@@ -94,6 +94,20 @@ def toggle_deck_controls(controller: object, sender: object) -> None:
     _submit_save(controller, candidate, previous)
 
 
+def toggle_deck_option(controller: object, sender: object, option: str) -> None:
+    if option not in {"session_mode", "analog_enabled"}:
+        raise ValueError("unknown deck option")
+    previous = getattr(controller, "_deck_control_settings", None)
+    if type(previous) is not DeckControlSettings:
+        controller.deck_settings_pane.set_status("Device action settings are unavailable.")
+        return
+    runtime = getattr(controller, "_sidepulse_optional_integration_runtime", None)
+    dispatch = getattr(runtime, "_deck_dispatch", None)
+    if dispatch is not None:
+        dispatch.reset_connection()
+    _submit_save(controller, replace(previous, **{option: bool(sender.state())}), previous)
+
+
 def save_deck_mapping(controller: object, _sender: object) -> None:
     previous = getattr(controller, "_deck_control_settings", None)
     if type(previous) is not DeckControlSettings:

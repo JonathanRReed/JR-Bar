@@ -21,7 +21,7 @@ def test_disabled_settings_do_not_resolve_any_action():
 
 
 @pytest.mark.parametrize("bindings", [
-    ((True, DeckAction("open_usage")),), ((20, DeckAction("open_usage")),),
+    ((True, DeckAction("open_usage")),), ((24, DeckAction("open_usage")),),
     ((3, DeckAction("open_usage")), (3, DeckAction("open_agent_browser"))),
     ((3, "open_usage"),),
 ])

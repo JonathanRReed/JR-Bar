@@ -26,6 +26,10 @@ class KeymapPlan:
     changes: tuple[str, ...]
     profile_index: int
     layer_index: int
+    observed_profile: int = 0
+    observed_layer: int = 0
+    include_auxiliary: bool = False
+    control_labels: tuple[tuple[int, str], ...] = ()
 
 
 def _reject_constant(value: str) -> None:
@@ -151,13 +155,27 @@ def _keymap(layer: dict[str, Any]) -> list[list[str]]:
     return keymap
 
 
-def plan_keymap(raw: str, status: dict[str, Any]) -> KeymapPlan:
+def plan_keymap(raw: str, status: dict[str, Any], *, profile_index: int | None = None,
+                layer_index: int | None = None, include_auxiliary: bool = False) -> KeymapPlan:
     """Plan AG00..AG12 without I/O, preserving dial and joystick mappings."""
 
     original = _load_keymap_json(raw)
     proposed = copy.deepcopy(original)
-    profile_index, profile = _active_profile(proposed)
-    layer_index, layer = _active_layer(profile, status)
+    observed_profile, active_profile = _active_profile(proposed)
+    observed_layer, _ = _active_layer(active_profile, status)
+    if "profile_index" in status and (
+            type(status["profile_index"]) is not int or status["profile_index"] != observed_profile):
+        raise ValueError("device status profile_index disagrees with keymap")
+    profile_index = observed_profile if profile_index is None else profile_index
+    layer_index = observed_layer if layer_index is None else layer_index
+    if type(profile_index) is not int or not 0 <= profile_index < len(proposed["profiles"]):
+        raise ValueError("invalid selected profile")
+    profile = proposed["profiles"][profile_index]
+    if type(layer_index) is not int or not 0 <= layer_index < len(profile.get("layers", [])):
+        raise ValueError("invalid selected layer")
+    layer = profile["layers"][layer_index]
+    if type(include_auxiliary) is not bool:
+        raise ValueError("include_auxiliary must be a bool")
     keymap = _keymap(layer)
 
     changes: list[str] = []
@@ -173,6 +191,34 @@ def plan_keymap(raw: str, status: dict[str, Any]) -> KeymapPlan:
                 row[column] = new_keycode
             key_index += 1
 
+    labels = [(index, f"Key {index + 1}") for index in range(13)]
+    if include_auxiliary:
+        layout = layer["layout"]
+        encoders = layout.get("encoders", [])
+        if not isinstance(encoders, list) or any(
+                not isinstance(row, list) or len(row) != 3 or any(type(key) is not str for key in row)
+                for row in encoders):
+            raise ValueError("unsupported encoder layout; nothing was changed")
+        auxiliary = []
+        for encoder, row in enumerate(encoders):
+            for position in range(3):
+                auxiliary.append((row, position, f"Encoder {encoder + 1} input {position + 1}"))
+        joystick = layout.get("joystick", {})
+        if not isinstance(joystick, dict) or not isinstance(joystick.get("sectors", []), list):
+            raise ValueError("unsupported joystick layout; nothing was changed")
+        for index, sector in enumerate(joystick.get("sectors", [])):
+            if not isinstance(sector, dict) or type(sector.get("k")) is not str:
+                raise ValueError("unsupported joystick sector; nothing was changed")
+            auxiliary.append((sector, "k", f"Joystick sector {index + 1}"))
+        if 13 + len(auxiliary) > 20:
+            raise ValueError("selected controls exceed the firmware's 20 AG slots; retain the auxiliary mappings")
+        for index, (parent, position, label) in enumerate(auxiliary, 13):
+            code = f"KV_OAI_AG{index:02d}"
+            labels.append((index, label))
+            if parent[position] != code:
+                changes.append(f"{label}: {parent[position]} -> {code}; replaces its normal firmware action.")
+                parent[position] = code
+
     proposed_json = _canonical_json(proposed)
     if len(proposed_json.encode("utf-8")) > _MAX_JSON_BYTES:
         raise ValueError("proposed keymap JSON exceeds the 64 KiB limit")
@@ -186,4 +232,28 @@ def plan_keymap(raw: str, status: dict[str, Any]) -> KeymapPlan:
         changes=tuple(changes),
         profile_index=profile_index,
         layer_index=layer_index,
+        observed_profile=observed_profile,
+        observed_layer=observed_layer,
+        include_auxiliary=include_auxiliary,
+        control_labels=tuple(labels),
     )
+
+
+def keymap_layers(raw: str) -> tuple[tuple[int, int, str], ...]:
+    """Return only editable layouts; unknown profiles/layers remain untouched."""
+    document = _load_keymap_json(raw)
+    _active_profile(document)
+    output = []
+    for profile_index, profile in enumerate(document["profiles"]):
+        layers = profile.get("layers", [])
+        if not isinstance(layers, list):
+            continue
+        for layer_index, layer in enumerate(layers):
+            try:
+                _keymap(layer)
+            except (ValueError, AttributeError):
+                continue
+            name = str(layer.get("name", f"Layer {layer_index + 1}"))
+            name = "".join(char for char in name if char.isprintable())[:64]
+            output.append((profile_index, layer_index, f"Profile {profile_index + 1} / Layer {layer_index + 1}: {name}"))
+    return tuple(output)

@@ -66,11 +66,9 @@ def _database(base: Path, *, supported: bool = True) -> Path:
           active_turn_id TEXT,
           last_error TEXT,
           updated_at TEXT NOT NULL
-    """.format(
-        provider_thread_id=(
-            "provider_thread_id TEXT," if supported else ""
-        )
-    )
+    """.format(provider_thread_id="provider_thread_id TEXT,")
+    if not supported:
+        session_columns = session_columns.replace("provider_instance_id TEXT,", "")
     connection.execute(
         f"CREATE TABLE projection_thread_sessions ({session_columns})"
     )
@@ -539,3 +537,37 @@ def test_enabled_runtime_update_polls_the_admitted_service() -> None:
     assert target._t3_snapshot_service is service
     assert requests == [True]
     assert replacements == [("t3code", ())]
+
+
+def test_modern_t3_without_native_thread_id_stays_read_only_and_scoped(tmp_path):
+    database = _database(tmp_path)
+    _insert_thread(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("ALTER TABLE projection_thread_sessions DROP COLUMN provider_thread_id")
+    snapshot = read_t3_snapshot(base_dir=tmp_path)
+    assert snapshot.compatible
+    status = snapshot.agent_statuses()[0]
+    assert status.session_id is None
+    assert status.work_key.source_key.adapter_id == "t3code"
+    assert snapshot.threads[0].provider_thread_id is None
+
+
+@pytest.mark.parametrize("turn_state,expected", [
+    (None, AgentMode.IDLE_READY), ("completed", AgentMode.COMPLETED),
+    ("interrupted", AgentMode.UNKNOWN), ("error", AgentMode.BLOCKED_ERROR),
+    ("running", AgentMode.WORKING),
+])
+def test_idle_transport_is_not_inferred_success(tmp_path, turn_state, expected):
+    database = _database(tmp_path)
+    _insert_thread(database)
+    with sqlite3.connect(database) as connection:
+        connection.execute("UPDATE projection_threads SET pending_approval_count=0")
+        connection.execute("UPDATE projection_thread_sessions SET status='ready', active_turn_id=NULL")
+        connection.execute("CREATE TABLE projection_turns (thread_id TEXT, turn_id TEXT, state TEXT)")
+        if turn_state is not None:
+            connection.execute("INSERT INTO projection_turns VALUES ('thread-1','turn-1',?)", (turn_state,))
+    assert read_t3_snapshot(base_dir=tmp_path).agent_statuses()[0].mode is expected
+
+
+def test_gemini_is_not_silently_rebranded_as_antigravity():
+    assert t3_compat._normalize_provider("gemini", "antigravity-main", "gemini-model") == "other"

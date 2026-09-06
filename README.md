@@ -110,6 +110,23 @@ features ask for what they need when you turn them on:
 | Calendar / Reminders | Event and reminder glows | You enable those signals |
 | Screen Recording | The Screen Bar matching Alcove's live capsule width | Automatic if granted; quietly skipped otherwise |
 
+## Control Center
+
+Open **Control Center…** from the menu for stable session slots, explicit banks,
+per-session state, input checking and an optional compact rail on any display
+edge. It works without physical hardware. Optional Creator Micro 2 controls use
+approved device identity, a bounded action queue, and the existing provider
+navigation resolver. Named macOS Shortcuts and app-specific shortcuts are
+explicit user mappings, not commands supplied by a device or agent.
+
+The September 6 source work adds bounded binary keymap transfer with a private
+first-original backup and interrupted-write recovery, selected profile/layer
+previews, supported auxiliary mappings, data-only mapping import/export, and
+nonblocking/reconnecting HID ownership. This is **not yet a physical-device or
+release certification**. Tests were deferred by the owner. Read the
+[Control Center guide and required Mac checks](docs/CONTROL-CENTER.md) before
+changing a device keymap. Restore the original keymap before uninstalling.
+
 ## The Screen Bar
 
 A light bar that wraps the MacBook notch and mirrors the LEDs —
@@ -124,7 +141,10 @@ unseen-done dot in your peripheral vision.
 
 ## Hardware
 
-The devices mount as disk drives; everything renders by writing a
+Creator Micro 2 uses a separate vendor-HID protocol, not the SidePulse disk-file
+protocol. Its supported setup and recovery flow is in the Control Center guide.
+
+SidePulse Pro and Dot mount as disk drives; their output renders by writing a
 small LED program to `LEDS.LED` (the DSL is in
 [`LEDS_FORMAT.md`](LEDS_FORMAT.md), and writes are atomic — an eject
 mid-write can't leave the firmware a torn program). Per-device:

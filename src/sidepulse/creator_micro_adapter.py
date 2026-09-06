@@ -7,11 +7,11 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import Any, Protocol
 
 
-class SemanticState(StrEnum):
+class SemanticState(str, Enum):
     INPUT_REQUIRED = "input_required"
     FAILURE = "failure"
     QUOTA_EXHAUSTED = "quota_exhausted"
@@ -20,6 +20,9 @@ class SemanticState(StrEnum):
     COMPLETED = "completed"
     QUOTA_WARNING = "quota_warning"
     IDLE = "idle"
+
+    def __str__(self) -> str:
+        return self.value
 
     @property
     def priority(self) -> int:
@@ -130,6 +133,7 @@ class CreatorMicro2Framer:
             firmware = keys in (
                 {"id", "method", "params"},
                 {"id", "method", "result"},
+                {"id", "method", "error"},
             ) and isinstance(value.get("method"), str)
             if not conventional and not firmware:
                 raise ValueError("invalid JSON-RPC response")
@@ -143,9 +147,17 @@ class CreatorMicro2Framer:
             raise ValueError("invalid JSON-RPC notification")
 
     @classmethod
-    def _encode(cls, message: dict[str, Any], *, max_bytes: int | None = None) -> list[bytes]:
+    def _encode(
+        cls, message: dict[str, Any], *, max_bytes: int | None = None,
+        line_delimited: bool = False,
+    ) -> list[bytes]:
         budget = cls.bounded_budget(cls.MAX_REPORTS * cls.CHUNK_SIZE if max_bytes is None else max_bytes)
         payload = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        if line_delimited:
+            # The firmware parses the shared channel on line boundaries. The
+            # leading delimiter also separates a previous incomplete request.
+            # Count delimiters in the wire budget, not only the JSON body.
+            payload = b"\r\n" + payload + b"\r\n"
         if not payload or len(payload) > budget:
             raise ValueError("payload exceeds report limit")
         parts = [payload[offset : offset + cls.CHUNK_SIZE] for offset in range(0, len(payload), cls.CHUNK_SIZE)]
@@ -156,7 +168,7 @@ class CreatorMicro2Framer:
     @classmethod
     def encode_request(cls, message: dict[str, Any], *, max_bytes: int | None = None) -> list[bytes]:
         cls.validate_request(message)
-        return cls._encode(message, max_bytes=max_bytes)
+        return cls._encode(message, max_bytes=max_bytes, line_delimited=True)
 
     @classmethod
     def encode_message(cls, message: dict[str, Any]) -> list[bytes]:
@@ -313,6 +325,7 @@ class CreatorMicro2Adapter:
         self._notifications: deque[tuple[float, dict[str, Any]]] = deque(maxlen=128)
         self.conflict = DeviceConflict()
         self.connected = False
+        self.connection_generation = 0
 
     def discover(self) -> bool:
         return CreatorMicro2Framer.discover(self.info)
@@ -328,11 +341,13 @@ class CreatorMicro2Adapter:
             self.transport.open(nonexclusive=True)
         except NoDeviceError:
             return Receipt("no_device", "Creator Micro 2 vendor collection not found")
-        except PermissionError:
-            return Receipt("permission_denied", "HID access requires Input Monitoring permission")
+        except PermissionError as exc:
+            return Receipt(getattr(exc, "code", "permission_denied"), "Device access or approved identity was refused")
         except (ImportError, OSError) as exc:
             return Receipt("transport_unavailable", str(exc))
         self.connected = True
+        self.connection_generation += 1
+        self.conflict.issued_ids.clear()
         self._decoder = RpcStreamDecoder(max_bytes=self._rpc_max_bytes)
         return Receipt("connected")
 
@@ -351,8 +366,11 @@ class CreatorMicro2Adapter:
             if receipt.code not in {"applied", "rpc_error"}:
                 return receipt
             error = response.get("error") if response else None
-            if not (isinstance(error, dict) and error.get("code") == -32601):
-                supported.add(method)
+            if isinstance(error, dict):
+                if error.get("code") in {-32601, 404}:
+                    continue
+                return Receipt("capability_probe_failed", method)
+            supported.add(method)
         self._capabilities = DeviceCapability.from_methods(supported)
         return Receipt("capabilities_negotiated", ",".join(sorted(supported)))
 
@@ -369,6 +387,19 @@ class CreatorMicro2Adapter:
 
             params = creator_micro_light_params(state.value)
         receipt, _ = self._call(method, params)
+        return receipt
+
+    def apply_preview(self, frame) -> Receipt:
+        """Nonpersistent whole-board fallback, valid without AG keycodes."""
+        if not self.connected:
+            return Receipt("not_connected")
+        if self.conflict.active:
+            return Receipt("device_conflict", recoverable=False)
+        if not self._capabilities.can_light:
+            return Receipt("unsupported_method", "lights.preview")
+        side = {"effect": "solid" if frame.brightness else "off", "brightness": frame.brightness,
+                "speed": 0.5, "magic": 1, "color": frame.color}
+        receipt, _ = self._call("lights.preview", {"backlight": side, "underglow": dict(side)})
         return receipt
 
     def _call(self, method: str, params: list[Any] | dict[str, Any] | None) -> tuple[Receipt, dict[str, Any] | None]:
