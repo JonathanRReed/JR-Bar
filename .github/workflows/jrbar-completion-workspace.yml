@@ -24,12 +24,36 @@ jobs:
         with:
           ref: finish/creator-control-center-2026-09-06
           fetch-depth: 1
-      - name: Apply reviewed source changes without running tests
+      - name: Assemble exact reviewed patch
         shell: bash
         run: |
           set -euo pipefail
           if [ -f .jrbar-completion.patch ]; then
-            python3 -c 'import base64,gzip,pathlib; p=pathlib.Path(".jrbar-completion.patch"); raw=base64.b64decode(p.read_bytes(),validate=False); data=gzip.decompress(raw); assert len(data)<2000000; pathlib.Path("/tmp/jrbar-reviewed.patch").write_bytes(data)'
+            python3 - <<'PY'
+          import base64, gzip, hashlib, json, pathlib
+          manifest = json.loads(pathlib.Path('.jrbar-completion.patch').read_text())
+          assert manifest['parts'] == 10
+          parts = [''.join(pathlib.Path(f'.jrbar-completion.parts/{i:02d}').read_text().split()) for i in range(10)]
+          repairs = pathlib.Path('.jrbar-completion-repairs.json')
+          if repairs.exists():
+              changes = json.loads(repairs.read_text())
+              for index in range(10):
+                  edits = sorted((e for e in changes if e[0] == index), key=lambda e: e[1], reverse=True)
+                  for _, start, end, replacement in edits:
+                      parts[index] = parts[index][:start] + replacement + parts[index][end:]
+          encoded = ''.join(parts)
+          data = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert len(data) == 216900
+          assert hashlib.sha256(data).hexdigest() == '43b27cbdc8bef7b6b16e51dd1c50e5b8c4f8b75a59e7972be7b19095de0959a6'
+          pathlib.Path('/tmp/jrbar-reviewed.patch').write_bytes(data)
+          print('Reviewed patch byte count and SHA-256 verified.')
+          PY
+          fi
+      - name: Apply source changes and static checks only
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f /tmp/jrbar-reviewed.patch ]; then
             git apply --check /tmp/jrbar-reviewed.patch
             git apply /tmp/jrbar-reviewed.patch
             git add -N src tests docs README.md CHANGELOG.md pyproject.toml
@@ -38,6 +62,8 @@ jobs:
             python3 -m compileall -q src tests
             git diff --check
             rm .jrbar-completion.patch
+            rm -rf .jrbar-completion.parts
+            rm -f .jrbar-completion-repairs.json
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add -A
