@@ -108,18 +108,42 @@ class MacDeckActionExecutor:
         open_agent_browser: Callable[[], None] | None = None,
         open_usage: Callable[[], None] | None = None,
         bridge: _MacBridge | None = None,
+        open_control_center: Callable[[], None] | None = None,
+        next_bank: Callable[[], None] | None = None,
+        previous_bank: Callable[[], None] | None = None,
+        session_revealer: Callable[[str, int | None], DeckActionReceipt] | None = None,
+        shortcut_runner: Callable[[str], DeckActionReceipt] | None = None,
     ) -> None:
         self._bridge = bridge or _NativeMacBridge()
+        self._session_revealer = session_revealer
+        self._shortcut_runner = shortcut_runner
         self._callbacks = {
             "reveal_current_ask": (reveal_current_ask, "revealed_current_ask"),
             "open_agent_browser": (open_agent_browser, "opened_agent_browser"),
             "open_usage": (open_usage, "opened_usage"),
+            "open_control_center": (open_control_center, "opened_control_center"),
+            "next_bank": (next_bank, "bank_changed"),
+            "previous_bank": (previous_bank, "bank_changed"),
         }
+
+    def reveal_session(self, identity: str, revision: int | None) -> DeckActionReceipt:
+        if self._session_revealer is None:
+            return DeckActionReceipt("navigation_unavailable", False)
+        try:
+            return self._session_revealer(identity, revision)
+        except Exception:
+            return DeckActionReceipt("navigation_failed", False)
 
     def execute(self, action: DeckAction) -> DeckActionReceipt:
         if type(action) is not DeckAction:
             raise TypeError("action must be a DeckAction")
         try:
+            if action.kind == "run_system_shortcut":
+                if self._shortcut_runner is None:
+                    return DeckActionReceipt("shortcut_runner_unavailable", False)
+                return self._shortcut_runner(action.shortcut_name)
+            if action.kind == "reveal_session":
+                return DeckActionReceipt("session_target_required", False)
             if action.kind == "open_app":
                 code = self._bridge.open_app(action.bundle_id)
                 return DeckActionReceipt(code=code, success=code == "opened")

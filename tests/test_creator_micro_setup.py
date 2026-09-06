@@ -1,5 +1,7 @@
 """Device acknowledgement alone must never count as successful keymap setup."""
 
+import base64
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -18,33 +20,62 @@ def keymap():
 
 class Device:
     connected = True
+    connection_generation = 1
 
     def __init__(self, raw=None, *, ignores_writes=False, empty_write_ack=False):
-        self.raw = raw or keymap()
-        self.status = {"layer_index": 1}
+        self.disk = {"keymap.json": (raw or keymap()).encode("utf-8")}
+        self.status = {"layer_index": 1, "profile_index": 0, "version": "0.6.2"}
         self.ignores_writes = ignores_writes
         self.empty_write_ack = empty_write_ack
         self.writes = []
         self.before_write = lambda: None
+        self.request_sizes = []
+
+    @property
+    def raw(self):
+        return self.disk["keymap.json"].decode("utf-8")
+
+    @raw.setter
+    def raw(self, value):
+        self.disk["keymap.json"] = value.encode("utf-8")
 
     def _call(self, method, params):
+        self.request_sizes.append(len(json.dumps(params).encode("utf-8")))
+        name = params.get("file") if isinstance(params, dict) else None
         if method == "device.status":
             result = self.status.copy()
-        elif method == "fs.read":
-            assert params == {"file": "keymap.json"}
-            result = {"data": self.raw}
-        elif method == "fs.write":
-            self.before_write()
-            assert params["file"] == "keymap.json"
-            self.writes.append(params["data"])
-            if not self.ignores_writes:
-                self.raw = params["data"]
-            result = {"ok": 1}
+        elif method == "fs.list":
+            result = [{"name": path, "size": len(data), "checksum": hashlib.sha1(data).hexdigest()}
+                      for path, data in self.disk.items()]
+        elif method == "fs.chksm":
+            if name not in self.disk:
+                return Receipt("rpc_error"), {"id": 1, "method": method,
+                                               "error": {"code": 404, "message": "not found"}}
+            data = self.disk[name]
+            result = {"size": len(data), "checksum": hashlib.sha1(data).hexdigest()}
+        elif method == "fs.readbin":
+            data = self.disk[name]
+            chunk = data[params["offset"]:params["offset"] + params["len"]]
+            result = {"data": base64.b64encode(chunk).decode("ascii"), "total_size": len(data)}
+        elif method == "fs.delete":
+            if name == "keymap.json":
+                self.before_write()
+            if not (name == "keymap.json" and self.ignores_writes):
+                self.disk.pop(name, None)
+            result = None
+        elif method == "fs.writebin":
+            data = base64.b64decode(params["data"], validate=True)
+            if not (name == "keymap.json" and self.ignores_writes):
+                current = self.disk.get(name, b"")
+                assert params["append"] is True
+                assert params["offset"] == len(current)
+                self.disk[name] = current + data
+            if name == "keymap.json" and params["completed"]:
+                self.writes.append(self.raw)
+            result = None if self.empty_write_ack else {"ok": 1}
         else:
             raise AssertionError(method)
-        if method == "fs.write" and self.empty_write_ack:
-            return Receipt("applied"), {"id": 1, "method": method, "result": None}
-        return Receipt("applied"), {"id": 1, "method": method, "params": result}
+        return Receipt("applied"), {"id": 1, "method": method, "result": result}
 
 
 def service(tmp_path, device=None, serial="test-device", **kwargs):
@@ -89,7 +120,7 @@ def test_apply_persists_private_verified_backup_before_write_and_restore_round_t
 def test_acknowledged_but_ignored_write_fails_verification_and_keeps_backup(tmp_path, empty_write_ack):
     device = Device(ignores_writes=True, empty_write_ack=empty_write_ack)
     setup = service(tmp_path, device)
-    assert setup.apply(setup.inspect()).code == "readback_mismatch"
+    assert setup.apply(setup.inspect()).code == "recovery_required"
     assert (tmp_path / "backup.json").exists()
 
 
@@ -158,12 +189,12 @@ def test_inspect_refuses_missing_status_or_non_file_response(tmp_path):
 def test_empty_file_read_result_is_not_treated_as_a_write_acknowledgement(tmp_path):
     class EmptyReadDevice(Device):
         def _call(self, method, params):
-            if method == "fs.read":
+            if method == "fs.readbin":
                 return Receipt("applied"), {"id": 1, "method": method, "result": None}
             return super()._call(method, params)
 
     device = EmptyReadDevice()
-    with pytest.raises(ValueError, match="malformed_report"):
+    with pytest.raises(ValueError, match="malformed_file_chunk"):
         service(tmp_path, device).inspect()
     assert device.writes == []
 
@@ -206,7 +237,7 @@ def test_device_disconnect_during_readback_keeps_original_for_recovery(tmp_path)
     device = Device()
     setup = service(tmp_path, device)
     device.before_write = lambda: setattr(device, "connected", False)
-    assert setup.apply(setup.inspect()).code == "not_connected"
+    assert setup.apply(setup.inspect()).code == "recovery_required"
     assert (tmp_path / "backup.json").exists()
 
 
@@ -248,7 +279,7 @@ def test_large_keymap_round_trip_through_real_adapter_and_fragment_decoder(tmp_p
 
     class Wire:
         def __init__(self):
-            self.decoder = RpcStreamDecoder(max_bytes=132_096)
+            self.decoder = RpcStreamDecoder()
             self.responses = deque()
 
         def open(self, *, nonexclusive):
@@ -261,7 +292,7 @@ def test_large_keymap_round_trip_through_real_adapter_and_fragment_decoder(tmp_p
             for request in self.decoder.feed(report):
                 _, response = firmware._call(request["method"], request["params"])
                 response["id"] = request["id"]
-                self.responses.extend(CreatorMicro2Framer._encode(response, max_bytes=132_096))
+                self.responses.extend(CreatorMicro2Framer._encode(response))
 
         def read(self, *, timeout_ms):
             return self.responses.popleft() if self.responses else None
@@ -269,10 +300,44 @@ def test_large_keymap_round_trip_through_real_adapter_and_fragment_decoder(tmp_p
     wire = Wire()
     adapter = CreatorMicro2Adapter(wire, {
         "vendor_id": 0x303A, "product_id": 0x8297, "usage_page": 0xFF00, "usage": 1,
-    }, rpc_max_bytes=132_096)
+    })
     assert adapter.connect().code == "connected"
     setup = service(tmp_path, adapter)
     assert setup.apply(setup.inspect()).code == "keymap_verified"
     assert json.loads(firmware.raw)["macro"] == document["macro"]
     assert setup.restore().code == "keymap_restored"
     assert firmware.raw == original
+
+
+def test_interrupted_prefix_restore_recovers_first_original_without_replaying_apply(tmp_path):
+    device = Device()
+    setup = service(tmp_path, device)
+    original = device.raw
+    assert setup.apply(setup.inspect()).code == "keymap_verified"
+    path = setup.recovery_path
+    journal = json.loads(path.read_text())
+    intended = journal["after_json"].encode("utf-8")
+    journal["state"] = "pending"
+    journal["max_prefix"] = min(100, len(intended))
+    path.write_text(json.dumps(journal))
+    device.disk["keymap.json"] = intended[:journal["max_prefix"]]
+    assert setup.restore().code == "keymap_restored"
+    assert device.raw == original
+
+
+def test_profile_change_with_same_layer_revokes_preview(tmp_path):
+    device = Device()
+    setup = service(tmp_path, device)
+    plan = setup.inspect()
+    device.status["profile_index"] = 1
+    assert setup.apply(plan).code == "keymap_changed"
+    assert not device.writes
+
+
+def test_connection_generation_change_revokes_even_connected_transfer(tmp_path):
+    device = Device()
+    setup = service(tmp_path, device)
+    plan = setup.inspect()
+    device.connection_generation += 1
+    assert setup.apply(plan).code == "connection_changed"
+    assert not device.writes

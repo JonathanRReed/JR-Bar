@@ -20,13 +20,39 @@ class CreatorMicroLightFrame:
     color: int
     brightness: float
     effect: int
+    slots: tuple[tuple[int, int, float, int], ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.slots) is not tuple or len(self.slots) > 20:
+            raise ValueError("invalid light slots")
+        indices = set()
+        for index, color, brightness, effect in ((-1, self.color, self.brightness, self.effect), *self.slots):
+            if (type(index) is not int or not -1 <= index < 20 or index in indices
+                    or type(color) is not int or not 0 <= color <= 0xFFFFFF
+                    or type(brightness) not in (int, float) or not math.isfinite(brightness)
+                    or not 0 <= brightness <= 1 or type(effect) is not int or not 0 <= effect <= 6):
+                raise ValueError("invalid light frame")
+            indices.add(index)
 
     def params(self) -> list[dict[str, int | float]]:
-        return [
-            {"id": index, "c": self.color, "b": self.brightness,
-             "e": self.effect, "s": 0.5, "sk": 0, "sa": 0}
-            for index in range(20)
-        ]
+        values = {index: (color, brightness, effect) for index, color, brightness, effect in self.slots}
+        output = []
+        for index in range(20):
+            color, brightness, effect = values.get(index, (self.color, self.brightness, self.effect))
+            output.append({"id": index, "c": color, "b": brightness, "e": effect, "s": 0.5, "sk": 0, "sa": 0})
+        return output
+
+
+def creator_micro_session_frame(board, *, colors: ColorSettings | None = None,
+                                brightness: float = 0.4) -> CreatorMicroLightFrame:
+    slots = []
+    for slot in board.slots:
+        state = slot.state if slot.state not in {"stale", "unavailable", "unknown", "ended_unconfirmed"} else "idle"
+        frame = creator_micro_light_frame(state, colors=colors, brightness=brightness)
+        slots.append((slot.index, frame.color, frame.brightness, frame.effect))
+    # Unassigned and auxiliary AG slots stay off. An explicit global signal can
+    # still replace this projection through the shared runtime signal policy.
+    return CreatorMicroLightFrame(0, 0, 0, tuple(slots))
 
 
 def creator_micro_light_frame(

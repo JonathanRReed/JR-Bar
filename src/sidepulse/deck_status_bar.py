@@ -48,6 +48,44 @@ def install_deck_status_bar(base):
             apply_deck_input(self, payload)
 
         @objc.IBAction
+        def openDeckControlCenter_(self, _sender) -> None:
+            from .deck_control_center import open_control_center
+            open_control_center(self)
+
+        @objc.IBAction
+        def toggleDeckSessionMode_(self, sender) -> None:
+            from .deck_settings_controller import toggle_deck_option
+            toggle_deck_option(self, sender, "session_mode")
+
+        @objc.IBAction
+        def toggleDeckAnalogMode_(self, sender) -> None:
+            from .deck_settings_controller import toggle_deck_option
+            toggle_deck_option(self, sender, "analog_enabled")
+
+        @objc.IBAction
+        def importDeckMappings_(self, _sender) -> None:
+            from .deck_mapping_files import choose_mapping_file
+            choose_mapping_file(self, "import")
+
+        @objc.IBAction
+        def exportDeckMappings_(self, _sender) -> None:
+            from .deck_mapping_files import choose_mapping_file
+            choose_mapping_file(self, "export")
+
+        @objc.IBAction
+        def exportCreatorMicroBackup_(self, _sender) -> None:
+            from .deck_mapping_files import choose_mapping_file
+            choose_mapping_file(self, "backup")
+
+        def applyDeckFileResult_(self, result) -> None:
+            from .deck_mapping_files import apply_mapping_file_result
+            apply_mapping_file_result(self, result)
+
+        def applyDeckAutomationResult_(self, receipt) -> None:
+            if not getattr(self, "_runtime_termination_started", False):
+                self._deck_action_receipt = receipt
+
+        @objc.IBAction
         def toggleDeckControls_(self, sender) -> None:
             from .deck_settings_controller import toggle_deck_controls
 

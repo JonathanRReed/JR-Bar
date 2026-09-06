@@ -308,7 +308,7 @@ def test_hidapi_transport_is_injectable_read_only_until_opt_in_and_uses_timeout_
             self.path = path
 
         def set_nonblocking(self, value):
-            assert value is False
+            assert value is True
 
         def write(self, report):
             self.report = report
@@ -351,7 +351,7 @@ def test_hidapi_output_requires_one_approved_stable_device_identity(monkeypatch)
             opened.append(path)
 
         def set_nonblocking(self, value):
-            assert value is False
+            assert value is True
 
         def close(self):
             pass

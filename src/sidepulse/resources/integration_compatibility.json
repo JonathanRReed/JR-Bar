@@ -5,11 +5,11 @@
       "integration": "t3code",
       "minimumVersion": "0.0.33",
       "maximumTestedVersion": "0.0.33",
-      "protocolFingerprint": "sha256:7bd830739f7f9c6bd84b5b909857f7de2cd79aac1ec512f96a5fc6564c0da010",
-      "sourceCommit": "bab4b6f02b8bdaf15fd32636a97f69ff657cec50",
-      "fixtureVersion": 1,
+      "protocolFingerprint": "sha256:dbb31c118c4705166cd223ba9c17785174acd6d52182980ee2f3d3d6d1ade9c2",
+      "sourceCommit": "ea646c0834a3394ecb0be4a30c5d367e5a9002bd",
+      "fixtureVersion": 2,
       "connectionMode": "sqlite-readonly-v1",
-      "reviewedOn": "2026-08-29"
+      "reviewedOn": "2026-09-06"
     }
   ]
 }
