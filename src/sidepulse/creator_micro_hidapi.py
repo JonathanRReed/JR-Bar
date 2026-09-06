@@ -88,11 +88,27 @@ class HidApiTransport(DeviceTransport):
         return self._hid
 
     def _matching_devices(self) -> list[dict[str, Any]]:
-        return [
-            device
-            for device in self._module().enumerate(CreatorMicro2Framer.VENDOR_ID)
-            if CreatorMicro2Framer.discover(device)
-        ]
+        from .creator_micro_discovery import native_vendor_collections, preferred_endpoints
+
+        rows = [dict(row) for row in self._module().enumerate(CreatorMicro2Framer.VENDOR_ID)]
+        native = frozenset()
+        if sys.platform == "darwin" and any(
+                row.get("product_id") in CreatorMicro2Framer.PRODUCT_IDS
+                and row.get("bus_type") == 2
+                and not CreatorMicro2Framer.discover(row) for row in rows):
+            try:
+                native = native_vendor_collections()
+            except (OSError, AttributeError, ValueError):
+                pass
+        matching = []
+        for row in rows:
+            identity = (row.get("vendor_id"), row.get("product_id"),
+                        row.get("serial_number"), row.get("bus_type"))
+            if row.get("bus_type") == 2 and identity in native:
+                row["usage_page"], row["usage"] = CreatorMicro2Framer.USAGE_PAGE, CreatorMicro2Framer.USAGE
+            if CreatorMicro2Framer.discover(row):
+                matching.append(row)
+        return preferred_endpoints(matching)
 
     def enumerate(self) -> list[dict[str, Any]]:
         devices = self._matching_devices()
@@ -131,7 +147,10 @@ class HidApiTransport(DeviceTransport):
                 if sys.platform == "darwin" and nonexclusive:
                     _enable_macos_nonexclusive(self._module())
                 device.open_path(devices[0]["path"])
-                device.set_nonblocking(False)
+                # cython-hidapi routes read(..., 0) through hid_read, which
+                # otherwise blocks indefinitely on the input polling path.
+                # Positive timeouts still use hid_read_timeout.
+                device.set_nonblocking(True)
             except Exception:
                 try:
                     device.close()
@@ -148,7 +167,9 @@ class HidApiTransport(DeviceTransport):
             raise PermissionError("device writes require explicit opt-in")
         if self._device is None:
             raise OSError("transport is not open")
-        self._device.write(report)
+        written = self._device.write(report)
+        if written != len(report):
+            raise OSError(f"incomplete HID write: {written} of {len(report)} bytes")
 
     def read(self, *, timeout_ms: int) -> bytes | None:
         if self._device is None:

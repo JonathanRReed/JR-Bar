@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sidepulse"
 version = "0.6.0"
-description = "JR-Bar tools for SidePulse Pro and SidePulse Dot."
+description = "Standalone macOS agent monitoring, usage and optional hardware controls."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -45,9 +45,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://sidepulse.io"
-Repository = "https://github.com/JonathanRReed/sidepulse-JR-Fork"
-Issues = "https://github.com/JonathanRReed/sidepulse-JR-Fork/issues"
+Homepage = "https://github.com/JonathanRReed/JR-Bar"
+Repository = "https://github.com/JonathanRReed/JR-Bar"
+Issues = "https://github.com/JonathanRReed/JR-Bar/issues"
 Upstream = "https://github.com/inteliwear/sidepulse"
 
 [project.optional-dependencies]

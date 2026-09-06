@@ -4,6 +4,21 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Add a hardware-optional native Control Center with stable, identity-scoped
+  session slots, explicit banks/pins, input checking and a compact four-edge rail.
+- Complete the reviewed HID framing/nonblocking/write-result fixes; classify
+  method-tagged firmware errors and retain Python 3.10 Creator Micro imports.
+- Add bounded binary keymap reads/writes, device checksums, scratch-file preflight,
+  private first-original backup and generation-bound interrupted-write recovery.
+- Add selected profile/layer and supported auxiliary-key previews, analog joystick
+  sectors, mapping import/export, per-session lighting and stock-map aggregate preview.
+- Keep distinct user inputs in a bounded ordered queue, revoke stale generations,
+  and expose explicit named macOS Shortcuts without a shell/device execution channel.
+- Refresh T3 read-only projection compatibility, keep native and T3 identities
+  distinct, and require explicit turn outcomes instead of treating idle as success.
+- This source integration is not a tested hardware/release claim. The owner deferred
+  test suites; required Mac/device/provider/release checks are in `docs/CONTROL-CENTER.md`.
+
 ## 0.6.0
 
 - JR-Bar now presents provider attention, activity, authoritative quota limits,
