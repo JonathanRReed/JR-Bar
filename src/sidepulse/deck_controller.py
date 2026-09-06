@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import threading
 
-from .deck_actions_macos import MacDeckActionExecutor
+from .deck_control_center import deck_executor
 from .deck_input_dispatch import DeckInputBatch
 
 
 def apply_deck_input(target, batch: object) -> None:
     if type(batch) is not DeckInputBatch or getattr(target, "_runtime_termination_started", False):
         return
-    executor = MacDeckActionExecutor(
-        reveal_current_ask=lambda: target.performRevealCurrentAsk_(None),
-        open_agent_browser=lambda: target.openAgentBrowser_(None),
-        open_usage=lambda: target.openProviderUsageCenter_(None),
-    )
+    executor = deck_executor(target)
     receipts = batch.owner.deliver(batch, executor)
     if not receipts:
         return
@@ -83,6 +79,12 @@ def _lifecycle_lock(target):
 
 
 def stop_deck_runtime_reconfiguration(target) -> None:
+    runner = getattr(target, "_deck_automation_runner", None)
+    if runner is not None:
+        runner.close()
+    window = getattr(target, "_deck_control_center_window", None)
+    if window is not None:
+        window.shutdown()
     with _lifecycle_lock(target):
         target._deck_runtime_stopping = True
         target._deck_runtime_generation = object()

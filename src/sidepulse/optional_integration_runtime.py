@@ -101,6 +101,7 @@ class CreatorMicroOutputService:
         approved_serial: str | None = None,
         callback: Callable[[CreatorMicroOutputReceipt], None] | None = None,
         input_callback: Callable[[list[dict[str, Any]]], None] | None = None,
+        input_reset_callback: Callable[[], None] | None = None,
     ) -> None:
         if adapter_factory is _creator_output_adapter:
             if not approved_serial:
@@ -110,6 +111,7 @@ class CreatorMicroOutputService:
             self._adapter_factory = adapter_factory
         self._callback = callback
         self._input_callback = input_callback
+        self._input_reset_callback = input_reset_callback
         self._condition = threading.Condition()
         self._pending: tuple[AgentMode, str | None, CreatorMicroLightFrame | None] | None = None
         self._closed = False
@@ -147,56 +149,113 @@ class CreatorMicroOutputService:
 
     def _run(self) -> None:
         adapter = None
+        last_output = None
+        last_write_at = 0.0
+        retry_delay = 1.0
+        retry_at = 0.0
         try:
-            adapter = self._adapter_factory()
-            connected = adapter.connect()
-            if connected.code != "connected":
-                self._publish(False, connected.code, connected.detail)
-                return
-            negotiated = adapter.negotiate_capabilities()
-            if negotiated.code != "capabilities_negotiated":
-                self._publish(False, negotiated.code, negotiated.detail)
-                return
-            if "v.oai.thstatus" not in adapter.capabilities().methods:
-                self._publish(False, "unsupported_firmware")
-                return
-            self._publish(True, "ready")
             while True:
                 with self._condition:
-                    if self._pending is None and not self._closed:
-                        self._condition.wait(timeout=0.05 if self._input_callback else None)
                     if self._closed:
                         return
-                    pending = self._pending
-                    self._pending = None
+                    remaining = retry_at - time.monotonic()
+                    if adapter is None and remaining > 0:
+                        self._condition.wait(timeout=remaining)
+                        continue
+                if adapter is None:
+                    try:
+                        candidate = self._adapter_factory()
+                        connected = candidate.connect()
+                        if connected.code != "connected":
+                            candidate.close()
+                            if connected.code not in {"no_device", "transport_unavailable", "backoff"}:
+                                self._publish(False, connected.code, connected.detail)
+                                return
+                            raise OSError(connected.code)
+                        adapter = candidate
+                        last_output = None
+                        negotiated = adapter.negotiate_capabilities()
+                        if negotiated.code != "capabilities_negotiated":
+                            self._publish(False, negotiated.code, negotiated.detail)
+                            if negotiated.code not in {"timeout", "transport_unavailable", "backoff"}:
+                                return
+                            raise OSError(negotiated.code)
+                        if not adapter.capabilities().methods.intersection({"v.oai.thstatus", "lights.preview"}):
+                            self._publish(False, "unsupported_firmware")
+                            return
+                        if self._input_reset_callback is not None:
+                            self._input_reset_callback()
+                        self._publish(True, "ready")
+                        retry_delay = 1.0
+                    except OSError:
+                        if adapter is not None:
+                            adapter.close()
+                            adapter = None
+                        if self._input_reset_callback is not None:
+                            self._input_reset_callback()
+                        self._publish(False, "reconnecting")
+                        retry_at = time.monotonic() + retry_delay
+                        retry_delay = min(10.0, retry_delay * 2)
+                        continue
+                with self._condition:
+                    if self._pending is None and not self._closed:
+                        self._condition.wait(timeout=0.05 if self._input_callback else 0.5)
+                    if self._closed:
+                        return
+                    pending, self._pending = self._pending, None
                     self._busy = pending is not None
+                failed = False
                 if pending is not None:
                     mode, signal, frame = pending
                     state = creator_semantic_state(mode, signal=signal)
-                    result = adapter.apply(state, frame.params()) if frame is not None else adapter.apply(state)
-                    self._publish(result.code == "applied", result.code, result.detail)
-                    if result.code != "applied":
-                        return
-                if self._input_callback is not None:
-                    inputs = adapter.poll_inputs()
-                    if adapter.conflict.active:
-                        self._publish(False, "device_conflict")
-                        return
-                    if not adapter.connected:
-                        self._publish(False, "transport_unavailable")
-                        return
-                    if inputs:
-                        self._input_callback(inputs)
+                    output = (state, frame)
+                    if output != last_output or time.monotonic() - last_write_at >= 1.0:
+                        methods = adapter.capabilities().methods
+                        preview = "lights.preview" in methods and frame is not None and not frame.slots
+                        if preview:
+                            result = adapter.apply_preview(frame)
+                        elif "v.oai.thstatus" in methods:
+                            result = adapter.apply(state, frame.params()) if frame is not None else adapter.apply(state)
+                        else:
+                            self._publish(False, "per_key_output_unsupported")
+                            return
+                        self._publish(result.code == "applied",
+                                      "aggregate_preview" if preview and result.code == "applied" else result.code,
+                                      result.detail)
+                        if result.code not in {"applied", "timeout", "transport_unavailable", "backoff"}:
+                            return
+                        failed = result.code != "applied"
+                        if not failed:
+                            last_output, last_write_at = output, time.monotonic()
+                # Poll even with actions disabled: this detects competing owners
+                # and disconnects. Never replay notifications after reconnect.
+                inputs = adapter.poll_inputs() if not failed else []
+                if adapter.conflict.active:
+                    self._publish(False, "device_conflict")
+                    return
+                failed = failed or not adapter.connected
+                if not failed and inputs and self._input_callback is not None:
+                    self._input_callback(inputs)
                 with self._condition:
                     self._busy = False
                     self._condition.notify_all()
-                if adapter.conflict.active:
-                    return
+                if failed:
+                    adapter.close()
+                    adapter = None
+                    if self._input_reset_callback is not None:
+                        self._input_reset_callback()
+                    self._publish(False, "reconnecting")
+                    retry_at = time.monotonic() + retry_delay
         except Exception:
             self._publish(False, "transport_unavailable")
         finally:
+            if self._input_reset_callback is not None:
+                self._input_reset_callback()
             if adapter is not None:
-                adapter.close()
+                try:
+                    adapter.close()
+                except OSError:
+                    pass
             with self._condition:
                 self._busy = False
                 self._pending = None
@@ -274,6 +333,8 @@ class OptionalIntegrationRuntime:
         return self._configured.wait(timeout)
 
     def _configure(self) -> None:
+        from .deck_control_center import ensure_deck_board
+        ensure_deck_board(self._target)
         try:
             loaded = self._settings_loader()
             settings = getattr(loaded, "settings", loaded)
@@ -340,7 +401,8 @@ class OptionalIntegrationRuntime:
                 service = self._creator_service_factory(
                     approved_serial=approved_serial,
                     callback=self._publish_creator_receipt,
-                    input_callback=self._deck_dispatch.receive if controls.enabled else None,
+                    input_callback=self._deck_dispatch.receive,
+                    input_reset_callback=self._reset_deck_connection,
                 )
                 with self._lock:
                     if self._closed:
@@ -387,6 +449,8 @@ class OptionalIntegrationRuntime:
             if self._closed:
                 return False
             service = self._creator_service
+        from .deck_control_center import refresh_deck_board
+        board = refresh_deck_board(self._target)
         submit = getattr(service, "submit", None)
         if not callable(submit):
             return False
@@ -401,6 +465,11 @@ class OptionalIntegrationRuntime:
             brightness=brightness,
             idle_off=not callable(brightness_policy),
         )
+        controls = getattr(self._target, "_deck_control_settings", None)
+        if controls is not None and controls.session_mode and signal is None:
+            from .creator_micro_lighting import creator_micro_session_frame
+            frame = creator_micro_session_frame(board, colors=colors if type(colors) is ColorSettings else None,
+                                                brightness=brightness)
         return bool(submit(mode, signal=signal, frame=frame))
 
     @staticmethod
@@ -409,7 +478,21 @@ class OptionalIntegrationRuntime:
         if callable(close):
             close()
 
+    def _reset_deck_connection(self) -> None:
+        with self._lock:
+            dispatch = self._deck_dispatch
+        runner = getattr(self._target, "_deck_automation_runner", None)
+        if runner is not None:
+            self._target._deck_automation_runner = None
+            runner.close()
+        if dispatch is not None:
+            dispatch.reset_connection()
+
     def revoke_deck_input(self) -> None:
+        runner = getattr(self._target, "_deck_automation_runner", None)
+        if runner is not None:
+            self._target._deck_automation_runner = None
+            runner.close()
         with self._lock:
             dispatch = self._deck_dispatch
         if dispatch is not None:

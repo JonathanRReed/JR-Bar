@@ -1,4 +1,4 @@
-"""Setup transfers stay bounded without inheriting the tiny lighting budget."""
+"""Explicit legacy RPC budgets remain bounded. Production setup uses chunked binary transfers."""
 
 import json
 from collections import deque
@@ -38,7 +38,7 @@ def adapter(response, **kwargs):
     return result, transport
 
 
-def test_setup_can_read_a_fragmented_keymap_larger_than_lighting_messages():
+def test_explicit_budget_can_read_a_fragmented_payload_larger_than_lighting_messages():
     raw = json.dumps({"profiles": [], "label": "é" * 12_000}, ensure_ascii=False)
     device, _ = adapter({"id": 1, "method": "fs.read", "params": {"data": raw}},
                         rpc_max_bytes=132_096)
@@ -47,7 +47,7 @@ def test_setup_can_read_a_fragmented_keymap_larger_than_lighting_messages():
     assert response["params"]["data"] == raw
 
 
-def test_setup_write_is_framed_completely_and_defaults_still_reject_large_messages():
+def test_explicit_budget_is_framed_completely_and_defaults_still_reject_large_messages():
     data = json.dumps({"label": "x" * 12_000})
     device, transport = adapter({"id": 1, "result": {"ok": 1}}, rpc_max_bytes=132_096)
     receipt, _ = device._call("fs.write", {"file": "keymap.json", "data": data})

@@ -28,6 +28,10 @@ ACTION_CHOICES: Final = (
     ("Reveal current ask", "reveal_current_ask"),
     ("Agent browser", "open_agent_browser"),
     ("Usage Center", "open_usage"),
+    ("Control Center", "open_control_center"),
+    ("Next session bank", "next_bank"),
+    ("Previous session bank", "previous_bank"),
+    ("Run system Shortcut", "run_system_shortcut"),
 )
 
 _MODIFIER_FLAGS = (
@@ -236,7 +240,7 @@ class DeckSettingsPane(NSObject):
 
     @objc.python_method
     def _build(self) -> None:
-        self.view, content = native_ui.make_card("Agent Deck controls")
+        self.view, content = native_ui.make_card("Control Center")
         self.view.setAccessibilityElement_(True)
         self.view.setAccessibilityRole_("AXGroup")
         self.view.setAccessibilityLabel_("Agent Deck controls")
@@ -256,11 +260,20 @@ class DeckSettingsPane(NSObject):
         )
         self.enable_checkbox.setAccessibilityLabel_("Enable device actions")
         content.addArrangedSubview_(self.enable_checkbox)
+        self.session_checkbox = native_ui.make_checkbox(
+            "Session keys and per-session lighting", self.target, "toggleDeckSessionMode:",
+            help_text="Unmapped keys 1–13 navigate their stable session slots. Saved custom actions take precedence.")
+        content.addArrangedSubview_(self.session_checkbox)
+        self.analog_checkbox = native_ui.make_checkbox(
+            "Enable analog joystick sectors", self.target, "toggleDeckAnalogMode:",
+            help_text="Calibrate numbered sectors in Input Check. Each excursion triggers at most one saved action.")
+        content.addArrangedSubview_(self.analog_checkbox)
+        content.addArrangedSubview_(native_ui.make_button("Open Control Center…", self.target, "openDeckControlCenter:"))
         native_ui.add_separator(content)
 
         self.key_popup = native_ui.make_popup_button(self.target, "deckMappingSelectionChanged:")
-        for key in range(20):
-            self.key_popup.addItemWithTitle_(f"AG{key:02d}")
+        for key in range(24):
+            self.key_popup.addItemWithTitle_(f"AG{key:02d}" if key < 20 else f"Analog sector {key - 19}")
             self.key_popup.lastItem().setRepresentedObject_(key)
         content.addArrangedSubview_(native_ui.make_row("Logical key", self.key_popup))
 
@@ -283,6 +296,12 @@ class DeckSettingsPane(NSObject):
         shortcut_controls.addArrangedSubview_(self.shortcut_recorder)
         shortcut_controls.addArrangedSubview_(self.record_button)
         content.addArrangedSubview_(native_ui.make_row("Shortcut", shortcut_controls))
+
+        self.system_shortcut_field = NSTextField.alloc().initWithFrame_(((0, 0), (290, 26)))
+        self.system_shortcut_field.setPlaceholderString_("Exact name from the macOS Shortcuts app")
+        self.system_shortcut_field.setAccessibilityLabel_("System Shortcut name")
+        native_ui.constrain_width(self.system_shortcut_field, 290.0)
+        content.addArrangedSubview_(native_ui.make_row("System Shortcut", self.system_shortcut_field))
 
         self.save_button = native_ui.make_button("Save mapping", self.target, "saveDeckMapping:")
         self.save_row = native_ui.make_stack(orientation="horizontal", spacing=native_ui.SPACE_S)
@@ -321,6 +340,11 @@ class DeckSettingsPane(NSObject):
         setup_row.addArrangedSubview_(self.restore_setup_button)
         setup_row.addArrangedSubview_(native_ui.make_hspacer())
         content.addArrangedSubview_(setup_row)
+        file_row = native_ui.make_stack(orientation="horizontal", spacing=native_ui.SPACE_S)
+        file_row.addArrangedSubview_(native_ui.make_button("Import mappings…", self.target, "importDeckMappings:"))
+        file_row.addArrangedSubview_(native_ui.make_button("Export mappings…", self.target, "exportDeckMappings:"))
+        file_row.addArrangedSubview_(native_ui.make_button("Export original keymap…", self.target, "exportCreatorMicroBackup:"))
+        content.addArrangedSubview_(file_row)
 
     def recordShortcut_(self, _sender) -> None:
         self.shortcut_recorder.begin_recording()
@@ -340,11 +364,15 @@ class DeckSettingsPane(NSObject):
         self.settings = settings
         self.shortcut_recorder.stop_recording()
         self.enable_checkbox.setState_(1 if settings.enabled else 0)
+        self.session_checkbox.setState_(int(settings.session_mode))
+        self.analog_checkbox.setState_(int(settings.analog_enabled))
         self._load_selected_mapping()
 
     @objc.python_method
     def set_save_pending(self, pending: bool) -> None:
         self.enable_checkbox.setEnabled_(not pending)
+        self.session_checkbox.setEnabled_(not pending)
+        self.analog_checkbox.setEnabled_(not pending)
         self.save_button.setEnabled_(not pending)
 
     @objc.python_method
@@ -372,6 +400,7 @@ class DeckSettingsPane(NSObject):
             self.shortcut_recorder.set_shortcut(action.key_code, action.modifiers)
         else:
             self.shortcut_recorder.set_shortcut(None)
+        self.system_shortcut_field.setStringValue_(action.shortcut_name if action and action.shortcut_name else "")
         self._refresh_visibility()
         self._refresh_summary()
 
@@ -390,6 +419,7 @@ class DeckSettingsPane(NSObject):
         self.application_button.setEnabled_(needs_app)
         self.shortcut_recorder.setHidden_(kind != "shortcut")
         self.record_button.setHidden_(kind != "shortcut")
+        self.system_shortcut_field.setEnabled_(kind == "run_system_shortcut")
 
     @objc.python_method
     def selected_mapping(self) -> tuple[int, DeckAction | None]:
@@ -397,6 +427,8 @@ class DeckSettingsPane(NSObject):
         kind = ACTION_CHOICES[int(self.action_popup.indexOfSelectedItem())][1]
         if kind is None:
             return key, None
+        if kind == "run_system_shortcut":
+            return key, DeckAction(kind, shortcut_name=str(self.system_shortcut_field.stringValue()).strip())
         if kind == "open_app":
             return key, DeckAction(kind, bundle_id=self._required_bundle_id())
         if kind == "shortcut":
@@ -427,7 +459,9 @@ class DeckSettingsPane(NSObject):
 
 
 def _mapping_summary(key: int, action: DeckAction) -> str:
-    prefix = f"AG{key:02d}: "
+    prefix = f"AG{key:02d}: " if key < 20 else f"Analog sector {key - 19}: "
+    if action.kind == "run_system_shortcut":
+        return prefix + f"Run system Shortcut: {action.shortcut_name}"
     if action.kind == "open_app":
         return prefix + f"Open {_app_label(action.bundle_id)}"
     if action.kind == "shortcut":

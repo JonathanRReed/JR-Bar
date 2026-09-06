@@ -33,9 +33,12 @@ T3_QUERY_TIMEOUT_SECONDS = 0.5
 T3_POLL_INTERVAL_SECONDS = 2.0
 T3_MAX_THREADS = 512
 T3_MAX_TITLE_LENGTH = 160
-T3_SOURCE_COMMIT = "bab4b6f02b8bdaf15fd32636a97f69ff657cec50"
+T3_SOURCE_COMMIT = "ea646c0834a3394ecb0be4a30c5d367e5a9002bd"
+T3_LAST_TESTED_SOURCE_COMMIT = "bab4b6f02b8bdaf15fd32636a97f69ff657cec50"
 T3_MINIMUM_VERSION = "0.0.33"
 T3_MAXIMUM_TESTED_VERSION = "0.0.33"
+# Source review is not a claimed live application or test-suite verification.
+T3_SOURCE_REVIEW_COMMIT = "ea646c0834a3394ecb0be4a30c5d367e5a9002bd"
 T3_REASON_MISSING = "t3_database_missing"
 T3_REASON_UNSUPPORTED = "t3_schema_unsupported"
 T3_REASON_BUSY = "t3_database_busy"
@@ -79,7 +82,6 @@ _REQUIRED_COLUMNS = {
             "status",
             "provider_name",
             "provider_instance_id",
-            "provider_thread_id",
             "runtime_mode",
             "active_turn_id",
             "last_error",
@@ -106,7 +108,6 @@ _PROVIDER_ALIASES = {
     "opencode": "opencode",
     "open-code": "opencode",
     "antigravity": "antigravity",
-    "gemini": "antigravity",
     "devin": "devin",
 }
 _SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]{0,255}\Z")
@@ -203,6 +204,7 @@ class T3ThreadView:
     last_error_present: bool
     updated_at: datetime
     deep_link: str | None
+    turn_state: str | None = None
 
     @property
     def needs_user(self) -> bool:
@@ -220,20 +222,19 @@ class T3ThreadView:
 
     @property
     def observation_state(self) -> T3ObservationState:
-        if self.needs_user:
+        mode, _event, _message = _agent_state_for_thread(self)
+        if mode is AgentMode.WAITING_FOR_INPUT:
             return T3ObservationState.ATTENTION
-        status = (self.session_status or "").casefold()
-        if status in {"connecting", "starting", "running", "waiting"}:
+        if mode is AgentMode.WORKING:
             return T3ObservationState.ACTIVE
-        if status == "error":
+        if mode is AgentMode.BLOCKED_ERROR:
             return T3ObservationState.FAILED
         return T3ObservationState.IDLE
 
     def to_agent_status(self, *, stale: bool = False) -> AgentStatus:
         mode, event_name, message = _agent_state_for_thread(self)
-        session_id = _safe_session_identifier(
-            self.provider_thread_id or self.thread_id
-        )
+        session_id = _safe_session_identifier(self.provider_thread_id) if self.provider_thread_id else None
+        observation_id = session_id or "t3-" + _safe_session_identifier(self.thread_id)
         origin = _bounded_text(
             f"T3 Code · {self.project_title}"
             + (f" · {self.branch}" if self.branch else ""),
@@ -249,7 +250,7 @@ class T3ThreadView:
         )
         return AgentStatus(
             provider=self.provider,
-            agent_id=f"{self.provider}:session:{session_id}",
+            agent_id=f"{self.provider}:session:{observation_id}",
             display_name=_bounded_text(self.thread_title, T3_MAX_TITLE_LENGTH),
             mode=mode,
             updated_at=self.updated_at,
@@ -361,14 +362,11 @@ def _safe_work_identifier(value: str) -> str:
 
 
 def _normalize_provider(*values: object) -> str:
-    text = " ".join(str(value or "").casefold() for value in values)
-    tokens = re.split(r"[^a-z0-9]+", text)
-    for token in tokens:
-        if token in _PROVIDER_ALIASES:
-            return _PROVIDER_ALIASES[token]
-    for alias, provider in _PROVIDER_ALIASES.items():
-        if alias in text:
-            return provider
+    # An explicit provider name is authoritative. A model name, account label
+    # or arbitrary substring never grants another provider's identity.
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return _PROVIDER_ALIASES.get(value.strip().casefold(), "other")
     return "other"
 
 
@@ -408,7 +406,7 @@ def _latest_time(*values: object) -> datetime:
         for value in values
         if isinstance(value, (str, datetime)) and value
     ]
-    return max(parsed, default=datetime.now(timezone.utc))
+    return max(parsed, default=datetime.fromtimestamp(0, timezone.utc))
 
 
 def _deep_link(environment_id: str | None, thread_id: str) -> str | None:
@@ -442,25 +440,19 @@ def _agent_state_for_thread(
             "Plan ready in T3 Code",
         )
     status = (thread.session_status or "").casefold()
-    if status == "error":
-        if thread.updated_at is not None:
-            now_dt = datetime.now(timezone.utc)
-            th_dt = (
-                thread.updated_at
-                if thread.updated_at.tzinfo is not None
-                else thread.updated_at.replace(tzinfo=timezone.utc)
-            )
-            if (now_dt - th_dt).total_seconds() > 300:
-                return AgentMode.IDLE_READY, "SessionStart", None
-        return AgentMode.BLOCKED_ERROR, "StopFailure", "T3 Code session failed"
-    if status in {"starting", "running"}:
+    if status in {"connecting", "starting", "running", "waiting"}:
         return AgentMode.WORKING, "UserPromptSubmit", None
-    if status in {"ready", "idle"}:
-        return AgentMode.COMPLETED, "Stop", "Review the completed T3 Code task"
-    if status == "interrupted":
+    if status == "error" or thread.turn_state == "error":
+        return AgentMode.BLOCKED_ERROR, "StopFailure", "T3 Code session failed"
+    if status == "interrupted" or thread.turn_state == "interrupted":
         return AgentMode.UNKNOWN, "StopInterrupted", "T3 Code session interrupted"
-    if status == "stopped" and (thread.active_turn_id or thread.latest_turn_id):
+    if thread.turn_state == "completed":
         return AgentMode.COMPLETED, "Stop", "Review the completed T3 Code task"
+    if thread.turn_state in {"pending", "running"}:
+        return AgentMode.WORKING, "UserPromptSubmit", None
+    if status == "stopped" and (thread.active_turn_id or thread.latest_turn_id):
+        return AgentMode.ENDED_UNCONFIRMED, "StopUnconfirmed", "T3 Code did not confirm the turn outcome"
+    # Ready/idle is a session transport state, not proof of a successful turn.
     return AgentMode.IDLE_READY, "SessionStart", None
 
 
@@ -490,7 +482,11 @@ def _open_read_only(
         timeout=T3_SQLITE_TIMEOUT_SECONDS,
     )
     connection.row_factory = sqlite3.Row
-    connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, T3_SQLITE_MAX_VALUE_BYTES)
+    limiter = getattr(connection, "setlimit", None)
+    if not callable(limiter):
+        connection.close()
+        raise ValueError("T3 observation requires Python 3.11+ for bounded SQLite reads")
+    limiter(sqlite3.SQLITE_LIMIT_LENGTH, T3_SQLITE_MAX_VALUE_BYTES)
     connection.execute("PRAGMA query_only = ON")
     connection.execute(
         f"PRAGMA busy_timeout = {int(T3_SQLITE_TIMEOUT_SECONDS * 1000)}"
@@ -526,6 +522,7 @@ def read_t3_snapshot(
             query_budget_exhausted,
             T3_QUERY_PROGRESS_INTERVAL,
         )
+        connection.execute("BEGIN")
         columns = {
             table: _table_columns(connection, table) for table in _REQUIRED_COLUMNS
         }
@@ -544,8 +541,18 @@ def read_t3_snapshot(
                 compatible=False,
                 reason=T3_REASON_UNSUPPORTED,
             )
+        native_thread = ("sessions.provider_thread_id" if "provider_thread_id" in
+                         columns["projection_thread_sessions"] else "NULL")
+        turn_columns = _table_columns(connection, "projection_turns")
+        turn_state = "NULL"
+        if {"thread_id", "turn_id", "state"}.issubset(turn_columns):
+            # All SQL fragments are fixed strings, not names supplied by the DB.
+            # Duplicate turn identities cannot manufacture a completion receipt.
+            turn_state = ("(SELECT CASE WHEN COUNT(*) = 1 THEN MIN(observed_turn.state) ELSE NULL END "
+                          "FROM projection_turns AS observed_turn WHERE observed_turn.thread_id = threads.thread_id "
+                          "AND observed_turn.turn_id = COALESCE(sessions.active_turn_id, threads.latest_turn_id))")
         rows = connection.execute(
-            """
+            f"""
             SELECT
               threads.thread_id,
               threads.project_id,
@@ -566,7 +573,8 @@ def read_t3_snapshot(
               sessions.status AS session_status,
               sessions.provider_name,
               sessions.provider_instance_id,
-              sessions.provider_thread_id,
+              {native_thread} AS provider_thread_id,
+              {turn_state} AS observed_turn_state,
               sessions.runtime_mode AS session_runtime_mode,
               sessions.active_turn_id,
               sessions.last_error,
@@ -658,6 +666,7 @@ def read_t3_snapshot(
                         row["settled_at"],
                     ),
                     deep_link=_deep_link(environment_id, str(row["thread_id"])),
+                    turn_state=str(row["observed_turn_state"]) if row["observed_turn_state"] is not None else None,
                 )
             )
         user_version = int(connection.execute("PRAGMA user_version").fetchone()[0])

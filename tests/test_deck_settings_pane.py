@@ -43,13 +43,17 @@ def test_card_exposes_bounded_actions_and_explicit_keymap_setup() -> None:
         "Reveal current ask",
         "Agent browser",
         "Usage Center",
+        "Control Center",
+        "Next session bank",
+        "Previous session bank",
+        "Run system Shortcut",
     ]
     assert pane.view.accessibilityLabel() == "Agent Deck controls"
     assert "active device layer" in pane.hardware_note.stringValue()
     assert "preview keymap changes before applying" in pane.hardware_note.stringValue()
     assert "Creator Micro master connection toggle" in pane.hardware_note.stringValue()
     assert pane.enable_checkbox.accessibilityLabel() == "Enable device actions"
-    assert pane.key_popup.numberOfItems() == 20
+    assert pane.key_popup.numberOfItems() == 24
     assert pane.key_popup.itemAtIndex_(0).title() == "AG00"
     assert pane.key_popup.itemAtIndex_(19).title() == "AG19"
     assert pane.description_field.stringValue() == "Choose what each device key does."

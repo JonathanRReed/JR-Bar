@@ -131,6 +131,10 @@ def build_menu(snapshot, state, target):
         target,
         getattr(target, "_sidepulse_sparkle_updater", None),
     )
+    center = _legacy.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
+        "Control Center…", "openDeckControlCenter:", "")
+    center.setTarget_(target)
+    menu.insertItem_atIndex_(center, min(index + 1, menu.numberOfItems()))
     remove_redundant_separators(menu)
     return menu
 

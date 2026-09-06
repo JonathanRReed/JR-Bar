@@ -184,3 +184,23 @@ def test_plan_rejects_unpaired_unicode_surrogates_as_value_errors() -> None:
 def test_canonical_digest_ignores_object_order_and_whitespace_but_not_array_order() -> None:
     assert keymap_digest('{"b": 2, "a": [1, 3]}') == keymap_digest('{"a":[1,3],"b":2}')
     assert keymap_digest('{"a":[1,3],"b":2}') != keymap_digest('{"a":[3,1],"b":2}')
+
+
+def test_auxiliary_setup_is_explicit_and_preserves_sector_geometry():
+    source = _stock_config()
+    original = json.dumps(source)
+    plan = plan_keymap(original, {"profile_index": 0, "layer_index": 1}, include_auxiliary=True)
+    layout = json.loads(plan.proposed_json)["profiles"][0]["layers"][0]["layout"]
+    assert layout["encoders"][0] == ["KV_OAI_AG13", "KV_OAI_AG14", "KV_OAI_AG15"]
+    assert layout["joystick"]["sectors"][0] == {"k": "KV_OAI_AG16", "a1": .9375, "a2": .0625}
+    assert json.loads(plan.proposed_json)["topLevelExtension"] == source["topLevelExtension"]
+    assert len(plan.control_labels) == 17
+
+
+def test_unknown_auxiliary_shape_is_refused_without_changing_base_plan():
+    source = _stock_config()
+    source["profiles"][0]["layers"][0]["layout"]["encoders"] = {"unknown": True}
+    raw = json.dumps(source)
+    assert plan_keymap(raw, {"profile_index": 0, "layer_index": 1}).changes
+    with pytest.raises(ValueError, match="encoder"):
+        plan_keymap(raw, {"profile_index": 0, "layer_index": 1}, include_auxiliary=True)

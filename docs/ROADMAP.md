@@ -1,5 +1,9 @@
 # JR-Bar roadmap
 
+September 6 source update: see [Control Center implementation and owner acceptance](CONTROL-CENTER.md)
+and the [bounded adaptation closeout](UPSTREAM-REFRESH-2026-09-06.md). Test execution
+was deferred by the owner; this update does not close native, device or release gates.
+
 Living roadmap, updated 2026-08-30. JR-Bar is the product name; the
 `sidepulse` CLI, bundle identifiers, support paths, and SidePulse hardware
 names remain stable until a separately tested migration exists.
