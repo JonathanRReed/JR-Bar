@@ -1,0 +1,55 @@
+name: JR-Bar completion workspace
+
+on:
+  push:
+    branches: [finish/creator-control-center-2026-09-06]
+    paths:
+      - .github/workflows/jrbar-completion-workspace.yml
+      - .jrbar-completion.patch
+
+permissions:
+  contents: write
+
+concurrency:
+  group: jrbar-completion-workspace
+  cancel-in-progress: false
+
+jobs:
+  source-work:
+    if: github.repository == 'JonathanRReed/JR-Bar'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: finish/creator-control-center-2026-09-06
+          fetch-depth: 1
+      - name: Apply reviewed source changes without running tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f .jrbar-completion.patch ]; then
+            git apply --check .jrbar-completion.patch
+            git apply .jrbar-completion.patch
+            python3 -m compileall -q src tests
+            git diff --check
+            rm .jrbar-completion.patch .github/workflows/jrbar-completion-workspace.yml
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A
+            git commit -m 'feat: finish Creator Micro control-center source integration'
+            git push origin HEAD:finish/creator-control-center-2026-09-06
+          fi
+      - name: Export tracked source only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/jrbar-export
+          git archive --format=zip HEAD -o /tmp/jrbar-export/source.zip
+          git rev-parse HEAD > /tmp/jrbar-export/commit.txt
+          git status --porcelain > /tmp/jrbar-export/status.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: jrbar-completion-source
+          path: /tmp/jrbar-export/
+          retention-days: 1
