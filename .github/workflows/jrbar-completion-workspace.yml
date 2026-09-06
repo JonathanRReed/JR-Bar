@@ -29,18 +29,23 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f .jrbar-completion.patch ]; then
-            git apply --check .jrbar-completion.patch
-            git apply .jrbar-completion.patch
+            python3 -c 'import base64,gzip,pathlib; p=pathlib.Path(".jrbar-completion.patch"); raw=base64.b64decode(p.read_bytes(),validate=False); data=gzip.decompress(raw); assert len(data)<2000000; pathlib.Path("/tmp/jrbar-reviewed.patch").write_bytes(data)'
+            git apply --check /tmp/jrbar-reviewed.patch
+            git apply /tmp/jrbar-reviewed.patch
+            git add -N src tests docs README.md CHANGELOG.md pyproject.toml
+            python3 -m pip install --disable-pip-version-check ruff==0.16.3
+            git diff --name-only --diff-filter=ACM -z -- 'src/*.py' 'tests/*.py' | xargs -0 -r python3 -m ruff check --fix
             python3 -m compileall -q src tests
             git diff --check
-            rm .jrbar-completion.patch .github/workflows/jrbar-completion-workspace.yml
+            rm .jrbar-completion.patch
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git add -A
             git commit -m 'feat: finish Creator Micro control-center source integration'
             git push origin HEAD:finish/creator-control-center-2026-09-06
           fi
-      - name: Export tracked source only
+      - name: Export tracked source and static-review diff
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -48,7 +53,9 @@ jobs:
           git archive --format=zip HEAD -o /tmp/jrbar-export/source.zip
           git rev-parse HEAD > /tmp/jrbar-export/commit.txt
           git status --porcelain > /tmp/jrbar-export/status.txt
+          git diff --binary > /tmp/jrbar-export/static-review.patch
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
           name: jrbar-completion-source
           path: /tmp/jrbar-export/
