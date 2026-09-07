@@ -57,6 +57,16 @@ fi
 
 if [ "$PORTABLE" -eq 1 ]; then
     "$PYTHON" -m pytest \
+        tests/test_creator_micro_adapter.py \
+        tests/test_creator_micro_wire_conformance.py \
+        tests/test_creator_micro_setup.py \
+        tests/test_creator_micro_keymap.py \
+        tests/test_creator_micro_setup_rpc.py \
+        tests/test_deck_control_center_contracts.py \
+        tests/test_deck_input_dispatch.py \
+        tests/test_deck_control_settings.py \
+        tests/test_deck_final_readiness.py \
+        tests/test_final_test_entrypoint.py \
         tests/test_device_projection.py \
         tests/test_packaging_contract.py \
         tests/test_status_bar_facade_contract.py \

@@ -48,7 +48,8 @@ class DeckAutomationRunner:
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
+                    process.wait(timeout=1.0)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
                     pass
             except ProcessLookupError:
                 pass

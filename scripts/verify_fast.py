@@ -48,6 +48,17 @@ FIXTURE_TESTS: Final = (
     "tests/test_provider_fixture_ownership.py",
 )
 FOCUSED_TESTS: Final = (
+    "tests/test_creator_micro_adapter.py",
+    "tests/test_creator_micro_wire_conformance.py",
+    "tests/test_creator_micro_setup.py",
+    "tests/test_creator_micro_keymap.py",
+    "tests/test_creator_micro_setup_rpc.py",
+    "tests/test_deck_control_center_contracts.py",
+    "tests/test_deck_input_dispatch.py",
+    "tests/test_deck_control_settings.py",
+    "tests/test_deck_final_readiness.py",
+    "tests/test_final_test_entrypoint.py",
+
     "tests/test_adaptive_refresh_acceptance.py",
     "tests/test_core_state.py",
     "tests/test_core_state_determinism.py",

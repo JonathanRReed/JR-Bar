@@ -163,6 +163,9 @@ class CreatorMicroSetup:
         if type(plan) is not KeymapPlan:
             return Receipt("invalid_plan")
         try:
+            recovery = self._load_recovery()
+            if recovery is not None and recovery["state"] == "pending":
+                return Receipt("recovery_required", "Restore the device keymap before applying another change.")
             # Recompute the reviewed transformation so a forged/stale plan
             # cannot write arbitrary JSON through the setup confirmation.
             expected = plan_keymap(plan.original_json, {"layer_index": plan.observed_layer + 1, "profile_index": plan.observed_profile},
@@ -213,6 +216,12 @@ class CreatorMicroSetup:
                 current_raw = b""
             original = backup["original_json"].encode("utf-8")
             if current_raw == original:
+                if journal is not None and journal["state"] == "pending":
+                    # A failed transfer may leave the original untouched. Close
+                    # the recovery record without issuing a device write.
+                    journal.update(state="verified", after_json=backup["original_json"],
+                                   max_prefix=len(original), before_base64=base64.b64encode(original).decode("ascii"))
+                    atomic_private_write(self.recovery_path, json.dumps(journal, ensure_ascii=False) + "\n")
                 return Receipt("already_restored")
             allowed = current_raw == backup["proposed_json"].encode("utf-8")
             if journal is not None:

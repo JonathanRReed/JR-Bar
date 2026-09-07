@@ -41,8 +41,16 @@ class DeckInputDispatch:
         self._generation = 0
         self.dropped_inputs = 0
 
+    def capture_context(self) -> tuple[int, int | None]:
+        """Bind modal confirmation to this connection and session-bank revision."""
+        with self._lock:
+            board = getattr(self._target, "_deck_session_board", None)
+            revision = board.resolve_slot(0)[0] if board is not None else None
+            return self._generation, revision
+
     def _schedule(self) -> None:
-        if self._pending is not None or self._closed:
+        if (self._pending is not None or self._closed
+                or getattr(self._target, "_runtime_termination_started", False)):
             return
         while self._queue and (
             self._queue[0].generation != self._generation
@@ -71,13 +79,15 @@ class DeckInputDispatch:
                            if (event := self._router.normalize(message)) is not None)
             self.receive_normalized(events)
 
-    def receive_normalized(self, events: tuple[ControlInput, ...], *, virtual: bool = False) -> None:
+    def receive_normalized(self, events: tuple[ControlInput, ...], *, virtual: bool = False,
+                           expected_context: tuple[int, int | None] | None = None) -> bool:
         """The same bounded resolver serves hardware and explicitly simulated input."""
         if type(events) is not tuple or len(events) > 128 or any(type(event) is not ControlInput for event in events):
             raise ValueError("invalid normalized input batch")
         with self._lock:
-            if self._closed:
-                return
+            if (self._closed or getattr(self._target, "_runtime_termination_started", False)
+                    or (expected_context is not None and expected_context != self.capture_context())):
+                return False
             board = getattr(self._target, "_deck_session_board", None)
             for event in events:
                 setattr(self._target, "_deck_last_input",
@@ -99,6 +109,7 @@ class DeckInputDispatch:
                 self._queue.append(DeckInputBatch(self, self._clock(), (action,), self._generation,
                                                   revision, (session,)))
             self._schedule()
+            return True
 
     def deliver(self, batch: DeckInputBatch, executor) -> tuple:
         with self._lock:
@@ -106,7 +117,9 @@ class DeckInputDispatch:
                 return ()
             self._pending = None
             try:
-                if batch.generation != self._generation or not 0 <= self._clock() - batch.created_at <= self.MAX_AGE:
+                if (getattr(self._target, "_runtime_termination_started", False)
+                        or batch.generation != self._generation
+                        or not 0 <= self._clock() - batch.created_at <= self.MAX_AGE):
                     self.dropped_inputs += len(batch.actions)
                     setattr(self._target, "_deck_dropped_inputs", self.dropped_inputs)
                     return ()
