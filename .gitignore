@@ -20,3 +20,6 @@ work/
 *.log
 *.pkg
 *.dmg
+
+# Private local final-testing records. Never uploaded automatically.
+.jrbar-verification/

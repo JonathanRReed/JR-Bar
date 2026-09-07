@@ -18,6 +18,7 @@ from .provider_facts import WorkKey, work_key_to_payload
 
 SLOTS_PER_BANK = 13
 MAX_SESSIONS = 520
+RAIL_EDGES = ("off", "left", "right", "top", "bottom")
 
 
 def session_identity(status: AgentStatus) -> str | None:
@@ -64,6 +65,7 @@ class BoardSnapshot:
     bank_count: int
     slots: tuple[SessionSlot, ...]
     unscoped_count: int = 0
+    rail_edge: str = "off"
 
 
 class DeckSessionBoard:
@@ -74,6 +76,7 @@ class DeckSessionBoard:
         self._statuses: dict[str, AgentStatus] = {}
         self._pinned: set[str] = set()
         self._bank = 0
+        self._rail_edge = "off"
         self._revision = 0
         self._unscoped_count = 0
         self._navigation_keys: set[str] = set()
@@ -142,14 +145,28 @@ class DeckSessionBoard:
             self._bank = min(self._bank, max(0, (len(self._order) - 1) // SLOTS_PER_BANK))
             self._revision += 1
 
+    def set_rail_edge(self, edge: str) -> None:
+        if type(edge) is not str or edge not in RAIL_EDGES:
+            raise ValueError("invalid compact rail edge")
+        with self._lock:
+            self._rail_edge = edge
+
     def serialize(self) -> dict:
         with self._lock:
             # Only opaque hashes persist. No provider titles, paths, or credentials.
-            return {"version": 1, "slots": list(self._order), "pinned": sorted(self._pinned), "bank": self._bank}
+            return {"version": 2, "slots": list(self._order), "pinned": sorted(self._pinned),
+                    "bank": self._bank, "rail_edge": self._rail_edge}
 
     def restore(self, value: object) -> None:
-        if (type(value) is not dict or set(value) != {"version", "slots", "pinned", "bank"}
-                or type(value["version"]) is not int or value["version"] != 1
+        if type(value) is not dict:
+            raise ValueError("invalid session board")
+        version = value.get("version")
+        fields = {"version", "slots", "pinned", "bank"}
+        if version == 2:
+            fields.add("rail_edge")
+        edge = value.get("rail_edge", "off")
+        if (set(value) != fields or type(version) is not int or version not in (1, 2)
+                or type(edge) is not str or edge not in RAIL_EDGES
                 or type(value["slots"]) is not list or len(value["slots"]) > MAX_SESSIONS
                 or type(value["pinned"]) is not list or len(value["pinned"]) > MAX_SESSIONS
                 or type(value["bank"]) is not int or not 0 <= value["bank"] < MAX_SESSIONS // SLOTS_PER_BANK):
@@ -160,6 +177,7 @@ class DeckSessionBoard:
             raise ValueError("invalid session board identity")
         with self._lock:
             self._order = list(slots)
+            self._rail_edge = edge
             self._pinned = set(pinned)
             self._bank = min(value["bank"], max(0, (len(slots) - 1) // SLOTS_PER_BANK))
             self._revision += 1
@@ -192,4 +210,4 @@ class DeckSessionBoard:
                                          fresh and identity in self._navigation_keys, pinned))
             return BoardSnapshot(self._revision, self._bank,
                                  max(1, (len(self._order) + SLOTS_PER_BANK - 1) // SLOTS_PER_BANK),
-                                 tuple(slots), self._unscoped_count)
+                                 tuple(slots), self._unscoped_count, self._rail_edge)

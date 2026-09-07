@@ -31,7 +31,8 @@ from AppKit import (
 )
 from Foundation import NSObject, NSTimer
 
-from .deck_control_center import change_deck_bank, refresh_deck_board, reveal_deck_session
+from .deck_control_center import change_deck_bank, refresh_deck_board, reveal_deck_session, revoke_deck_context
+from .deck_session_board import RAIL_EDGES
 from .surface_placement import SurfacePlacement
 from .window_presentation import activate_app, present_window
 
@@ -149,6 +150,13 @@ class DeckControlCenterWindow(NSObject):
             return
         snapshot = refresh_deck_board(self.target)
         self._snapshot = snapshot
+        if self.edge != snapshot.rail_edge:
+            self.edge = snapshot.rail_edge
+            self.edge_popup.selectItemAtIndex_(RAIL_EDGES.index(self.edge))
+            if self.edge_panel is not None:
+                self.edge_panel.orderOut_(None)
+                self.edge_panel = None
+            self.edge_buttons = []
         controls = getattr(self.target, "_deck_control_settings", None)
         input_check = bool(getattr(self.target, "_deck_input_check_active", False))
         self.input_check.setState_(int(input_check))
@@ -224,6 +232,7 @@ class DeckControlCenterWindow(NSObject):
             dispatch.receive_normalized((ControlInput(index, "press"),), virtual=True)
             self.refresh_(None)
             return
+        context = dispatch.capture_context()
         alert = NSAlert.alloc().init()
         alert.setMessageText_("Run this saved mapping now?")
         action = settings.action_for(index)
@@ -235,7 +244,10 @@ class DeckControlCenterWindow(NSObject):
         alert.addButtonWithTitle_("Run mapping")
         alert.addButtonWithTitle_("Cancel")
         if alert.runModal() == NSAlertFirstButtonReturn:
-            dispatch.receive_normalized((ControlInput(index, "press"),), virtual=True)
+            if (settings is not getattr(self.target, "_deck_control_settings", None)
+                    or not dispatch.receive_normalized((ControlInput(index, "press"),), virtual=True,
+                                                       expected_context=context)):
+                self.receipt_label.setStringValue_("The mapping or session bank changed. Review it again before running.")
 
     def previousBank_(self, _sender):
         change_deck_bank(self.target, -1)
@@ -255,6 +267,7 @@ class DeckControlCenterWindow(NSObject):
         self.refresh_(None)
 
     def pinSlot_(self, _sender):
+        revoke_deck_context(self.target)
         self.target._deck_session_board.toggle_pin(int(self.slot_popup.indexOfSelectedItem()))
         self.target._deck_board_store.submit(self.target._deck_session_board)
         self.refresh_(None)
@@ -267,17 +280,16 @@ class DeckControlCenterWindow(NSObject):
         alert.addButtonWithTitle_("Clear absent slots")
         alert.addButtonWithTitle_("Cancel")
         if alert.runModal() == NSAlertFirstButtonReturn:
+            revoke_deck_context(self.target)
             self.target._deck_session_board.clear_inactive()
             self.target._deck_board_store.submit(self.target._deck_session_board)
             from .deck_control_center import publish_deck_frame
             publish_deck_frame(self.target)
 
     def edgeChanged_(self, sender):
-        self.edge = ("off", "left", "right", "top", "bottom")[int(sender.indexOfSelectedItem())]
-        if self.edge_panel is not None:
-            self.edge_panel.orderOut_(None)
-            self.edge_panel = None
-        self.edge_buttons = []
+        board = self.target._deck_session_board
+        board.set_rail_edge(RAIL_EDGES[int(sender.indexOfSelectedItem())])
+        self.target._deck_board_store.submit(board)
         self.refresh_(None)
 
     @objc.python_method

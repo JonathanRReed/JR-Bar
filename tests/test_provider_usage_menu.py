@@ -754,12 +754,6 @@ def test_jr_plane_owns_the_usage_menu_row() -> None:
     settings-window tests downstream.
     """
     from pathlib import Path
-    from types import SimpleNamespace
-
-    from sidepulse.status_bar import StatusBarController
-
-    probe = SimpleNamespace()
-    assert StatusBarController.jr_plane_owns_usage_menu_item(probe) is False
 
     facade = (
         Path(__file__).resolve().parents[1]
@@ -771,6 +765,17 @@ def test_jr_plane_owns_the_usage_menu_row() -> None:
     assert marker in facade
     body = facade.split(marker, 1)[1].split("def ", 1)[0]
     assert "return True" in body
+
+
+def test_native_base_keeps_its_usage_menu_row() -> None:
+    from types import SimpleNamespace
+
+    import pytest
+
+    pytest.importorskip("AppKit", reason="Native menu ownership requires macOS")
+    from sidepulse.status_bar import StatusBarController
+
+    assert StatusBarController.jr_plane_owns_usage_menu_item(SimpleNamespace()) is False
 
 
 def test_a_provider_with_no_usable_number_says_what_would_fix_it():
