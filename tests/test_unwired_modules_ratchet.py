@@ -36,6 +36,8 @@ from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 SRC = Path(__file__).resolve().parents[1] / "src" / "sidepulse"
 
 # module -> why it is not reachable yet. Empty is the goal state, not an
@@ -251,6 +253,7 @@ def test_build_phone_glance_projection_uses_the_serve_document_owner(
 
 
 def test_status_bar_ambient_bar_uses_the_screen_consumer_runtime(monkeypatch) -> None:
+    pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
     from sidepulse import _status_bar_production as production
 
     calls: dict[str, object] = {}
@@ -298,6 +301,7 @@ def test_status_bar_ambient_bar_uses_the_screen_consumer_runtime(monkeypatch) ->
 
 
 def test_status_bar_hardware_sync_uses_the_hardware_consumer_runtime(monkeypatch) -> None:
+    pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
     from sidepulse import _status_bar_production as production
     from sidepulse import status_bar_legacy as legacy
 

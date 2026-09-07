@@ -27,8 +27,8 @@ def test_package_versions_match() -> None:
 def test_fork_metadata_points_at_the_fork_and_preserves_upstream_link() -> None:
     urls = _project()["urls"]
 
-    assert urls["Repository"].endswith("JonathanRReed/sidepulse-JR-Fork")
-    assert urls["Issues"].endswith("JonathanRReed/sidepulse-JR-Fork/issues")
+    assert urls["Repository"].endswith("JonathanRReed/JR-Bar")
+    assert urls["Issues"].endswith("JonathanRReed/JR-Bar/issues")
     assert urls["Upstream"].endswith("inteliwear/sidepulse")
 
 

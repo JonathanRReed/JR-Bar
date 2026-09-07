@@ -4,6 +4,18 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Consolidate historical feature/fix branch ancestry without overwriting newer
+  implementations; preserve the unmerged historical plan under `docs/archive/`.
+- Fix overlapping session-board saves, drain persistence on shutdown and persist
+  compact-rail edge selection with backwards-compatible board settings migration.
+- Fence bank changes and virtual-input confirmation against stale queued actions;
+  refuse new input during termination and reap terminated Shortcut subprocesses.
+- Require pending keymap recovery to resolve before a new apply; verify an intact
+  original without writing it again.
+- Add `make final-test` for clean-checkout, pinned Mac source/package verification
+  with local logs, exact source identity and JUnit output; repair portable fixtures
+  and include control-center regressions in the ordinary gates.
+
 - Add a hardware-optional native Control Center with stable, identity-scoped
   session slots, explicit banks/pins, input checking and a compact four-edge rail.
 - Complete the reviewed HID framing/nonblocking/write-result fixes; classify
@@ -16,8 +28,8 @@ All notable changes to JR-Bar are documented here.
   and expose explicit named macOS Shortcuts without a shell/device execution channel.
 - Refresh T3 read-only projection compatibility, keep native and T3 identities
   distinct, and require explicit turn outcomes instead of treating idle as success.
-- This source integration is not a tested hardware/release claim. The owner deferred
-  test suites; required Mac/device/provider/release checks are in `docs/CONTROL-CENTER.md`.
+- Portable regression checks do not certify native hardware or a release. Required
+  final Mac/device/provider/release checks are in `docs/FINAL-TESTING.md`.
 
 ## 0.6.0
 

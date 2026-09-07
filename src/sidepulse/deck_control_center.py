@@ -74,8 +74,21 @@ def reveal_deck_session(target, identity: str, revision: int | None) -> DeckActi
     return DeckActionReceipt("navigation_requested" if success else "navigation_unavailable", success)
 
 
+def revoke_deck_context(target) -> None:
+    """Invalidate queued input and automation before changing its meaning."""
+    runner = getattr(target, "_deck_automation_runner", None)
+    if runner is not None:
+        target._deck_automation_runner = None
+        runner.close()
+    runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+    dispatch = getattr(runtime, "_deck_dispatch", None)
+    if dispatch is not None:
+        dispatch.reset_connection()
+
+
 def change_deck_bank(target, delta: int) -> None:
     board = ensure_deck_board(target)
+    revoke_deck_context(target)
     board.change_bank(delta)
     target._deck_board_store.submit(board)
     publish_deck_frame(target)

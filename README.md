@@ -94,6 +94,11 @@ dependency and version policy, and diff hygiene. It does not replace the full
 macOS, packaging, installed-app, hardware, signing, notarization, or Instruments
 gates.
 
+For final testing from a clean `main` checkout, run `make final-test`. It bootstraps
+the pinned Python 3.12 environment, runs the full Mac source/package gates, and
+saves local logs and a JUnit report under `.jrbar-verification/`. See
+[Final testing](docs/FINAL-TESTING.md) for requirements and separate device/release checks.
+
 `sidepulse setup` installs provider hooks and the status-bar LaunchAgent so
 the menu-bar app starts now and at login. It does not install a hardware
 helper by default. Add `--sd-eject-guard` if you want SidePulse Pro Eject
@@ -123,7 +128,8 @@ The September 6 source work adds bounded binary keymap transfer with a private
 first-original backup and interrupted-write recovery, selected profile/layer
 previews, supported auxiliary mappings, data-only mapping import/export, and
 nonblocking/reconnecting HID ownership. This is **not yet a physical-device or
-release certification**. Tests were deferred by the owner. Read the
+release certification**. Portable regressions have been run; final Mac, device,
+live-provider and signed-release checks remain. Read the
 [Control Center guide and required Mac checks](docs/CONTROL-CENTER.md) before
 changing a device keymap. Restore the original keymap before uninstalling.
 
