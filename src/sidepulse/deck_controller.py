@@ -79,6 +79,9 @@ def _lifecycle_lock(target):
 
 
 def stop_deck_runtime_reconfiguration(target) -> None:
+    store = getattr(target, "_deck_board_store", None)
+    if store is not None:
+        store.close()
     runner = getattr(target, "_deck_automation_runner", None)
     if runner is not None:
         runner.close()

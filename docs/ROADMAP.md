@@ -17,6 +17,14 @@ privacy, performance, packaging, and release evidence are all attributable.
 
 ## Now
 
+### September 7 final integration candidate
+
+Use `main` and `make final-test`. The [final-testing handoff](FINAL-TESTING.md)
+records implemented scope, portable evidence and remaining Mac/device/release
+acceptance. The [branch ledger](BRANCH-CONSOLIDATION-2026-09-07.md) records the
+explicit resolution of every historical branch, including earlier squash merges.
+
+
 ### P5.67–P5.72 integration and source-level closeout
 
 Integrate the roadmap, provider/effect authoring guidance, issue templates,

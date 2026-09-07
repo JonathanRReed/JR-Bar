@@ -341,3 +341,37 @@ def test_connection_generation_change_revokes_even_connected_transfer(tmp_path):
     device.connection_generation += 1
     assert setup.apply(plan).code == "connection_changed"
     assert not device.writes
+
+
+def test_pending_recovery_refuses_apply_even_when_original_bytes_survived(tmp_path):
+    device = Device()
+    setup = service(tmp_path, device)
+    original = device.raw
+    plan = setup.inspect()
+    assert setup.apply(plan).code == "keymap_verified"
+    journal = json.loads(setup.recovery_path.read_text())
+    journal["state"] = "pending"
+    journal["max_prefix"] = 0
+    setup.recovery_path.write_text(json.dumps(journal))
+    device.raw = original
+    before = len(device.writes)
+    assert setup.apply(plan).code == "recovery_required"
+    assert len(device.writes) == before
+
+
+def test_restore_of_surviving_original_clears_pending_recovery(tmp_path):
+    device = Device()
+    setup = service(tmp_path, device)
+    original = device.raw
+    plan = setup.inspect()
+    assert setup.apply(plan).code == "keymap_verified"
+    journal = json.loads(setup.recovery_path.read_text())
+    journal["state"] = "pending"
+    journal["max_prefix"] = 0
+    setup.recovery_path.write_text(json.dumps(journal))
+    device.raw = original
+    before = len(device.writes)
+    assert setup.restore().code == "already_restored"
+    assert len(device.writes) == before
+    assert json.loads(setup.recovery_path.read_text())["state"] == "verified"
+    assert setup.apply(plan).code == "keymap_verified"

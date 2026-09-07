@@ -1,8 +1,9 @@
 # JR-Bar Control Center
 
-Source implementation: September 6, 2026. Test execution was explicitly deferred
-by the owner. Compilation, imports and static review do not certify the installed
-macOS UI, a physical board, live provider accounts, or a release package.
+Source implementation: September 6, with final integration on September 7, 2026.
+Portable regression checks have run. Final Mac, device, live-account and release
+acceptance remain separate. Use `make final-test` from a clean `main` checkout;
+[FINAL-TESTING.md](FINAL-TESTING.md) records the full handoff and evidence boundary.
 
 ## Start without hardware
 
@@ -21,8 +22,10 @@ paths, transcript text or credentials.
 The optional **Compact rail** places the same session slots against the selected
 display's left, right, top or bottom visible edge. State words, accessible labels
 and tooltips accompany the compact marks. Closing the workspace leaves an enabled
-rail visible; select **Compact rail: off** to remove it. Edge selection is currently
-per app session; persistent rail preferences are not part of this change.
+rail visible; select **Compact rail: off** to remove it. Edge selection is saved
+with the session board and restored when Control Center is next opened, including
+after app restart. The rail does not independently open before the workspace;
+display selection is resolved again rather than storing a stale screen identity.
 
 Legacy observations without a canonical work identity remain in Agent Browser.
 A visible session is not automatically controllable: navigation requires the
@@ -113,6 +116,8 @@ integration settings; a separate `.recovery.json` records interrupted operations
 Do not delete either file while recovery is pending.
 
 After **Recovery required**, use **Restore device keymap…**, not repeated Apply.
+Apply is refused until recovery is resolved. If the original is already intact,
+Restore verifies those bytes and clears the pending recovery without a device write.
 Restore accepts only the original, JR-Bar's verified map, or a pending write's
 recorded original/prefix. Unrelated later device edits cause refusal. A reconnect
 starts a new transfer generation; it never resumes an old write automatically.
