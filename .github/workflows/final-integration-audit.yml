@@ -1,0 +1,43 @@
+name: Final integration audit
+on:
+  push:
+    branches: [finish/final-integration-2026-09-07]
+    paths: [.github/workflows/final-integration-audit.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export tracked history and branch inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/final-integration-audit
+          git bundle create /tmp/final-integration-audit/repository.bundle --all
+          git for-each-ref --format='%(refname:short) %(objectname)' refs/remotes/origin > /tmp/final-integration-audit/branches.txt
+          git rev-parse origin/main > /tmp/final-integration-audit/main.txt
+          git status --porcelain > /tmp/final-integration-audit/status.txt
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          refs = git('for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin').splitlines()
+          rows = []
+          for ref in refs:
+              behind, ahead = map(int, git('rev-list', '--left-right', '--count', f'origin/main...{ref}').split())
+              rows.append({'ref': ref, 'sha': git('rev-parse', ref), 'ahead': ahead, 'behind': behind})
+          Path('/tmp/final-integration-audit/inventory.json').write_text(json.dumps(rows, indent=2))
+          print(json.dumps(rows, indent=2))
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: final-integration-audit
+          path: /tmp/final-integration-audit/
+          retention-days: 3
