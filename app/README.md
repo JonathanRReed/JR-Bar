@@ -16,9 +16,9 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
 | `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, presentation-safety compiler. No AppKit. |
 | `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`. Foundation only. |
-| `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, file-feed fallback. |
+| `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings window, file-feed fallback. |
 | `Tests/JRBarLEDSTests/` | Swift Testing suites plus the firmware fixtures they check against. |
-| `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, and a mock-daemon integration test. |
+| `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, and mock-daemon integration tests. |
 | `scripts/gen_leds_fixtures.py` | Regenerates the fixtures from the Python/firmware reference. |
 | `scripts/mock-core.py` | A stdlib-only mock `jrbar-core` that plays a scripted timeline over the socket. |
 | `scripts/build-app.sh` | `swift build -c release`, assembles and signs `build/JR-Bar.app`. |
@@ -32,7 +32,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 31 tests / 5 suites; the parity test fans out over 29 programs
+swift test                  # 37 tests / 7 suites; the parity test fans out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # restart the built app
 ```
@@ -69,6 +69,9 @@ Developer switches (environment variables read at launch):
 * `JRBAR_CORE_SOCKET=/path/core.sock` overrides the daemon socket path
   (default `$XDG_STATE_HOME/jrbar/core.sock`, i.e. `~/.local/state/jrbar/core.sock`).
 * `JRBAR_OPEN_PANEL=1` opens the panel shortly after launch (screenshots).
+* `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on `general`, `agents`,
+  `usage`, `devices`, `lighting`, `notifications`, `remote`, `advanced` or
+  `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
 * `JRBAR_PLAIN_MATERIAL=1` uses an `NSVisualEffectView` instead of `NSGlassEffectView`.
 * `JRBAR_PROGRAM_FILE=/path/file.led` feeds the Screen Bar from any file
   (watched like the device file) without writing to the strip.
@@ -160,13 +163,32 @@ compiler ports reproduce exactly.
   only once connected *and* a state has arrived; until then (and whenever
   the daemon goes away) the app keeps using the file feeds below.
 
+* `SettingsDocument` / `SettingsPath` / `SettingsKey`: the settings
+  document with dot-path reads (`colors.agent_colors.claude`,
+  `devices.0.brightness`; integer segments index arrays), a pure
+  `replacing` write for optimistic overlays, and the catalogue of every key
+  the Settings window touches, by page. Keys are the Python
+  `AgentMonitorSettings.to_dict()` names; the five the dataclass lacks
+  (`menu_bar_icon_style`, `devices_linked`, `cloud_ingest_token_path`,
+  `quota_alert_thresholds`, `devices[].resting_glow`) are listed in
+  `SettingsKey.appIntroduced`. `CoreModel` gained `setSetting`,
+  `resetSettings`, `installHooks` / `uninstallHooks`, `previewProgram`,
+  `applyCalibration`, `doctor`, and a bounded `logTail` of `log` messages.
+
 `scripts/mock-core.py` is the daemon stand-in: hello/state/lights/settings
 on connect, then a looping timeline (Claude starts working, a Codex
 permission ask opens and resolves, Codex completes, the Pro disconnects and
 reconnects, Claude completes, idle) with usage ticking up, working relay and
-amber ask pulse programs on the lights surfaces with fresh anchors, and
-`ok` replies to every command (answer_ask, set_brightness, clear_completed
-and quiet also change the world). `--step`, `--start-at`, `--no-loop`,
+amber ask pulse programs on the lights surfaces with fresh anchors, a `log`
+line per step, and `ok` replies to every command (answer_ask,
+set_brightness, clear_completed and quiet also change the world). Its
+settings document is seeded from the real Python defaults
+(`default_settings_document()`); `set_setting` writes by dot path and
+echoes a new `settings` (an index past the end of an array is refused with
+`invalid_path`), `reset_settings` (`paths[]`, a protocol-1 extension)
+restores from the defaults, `install_hooks` / `uninstall_hooks` flip
+`health.hooks`, `apply_calibration` writes the gains into the device entry,
+`doctor` returns a checklist document. `--step`, `--start-at`, `--no-loop`,
 `--socket`, `--once`.
 
 ## The app (`JRBarApp`)
@@ -236,15 +258,66 @@ and quiet also change the world). `--step`, `--start-at`, `--no-loop`,
   programs keep the previous one and are named in the menu's lights line.
 * Events: `completed`, `ask_opened` and friends play their named system
   sound when `notify` is true, and are logged. No banners yet.
+* Screen Bar interactions (`ScreenBarInteraction`): the band stays
+  click-through (`ignoresMouseEvents`), and global + local `NSEvent`
+  monitors hit-test the pointer against the band's own rect instead.
+  Hovering for 0.32 s shows a glass pill under the band with the
+  top-priority session (a live ask, else a failure, else the working one,
+  else an unseen completion; with nothing live, the aggregate word) as
+  provider tile, label and state word; it leaves when the pointer does,
+  on any click, when the geometry changes, and after 4 s regardless.
+  Clicking the band sends `open_session` for the ask's session, else the
+  working one, else nothing. The panel never becomes key.
+* Settings (`SettingsWindowController`, `SettingsStore`, `SettingsView`,
+  `SettingsPagesA/B`): a standard titled, resizable 760×520 window
+  ("JR-Bar Settings", frame autosaved, page name in the subtitle) hosting
+  a `NavigationSplitView` with System Settings-style tinted sidebar icons
+  and a grouped `Form` per page. Every control reads the daemon's document
+  and writes through `set_setting`; the store overlays each write until the
+  echo carries it (so sliders do not snap back), throttles slider streams
+  to one write per 120 ms, and shows refused writes in a transient line.
+  A key the document lacks renders its default, disabled, with a "Not
+  provided by core" caption; with no document at all a banner says so.
+  Pages: General (launch at login via `SMAppService`, icon style, tips,
+  Screen Bar on/Alcove/full screen/link, global brightness, Software Update
+  stub with an app-local channel), Agents (twelve provider rows with hook
+  status from `state.health.hooks`, Install/Reinstall/Remove →
+  `install_hooks` / `uninstall_hooks`, per-provider "Open in", transcript
+  toggles, sub-agent asks), Usage (providers shown, display mode, graph
+  range, Claude plan-limits consent (writes `claude_plan_limits_enabled`
+  and `…_consent_version` together), quota thresholds, capacity history),
+  Devices & Screen Bar (a card per `devices[]` entry with display mode,
+  brightness, auto-brightness, provider pin, asks-only, Calibrate… sheet
+  with RGB gains + resting glow previewed live through `preview_program`
+  and applied through `apply_calibration`; Pro+Dot link; gap width, wing
+  length (null = automatic), bracket style, minimum glow), Lighting
+  (provider colour pickers, blend mode with descriptions, cycle speed, done
+  celebration, pulse floor/ceiling per mode, idle/sleep dim, auto-off,
+  scene, and an Effects… page that is an empty state), Notifications &
+  Focus (completion banner/sweep, escalation tier and timings, alert burst,
+  quiet schedule with time pickers, focus sync with per-Focus dim rules,
+  DND mode, keep-awake, closed-lid policy with the helper's status from
+  `state.power`, battery threshold), Remote (peers, unmuted machine list,
+  cloud ingest with the token path, webhook URL and events), Advanced
+  (connection, core version, socket, capabilities, generations, Reveal
+  State Folder, Run Doctor → `doctor` shown as a checklist plus JSON, the
+  `log` tail, and a per-page Reset… → `reset_settings`). The panel's
+  Settings… and the status menu's Settings… (⌘,) open it; a minimal main
+  menu gives the text fields ⌘C/⌘V/⌘A.
 
 ## Stubbed or deliberately deferred
 
 * The app does not launch the daemon as a child process yet (there is no
   daemon to launch); it connects to whatever listens on the socket and
   keeps the file feeds as the fallback until then.
-* Settings… is a stub: the daemon's settings document is decoded and held,
-  nothing renders it yet. `subscribe`, `preview_program`, effects,
-  calibration, history, peers and the log view are not surfaced.
+* Settings: Software Update is a stub button plus an app-local channel
+  choice (no updater). The Effects page is an empty state; Effect Studio
+  (`apply_effect`) is a later slice. `menu_bar_icon_style` is written but
+  the status item still draws the glyph only. Launch at login registers
+  with `SMAppService`, which only works from a bundled, signed app.
+  `reset_settings` is an app-proposed command the mock answers; the real
+  daemon has to adopt it (or the app falls back to nothing: the button
+  reports the refusal). `subscribe` and `list_history` are not surfaced.
 * Events play a sound and are logged; no banners, confetti or notifications.
 * The aggregate fallback is a simple reduction of `latest.json` (needs input >
   failed > working > done-within-90 s > idle); the Python attention model with

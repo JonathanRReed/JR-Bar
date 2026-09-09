@@ -41,6 +41,14 @@ final class ScreenBarController {
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
     }
 
+    /// The band's rounded rect in screen coordinates, for hit testing.
+    var bandScreenRect: NSRect? {
+        guard isShown, panel.isVisible else { return nil }
+        return panel.convertToScreen(view.convert(view.bandRect, to: nil))
+    }
+
+    var onGeometryChange: (@MainActor () -> Void)?
+
     // MARK: Visibility
 
     func show() {
@@ -69,6 +77,7 @@ final class ScreenBarController {
             view.relayout()
             lastCodes = []
             renderCurrentFrame()
+            onGeometryChange?()
         }
     }
 

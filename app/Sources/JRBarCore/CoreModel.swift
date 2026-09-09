@@ -25,6 +25,9 @@ public final class CoreModel {
     /// The most recent transient event; consumers compare ids.
     public private(set) var lastEvent: CoreEvent?
     public private(set) var lastLog: CoreLog?
+    /// The daemon's recent `log` messages, oldest first, bounded.
+    public private(set) var logTail: [CoreLog] = []
+    public static let logTailLimit = 200
     public private(set) var lastDecodeFailure: String?
     public private(set) var unknownMessageCount = 0
     public private(set) var connectedAt: Date?
@@ -108,6 +111,34 @@ public final class CoreModel {
         post("snooze", args: ["session": .string(session ?? "all"), "seconds": .number(Double(seconds))])
     }
 
+    /// A validated settings write; the daemon echoes a new `settings`
+    /// document and replies with its generation.
+    @discardableResult
+    public func setSetting(_ path: SettingsPath, value: JSONValue) async throws -> CoreReply {
+        try await send("set_setting", args: ["path": .string(path.description), "value": value])
+    }
+
+    public func installHooks(providers: [String]) { post("install_hooks", args: ["providers": .array(providers.map(JSONValue.string))]) }
+
+    public func uninstallHooks(providers: [String]) { post("uninstall_hooks", args: ["providers": .array(providers.map(JSONValue.string))]) }
+
+    /// Shows `program` on `surface` for `seconds`, then the daemon reverts.
+    public func previewProgram(surface: String, program: String, seconds: Double) {
+        post("preview_program", args: ["surface": .string(surface), "program": .string(program), "seconds": .number(seconds)])
+    }
+
+    public func applyCalibration(device: String, profile: [String: JSONValue]) {
+        post("apply_calibration", args: ["device": .string(device), "profile": .object(profile)])
+    }
+
+    public func doctor() async throws -> CoreReply { try await send("doctor") }
+
+    /// Puts every listed path back to the daemon's default.
+    @discardableResult
+    public func resetSettings(paths: [String]) async throws -> CoreReply {
+        try await send("reset_settings", args: ["paths": .array(paths.map(JSONValue.string))])
+    }
+
     // MARK: Inbound
 
     private func handle(_ event: CoreClient.Event) {
@@ -147,6 +178,8 @@ public final class CoreModel {
             break
         case .log(let log):
             lastLog = log
+            logTail.append(log)
+            if logTail.count > Self.logTailLimit { logTail.removeFirst(logTail.count - Self.logTailLimit) }
         case .unknown:
             unknownMessageCount += 1
         }

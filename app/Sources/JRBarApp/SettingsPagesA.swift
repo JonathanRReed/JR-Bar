@@ -1,0 +1,412 @@
+import JRBarCore
+import SwiftUI
+
+// MARK: - General
+
+struct GeneralPage: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(get: { store.launchAtLogin }, set: { store.setLaunchAtLogin($0) })) {
+                SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Registers JR-Bar with the system so it starts with your Mac.")
+            }
+            SettingPicker(store, "Menu bar icon", path: "menu_bar_icon_style", options: [
+                ("glyph", "Glyph only"), ("ring", "Glyph with usage ring"), ("label", "Glyph with label"),
+            ], default: "glyph")
+            SettingToggle(store, "Show tips", subtitle: "Occasional hints in the panel about what the light means.", path: "tips_enabled", default: true)
+        }
+
+        Section("Screen Bar") {
+            SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
+            SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
+            SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen")
+            SettingToggle(store, "Link to the hardware strip", subtitle: "The Screen Bar plays the same animation the SidePulse is running, phase-locked.", path: "link_screen_bar_to_hardware", default: true)
+        }
+
+        Section("Brightness") {
+            SettingSlider(store, "Global brightness", subtitle: "One dial over every surface; composes with each device's own brightness.",
+                          path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
+        }
+
+        Section {
+            LabeledContent {
+                Button("Check for Updates…") { store.report(error: "Software update is not wired up yet") }
+            } label: {
+                SettingLabel(title: "Software Update", subtitle: "JR-Bar \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+            }
+            Picker("Update channel", selection: $store.updateChannel) {
+                Text("Stable").tag("stable")
+                Text("Beta").tag("beta")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+        } footer: {
+            SectionNote("Updates are checked by the app, not the core. The channel is remembered on this Mac.")
+        }
+    }
+}
+
+// MARK: - Agents
+
+struct AgentsPage: View {
+    @Bindable var store: SettingsStore
+
+    static let openChoices: [(value: String, label: String)] = [
+        ("", "Automatic"), ("app", "App"), ("terminal", "Terminal"), ("vscode", "VS Code"),
+    ]
+
+    var body: some View {
+        Section {
+            ForEach(SettingsKey.providers, id: \.self) { provider in
+                AgentRow(store: store, provider: provider)
+            }
+        } header: {
+            Text("Providers")
+        } footer: {
+            SectionNote("Hooks let each agent report its sessions to the core. \"Open in\" picks what is raised when you click a session.")
+        }
+
+        Section("Transcripts") {
+            ForEach(SettingsKey.transcriptProviders, id: \.self) { provider in
+                SettingToggle(store, "Watch \(ProviderStyle.style(for: provider).name) transcripts",
+                              subtitle: "Reads the local transcript files for token and cost figures.",
+                              path: "transcript_monitoring.\(provider)")
+            }
+        }
+
+        Section("Asks") {
+            SettingToggle(store, "Alert for sub-agent asks", subtitle: "Sub-agents cannot be answered directly; by default only main sessions ring the Ask signal.",
+                          path: "subagent_asks_alert")
+        }
+    }
+}
+
+struct AgentRow: View {
+    @Bindable var store: SettingsStore
+    let provider: String
+
+    private var style: ProviderStyle { ProviderStyle.style(for: provider) }
+    private var status: String? { store.hookStatus(provider) }
+
+    private var statusWord: String {
+        switch status {
+        case "ok": return "Installed"
+        case "missing": return "Not installed"
+        case "stale": return "Needs reinstall"
+        case nil: return store.core.isLive ? "Unknown" : "Core offline"
+        case let other?: return other.capitalized
+        }
+    }
+
+    private var statusColor: Color {
+        switch status {
+        case "ok": return .green
+        case "stale": return .orange
+        case "missing": return Color(nsColor: .tertiaryLabelColor)
+        default: return Color(nsColor: .quaternaryLabelColor)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProviderTile(style: style, size: 24)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(style.name)
+                HStack(spacing: 5) {
+                    Circle().fill(statusColor).frame(width: 6, height: 6)
+                    Text(statusWord).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Text("Open in").font(.callout).foregroundStyle(.tertiary)
+            Picker("Open in", selection: store.optionalString("session_open_preferences.\(provider)")) {
+                ForEach(AgentsPage.openChoices, id: \.value) { choice in
+                    Text(choice.label).tag(choice.value)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 104)
+            .disabled(!store.isProvided("session_open_preferences"))
+            .help("What a click on one of this provider's sessions raises")
+            Button { store.core.installHooks(providers: [provider]) } label: {
+                Text(status == "ok" ? "Reinstall" : "Install").frame(width: 58)
+            }
+            .controlSize(.small)
+            .disabled(!store.core.isLive)
+            Button { store.core.uninstallHooks(providers: [provider]) } label: {
+                Text("Remove").frame(width: 52)
+            }
+            .controlSize(.small)
+            .disabled(!store.core.isLive || status == "missing")
+        }
+        .padding(.vertical, 1)
+    }
+}
+
+// MARK: - Usage
+
+struct UsagePage: View {
+    @Bindable var store: SettingsStore
+
+    private let columns = [GridItem(.adaptive(minimum: 150), alignment: .leading)]
+
+    var body: some View {
+        Section {
+            Provided(store, "usage_graph_providers") {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+                    ForEach(SettingsKey.providers, id: \.self) { provider in
+                        let style = ProviderStyle.style(for: provider)
+                        Toggle(isOn: store.listMember("usage_graph_providers", provider)) {
+                            HStack(spacing: 6) {
+                                ProviderTile(style: style, size: 16)
+                                Text(style.name)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Text("Show in the panel")
+        }
+
+        Section("Display") {
+            SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
+                ("tokens", "Tokens"), ("cost", "Cost"), ("percent", "Percent"),
+            ], default: "tokens", segmented: true)
+                .fixedSize()
+            SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
+                (1, "Today"), (7, "7 days"), (30, "30 days"),
+            ], default: 7)
+        }
+
+        Section {
+            Provided(store, "claude_plan_limits_enabled") {
+                Toggle(isOn: Binding(
+                    get: { store.document.bool("claude_plan_limits_enabled") ?? false },
+                    set: { on in
+                        store.set("claude_plan_limits_enabled", .bool(on))
+                        store.set("claude_plan_limits_consent_version", .number(on ? 1 : 0))
+                    }
+                )) {
+                    SettingLabel(title: "Read Claude plan limits",
+                                 subtitle: "Presents your own Claude subscription credential to api.anthropic.com to read the official 5-hour and 7-day windows. Off until you opt in.")
+                }
+            }
+        } header: {
+            Text("Claude")
+        }
+
+        Section("Quota alerts") {
+            SettingToggle(store, "Alert when a window crosses a threshold", path: "quota_alerts_enabled")
+            Provided(store, "quota_alert_thresholds") {
+                ThresholdRow(store: store)
+            }
+        }
+
+        Section {
+            SettingToggle(store, "Keep capacity history", subtitle: "Stores usage samples locally so the graph can look back.", path: "capacity_history_enabled")
+            SettingIntPicker(store, "Keep for", path: "capacity_history_retention_days", options: [
+                (1, "1 day"), (7, "7 days"), (30, "30 days"), (90, "90 days"),
+            ], default: 7)
+                .disabled(!(store.document.bool("capacity_history_enabled") ?? false))
+        } header: {
+            Text("History")
+        }
+    }
+}
+
+/// `quota_alert_thresholds`: a nudge and a warning, as two steppers.
+struct ThresholdRow: View {
+    @Bindable var store: SettingsStore
+
+    private var thresholds: [Double] {
+        let values = store.document.array("quota_alert_thresholds")?.compactMap(\.doubleValue) ?? []
+        return values.count >= 2 ? Array(values.prefix(2)) : [90, 95]
+    }
+
+    private func binding(_ index: Int) -> Binding<Int> {
+        Binding(
+            get: { Int(thresholds[index].rounded()) },
+            set: { value in
+                var values = thresholds
+                values[index] = Double(value)
+                store.set("quota_alert_thresholds", .array(values.sorted().map(JSONValue.number)))
+            }
+        )
+    }
+
+    var body: some View {
+        LabeledContent("Thresholds") {
+            HStack(spacing: 14) {
+                HStack(spacing: 4) {
+                    ValueText(text: "Nudge at \(binding(0).wrappedValue) %", width: 100)
+                    Stepper("", value: binding(0), in: 50...99).labelsHidden()
+                }
+                HStack(spacing: 4) {
+                    ValueText(text: "Warn at \(binding(1).wrappedValue) %", width: 92)
+                    Stepper("", value: binding(1), in: 50...100).labelsHidden()
+                }
+            }
+        }
+        .disabled(!(store.document.bool("quota_alerts_enabled") ?? false))
+    }
+}
+
+// MARK: - Devices & Screen Bar
+
+struct DevicesPage: View {
+    @Bindable var store: SettingsStore
+
+    static let displayModes: [(value: String, label: String)] = [
+        ("agent", "Agent status"), ("battery", "Battery"), ("studio", "Studio program"), ("quota_runway", "Quota runway"),
+    ]
+
+    var body: some View {
+        let devices = store.deviceEntries
+        if devices.isEmpty {
+            Section("Devices") {
+                if store.hasDocument {
+                    Text("No SidePulse devices in the settings document.").foregroundStyle(.secondary)
+                } else {
+                    Text("Devices appear once the core is connected.").foregroundStyle(.secondary)
+                }
+            }
+        }
+        ForEach(devices) { device in
+            DeviceCard(store: store, device: device)
+        }
+
+        Section {
+            SettingToggle(store, "Link Pro and Dot", subtitle: "The Dot plays a phase-locked continuation of the Pro's animation instead of its own two-LED rendering.",
+                          path: "devices_linked", default: true)
+        } header: {
+            Text("Pro + Dot")
+        }
+
+        Section {
+            ScreenBarCard(store: store)
+        } header: {
+            HStack(spacing: 8) {
+                Text("Screen Bar")
+                if let bar = store.stateDevice("screen-bar") {
+                    Text(bar.enabled == true ? "Shown" : "Hidden").foregroundStyle(.secondary).font(.callout)
+                }
+            }
+        } footer: {
+            SectionNote("The gap is the span treated as the notch, between the two risers; the wing is each stroke's reach beyond it. Automatic measures the notch and Alcove; manual values are points and always win.")
+        }
+    }
+}
+
+struct DeviceCard: View {
+    @Bindable var store: SettingsStore
+    let device: SettingsStore.DeviceEntry
+
+    private var state: CoreDevice? { store.stateDevice(device.id) }
+    private var pinOptions: [(value: String, label: String)] {
+        [("", "Everyone")] + SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) }
+    }
+
+    var body: some View {
+        Section {
+            SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
+            SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded())) %" }
+            SettingToggle(store, "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight.",
+                          path: "\(device.prefix).auto_brightness_enabled")
+            Provided(store, "\(device.prefix).provider_pin") {
+                Picker(selection: store.optionalString("\(device.prefix).provider_pin")) {
+                    ForEach(pinOptions, id: \.value) { Text($0.label).tag($0.value) }
+                } label: {
+                    SettingLabel(title: "Pin to", subtitle: "A pinned device shows only that provider's sessions and rests dark otherwise.")
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            Provided(store, "\(device.prefix).signal_policy") {
+                Toggle(isOn: Binding(
+                    get: { store.document.string(SettingsPath("\(device.prefix).signal_policy")) == "asks_only" },
+                    set: { store.set("\(device.prefix).signal_policy", $0 ? .string("asks_only") : .null) }
+                )) {
+                    SettingLabel(title: "Asks only", subtitle: "Mute courtesy signals on this device; agent status, asks and low battery still show.")
+                }
+            }
+            LabeledContent {
+                Button("Calibrate…") { store.calibrating = device.id }
+                    .disabled(!store.core.isLive)
+            } label: {
+                SettingLabel(title: "Colour calibration", subtitle: calibrationSummary)
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Image(systemName: device.kind == "dot" ? "circle.grid.2x1.fill" : "light.beacon.max.fill")
+                Text(device.name)
+                if let state {
+                    Text(state.isPresent ? "Connected" : (state.error ?? "Not connected"))
+                        .foregroundStyle(state.isPresent ? Color.secondary : .orange)
+                        .font(.callout)
+                }
+                Spacer()
+                Text(device.kind == "dot" ? "2 LEDs" : "8 LEDs").font(.callout).foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private var calibrationSummary: String {
+        let doc = store.document
+        let r = doc.double(SettingsPath("\(device.prefix).red_gain")) ?? 1
+        let g = doc.double(SettingsPath("\(device.prefix).green_gain")) ?? 1
+        let b = doc.double(SettingsPath("\(device.prefix).blue_gain")) ?? 1
+        let glow = doc.double(SettingsPath("\(device.prefix).resting_glow")) ?? 0
+        if r == 1, g == 1, b == 1, glow == 0 { return "Uncalibrated" }
+        return String(format: "R %.2f · G %.2f · B %.2f · glow %d %%", r, g, b, Int((glow * 100).rounded()))
+    }
+}
+
+struct ScreenBarCard: View {
+    @Bindable var store: SettingsStore
+
+    var body: some View {
+        NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
+        NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
+        SettingPicker(store, "Bracket style", subtitle: "How the Alcove bracket colours itself.", path: "screen_bar_bracket_style", options: [
+            ("auto", "Automatic"), ("spatial", "Mirror the LEDs"), ("identity", "One hue"),
+        ], default: "auto")
+        SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor. Zero is pitch black: only the moving signal shows.",
+                      path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
+    }
+}
+
+/// A number that may be JSON null (automatic): a checkbox and, when manual, a slider.
+struct NullableSlider: View {
+    @Bindable var store: SettingsStore
+    let title: String
+    var subtitle: String? = nil
+    let path: String
+    let range: ClosedRange<Double>
+    let fallback: Double
+
+    var body: some View {
+        Provided(store, path) {
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Toggle("Automatic", isOn: Binding(
+                        get: { store.isNull(path) },
+                        set: { auto in store.set(path, auto ? .null : .number(fallback)) }
+                    ))
+                    .toggleStyle(.checkbox)
+                    Slider(value: Binding(get: { store.document.double(SettingsPath(path)) ?? fallback },
+                                          set: { store.set(path, .number($0.rounded()), throttled: true) }), in: range)
+                        .frame(width: 120)
+                        .disabled(store.isNull(path))
+                    ValueText(text: store.isNull(path) ? "auto" : SettingsStore.points(store.document.double(SettingsPath(path)) ?? fallback), width: 48)
+                }
+            } label: {
+                SettingLabel(title: title, subtitle: subtitle)
+            }
+        }
+    }
+}
