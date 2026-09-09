@@ -1501,6 +1501,8 @@ CALENDAR_WATCH_SECONDS = 30.0
 CALENDAR_WATCH_RETRY_SECONDS = 300.0
 
 STATUS_BAR_REFRESH_SECONDS = 15.0
+# How often the app checks that live sessions still have a process.
+LIVENESS_POLL_SECONDS = 5.0
 # The second Mac's own, much slower cadence. A peer fetch is bounded
 # subprocess I/O (up to eight seconds for eight peers), so it never rides
 # the UI tick -- it gets a minute timer and a worker thread.
@@ -2818,6 +2820,16 @@ class StatusBarController(NSObject):
                 None,
                 True,
             )
+        # A killed agent should read as ended within seconds, not at the
+        # next heartbeat. The sweep is one ps fork plus a stat per live
+        # session, run off the main thread.
+        self.liveness_timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            LIVENESS_POLL_SECONDS,
+            self,
+            "pollLiveness:",
+            None,
+            True,
+        )
         # NSTimer's first fire is one interval out; warn NOW.
         if self.settings.weather_alerts_enabled:
             self._weather_observation_timer_fired()
@@ -7832,6 +7844,7 @@ class StatusBarController(NSObject):
         self._runtime_worker_registry.close_all(timeout_seconds=1.0)
         for name in (
             "timer",
+            "liveness_timer",
             "failure_signal_timer",
             "_capacity_reset_timer",
             "_capacity_countdown_timer",
@@ -9932,7 +9945,7 @@ class StatusBarController(NSObject):
             statuses = tuple(self.monitor.current_statuses_by_key().values())
         except Exception as exc:
             log_status_bar(f"liveness sweep skipped: {exc}")
-            return
+            return False
 
         def _reconcile(hint):
             self.monitor.reconcile_refresh_hint(
@@ -9948,13 +9961,35 @@ class StatusBarController(NSObject):
             )
         except Exception as exc:
             log_status_bar(f"liveness sweep error: {exc}")
-            return
+            return False
         for dead in result.ended_sessions:
             log_status_bar(
                 "liveness: ended "
                 f"{dead.record.provider} {dead.record.session_id[:8]} "
                 f"pid={dead.record.pid} reason={dead.reason}"
             )
+        return bool(result.ended_sessions)
+
+    @objc.IBAction
+    def pollLiveness_(self, _timer):
+        """Five-second liveness check, off the main thread.
+
+        The monitor is lock-protected, so the sweep and its synthetic
+        SessionEnd ingest are safe from a worker. Only a death schedules a
+        refresh; a quiet sweep costs nothing on the main thread.
+        """
+        if getattr(self, "_liveness_sweep_running", False):
+            return
+        self._liveness_sweep_running = True
+
+        def _run():
+            try:
+                if self.reap_dead_agent_processes():
+                    self.schedule_event_refresh()
+            finally:
+                self._liveness_sweep_running = False
+
+        threading.Thread(target=_run, name="JRBarLiveness", daemon=True).start()
 
     def handle_hook_event_message(self, hint: ProviderRefreshHint) -> None:
         """Reconcile one authenticated hint from the persisted normalized log.
