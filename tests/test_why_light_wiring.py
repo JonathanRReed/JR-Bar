@@ -40,7 +40,7 @@ from jrbar.why_light_context import (
     ValueAvailability,
     WinningPriority,
 )
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 
 class WhyLightWiringTests(unittest.TestCase):

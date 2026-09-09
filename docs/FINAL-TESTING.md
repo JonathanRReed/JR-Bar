@@ -25,7 +25,7 @@ The existing bootstrap accepts Homebrew's usual Python 3.12 paths or an explicit
 base interpreter, for example `PYTHON=python3.12 make final-test`. It creates the
 pinned `.venv`; final verification then uses that environment. It does not try to
 bootstrap using a nonexistent virtual environment. An existing `.venv` of another
-Python version is refused rather than silently replaced; set `SIDEPULSE_DEV_VENV`
+Python version is refused rather than silently replaced; set `JRBAR_DEV_VENV`
 to a new directory to preserve it.
 
 `make final-test` runs the fast source gate, the full Mac pytest suite, wheel/sdist

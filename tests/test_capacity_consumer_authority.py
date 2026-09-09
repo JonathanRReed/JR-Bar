@@ -25,7 +25,7 @@ from jrbar.capacity_types import (
     SourceKey,
 )
 from jrbar.settings import LED_DISPLAY_QUOTA_RUNWAY, AgentMonitorSettings
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 NOW = 1_000.0
 

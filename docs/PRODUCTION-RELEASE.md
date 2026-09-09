@@ -10,8 +10,8 @@ Set the signing identities and notarization profile used by `packaging/build_mac
 export APP_SIGN_IDENTITY='Developer ID Application: …'
 export INSTALLER_SIGN_IDENTITY='Developer ID Installer: …'
 export NOTARY_PROFILE='sidepulse-notary'
-export SPARKLE_KEY_ACCOUNT='io.sidepulse.app'
-export SIDEPULSE_RELEASE_CHANNEL='stable'
+export SPARKLE_KEY_ACCOUNT='io.jrbar.app'
+export JRBAR_RELEASE_CHANNEL='stable'
 ```
 
 ## Authoritative artifact
@@ -20,15 +20,15 @@ The signed and notarized PKG remains the authoritative installer and manual
 recovery artifact:
 
 ```text
-dist/SidePulse-<version>-<architecture>.pkg
+dist/JR-Bar-<version>-<architecture>.pkg
 ```
 
-The filename keeps the SidePulse compatibility name because the package
-installs `SidePulse.app`, the `SidePulse` executable, and the `sidepulse` CLI.
+The package installs `JR-Bar.app` (executable `JR-Bar`) and the `jrbar` CLI,
+with `sidepulse` kept as a command alias for one release.
 The application displays JR-Bar to people.
 
 Production packaging also creates a required supplemental Sparkle ZIP from the
-same signed, notarized, and stapled `SidePulse.app`. The signed `appcast.xml`
+same signed, notarized, and stapled `JR-Bar.app`. The signed `appcast.xml`
 and `jr-bar-update-channel.json` bind that ZIP to the exact candidate. They do
 not become a second installer contract.
 
@@ -57,9 +57,9 @@ both the appcast and update archive. A matching version string alone is not a
 release provenance receipt.
 
 The dedicated Sparkle private key is stored in the owner's login Keychain under
-account `io.sidepulse.app`. Only its public key is committed. Before a real
+account `io.jrbar.app`. Only its public key is committed. Before a real
 release, export one encrypted offline backup with pinned Sparkle's
-`generate_keys --account io.sidepulse.app -x <secure-path>` command. Never put
+`generate_keys --account io.jrbar.app -x <secure-path>` command. Never put
 that file in the checkout, shell arguments, logs, release evidence, or Git.
 The committed public-key fingerprint is
 `9c134249398dd15c364a29451de3d81436d8eda97a0c706fa59047e6607f59ac`.
@@ -85,7 +85,7 @@ The measurements must come from the signed candidate on the release Mac after a 
 
 ## Installer ownership
 
-The signed package installs the application payload and an owned `sidepulse` CLI link only. Package scripts do not install provider hooks, a user LaunchAgent, the privileged sleep helper, the eject guard, or T3 Code integration. Those are external mutable state and cannot be transactionally rolled back by Installer without risking pre-existing user setup.
+The signed package installs the application payload and an owned `jrbar` CLI link only. Package scripts do not install provider hooks, a user LaunchAgent, the privileged sleep helper, the eject guard, or T3 Code integration. Those are external mutable state and cannot be transactionally rolled back by Installer without risking pre-existing user setup.
 
 The ordinary user completes integrations from JR-Bar's first-run setup or explicit CLI commands. The release gate exercises the explicit installed `status-bar start` command after package installation before it checks the LaunchAgent. This keeps package installation reversible while still testing the installed integration path.
 
@@ -101,24 +101,24 @@ against an everyday account. The default `software` profile requires no
 physical SidePulse and performs no hardware writes.
 
 ```bash
-export SIDEPULSE_PERFORMANCE_EVIDENCE='/absolute/path/outside-the-checkout/performance-evidence.json'
-export SIDEPULSE_RUN_INSTALLED_UPGRADE=1
-export SIDEPULSE_RUN_UNINSTALL=1
-export SIDEPULSE_RELEASE_USER="$(id -un)"
+export JRBAR_PERFORMANCE_EVIDENCE='/absolute/path/outside-the-checkout/performance-evidence.json'
+export JRBAR_RUN_INSTALLED_UPGRADE=1
+export JRBAR_RUN_UNINSTALL=1
+export JRBAR_RELEASE_USER="$(id -un)"
 ./scripts/verify_macos_release.sh
 ```
 
-To verify optional SidePulse hardware, set `SIDEPULSE_REQUIRED_HARDWARE` to
+To verify optional SidePulse hardware, set `JRBAR_REQUIRED_HARDWARE` to
 `pro`, `dot`, `both`, or `any`, connect the selected devices, and set
-`SIDEPULSE_HARDWARE_CONFIRM=1`. These profiles require reversible smoke writes
+`JRBAR_HARDWARE_CONFIRM=1`. These profiles require reversible smoke writes
 and a receipt bound to the same candidate and hardware profile. A software
 release emits no hardware-smoke receipt and makes no physical-hardware
 validation claim.
 
-Set `SIDEPULSE_RELEASE_CHANNEL=beta` only for a beta release. To retain prior
-stable and beta entries, set `SIDEPULSE_SPARKLE_HISTORY_DIR` to an absolute
+Set `JRBAR_RELEASE_CHANNEL=beta` only for a beta release. To retain prior
+stable and beta entries, set `JRBAR_SPARKLE_HISTORY_DIR` to an absolute
 external directory containing the currently published signed `appcast.xml`
-and every retained `SidePulse-*.zip` it references. The gate verifies the prior
+and every retained `JR-Bar-*.zip` it references. The gate verifies the prior
 feed and each retained archive with the pinned Keychain key before it signs a
 replacement feed. Omit this variable only for the first published feed.
 
@@ -129,7 +129,7 @@ stapling, Gatekeeper, the exact updater ZIP and signed appcast, package
 contents, bundle closure, entitlements, requested hardware checks, installed
 upgrade, settings preservation, supported uninstall, and clean PKG reinstall
 to that exact candidate. The clean reinstall verifies `doctor` and
-`sidepulse integrations status --json` without silently reinstalling external
+`jrbar integrations status --json` without silently reinstalling external
 integrations.
 
 The developer-facing wheel and source distribution are rebuilt from the same
@@ -153,8 +153,8 @@ the release assets.
 Before authorizing the release gate, enable T3 Code only when the release Mac has representative local data. Run a bounded probe and preserve the output with the release evidence:
 
 ```bash
-sidepulse integrations status --json
-sidepulse integrations probe t3code --json
+jrbar integrations status --json
+jrbar integrations probe t3code --json
 ```
 
 An unavailable optional third-party installation is not a failure for the core package. A configured integration that is present but violates its required schema, process, freshness, or installed-command contract blocks the associated compatibility claim.

@@ -6,7 +6,7 @@ Only the newest signed and notarized JR-Bar GitHub Release is supported. Source 
 
 - a Developer ID signed and notarized `.pkg`;
 - `SHA256SUMS`;
-- `sidepulse-sbom.cdx.json`;
+- `jrbar-sbom.cdx.json`;
 - `release-environment.txt`;
 - `release-verification.json` showing the exact commit, signing team, installed-upgrade result, hardware matrix, and performance evidence.
 

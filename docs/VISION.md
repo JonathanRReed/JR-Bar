@@ -219,7 +219,7 @@ Crucially: `jrbar signal` also **reads** — `jrbar status --json` gives the who
 **Retired 2026-08-26 (owner decision).** The open Signal API — the
 `jrbar signal` CLI, Shortcuts action, socket schema, pull-mode manifest,
 and its permission layer — is off the roadmap. The full entry lives in
-git history; nothing here should be built or claimed. (`sidepulse serve`
+git history; nothing here should be built or claimed. (`jrbar serve`
 remains the one shipped read-only loopback surface.)
 
 ### 8. Quota lane with honest provenance — and cut the bespoke forecasting  ·  _medium_

@@ -31,7 +31,7 @@ in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 ## Getting help
 
-Use the repository's [GitHub issue tracker](https://github.com/JonathanRReed/sidepulse-JR-Fork/issues)
+Use the repository's [GitHub issue tracker](https://github.com/JonathanRReed/JR-Bar/issues)
 for reproducible product bugs, documentation corrections, and feature
 discussion. Include the JR Bar version, installation artifact, macOS version,
 architecture, relevant provider or hardware, exact command or action, and the
@@ -55,7 +55,7 @@ suspected vulnerability or privacy leak, do not open a public issue. Send the
 private report required by [SECURITY.md](SECURITY.md) to
 `Contact@JonathanRReed.com`.
 
-Before reporting an installed-release problem, `sidepulse doctor` and
-`sidepulse integrations status --json` can provide bounded local facts. They
+Before reporting an installed-release problem, `jrbar doctor` and
+`jrbar integrations status --json` can provide bounded local facts. They
 do not replace the release evidence or prove a third-party service is
 compatible.

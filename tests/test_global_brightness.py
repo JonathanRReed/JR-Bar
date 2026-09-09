@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from test_sidepulse import isolate_controller
+from test_jrbar import isolate_controller
 
 from jrbar._settings_legacy import AgentMonitorSettings
 from jrbar.status_bar_legacy import BRIGHTNESS_PRESET_CHOICES, StatusBarDevice

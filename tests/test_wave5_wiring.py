@@ -27,7 +27,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from test_sidepulse import isolate_controller
+from test_jrbar import isolate_controller
 
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.remote_peers import (

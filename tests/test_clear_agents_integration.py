@@ -22,7 +22,7 @@ from jrbar.persistence_writer import (
     PersistenceReceipt,
 )
 from jrbar.provider_facts import WorkIdentifier, WorkKey
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 
 class ClearAgentsControllerIntegrationTests(unittest.TestCase):

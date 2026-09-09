@@ -29,9 +29,9 @@ Choose a private output path and launch JR-Bar in the foreground with the
 scenario named explicitly:
 
 ```bash
-SIDEPULSE_SCREEN_BAR_PROFILE_SCENARIO=static \
-SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT="$PWD/performance-evidence/static.runtime.json" \
-.venv/bin/python -m sidepulse status-bar start --foreground
+JRBAR_SCREEN_BAR_PROFILE_SCENARIO=static \
+JRBAR_SCREEN_BAR_PROFILE_OUTPUT="$PWD/performance-evidence/static.runtime.json" \
+.venv/bin/python -m jrbar status-bar start --foreground
 ```
 
 Put the app into the named state, keep it there for at least 300 seconds, and

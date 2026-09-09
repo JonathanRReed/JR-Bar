@@ -138,7 +138,7 @@ Our `capacity_types.py` is already the right shape and is *stricter* than what w
 2. **Reset known, percent unknown** (CodexBar's `usageKnown: Bool`) → represent as `ObservationState.PARTIAL` with `reset_epoch` set and `used_percent = None`. Show the reset, show `—` for the number. Never render a fake exhausted quota.
 3. **Raw vs display-clamped percent.** Keep `used_percent` unclamped in the model (pace math must see >100%); clamp only in the formatter. This is CodexBar's `UsagePercent.raw / .displayClamped` split and it's correct.
 
-**The blocking gap:** `claude_quota.fetch_windows()` (claude_quota.py:49-51) unconditionally raises `ClaudeQuotaUnavailableError('claude_remote_quota_unsupported')`. There is no network call, no OAuth read, no Keychain access anywhere in `src/sidepulse`. Meanwhile `windows_from_payload` (claude_quota.py:68-197) is a **correct, complete parser** that already reproduces CodexBar's schema including both the legacy `seven_day_opus`/`seven_day_sonnet` fields and the newer `limits[]` array with `scope.model.display_name` extraction and all-models-scope filtering.
+**The blocking gap:** `claude_quota.fetch_windows()` (claude_quota.py:49-51) unconditionally raises `ClaudeQuotaUnavailableError('claude_remote_quota_unsupported')`. There is no network call, no OAuth read, no Keychain access anywhere in `src/jrbar`. Meanwhile `windows_from_payload` (claude_quota.py:68-197) is a **correct, complete parser** that already reproduces CodexBar's schema including both the legacy `seven_day_opus`/`seven_day_sonnet` fields and the newer `limits[]` array with `scope.model.display_name` extraction and all-models-scope filtering.
 
 **Build item #1, and it's bounded:** read the `claude` CLI's OAuth token from the macOS Keychain, `GET https://api.anthropic.com/api/oauth/usage` with `Authorization: Bearer <token>`, `anthropic-beta: oauth-2025-04-20`, `User-Agent: claude-code/<version>`, hand the JSON straight to the existing parser, delete the raise. Template to port: CodexBar's `ClaudeOAuth/ClaudeOAuthUsageFetcher.swift:60-127` and `ClaudeOAuthCredentials+SecurityCLIReader.swift`. Populate honest `ObservationState`/`SourceHealthKind` on every outcome — 401 → `SIGN_IN_REQUIRED`, 429 → `COOLDOWN` with `retry_at` from `Retry-After`, network fail → `FAILED`. **Do not default silently**; that is precisely the trap CodexBar fell into (its confidence enum is populated in 2 of ~10 provider paths).
 
@@ -227,7 +227,7 @@ Further rules:
 
 ## Alcove coexistence fix list
 
-Ordered by user-visible impact. All references are `src/sidepulse/virtual_device.py` unless noted.
+Ordered by user-visible impact. All references are `src/jrbar/virtual_device.py` unless noted.
 
 ### 1. The 4–6pt bracket inset — one-line fix, in `reposition()`, not in drawing code
 **Root cause traced end to end.** The live path takes `observation.width` raw from `AlcoveObservationReducer.current()` with zero margin; `virtual_window_frame_for_screen` (366-372) then sets the window to *exactly* that width (`target = max(140.0, alcove_total_width)`); then `_draw_wings_only` (1475) calls `alcove_accent_horizontal_bounds(width)` (1488), which insets by `ALCOVE_ACCENT_EDGE_INSET = 6.0` (148, function 576-579) before drawing the underline, the rounded-rect clip, the Alcove-body clip, and the risers. Everything visible is drawn 6pt inside a pixel-exact window.
@@ -237,7 +237,7 @@ The 6pt inset is **not** wrong in isolation — its comment (145-148) correctly 
 **Fix: widen the window, don't shrink the content.** In `reposition()`'s Alcove-follow branch, request `observation.width + 2 * ALCOVE_ACCENT_EDGE_INSET`. Rehabilitate the currently-dead `ALCOVE_CAPSULE_MARGIN = 2.0` (123) for this — it's plainly what it was originally for. **No change to any drawing code.**
 
 ### 2. Stop guessing the window level — measure it
-`ABOVE_ALCOVE_WINDOW_LEVEL = 2147483630` (89) is a hardcoded literal (INT32_MAX − 17) with a comment claiming it's one above Alcove's overlay. Nothing in `src/sidepulse` calls `kCGWindowLayer`, `CGWindowLevelForKey`, or `kCGMaximumWindowLevel` — it is never validated.
+`ABOVE_ALCOVE_WINDOW_LEVEL = 2147483630` (89) is a hardcoded literal (INT32_MAX − 17) with a comment claiming it's one above Alcove's overlay. Nothing in `src/jrbar` calls `kCGWindowLayer`, `CGWindowLevelForKey`, or `kCGMaximumWindowLevel` — it is never validated.
 
 But `_alcove_window_values()` (441-484) **already** calls `Quartz.CGWindowListCopyWindowInfo` and iterates the result dicts for `kCGWindowNumber` and `kCGWindowBounds`. Those same dicts carry `kCGWindowLayer` — Alcove's real, live Z-order. It's simply never read.
 
@@ -253,7 +253,7 @@ Result: with "wrap the menu bar" off, our accent sits at fixed hardware-notch wi
 ### 4. Delete the dead capture subsystem as ONE unit
 It's bigger than the logged `AlcoveCapsuleTracker` (493-567). Delete together:
 - `measured_alcove_capsule_width()` (487-490) — a stub whose entire body is `del menu_band_height; return None`.
-- `AlcoveCapsuleTracker` — constructed only in `tests/test_sidepulse.py` (~16865-16908), never in production.
+- `AlcoveCapsuleTracker` — constructed only in `tests/test_jrbar.py` (~16865-16908), never in production.
 - Seven constants duplicating `alcove_observation.py`'s real ones: `ALCOVE_CAPSULE_ALPHA_THRESHOLD`, `ALCOVE_CAPSULE_MAX_BAND_FACTOR`, `ALCOVE_FOLLOW_MAX_WIDTH`, `ALCOVE_NARROW_AFTER_SECONDS`, `ALCOVE_HOLD_SECONDS`, `ALCOVE_CAPSULE_MARGIN` (unless rehabilitated per fix #1), `ALCOVE_MEASURE_TTL_SECONDS`.
 - Its three tests: `test_tracker_widen_instant_narrow_patient`, `test_tracker_holds_through_gaps_then_falls_back`, `test_tracker_caps_the_balloon`.
 

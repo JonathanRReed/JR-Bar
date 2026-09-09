@@ -19,32 +19,32 @@ Unknown provider-owned quota lanes remain visible in detail views but cannot tri
 ## Basic setup
 
 ```bash
-sidepulse providers status
-sidepulse providers enable codex
-sidepulse providers enable claude
-sidepulse providers enable cursor
-sidepulse providers enable devin
-sidepulse providers enable grok
-sidepulse providers enable antigravity
-sidepulse providers enable openai-api
+jrbar providers status
+jrbar providers enable codex
+jrbar providers enable claude
+jrbar providers enable cursor
+jrbar providers enable devin
+jrbar providers enable grok
+jrbar providers enable antigravity
+jrbar providers enable openai-api
 ```
 
 Configure source and display policy:
 
 ```bash
-sidepulse providers configure claude --source-mode auto
-sidepulse providers configure claude --dynamic-lanes on
-sidepulse providers configure claude --reset-celebrations on
-sidepulse providers configure claude --threshold-remaining 20
-sidepulse providers configure devin --option organization=org_example
-sidepulse providers configure openai-api --option project_id=proj_example
+jrbar providers configure claude --source-mode auto
+jrbar providers configure claude --dynamic-lanes on
+jrbar providers configure claude --reset-celebrations on
+jrbar providers configure claude --threshold-remaining 20
+jrbar providers configure devin --option organization=org_example
+jrbar providers configure openai-api --option project_id=proj_example
 ```
 
 Collect one bounded user-initiated snapshot:
 
 ```bash
-sidepulse providers refresh
-sidepulse providers refresh --json
+jrbar providers refresh
+jrbar providers refresh --json
 ```
 
 ## Manual credentials
@@ -53,15 +53,15 @@ Secrets are read from standard input and stored in JR-Bar's encrypted owner-priv
 
 ```bash
 printf '%s' "$DEVIN_BEARER_TOKEN" | \
-  sidepulse providers credential set devin --stdin \
+  jrbar providers credential set devin --stdin \
   --option organization=org_example
 
 printf '%s' "$OPENAI_ADMIN_KEY" | \
-  sidepulse providers credential set openai-api --stdin \
+  jrbar providers credential set openai-api --stdin \
   --option project_id=proj_example
 
-sidepulse providers credential list
-sidepulse providers credential remove devin
+jrbar providers credential list
+jrbar providers credential remove devin
 ```
 
 ## Browser-backed sources
@@ -69,15 +69,15 @@ sidepulse providers credential remove devin
 Browser sources are disabled by default. Consent binds one provider, browser, profile, approved domains, approved field names, and optional background repair policy. Granting consent does not import anything. Import is a separate explicit action.
 
 ```bash
-sidepulse providers configure cursor --browser-sources on
-sidepulse providers browser-consent grant cursor \
+jrbar providers configure cursor --browser-sources on
+jrbar providers browser-consent grant cursor \
   --browser chrome --profile Default --background-repair
-sidepulse providers browser-consent import cursor \
+jrbar providers browser-consent import cursor \
   --browser chrome --profile Default \
   --profile-root "$HOME/Library/Application Support/Google/Chrome/Default"
 
-sidepulse providers browser-consent list
-sidepulse providers browser-consent revoke cursor \
+jrbar providers browser-consent list
+jrbar providers browser-consent revoke cursor \
   --browser chrome --profile Default
 ```
 
@@ -98,22 +98,22 @@ JR-Bar sync is local-first and peer-to-peer over SSH/SFTP, normally addressed th
 On the first Mac:
 
 ```bash
-sidepulse providers sync set-device mac-mini
-sidepulse providers sync set-categories quota,token_usage,agent_activity
-sidepulse providers sync export-pairing --output ~/Desktop/sidepulse-pairing.json
+jrbar providers sync set-device mac-mini
+jrbar providers sync set-categories quota,token_usage,agent_activity
+jrbar providers sync export-pairing --output ~/Desktop/jrbar-pairing.json
 ```
 
 Transfer that owner-private file directly to the second Mac. On the second Mac:
 
 ```bash
-sidepulse providers sync set-device macbook
-sidepulse providers sync import-pairing \
-  --input ~/Desktop/sidepulse-pairing.json \
+jrbar providers sync set-device macbook
+jrbar providers sync import-pairing \
+  --input ~/Desktop/jrbar-pairing.json \
   --host mac-mini.tailnet-name.ts.net \
-  --remote-path ~/.local/state/sidepulse/provider-sync/local.json \
+  --remote-path ~/.local/state/jrbar/provider-sync/local.json \
   --known-hosts ~/.ssh/known_hosts \
   --identity-file ~/.ssh/id_ed25519
-sidepulse providers sync enable
+jrbar providers sync enable
 ```
 
 Repeat the pairing import in the opposite direction so both Macs can fetch each other's signed packet. Delete pairing files after import. Agent activity sync is a separate metadata-only category and remains off by default.

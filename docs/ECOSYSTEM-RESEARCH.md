@@ -13,7 +13,7 @@ device rewrites at most once every ~3 minutes from patina.
 
 | Source | What | Where it landed |
 | --- | --- | --- |
-| upstream PR #16 (CoolColby23) | Kiro CLI provider: dedicated managed agent file (`~/.kiro/agents/sidepulse.json`, launched with `kiro-cli --agent sidepulse`), refuses unmanaged files, camelCase natives normalize to canonical events, live_agent_events only (no ask-shaped hook). Detection-gated: quiet until Kiro is installed. Colour #704028 clears the dichromacy gate by dE >= 33 (Kiro's brand purple collapses onto Codex blue under deuteranopia). | `providers.py`, `install.py`, adapters/labels/inventory, `tests/test_kiro_provider.py` |
+| upstream PR #16 (CoolColby23) | Kiro CLI provider: dedicated managed agent file (`~/.kiro/agents/jrbar.json`, launched with `kiro-cli --agent jrbar`), refuses unmanaged files, camelCase natives normalize to canonical events, live_agent_events only (no ask-shaped hook). Detection-gated: quiet until Kiro is installed. Colour #704028 clears the dichromacy gate by dE >= 33 (Kiro's brand purple collapses onto Codex blue under deuteranopia). | `providers.py`, `install.py`, adapters/labels/inventory, `tests/test_kiro_provider.py` |
 | upstream PR #20 (d31tcjg) | A failed tool the agent continues past is Working, not Blocked — no more one amber flash per failed grep. Terminal failures (`StopFailure`, `PermissionDenied`) still block. | `_collector_legacy.mode_for_event` |
 | upstream PR #21 (quinnypig) | Keep-awake battery guard: optional release of `caffeinate` while on battery; an unknown power state never releases. Off by default (historical behavior preserved), `keep_awake_on_battery` setting. Uses our async battery runtime, not a new `pmset` subprocess. | `keep_awake.py`, settings, `sync_keep_awake` |
 
@@ -43,8 +43,8 @@ device rewrites at most once every ~3 minutes from patina.
   per program write. Measure against the Instruments ritual before and
   after; the budget doc wants idle-motion <= 2.5%.
 
-- **Kiro provider (upstream PR #16)** — hooks via `~/.kiro/agents/sidepulse.json`,
-  launched with `kiro-cli --agent sidepulse`. Not ported: Kiro is not
+- **Kiro provider (upstream PR #16)** — hooks via `~/.kiro/agents/jrbar.json`,
+  launched with `kiro-cli --agent jrbar`. Not ported: Kiro is not
   installed on this Mac, and unreachable providers violate the reachability
   ratchet. Port the day Kiro lands here; the PR's shape maps cleanly onto our
   `providers.py` detection + `hook_entry` pattern.
@@ -73,7 +73,7 @@ device rewrites at most once every ~3 minutes from patina.
   as our startup replay; compare their reconciliation on next T3 bump.
 - Our compatibility manifest pins T3 **0.0.33**; T3 Nightly moves fast — the
   probe currently reads his live database fine, but re-run
-  `sidepulse integrations probe t3code --json` after T3 updates and refresh
+  `jrbar integrations probe t3code --json` after T3 updates and refresh
   the fixture when the schema fingerprint moves.
 
 ## T3Notch (zortos293/T3Notch) — announcer-surface ideas

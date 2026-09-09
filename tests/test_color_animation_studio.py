@@ -659,7 +659,7 @@ def test_a_hold_nobody_released_expires_instead_of_owning_the_bar_forever(
 
 class StudioPaneTests(unittest.TestCase):
     def setUp(self) -> None:
-        from tests.test_sidepulse import isolate_controller
+        from tests.test_jrbar import isolate_controller
 
         isolate_controller(self)
         self.controller.show_settings_window()
@@ -917,7 +917,7 @@ class StudioPaneTests(unittest.TestCase):
         self.assertIn("Hover", compare["caption"].stringValue())
 
     def test_no_section_overlaps_itself_or_collapses_to_nothing(self) -> None:
-        """The generic pane-overlap guard in test_sidepulse skips this pane
+        """The generic pane-overlap guard in test_jrbar skips this pane
         (it is a pinned header plus its own scroll view, not the standard
         wrap_in_scroll_pane shape), so it needs its own."""
         self.controller.settings_window.contentView().layoutSubtreeIfNeeded()

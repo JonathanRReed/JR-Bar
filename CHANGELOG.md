@@ -4,6 +4,20 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Rename the software from SidePulse to JR-Bar. The Python package is `jrbar`
+  (`sidepulse.*` imports and `python -m sidepulse.hook_client` keep working
+  through a one-release shim), the CLI is `jrbar` (`sidepulse` stays as an
+  alias for one release), the app is `JR-Bar.app` / `com.jonathanreed.jrbar`,
+  the LaunchAgents are `com.jonathanreed.jrbar.app` and
+  `com.jonathanreed.jrbar.sdejectguard`, config/state/data live flat under
+  `~/.config/jrbar`, `~/.local/state/jrbar` and `~/.local/share/jrbar`,
+  environment variables are `JRBAR_*` (the `SIDEPULSE_*` names are read as a
+  fallback), provider Keychain items move to `com.jonathanreed.jrbar.provider.*`
+  with copy-forward on read, and every provider hook installer replaces its
+  pre-rename registration instead of duplicating it. First launch and
+  `jrbar setup` copy an existing SidePulse install forward automatically;
+  the hardware names (SidePulse Pro, SidePulse Dot) are unchanged.
+
 - Remove night warmth and the 7 PM–7 AM night dim (the Night Warmth card,
   `NIGHT_WARMTH_GAINS`, and the `night_warmth_enabled` / `night_dim_fraction`
   settings, ignored on load). `brightness_policy` keeps its `night_factor`

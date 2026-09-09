@@ -8,7 +8,7 @@ Prepared from `a07895c34ad22809a2260da752c69d6bfb9036fa` on August 15, 2026.
 - Provider-only background workers could disappear because the global worker representative was selected before the provider pin was applied.
 - Reconstructing a projection with a worker in `visible_rows` could duplicate that worker when the canonical invariant demoted it again.
 - A constant split the import section in the AppKit controller, producing a large Ruff cascade and preventing pytest from running in the hosted workflow.
-- Direct `python -m sidepulse.status_bar` execution was lost when the controller was placed behind a compatibility facade.
+- Direct `python -m jrbar.status_bar` execution was lost when the controller was placed behind a compatibility facade.
 - Historical `agent_monitor` and `sidepulse_cli` hook modules were present or referenced but excluded from built packages.
 - The packaging script defaulted to Apple's Python 3.9 even though the package requires Python 3.10 or newer.
 - Project metadata and release automation still targeted upstream/PyPI despite this being a deliberately divergent personal fork.
@@ -16,7 +16,7 @@ Prepared from `a07895c34ad22809a2260da752c69d6bfb9036fa` on August 15, 2026.
 
 ## Structural changes
 
-- Pure provider/device projection lives in `sidepulse.device_projection` with focused regression tests.
+- Pure provider/device projection lives in `jrbar.device_projection` with focused regression tests.
 - The 18,000-line AppKit controller is retained as `status_bar_legacy.py`; `status_bar.py` is a small compatibility boundary. New behavior must be extracted rather than added to the monolith.
 - Local bootstrap, verification, clean-install, isolated-install, and release scripts define the supported developer path.
 - GitHub workflows are manual-only while hosted credits are unavailable.

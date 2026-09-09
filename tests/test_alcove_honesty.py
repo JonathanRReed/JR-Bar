@@ -24,7 +24,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from test_sidepulse import isolate_controller
+from test_jrbar import isolate_controller
 
 from jrbar.alcove_observation import (
     AlcoveCaptureOutcome,

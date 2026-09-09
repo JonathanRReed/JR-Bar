@@ -1,10 +1,10 @@
-# Contributing to JR Bar (formerly SidePulse)
+# Contributing to JR-Bar
 
-JR Bar (formerly SidePulse) controls visible light, edits other tools’ hook configuration, reads private local state, can request macOS permissions, and ships a privileged installer path. Contributions are reviewed as desktop-systems changes, not as isolated Python utilities.
+JR-Bar controls visible light, edits other tools’ hook configuration, reads private local state, can request macOS permissions, and ships a privileged installer path. Contributions are reviewed as desktop-systems changes, not as isolated Python utilities.
 
 ## Development baseline
 
-JR Bar (formerly SidePulse) supports Python 3.10 through 3.13. macOS behavior requires PyObjC and must be tested on macOS. Use the reviewed dependency constraints:
+JR-Bar supports Python 3.10 through 3.13. macOS behavior requires PyObjC and must be tested on macOS. Use the reviewed dependency constraints:
 
 ```bash
 ./scripts/bootstrap-dev.sh
@@ -73,9 +73,9 @@ A production candidate requires a clean `main` checkout equal to `origin/main`, 
 export APP_SIGN_IDENTITY='Developer ID Application: …'
 export INSTALLER_SIGN_IDENTITY='Developer ID Installer: …'
 export NOTARY_PROFILE='sidepulse-notary'
-export SIDEPULSE_PERFORMANCE_EVIDENCE="$PWD/performance-evidence.json"
-export SIDEPULSE_HARDWARE_CONFIRM=1
-export SIDEPULSE_RUN_INSTALLED_UPGRADE=1
+export JRBAR_PERFORMANCE_EVIDENCE="$PWD/performance-evidence.json"
+export JRBAR_HARDWARE_CONFIRM=1
+export JRBAR_RUN_INSTALLED_UPGRADE=1
 ./scripts/verify_macos_release.sh
 ```
 

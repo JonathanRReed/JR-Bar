@@ -36,7 +36,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from test_sidepulse import isolate_controller
+from test_jrbar import isolate_controller
 
 from jrbar import doctor as doctor_module
 from jrbar import settings_window

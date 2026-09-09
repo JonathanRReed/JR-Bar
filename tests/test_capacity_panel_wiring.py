@@ -54,7 +54,7 @@ from jrbar.capacity_view import CapacityDetailModel
 from jrbar.decision_trace import CAPACITY_SECTION_TITLE, capacity_detail_text
 from jrbar.persistence_writer import SerialPersistenceWriter
 from tests.test_activity_ledger import _limits, _run_codex_refresh
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 NOW = 1_800_000_000.0
 
