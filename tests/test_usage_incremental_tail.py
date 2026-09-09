@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from sidepulse import usage_stats
+from jrbar import usage_stats
 
 
 def _assistant_row(message_id, *, inp=1000, out=500):

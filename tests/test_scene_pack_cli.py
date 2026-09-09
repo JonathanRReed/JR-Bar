@@ -5,9 +5,9 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from sidepulse.cli import build_sidepulse_parser, cmd_effects, sidepulse_main
-from sidepulse.effect_cli import dispatch_effect_command
-from sidepulse.scene_pack_store import ScenePackStore
+from jrbar.cli import build_sidepulse_parser, cmd_effects, jrbar_main
+from jrbar.effect_cli import dispatch_effect_command
+from jrbar.scene_pack_store import ScenePackStore
 
 
 def _pack(*, name: str = "Quiet Work") -> dict[str, object]:
@@ -109,6 +109,6 @@ def test_sidepulse_parser_reaches_scene_pack_store(tmp_path: Path, capsys) -> No
 
     assert parsed.func is cmd_effects
     assert parsed.action == "scene-install"
-    assert sidepulse_main(arguments) == 0
+    assert jrbar_main(arguments) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "installed"
     assert ScenePackStore(store).inspect("quiet-work").name == "Quiet Work"

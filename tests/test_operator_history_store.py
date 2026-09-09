@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.operator_history import HistoryCoverage, OperatorHistoryDay
-from sidepulse.operator_history_store import (
+from jrbar.operator_history import HistoryCoverage, OperatorHistoryDay
+from jrbar.operator_history_store import (
     MAX_OPERATOR_HISTORY_ROWS,
     MAX_OPERATOR_HISTORY_STORE_BYTES,
     OperatorHistoryRestoreHealth,
@@ -22,7 +22,7 @@ from sidepulse.operator_history_store import (
     load_operator_history,
     save_operator_history,
 )
-from sidepulse.provider_contracts import ProviderIdentifier
+from jrbar.provider_contracts import ProviderIdentifier
 
 NOW = 1_800_000_000.0
 TODAY = datetime.fromtimestamp(NOW, timezone.utc).date()
@@ -110,7 +110,7 @@ def test_zero_retention_delete_wins_a_concurrent_store_flush(tmp_path: Path) -> 
     release_write = threading.Event()
     delete_entered = threading.Event()
 
-    from sidepulse import operator_history_store as history_store_module
+    from jrbar import operator_history_store as history_store_module
 
     real_write = history_store_module.atomic_private_write
     real_unlink = history_store_module._secure_unlink
@@ -125,8 +125,8 @@ def test_zero_retention_delete_wins_a_concurrent_store_flush(tmp_path: Path) -> 
         return real_unlink(path)
 
     with (
-        patch("sidepulse.operator_history_store.atomic_private_write", side_effect=pausing_write),
-        patch("sidepulse.operator_history_store._secure_unlink", side_effect=observed_unlink),
+        patch("jrbar.operator_history_store.atomic_private_write", side_effect=pausing_write),
+        patch("jrbar.operator_history_store._secure_unlink", side_effect=observed_unlink),
     ):
         with ThreadPoolExecutor(max_workers=2) as executor:
             flush_future = executor.submit(store.flush, now=NOW)
@@ -374,7 +374,7 @@ def test_load_uses_held_parent_during_leaf_open_parent_path_swap(tmp_path: Path)
             swapped = True
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         restored = load_operator_history(target)
 
     assert restored.state == inside_state
@@ -402,7 +402,7 @@ def test_store_refuses_parent_swap_while_opening(tmp_path: Path, operation: str)
             swapped = True
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         if operation == "load":
             restored = load_operator_history(target)
             assert restored.state == OperatorHistoryState()
@@ -451,7 +451,7 @@ def test_file_growth_during_read_is_refused_without_retaining_payload(
             grew = True
         return real_read(descriptor, size)
 
-    with patch("sidepulse.private_io.os.read", side_effect=growing_read):
+    with patch("jrbar.private_io.os.read", side_effect=growing_read):
         restored = load_operator_history(target)
 
     assert restored.health is OperatorHistoryRestoreHealth.UNAVAILABLE
@@ -467,7 +467,7 @@ def test_atomic_replace_failure_preserves_previous_state(tmp_path: Path) -> None
     previous_bytes = target.read_bytes()
 
     with patch(
-        "sidepulse.private_io._replace_private_leaf",
+        "jrbar.private_io._replace_private_leaf",
         side_effect=OSError("injected replace failure"),
     ):
         with pytest.raises(OSError):
@@ -485,7 +485,7 @@ def test_failed_store_flush_remains_dirty_and_retries_exact_pending_rows(
     store.add_rows((_day(),))
 
     with patch(
-        "sidepulse.private_io._replace_private_leaf",
+        "jrbar.private_io._replace_private_leaf",
         side_effect=OSError("injected replace failure"),
     ):
         with pytest.raises(OSError):
@@ -573,7 +573,7 @@ def test_clear_failure_preserves_in_memory_truth_and_disk_for_retry(tmp_path: Pa
     store.flush(now=NOW)
 
     with patch(
-        "sidepulse.operator_history_store._secure_unlink",
+        "jrbar.operator_history_store._secure_unlink",
         side_effect=OSError("injected clear failure"),
     ):
         with pytest.raises(OSError):
@@ -594,7 +594,7 @@ def test_clear_wins_a_flush_that_already_observed_dirty_state(tmp_path: Path) ->
     release_clear = threading.Event()
     flush_started = threading.Event()
 
-    from sidepulse import operator_history_store as history_store_module
+    from jrbar import operator_history_store as history_store_module
 
     real_unlink = history_store_module._secure_unlink
 
@@ -608,8 +608,8 @@ def test_clear_wins_a_flush_that_already_observed_dirty_state(tmp_path: Path) ->
         return value == NOW
 
     with (
-        patch("sidepulse.operator_history_store._secure_unlink", side_effect=pausing_unlink),
-        patch("sidepulse.operator_history_store._valid_now", side_effect=observed_valid_now),
+        patch("jrbar.operator_history_store._secure_unlink", side_effect=pausing_unlink),
+        patch("jrbar.operator_history_store._valid_now", side_effect=observed_valid_now),
     ):
         with ThreadPoolExecutor(max_workers=2) as executor:
             clear_future = executor.submit(store.clear)

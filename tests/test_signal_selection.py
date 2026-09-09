@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.dnd_policy import DisplayAdmission
-from sidepulse.signal_selection import (
+from jrbar.dnd_policy import DisplayAdmission
+from jrbar.signal_selection import (
     SIGNAL_CLAIM_PRECEDENCE,
     SignalClaimKey,
     select_active_led_display_kind,

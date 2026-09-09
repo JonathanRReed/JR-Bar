@@ -72,11 +72,11 @@ def isolate_live_settings_file(tmp_path, monkeypatch):
         return isolated
 
     monkeypatch.setattr(
-        "sidepulse._settings_legacy.default_settings_path",
+        "jrbar._settings_legacy.default_settings_path",
         _isolated_path,
     )
     monkeypatch.setattr(
-        "sidepulse.settings.default_settings_path",
+        "jrbar.settings.default_settings_path",
         _isolated_path,
     )
 
@@ -155,7 +155,7 @@ def block_live_volume_writes(monkeypatch):
     monkeypatch.setattr(Path, "touch", guarded_touch, raising=False)
     monkeypatch.setattr(Path, "replace", guarded_replace, raising=False)
 
-    from sidepulse import keep_awake
+    from jrbar import keep_awake
 
     original_keepalive_touch = keep_awake.touch_keepalive_file
     original_poke_status_file = keep_awake.KeepAwakeController.poke_status_file
@@ -186,7 +186,7 @@ def block_live_volume_writes(monkeypatch):
     monkeypatch.setattr(keep_awake.subprocess, "run", guarded_subprocess_run)
 
     try:
-        from sidepulse import status_bar
+        from jrbar import status_bar
     except (ImportError, SystemExit):
         return
 
@@ -204,7 +204,7 @@ def block_live_volume_writes(monkeypatch):
         guarded_keepalive_targets,
     )
 
-    from sidepulse import device_writer
+    from jrbar import device_writer
 
     original_write_led_program = device_writer.write_led_program
 

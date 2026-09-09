@@ -4,16 +4,16 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.dnd_policy import (
+from jrbar.dnd_policy import (
     DndMode,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.local_health import LocalHealthMonitor, format_local_health
-from sidepulse.performance_metrics import PerformanceRegistry
-from sidepulse.runtime_scheduler import RuntimeWorkerDomain, RuntimeWorkerSnapshot
-from sidepulse.screen_bar_pipeline import (
+from jrbar.local_health import LocalHealthMonitor, format_local_health
+from jrbar.performance_metrics import PerformanceRegistry
+from jrbar.runtime_scheduler import RuntimeWorkerDomain, RuntimeWorkerSnapshot
+from jrbar.screen_bar_pipeline import (
     MAX_METRIC_COUNTER,
     PresentationMetricKind,
     PresentationMetrics,

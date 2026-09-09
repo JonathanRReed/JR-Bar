@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from sidepulse.courtesy_signatures import (
+from jrbar.courtesy_signatures import (
     COURTESY_SIGNATURES,
     DEFAULT_COURTESY_SIGNATURE_REGISTRY,
     MAX_CADENCE_HZ,

@@ -4,9 +4,9 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import CompletionPresentationKey
-from sidepulse.milestone_odometer import (
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import CompletionPresentationKey
+from jrbar.milestone_odometer import (
     MAX_RETAINED_OUTCOMES,
     MOTION_STEP_DURATION_MS,
     STATIC_HIGHLIGHT_DURATION_MS,

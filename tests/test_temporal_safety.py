@@ -5,7 +5,7 @@ import random
 
 import pytest
 
-from sidepulse.temporal_safety import (
+from jrbar.temporal_safety import (
     CalibrationState,
     RefusedTemporalProgram,
     SafeTemporalProgram,

@@ -5,8 +5,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.render_policy import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.render_policy import (
     BoundedRenderCache,
     GlowGeometryKey,
     GlowPaintKey,
@@ -251,7 +251,7 @@ def test_rounded_silhouette_is_one_closed_body_and_clamps_radius() -> None:
 
 
 def test_glow_composition_reuses_geometry_across_paint_changes() -> None:
-    from sidepulse.virtual_device import _glow_runs
+    from jrbar.virtual_device import _glow_runs
 
     geometry_cache: BoundedRenderCache[object] = BoundedRenderCache(max_entries=4)
     paint_cache: BoundedRenderCache[object] = BoundedRenderCache(max_entries=8)

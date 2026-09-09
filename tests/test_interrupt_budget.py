@@ -32,15 +32,15 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import signals
-from sidepulse.dnd_policy import DndMode, DndOverride, OutboundAdmission
-from sidepulse.focus_status import (
+from jrbar import signals
+from jrbar.dnd_policy import DndMode, DndOverride, OutboundAdmission
+from jrbar.focus_status import (
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.settings import AgentMonitorSettings
 
 COURTESY_KINDS = (
     signals.SIGNAL_QUOTA,
@@ -374,7 +374,7 @@ def test_a_default_burst_of_three_at_the_2hz_floor_is_the_shortest_burst() -> No
 
 
 def test_the_burst_budget_round_trips_and_a_junk_value_cannot_land() -> None:
-    from sidepulse.settings import load_settings, save_settings
+    from jrbar.settings import load_settings, save_settings
 
     assert AgentMonitorSettings().alert_burst == signals.DEFAULT_ALERT_BURST
     assert AgentMonitorSettings().with_alert_burst(5).alert_burst == 5
@@ -397,19 +397,19 @@ def controller(tmp_path, monkeypatch):
     and no live Focus leaking in from the machine running the gate."""
     settings_path = tmp_path / "settings.json"
     for target in (
-        "sidepulse.settings.default_settings_path",
-        "sidepulse.status_bar.default_settings_path",
+        "jrbar.settings.default_settings_path",
+        "jrbar.status_bar.default_settings_path",
     ):
         monkeypatch.setattr(target, lambda _p=settings_path: _p)
     monkeypatch.setattr(
-        "sidepulse.status_bar.default_latest_state_path",
+        "jrbar.status_bar.default_latest_state_path",
         lambda: tmp_path / "latest.json",
     )
-    monkeypatch.setattr("sidepulse.status_bar.discover_devices", lambda: [])
+    monkeypatch.setattr("jrbar.status_bar.discover_devices", lambda: [])
     monkeypatch.setattr(
-        "sidepulse.focus_sync.active_focus_mode_identifiers", lambda: []
+        "jrbar.focus_sync.active_focus_mode_identifiers", lambda: []
     )
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     built = status_bar.StatusBarController.alloc().init()
     built.settings = built.settings.with_focus_sync_enabled(True)
@@ -479,7 +479,7 @@ def test_a_focus_takes_the_courtesy_claims_off_the_bar(controller) -> None:
     reminder, a live completion sweep and a live calendar glow all stop
     claiming the LEDs -- and the SAME conditions claim them without
     one."""
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     device = _device(status_bar)
     controller.settings = (
@@ -518,7 +518,7 @@ def test_a_focus_leaves_the_critical_claims_exactly_where_they_were(
 ) -> None:
     """The wired proof that critical escalates through Focus: a failed
     session still claims the bar with a Focus on."""
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     device = _device(status_bar)
     _turn_on_a_focus(controller)
@@ -565,7 +565,7 @@ def test_a_completion_banner_during_a_focus_is_not_delivered(controller) -> None
     Both directions, because the early-return has four reasons and only
     one of them is the Focus: without a Focus the SAME call delivers.
     """
-    from sidepulse.operator_state import InterruptionClass
+    from jrbar.operator_state import InterruptionClass
 
     delivered: list[object] = []
     controller.settings = (
@@ -600,7 +600,7 @@ def test_the_escalation_chime_asks_the_gate_rather_than_re_deriving_it(
     until the rule changes, and then disagrees silently. So: the site
     must consult the gate, and must honour what it says.
     """
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     asked: list[str] = []
     verdict = {"audible": False}
@@ -685,7 +685,7 @@ def test_a_signal_dialled_into_strobe_range_is_slowed_before_the_hardware(
     played = controller.budgeted_signal_style(signals.SIGNAL_QUOTA)
     assert played.speed_seconds == signals.MIN_INTERRUPT_CYCLE_SECONDS
 
-    from sidepulse.led_status import style_to_program
+    from jrbar.led_status import style_to_program
 
     program = style_to_program(played, 255)
     durations = [
@@ -749,7 +749,7 @@ def test_a_reminder_that_arrives_during_a_focus_is_not_replayed_later(
 ) -> None:
     """The watermark advances even when the burst is refused, so the
     glow does not queue up and fire the moment the meeting ends."""
-    from sidepulse.status_bar import RemindersObservationResult
+    from jrbar.status_bar import RemindersObservationResult
 
     # Identifiers are opaque 64-char hex digests by contract.
     first = hashlib.sha256(b"reminder-1").hexdigest()
@@ -790,7 +790,7 @@ def test_an_unreadable_focus_never_holds_a_signal(controller) -> None:
     as "no Focus" -- the same fail-safe every other Focus caller takes.
     A permission the owner never granted must not silently mute the
     app."""
-    from sidepulse import focus_sync
+    from jrbar import focus_sync
 
     controller._focus_ids_cache = None
     with patch.object(
@@ -828,9 +828,9 @@ def test_charging_trickle_claims_the_idle_strip_and_yields_to_agents(
     battery display; ANY non-idle lifecycle -- working, asking, freshly
     done -- takes the strip back; full charge and the off-switch both
     drop the claim."""
-    from sidepulse import status_bar
-    from sidepulse.attention import LifecycleMode
-    from sidepulse.battery import BatterySnapshot
+    from jrbar import status_bar
+    from jrbar.attention import LifecycleMode
+    from jrbar.battery import BatterySnapshot
 
     device = _device(status_bar)
     charging = BatterySnapshot(percent=60, is_charging=True, is_plugged=True)
@@ -897,8 +897,8 @@ def test_charging_trickle_never_steals_a_pinned_display(
     sat ABOVE Studio/Runway and ignored the per-device display pin, so
     every pinned device silently became a battery meter while the Mac
     charged. The trickle claims ONLY default-display devices."""
-    from sidepulse import status_bar
-    from sidepulse.battery import BatterySnapshot
+    from jrbar import status_bar
+    from jrbar.battery import BatterySnapshot
 
     charging = BatterySnapshot(percent=60, is_charging=True, is_plugged=True)
     controller.current_attention_projection = None
@@ -918,9 +918,9 @@ def test_reset_celebration_claims_the_strip_and_respects_focus(controller) -> No
     is NOT gated behind quota_alerts_enabled."""
     import time as time_module
 
-    from sidepulse import status_bar
-    from sidepulse.celebrations import reset_celebration_program
-    from sidepulse.firmware_validation import validate_firmware_program
+    from jrbar import status_bar
+    from jrbar.celebrations import reset_celebration_program
+    from jrbar.firmware_validation import validate_firmware_program
 
     device = _device(status_bar)
     controller.quota_reset_celebration_until = time_module.monotonic() + 6.0
@@ -946,8 +946,8 @@ def test_reset_celebration_claim_outlasts_the_full_program() -> None:
     """The display claim must cover ALL cycles of the finite program --
     a hand-kept constant drifted under the 2026-08-26 choreography and
     the steady status program clipped the third cycle's fade."""
-    from sidepulse.animation import RepeatStep, parse_animation, step_duration_ms
-    from sidepulse.celebrations import (
+    from jrbar.animation import RepeatStep, parse_animation, step_duration_ms
+    from jrbar.celebrations import (
         RESET_CELEBRATION_SECONDS,
         reset_celebration_program,
     )

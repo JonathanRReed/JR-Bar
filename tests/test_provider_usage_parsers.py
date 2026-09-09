@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepulse.provider_usage_parsers import (
+from jrbar.provider_usage_parsers import (
     parse_antigravity_usage,
     parse_claude_usage,
     parse_codex_usage,

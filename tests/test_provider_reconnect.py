@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from sidepulse.provider_reconnect import (
+from jrbar.provider_reconnect import (
     TRANSIENT_BACKOFF_SECONDS,
     FailureGate,
     RepairOutcome,
@@ -447,7 +447,7 @@ def test_the_claude_gate_can_lift_when_the_keychain_item_changes():
     """The gate fingerprinted ~/.claude/.credentials.json, which does not
     exist on a Keychain-only machine -- so None == None forever and a
     fresh `claude login` was invisible to it."""
-    from sidepulse import provider_reconnect
+    from jrbar import provider_reconnect
 
     provider_reconnect._KEYCHAIN_FINGERPRINT_CACHE.clear()
     before = provider_reconnect.keychain_fingerprint("svc", now=0.0)
@@ -468,7 +468,7 @@ def test_the_claude_gate_can_lift_when_the_keychain_item_changes():
 
 
 def test_a_stored_expiry_drives_read_only_sync():
-    from sidepulse.provider_reconnect import claude_token_is_stale
+    from jrbar.provider_reconnect import claude_token_is_stale
 
     class Store:
         def __init__(self, value):

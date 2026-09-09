@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from sidepulse.webhook_delivery import (
+from jrbar.webhook_delivery import (
     WebhookReason,
     WebhookValidationError,
     _read_response,
@@ -52,7 +52,7 @@ def test_webhook_refuses_mixed_public_and_private_dns_answers() -> None:
 
 def test_webhook_payload_drops_session_provider_and_user_labels() -> None:
     payload = {
-        "event": "sidepulse.escalation",
+        "event": "jrbar.escalation",
         "stage": 3,
         "ask_count": 2,
         "oldest_ask_seconds": 305,
@@ -66,7 +66,7 @@ def test_webhook_payload_drops_session_provider_and_user_labels() -> None:
     encoded = json.loads(encode_webhook_payload(payload))
 
     assert safe == {
-        "event": "sidepulse.escalation",
+        "event": "jrbar.escalation",
         "stage": 3,
         "ask_count": 2,
         "oldest_ask_seconds": 305,

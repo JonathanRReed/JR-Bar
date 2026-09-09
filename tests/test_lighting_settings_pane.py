@@ -3,12 +3,12 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from sidepulse.lighting_settings_pane import build_effects_page
-from sidepulse.onboarding_runtime import (
+from jrbar.lighting_settings_pane import build_effects_page
+from jrbar.onboarding_runtime import (
     set_idle_auto_off_timeout,
     set_sleep_dim_percentage,
 )
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.settings import AgentMonitorSettings
 
 
 class _Field:

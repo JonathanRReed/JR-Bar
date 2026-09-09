@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from dataclasses import fields
 
-from sidepulse.capacity_authority import select_binding_lanes
-from sidepulse.capacity_refresh import (
+from jrbar.capacity_authority import select_binding_lanes
+from jrbar.capacity_refresh import (
     RefreshCause,
     RefreshDecision,
     RefreshDecisionKind,
     RefreshDecisionReason,
     RefreshSourceKey,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacitySnapshot,
     CapacitySourceHealth,
     CapacityUnit,
@@ -26,7 +26,7 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.capacity_view import (
+from jrbar.capacity_view import (
     CapacityAccessibilityChildModel,
     CapacityAccessibilityGroupModel,
     build_capacity_card,
@@ -155,7 +155,7 @@ def test_stale_and_zero_are_announced_without_relying_on_color() -> None:
 
 
 def test_no_source_status_remains_nonempty_and_does_not_create_fake_child() -> None:
-    from sidepulse.capacity_authority import CapacityProjection
+    from jrbar.capacity_authority import CapacityProjection
 
     card = build_capacity_card(CapacityProjection((), ()), NOW)
     accessibility = build_capacity_card_accessibility(card, NOW)

@@ -7,8 +7,8 @@ from collections.abc import Callable
 
 import pytest
 
-import sidepulse.runtime_scheduler as runtime_scheduler
-from sidepulse.runtime_scheduler import (
+import jrbar.runtime_scheduler as runtime_scheduler
+from jrbar.runtime_scheduler import (
     MAX_RUNTIME_METRIC_COUNT,
     AppKitTimerRegistry,
     LatestWinsWorker,

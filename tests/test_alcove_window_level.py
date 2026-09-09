@@ -9,7 +9,7 @@ bracket would simply vanish, with no error anywhere.
 
 from __future__ import annotations
 
-from sidepulse.virtual_device import (
+from jrbar.virtual_device import (
     ABOVE_ALCOVE_WINDOW_LEVEL,
     AlcoveWindowProbe,
     AlcoveWindowSnapshot,

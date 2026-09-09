@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.install import install_kiro_hooks, uninstall_kiro_hooks
-from sidepulse.models import AgentMode
-from sidepulse.providers import (
+from jrbar.install import install_kiro_hooks, uninstall_kiro_hooks
+from jrbar.models import AgentMode
+from jrbar.providers import (
     KIRO_EVENTS,
     KIRO_MANAGED_DESCRIPTION,
     KIRO_NATIVE_EVENT_NAMES,
@@ -20,7 +20,7 @@ from sidepulse.providers import (
 
 
 def test_install_detect_round_trip(tmp_path: Path) -> None:
-    config = tmp_path / ".kiro" / "agents" / "sidepulse.json"
+    config = tmp_path / ".kiro" / "agents" / "jrbar.json"
     log = tmp_path / "kiro.jsonl"
 
     result = install_kiro_hooks(log_path=log, config_path=config)
@@ -44,7 +44,7 @@ def test_install_detect_round_trip(tmp_path: Path) -> None:
 
 
 def test_install_refuses_unmanaged_agent_file(tmp_path: Path) -> None:
-    config = tmp_path / ".kiro" / "agents" / "sidepulse.json"
+    config = tmp_path / ".kiro" / "agents" / "jrbar.json"
     config.parent.mkdir(parents=True)
     config.write_text(json.dumps({"name": "sidepulse", "description": "mine"}))
 
@@ -60,7 +60,7 @@ def test_install_refuses_unmanaged_agent_file(tmp_path: Path) -> None:
 
 
 def test_uninstall_removes_only_the_managed_file(tmp_path: Path) -> None:
-    config = tmp_path / ".kiro" / "agents" / "sidepulse.json"
+    config = tmp_path / ".kiro" / "agents" / "jrbar.json"
     install_kiro_hooks(log_path=tmp_path / "kiro.jsonl", config_path=config)
 
     result = uninstall_kiro_hooks(
@@ -77,7 +77,7 @@ def test_kiro_native_names_normalize_to_canonical_events() -> None:
 
 
 def test_kiro_log_lines_reach_the_collector_with_working_semantics() -> None:
-    from sidepulse.collector import mode_for_event
+    from jrbar.collector import mode_for_event
 
     line = json.dumps(
         {

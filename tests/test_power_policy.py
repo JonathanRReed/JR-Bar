@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.power_policy import (
+from jrbar.power_policy import (
     PowerHoldChoices,
     configure_caffeinate_display_assertion,
 )
@@ -105,8 +105,8 @@ def test_power_hold_choices_keep_the_four_decisions_independent() -> None:
 
 
 def test_default_agent_and_closed_lid_commands_allow_display_sleep() -> None:
-    from sidepulse.keep_awake import CAFFEINATE_COMMAND
-    from sidepulse.lid_sleep import CAFFEINATE_CLOSED_LID_COMMAND
+    from jrbar.keep_awake import CAFFEINATE_COMMAND
+    from jrbar.lid_sleep import CAFFEINATE_CLOSED_LID_COMMAND
 
     assert configure_caffeinate_display_assertion(
         CAFFEINATE_COMMAND,

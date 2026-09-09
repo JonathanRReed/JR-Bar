@@ -5,18 +5,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from sidepulse.dnd_policy import (
+from jrbar.dnd_policy import (
     DndMode,
     DndOverride,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.settings import AgentMonitorSettings
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_BAR = ROOT / "src" / "sidepulse" / "status_bar.py"
-MENU_PROJECTION = ROOT / "src" / "sidepulse" / "menu_projection.py"
+STATUS_BAR = ROOT / "src" / "jrbar" / "status_bar.py"
+MENU_PROJECTION = ROOT / "src" / "jrbar" / "menu_projection.py"
 
 
 class _FakeMenuItem:
@@ -152,7 +152,7 @@ def test_compact_menu_projects_one_safe_clear_agents_action() -> None:
 
 
 def test_clearable_presented_count_adapter_is_exception_safe(monkeypatch) -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     monkeypatch.setattr(
         status_bar._legacy,
@@ -175,7 +175,7 @@ def test_clearable_presented_count_adapter_is_exception_safe(monkeypatch) -> Non
 
 
 def test_clear_agents_compaction_replaces_duplicate_rows_once(monkeypatch) -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     monkeypatch.setattr(status_bar._legacy, "NSMenuItem", _FakeMenuItem)
     target = object()
@@ -201,7 +201,7 @@ def test_clear_agents_compaction_replaces_duplicate_rows_once(monkeypatch) -> No
 def test_clear_agents_compaction_removes_action_when_nothing_is_clearable(
     monkeypatch,
 ) -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     monkeypatch.setattr(status_bar._legacy, "NSMenuItem", _FakeMenuItem)
     menu = _FakeMenu(
@@ -215,7 +215,7 @@ def test_clear_agents_compaction_removes_action_when_nothing_is_clearable(
 
 
 def test_compact_adapter_prefers_manual_override_mode_and_exact_expiry() -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     now = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc).timestamp()
     override = DndOverride.for_mode(
@@ -256,7 +256,7 @@ def test_compact_adapter_prefers_manual_override_mode_and_exact_expiry() -> None
 
 
 def test_compact_adapter_fails_closed_without_the_typed_controller_protocol() -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     assert status_bar._dnd_menu_fields(SimpleNamespace()) == (
         None,
@@ -270,7 +270,7 @@ def test_compact_adapter_fails_closed_without_the_typed_controller_protocol() ->
 
 
 def test_compact_adapter_preserves_scheduled_and_focus_summary() -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     now = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc).timestamp()
     projection = compose_dnd_contributions(
@@ -294,7 +294,7 @@ def test_compact_adapter_preserves_scheduled_and_focus_summary() -> None:
 
 
 def test_compact_adapter_preserves_manual_and_focus_summary() -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     now = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc).timestamp()
     override = DndOverride.for_mode(

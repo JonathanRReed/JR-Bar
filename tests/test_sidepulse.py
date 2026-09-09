@@ -19,27 +19,27 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
-from sidepulse import cli as cli_module
-from sidepulse import collector as collector_module
-from sidepulse import colors as colors_module
-from sidepulse.agent_browser_window import AgentBrowserActionPayload
-from sidepulse.battery import (
+from jrbar import cli as cli_module
+from jrbar import collector as collector_module
+from jrbar import colors as colors_module
+from jrbar.agent_browser_window import AgentBrowserActionPayload
+from jrbar.battery import (
     BATTERY_CHARGING_MINT,
     BatteryLedController,
     BatterySnapshot,
     parse_ioreg_battery_plist,
     program_for_battery,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.cli import build_parser, visible_watch_statuses
-from sidepulse.collector import (
+from jrbar.capacity_types import SourceKey
+from jrbar.cli import build_parser, visible_watch_statuses
+from jrbar.collector import (
     AgentMonitor,
     LiveAgentMonitor,
     MonitorSnapshot,
     SourceSpec,
     default_sources,
 )
-from sidepulse.colors import (
+from jrbar.colors import (
     BLEND_MODE_CHOICES,
     BLEND_MODE_CLASSIC,
     BLEND_MODE_COLOR,
@@ -57,16 +57,15 @@ from sidepulse.colors import (
     program_for_snapshot,
     urgency_weight,
 )
-from sidepulse.device_writer import (
+from jrbar.device_writer import (
     DeviceWriteError,
     discover_devices,
     normalize_led_text,
     validate_led_text,
     write_led_program,
 )
-from sidepulse.hook import format_hook_payload, routed_hook_payload
-from sidepulse.providers import CODEX_EVENTS
-from sidepulse.install import (
+from jrbar.hook import format_hook_payload, routed_hook_payload
+from jrbar.install import (
     hook_command,
     install_claude_hooks,
     install_codex_hooks,
@@ -87,14 +86,14 @@ from sidepulse.install import (
     uninstall_opencode_plugin,
     update_codex_trusted_hashes,
 )
-from sidepulse.ipc import (
+from jrbar.ipc import (
     HookEventServer,
     ProviderRefreshHint,
     send_hook_event,
     send_refresh_hint,
 )
-from sidepulse.keep_awake import KeepAwakeController
-from sidepulse.led_status import (
+from jrbar.keep_awake import KeepAwakeController
+from jrbar.led_status import (
     ANIMATION_STYLE_BLINK,
     ANIMATION_STYLE_CHOICES,
     ANIMATION_STYLE_PULSE,
@@ -108,7 +107,7 @@ from sidepulse.led_status import (
     program_for_display_state,
     write_mode_to_leds,
 )
-from sidepulse.lid_sleep import (
+from jrbar.lid_sleep import (
     ClosedLidAwakeController,
     SleepHelperRequiredError,
     closed_lid_awake_should_hold,
@@ -116,25 +115,25 @@ from sidepulse.lid_sleep import (
     run_sudo_pmset_disablesleep,
     sleep_helper_sudoers_rule,
 )
-from sidepulse.mailbox import MailboxSectionKind
-from sidepulse.models import AgentMode, AgentStatus, AggregateStatus
-from sidepulse.navigation_policy import (
+from jrbar.mailbox import MailboxSectionKind
+from jrbar.models import AgentMode, AgentStatus, AggregateStatus
+from jrbar.navigation_policy import (
     NavigationCandidate,
     OperatorActionKind,
     resolve_navigation,
 )
-from sidepulse.operator_accessibility import status_item_accessibility
-from sidepulse.operator_history_store import OperatorHistoryState
-from sidepulse.operator_state import BootIdentifier, ClockSample, empty_operator_state
-from sidepulse.origin import ProcessInfo, origin_from_processes
-from sidepulse.presentation_policy import (
+from jrbar.operator_accessibility import status_item_accessibility
+from jrbar.operator_history_store import OperatorHistoryState
+from jrbar.operator_state import BootIdentifier, ClockSample, empty_operator_state
+from jrbar.origin import ProcessInfo, origin_from_processes
+from jrbar.presentation_policy import (
     FiniteCue,
     GlanceOverrideReason,
     GlanceSemantic,
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -153,7 +152,8 @@ from sidepulse.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from sidepulse.providers import (
+from jrbar.providers import (
+    CODEX_EVENTS,
     DEVIN_EVENTS,
     HOOK_PROVIDERS,
     PROVIDER_REGISTRY,
@@ -166,7 +166,7 @@ from sidepulse.providers import (
     parse_log_line,
     provider_spec,
 )
-from sidepulse.sd_eject_guard_launch import (
+from jrbar.sd_eject_guard_launch import (
     SD_EJECT_GUARD_BINARY_NAME,
     SD_EJECT_GUARD_DISPLAY_NAME,
     SD_EJECT_GUARD_LABEL,
@@ -178,7 +178,7 @@ from sidepulse.sd_eject_guard_launch import (
     stop_sd_eject_guard,
     uninstall_sd_eject_guard,
 )
-from sidepulse.session_actions import (
+from jrbar.session_actions import (
     SESSION_OPEN_APP,
     SESSION_OPEN_TERMINAL,
     SESSION_OPEN_VSCODE,
@@ -190,7 +190,7 @@ from sidepulse.session_actions import (
     session_resume_command,
     session_vscode_link,
 )
-from sidepulse.settings import (
+from jrbar.settings import (
     CLOSED_LID_AWAKE_AGENTS,
     CLOSED_LID_AWAKE_ALWAYS,
     CLOSED_LID_AWAKE_NEVER,
@@ -204,7 +204,7 @@ from sidepulse.settings import (
     load_settings,
     save_settings,
 )
-from sidepulse.status_bar_launch import (
+from jrbar.status_bar_launch import (
     LAUNCH_AGENT_LABEL,
     build_launch_agent_plist,
     install_launch_agent,
@@ -215,8 +215,8 @@ from sidepulse.status_bar_launch import (
 def write_hook_line(log_path, line):
     """Local fixture writer (deleted from hook.py 2026-08-26: production
     goes through routed/normalized records; only fixtures write raw lines)."""
-    from sidepulse import audit
-    from sidepulse.private_io import append_private_text, redact_event_payload
+    from jrbar import audit
+    from jrbar.private_io import append_private_text, redact_event_payload
 
     log_path = log_path.expanduser()
     safe_line = redact_event_payload(line)
@@ -251,7 +251,7 @@ def snapshot_from_statuses(statuses, **kwargs):
     loose statuses. Resolves every collector function at call time so the
     facade's patched status_is_stale semantics apply.
     """
-    from sidepulse import _collector_legacy as _cl
+    from jrbar import _collector_legacy as _cl
 
     fresh = []
     stale = []
@@ -353,11 +353,11 @@ class AgentMonitorTests(unittest.TestCase):
         )
 
     def test_opencode_global_plugin_detector_reports_only_the_expected_plugin_file(self) -> None:
-        from sidepulse.providers import default_opencode_plugin_path, detect_opencode_plugin
+        from jrbar.providers import default_opencode_plugin_path, detect_opencode_plugin
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            plugin_path = home / ".config" / "opencode" / "plugins" / "sidepulse.js"
+            plugin_path = home / ".config" / "opencode" / "plugins" / "jrbar.js"
 
             self.assertEqual(default_opencode_plugin_path(home), plugin_path)
             absent = detect_opencode_plugin(home)
@@ -378,7 +378,7 @@ class AgentMonitorTests(unittest.TestCase):
             self.assertEqual(detected.log_paths, ())
 
     def test_opencode_detector_requires_exact_managed_plugin_source(self) -> None:
-        from sidepulse.providers import default_opencode_plugin_path, detect_opencode_plugin
+        from jrbar.providers import default_opencode_plugin_path, detect_opencode_plugin
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -404,11 +404,11 @@ class AgentMonitorTests(unittest.TestCase):
             self.assertFalse(detect_opencode_plugin(home).exists)
 
     def test_opencode_plugin_installer_is_private_idempotent_and_preserves_config(self) -> None:
-        from sidepulse.providers import detect_opencode_plugin
+        from jrbar.providers import detect_opencode_plugin
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            plugin_path = home / ".config" / "opencode" / "plugins" / "sidepulse.js"
+            plugin_path = home / ".config" / "opencode" / "plugins" / "jrbar.js"
             config_path = home / ".config" / "opencode" / "opencode.json"
             config_path.parent.mkdir(parents=True)
             config_path.write_text('{"unrelated": {"keep": true}}\n')
@@ -461,7 +461,7 @@ class AgentMonitorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             target_log = base / "logs" / "opencode.jsonl"
-            plugin_path = base / "plugins" / "sidepulse.js"
+            plugin_path = base / "plugins" / "jrbar.js"
             plugin_path.parent.mkdir()
             plugin_path.write_text("export default { event: () => {} };\n")
 
@@ -487,12 +487,12 @@ class AgentMonitorTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 install_opencode_plugin(
                     target_log,
-                    plugin_path=linked_parent / "sidepulse.js",
+                    plugin_path=linked_parent / "jrbar.js",
                     python_executable=sys.executable,
                 )
 
     def test_opencode_plugin_rejects_forged_managed_source_arguments(self) -> None:
-        from sidepulse.providers import default_opencode_plugin_path, detect_opencode_plugin
+        from jrbar.providers import default_opencode_plugin_path, detect_opencode_plugin
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -518,7 +518,7 @@ class AgentMonitorTests(unittest.TestCase):
 
     def test_opencode_install_rejects_an_untrusted_generation_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            plugin_path = Path(tmp) / "plugins" / "sidepulse.js"
+            plugin_path = Path(tmp) / "plugins" / "jrbar.js"
             with self.assertRaises(ValueError):
                 install_opencode_plugin(
                     Path(tmp) / "opencode.jsonl",
@@ -540,13 +540,13 @@ class AgentMonitorTests(unittest.TestCase):
         self.assertNotIn("detached", source)
 
     def test_opencode_uninstall_uses_held_parent_when_parent_path_swaps(self) -> None:
-        from sidepulse import install as install_module
-        from sidepulse import private_io
+        from jrbar import install as install_module
+        from jrbar import private_io
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             target_log = base / "logs" / "opencode.jsonl"
-            plugin_path = base / "plugins" / "sidepulse.js"
+            plugin_path = base / "plugins" / "jrbar.js"
             install_opencode_plugin(target_log, plugin_path=plugin_path, python_executable=sys.executable)
             outside = base / "outside"
             outside.mkdir()
@@ -567,22 +567,22 @@ class AgentMonitorTests(unittest.TestCase):
                 return original_require_leaf(*args)
 
             with (
-                patch("sidepulse.install._read_opencode_plugin_source", return_value=managed_source),
-                patch("sidepulse.private_io._require_private_leaf", side_effect=swap_parent),
+                patch("jrbar.install._read_opencode_plugin_source", return_value=managed_source),
+                patch("jrbar.private_io._require_private_leaf", side_effect=swap_parent),
             ):
                 result = uninstall_opencode_plugin(target_log, plugin_path=plugin_path)
 
             self.assertTrue(result.changed)
-            self.assertFalse((held_parent / "sidepulse.js").exists())
+            self.assertFalse((held_parent / "jrbar.js").exists())
             self.assertTrue(plugin_path.parent.is_symlink())
             self.assertEqual(marker.read_text(), "outside remains")
 
     def test_opencode_uninstall_preserves_leaf_replaced_after_ownership_check(self) -> None:
-        from sidepulse import install as install_module
+        from jrbar import install as install_module
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            plugin_path = base / "plugins" / "sidepulse.js"
+            plugin_path = base / "plugins" / "jrbar.js"
             target_log = base / "opencode.jsonl"
             install_opencode_plugin(target_log, plugin_path=plugin_path, python_executable=sys.executable)
             replacement = "replacement remains\n"
@@ -593,18 +593,18 @@ class AgentMonitorTests(unittest.TestCase):
                 path.write_text(replacement)
                 return real_unlink(path, expected_identity=expected_identity)
 
-            with patch("sidepulse.install.unlink_private_file_if_unchanged", side_effect=replace_then_unlink):
+            with patch("jrbar.install.unlink_private_file_if_unchanged", side_effect=replace_then_unlink):
                 result = uninstall_opencode_plugin(target_log, plugin_path=plugin_path)
 
             self.assertFalse(result.changed)
             self.assertEqual(plugin_path.read_text(), replacement)
 
     def test_opencode_uninstall_preserves_leaf_swapped_between_source_and_identity(self) -> None:
-        from sidepulse import install as install_module
+        from jrbar import install as install_module
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            plugin_path = base / "plugins" / "sidepulse.js"
+            plugin_path = base / "plugins" / "jrbar.js"
             target_log = base / "opencode.jsonl"
             install_opencode_plugin(target_log, plugin_path=plugin_path, python_executable=sys.executable)
             replacement = "replacement remains\n"
@@ -616,7 +616,7 @@ class AgentMonitorTests(unittest.TestCase):
                 path.write_text(replacement)
                 return result
 
-            with patch("sidepulse.install._read_opencode_plugin_source", side_effect=read_then_swap):
+            with patch("jrbar.install._read_opencode_plugin_source", side_effect=read_then_swap):
                 result = uninstall_opencode_plugin(target_log, plugin_path=plugin_path)
 
             self.assertFalse(result.changed)
@@ -626,7 +626,7 @@ class AgentMonitorTests(unittest.TestCase):
     def test_opencode_plugin_forwards_only_bounded_canonical_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            plugin_path = base / "sidepulse.js"
+            plugin_path = base / "jrbar.js"
             capture_path = base / "opencode.jsonl"
             capture_hook = base / "capture-hook"
             capture_hook.write_text(
@@ -989,7 +989,7 @@ for (const event of [
         )
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch("sidepulse.origin.process_ancestry", return_value=processes),
+            patch("jrbar.origin.process_ancestry", return_value=processes),
         ):
             line = format_hook_payload(
                 "codex",
@@ -1121,7 +1121,7 @@ for (const event of [
             )
 
             with (
-                patch("sidepulse.hook.detect_log_path", return_value=grok),
+                patch("jrbar.hook.detect_log_path", return_value=grok),
                 patch.dict(os.environ, {"TERM_PROGRAM": "Apple_Terminal"}, clear=True),
             ):
                 provider, path, line = routed_hook_payload("claude", claude, payload)
@@ -1223,7 +1223,7 @@ for (const event of [
 
     def test_status_bar_startup_replay_ingests_recent_debug_logs(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -1248,7 +1248,7 @@ for (const event of [
             monitor = LiveAgentMonitor()
 
             with patch(
-                "sidepulse.status_bar.detect_log_path",
+                "jrbar.status_bar.detect_log_path",
                 return_value=log,
             ):
                 replayed = status_bar.replay_recent_debug_logs(
@@ -1273,7 +1273,7 @@ for (const event of [
 
     def test_status_bar_startup_replay_keeps_only_latest_record_per_session(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -1316,7 +1316,7 @@ for (const event of [
             monitor = LiveAgentMonitor()
 
             with patch(
-                "sidepulse.status_bar.detect_log_path",
+                "jrbar.status_bar.detect_log_path",
                 return_value=log,
             ):
                 replayed = status_bar.replay_recent_debug_logs(
@@ -1337,7 +1337,7 @@ for (const event of [
 
     def test_status_bar_grok_provider_uses_badge_icon(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -1358,7 +1358,7 @@ for (const event of [
 
     def test_status_bar_vscode_origin_uses_composite_app_icon(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -1380,7 +1380,7 @@ for (const event of [
 
     def test_status_bar_session_row_icon_combines_status_and_origin(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -1402,8 +1402,8 @@ for (const event of [
 
     def test_virtual_screen_bar_frame_covers_notch_plus_led_band(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.screen_bar_runtime import install_screen_bar_runtime
+            from jrbar import virtual_device
+            from jrbar.screen_bar_runtime import install_screen_bar_runtime
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1436,8 +1436,8 @@ for (const event of [
 
     def test_virtual_screen_bar_on_notchless_display_is_led_band_only(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.screen_bar_runtime import install_screen_bar_runtime
+            from jrbar import virtual_device
+            from jrbar.screen_bar_runtime import install_screen_bar_runtime
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1470,7 +1470,7 @@ for (const event of [
         # 30fps paint / 15Hz WASM pipeline. Static output has no repeating
         # frame driver and hidden output is paused by the render policy.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1484,7 +1484,7 @@ for (const event of [
 
     def test_screen_bar_sampling_interval_follows_selected_cadence(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1496,8 +1496,8 @@ for (const event of [
 
     def test_screen_bar_new_program_promotes_cadence_immediately(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.render_policy import RenderEnvironment
+            from jrbar import virtual_device
+            from jrbar.render_policy import RenderEnvironment
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1536,8 +1536,8 @@ for (const event of [
 
     def test_screen_bar_frame_callback_never_promotes_cadence(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.render_policy import RenderEnvironment
+            from jrbar import virtual_device
+            from jrbar.render_policy import RenderEnvironment
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1574,7 +1574,7 @@ for (const event of [
 
     def test_screen_bar_power_observers_are_removed_when_hidden(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1607,8 +1607,8 @@ for (const event of [
 
     def test_visible_screen_bar_pauses_for_sleep_and_promotes_on_wake(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.render_policy import RenderEnvironment
+            from jrbar import virtual_device
+            from jrbar.render_policy import RenderEnvironment
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1659,7 +1659,7 @@ for (const event of [
 
     def test_screen_bar_identical_quantized_frame_is_not_repainted(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1687,7 +1687,7 @@ for (const event of [
 
     def test_screen_bar_riser_uses_two_native_gradient_draws(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1718,7 +1718,7 @@ for (const event of [
 
     def test_screen_bar_riser_fallback_stays_below_old_fill_count(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1743,7 +1743,7 @@ for (const event of [
 
     def test_screen_bar_gradient_cache_reuses_changing_smoothed_colors(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1801,7 +1801,7 @@ for (const event of [
         # accent. Position/size must be identical either way; only
         # VirtualLedView.compact_mode (tested below) changes.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1827,8 +1827,8 @@ for (const event of [
 
     def test_compact_mode_toggle_updates_the_view_and_redraws(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.screen_bar_runtime import install_screen_bar_runtime
+            from jrbar import virtual_device
+            from jrbar.screen_bar_runtime import install_screen_bar_runtime
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1866,7 +1866,7 @@ for (const event of [
 
     def test_wrap_menu_bar_off_matches_todays_exact_frame(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1881,7 +1881,7 @@ for (const event of [
 
     def test_wrap_menu_bar_widens_the_frame_but_stays_centered(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1900,7 +1900,7 @@ for (const event of [
 
     def test_wing_width_is_bounded_by_the_narrower_side(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1922,7 +1922,7 @@ for (const event of [
 
     def test_wing_width_is_zero_on_a_notchless_display(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1948,7 +1948,7 @@ for (const event of [
 
     def test_notch_width_none_uses_full_view_width_unchanged(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1960,7 +1960,7 @@ for (const event of [
 
     def test_set_notch_width_insets_the_body_and_computes_wing_offset(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1972,7 +1972,7 @@ for (const event of [
 
     def test_notch_width_never_exceeds_the_views_own_bounds(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -1986,8 +1986,8 @@ for (const event of [
 
     def test_wrap_mode_drawing_does_not_raise(self) -> None:
         try:
-            from sidepulse import virtual_device
-            from sidepulse.screen_bar_runtime import install_screen_bar_runtime
+            from jrbar import virtual_device
+            from jrbar.screen_bar_runtime import install_screen_bar_runtime
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2012,7 +2012,7 @@ for (const event of [
         # width, reading as "the glow doesn't extend to the edges" even
         # though the window itself was genuinely that wide.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2033,7 +2033,7 @@ for (const event of [
 
     def test_glow_color_for_column_matches_plain_blend_with_no_wing(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2049,7 +2049,7 @@ for (const event of [
 
     def test_preview_white_brightness_scales_all_leds_evenly(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2073,7 +2073,7 @@ for (const event of [
         # feeds identical left/right risers. The drawRect_ call below
         # exercises the contained classic path end to end.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2097,7 +2097,7 @@ for (const event of [
         # each side's free room; the auto wing must shrink by the same
         # overhang or it draws over app menus and status icons.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2125,7 +2125,7 @@ for (const event of [
     def test_bracket_style_auto_mirrors_leds_when_a_crowd_is_lit(self) -> None:
         # Auto preserves each LED even when only the moving head is lit.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
         view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
@@ -2155,7 +2155,7 @@ for (const event of [
         # spatial per-LED render, one working agent lit 1 of 8 LEDs and
         # the bracket was 7/8 black with an invisible right riser.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
         view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
@@ -2170,7 +2170,7 @@ for (const event of [
         # The Alcove-aware wrap draws just the bracket (wings + risers)
         # and leaves the center -- Alcove's own overlay -- untouched.
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2203,7 +2203,7 @@ for (const event of [
 
     def test_virtual_status_device_set_wraps_menu_bar(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2214,7 +2214,7 @@ for (const event of [
 
     def test_is_alcove_running_fails_safe_on_workspace_error(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2233,7 +2233,7 @@ for (const event of [
 
     def test_led_wasm_controller_uses_packaged_firmware_engine(self) -> None:
         try:
-            from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
+            from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
         except ImportError as exc:
             self.skipTest(str(exc))
 
@@ -2249,7 +2249,7 @@ for (const event of [
 
     def test_led_wasm_controller_supports_sidepulse_dot_led_count(self) -> None:
         try:
-            from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
+            from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
         except ImportError as exc:
             self.skipTest(str(exc))
 
@@ -2265,7 +2265,7 @@ for (const event of [
 
     def test_virtual_screen_bar_led_blend_spans_three_leds(self) -> None:
         try:
-            from sidepulse import virtual_device
+            from jrbar import virtual_device
         except (ImportError, SystemExit) as exc:
             self.skipTest(str(exc))
 
@@ -2297,7 +2297,7 @@ for (const event of [
 
     def test_status_bar_native_session_row_uses_task_title(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2330,7 +2330,7 @@ for (const event of [
 
     def test_status_bar_device_submenu_has_brightness_slider(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2361,7 +2361,7 @@ for (const event of [
 
     def test_status_bar_observe_connected_device_resets_on_new_mount(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2395,7 +2395,7 @@ for (const event of [
 
     def test_status_bar_poll_devices_refreshes_on_connection_change(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2413,7 +2413,7 @@ for (const event of [
 
     def test_status_bar_menu_has_closed_lid_awake_policy_choices(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2474,7 +2474,7 @@ for (const event of [
 
     def test_status_bar_menu_shows_stale_statuses_when_no_fresh_statuses(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2514,7 +2514,7 @@ for (const event of [
 
     def test_lid_animation_program_uses_device_brightness(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2526,7 +2526,7 @@ for (const event of [
 
     def test_lid_animation_restore_forces_led_resync(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2556,7 +2556,7 @@ for (const event of [
 
     def test_status_bar_settings_window_has_lid_animation_controls(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2568,8 +2568,8 @@ for (const event of [
         with tempfile.TemporaryDirectory() as tmp:
             settings_path = Path(tmp) / "settings.json"
             with (
-                patch("sidepulse.settings.default_settings_path", return_value=settings_path),
-                patch("sidepulse.status_bar.default_settings_path", return_value=settings_path),
+                patch("jrbar.settings.default_settings_path", return_value=settings_path),
+                patch("jrbar.status_bar.default_settings_path", return_value=settings_path),
             ):
                 target = status_bar.StatusBarController.alloc().init()
                 window = status_bar.build_settings_window(target)
@@ -2587,7 +2587,7 @@ for (const event of [
 
     def test_status_bar_setup_window_has_first_launch_controls(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2630,7 +2630,7 @@ for (const event of [
 
     def test_first_launch_setup_window_only_shows_until_completed(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2639,15 +2639,15 @@ for (const event of [
 
     def test_setup_terminal_installer_opens_command_file(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
         with tempfile.TemporaryDirectory() as tmp:
             state_dir = Path(tmp)
             with (
-                patch("sidepulse.status_bar.default_state_dir", return_value=state_dir),
-                patch("sidepulse.status_bar.subprocess.Popen") as popen,
+                patch("jrbar.status_bar.default_state_dir", return_value=state_dir),
+                patch("jrbar.status_bar.subprocess.Popen") as popen,
             ):
                 script = status_bar.open_terminal_setup_command("echo hello")
 
@@ -2659,7 +2659,7 @@ for (const event of [
 
     def test_status_bar_open_session_remembers_action_by_origin(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2681,8 +2681,8 @@ for (const event of [
         )
 
         with (
-            patch("sidepulse.status_bar.open_terminal_command") as open_terminal,
-            patch("sidepulse.status_bar.save_settings") as save,
+            patch("jrbar.status_bar.open_terminal_command") as open_terminal,
+            patch("jrbar.status_bar.save_settings") as save,
         ):
             status_bar.StatusBarController.open_session(
                 fake,
@@ -2703,7 +2703,7 @@ for (const event of [
 
     def test_status_bar_primary_session_click_uses_saved_origin_preference(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -2764,7 +2764,7 @@ for (const event of [
             self.assertIn("hooks = true", text)
             self.assertIn("[hooks.state]", text)
             self.assertIn('source = "keep-me"', text)
-            self.assertIn("sidepulse.hook_client", text)
+            self.assertIn("jrbar.hook_client", text)
             self.assertIn("--provider codex", text)
             self.assertIn(str(log), text)
             self.assertNotIn("echo old", text)
@@ -2812,8 +2812,8 @@ for (const event of [
             original = config.read_bytes()
 
             with (
-                patch("sidepulse.install.hook_command", return_value=current_command),
-                patch("sidepulse.install.local_codex_hook_hashes", return_value={}),
+                patch("jrbar.install.hook_command", return_value=current_command),
+                patch("jrbar.install.local_codex_hook_hashes", return_value={}),
             ):
                 result = install_codex_hooks(log_path=log, config_path=config)
 
@@ -2871,7 +2871,7 @@ for (const event of [
             )
             config.write_text("\n".join(lines))
 
-            with patch("sidepulse.install.hook_command", return_value=current_command):
+            with patch("jrbar.install.hook_command", return_value=current_command):
                 result = install_codex_hooks(log_path=log, config_path=config)
 
             self.assertTrue(result.changed)
@@ -2883,7 +2883,7 @@ for (const event of [
             self.assertEqual(text.count("# <<< agent-monitor hooks <<<"), 1)
 
             first_update = config.read_bytes()
-            with patch("sidepulse.install.hook_command", return_value=current_command):
+            with patch("jrbar.install.hook_command", return_value=current_command):
                 repeat = install_codex_hooks(log_path=log, config_path=config)
 
             self.assertFalse(repeat.changed)
@@ -2898,9 +2898,9 @@ for (const event of [
             key = f"{config}:pre_tool_use:0:0"
             config.write_text("[features]\nhooks = true\n")
 
-            with patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True), patch("sidepulse.install.local_codex_hook_hashes", return_value={}):
+            with patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True), patch("jrbar.install.local_codex_hook_hashes", return_value={}):
                 with patch(
-                    "sidepulse.install.resolve_codex_hook_hashes",
+                    "jrbar.install.resolve_codex_hook_hashes",
                     return_value={key: "sha256:new-current-hash"},
                 ):
                     result = install_codex_hooks(
@@ -2985,14 +2985,14 @@ for (const event of [
             commands = [hook["command"] for entry in data["hooks"]["PreToolUse"] for hook in entry["hooks"]]
             self.assertIn("echo keep >> /tmp/other.log", commands)
             self.assertIn(f"jq -c . >> {log}", commands)
-            self.assertTrue(any("sidepulse.hook_client" in command for command in commands))
+            self.assertTrue(any("jrbar.hook_client" in command for command in commands))
             self.assertEqual(sum("--provider claude" in command for command in commands), 1)
             self.assertEqual(data["permissions"]["allow"], ["Bash(date)"])
 
     def test_grok_installer_writes_global_hook_file_without_lifecycle_matchers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            config = base / "hooks" / "sidepulse.json"
+            config = base / "hooks" / "jrbar.json"
             log = base / "grok.jsonl"
             config.parent.mkdir()
             config.write_text(
@@ -3060,7 +3060,7 @@ for (const event of [
             shell_commands = [entry["command"] for entry in data["hooks"]["beforeShellExecution"]]
             self.assertIn(other["command"], shell_commands)
             self.assertEqual(sum("--provider cursor" in c for c in shell_commands), 1)
-            from sidepulse.providers import CURSOR_EVENTS, detect_cursor_config
+            from jrbar.providers import CURSOR_EVENTS, detect_cursor_config
 
             for event in CURSOR_EVENTS:
                 self.assertIn(event, data["hooks"])
@@ -3120,7 +3120,7 @@ for (const event of [
             self.assertTrue(data["hooks"]["internal"]["entries"]["sidepulse-status"]["enabled"])
             self.assertTrue(handler.exists())
             self.assertIn('"--provider","openclaw"', handler.read_text())
-            self.assertIn('"-m","sidepulse.hook_client"', handler.read_text())
+            self.assertIn('"-m","jrbar.hook_client"', handler.read_text())
             self.assertIn('child.once("close"', handler.read_text())
             self.assertNotIn("unref", handler.read_text())
             self.assertNotIn("detached", handler.read_text())
@@ -3133,8 +3133,8 @@ for (const event of [
             self.assertFalse(handler.parent.exists())
 
     def test_openclaw_detector_requires_exact_managed_handler_source(self) -> None:
-        from sidepulse.install import openclaw_handler_source
-        from sidepulse.providers import (
+        from jrbar.install import openclaw_handler_source
+        from jrbar.providers import (
             default_openclaw_config_path,
             detect_openclaw_config,
             openclaw_hook_dir,
@@ -3180,7 +3180,7 @@ for (const event of [
             self.assertFalse(detect_openclaw_config(home).hooks_enabled)
 
     def test_new_provider_native_events_canonicalize_on_ingest(self) -> None:
-        from sidepulse.providers import KNOWN_EVENTS, canonical_event_name
+        from jrbar.providers import KNOWN_EVENTS, canonical_event_name
 
         # Cursor camelCase and Hermes snake_case both land on the shared
         # canonical vocabulary...
@@ -3405,7 +3405,7 @@ for (const event of [
     def test_grok_uninstaller_removes_monitor_hooks_and_preserves_other_hooks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            config = base / "hooks" / "sidepulse.json"
+            config = base / "hooks" / "jrbar.json"
             log = base / "grok.jsonl"
             config.parent.mkdir()
             config.write_text(
@@ -3439,7 +3439,7 @@ for (const event of [
     def test_detect_grok_config_reads_managed_hook_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            config = home / ".grok" / "hooks" / "sidepulse.json"
+            config = home / ".grok" / "hooks" / "jrbar.json"
             log = home / "state" / "grok.jsonl"
             install_grok_hooks(log_path=log, config_path=config, python_executable="python3")
 
@@ -3492,7 +3492,7 @@ for (const event of [
 
     def test_sidepulse_entrypoint_dispatches_to_sidepulse(self) -> None:
         with patch.object(cli_module, "main", return_value=17) as main:
-            result = cli_module.sidepulse_main(["agent-monitor", "live"])
+            result = cli_module.jrbar_main(["agent-monitor", "live"])
 
         self.assertEqual(result, 17)
         main.assert_called_once_with(["live"], prog="sidepulse agent-monitor")
@@ -3589,7 +3589,7 @@ for (const event of [
         )
 
         with patch(
-            "sidepulse.sd_eject_guard_launch.install_sd_eject_guard",
+            "jrbar.sd_eject_guard_launch.install_sd_eject_guard",
             return_value=guard_result,
         ) as install:
             result = cli_module.cmd_sidepulse_sdejectguard_start(args)
@@ -3616,7 +3616,7 @@ for (const event of [
         )
 
         with patch(
-            "sidepulse.sd_eject_guard_launch.run_sd_eject_guard_interactive",
+            "jrbar.sd_eject_guard_launch.run_sd_eject_guard_interactive",
             return_value=0,
         ) as run:
             result = cli_module.cmd_sidepulse_sdejectguard_start(args)
@@ -3635,7 +3635,7 @@ for (const event of [
         )
 
         with patch(
-            "sidepulse.sd_eject_guard_launch.stop_sd_eject_guard",
+            "jrbar.sd_eject_guard_launch.stop_sd_eject_guard",
             return_value=(stop_result,),
         ) as stop:
             result = cli_module.cmd_sidepulse_sdejectguard_stop(args)
@@ -3655,7 +3655,7 @@ for (const event of [
         )
 
         with patch(
-            "sidepulse.sd_eject_guard_launch.uninstall_sd_eject_guard",
+            "jrbar.sd_eject_guard_launch.uninstall_sd_eject_guard",
             return_value=(uninstall_result,),
         ) as uninstall:
             result = cli_module.cmd_sidepulse_sdejectguard_uninstall(args)
@@ -3758,11 +3758,11 @@ for (const event of [
                 side_effect=(codex_result, claude_result, devin_result, grok_result, *extra_results),
             ) as install,
             patch(
-                "sidepulse.sd_eject_guard_launch.install_sd_eject_guard",
+                "jrbar.sd_eject_guard_launch.install_sd_eject_guard",
                 return_value=guard_result,
             ) as guard,
             patch(
-                "sidepulse.status_bar_launch.install_launch_agent",
+                "jrbar.status_bar_launch.install_launch_agent",
                 return_value=launch_result,
             ) as launch,
         ):
@@ -3811,10 +3811,10 @@ for (const event of [
         with (
             patch.object(cli_module, "install_hook_results", return_value=[hook_result]),
             patch(
-                "sidepulse.sd_eject_guard_launch.install_sd_eject_guard",
+                "jrbar.sd_eject_guard_launch.install_sd_eject_guard",
                 return_value=guard_result,
             ) as guard,
-            patch("sidepulse.status_bar_launch.install_launch_agent") as launch,
+            patch("jrbar.status_bar_launch.install_launch_agent") as launch,
         ):
             result = cli_module.cmd_sidepulse_setup(args)
 
@@ -3918,7 +3918,7 @@ for (const event of [
         with tempfile.TemporaryDirectory() as tmp:
             device = Path(tmp) / "SidePulseDot"
             device.mkdir()
-            result = cli_module.sidepulse_main(["write", r"off\n#FF00FF pulse", "--device", str(device)])
+            result = cli_module.jrbar_main(["write", r"off\n#FF00FF pulse", "--device", str(device)])
 
             self.assertEqual(result, 0)
             self.assertEqual((device / "LEDS.LED").read_text(), "off\n#FF00FF pulse")
@@ -4161,7 +4161,7 @@ for (const event of [
             )
 
             with patch(
-                "sidepulse.battery.time.monotonic",
+                "jrbar.battery.time.monotonic",
                 side_effect=[0.0, 0.5, 2.0],
             ):
                 first = controller.sync_snapshot(snapshot)
@@ -4180,7 +4180,7 @@ for (const event of [
             snapshot = BatterySnapshot(percent=50, is_plugged=False)
 
             with patch(
-                "sidepulse.battery.time.monotonic",
+                "jrbar.battery.time.monotonic",
                 side_effect=[0.0, 10.0],
             ):
                 first = controller.sync_snapshot(snapshot)
@@ -4499,7 +4499,7 @@ for (const event of [
         self.assertNotIn("claude-transcripts", providers)
 
     def test_default_sources_include_registered_hook_providers(self) -> None:
-        with patch("sidepulse.collector.load_settings", return_value=AgentMonitorSettings()):
+        with patch("jrbar.collector.load_settings", return_value=AgentMonitorSettings()):
             sources = default_sources()
 
         providers = tuple(source.provider for source in sources if not source.provider.endswith("-transcript"))
@@ -4656,7 +4656,7 @@ for (const event of [
 
     def test_persistable_device_identity_rejects_temp_volumes(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -4681,7 +4681,7 @@ for (const event of [
 
     def test_disconnected_device_menu_has_remove_option(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -4745,8 +4745,8 @@ for (const event of [
             executable.write_bytes(b"frozen")
             executable.chmod(0o755)
             with (
-                patch("sidepulse.status_bar_launch.sys.frozen", True, create=True),
-                patch("sidepulse.status_bar_launch.sys.executable", str(executable)),
+                patch("jrbar.status_bar_launch.sys.frozen", True, create=True),
+                patch("jrbar.status_bar_launch.sys.executable", str(executable)),
             ):
                 plist = build_launch_agent_plist(
                     stdout_path=Path("/tmp/sidepulse.out.log"),
@@ -4759,7 +4759,7 @@ for (const event of [
         )
 
     def test_frozen_hook_command_uses_internal_cli(self) -> None:
-        with patch("sidepulse.install.sys.frozen", True, create=True):
+        with patch("jrbar.install.sys.frozen", True, create=True):
             command = hook_command("codex", Path("/tmp/codex events.jsonl"))
 
         self.assertEqual(
@@ -4775,8 +4775,8 @@ for (const event of [
             legacy.write_bytes(b"old")
 
             with (
-                patch("sidepulse.status_bar_launch.default_state_dir", return_value=base / "state"),
-                patch("sidepulse.status_bar_launch.subprocess.run") as run,
+                patch("jrbar.status_bar_launch.default_state_dir", return_value=base / "state"),
+                patch("jrbar.status_bar_launch.subprocess.run") as run,
             ):
                 result = install_launch_agent(
                     start=False,
@@ -4889,9 +4889,9 @@ for (const event of [
                 return subprocess.CompletedProcess(command, 0)
 
             with (
-                patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.os.getuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
+                patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.os.getuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
             ):
                 result = install_sd_eject_guard(
                     scope="auto",
@@ -4941,9 +4941,9 @@ for (const event of [
                 return subprocess.CompletedProcess(command, 0)
 
             with (
-                patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.os.getuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
+                patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.os.getuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
             ):
                 result = install_sd_eject_guard(
                     scope="user",
@@ -4984,9 +4984,9 @@ for (const event of [
                 return subprocess.CompletedProcess(command, 0)
 
             with (
-                patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.os.getuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
+                patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.os.getuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
             ):
                 result = install_sd_eject_guard(
                     scope="user",
@@ -5022,9 +5022,9 @@ for (const event of [
             system_paths.plist_path.write_bytes(b"system")
 
             with (
-                patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.os.getuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.subprocess.run") as run,
+                patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.os.getuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.subprocess.run") as run,
             ):
                 results = stop_sd_eject_guard(
                     scope="auto",
@@ -5063,9 +5063,9 @@ for (const event of [
             legacy.write_bytes(b"legacy")
 
             with (
-                patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.os.getuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.subprocess.run") as run,
+                patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.os.getuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.subprocess.run") as run,
             ):
                 results = uninstall_sd_eject_guard(
                     scope="user",
@@ -5098,7 +5098,7 @@ for (const event of [
                 stderr_path=base / "system" / "err.log",
             )
 
-            with patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=501):
+            with patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=501):
                 with self.assertRaisesRegex(SdEjectGuardInstallError, "requires root"):
                     install_sd_eject_guard(
                         scope="system",
@@ -5136,10 +5136,10 @@ for (const event of [
                 return subprocess.CompletedProcess(command, 0)
 
             with (
-                patch("sidepulse.sd_eject_guard_launch.os.geteuid", return_value=0),
-                patch("sidepulse.sd_eject_guard_launch.os.getuid", return_value=501),
-                patch("sidepulse.sd_eject_guard_launch.os.chown") as chown,
-                patch("sidepulse.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
+                patch("jrbar.sd_eject_guard_launch.os.geteuid", return_value=0),
+                patch("jrbar.sd_eject_guard_launch.os.getuid", return_value=501),
+                patch("jrbar.sd_eject_guard_launch.os.chown") as chown,
+                patch("jrbar.sd_eject_guard_launch.subprocess.run", side_effect=fake_run),
             ):
                 result = install_sd_eject_guard(
                     scope="system",
@@ -5630,7 +5630,7 @@ for (const event of [
                 return original_read_recent_lines(read_path, max_lines)
 
             with patch(
-                "sidepulse.collector.read_recent_lines",
+                "jrbar.collector.read_recent_lines",
                 side_effect=counting_read_recent_lines,
             ):
                 self.assertEqual(monitor.snapshot().aggregate.mode, AgentMode.TOOL_RUNNING)
@@ -5686,7 +5686,7 @@ for (const event of [
                 return original_read_recent_lines(read_path, max_lines)
 
             with patch(
-                "sidepulse.collector.read_recent_lines",
+                "jrbar.collector.read_recent_lines",
                 side_effect=counting_read_recent_lines,
             ):
                 self.assertEqual(monitor.snapshot().aggregate.mode, AgentMode.TOOL_RUNNING)
@@ -5733,7 +5733,7 @@ for (const event of [
             )
 
             with patch(
-                "sidepulse.collector.status_from_event",
+                "jrbar.collector.status_from_event",
                 wraps=collector_module.status_from_event,
             ) as status_from_event:
                 self.assertEqual(monitor.snapshot().aggregate.mode, AgentMode.TOOL_RUNNING)
@@ -5901,7 +5901,7 @@ for (const event of [
             self.assertNotIn("usage_limit_exceeded", json.dumps(terminal.raw))
 
     def test_authoritative_codex_stop_outranks_later_usage_limit_fallback(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         now = datetime.now(timezone.utc)
         session_id = "019f179b-7fdc-7eb0-a3af-1ca3eb128eee"
@@ -6020,7 +6020,7 @@ for (const event of [
         )
 
     def test_codex_usage_limit_fallback_closes_older_direct_active_work(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         now = datetime.now(timezone.utc)
         session_id = "019f179b-7fdc-7eb0-a3af-1ca3eb128eee"
@@ -6061,7 +6061,7 @@ for (const event of [
         self.assertEqual(snapshot.statuses[0].event_name, "StopFailure")
 
     def test_forged_codex_fallback_stop_failure_cannot_close_direct_active_work(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         now = datetime.now(timezone.utc)
         session_id = "019f179b-7fdc-7eb0-a3af-1ca3eb128eee"
@@ -6102,7 +6102,7 @@ for (const event of [
         self.assertEqual(snapshot.statuses[0].event_name, "PreToolUse")
 
     def test_classified_codex_usage_limit_terminal_removes_direct_request(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         now = datetime.now(timezone.utc)
         session_id = "019f179b-7fdc-7eb0-a3af-1ca3eb128eee"
@@ -6144,7 +6144,7 @@ for (const event of [
         self.assertEqual(snapshot.statuses[0].event_name, "StopFailure")
 
     def test_classified_codex_usage_limit_terminal_with_codex_error_info(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         now = datetime.now(timezone.utc)
         session_id = "019f179b-7fdc-7eb0-a3af-1ca3eb128eee"
@@ -6184,7 +6184,7 @@ for (const event of [
         self.assertEqual(snapshot.statuses[0].event_name, "StopFailure")
 
     def test_older_codex_usage_limit_fallback_cannot_close_newer_direct_active_work(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         now = datetime.now(timezone.utc)
         session_id = "019f179b-7fdc-7eb0-a3af-1ca3eb128eee"
@@ -6818,7 +6818,7 @@ team id YOUR_TEAM_ID, push key '/path/to/AuthKey_YOUR_KEY_ID.p8'
                 + "\n"
             )
 
-            with patch("sidepulse.collector.Path.home", return_value=home):
+            with patch("jrbar.collector.Path.home", return_value=home):
                 monitor = AgentMonitor(
                     sources=(SourceSpec("codex", log),),
                     stale_after_seconds=999999999,
@@ -6869,7 +6869,7 @@ team id YOUR_TEAM_ID, push key '/path/to/AuthKey_YOUR_KEY_ID.p8'
                 + "\n"
             )
 
-            with patch("sidepulse.collector.Path.home", return_value=home):
+            with patch("jrbar.collector.Path.home", return_value=home):
                 monitor = LiveAgentMonitor(latest_state_path=latest)
                 snapshot = monitor.snapshot()
 
@@ -7148,7 +7148,7 @@ def _program_body(program: str) -> list[str]:
 
 class ColorSettingsTests(unittest.TestCase):
     def test_defaults_seed_mode_colors_from_led_status_constants(self) -> None:
-        from sidepulse.led_status import ASK_AMBER, DONE_GREEN, IDLE_DIM, WORKING_CYAN
+        from jrbar.led_status import ASK_AMBER, DONE_GREEN, IDLE_DIM, WORKING_CYAN
 
         defaults = ColorSettings.defaults()
         self.assertEqual(defaults.mode_color(colors_module.MODE_IDLE), IDLE_DIM)
@@ -7343,7 +7343,7 @@ class ColorSettingsTests(unittest.TestCase):
                 self.assertLessEqual(len(program.encode()), 512, f"{blend_mode}/{led_count}: too many bytes")
 
     def test_scale_hex_brightness_preserves_hue_scales_channels(self) -> None:
-        from sidepulse.led_status import scale_hex_brightness
+        from jrbar.led_status import scale_hex_brightness
 
         self.assertEqual(scale_hex_brightness("#00E5FF", 1.0), "#00E5FF")
         self.assertEqual(scale_hex_brightness("#00E5FF", 0.0), "#000000")
@@ -7671,7 +7671,7 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         pulse_line = program.splitlines()[1]
         # Hand-derived: the default full traversal divided across four
         # LEDs is one turn per LED (2.2s default -> 550ms turns).
-        from sidepulse.colors import DEFAULT_CYCLE_SPEED_SECONDS
+        from jrbar.colors import DEFAULT_CYCLE_SPEED_SECONDS
 
         duration_ms = int(DEFAULT_CYCLE_SPEED_SECONDS * 1000 / 4)
         delays = []
@@ -7778,7 +7778,7 @@ class AnimationSmoothnessTests(unittest.TestCase):
     in-progress pulse."""
 
     def test_settle_duration_ms_is_bounded_and_proportional(self) -> None:
-        from sidepulse.led_status import (
+        from jrbar.led_status import (
             SETTLE_MAX_MS,
             SETTLE_MIN_MS,
             settle_duration_ms,
@@ -8256,7 +8256,7 @@ class AgentLedControllerSnapshotTests(unittest.TestCase):
             settings = ColorSettings.defaults()
             statuses = (_status("codex", AgentMode.WORKING),)
 
-            with patch("sidepulse.led_status.time.monotonic", side_effect=lambda: clock[0]):
+            with patch("jrbar.led_status.time.monotonic", side_effect=lambda: clock[0]):
                 self.assertTrue(controller.sync_snapshot(statuses, settings).changed)
                 clock[0] = 69.999
                 self.assertFalse(controller.sync_snapshot(statuses, settings).changed)
@@ -8270,24 +8270,24 @@ class ChannelGainCalibrationTests(unittest.TestCase):
     an over-bright green die making a mostly-blue color read greenish)."""
 
     def test_apply_channel_gain_to_hex_scales_each_channel_independently(self) -> None:
-        from sidepulse.led_status import apply_channel_gain_to_hex
+        from jrbar.led_status import apply_channel_gain_to_hex
 
         # Halve green, leave red/blue alone.
         self.assertEqual(apply_channel_gain_to_hex("#2B8FFF", (1.0, 0.5, 1.0)), "#2B48FF")
 
     def test_apply_channel_gain_to_hex_clamps_to_byte_range(self) -> None:
-        from sidepulse.led_status import apply_channel_gain_to_hex
+        from jrbar.led_status import apply_channel_gain_to_hex
 
         self.assertEqual(apply_channel_gain_to_hex("#FFFFFF", (1.5, 1.5, 1.5)), "#FFFFFF")
         self.assertEqual(apply_channel_gain_to_hex("#000000", (0.3, 0.3, 0.3)), "#000000")
 
     def test_apply_channel_gain_to_hex_invalid_input_passes_through(self) -> None:
-        from sidepulse.led_status import apply_channel_gain_to_hex
+        from jrbar.led_status import apply_channel_gain_to_hex
 
         self.assertEqual(apply_channel_gain_to_hex("off", (0.5, 0.5, 0.5)), "off")
 
     def test_apply_channel_gain_to_program_is_a_no_op_at_neutral_gains(self) -> None:
-        from sidepulse.led_status import (
+        from jrbar.led_status import (
             NEUTRAL_CHANNEL_GAINS,
             apply_channel_gain_to_program,
         )
@@ -8296,7 +8296,7 @@ class ChannelGainCalibrationTests(unittest.TestCase):
         self.assertEqual(apply_channel_gain_to_program(program, NEUTRAL_CHANNEL_GAINS), program)
 
     def test_apply_channel_gain_to_program_rewrites_every_hex_occurrence(self) -> None:
-        from sidepulse.led_status import apply_channel_gain_to_program
+        from jrbar.led_status import apply_channel_gain_to_program
 
         program = "0:#2B8FFF 160ms cosine; 1:#6C3C2C 160ms cosine\n0:#2B8FFF 1600ms pulse\nrepeat"
         result = apply_channel_gain_to_program(program, (1.0, 0.5, 1.0))
@@ -8308,7 +8308,7 @@ class ChannelGainCalibrationTests(unittest.TestCase):
         self.assertIn("repeat", result)
 
     def test_apply_channel_gain_to_program_leaves_off_and_brightness_alone(self) -> None:
-        from sidepulse.led_status import apply_channel_gain_to_program
+        from jrbar.led_status import apply_channel_gain_to_program
 
         program = "brightness 128\noff\n#2B8FFF 1600ms pulse\nrepeat"
         result = apply_channel_gain_to_program(program, (1.0, 0.5, 1.0))
@@ -8316,7 +8316,7 @@ class ChannelGainCalibrationTests(unittest.TestCase):
         self.assertIn("off\n", result)
 
     def test_normalize_channel_gain_clamps_and_defaults(self) -> None:
-        from sidepulse.led_status import (
+        from jrbar.led_status import (
             DEFAULT_CHANNEL_GAIN,
             MAX_CHANNEL_GAIN,
             MIN_CHANNEL_GAIN,
@@ -8384,7 +8384,7 @@ class ChannelGainCalibrationTests(unittest.TestCase):
             self.assertTrue(after_calibration.changed)
 
     def test_battery_led_controller_applies_gain_to_physical_write(self) -> None:
-        from sidepulse.battery import BatteryLedController, BatterySnapshot
+        from jrbar.battery import BatteryLedController, BatterySnapshot
 
         with tempfile.TemporaryDirectory() as tmp:
             device_dir = Path(tmp) / "SidePulsePro"
@@ -8447,7 +8447,7 @@ class ChannelGainCalibrationTests(unittest.TestCase):
 
     def test_status_bar_device_submenu_shows_calibration_sliders(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -8480,12 +8480,12 @@ class FocusSyncTests(unittest.TestCase):
     documented format rather than a real capture."""
 
     def test_no_assertions_present_is_not_active(self) -> None:
-        from sidepulse.focus_sync import _has_active_assertion
+        from jrbar.focus_sync import _has_active_assertion
 
         self.assertFalse(_has_active_assertion({"data": [{"storeAssertionRecords": []}]}))
 
     def test_a_populated_assertion_record_is_active(self) -> None:
-        from sidepulse.focus_sync import _has_active_assertion
+        from jrbar.focus_sync import _has_active_assertion
 
         data = {
             "data": [
@@ -8501,38 +8501,38 @@ class FocusSyncTests(unittest.TestCase):
     def test_active_assertion_found_regardless_of_nesting_depth(self) -> None:
         # The exact schema isn't documented and has shifted across macOS
         # releases -- the search must not depend on one exact key path.
-        from sidepulse.focus_sync import _has_active_assertion
+        from jrbar.focus_sync import _has_active_assertion
 
         deeply_nested = {"a": {"b": [{"c": {"storeAssertionRecords": [{"x": 1}]}}]}}
         self.assertTrue(_has_active_assertion(deeply_nested))
 
     def test_is_focus_active_reads_the_real_expected_path(self) -> None:
-        from sidepulse.focus_sync import ASSERTIONS_PATH
+        from jrbar.focus_sync import ASSERTIONS_PATH
 
         self.assertEqual(str(ASSERTIONS_PATH), str(Path.home() / "Library/DoNotDisturb/DB/Assertions.json"))
 
     def test_is_focus_active_raises_unavailable_on_permission_error(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         with patch.object(focus_sync.Path, "read_text", side_effect=PermissionError("no FDA")):
             with self.assertRaises(focus_sync.FocusSyncUnavailableError):
                 focus_sync.is_focus_active()
 
     def test_is_focus_active_raises_unavailable_on_unparseable_json(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         with patch.object(focus_sync.Path, "read_text", return_value="not json"):
             with self.assertRaises(focus_sync.FocusSyncUnavailableError):
                 focus_sync.is_focus_active()
 
     def test_is_focus_active_false_on_empty_file(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         with patch.object(focus_sync.Path, "read_text", return_value=""):
             self.assertFalse(focus_sync.is_focus_active())
 
     def test_is_focus_active_true_end_to_end_on_realistic_json(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         payload = json.dumps({"data": [{"storeAssertionRecords": [{"assertionDetails": {"id": "abc"}}]}]})
         with patch.object(focus_sync.Path, "read_text", return_value=payload):
@@ -8597,14 +8597,14 @@ def isolate_controller(case, *, build_controller=True):
     case._tmp = tmp
     case._settings_path = Path(tmp.name) / "settings.json"
     for target in (
-        "sidepulse.settings.default_settings_path",
-        "sidepulse.status_bar.default_settings_path",
+        "jrbar.settings.default_settings_path",
+        "jrbar.status_bar.default_settings_path",
     ):
         patcher = patch(target, return_value=case._settings_path)
         patcher.start()
         case.addCleanup(patcher.stop)
     latest = patch(
-        "sidepulse.status_bar.default_latest_state_path",
+        "jrbar.status_bar.default_latest_state_path",
         return_value=Path(tmp.name) / "latest.json",
     )
     latest.start()
@@ -8616,14 +8616,14 @@ def isolate_controller(case, *, build_controller=True):
     # ~/.local/state ledger.
     case._activity_ledger_path = Path(tmp.name) / "activity-ledger.json"
     activity = patch(
-        "sidepulse.status_bar.default_activity_ledger_path",
+        "jrbar.status_bar.default_activity_ledger_path",
         return_value=case._activity_ledger_path,
     )
     activity.start()
     case.addCleanup(activity.stop)
     case._clear_agents_path = Path(tmp.name) / "clear-agents.json"
     clear_agents = patch(
-        "sidepulse.status_bar.default_clear_agents_path",
+        "jrbar.status_bar.default_clear_agents_path",
         return_value=case._clear_agents_path,
     )
     clear_agents.start()
@@ -8632,7 +8632,7 @@ def isolate_controller(case, *, build_controller=True):
     # geometry, but the synchronous capsule probe this used to stub is
     # gone: observation now runs only through the async worker, which
     # tests drive explicitly by injecting an AlcoveObservation.
-    discovery = patch("sidepulse.status_bar.discover_devices", return_value=[])
+    discovery = patch("jrbar.status_bar.discover_devices", return_value=[])
     discovery.start()
     case.addCleanup(discovery.stop)
     # The interrupt budget reads the live Focus assertions (a courtesy
@@ -8641,7 +8641,7 @@ def isolate_controller(case, *, build_controller=True):
     # gate happens to have Do Not Disturb switched on. Tests that WANT a
     # Focus prime controller._focus_ids_cache or patch this themselves.
     focus = patch(
-        "sidepulse.focus_sync.active_focus_mode_identifiers",
+        "jrbar.focus_sync.active_focus_mode_identifiers",
         return_value=[],
     )
     focus.start()
@@ -8654,19 +8654,19 @@ def isolate_controller(case, *, build_controller=True):
     # low. Other machine-truthy fields (thermal, accessibility) are
     # pinned to the same hermetic defaults. Tests that WANT low power or
     # a thermal state patch this themselves.
-    from sidepulse.render_policy import RenderEnvironment
+    from jrbar.render_policy import RenderEnvironment
 
     def _mains_powered_environment(*, visible, display_asleep=False, process_info=None):
         return RenderEnvironment(visible=visible, display_asleep=display_asleep)
 
     render_env = patch(
-        "sidepulse.status_bar.runtime_render_environment",
+        "jrbar.status_bar.runtime_render_environment",
         _mains_powered_environment,
     )
     render_env.start()
     case.addCleanup(render_env.stop)
     try:
-        from sidepulse import status_bar
+        from jrbar import status_bar
     except SystemExit as exc:
         case.skipTest(str(exc))
     case.status_bar = status_bar
@@ -8698,7 +8698,7 @@ class LowPowerModeTests(unittest.TestCase):
         isolate_controller(self)
 
     def _snapshot(self, percent: int, *, plugged: bool = False):
-        from sidepulse.battery import BatterySnapshot
+        from jrbar.battery import BatterySnapshot
 
         return BatterySnapshot(percent=percent, is_plugged=plugged, battery_present=True)
 
@@ -8736,8 +8736,8 @@ class LowPowerModeTests(unittest.TestCase):
         # that strobes is a nagging light; one long 3.6s breath reads as
         # patient. Pinned against the live signal default, which is the
         # only place the style lives now.
-        from sidepulse.led_status import style_to_program
-        from sidepulse.signals import DEFAULT_SIGNAL_STYLES, SIGNAL_LOW_BATTERY
+        from jrbar.led_status import style_to_program
+        from jrbar.signals import DEFAULT_SIGNAL_STYLES, SIGNAL_LOW_BATTERY
 
         program = style_to_program(DEFAULT_SIGNAL_STYLES[SIGNAL_LOW_BATTERY], 255)
         lines = program.splitlines()
@@ -8764,7 +8764,7 @@ class LowPowerModeTests(unittest.TestCase):
 
 class FocusModeParsingTests(unittest.TestCase):
     def test_active_identifiers_found_regardless_of_nesting(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         data = {
             "data": [
@@ -8786,7 +8786,7 @@ class FocusModeParsingTests(unittest.TestCase):
                 )
 
     def test_configured_identifier_metadata_is_not_reported_as_active(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         data = {
             "data": [
@@ -8811,7 +8811,7 @@ class FocusModeParsingTests(unittest.TestCase):
                 )
 
     def test_no_active_assertions_means_no_identifiers(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "Assertions.json"
@@ -8820,7 +8820,7 @@ class FocusModeParsingTests(unittest.TestCase):
                 self.assertEqual(focus_sync.active_focus_mode_identifiers(), [])
 
     def test_configured_modes_parsed_and_sorted_by_name(self) -> None:
-        from sidepulse import focus_sync
+        from jrbar import focus_sync
 
         data = {
             "data": [
@@ -8858,7 +8858,7 @@ class FocusModeParsingTests(unittest.TestCase):
             loaded = load_settings(path)
         self.assertEqual(loaded.focus_dim_rules, {"com.apple.sleep": 0.0, "com.apple.focus.work": 0.5})
         # Malformed persisted values are dropped, numeric ones clamped.
-        from sidepulse.settings import _focus_dim_rules
+        from jrbar.settings import _focus_dim_rules
 
         self.assertEqual(
             _focus_dim_rules({"ok": 2.5, "bad": "x", 3: 0.1, "flag": True}),
@@ -8926,7 +8926,7 @@ class FocusSyncScaleFactorTests(unittest.TestCase):
             self.assertEqual(self.controller.focus_sync_scale_factor(), 1.0)
 
     def test_effective_brightness_combines_idle_dim_and_focus_sync_multiplicatively(self) -> None:
-        from sidepulse.focus_status import (
+        from jrbar.focus_status import (
             FocusActivity,
             FocusAuthorization,
             FocusStatusObservation,
@@ -8988,7 +8988,7 @@ class FocusSyncScaleFactorTests(unittest.TestCase):
             )
 
     def test_signal_brightness_turns_fully_off_for_a_focus_off_rule(self) -> None:
-        from sidepulse.focus_status import (
+        from jrbar.focus_status import (
             FocusActivity,
             FocusAuthorization,
             FocusStatusObservation,
@@ -9045,7 +9045,7 @@ class FocusSyncScaleFactorTests(unittest.TestCase):
 class DisplayBrightnessTests(unittest.TestCase):
     def test_current_screen_brightness_returns_a_valid_fraction_on_this_mac(self) -> None:
         try:
-            from sidepulse.display_brightness import current_screen_brightness_fraction
+            from jrbar.display_brightness import current_screen_brightness_fraction
         except ImportError as exc:
             self.skipTest(str(exc))
         try:
@@ -9056,13 +9056,13 @@ class DisplayBrightnessTests(unittest.TestCase):
         self.assertLessEqual(value, 1.0)
 
     def test_auto_led_brightness_respects_the_minimum_floor(self) -> None:
-        from sidepulse import display_brightness
+        from jrbar import display_brightness
 
         with patch.object(display_brightness, "current_screen_brightness_fraction", return_value=0.0):
             self.assertEqual(display_brightness.auto_led_brightness(), display_brightness.MIN_AUTO_BRIGHTNESS)
 
     def test_auto_led_brightness_scales_with_screen_fraction(self) -> None:
-        from sidepulse import display_brightness
+        from jrbar import display_brightness
 
         with patch.object(display_brightness, "current_screen_brightness_fraction", return_value=1.0):
             self.assertEqual(display_brightness.auto_led_brightness(), 255)
@@ -9070,7 +9070,7 @@ class DisplayBrightnessTests(unittest.TestCase):
             self.assertEqual(display_brightness.auto_led_brightness(), 128)
 
     def test_unavailable_error_propagates_from_auto_led_brightness(self) -> None:
-        from sidepulse import display_brightness
+        from jrbar import display_brightness
 
         with (
             patch.object(
@@ -9405,7 +9405,7 @@ class IdleTimeoutDimmingTests(unittest.TestCase):
         self.assertEqual(reloaded.idle_dim_fraction, 0.3)
 
     def test_idle_dim_after_minutes_is_clamped(self) -> None:
-        from sidepulse.settings import (
+        from jrbar.settings import (
             MAX_IDLE_DIM_AFTER_MINUTES,
             MIN_IDLE_DIM_AFTER_MINUTES,
         )
@@ -9416,7 +9416,7 @@ class IdleTimeoutDimmingTests(unittest.TestCase):
         self.assertEqual(settings.idle_dim_after_minutes, MAX_IDLE_DIM_AFTER_MINUTES)
 
     def test_idle_dim_fraction_is_clamped(self) -> None:
-        from sidepulse.settings import MAX_IDLE_DIM_FRACTION, MIN_IDLE_DIM_FRACTION
+        from jrbar.settings import MAX_IDLE_DIM_FRACTION, MIN_IDLE_DIM_FRACTION
 
         settings = AgentMonitorSettings().with_idle_dim_fraction(-1.0)
         self.assertEqual(settings.idle_dim_fraction, MIN_IDLE_DIM_FRACTION)
@@ -9430,7 +9430,7 @@ class ClosedLidGracePeriodTests(unittest.TestCase):
     losing the agent's work."""
 
     def test_default_matches_keep_awakes_own_long_standing_default(self) -> None:
-        from sidepulse.keep_awake import AWAKE_GRACE_SECONDS
+        from jrbar.keep_awake import AWAKE_GRACE_SECONDS
 
         settings = AgentMonitorSettings()
         self.assertEqual(settings.closed_lid_grace_minutes * 60.0, AWAKE_GRACE_SECONDS)
@@ -9444,7 +9444,7 @@ class ClosedLidGracePeriodTests(unittest.TestCase):
         self.assertEqual(reloaded.closed_lid_grace_minutes, 15.0)
 
     def test_closed_lid_grace_minutes_is_clamped(self) -> None:
-        from sidepulse.settings import (
+        from jrbar.settings import (
             MAX_CLOSED_LID_GRACE_MINUTES,
             MIN_CLOSED_LID_GRACE_MINUTES,
         )
@@ -9455,7 +9455,7 @@ class ClosedLidGracePeriodTests(unittest.TestCase):
         self.assertEqual(settings.closed_lid_grace_minutes, MAX_CLOSED_LID_GRACE_MINUTES)
 
     def test_closed_lid_grace_minutes_defaults_when_absent_from_saved_json(self) -> None:
-        from sidepulse.settings import DEFAULT_CLOSED_LID_GRACE_MINUTES
+        from jrbar.settings import DEFAULT_CLOSED_LID_GRACE_MINUTES
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
@@ -9468,7 +9468,7 @@ class ClosedLidGracePeriodTests(unittest.TestCase):
 
     def test_sync_keep_awake_applies_the_configured_grace_seconds(self) -> None:
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
 
@@ -9500,7 +9500,7 @@ class SettingsWindowDeviceSectionTests(unittest.TestCase):
         (volume_root / "SidePulseDot").mkdir(parents=True)
         devices = discover_devices(mount_root=volume_root)
         assert len(devices) == 1
-        fake_discovery = patch("sidepulse.status_bar.discover_devices", return_value=devices)
+        fake_discovery = patch("jrbar.status_bar.discover_devices", return_value=devices)
         fake_discovery.start()
         self.addCleanup(fake_discovery.stop)
         # Settings consumes a cached inventory projection; prime the test
@@ -9803,7 +9803,7 @@ class SettingsWindowDeviceSectionTests(unittest.TestCase):
         self.assertEqual(self.controller.settings.channel_gains_for_device(device_id), (1.0, 0.6, 1.0))
 
     def test_closed_lid_awake_policy_popup_reflects_current_setting(self) -> None:
-        from sidepulse.settings import CLOSED_LID_AWAKE_ALWAYS
+        from jrbar.settings import CLOSED_LID_AWAKE_ALWAYS
 
         self.controller.settings = self.controller.settings.with_closed_lid_awake_policy(CLOSED_LID_AWAKE_ALWAYS)
         self.controller.show_settings_window()
@@ -9812,7 +9812,7 @@ class SettingsWindowDeviceSectionTests(unittest.TestCase):
         self.assertEqual(popup.titleOfSelectedItem(), "Always")
 
     def test_closed_lid_awake_policy_popup_sets_the_policy(self) -> None:
-        from sidepulse.settings import CLOSED_LID_AWAKE_ALWAYS
+        from jrbar.settings import CLOSED_LID_AWAKE_ALWAYS
 
         self.controller.show_settings_window()
 
@@ -9882,8 +9882,8 @@ class Task9HistorySettingsCompositionTests(unittest.TestCase):
         return self.controller.settings_panes["history"]
 
     def _day(self, *, coverage="complete"):
-        from sidepulse.operator_history import HistoryCoverage, OperatorHistoryDay
-        from sidepulse.provider_contracts import ProviderIdentifier
+        from jrbar.operator_history import HistoryCoverage, OperatorHistoryDay
+        from jrbar.provider_contracts import ProviderIdentifier
 
         return OperatorHistoryDay(
             datetime.now().date().isoformat(),
@@ -10258,7 +10258,7 @@ class TranscriptFallbackTests(unittest.TestCase):
         # The "Watch ... transcripts" switches used to save a setting
         # nothing in the app read (transcript scanning lived only in the
         # CLI's monitor) -- the fallback silently did nothing.
-        from sidepulse.collector import CODEX_TRANSCRIPT_PROVIDER
+        from jrbar.collector import CODEX_TRANSCRIPT_PROVIDER
 
         self.controller.settings = self.controller.settings.with_transcript_provider(
             "codex", False
@@ -10274,7 +10274,7 @@ class TranscriptFallbackTests(unittest.TestCase):
         )
 
     def test_transcript_records_reach_the_live_monitor_exactly_once(self) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         # Relative, not a wall-clock date: a hardcoded timestamp aged
         # past the collector's staleness window overnight and the test
@@ -10304,7 +10304,7 @@ class TranscriptFallbackTests(unittest.TestCase):
         # stand-in delivers the batch inline so ingestion is observable
         # without pumping a run loop. The dedupe/watermark logic under test
         # still runs in applyTranscriptFallbackBatch_.
-        from sidepulse.transcript_runtime import TranscriptFallbackBatch
+        from jrbar.transcript_runtime import TranscriptFallbackBatch
 
         controller = self.controller
 
@@ -10351,7 +10351,7 @@ class TranscriptFallbackTests(unittest.TestCase):
 
         with (
             patch(
-                "sidepulse.status_bar.detect_log_path",
+                "jrbar.status_bar.detect_log_path",
                 return_value=log_path,
             ),
             patch.object(
@@ -10380,8 +10380,8 @@ class SignalEngineTests(unittest.TestCase):
         # the pattern is named after. The low-battery and calendar
         # breathes below are untouched, which is what still makes this a
         # migration test rather than a changelog.
-        from sidepulse import signals
-        from sidepulse.led_status import style_to_program
+        from jrbar import signals
+        from jrbar.led_status import style_to_program
 
         self.assertEqual(
             style_to_program(signals.DEFAULT_SIGNAL_STYLES[signals.SIGNAL_LOW_BATTERY]),
@@ -10402,9 +10402,9 @@ class SignalEngineTests(unittest.TestCase):
     def test_every_pattern_stays_within_device_limits_at_every_extreme(self) -> None:
         import re as _re
 
-        from sidepulse import signals
-        from sidepulse.device_writer import MAX_LED_BYTES, MAX_LED_LINES
-        from sidepulse.led_status import style_to_program
+        from jrbar import signals
+        from jrbar.device_writer import MAX_LED_BYTES, MAX_LED_LINES
+        from jrbar.led_status import style_to_program
 
         for pattern in signals.SIGNAL_PATTERNS:
             for speed in (signals.MIN_SPEED_SECONDS, 1.0, signals.MAX_SPEED_SECONDS):
@@ -10418,7 +10418,7 @@ class SignalEngineTests(unittest.TestCase):
                         self.assertLessEqual(int(value), 65535, label)
 
     def test_signal_style_settings_round_trip_and_validation(self) -> None:
-        from sidepulse import signals
+        from jrbar import signals
 
         style = signals.SignalStyle("#112233", signals.PATTERN_SWEEP, 2.0, 0.6)
         configured = AgentMonitorSettings().with_signal_style("calendar", style)
@@ -10444,7 +10444,7 @@ class SignalEngineTests(unittest.TestCase):
         self.assertLessEqual(style.speed_seconds, signals.MAX_SPEED_SECONDS)
 
     def test_unknown_signal_key_is_rejected(self) -> None:
-        from sidepulse import signals
+        from jrbar import signals
 
         with self.assertRaises(ValueError):
             AgentMonitorSettings().with_signal_style("nope", signals.DEFAULT_SIGNAL_STYLES["calendar"])
@@ -10457,7 +10457,7 @@ class SignalStyleCardTests(unittest.TestCase):
         self.controller.ensure_all_settings_panes()
 
     def test_every_signal_gets_a_full_style_card(self) -> None:
-        from sidepulse import signals
+        from jrbar import signals
 
         for key, _title, show_color in self.status_bar.SIGNAL_STYLE_CARDS:
             thumbs = self.controller.settings_fields.get(f"signal_thumbs:{key}")
@@ -10494,7 +10494,7 @@ class SignalStyleCardTests(unittest.TestCase):
 
 class IdentityColorTests(unittest.TestCase):
     def test_assignment_is_deterministic_and_collision_free(self) -> None:
-        from sidepulse.colors import IDENTITY_PALETTE, identity_colors_for_agents
+        from jrbar.colors import IDENTITY_PALETTE, identity_colors_for_agents
 
         ids = [f"agent-{index}" for index in range(8)]
         first = identity_colors_for_agents(ids)
@@ -10510,7 +10510,7 @@ class IdentityColorTests(unittest.TestCase):
         self.assertEqual(alone[ids[0]], first[ids[0]])
 
     def test_identity_palette_stays_clear_of_state_hues(self) -> None:
-        from sidepulse.colors import IDENTITY_PALETTE
+        from jrbar.colors import IDENTITY_PALETTE
 
         for reserved in ("#00E5FF", "#00FF66", "#FF3A00", "#A45CFF", "#E01010"):
             self.assertNotIn(reserved, IDENTITY_PALETTE)
@@ -10525,7 +10525,7 @@ class IdentityColorTests(unittest.TestCase):
         #D97757 appeared nowhere. Distinctness is still required below;
         it is now bought with lightness inside each brand's own hue.
         """
-        from sidepulse.colors import ColorSettings, _active_agents
+        from jrbar.colors import ColorSettings, _active_agents
 
         one = (_status("codex", AgentMode.WORKING),)
         two = (
@@ -10545,7 +10545,7 @@ class IdentityColorTests(unittest.TestCase):
         """Which product, then which session -- in that order."""
         from dataclasses import replace as dataclass_replace
 
-        from sidepulse.colors import ColorSettings, _active_agents, hex_to_oklch
+        from jrbar.colors import ColorSettings, _active_agents, hex_to_oklch
 
         settings = ColorSettings.defaults()
         base = _status("claude", AgentMode.WORKING)
@@ -10563,7 +10563,7 @@ class IdentityColorTests(unittest.TestCase):
             self.assertAlmostEqual(hex_to_oklch(agent.color)[2], brand_hue, delta=6.0)
 
     def test_session_override_wins_and_round_trips(self) -> None:
-        from sidepulse.colors import ColorSettings, _active_agents
+        from jrbar.colors import ColorSettings, _active_agents
 
         two = (
             _status("codex", AgentMode.WORKING),
@@ -10582,7 +10582,7 @@ class IdentityColorTests(unittest.TestCase):
 
 class EscalationTests(unittest.TestCase):
     def test_stage_function_thresholds_and_tier_ceiling(self) -> None:
-        from sidepulse import signals
+        from jrbar import signals
 
         def stage(elapsed, tier="takeover"):
             return signals.escalation_stage(
@@ -10714,7 +10714,7 @@ class HardeningTests(unittest.TestCase):
     def test_charging_program_repeats(self) -> None:
         # Without repeat the charge pulse played once per device write
         # and froze until the next 15s sync -- four blinks a minute.
-        from sidepulse.battery import BatterySnapshot, program_for_battery
+        from jrbar.battery import BatterySnapshot, program_for_battery
 
         snapshot = BatterySnapshot(
             percent=50, is_plugged=True, is_charging=True, battery_present=True, adapter_watts=60
@@ -10724,7 +10724,7 @@ class HardeningTests(unittest.TestCase):
         self.assertIn("repeat", program)
 
     def test_trim_oversized_logs_keeps_the_tail_only(self) -> None:
-        from sidepulse import audit
+        from jrbar import audit
 
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -10757,7 +10757,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
         return stat.S_IMODE(path.lstat().st_mode)
 
     def test_sensitive_entrypoints_create_owner_only_files(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -10830,7 +10830,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 self.assertEqual(self._mode(path), 0o600, path)
 
     def test_atomic_state_entrypoints_refuse_preplanted_symlink_targets(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -10870,7 +10870,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             self.assertEqual(outside.read_text(), "outside stays unchanged")
 
     def test_sensitive_state_reads_refuse_preplanted_symlinks(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -10945,7 +10945,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             self.assertTrue(cache_link.is_symlink())
 
     def test_existing_owned_state_reads_tighten_their_directories(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -11081,7 +11081,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                     "authorization": "Bearer private",
                 }
             )
-            with patch("sidepulse.hook.detect_log_path", return_value=grok_log):
+            with patch("jrbar.hook.detect_log_path", return_value=grok_log):
                 provider, routed_path, line = routed_hook_payload("claude", claude_log, payload)
             write_hook_line(routed_path, line)
 
@@ -11098,7 +11098,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
     def test_hook_log_main_redacts_before_ipc_and_storage(self) -> None:
         import io
 
-        from sidepulse.hook import hook_log_main
+        from jrbar.hook import hook_log_main
 
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "claude.jsonl"
@@ -11123,9 +11123,9 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 return True
 
             with (
-                patch("sidepulse.hook.sys.stdin", io.StringIO(payload)),
+                patch("jrbar.hook.sys.stdin", io.StringIO(payload)),
                 patch(
-                    "sidepulse.hook.send_refresh_hint",
+                    "jrbar.hook.send_refresh_hint",
                     side_effect=observe_hint,
                 ),
             ):
@@ -11162,7 +11162,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
     def test_cursor_hook_main_persists_only_opaque_identity_and_returns_json(self) -> None:
         import io
 
-        from sidepulse.hook import hook_log_main
+        from jrbar.hook import hook_log_main
 
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "cursor.jsonl"
@@ -11187,9 +11187,9 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 }
             )
             with (
-                patch("sidepulse.hook.sys.stdin", io.StringIO(payload)),
-                patch("sidepulse.hook.sys.stdout", output),
-                patch("sidepulse.hook.send_refresh_hint", return_value=True),
+                patch("jrbar.hook.sys.stdin", io.StringIO(payload)),
+                patch("jrbar.hook.sys.stdout", output),
+                patch("jrbar.hook.send_refresh_hint", return_value=True),
             ):
                 self.assertEqual(hook_log_main("cursor", log), 0)
 
@@ -11215,7 +11215,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
     def test_hermes_hook_main_preserves_typed_turn_outcome_without_raw_copy(self) -> None:
         import io
 
-        from sidepulse.hook import hook_log_main
+        from jrbar.hook import hook_log_main
 
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "hermes.jsonl"
@@ -11239,8 +11239,8 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 }
             )
             with (
-                patch("sidepulse.hook.sys.stdin", io.StringIO(payload)),
-                patch("sidepulse.hook.send_refresh_hint", return_value=True),
+                patch("jrbar.hook.sys.stdin", io.StringIO(payload)),
+                patch("jrbar.hook.send_refresh_hint", return_value=True),
             ):
                 self.assertEqual(hook_log_main("hermes", log), 0)
 
@@ -11259,7 +11259,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 self.assertNotIn(forbidden, serialized)
 
     def test_active_hook_append_compacts_tail_and_skips_symlinked_jsonl(self) -> None:
-        from sidepulse import audit
+        from jrbar import audit
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -11326,7 +11326,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 received_hint.set()
 
             server = HookEventServer(receive_hint, socket_path=socket_path)
-            with patch("sidepulse.ipc.socket.socket", side_effect=factory):
+            with patch("jrbar.ipc.socket.socket", side_effect=factory):
                 server.start()
             try:
                 self.assertEqual(listen_modes, [0o600])
@@ -11372,7 +11372,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             self.assertEqual(outside.read_text(), "outside")
 
     def test_openclaw_installer_round_trip_is_private_and_backups_are_bounded(self) -> None:
-        from sidepulse.install import BACKUP_MAX_FILES, backup_file
+        from jrbar.install import BACKUP_MAX_FILES, backup_file
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -11454,7 +11454,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             self.assertEqual(marker.read_text(), "outside remains")
 
     def test_ipc_clients_refuse_symlink_redirect_to_live_socket(self) -> None:
-        from sidepulse.ipc import another_instance_alive
+        from jrbar.ipc import another_instance_alive
 
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -11486,7 +11486,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
     def test_ipc_clients_require_same_uid_peer_credentials(self) -> None:
         import threading
 
-        from sidepulse.ipc import another_instance_alive
+        from jrbar.ipc import another_instance_alive
 
         with tempfile.TemporaryDirectory() as tmp:
             socket_path = Path(tmp) / "events.sock"
@@ -11505,7 +11505,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
 
             try:
                 with patch(
-                    "sidepulse.ipc.peer_effective_uid",
+                    "jrbar.ipc.peer_effective_uid",
                     create=True,
                     side_effect=peer_uid,
                 ):
@@ -11526,7 +11526,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
     def test_ipc_clients_fail_closed_when_peer_credentials_are_unavailable(
         self,
     ) -> None:
-        from sidepulse.ipc import another_instance_alive
+        from jrbar.ipc import another_instance_alive
 
         with tempfile.TemporaryDirectory() as tmp:
             socket_path = Path(tmp) / "events.sock"
@@ -11538,7 +11538,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             server.start()
             try:
                 with patch(
-                    "sidepulse.ipc.peer_effective_uid",
+                    "jrbar.ipc.peer_effective_uid",
                     create=True,
                     side_effect=OSError("peer credentials unavailable"),
                 ):
@@ -11582,7 +11582,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
 
                     try:
                         with patch(
-                            "sidepulse.ipc.peer_effective_uid",
+                            "jrbar.ipc.peer_effective_uid",
                             return_value=effective_uid,
                         ):
                             self.assertTrue(
@@ -11885,7 +11885,7 @@ class CompletionBatchControllerTests(unittest.TestCase):
 
 class DeferredRoadmapTests(unittest.TestCase):
     def test_per_device_blend_override_round_trips(self) -> None:
-        from sidepulse.settings import DeviceDisplaySetting
+        from jrbar.settings import DeviceDisplaySetting
 
         device = DeviceDisplaySetting(device_id="pro", name="Pro", path="/Volumes/Pro")
         configured = AgentMonitorSettings(devices=(device,)).with_device_blend_mode("pro", "relay")
@@ -11901,7 +11901,7 @@ class DeferredRoadmapTests(unittest.TestCase):
     def test_calibration_profiles_save_and_apply(self) -> None:
         from dataclasses import replace as dc_replace
 
-        from sidepulse.settings import DeviceDisplaySetting
+        from jrbar.settings import DeviceDisplaySetting
 
         device = DeviceDisplaySetting(device_id="pro", name="Pro", path="/Volumes/Pro", brightness=200, red_gain=0.8)
         configured = AgentMonitorSettings(devices=(device,)).with_saved_calibration_profile("Night")
@@ -11945,8 +11945,8 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
         self.assertIsNone(main.parent_agent_id)
 
     def test_finished_subagent_is_never_an_ask(self) -> None:
-        from sidepulse.collector import mode_for_event
-        from sidepulse.models import HookEvent
+        from jrbar.collector import mode_for_event
+        from jrbar.models import HookEvent
 
         record = HookEvent(
             provider="claude",
@@ -11957,8 +11957,8 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
         self.assertEqual(mode_for_event(record), AgentMode.COMPLETED)
 
     def test_stop_with_trailing_question_is_an_ask(self) -> None:
-        from sidepulse.collector import mode_for_event
-        from sidepulse.models import HookEvent
+        from jrbar.collector import mode_for_event
+        from jrbar.models import HookEvent
 
         record = HookEvent(
             provider="claude",
@@ -11969,8 +11969,8 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
         self.assertEqual(mode_for_event(record), AgentMode.WAITING_FOR_INPUT)
 
     def test_question_buried_in_a_summary_is_not_an_ask(self) -> None:
-        from sidepulse.collector import mode_for_event
-        from sidepulse.models import HookEvent
+        from jrbar.collector import mode_for_event
+        from jrbar.models import HookEvent
 
         message = (
             "Should we ship this? I decided yes.\n"
@@ -11989,7 +11989,7 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
         self.assertEqual(mode_for_event(record), AgentMode.COMPLETED)
 
     def test_ask_inbox_ignores_subagents(self) -> None:
-        from sidepulse import status_bar
+        from jrbar import status_bar
 
         snapshot = SimpleNamespace(
             statuses=[
@@ -12008,8 +12008,8 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
     def test_menu_groups_running_subagents_under_their_parent(self) -> None:
         from dataclasses import replace
 
-        from sidepulse import status_bar
-        from sidepulse.settings import AgentMonitorSettings
+        from jrbar import status_bar
+        from jrbar.settings import AgentMonitorSettings
 
         main = self._status("claude:session:s1", AgentMode.WORKING, session_id="s1")
         workers = [
@@ -12067,7 +12067,7 @@ class SubagentAndPhantomAskTests(unittest.TestCase):
 
 class ClaudeQuotaTests(unittest.TestCase):
     def test_windows_from_payload_tolerates_schema_growth(self) -> None:
-        from sidepulse.claude_quota import windows_from_payload
+        from jrbar.claude_quota import windows_from_payload
 
         payload = {
             "five_hour": {"utilization": 42.5, "resets_at": "2026-08-12T04:00:00Z"},
@@ -12093,7 +12093,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
     def _snapshot(self, *statuses):
         from types import SimpleNamespace as NS
 
-        from sidepulse.collector import aggregate_status
+        from jrbar.collector import aggregate_status
 
         return NS(
             statuses=list(statuses),
@@ -12133,7 +12133,7 @@ class SubagentAskAggregateTests(unittest.TestCase):
 
 class UsageGraphRangeTests(unittest.TestCase):
     def test_range_validation_and_round_trip(self) -> None:
-        from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+        from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
         configured = (
             AgentMonitorSettings()
@@ -12154,7 +12154,7 @@ class UsageGraphRangeTests(unittest.TestCase):
             AgentMonitorSettings().with_usage_graph_providers(())
 
     def test_daily_buckets_scale_to_a_year(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         buckets = usage_stats.daily_buckets([], days=365)
         self.assertEqual(len(buckets), 365)
@@ -12162,7 +12162,7 @@ class UsageGraphRangeTests(unittest.TestCase):
     def test_range_model_includes_yesterday_and_uses_one_shared_metric(self) -> None:
         from datetime import datetime, timedelta
 
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         now = datetime(2026, 8, 13, 12, 0, 0)
         yesterday = (now - timedelta(days=1)).timestamp()
@@ -12191,14 +12191,14 @@ class UsageGraphRangeTests(unittest.TestCase):
 class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
-        from sidepulse.capacity_refresh import (
+        from jrbar.capacity_refresh import (
             CapacityRefreshCoordinator,
             RefreshFailureKind,
             RefreshSourceKey,
             RefreshSourceRegistration,
         )
-        from sidepulse.capacity_types import SourceKey
-        from sidepulse.refresh_policy import ProviderRefreshState, mark_refresh_started
+        from jrbar.capacity_types import SourceKey
+        from jrbar.refresh_policy import ProviderRefreshState, mark_refresh_started
 
         run_loop_patch = patch.object(self.status_bar, "NSRunLoop")
         self.capacity_run_loop_type = run_loop_patch.start()
@@ -12269,7 +12269,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         return {self._source(provider_id): failure for provider_id, failure in failures.items()}
 
     def _prime_refreshes(self, *provider_ids, completed_at=None):
-        from sidepulse.capacity_refresh import RefreshCause, RefreshDecisionKind
+        from jrbar.capacity_refresh import RefreshCause, RefreshDecisionKind
 
         completed_at = time.monotonic() if completed_at is None else float(completed_at)
         states = getattr(self.controller, "_usage_provider_states", {})
@@ -12336,9 +12336,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         the real descriptor keeps every rendered string in these tests the
         string a real refresh produces.
         """
-        from sidepulse import usage_stats
-        from sidepulse.capacity_sources import normalize_supported_quota_evidence
-        from sidepulse.status_bar import CAPACITY_DESCRIPTORS_BY_SOURCE
+        from jrbar import usage_stats
+        from jrbar.capacity_sources import normalize_supported_quota_evidence
+        from jrbar.status_bar import CAPACITY_DESCRIPTORS_BY_SOURCE
 
         evidence_builders = {
             "codex": usage_stats.codex_capacity_evidence_from_windows,
@@ -12368,7 +12368,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
     @staticmethod
     def _claude_evidence_from_windows(descriptor, windows, *, observed_at):
-        from sidepulse import claude_quota
+        from jrbar import claude_quota
 
         return claude_quota.capacity_evidence_from_windows(
             descriptor,
@@ -12394,7 +12394,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
 
     def _capacity_observation(self, provider_id, remaining, observed_at):
-        from sidepulse.capacity_types import (
+        from jrbar.capacity_types import (
             CapacitySourceHealth,
             CapacityUnit,
             CapacityValue,
@@ -12552,7 +12552,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
     def test_controller_initializes_exact_registry_scoped_refresh_authority(self) -> None:
-        from sidepulse.capacity_refresh import RefreshStatusKind
+        from jrbar.capacity_refresh import RefreshStatusKind
 
         source_states = self.controller._capacity_refresh_coordinator.snapshot_state(100.0).sources
 
@@ -12590,9 +12590,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
         with (
             patch.object(self.controller, "request_usage_refresh") as request,
-            patch("sidepulse.status_bar.usage_stats.scan_usage") as scan,
-            patch("sidepulse.status_bar.usage_stats.codex_rate_limits") as codex,
-            patch("sidepulse.status_bar.claude_quota.fetch_windows") as claude,
+            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
+            patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
+            patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
         ):
             self.controller.menuWillOpen_(None)
 
@@ -12620,7 +12620,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=100.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             started = self.controller.request_usage_refresh(
                 source_keys,
@@ -12746,11 +12746,11 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         try:
             with (
                 patch(
-                    "sidepulse.status_bar.usage_stats.scan_usage",
+                    "jrbar.status_bar.usage_stats.scan_usage",
                     side_effect=blocked_scan,
                 ),
                 patch(
-                    "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                    "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                     side_effect=blocked_source,
                 ),
             ):
@@ -12786,7 +12786,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             self.status_bar.log_status_bar("worker is stopping")
 
     def test_disabled_exact_source_starts_no_worker_and_owns_no_timer(self) -> None:
-        from sidepulse.capacity_refresh import (
+        from jrbar.capacity_refresh import (
             CapacityRefreshCoordinator,
             RefreshSourceRegistration,
         )
@@ -12802,7 +12802,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
         with (
             patch.object(self.status_bar, "NSTimer") as timer_api,
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             started = self.controller.request_usage_refresh(
                 (self._source("codex"),),
@@ -12815,7 +12815,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         thread_type.assert_not_called()
 
     def test_exact_deadline_times_out_only_its_source(self) -> None:
-        from sidepulse.capacity_refresh import RefreshFailureKind, RefreshStatusKind
+        from jrbar.capacity_refresh import RefreshFailureKind, RefreshStatusKind
 
         codex_timer = MagicMock()
         claude_timer = MagicMock()
@@ -12827,7 +12827,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=100.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread"),
+            patch("jrbar.status_bar.threading.Thread"),
         ):
             self.controller.request_usage_refresh(
                 (self._source("codex"), self._source("claude")),
@@ -12869,7 +12869,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=100.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread"),
+            patch("jrbar.status_bar.threading.Thread"),
         ):
             self.controller.request_usage_refresh((self._source("codex"),))
         first_timer.userInfo.return_value = (self._refresh_key("codex"), 1)
@@ -12882,7 +12882,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=145.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             self.controller.request_usage_refresh((self._source("codex"),))
         newest_requests = thread_type.call_args.kwargs["args"][0]
@@ -12957,7 +12957,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
         with (
             patch.object(self.controller, "request_usage_refresh") as request,
-            patch("sidepulse.status_bar.NSApp"),
+            patch("jrbar.status_bar.NSApp"),
         ):
             self.controller.show_settings_window()
 
@@ -12984,7 +12984,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             "claude": self._state("claude"),
         }
 
-        with patch("sidepulse.status_bar.threading.Thread") as thread_type:
+        with patch("jrbar.status_bar.threading.Thread") as thread_type:
             self.controller.menuWillOpen_(None)
             self.controller.menuWillOpen_(None)
 
@@ -13011,7 +13011,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         )
 
     def test_disabled_plan_limits_skip_network_but_publish_local_claude_usage(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         self.controller.settings = self.controller.settings.with_claude_plan_limits_enabled(False)
         totals = usage_stats.UsageTotals()
@@ -13020,10 +13020,10 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         published = []
         with (
             patch(
-                "sidepulse.status_bar.usage_stats.scan_usage",
+                "jrbar.status_bar.usage_stats.scan_usage",
                 return_value=totals,
             ),
-            patch("sidepulse.status_bar.claude_quota.fetch_windows") as fetch,
+            patch("jrbar.status_bar.claude_quota.fetch_windows") as fetch,
             patch.object(
                 self.controller,
                 "performSelectorOnMainThread_withObject_waitUntilDone_",
@@ -13040,7 +13040,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         )
 
     def test_disabling_codex_percent_clears_old_windows_after_successful_refresh(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         now = time.monotonic()
         self.controller._usage_provider_states = {
@@ -13074,13 +13074,13 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             return InlineThread()
 
         with (
-            patch("sidepulse.status_bar.usage_stats.scan_usage") as scan,
+            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
             patch(
-                "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                 return_value={"primary": {"used_percent": 82, "window_minutes": 300}},
             ),
             patch(
-                "sidepulse.status_bar.threading.Thread",
+                "jrbar.status_bar.threading.Thread",
                 side_effect=inline_thread,
             ),
             patch.object(
@@ -13111,7 +13111,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertIs(self.controller._usage_menu_item, menu_item)
 
     def test_disabling_claude_plan_limits_clears_old_windows_after_successful_refresh(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         now = time.monotonic()
         self.controller._usage_provider_states = {
@@ -13145,10 +13145,10 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             return InlineThread()
 
         with (
-            patch("sidepulse.status_bar.usage_stats.scan_usage") as scan,
-            patch("sidepulse.status_bar.claude_quota.fetch_windows") as fetch,
+            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
+            patch("jrbar.status_bar.claude_quota.fetch_windows") as fetch,
             patch(
-                "sidepulse.status_bar.threading.Thread",
+                "jrbar.status_bar.threading.Thread",
                 side_effect=inline_thread,
             ),
             patch.object(
@@ -13202,7 +13202,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             "profile_usage_label": label,
             "profile_usage_graph": graph,
         }
-        with patch("sidepulse.usage_graph_worker.refresh_usage_graph") as refresh:
+        with patch("jrbar.usage_graph_worker.refresh_usage_graph") as refresh:
             self.controller.applyUsageSummary_(
                 {
                     "requests": requests,
@@ -13217,7 +13217,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         refresh.assert_called_once_with(self.controller)
 
     def test_one_provider_failure_keeps_other_success_and_last_known_good(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         requests = self._prime_refreshes("codex", "claude")
         old_claude = build_provider_usage_view(
@@ -13246,8 +13246,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._usage_provider_states["claude"].consecutive_failures, 1)
 
     def test_failed_last_known_good_keeps_remaining_but_clears_reset_timers(self) -> None:
-        from sidepulse.capacity_types import ResetState
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.capacity_types import ResetState
+        from jrbar.usage_view import build_provider_usage_view
 
         requests = self._prime_refreshes("claude", completed_at=1_000.0)
         self.controller._usage_provider_models = {
@@ -13295,7 +13295,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_unscoped_source_generation_keeps_remaining_but_disputes_reset(self) -> None:
         from dataclasses import replace as dataclass_replace
 
-        from sidepulse.capacity_types import (
+        from jrbar.capacity_types import (
             CapacitySourceHealth,
             CapacityUnit,
             CapacityValue,
@@ -13428,7 +13428,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
 
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=101.0),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             queued = self.controller.request_usage_refresh(
                 (self._source("claude"),),
@@ -13448,7 +13448,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=115.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             started = self.controller.request_usage_refresh((self._source("claude"),))
         self.assertEqual(started, (self._source("claude"),))
@@ -13485,7 +13485,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=101.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             first = self.controller.request_usage_refresh(
                 (self._source("claude"),),
@@ -13514,7 +13514,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=115.0),
             patch.object(self.status_bar, "NSTimer", deadline_api),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             self.controller.capacityRefreshRetry_(retry_timer)
             self.controller.capacityRefreshRetry_(retry_timer)
@@ -13559,7 +13559,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         )
 
     def test_obsolete_worker_generation_cannot_publish(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         requests = self._prime_refreshes("codex", completed_at=800.0)
         with patch.object(self.status_bar.time, "monotonic", return_value=800.0):
@@ -13593,18 +13593,18 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertTrue(self.controller._usage_provider_states["codex"].in_flight)
 
     def test_one_local_scan_serves_same_batch_codex_and_claude_refresh(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         totals = usage_stats.UsageTotals()
         published = []
         with (
-            patch("sidepulse.status_bar.usage_stats.scan_usage", return_value=totals) as scan,
+            patch("jrbar.status_bar.usage_stats.scan_usage", return_value=totals) as scan,
             patch(
-                "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                 return_value={"primary": {"used_percent": 20, "window_minutes": 300}},
             ),
             patch(
-                "sidepulse.status_bar.claude_quota.fetch_windows",
+                "jrbar.status_bar.claude_quota.fetch_windows",
                 return_value=[{"label": "5-hour", "utilization": 30, "window_minutes": 300}],
             ),
             patch.object(
@@ -13637,7 +13637,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_hung_source_cannot_block_sibling_publication(self) -> None:
         import threading
 
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         totals = usage_stats.UsageTotals()
         codex_entered = threading.Event()
@@ -13656,13 +13656,13 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
                 claude_published.set()
 
         with (
-            patch("sidepulse.status_bar.usage_stats.scan_usage", return_value=totals),
+            patch("jrbar.status_bar.usage_stats.scan_usage", return_value=totals),
             patch(
-                "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                 side_effect=hung_codex,
             ),
             patch(
-                "sidepulse.status_bar.claude_quota.fetch_windows",
+                "jrbar.status_bar.claude_quota.fetch_windows",
                 return_value=[{"label": "5-hour", "utilization": 30, "window_minutes": 300}],
             ),
             patch.object(
@@ -13690,7 +13690,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_scan_failure_isolated_from_supported_remote_capacity_and_keeps_local_lkg(
         self,
     ) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         requests = self._prime_refreshes("codex", "claude")
         self.controller._usage_provider_models = {
@@ -13719,15 +13719,15 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         published = []
         with (
             patch(
-                "sidepulse.status_bar.usage_stats.scan_usage",
+                "jrbar.status_bar.usage_stats.scan_usage",
                 side_effect=OSError("scan broke"),
             ),
             patch(
-                "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                 return_value={"primary": {"used_percent": 22, "window_minutes": 300}},
             ) as codex_limits,
             patch(
-                "sidepulse.status_bar.claude_quota.fetch_windows",
+                "jrbar.status_bar.claude_quota.fetch_windows",
                 return_value=[{"label": "5-hour", "utilization": 33, "window_minutes": 300}],
             ) as claude_limits,
             patch.object(
@@ -13766,7 +13766,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_usage_refresh_worker_publishes_provider_local_coverage_without_paths(
         self,
     ) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         totals = usage_stats.UsageTotals()
         totals.sessions.add("claude-session")
@@ -13802,13 +13802,13 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         published = []
 
         with (
-            patch("sidepulse.status_bar.usage_stats.scan_usage", return_value=totals),
+            patch("jrbar.status_bar.usage_stats.scan_usage", return_value=totals),
             patch(
-                "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                 return_value={"primary": {"used_percent": 22, "window_minutes": 300}},
             ),
             patch(
-                "sidepulse.status_bar.claude_quota.fetch_windows",
+                "jrbar.status_bar.claude_quota.fetch_windows",
                 return_value=[{"label": "5-hour", "utilization": 33, "window_minutes": 300}],
             ),
             patch.object(
@@ -13870,8 +13870,8 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_codex_adapter_failure_publishes_new_local_coverage_and_keeps_old_window(
         self,
     ) -> None:
-        from sidepulse import usage_stats
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar import usage_stats
+        from jrbar.usage_view import build_provider_usage_view
 
         totals = usage_stats.UsageTotals()
         totals.codex_sessions.add("codex-session")
@@ -13906,9 +13906,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         }
         published = []
         with (
-            patch("sidepulse.status_bar.usage_stats.scan_usage", return_value=totals),
+            patch("jrbar.status_bar.usage_stats.scan_usage", return_value=totals),
             patch(
-                "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+                "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
                 side_effect=OSError("Bearer secret-token /Users/person/private-capacity.json"),
             ),
             patch.object(
@@ -14057,7 +14057,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.controller.status_item.setMenu_.assert_not_called()
 
     def test_capacity_reset_only_window_never_displays_fake_zero_percent(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         self.controller._usage_provider_models = {
             "codex": build_provider_usage_view(
@@ -14148,7 +14148,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         )
 
     def test_capacity_reset_timer_uses_earliest_window_across_all_providers(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         timer_api = MagicMock()
         timer_api.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_.side_effect = (
@@ -14195,7 +14195,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._capacity_reset_plan.deadline, 1_042.0)
 
     def test_normal_refresh_due_first_suppresses_reset_boundary_timer(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         timer_api = MagicMock()
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=100.0)}
@@ -14224,7 +14224,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertIsNone(self.controller._capacity_reset_timer)
 
     def test_unchanged_capacity_plan_keeps_existing_timer_identity(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         self.controller.status_menu_open = True
         reset_timer = MagicMock()
@@ -14263,7 +14263,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
     def test_capacity_timers_join_common_run_loop_modes_for_open_menu_updates(
         self,
     ) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         self.controller.status_menu_open = True
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
@@ -14301,7 +14301,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         countdown_timer.invalidate.assert_not_called()
 
     def test_exact_twenty_four_hour_countdown_schedules_the_branch_transition(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         self.controller.status_menu_open = True
         timer_api = MagicMock()
@@ -14444,7 +14444,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
     def test_late_reset_callback_reconciles_changed_windows_before_requesting(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         timer = MagicMock()
         self.controller._capacity_reset_timer = timer
@@ -14476,7 +14476,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._attempted_capacity_boundary_keys, ())
 
     def test_backoff_blocked_reset_request_keeps_one_concrete_retry_timer(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         timer = MagicMock()
         retry_timer = MagicMock()
@@ -14569,7 +14569,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         self.assertEqual(self.controller._attempted_capacity_boundary_keys[-1], "new")
 
     def test_countdown_callback_only_mutates_existing_labels_and_reschedules(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         self.controller._usage_provider_states = {"codex": self._state("codex", last_success_at=500.0)}
         self.controller._usage_provider_models = {
@@ -14598,9 +14598,9 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
             patch.object(self.status_bar.time, "monotonic", return_value=510.0),
             patch.object(self.status_bar.time, "time", return_value=1_010.0),
             patch.object(self.controller, "_usage_refresh_worker") as worker,
-            patch("sidepulse.status_bar.usage_stats.scan_usage") as scan,
-            patch("sidepulse.status_bar.usage_stats.codex_rate_limits") as codex,
-            patch("sidepulse.status_bar.claude_quota.fetch_windows") as claude,
+            patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
+            patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
+            patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
             patch.object(self.controller, "schedule_capacity_timers") as schedule,
         ):
             self.controller.capacityCountdown_(timer)
@@ -14615,7 +14615,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         schedule.assert_called_once_with(epoch_now=1_010.0)
 
     def test_invalidation_clears_capacity_timers_models_and_attempts(self) -> None:
-        from sidepulse.usage_view import build_provider_usage_view
+        from jrbar.usage_view import build_provider_usage_view
 
         reset_timer = MagicMock()
         countdown_timer = MagicMock()
@@ -14700,7 +14700,7 @@ class ProviderAwareUsageRefreshTests(unittest.TestCase):
         with (
             patch.object(self.status_bar.time, "monotonic", return_value=102.0),
             patch.object(self.status_bar, "NSTimer", timer_api),
-            patch("sidepulse.status_bar.threading.Thread") as thread_type,
+            patch("jrbar.status_bar.threading.Thread") as thread_type,
         ):
             self.controller.maybe_refresh_usage_summary()
             self.controller.maybe_refresh_usage_summary()
@@ -14973,7 +14973,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         return device
 
     def test_stopped_worker_failure_projection_contract_across_every_surface(self) -> None:
-        from sidepulse.attention import LifecycleMode
+        from jrbar.attention import LifecycleMode
 
         self.controller.update_attention_projection(self._snapshot(), now=10.0)
         projection = self.controller.update_attention_projection(
@@ -15154,7 +15154,7 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         refresh.assert_called_once_with(None)
 
     def test_failed_rows_do_not_crash_multi_agent_projection_blend_modes(self) -> None:
-        from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+        from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
 
         now = datetime.now(timezone.utc)
         working = AgentStatus(
@@ -15240,7 +15240,7 @@ class QuotaRunwayTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_runway_program_fill_split_and_firmware_law(self) -> None:
-        from sidepulse.led_status import quota_runway_program
+        from jrbar.led_status import quota_runway_program
 
         program = quota_runway_program(0.5, led_count=8, brightness=255, color="#10A37F")
         self.assertNotIn(":off", program)
@@ -15261,7 +15261,7 @@ class QuotaRunwayTests(unittest.TestCase):
         # quota_runway_state with the JR plane's gated lanes
         # (quota_runway.py / test_quota_runway.py). THIS controller has
         # no such producer, so the claim must keep failing closed.
-        from sidepulse.settings import LED_DISPLAY_QUOTA_RUNWAY
+        from jrbar.settings import LED_DISPLAY_QUOTA_RUNWAY
 
         device = self.status_bar.StatusBarDevice(
             device_id="SidePulsePro",
@@ -15289,7 +15289,7 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         )
 
     def _snooze_preferences(self, work_id: str):
-        from sidepulse.mailbox_preferences import MailboxPreference
+        from jrbar.mailbox_preferences import MailboxPreference
 
         now = time.time()
         return (
@@ -15330,8 +15330,8 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         store's timezone-correct resolver (wired 2026-08-26)."""
         from datetime import datetime as _datetime
 
-        from sidepulse import status_bar_legacy
-        from sidepulse.agent_browser_window import (
+        from jrbar import status_bar_legacy
+        from jrbar.agent_browser_window import (
             AgentBrowserActionPayload,
             OperatorActionKind,
         )
@@ -15373,8 +15373,8 @@ class SnoozeScopeControllerTests(unittest.TestCase):
         self.assertIn("codex:session:main", row_ids)
 
     def test_agent_browser_answer_payload_requires_exact_identity_and_reply_shape(self) -> None:
-        from sidepulse.agent_browser_window import AgentBrowserAnswerPayload
-        from sidepulse.answer_in_place import AnswerActionKind
+        from jrbar.agent_browser_window import AgentBrowserAnswerPayload
+        from jrbar.answer_in_place import AnswerActionKind
 
         key = self._work_key("main")
         payload = AgentBrowserAnswerPayload(
@@ -15442,7 +15442,7 @@ class PowerUpLookTests(unittest.TestCase):
         self.controller.show_settings_window()
         self.controller.ensure_all_settings_panes()
         self.controller.studio_editor.setString_("#00E5FF 500ms pulse\nrepeat")
-        with patch("sidepulse.status_bar.discover_devices", return_value=devices):
+        with patch("jrbar.status_bar.discover_devices", return_value=devices):
             self.controller.applyStudioAsPowerUp_(None)
         init_path = volume_root / "SidePulseDot" / "INIT.LED"
         self.assertTrue(init_path.exists())
@@ -15457,7 +15457,7 @@ class PowerUpLookTests(unittest.TestCase):
         self.controller.show_settings_window()
         self.controller.ensure_all_settings_panes()
         self.controller.studio_editor.setString_("")
-        with patch("sidepulse.status_bar.discover_devices", return_value=devices):
+        with patch("jrbar.status_bar.discover_devices", return_value=devices):
             self.controller.applyStudioAsPowerUp_(None)
         self.assertFalse((volume_root / "SidePulseDot" / "INIT.LED").exists())
 
@@ -15467,7 +15467,7 @@ class StudioLibraryTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_save_load_delete_round_trip(self) -> None:
-        from sidepulse.settings import load_settings, save_settings
+        from jrbar.settings import load_settings, save_settings
 
         settings = self.controller.settings.with_studio_saved_look("Aurora", "#00E5FF 500ms pulse\nrepeat")
         settings = settings.with_studio_saved_look("Ember", "#FF9F0A 400ms pulse\nrepeat")
@@ -15547,7 +15547,7 @@ class ContextLidAnimationTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_context_picks_the_active_variant_only_when_agents_run(self) -> None:
-        from sidepulse.settings import (
+        from jrbar.settings import (
             LID_ANIMATION_CLOSED,
             LID_ANIMATION_CLOSED_ACTIVE,
             LID_ANIMATION_OPEN_ACTIVE,
@@ -15594,7 +15594,7 @@ class ContextLidAnimationTests(unittest.TestCase):
         self.assertTrue(self.controller.agents_active_now())
 
     def test_active_variants_round_trip(self) -> None:
-        from sidepulse.settings import (
+        from jrbar.settings import (
             LID_ANIMATION_OPEN_ACTIVE,
             AgentMonitorSettings,
             load_settings,
@@ -15810,7 +15810,7 @@ class CompletionThroughSnapshotTests(unittest.TestCase):
         self.controller.post_completion_notification = self.posted.append
 
     def _ingest(self, session_id: str, event: str, **raw) -> None:
-        from sidepulse.models import HookEvent
+        from jrbar.models import HookEvent
 
         self.controller.monitor.ingest_record(
             HookEvent(
@@ -16285,7 +16285,7 @@ class AgentMailboxMenuTests(unittest.TestCase):
         )
         snapshot = self._snapshot((initial,))
         self.controller.update_attention_projection(snapshot)
-        with patch("sidepulse.status_bar.time.monotonic", return_value=100.0):
+        with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
             signature = self.status_bar.menu_content_signature(snapshot, self.status_bar.STATE_WORKING, self.controller)
 
         private_only = self._status(
@@ -16299,7 +16299,7 @@ class AgentMailboxMenuTests(unittest.TestCase):
         )
         private_snapshot = self._snapshot((private_only,))
         self.controller.update_attention_projection(private_snapshot)
-        with patch("sidepulse.status_bar.time.monotonic", return_value=100.0):
+        with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
             private_signature = self.status_bar.menu_content_signature(
                 private_snapshot, self.status_bar.STATE_WORKING, self.controller
             )
@@ -16313,7 +16313,7 @@ class AgentMailboxMenuTests(unittest.TestCase):
         )
         activity_snapshot = self._snapshot((activity_changed,))
         self.controller.update_attention_projection(activity_snapshot)
-        with patch("sidepulse.status_bar.time.monotonic", return_value=100.0):
+        with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
             activity_signature = self.status_bar.menu_content_signature(
                 activity_snapshot, self.status_bar.STATE_WORKING, self.controller
             )
@@ -16325,7 +16325,7 @@ class AgentMailboxMenuTests(unittest.TestCase):
         # AppKit rebuild every 30 seconds forever (deleted 2026-08-26).
         # Identical content must hash identically no matter how much
         # wall-clock passes between calls.
-        with patch("sidepulse.status_bar.time.monotonic", return_value=100_000.0):
+        with patch("jrbar.status_bar.time.monotonic", return_value=100_000.0):
             much_later = self.status_bar.menu_content_signature(
                 activity_snapshot, self.status_bar.STATE_WORKING, self.controller
             )
@@ -16466,7 +16466,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
             return True
 
         def request_authorization(self, completion=None) -> bool:
-            from sidepulse.macos_notifications import NotificationAuthorizationState
+            from jrbar.macos_notifications import NotificationAuthorizationState
 
             self.authorization_requests += 1
             if completion is not None:
@@ -16474,7 +16474,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
             return True
 
         def authorization_state(self):
-            from sidepulse.macos_notifications import NotificationAuthorizationState
+            from jrbar.macos_notifications import NotificationAuthorizationState
 
             self.authorization_observations += 1
             return NotificationAuthorizationState.AUTHORIZED
@@ -16495,7 +16495,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
         self.controller.settings = self.controller.settings.with_completion_notification_enabled(True)
 
     def _completion_fixture(self):
-        from sidepulse.operator_state import (
+        from jrbar.operator_state import (
             CanonicalOperatorEvent,
             InterruptionClass,
             SemanticEventKey,
@@ -16611,7 +16611,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
         self.assertEqual(completed, [True])
 
     def test_completion_notification_respects_toggle_and_quiet_state(self) -> None:
-        from sidepulse.dnd_policy import DndMode, DndOverride
+        from jrbar.dnd_policy import DndMode, DndOverride
 
         working, completed, event = self._completion_fixture()
         self.controller.track_completions((working,), operator_events=())
@@ -16634,7 +16634,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
         self.assertEqual(self.client.deliveries, [])
 
     def test_escalation_notification_uses_current_request_and_latches_once(self) -> None:
-        from sidepulse.operator_state import (
+        from jrbar.operator_state import (
             AcknowledgementEligibility,
             CanonicalRequestTruth,
             RequestPhase,
@@ -16721,7 +16721,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
         self.assertEqual(presented, [1 << 2])
 
     def test_explicit_permission_action_updates_controller_state(self) -> None:
-        from sidepulse.macos_notifications import NotificationAuthorizationState
+        from jrbar.macos_notifications import NotificationAuthorizationState
 
         self.controller.performSelectorOnMainThread_withObject_waitUntilDone_ = lambda selector, payload, _wait: (
             getattr(
@@ -16745,7 +16745,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
         their own area; Signals keeps the lights. If this ever reads
         "led_behavior" again, the two jobs have been merged back.
         """
-        from sidepulse.macos_notifications import NotificationAuthorizationState
+        from jrbar.macos_notifications import NotificationAuthorizationState
 
         self.controller._notification_authorization_checked = True
         self.controller.notification_authorization_state = NotificationAuthorizationState.NOT_DETERMINED
@@ -16761,7 +16761,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
     def test_unavailable_permission_action_retries_observation_without_prompt(
         self,
     ) -> None:
-        from sidepulse.macos_notifications import NotificationAuthorizationState
+        from jrbar.macos_notifications import NotificationAuthorizationState
 
         self.controller._notification_authorization_checked = True
         self.controller.notification_authorization_state = NotificationAuthorizationState.UNAVAILABLE
@@ -16809,7 +16809,7 @@ class ModernNotificationControllerTests(unittest.TestCase):
         self.assertEqual(self.client.authorization_observations, 1)
 
     def test_authorization_refresh_recovers_when_worker_cannot_start(self) -> None:
-        from sidepulse.macos_notifications import NotificationAuthorizationState
+        from jrbar.macos_notifications import NotificationAuthorizationState
 
         thread = MagicMock()
         thread.start.side_effect = RuntimeError("thread unavailable")
@@ -16883,7 +16883,7 @@ class SingleInstanceProbeTests(unittest.TestCase):
     the socket."""
 
     def test_probe_distinguishes_live_stale_and_absent(self) -> None:
-        from sidepulse.ipc import HookEventServer, another_instance_alive
+        from jrbar.ipc import HookEventServer, another_instance_alive
 
         with tempfile.TemporaryDirectory() as tmp:
             sock = Path(tmp) / "events.sock"
@@ -16921,7 +16921,7 @@ class ResilienceHardeningTests(unittest.TestCase):
             self.assertFalse(path.exists())
 
     def test_led_write_leaves_no_scratch_and_lands_content(self) -> None:
-        from sidepulse.device_writer import write_led_program
+        from jrbar.device_writer import write_led_program
 
         with tempfile.TemporaryDirectory() as tmp:
             target = write_led_program("1:#FF0000 500ms", device_path=Path(tmp), file_name="LEDS.LED")
@@ -16933,12 +16933,12 @@ class ResilienceHardeningTests(unittest.TestCase):
         """The atomicity guarantee itself: when the final rename fails
         (eject mid-write), the OLD program survives untouched -- a
         plain truncate-then-write would already have destroyed it."""
-        from sidepulse import device_writer
+        from jrbar import device_writer
 
         with tempfile.TemporaryDirectory() as tmp:
             target = device_writer.write_led_program("1:#00FF00 1s", device_path=Path(tmp), file_name="LEDS.LED")
             with patch(
-                "sidepulse.device_writer.os.replace",
+                "jrbar.device_writer.os.replace",
                 side_effect=OSError("device ejected"),
             ):
                 with self.assertRaises(OSError):
@@ -16953,12 +16953,12 @@ class ResilienceHardeningTests(unittest.TestCase):
         never freeze the device."""
         import errno as errno_module
 
-        from sidepulse import device_writer
+        from jrbar import device_writer
 
         with tempfile.TemporaryDirectory() as tmp:
             device_writer.write_led_program("1:#00FF00 1s", device_path=Path(tmp), file_name="LEDS.LED")
             with patch(
-                "sidepulse.device_writer.os.replace",
+                "jrbar.device_writer.os.replace",
                 side_effect=OSError(errno_module.ENOSPC, "No space left on device"),
             ):
                 target = device_writer.write_led_program("1:#FF0000 1s", device_path=Path(tmp), file_name="LEDS.LED")
@@ -16993,7 +16993,7 @@ class ResilienceHardeningTests(unittest.TestCase):
         entirely the wrong reason.
         """
         isolate_controller(self)
-        from sidepulse import status_bar
+        from jrbar import status_bar
 
         self.status_bar = status_bar
         self.controller.studio_editor = SimpleNamespace(string=lambda: self.VALID_BURN_PROGRAM)
@@ -17001,11 +17001,11 @@ class ResilienceHardeningTests(unittest.TestCase):
         writes: list = []
         with (
             patch(
-                "sidepulse.led_wasm.SdLedWasmController",
+                "jrbar.led_wasm.SdLedWasmController",
                 side_effect=RuntimeError("no JavaScriptCore"),
             ),
             patch(
-                "sidepulse.device_writer.write_led_program",
+                "jrbar.device_writer.write_led_program",
                 side_effect=lambda *a, **k: writes.append((a, k)),
             ),
         ):
@@ -17014,7 +17014,7 @@ class ResilienceHardeningTests(unittest.TestCase):
         # And the same wiring DOES write when the parser is available --
         # otherwise "wrote nothing" is just a broken burn button.
         with patch(
-            "sidepulse.device_writer.write_led_program",
+            "jrbar.device_writer.write_led_program",
             side_effect=lambda *a, **k: writes.append((a, k)) or Path("/Volumes/SidePulseBurnTest/INIT.LED"),
         ):
             self.controller.applyStudioAsPowerUp_(None)
@@ -17024,7 +17024,7 @@ class ResilienceHardeningTests(unittest.TestCase):
     def test_burn_validation_fails_closed_when_parser_is_gone(self) -> None:
         isolate_controller(self)
         with patch(
-            "sidepulse.led_wasm.SdLedWasmController",
+            "jrbar.led_wasm.SdLedWasmController",
             side_effect=RuntimeError("no JavaScriptCore"),
         ):
             self.assertIsNone(self.controller.validate_studio_program(self.VALID_BURN_PROGRAM))
@@ -17064,7 +17064,7 @@ class AlcoveFollowTests(unittest.TestCase):
         )
 
     def test_alcove_width_is_matched_exactly_both_directions(self) -> None:
-        from sidepulse import virtual_device
+        from jrbar import virtual_device
 
         screen = self._screen()
         base = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True)
@@ -17096,7 +17096,7 @@ class AlcoveFollowTests(unittest.TestCase):
         )
 
     def test_alcove_width_still_caps_at_the_screen(self) -> None:
-        from sidepulse import virtual_device
+        from jrbar import virtual_device
 
         screen = self._screen()
         huge = virtual_device.virtual_window_frame_for_screen(screen, wrap_menu_bar=True, alcove_total_width=5000.0)
@@ -17170,7 +17170,7 @@ class WingTipGaugeTests(unittest.TestCase):
     """Story #14: the wing tips as standing micro-gauges."""
 
     def test_setter_clamps_and_change_gates(self) -> None:
-        from sidepulse import virtual_device
+        from jrbar import virtual_device
 
         view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
         view.set_standing_gauges(0.6, True)
@@ -17248,7 +17248,7 @@ class FocusSignalPolicyTests(unittest.TestCase):
         self.assertFalse(self.controller.courtesy_signals_held())
 
     def test_strictest_active_policy_wins(self) -> None:
-        from sidepulse.focus_status import (
+        from jrbar.focus_status import (
             FocusActivity,
             FocusAuthorization,
             FocusStatusObservation,
@@ -17283,7 +17283,7 @@ class FocusSignalPolicyTests(unittest.TestCase):
 
     def test_durable_mute_keeps_visual_truth_and_holds_outbound_axes(self) -> None:
         """The old Quiet action now delegates to P3.38 Mute semantics."""
-        from sidepulse.dnd_policy import DndMode, DndOverride
+        from jrbar.dnd_policy import DndMode, DndOverride
 
         now = time.time()
         self.controller.settings = self.controller.settings.with_dnd_override(
@@ -17322,7 +17322,7 @@ class QuotaAlertTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_crossings_fire_upward_only_and_never_on_first_sight(self) -> None:
-        from sidepulse.signals import quota_crossings
+        from jrbar.signals import quota_crossings
 
         thresholds = (75.0, 90.0)
         self.assertEqual(quota_crossings({}, {"Codex weekly": 92.0}, thresholds), [])
@@ -17374,7 +17374,7 @@ class QuotaAlertTests(unittest.TestCase):
         refresh.assert_not_called()
 
     def test_threshold_settings_migrate_disabled_and_are_not_resaved(self) -> None:
-        from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+        from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
         configured = AgentMonitorSettings().with_quota_alert_thresholds([90, 50.5, 90])
         self.assertEqual(configured.quota_alert_thresholds, (90.0, 95.0))
@@ -17403,7 +17403,7 @@ class GlowDialTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_resting_glow_replaces_dark_tokens_before_gains(self) -> None:
-        from sidepulse.led_status import apply_resting_glow_to_program
+        from jrbar.led_status import apply_resting_glow_to_program
 
         program = "#FF0000 300ms pulse\noff 200ms cosine\n3:#000000 100ms ease\nrepeat"
         glowed = apply_resting_glow_to_program(program, 0.1)
@@ -17414,7 +17414,7 @@ class GlowDialTests(unittest.TestCase):
         self.assertEqual(apply_resting_glow_to_program(program, 0.0), program)
 
     def test_screen_bar_min_glow_round_trip_and_pitch_black(self) -> None:
-        from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+        from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
         configured = AgentMonitorSettings().with_screen_bar_min_glow(0.0)
         with tempfile.TemporaryDirectory() as tmp:
@@ -17446,7 +17446,7 @@ class GlowDialTests(unittest.TestCase):
         self.assertGreaterEqual(self.controller.effective_brightness_for_device(device), 63)
 
     def test_bracket_floor_zero_means_pitch_black(self) -> None:
-        from sidepulse import virtual_device
+        from jrbar import virtual_device
 
         view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
         view.setMinGlow_(0.0)
@@ -17455,7 +17455,7 @@ class GlowDialTests(unittest.TestCase):
         self.assertTrue(all(c[3] <= 0.011 for c in rendered))
 
     def test_classic_bar_preserves_dim_pixels_with_minimum_glow(self) -> None:
-        from sidepulse import virtual_device
+        from jrbar import virtual_device
 
         view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
         view.setMinGlow_(0.25)
@@ -17466,7 +17466,7 @@ class GlowDialTests(unittest.TestCase):
         self.assertEqual(rendered, dim)
 
     def test_classic_bar_minimum_glow_respects_dark_and_off(self) -> None:
-        from sidepulse import virtual_device
+        from jrbar import virtual_device
 
         view = virtual_device.VirtualLedView.alloc().initWithFrame_(((0, 0), (400.0, 37.0)))
         dim = [(0.02, 0.01, 0.01, 0.01)] * 8
@@ -17478,14 +17478,14 @@ class GlowDialTests(unittest.TestCase):
         self.assertEqual(view._classic_status_colors(dim), dim)
 
     def test_screen_bar_resting_glow_reaches_the_program(self) -> None:
-        from sidepulse.led_status import apply_resting_glow_to_program
+        from jrbar.led_status import apply_resting_glow_to_program
 
         program = "off 300ms cosine\n#FF0000 200ms pulse\nrepeat"
         rendered = apply_resting_glow_to_program(program, 0.12)
         self.assertNotIn("off ", rendered)
 
     def test_device_resting_glow_round_trip(self) -> None:
-        from sidepulse.settings import AgentMonitorSettings
+        from jrbar.settings import AgentMonitorSettings
 
         settings = AgentMonitorSettings()
         # No devices yet: setter is a safe no-op, getter defaults 0.
@@ -17498,14 +17498,14 @@ class PaletteTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_curated_palettes_are_complete_and_valid(self) -> None:
-        from sidepulse.colors import CURATED_PALETTES
+        from jrbar.colors import CURATED_PALETTES
 
         for name, palette in CURATED_PALETTES.items():
             for key in ("working", "done", "ask", "idle"):
                 value = palette["modes"][key]
                 self.assertRegex(value, r"^#[0-9A-F]{6}$", f"{name}/{key}")
-            from sidepulse.colors import PROVIDER_BRAND_COLORS
-            from sidepulse.providers import PROVIDER_SPECS
+            from jrbar.colors import PROVIDER_BRAND_COLORS
+            from jrbar.providers import PROVIDER_SPECS
 
             brandless = {spec.provider for spec in PROVIDER_SPECS if spec.provider not in PROVIDER_BRAND_COLORS}
             # A palette owns exactly the brandless providers -- branded
@@ -17516,7 +17516,7 @@ class PaletteTests(unittest.TestCase):
             self.assertEqual(len({palette["modes"][k] for k in ("working", "done", "ask")}), 3)
 
     def test_oklch_out_of_gamut_desaturates_instead_of_clipping(self) -> None:
-        from sidepulse.colors import oklch_hex
+        from jrbar.colors import oklch_hex
 
         value = oklch_hex(0.5, 5.0, 200.0)
         self.assertRegex(value, r"^#[0-9A-F]{6}$")
@@ -17524,7 +17524,7 @@ class PaletteTests(unittest.TestCase):
     def test_apply_palette_round_trip(self) -> None:
         from types import SimpleNamespace as NS
 
-        from sidepulse.colors import CURATED_PALETTES
+        from jrbar.colors import CURATED_PALETTES
 
         sender = NS(identifier=lambda: "Sunset")
         with patch.object(self.controller, "refresh_") as refresh:
@@ -17541,7 +17541,7 @@ class PaletteTests(unittest.TestCase):
         # with none left brandless, the agents fan is empty and a theme
         # can never repaint Cursor off its identity.
         self.assertEqual(expected["agents"], {})
-        from sidepulse.colors import PROVIDER_BRAND_COLORS
+        from jrbar.colors import PROVIDER_BRAND_COLORS
 
         self.assertEqual(
             self.controller.settings.colors.agent_color("cursor"),
@@ -17576,7 +17576,7 @@ class UsageStatsTests(unittest.TestCase):
         }
 
     def test_repeated_usage_blocks_count_once(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -17589,7 +17589,7 @@ class UsageStatsTests(unittest.TestCase):
             self.assertEqual(totals.output_tokens, 500)
 
     def test_cost_and_cache_savings_math(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -17605,7 +17605,7 @@ class UsageStatsTests(unittest.TestCase):
             self.assertAlmostEqual(totals.cache_savings_usd, 2.70, places=2)
 
     def test_cache_warm_scan_matches_cold_and_survives_corruption(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -17621,7 +17621,7 @@ class UsageStatsTests(unittest.TestCase):
             self.assertEqual(recovered.input_tokens, cold.input_tokens)
 
     def test_summary_line_shapes(self) -> None:
-        from sidepulse import usage_stats
+        from jrbar import usage_stats
 
         empty = usage_stats.UsageTotals()
         self.assertIsNone(usage_stats.usage_summary_line(empty))
@@ -17687,7 +17687,7 @@ class T3AdoptionTests(unittest.TestCase):
         self.assertEqual(self.status_bar.unseen_completions(snapshot, self.controller), [])
 
     def test_pause_override_consumes_courtesy_signals_without_replay(self) -> None:
-        from sidepulse.dnd_policy import DndMode, DndOverride
+        from jrbar.dnd_policy import DndMode, DndOverride
 
         now = time.time()
         self.controller.settings = self.controller.settings.with_dnd_override(
@@ -17719,8 +17719,8 @@ class T3AdoptionTests(unittest.TestCase):
         self.assertEqual(kind, self.status_bar.LED_DISPLAY_AGENT)
 
     def _menu(self, *, hooks_installed: bool = True):
-        from sidepulse import status_bar
-        from sidepulse.settings import AgentMonitorSettings
+        from jrbar import status_bar
+        from jrbar.settings import AgentMonitorSettings
 
         snapshot = SimpleNamespace(
             statuses=[],
@@ -17784,7 +17784,7 @@ class T3AdoptionTests(unittest.TestCase):
         self.assertEqual(len(tips), 0)
 
     def test_every_tip_pane_key_is_a_real_pane(self) -> None:
-        from sidepulse import status_bar
+        from jrbar import status_bar
 
         pane_keys = {key for key, _label in status_bar.SETTINGS_SIDEBAR_ITEMS}
         for _text, pane, _anchor in status_bar.DAILY_TIPS:
@@ -17792,8 +17792,8 @@ class T3AdoptionTests(unittest.TestCase):
                 self.assertIn(pane, pane_keys)
 
     def test_dismissed_tips_are_skipped_and_tips_can_turn_off(self) -> None:
-        from sidepulse import status_bar
-        from sidepulse.settings import AgentMonitorSettings
+        from jrbar import status_bar
+        from jrbar.settings import AgentMonitorSettings
 
         settings = AgentMonitorSettings()
         tip = status_bar.daily_tip(settings)
@@ -17804,8 +17804,8 @@ class T3AdoptionTests(unittest.TestCase):
         self.assertIsNone(status_bar.daily_tip(settings.with_tips_enabled(False)))
 
     def test_every_lid_preset_parses_in_the_real_firmware_grammar(self) -> None:
-        from sidepulse import status_bar
-        from sidepulse.led_wasm import SdLedWasmController
+        from jrbar import status_bar
+        from jrbar.led_wasm import SdLedWasmController
 
         engine = SdLedWasmController(led_count=8)
         for presets in status_bar.LID_ANIMATION_PRESETS.values():
@@ -17836,12 +17836,12 @@ class StudioDisplayAndTrancheCTests(unittest.TestCase):
         )
 
     def test_studio_is_a_valid_display_choice(self) -> None:
-        from sidepulse.settings import LED_DISPLAY_CHOICES, LED_DISPLAY_STUDIO
+        from jrbar.settings import LED_DISPLAY_CHOICES, LED_DISPLAY_STUDIO
 
         self.assertIn(LED_DISPLAY_STUDIO, LED_DISPLAY_CHOICES)
 
     def test_studio_display_claims_the_device(self) -> None:
-        from sidepulse.settings import LED_DISPLAY_STUDIO
+        from jrbar.settings import LED_DISPLAY_STUDIO
 
         kind = self.controller.active_led_display_kind_for_device(self._device(LED_DISPLAY_STUDIO), None)
         self.assertEqual(kind, LED_DISPLAY_STUDIO)
@@ -17860,12 +17860,12 @@ class StudioDisplayAndTrancheCTests(unittest.TestCase):
         self.assertIsNone(self.controller.studio_display_program(255))
 
     def test_studio_and_runway_options_are_in_the_display_popup(self) -> None:
-        from sidepulse.settings import LED_DISPLAY_QUOTA_RUNWAY, LED_DISPLAY_STUDIO
+        from jrbar.settings import LED_DISPLAY_QUOTA_RUNWAY, LED_DISPLAY_STUDIO
 
         volume_root = Path(self._tmp.name) / "volumes"
         (volume_root / "SidePulseDot").mkdir(parents=True)
         devices = discover_devices(mount_root=volume_root)
-        with patch("sidepulse.status_bar.discover_devices", return_value=devices):
+        with patch("jrbar.status_bar.discover_devices", return_value=devices):
             self.controller.discover_device_candidates()
             self.controller.show_settings_window()
             self.controller.ensure_all_settings_panes()
@@ -17888,7 +17888,7 @@ class StudioDisplayAndTrancheCTests(unittest.TestCase):
         volume_root = Path(self._tmp.name) / "hotplug"
         (volume_root / "SidePulsePro").mkdir(parents=True)
         devices = discover_devices(mount_root=volume_root)
-        with patch("sidepulse.status_bar.discover_devices", return_value=devices):
+        with patch("jrbar.status_bar.discover_devices", return_value=devices):
             self.controller.poll_devices_once()
         # Device ids for non-/Volumes roots carry the full path.
         self.assertTrue(
@@ -17926,9 +17926,9 @@ class CalendarAlertTests(unittest.TestCase):
         )
 
     def test_glow_program_fits_device_limits_and_repeats(self) -> None:
-        from sidepulse.device_writer import MAX_LED_BYTES, MAX_LED_LINES
-        from sidepulse.led_status import style_to_program
-        from sidepulse.signals import DEFAULT_SIGNAL_STYLES, SIGNAL_CALENDAR
+        from jrbar.device_writer import MAX_LED_BYTES, MAX_LED_LINES
+        from jrbar.led_status import style_to_program
+        from jrbar.signals import DEFAULT_SIGNAL_STYLES, SIGNAL_CALENDAR
 
         program = style_to_program(DEFAULT_SIGNAL_STYLES[SIGNAL_CALENDAR], 128)
         self.assertLessEqual(len(program.encode()), MAX_LED_BYTES)
@@ -21200,7 +21200,7 @@ class InstalledAgentInventoryControllerTests(unittest.TestCase):
 
     def test_inventory_refresh_is_generation_fenced_and_uses_only_the_existing_os_poll_worker(self) -> None:
         """Dropping the fence would apply old host state after a newer refresh or termination."""
-        from sidepulse.installed_agent_inventory import (
+        from jrbar.installed_agent_inventory import (
             InventoryRoot,
             collect_installed_agent_inventory,
         )
@@ -21290,14 +21290,14 @@ class LatestFeatureSettingsCompositionTests(unittest.TestCase):
         return tuple(rendered)
 
     def test_installed_agents_is_lazy_grouped_private_and_refreshable(self) -> None:
-        from sidepulse.installed_agents import installed_surface_registrations
+        from jrbar.installed_agents import installed_surface_registrations
 
         # This test exercises the isVisible()-gated inventory refresh,
         # which needs the window actually presented. The activation
         # policy in conftest still keeps focus with the owner.
         self.enterContext(
             patch(
-                "sidepulse.window_presentation.desktop_takeover_suppressed",
+                "jrbar.window_presentation.desktop_takeover_suppressed",
                 return_value=False,
             )
         )
@@ -21356,8 +21356,8 @@ class LatestFeatureSettingsCompositionTests(unittest.TestCase):
         )
 
     def test_inventory_result_mutates_stable_rows_without_focus_or_lifecycle_output(self) -> None:
-        from sidepulse.installed_agent_inventory import InstalledAgentInventoryResult
-        from sidepulse.installed_agents import (
+        from jrbar.installed_agent_inventory import InstalledAgentInventoryResult
+        from jrbar.installed_agents import (
             InstalledSurfaceObservation,
             InstalledSurfaceReduction,
             SurfacePresence,
@@ -21422,7 +21422,7 @@ class LatestFeatureSettingsCompositionTests(unittest.TestCase):
         self.assertEqual(result.reduction.hardware_presentation_changes, ())
 
     def test_capacity_is_lazy_complete_truthful_and_does_no_implicit_provider_work(self) -> None:
-        from sidepulse.provider_capacity import provider_capacity_policies
+        from jrbar.provider_capacity import provider_capacity_policies
 
         self.controller.show_settings_window()
         with patch.object(self.controller, "maybe_refresh_usage_summary") as refresh:
@@ -21516,8 +21516,8 @@ class RelayControllerContinuityTests(unittest.TestCase):
         return int(_program_body(program)[1].split("; ", 1)[0].split(":", 1)[0])
 
     def test_one_resolved_completion_is_staged_and_shared_by_all_surfaces(self) -> None:
-        from sidepulse.attention import AttentionProjection, LifecycleMode
-        from sidepulse.operator_state import (
+        from jrbar.attention import AttentionProjection, LifecycleMode
+        from jrbar.operator_state import (
             CanonicalOperatorEvent,
             InterruptionClass,
             SemanticEventKey,
@@ -21627,7 +21627,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
     def test_unavailable_hardware_does_not_change_automatic_semantic_priority(
         self,
     ) -> None:
-        from sidepulse.attention import AttentionProjection, LifecycleMode
+        from jrbar.attention import AttentionProjection, LifecycleMode
 
         projection = AttentionProjection(
             lifecycle_mode=LifecycleMode.ACTIVE,
@@ -21667,7 +21667,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
     def test_physical_worker_composes_shared_semantics_before_existing_writer_seam(
         self,
     ) -> None:
-        from sidepulse.attention import AttentionProjection, LifecycleMode
+        from jrbar.attention import AttentionProjection, LifecycleMode
 
         projection = AttentionProjection(
             lifecycle_mode=LifecycleMode.ACTIVE,
@@ -21741,7 +21741,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
     def test_physical_worker_keeps_one_write_identity_while_relay_phase_advances(
         self,
     ) -> None:
-        from sidepulse.attention import AttentionProjection, LifecycleMode
+        from jrbar.attention import AttentionProjection, LifecycleMode
 
         projection = AttentionProjection(
             lifecycle_mode=LifecycleMode.ACTIVE,
@@ -21823,7 +21823,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
         )
 
     def test_hardware_failure_does_not_hide_or_rebase_screen_bar_truth(self) -> None:
-        from sidepulse.attention import AttentionProjection, LifecycleMode
+        from jrbar.attention import AttentionProjection, LifecycleMode
 
         projection = AttentionProjection(
             lifecycle_mode=LifecycleMode.ACTIVE,
@@ -22001,7 +22001,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
             ),
             patch.object(self.controller, "schedule_screen_bar_sync", side_effect=capture_schedule),
             patch(
-                "sidepulse.status_bar.time.monotonic",
+                "jrbar.status_bar.time.monotonic",
                 side_effect=lambda: clock["now"],
             ),
         ):
@@ -22065,7 +22065,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
             patch.object(self.controller, "active_led_display_kind_for_device", return_value="agent"),
             patch.object(self.controller, "effective_brightness_for_device", return_value=255),
             patch.object(self.controller, "screen_bar_click_status", return_value=None),
-            patch("sidepulse.status_bar.program_for_snapshot", wraps=program_for_snapshot) as render,
+            patch("jrbar.status_bar.program_for_snapshot", wraps=program_for_snapshot) as render,
         ):
             self.controller.sync_virtual_status_device(
                 AgentMode.WORKING,
@@ -22162,7 +22162,7 @@ class RelayControllerContinuityTests(unittest.TestCase):
                 "performSelectorOnMainThread_withObject_waitUntilDone_",
                 side_effect=dispatch,
             ),
-            patch("sidepulse.status_bar.time.monotonic", return_value=100.1),
+            patch("jrbar.status_bar.time.monotonic", return_value=100.1),
         ):
             self.controller.sync_leds(AgentMode.WORKING, None, "agent", initial)
             first_physical = physical_target.read_text(encoding="utf-8")
@@ -22303,8 +22303,8 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         with (
             patch.object(self.controller, "maybe_refresh_usage_summary") as usage,
             patch.object(self.controller, "request_usage_refresh") as request_usage,
-            patch("sidepulse.status_bar.detect_log_path") as detect,
-            patch("sidepulse.status_bar.discover_devices") as discover,
+            patch("jrbar.status_bar.detect_log_path") as detect,
+            patch("jrbar.status_bar.discover_devices") as discover,
         ):
             self.controller.menuWillOpen_(None)
 
@@ -22655,7 +22655,7 @@ class CanonicalAgentBrowserIntegrationTests(unittest.TestCase):
         with (
             patch.object(self.status_bar, "NSTimer") as timers,
             patch.object(self.status_bar, "NSRunLoop") as run_loops,
-            patch("sidepulse.status_bar.time.time", return_value=100.0),
+            patch("jrbar.status_bar.time.time", return_value=100.0),
         ):
             timers.timerWithTimeInterval_target_selector_userInfo_repeats_.return_value = timer
             run_loops.currentRunLoop.return_value = run_loop
@@ -23069,7 +23069,7 @@ class SessionHeardSuffixTests(unittest.TestCase):
         )
 
     def test_fresh_rows_stay_clean_and_old_rows_say_their_age(self) -> None:
-        from sidepulse.status_bar import session_heard_suffix
+        from jrbar.status_bar import session_heard_suffix
 
         self.assertEqual(session_heard_suffix(self._status(10.0), self.now), "")
         self.assertEqual(session_heard_suffix(self._status(240.0), self.now), " · 4m ago")
@@ -23085,7 +23085,7 @@ class ChargingHelloTests(unittest.TestCase):
         the strip crests once, the finite program ends, and the steady
         preview fill takes over. Plug-in only -- unplugging is not an
         event worth celebrating."""
-        from sidepulse.battery import BatterySnapshot, charging_hello_program
+        from jrbar.battery import BatterySnapshot, charging_hello_program
 
         program = charging_hello_program(8)
         self.assertNotIn("repeat", program)
@@ -23111,7 +23111,7 @@ class StudioBuilderTests(unittest.TestCase):
         isolate_controller(self)
 
     def test_compile_maps_touch_steps_to_the_dsl(self) -> None:
-        from sidepulse.studio_builder import compile_builder_program
+        from jrbar.studio_builder import compile_builder_program
 
         program = compile_builder_program(
             (
@@ -23131,7 +23131,7 @@ class StudioBuilderTests(unittest.TestCase):
         the same text, validation, and persistence the editor uses --
         the DSL is an output format now, not the interface."""
         try:
-            from sidepulse import status_bar
+            from jrbar import status_bar
         except SystemExit as exc:
             self.skipTest(str(exc))
         with tempfile.TemporaryDirectory() as tmp:
@@ -23157,7 +23157,7 @@ class StudioBuilderTests(unittest.TestCase):
         self.controller.studioBuilderRemoveStep_(remove)
         self.assertEqual(len(rows.arrangedSubviews()), 2)
 
-        from sidepulse.animation import parse_animation
+        from jrbar.animation import parse_animation
 
         parse_animation(str(self.controller.studio_editor.string()), led_count=8)
 

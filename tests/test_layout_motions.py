@@ -11,15 +11,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sidepulse.colors import (
+from jrbar.colors import (
     BLEND_MODE_CYCLE,
     BLEND_MODE_ROUND_ROBIN,
     BLEND_MODE_SPATIAL,
     ColorSettings,
     program_for_snapshot,
 )
-from sidepulse.firmware_validation import validate_firmware_program
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.firmware_validation import validate_firmware_program
+from jrbar.models import AgentMode, AgentStatus
 
 
 def status(provider: str, session: str = "main") -> AgentStatus:

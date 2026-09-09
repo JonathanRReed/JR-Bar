@@ -1,4 +1,4 @@
-from sidepulse.performance_metrics import PerformanceRegistry
+from jrbar.performance_metrics import PerformanceRegistry
 
 
 def test_registry_reports_bounded_percentiles_and_error_counts() -> None:

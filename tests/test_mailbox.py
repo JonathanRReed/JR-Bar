@@ -5,13 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sidepulse.attention import (
+from jrbar.attention import (
     AttentionProjection,
     LifecycleMode,
     ProjectedAgentRow,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.mailbox import (
+from jrbar.capacity_types import SourceKey
+from jrbar.mailbox import (
     AgentMailboxProjection,
     MailboxRow,
     MailboxSectionKind,
@@ -19,14 +19,14 @@ from sidepulse.mailbox import (
     project_canonical_mailbox,
     project_mailbox,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     LegacyMailboxPreference as MailboxPreference,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     apply_mailbox_preferences,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalOperatorState,
     CanonicalRequestTruth,
@@ -37,7 +37,7 @@ from sidepulse.operator_state import (
     SemanticEventKey,
     TransitionKind,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,

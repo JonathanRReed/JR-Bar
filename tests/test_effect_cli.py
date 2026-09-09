@@ -5,17 +5,17 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from sidepulse.cli import build_sidepulse_parser, cmd_effects, sidepulse_main
-from sidepulse.effect_cli import dispatch_effect_command
-from sidepulse.effect_history import (
+from jrbar.cli import build_sidepulse_parser, cmd_effects, jrbar_main
+from jrbar.effect_cli import dispatch_effect_command
+from jrbar.effect_history import (
     EffectEvent,
     EffectHistory,
     EffectOutcome,
     EffectSemanticCategory,
     EffectSurface,
 )
-from sidepulse.effect_history_store import save_effect_history
-from sidepulse.effect_pack_store import EffectPackStore
+from jrbar.effect_history_store import save_effect_history
+from jrbar.effect_pack_store import EffectPackStore
 
 
 def _pack(**overrides: object) -> dict[str, object]:
@@ -196,7 +196,7 @@ def test_cli_history_rejects_store_dir_without_an_explicit_history_path(
 
     monkeypatch.setattr(EffectPackStore, "effect_history", fail_if_read)
 
-    code = sidepulse_main(
+    code = jrbar_main(
         [
             "effects",
             "history",
@@ -222,7 +222,7 @@ def test_sidepulse_effects_duplicate_and_rename_are_user_reachable(
     store = EffectPackStore(store_path)
     store.install(_pack())
 
-    duplicate_code = sidepulse_main(
+    duplicate_code = jrbar_main(
         [
             "effects",
             "duplicate",
@@ -240,7 +240,7 @@ def test_sidepulse_effects_duplicate_and_rename_are_user_reachable(
     assert duplicate_output.err == ""
     assert store.inspect("calm-pack-copy").name == "Calm Pack Copy"
 
-    rename_code = sidepulse_main(
+    rename_code = jrbar_main(
         [
             "effects",
             "rename",
@@ -334,7 +334,7 @@ def test_sidepulse_effects_parser_reaches_the_data_only_store(
 
     assert parsed.func is cmd_effects
     assert parsed.action == "install"
-    assert sidepulse_main(
+    assert jrbar_main(
         ["effects", "install", str(source), "--store-dir", str(store), "--json"]
     ) == 0
     document = json.loads(capsys.readouterr().out)

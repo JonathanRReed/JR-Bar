@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from sidepulse.provider_instances import (
+from jrbar.provider_instances import (
     OPEN_SESSION_ACTION_CHOICES,
     PROVIDER_INSTANCE_PROFILE_SCHEMA_VERSION,
     REMOTE_SHARING_CHOICES,

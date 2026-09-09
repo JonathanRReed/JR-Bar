@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.provider_browser_consent import BrowserConsentStore
-from sidepulse.provider_browser_import import (
+from jrbar.provider_browser_consent import BrowserConsentStore
+from jrbar.provider_browser_import import (
     BrowserImportState,
     import_devin_browser_session,
     read_chromium_local_storage,
 )
-from sidepulse.provider_instances import ProviderInstanceKey
+from jrbar.provider_instances import ProviderInstanceKey
 
 
 class Record:

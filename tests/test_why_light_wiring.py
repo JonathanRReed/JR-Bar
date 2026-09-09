@@ -6,23 +6,23 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import call, patch
 
-import sidepulse.status_bar_legacy as status_bar_legacy
-import sidepulse.why_panel as why_panel
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.core_state import StateDelta
-from sidepulse.dnd_policy import (
+import jrbar.status_bar_legacy as status_bar_legacy
+import jrbar.why_panel as why_panel
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.core_state import StateDelta
+from jrbar.dnd_policy import (
     DndMode,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.focus_status import (
+from jrbar.focus_status import (
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
 )
-from sidepulse.local_health import LocalHealthTiming
-from sidepulse.presentation_policy import (
+from jrbar.local_health import LocalHealthTiming
+from jrbar.presentation_policy import (
     FiniteCue,
     FiniteCueState,
     GlanceOverrideReason,
@@ -30,7 +30,7 @@ from sidepulse.presentation_policy import (
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.why_light_context import (
+from jrbar.why_light_context import (
     FocusObservation,
     FocusOutcome,
     GlobalSurfaceRole,

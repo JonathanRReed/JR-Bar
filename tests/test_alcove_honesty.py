@@ -26,7 +26,7 @@ from unittest.mock import patch
 import pytest
 from test_sidepulse import isolate_controller
 
-from sidepulse.alcove_observation import (
+from jrbar.alcove_observation import (
     AlcoveCaptureOutcome,
     AlcoveCaptureRequest,
     AlcoveCaptureStatus,
@@ -257,7 +257,7 @@ def test_a_measurable_capsule_reports_captured_with_its_geometry(monkeypatch) ->
 
 
 def test_macos_15_never_falls_back_to_obsolete_window_capture(monkeypatch) -> None:
-    import sidepulse.alcove_observation as module
+    import jrbar.alcove_observation as module
 
     quartz = _FakeQuartz(image=_FakeImage())
     monkeypatch.setitem(sys.modules, "Quartz", quartz)
@@ -277,7 +277,7 @@ def test_macos_15_never_falls_back_to_obsolete_window_capture(monkeypatch) -> No
 def test_macos_15_screen_capture_kit_image_uses_the_existing_scanner(
     monkeypatch,
 ) -> None:
-    import sidepulse.alcove_observation as module
+    import jrbar.alcove_observation as module
 
     width_px, height_px = 624, 74
     pixels = bytearray(width_px * height_px * 4)
@@ -301,7 +301,7 @@ def test_macos_15_screen_capture_kit_image_uses_the_existing_scanner(
 def test_screen_capture_kit_targets_only_the_selected_alcove_window(
     monkeypatch,
 ) -> None:
-    import sidepulse.alcove_observation as module
+    import jrbar.alcove_observation as module
 
     captured_image = object()
     selected_window = SimpleNamespace(
@@ -475,7 +475,7 @@ def test_an_unaskable_preflight_is_unknown_not_denied() -> None:
 def test_default_window_presence_lookup_is_cached_and_never_runs_inline(
     monkeypatch,
 ) -> None:
-    import sidepulse.alcove_observation as module
+    import jrbar.alcove_observation as module
 
     queued: list[object] = []
     calls = 0
@@ -512,7 +512,7 @@ def test_nothing_on_the_background_path_may_request_access(monkeypatch) -> None:
         requested.append(1)
         return True
 
-    import sidepulse.alcove_observation as module
+    import jrbar.alcove_observation as module
 
     monkeypatch.setattr(module, "_preflight_screen_capture_access", lambda: False)
     quartz = SimpleNamespace(
@@ -634,7 +634,7 @@ class _View:
 
 
 def _alcove_device(monkeypatch, *, granted, alcove_running=True, window=(99, 444.0, 0.0, 624.0)):
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     device = virtual_device.VirtualStatusDevice.alloc().init()
     device.window = _Window()
@@ -683,8 +683,8 @@ def _alcove_device(monkeypatch, *, granted, alcove_running=True, window=(99, 444
 
 def _recording_status(logged: list[str]):
     """Wrap the real recorder so the log line is captured, not printed."""
-    from sidepulse.alcove_observation import ALCOVE_STATUS_LOG_LINES
-    from sidepulse.virtual_device import VirtualStatusDevice
+    from jrbar.alcove_observation import ALCOVE_STATUS_LOG_LINES
+    from jrbar.virtual_device import VirtualStatusDevice
 
     original = VirtualStatusDevice._record_alcove_status
 
@@ -701,7 +701,7 @@ def test_enabling_following_preflights_and_says_permission_is_missing(
     monkeypatch,
 ) -> None:
     """Requirement: preflight AT the point following is enabled."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     device = virtual_device.VirtualStatusDevice.alloc().init()
     seen: list[bool] = []
@@ -800,7 +800,7 @@ def test_the_first_hardware_geometry_fallback_is_logged(monkeypatch) -> None:
     and every pass of a permanently broken follow, compared equal and
     said nothing. Zero alcove lines in the log, exactly as observed.
     """
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     device, module, _logged = _alcove_device(monkeypatch, granted=True)
     lines: list[str] = []
@@ -818,7 +818,7 @@ def test_the_first_hardware_geometry_fallback_is_logged(monkeypatch) -> None:
             return True
 
     device._alcove_observer_factory = lambda _buffer: Observer()
-    import sidepulse.status_bar as status_bar
+    import jrbar.status_bar as status_bar
 
     monkeypatch.setattr(status_bar, "log_status_bar", lines.append)
 
@@ -924,7 +924,7 @@ def test_compact_mode_keeps_measuring_the_capsule(monkeypatch) -> None:
 
 
 def test_doctor_reports_the_permission_as_its_own_code(monkeypatch) -> None:
-    from sidepulse import doctor
+    from jrbar import doctor
 
     note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED)
     monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
@@ -950,7 +950,7 @@ def test_doctor_reports_the_permission_as_its_own_code(monkeypatch) -> None:
 def test_every_outcome_has_a_distinct_doctor_code(
     monkeypatch, status, code_name
 ) -> None:
-    from sidepulse import doctor
+    from jrbar import doctor
 
     note_alcove_status(status)
     monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
@@ -963,8 +963,8 @@ def test_every_outcome_has_a_distinct_doctor_code(
 
 def test_doctor_never_upgrades_no_obvious_blocker_into_success(monkeypatch) -> None:
     """"Nothing is in the way" is not "it works"."""
-    import sidepulse.alcove_observation as module
-    from sidepulse import doctor
+    import jrbar.alcove_observation as module
+    from jrbar import doctor
 
     monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
     monkeypatch.setattr(module, "_preflight_screen_capture_access", lambda: True)
@@ -976,8 +976,8 @@ def test_doctor_never_upgrades_no_obvious_blocker_into_success(monkeypatch) -> N
 
 
 def test_a_stale_reading_is_not_presented_as_current(monkeypatch) -> None:
-    import sidepulse.alcove_observation as module
-    from sidepulse import doctor
+    import jrbar.alcove_observation as module
+    from jrbar import doctor
 
     note_alcove_status(
         AlcoveCaptureStatus.CAPTURED,
@@ -993,7 +993,7 @@ def test_a_stale_reading_is_not_presented_as_current(monkeypatch) -> None:
 
 
 def test_the_alcove_finding_is_in_the_manifest_and_encodes(monkeypatch) -> None:
-    from sidepulse import doctor
+    from jrbar import doctor
 
     note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED)
     monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
@@ -1026,7 +1026,7 @@ def test_the_alcove_finding_is_in_the_manifest_and_encodes(monkeypatch) -> None:
     ],
 )
 def test_doctor_maps_every_confidence_state(monkeypatch, state, code) -> None:
-    from sidepulse import doctor
+    from jrbar import doctor
 
     projection = SimpleNamespace(state=state)
     monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
@@ -1041,7 +1041,7 @@ def test_doctor_maps_every_confidence_state(monkeypatch, state, code) -> None:
 
 
 def test_doctor_manifest_is_version_four_and_allows_seven_codes() -> None:
-    from sidepulse import doctor
+    from jrbar import doctor
 
     assert doctor.DOCTOR_VERSION == 4
     field = next(
@@ -1061,8 +1061,8 @@ def test_doctor_manifest_is_version_four_and_allows_seven_codes() -> None:
 
 
 def test_expired_captured_snapshot_maps_to_stale(monkeypatch) -> None:
-    import sidepulse.alcove_observation as module
-    from sidepulse import doctor
+    import jrbar.alcove_observation as module
+    from jrbar import doctor
 
     now = 100.0
     note_alcove_status(
@@ -1095,7 +1095,7 @@ class AlcoveSettingsSurfaceTests(unittest.TestCase):
         reset_alcove_status()
         self.addCleanup(reset_screen_recording_cache)
         self.addCleanup(reset_alcove_status)
-        from sidepulse import settings_window
+        from jrbar import settings_window
 
         self.settings_window = settings_window
         blocker_patch = patch.object(settings_window, "alcove_follow_blocker", lambda **_k: None)
@@ -1177,7 +1177,7 @@ class AlcoveSettingsSurfaceTests(unittest.TestCase):
             self.assertTrue(button.isHidden())
 
     def test_held_stale_and_recovering_wing_copy_names_the_held_geometry(self) -> None:
-        from sidepulse import settings_window
+        from jrbar import settings_window
 
         self.controller.settings = self.controller.settings.with_virtual_status_device_wraps_menu_bar(True)
         with (
@@ -1215,7 +1215,7 @@ class AlcoveSettingsSurfaceTests(unittest.TestCase):
             )
 
     def test_wrapped_pane_build_resolves_alcove_once(self) -> None:
-        from sidepulse import settings_window
+        from jrbar import settings_window
 
         self.controller.settings = self.controller.settings.with_virtual_status_device_wraps_menu_bar(True)
         calls = 0

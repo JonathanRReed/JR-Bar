@@ -7,22 +7,22 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.effect_history import (
+from jrbar.effect_history import (
     EffectEvent,
     EffectHistory,
     EffectOutcome,
     EffectSemanticCategory,
     EffectSurface,
 )
-from sidepulse.effect_history_store import save_effect_history
-from sidepulse.effect_pack_store import (
+from jrbar.effect_history_store import save_effect_history
+from jrbar.effect_pack_store import (
     EFFECT_PACK_STORE_DIRECTORY,
     EffectPackStore,
     EffectPackStoreError,
     PackMutationStatus,
     default_effect_pack_store_path,
 )
-from sidepulse.effect_packs import export_pack
+from jrbar.effect_packs import export_pack
 
 
 def _pack(**overrides: object) -> dict[str, object]:
@@ -208,7 +208,7 @@ def test_rename_rolls_back_the_new_pack_when_source_removal_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import sidepulse.effect_pack_store as pack_store
+    import jrbar.effect_pack_store as pack_store
 
     store = EffectPackStore(tmp_path / "store")
     store.install(_pack())
@@ -363,7 +363,7 @@ def test_store_refuses_more_than_the_bounded_pack_count(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import sidepulse.effect_pack_store as pack_store
+    import jrbar.effect_pack_store as pack_store
 
     monkeypatch.setattr(pack_store, "MAX_STORED_EFFECT_PACKS", 1)
     store = EffectPackStore(tmp_path / "store")
@@ -380,7 +380,7 @@ def test_store_refuses_a_write_that_would_exceed_total_size(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import sidepulse.effect_pack_store as pack_store
+    import jrbar.effect_pack_store as pack_store
 
     first = _pack()
     monkeypatch.setattr(

@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from sidepulse.colors import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.colors import (
     BLEND_MODE_RELAY,
     ColorSettings,
     program_for_projection,
@@ -16,14 +16,14 @@ from sidepulse.colors import (
     relay_phase_index,
     relay_step_ms,
 )
-from sidepulse.device_writer import MAX_LED_BYTES, MAX_LED_LINES
-from sidepulse.led_status import (
+from jrbar.device_writer import MAX_LED_BYTES, MAX_LED_LINES
+from jrbar.led_status import (
     AgentLedController,
     LedDisplayState,
     apply_strip_transfer_to_program,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.presentation_policy import (
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.presentation_policy import (
     GlanceInputs,
     MotionClass,
     compose_presentation_program,
@@ -234,7 +234,7 @@ def test_relay_program_stays_inside_firmware_bounds(led_count: int) -> None:
 
 @pytest.mark.parametrize("led_count", [2, 8])
 def test_real_wasm_relay_visits_every_led_within_one_traversal(led_count: int) -> None:
-    from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
 
     try:
         controller = SdLedWasmController(led_count=led_count)
@@ -350,7 +350,7 @@ def test_semantic_relay_applies_canonical_phase_once_in_rendered_pixels(
     elapsed: float,
 ) -> None:
     """A phase-rotated program must not advance by the same elapsed time again."""
-    from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
 
     try:
         controller = SdLedWasmController(led_count=led_count)
@@ -399,7 +399,7 @@ def test_physical_relay_does_not_rewrite_when_only_canonical_phase_advances(
         writes.append(program)
         return Path("/Volumes/SIDEPULSE/LEDS.LED")
 
-    monkeypatch.setattr("sidepulse._led_status_legacy.write_led_program", write)
+    monkeypatch.setattr("jrbar._led_status_legacy.write_led_program", write)
     controller = AgentLedController()
     first = controller.sync_program(
         early.dsl,

@@ -5,15 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
-import sidepulse.provider_usage_controller_actions as actions
-from sidepulse import provider_usage_sync_cache as sync_cache
-from sidepulse.capacity_types import SourceKey
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
-from sidepulse.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_settings import default_provider_usage_settings
-from sidepulse.provider_usage_sync import MergedProviderSync
+import jrbar.provider_usage_controller_actions as actions
+from jrbar import provider_usage_sync_cache as sync_cache
+from jrbar.capacity_types import SourceKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import WorkIdentifier, WorkKey
+from jrbar.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_settings import default_provider_usage_settings
+from jrbar.provider_usage_sync import MergedProviderSync
 
 
 class _Sender:

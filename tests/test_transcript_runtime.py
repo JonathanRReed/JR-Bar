@@ -2,7 +2,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sidepulse.transcript_runtime import (
+from jrbar.transcript_runtime import (
     MAX_TRANSCRIPT_BATCH_RECORDS,
     TRANSCRIPT_REASON_INVALID_MONITOR,
     TranscriptFallbackService,

@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from sidepulse.colors import plan_fleet_projection
-from sidepulse.fleet_bands import FleetMember, plan_fleet_bands
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.colors import plan_fleet_projection
+from jrbar.fleet_bands import FleetMember, plan_fleet_bands
+from jrbar.models import AgentMode, AgentStatus
 
 
 class State(str, Enum):

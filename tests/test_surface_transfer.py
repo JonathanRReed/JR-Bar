@@ -32,8 +32,8 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.colors import relative_luminance
-from sidepulse.led_status import (
+from jrbar.colors import relative_luminance
+from jrbar.led_status import (
     NEUTRAL_CHANNEL_GAINS,
     STRIP_CODE_TO_LIGHT_EXPONENT,
     STRIP_MIN_LIT_DRIVE,
@@ -46,7 +46,7 @@ from sidepulse.led_status import (
     srgb_to_linear,
     strip_drive_code,
 )
-from sidepulse.virtual_device import (
+from jrbar.virtual_device import (
     LED_CORE_BOOST,
     LED_HOTLINE_BOOST,
     tone_mapped_led_color,
@@ -201,7 +201,7 @@ def test_the_strips_response_is_one_named_constant() -> None:
     holds the strip beside a #808080 patch and they match, the firmware
     decodes sRGB itself and the whole transform has to collapse to identity --
     which it does, from this constant alone, with no other edit."""
-    import sidepulse._led_status_legacy as led_status
+    import jrbar._led_status_legacy as led_status
 
     assert STRIP_CODE_TO_LIGHT_EXPONENT == 1.0
     assert strip_drive_code(128) == 55  # linear PWM: half the code, a fifth of full
@@ -303,7 +303,7 @@ def test_the_transform_rewrites_hexes_and_brightness_and_nothing_else() -> None:
 
 def test_ambient_visibility_floor_survives_the_strip_transfer() -> None:
     """The shared sRGB floor must remain visibly on after linear-PWM output."""
-    from sidepulse.brightness_policy import (
+    from jrbar.brightness_policy import (
         MIN_AMBIENT_VISIBLE_BRIGHTNESS,
         plan_ambient_brightness,
     )
@@ -339,8 +339,8 @@ def test_neutral_gains_still_change_the_program_because_the_surface_differs() ->
 
 def test_the_controller_writes_transferred_bytes_to_the_device(tmp_path) -> None:
     """The one that matters: what actually lands in LEDS.LED."""
-    from sidepulse.led_status import AgentLedController
-    from sidepulse.models import AgentMode
+    from jrbar.led_status import AgentLedController
+    from jrbar.models import AgentMode
 
     device = tmp_path / "SidePulsePro"
     device.mkdir()
@@ -360,7 +360,7 @@ def test_the_controller_writes_transferred_bytes_to_the_device(tmp_path) -> None
 def test_the_dedupe_identity_goes_through_the_same_transform(tmp_path) -> None:
     """The identity used for write-dedup has to be post-processed exactly like
     the live program, or a calibration change stops invalidating it."""
-    from sidepulse.led_status import AgentLedController
+    from jrbar.led_status import AgentLedController
 
     controller = AgentLedController(device_path=tmp_path, dry_run=True)
     controller.channel_gains = NEUTRAL_CHANNEL_GAINS
@@ -409,7 +409,7 @@ _FIDELITY_GAINS = (0.44, 0.3, 0.874)
 
 
 def test_a_dim_saturated_color_is_lifted_with_its_ratio_held() -> None:
-    from sidepulse.led_status import apply_strip_transfer_to_hex
+    from jrbar.led_status import apply_strip_transfer_to_hex
 
     lifted = apply_strip_transfer_to_hex("#031A14", _FIDELITY_GAINS)
     assert lifted != "#000000"
@@ -417,19 +417,19 @@ def test_a_dim_saturated_color_is_lifted_with_its_ratio_held() -> None:
 
 
 def test_whispers_still_crush_to_honest_black() -> None:
-    from sidepulse.led_status import apply_strip_transfer_to_hex
+    from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert apply_strip_transfer_to_hex("#010101", _FIDELITY_GAINS) == "#000000"
     assert apply_strip_transfer_to_hex("#010806", _FIDELITY_GAINS) == "#000000"
 
 
 def test_grays_are_never_lifted() -> None:
-    from sidepulse.led_status import apply_strip_transfer_to_hex
+    from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert max(_codes(apply_strip_transfer_to_hex("#404040", _FIDELITY_GAINS))) < 14
 
 
 def test_bright_colors_are_untouched_by_the_floor() -> None:
-    from sidepulse.led_status import apply_strip_transfer_to_hex
+    from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert max(_codes(apply_strip_transfer_to_hex("#10A37F", _FIDELITY_GAINS))) >= 14

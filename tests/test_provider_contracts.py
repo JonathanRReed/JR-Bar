@@ -4,7 +4,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     MAX_LANES_PER_OBSERVATION,
     CapacitySourceHealth,
     CapacityUnit,
@@ -18,7 +18,7 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     MAX_CAPABILITY_DECLARATIONS,
     MAX_DIAGNOSTICS,
     MAX_IDENTIFIER_LENGTH,
@@ -46,8 +46,8 @@ from sidepulse.provider_contracts import (
     product_capability_document,
     provider_contract_document,
 )
-from sidepulse.provider_facts import ObservationAuthority
-from sidepulse.providers import ProviderSourceRegistration
+from jrbar.provider_facts import ObservationAuthority
+from jrbar.providers import ProviderSourceRegistration
 
 
 def _version(major: int, minor: int) -> dict[str, int]:

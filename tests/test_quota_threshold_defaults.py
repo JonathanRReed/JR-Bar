@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.signals import (
+from jrbar.signals import (
     DEFAULT_ALERT_BURST,
     DEFAULT_QUOTA_THRESHOLDS,
     normalize_alert_burst,

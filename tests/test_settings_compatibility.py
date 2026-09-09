@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.settings import (
+from jrbar.settings import (
     CURRENT_SETTINGS_SCHEMA_VERSION,
     SettingsWriteRefusedError,
     load_settings,

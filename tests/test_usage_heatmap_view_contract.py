@@ -4,8 +4,8 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-VIEW = ROOT / "src" / "sidepulse" / "usage_heatmap_view.py"
-SETTINGS = ROOT / "src" / "sidepulse" / "settings_window.py"
+VIEW = ROOT / "src" / "jrbar" / "usage_heatmap_view.py"
+SETTINGS = ROOT / "src" / "jrbar" / "settings_window.py"
 
 
 def test_profile_pane_installs_one_compact_heatmap_below_the_line_chart():

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepulse import provider_usage_cli_router
+from jrbar import provider_usage_cli_router
 
 
 def test_sync_subcommand_routes_to_sync_cli(monkeypatch):

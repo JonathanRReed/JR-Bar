@@ -30,7 +30,7 @@ import random
 
 import pytest
 
-from sidepulse.render_policy import (
+from jrbar.render_policy import (
     RenderCadence,
     RenderDriverKind,
     RenderEnvironment,
@@ -40,7 +40,7 @@ from sidepulse.render_policy import (
     deliverable_fps,
     presentation_hold_seconds,
 )
-from sidepulse.screen_bar_pipeline import (
+from jrbar.screen_bar_pipeline import (
     DEFAULT_PRESENTATION_METRICS,
     ColorSample,
     PresentationMetricKind,
@@ -70,7 +70,7 @@ class _View:
 
 
 def _device(monkeypatch, fps: float | None, *, driver_fps: float = 0.0):
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(virtual_device.time, "monotonic", lambda: clock["now"])
@@ -346,7 +346,7 @@ def test_every_reachable_schedule_delivers_exactly_what_it_names(
 ) -> None:
     """Drive the real policy, then measure the real callback. The two numbers
     have to agree for every environment the app can actually be in."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     schedule = choose_render_schedule(
         RenderEnvironment(thermal=thermal, low_power=low_power),
@@ -455,7 +455,7 @@ def test_the_clamps_the_policy_already_computes_now_reach_the_screen(
     """A regression guard on the whole point: thermal and low-power clamps
     were computed and dropped, so a hot machine rendered the notch at 60-120
     Hz regardless. Drive the real policy, not a hand-made schedule."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     counts = []
     for thermal in ("nominal", "serious"):

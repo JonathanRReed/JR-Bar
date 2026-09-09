@@ -489,7 +489,7 @@ def read_log_tail(path: Path, line_count: int = 80) -> str:
 
 
 def packaged_sd_eject_guard_source():
-    return files("sidepulse.resources").joinpath("sd_eject_guard.c")
+    return files("jrbar.resources").joinpath("sd_eject_guard.c")
 
 
 def binary_needs_compile(binary_path: Path, source_path: Path) -> bool:

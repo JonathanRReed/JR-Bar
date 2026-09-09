@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.operator_history import (
+from jrbar.capacity_types import SourceKey
+from jrbar.operator_history import (
     HistoryCoverage,
     HistoryEventKind,
     HistoryValidationError,
@@ -19,9 +19,9 @@ from sidepulse.operator_history import (
     merge_operator_history_days,
     project_operator_history,
 )
-from sidepulse.operator_state import SemanticEventKey, TransitionKind
-from sidepulse.provider_contracts import ProviderIdentifier
-from sidepulse.provider_facts import (
+from jrbar.operator_state import SemanticEventKey, TransitionKind
+from jrbar.provider_contracts import ProviderIdentifier
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     WatermarkBasis,

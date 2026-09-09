@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.credentials import (
+from jrbar.credentials import (
     CLAUDE_CODE_KEYCHAIN,
     CodexTokens,
     CredentialOutcome,
@@ -250,7 +250,7 @@ def test_a_background_read_cannot_park_a_worker_thread_for_half_a_minute(tmp_pat
     worker was the hazard (2026-08-27 mining)."""
     import inspect
 
-    from sidepulse import credentials as module
+    from jrbar import credentials as module
 
     seen = {}
 

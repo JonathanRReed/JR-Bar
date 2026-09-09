@@ -7,11 +7,11 @@ from typing import ClassVar
 
 import pytest
 
-from sidepulse import sparkle_updater
+from jrbar import sparkle_updater
 
 
 def test_sparkle_runtime_boundary_exists() -> None:
-    assert importlib.util.find_spec("sidepulse.sparkle_updater") is not None
+    assert importlib.util.find_spec("jrbar.sparkle_updater") is not None
 
 
 def test_sparkle_runtime_boundary_exposes_the_reviewed_contract() -> None:
@@ -472,7 +472,7 @@ def test_final_status_menu_includes_the_available_update_submenu(
 ) -> None:
     from AppKit import NSMenu, NSMenuItem
 
-    from sidepulse import provider_usage_status_bar as provider_host
+    from jrbar import provider_usage_status_bar as provider_host
 
     runtime, *_rest = _start_valid_runtime(tmp_path)
     target = provider_host.JRProviderUsageStatusBarController.alloc()
@@ -525,8 +525,8 @@ def test_final_status_menu_includes_the_available_update_submenu(
 def test_final_controller_starts_updater_before_base_launch_and_first_menu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sidepulse import provider_usage_status_bar as provider_host
-    from sidepulse import provider_usage_store
+    from jrbar import provider_usage_status_bar as provider_host
+    from jrbar import provider_usage_store
 
     events: list[tuple[str, object]] = []
     runtime = object()
@@ -566,7 +566,7 @@ def test_final_controller_starts_updater_before_base_launch_and_first_menu(
 
 
 def test_final_controller_selectors_delegate_without_forcing_a_check() -> None:
-    from sidepulse.provider_usage_status_bar import JRProviderUsageStatusBarController
+    from jrbar.provider_usage_status_bar import JRProviderUsageStatusBarController
 
     class Runtime:
         def __init__(self) -> None:

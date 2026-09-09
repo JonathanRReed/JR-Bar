@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,

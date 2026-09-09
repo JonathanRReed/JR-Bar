@@ -8,14 +8,14 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.usage_stats import (
+from jrbar import usage_stats
+from jrbar.usage_stats import (
     UsageSourceCoverage,
     UsageSourceStatus,
     build_usage_inventory,
     scan_usage,
 )
-from sidepulse.usage_view import source_text_for_coverage
+from jrbar.usage_view import source_text_for_coverage
 
 
 def _claude_row(message_id: str, *, tokens: int = 7) -> dict:
@@ -282,7 +282,7 @@ def test_replaced_candidate_is_not_opened_as_discovered_and_valid_sibling_surviv
             swapped = True
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.usage_stats.os.open", side_effect=swapping_open):
+    with patch("jrbar.usage_stats.os.open", side_effect=swapping_open):
         totals = scan_usage(claude_root)
 
     coverage = _coverage(totals, "claude")
@@ -320,7 +320,7 @@ def test_in_place_candidate_mutation_after_discovery_is_a_bounded_failure(
             mutated = True
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.usage_stats.os.open", side_effect=mutating_open):
+    with patch("jrbar.usage_stats.os.open", side_effect=mutating_open):
         totals = scan_usage(root)
 
     # The snapshot prefix of the replacement holds no complete line, so
@@ -344,7 +344,7 @@ def test_root_walk_failure_and_all_file_read_failure_are_failed(
             raise PermissionError("root cannot be walked")
         return real_scandir(path)
 
-    with patch("sidepulse.usage_stats.os.scandir", side_effect=refusing_scandir):
+    with patch("jrbar.usage_stats.os.scandir", side_effect=refusing_scandir):
         walk_totals = scan_usage(walk_root)
 
     walked = _coverage(walk_totals, "claude")
@@ -361,7 +361,7 @@ def test_root_walk_failure_and_all_file_read_failure_are_failed(
             raise PermissionError("candidate cannot be opened")
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.usage_stats.os.open", side_effect=refusing_open):
+    with patch("jrbar.usage_stats.os.open", side_effect=refusing_open):
         read_totals = scan_usage(read_root)
 
     unreadable = _coverage(read_totals, "claude")
@@ -387,7 +387,7 @@ def test_nested_walk_failure_is_partial_and_keeps_valid_sibling_totals(
         return real_scandir(path)
 
     with patch(
-        "sidepulse.usage_stats.os.scandir",
+        "jrbar.usage_stats.os.scandir",
         side_effect=refusing_nested_scandir,
     ):
         totals = scan_usage(root)
@@ -417,7 +417,7 @@ def test_nested_walk_failure_does_not_prune_unobserved_cache_entries(
         return real_scandir(path)
 
     with patch(
-        "sidepulse.usage_stats.os.scandir",
+        "jrbar.usage_stats.os.scandir",
         side_effect=refusing_nested_scandir,
     ):
         totals = scan_usage(root, cache_path)
@@ -475,7 +475,7 @@ def test_root_replaced_by_symlink_during_discovery_does_not_expose_target(
         return real_scandir(path)
 
     with patch(
-        "sidepulse.usage_stats.os.scandir",
+        "jrbar.usage_stats.os.scandir",
         side_effect=replacing_root_scandir,
     ):
         totals = scan_usage(root)
@@ -541,7 +541,7 @@ def test_provider_coverage_states_do_not_bleed_across_roots(
             raise PermissionError("codex walk failed")
         return real_scandir(path)
 
-    with patch("sidepulse.usage_stats.os.scandir", side_effect=maybe_refuse_codex):
+    with patch("jrbar.usage_stats.os.scandir", side_effect=maybe_refuse_codex):
         totals = scan_usage(claude_root, codex_root=codex_root)
 
     assert _coverage(totals, "claude").status is claude_status
@@ -561,7 +561,7 @@ def test_failed_read_is_not_persisted_as_a_successful_empty_cache_entry(
             raise PermissionError("transient read failure")
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.usage_stats.os.open", side_effect=refusing_open):
+    with patch("jrbar.usage_stats.os.open", side_effect=refusing_open):
         failed = scan_usage(root, cache_path)
 
     recovered = scan_usage(root, cache_path)
@@ -601,7 +601,7 @@ def test_warm_cache_hit_revalidates_physical_file_after_discovery(
         return real_validation(path, expected_stat)
 
     with patch(
-        "sidepulse.usage_stats._physical_file_unchanged",
+        "jrbar.usage_stats._physical_file_unchanged",
         side_effect=replacing_before_validation,
     ):
         totals = scan_usage(root, cache_path)
@@ -732,7 +732,7 @@ def test_one_frozen_inventory_supplies_usage_and_codex_rate_evidence(
     _write_rows(codex_root / "rollout.jsonl", _codex_rate_row(used_percent=37))
     inventory = build_usage_inventory(claude_root, codex_root=codex_root)
 
-    with patch("sidepulse.usage_stats.os.walk", side_effect=AssertionError("second walk")):
+    with patch("jrbar.usage_stats.os.walk", side_effect=AssertionError("second walk")):
         totals = scan_usage(
             claude_root,
             codex_root=codex_root,
@@ -740,8 +740,8 @@ def test_one_frozen_inventory_supplies_usage_and_codex_rate_evidence(
         )
 
     with (
-        patch("sidepulse.usage_stats.os.walk", side_effect=AssertionError("second walk")),
-        patch("sidepulse.usage_stats.os.open", side_effect=AssertionError("second open")),
+        patch("jrbar.usage_stats.os.walk", side_effect=AssertionError("second walk")),
+        patch("jrbar.usage_stats.os.open", side_effect=AssertionError("second open")),
     ):
         limits = usage_stats.codex_rate_limits(codex_root)
 
@@ -767,9 +767,9 @@ def test_cached_codex_rate_evidence_does_not_wait_for_a_historical_rescan(
     scan_usage(claude_root, cache_path, codex_root=codex_root)
 
     with (
-        patch("sidepulse.usage_stats.os.walk", side_effect=AssertionError("rescan")),
+        patch("jrbar.usage_stats.os.walk", side_effect=AssertionError("rescan")),
         patch(
-            "sidepulse.usage_stats._parse_codex_file",
+            "jrbar.usage_stats._parse_codex_file",
             side_effect=AssertionError("transcript"),
         ),
     ):
@@ -797,7 +797,7 @@ def test_file_added_after_inventory_freeze_is_not_opened_or_counted(tmp_path: Pa
             raise AssertionError("path added after inventory freeze was opened")
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.usage_stats.os.open", side_effect=reject_late):
+    with patch("jrbar.usage_stats.os.open", side_effect=reject_late):
         totals = scan_usage(root, inventory=inventory)
 
     assert totals.input_tokens == 13
@@ -879,7 +879,7 @@ def test_persisted_usage_cache_contains_no_paths_titles_or_raw_models(
     )
     cache_path = tmp_path / "state" / "usage-cache.json"
 
-    with patch("sidepulse.usage_stats.os.scandir", wraps=os.scandir):
+    with patch("jrbar.usage_stats.os.scandir", wraps=os.scandir):
         scan_usage(private_root, cache_path)
     persisted = cache_path.read_text()
 

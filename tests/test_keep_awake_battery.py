@@ -3,8 +3,8 @@ hold when the owner opted out; an unknown power state never does."""
 
 from __future__ import annotations
 
-from sidepulse.keep_awake import KeepAwakeController
-from sidepulse.models import AgentMode
+from jrbar.keep_awake import KeepAwakeController
+from jrbar.models import AgentMode
 
 
 class _Process:
@@ -47,7 +47,7 @@ def test_unknown_power_state_never_releases() -> None:
 
 
 def test_settings_round_trip_keep_awake_on_battery(tmp_path) -> None:
-    from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+    from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
     path = tmp_path / "settings.json"
     saved = AgentMonitorSettings().with_keep_awake_on_battery(False)
@@ -61,7 +61,7 @@ def test_battery_yield_is_independent_of_the_reminder_toggle() -> None:
     reminder was off (regression review, round two)."""
     from types import SimpleNamespace
 
-    from sidepulse.keep_awake import battery_yields_hold
+    from jrbar.keep_awake import battery_yields_hold
 
     settings = SimpleNamespace(
         low_battery_alert_enabled=False,  # reminder OFF — must not matter

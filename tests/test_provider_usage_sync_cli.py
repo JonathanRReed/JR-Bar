@@ -4,22 +4,22 @@ import io
 import json
 from pathlib import Path
 
-from sidepulse import provider_usage_sync_cli
-from sidepulse.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
-from sidepulse.provider_usage_platform import (
+from jrbar import provider_usage_sync_cli
+from jrbar.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_settings import (
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_settings import (
     default_provider_usage_settings,
     default_provider_usage_settings_path,
     save_provider_usage_settings,
 )
-from sidepulse.provider_usage_sync_runtime import ProviderSyncRefresh
-from sidepulse.provider_usage_sync_service import ProviderSyncServiceState
-from sidepulse.provider_usage_sync_settings import load_provider_sync_settings
+from jrbar.provider_usage_sync_runtime import ProviderSyncRefresh
+from jrbar.provider_usage_sync_service import ProviderSyncServiceState
+from jrbar.provider_usage_sync_settings import load_provider_sync_settings
 
 
 class Credentials:

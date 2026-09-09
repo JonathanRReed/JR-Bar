@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import CompletionPresentationKey
-from sidepulse.completion_visibility import (
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import CompletionPresentationKey
+from jrbar.completion_visibility import (
     plan_seen_completion_ids,
     select_clearable_completions,
     select_unseen_completions,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import WorkIdentifier, WorkKey
 
 
 def _status(

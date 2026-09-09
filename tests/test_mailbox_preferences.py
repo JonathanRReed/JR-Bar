@@ -5,34 +5,34 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.attention import LifecycleMode
-from sidepulse.capacity_types import SourceKey
-from sidepulse.mailbox import (
+from jrbar.attention import LifecycleMode
+from jrbar.capacity_types import SourceKey
+from jrbar.mailbox import (
     AgentMailboxProjection,
     LegacyAgentMailboxProjection,
     MailboxSection,
     MailboxSectionKind,
 )
-from sidepulse.mailbox import (
+from jrbar.mailbox import (
     LegacyMailboxRow as MailboxRow,
 )
-from sidepulse.mailbox import (
+from jrbar.mailbox import (
     MailboxRow as CanonicalMailboxRow,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     LegacyMailboxPreference as MailboxPreference,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     MailboxPreference as CanonicalMailboxPreference,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     MailboxPreferenceMode,
     apply_mailbox_preferences,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     MailboxPreferenceProjection as CanonicalMailboxPreferenceProjection,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     NextActor,
     SourceFreshness,
     WorkIdentifier,

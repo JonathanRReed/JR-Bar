@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sidepulse.announcer_presenter import AnnouncerStackPresentationBridge
-from sidepulse.announcer_stack import (
+from jrbar.announcer_presenter import AnnouncerStackPresentationBridge
+from jrbar.announcer_stack import (
     empty_announcer_stack_state,
     project_announcer_stack,
 )

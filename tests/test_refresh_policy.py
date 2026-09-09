@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.providers import negotiated_provider_sources
-from sidepulse.refresh_policy import (
+from jrbar.capacity_types import SourceKey
+from jrbar.providers import negotiated_provider_sources
+from jrbar.refresh_policy import (
     ProviderRefreshState,
     RetryScheduleKind,
     mark_refresh_failed,

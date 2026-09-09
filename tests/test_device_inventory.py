@@ -5,8 +5,8 @@ import subprocess
 import threading
 from pathlib import Path
 
-from sidepulse.device_identity import DeviceKind
-from sidepulse.device_inventory import (
+from jrbar.device_identity import DeviceKind
+from jrbar.device_inventory import (
     DeviceIdentityCache,
     diskutil_facts,
     inventory_mounts,

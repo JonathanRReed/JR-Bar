@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sidepulse.provider_browser_access import (
+from jrbar.provider_browser_access import (
     handle_provider_usage_action,
     plausible_token,
 )

@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import status_bar
-from sidepulse.private_io import atomic_private_write
+from jrbar import status_bar
+from jrbar.private_io import atomic_private_write
 
 
 def test_atomic_private_write_can_publish_owner_executable(tmp_path: Path) -> None:
@@ -48,8 +48,8 @@ def test_setup_command_refuses_linked_leaf_without_launching(
         os.link(destination, script)
 
     with (
-        patch("sidepulse.status_bar.default_state_dir", return_value=state_dir),
-        patch("sidepulse.status_bar.subprocess.Popen") as popen,
+        patch("jrbar.status_bar.default_state_dir", return_value=state_dir),
+        patch("jrbar.status_bar.subprocess.Popen") as popen,
         pytest.raises(OSError),
     ):
         status_bar.open_terminal_setup_command("echo hello")
@@ -67,8 +67,8 @@ def test_setup_command_refuses_symlinked_state_directory_without_launching(
     state_dir.symlink_to(destination, target_is_directory=True)
 
     with (
-        patch("sidepulse.status_bar.default_state_dir", return_value=state_dir),
-        patch("sidepulse.status_bar.subprocess.Popen") as popen,
+        patch("jrbar.status_bar.default_state_dir", return_value=state_dir),
+        patch("jrbar.status_bar.subprocess.Popen") as popen,
         pytest.raises(OSError),
     ):
         status_bar.open_terminal_setup_command("echo hello")
@@ -83,8 +83,8 @@ def test_setup_command_rejects_non_basename_filename_without_launching(
     filename: str,
 ) -> None:
     with (
-        patch("sidepulse.status_bar.default_state_dir", return_value=tmp_path),
-        patch("sidepulse.status_bar.subprocess.Popen") as popen,
+        patch("jrbar.status_bar.default_state_dir", return_value=tmp_path),
+        patch("jrbar.status_bar.subprocess.Popen") as popen,
         pytest.raises(ValueError, match="filename"),
     ):
         status_bar.open_terminal_setup_command("echo hello", filename=filename)
@@ -104,9 +104,9 @@ def test_setup_command_publishes_mode_700_before_expected_open_argv(
         return object()
 
     with (
-        patch("sidepulse.status_bar.default_state_dir", return_value=state_dir),
-        patch("sidepulse.status_bar._installed_terminal_application", return_value=terminal),
-        patch("sidepulse.status_bar.subprocess.Popen", side_effect=observe_launch) as popen,
+        patch("jrbar.status_bar.default_state_dir", return_value=state_dir),
+        patch("jrbar.status_bar._installed_terminal_application", return_value=terminal),
+        patch("jrbar.status_bar.subprocess.Popen", side_effect=observe_launch) as popen,
     ):
         script = status_bar.open_terminal_setup_command(
             "echo hello",

@@ -27,7 +27,7 @@ import math
 
 import pytest
 
-from sidepulse.colors import (
+from jrbar.colors import (
     MIN_BEAT_MS,
     MIN_CYCLE_SPEED_SECONDS,
     MIN_FLASH_CYCLE_MS,
@@ -49,7 +49,7 @@ from sidepulse.colors import (
     relative_luminance,
     state_motion,
 )
-from sidepulse.led_status import LedDisplayState, srgb_to_linear
+from jrbar.led_status import LedDisplayState, srgb_to_linear
 
 STATE_MODE_KEY = {
     LedDisplayState.IDLE: MODE_IDLE,
@@ -76,7 +76,7 @@ def _linear(hex_color: str) -> list[float]:
 
 
 def _hex(linear: list[float]) -> str:
-    from sidepulse.led_status import linear_to_srgb
+    from jrbar.led_status import linear_to_srgb
 
     return "#" + "".join(
         f"{round(linear_to_srgb(max(0.0, min(1.0, c))) * 255.0):02X}" for c in linear
@@ -215,7 +215,7 @@ def test_an_urgent_light_rests_where_an_ambient_one_peaks() -> None:
     )
     assert relative_luminance(resting) > relative_luminance(working_floor) * 50
     # Specifically: Ask now RESTS at the brightness it used to peak at.
-    from sidepulse.colors import scale_hex_brightness
+    from jrbar.colors import scale_hex_brightness
 
     _floor, ceiling = settings.fade_range(MODE_ASK)
     assert resting == scale_hex_brightness(ask, ceiling)
@@ -364,8 +364,8 @@ def test_the_light_language_never_flashes_faster_than_two_hertz() -> None:
 def test_a_blocked_agent_beats_while_a_working_one_chases() -> None:
     from datetime import datetime, timezone
 
-    from sidepulse.colors import program_for_snapshot
-    from sidepulse.models import AgentMode, AgentStatus
+    from jrbar.colors import program_for_snapshot
+    from jrbar.models import AgentMode, AgentStatus
 
     def status(provider: str, mode: AgentMode) -> AgentStatus:
         return AgentStatus(
@@ -402,10 +402,10 @@ def test_completion_green_is_a_sweep_not_a_resting_state() -> None:
     badge, and gauge keep the longer memory."""
     from datetime import datetime, timedelta, timezone
 
-    from sidepulse.collector import MonitorSnapshot, aggregate_status
-    from sidepulse.models import AgentMode, AgentStatus
-    from sidepulse.operator_state import COMPLETED_GLOW_SECONDS
-    from sidepulse.status_bar_legacy import settled_completion_display_mode
+    from jrbar.collector import MonitorSnapshot, aggregate_status
+    from jrbar.models import AgentMode, AgentStatus
+    from jrbar.operator_state import COMPLETED_GLOW_SECONDS
+    from jrbar.status_bar_legacy import settled_completion_display_mode
 
     finished = datetime(2026, 8, 20, 18, 0, 0, tzinfo=timezone.utc)
     done = AgentStatus(

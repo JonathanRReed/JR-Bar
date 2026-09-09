@@ -23,7 +23,7 @@ def _screen(name, top):
 def _with_screens(monkeypatch, screens, main=None):
     """Replace the module-level NSScreen name -- ObjC classes refuse
     attribute patching, and preferred_screen resolves it there."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     monkeypatch.setattr(
         virtual_device,
@@ -72,7 +72,7 @@ def test_the_display_change_handler_is_actually_registered():
     so the bar never re-derived geometry after a display change."""
     from pathlib import Path as _Path
 
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     source = _Path(virtual_device.__file__).read_text(encoding="utf-8")
     assert "NSApplicationDidChangeScreenParametersNotification" in source

@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.accessibility_display import (
+from jrbar.accessibility_display import (
     AccessibilityDisplayPreferences,
     read_accessibility_display_preferences,
     refresh_accessibility_display_preferences,

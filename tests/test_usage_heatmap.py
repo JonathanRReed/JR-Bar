@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from sidepulse.usage_heatmap import build_usage_heatmap
-from sidepulse.usage_stats import daily_buckets
+from jrbar.usage_heatmap import build_usage_heatmap
+from jrbar.usage_stats import daily_buckets
 
 UTC = ZoneInfo("UTC")
 CHICAGO = ZoneInfo("America/Chicago")

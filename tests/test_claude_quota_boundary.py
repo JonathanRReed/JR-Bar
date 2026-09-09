@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import claude_quota
+from jrbar import claude_quota
 
 
 def _unexpected_boundary(*_args, **_kwargs):

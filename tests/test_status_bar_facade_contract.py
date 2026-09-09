@@ -6,8 +6,8 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FACADE = ROOT / "src" / "sidepulse" / "status_bar.py"
-PRODUCTION_FACADE = ROOT / "src" / "sidepulse" / "_status_bar_production.py"
+FACADE = ROOT / "src" / "jrbar" / "status_bar.py"
+PRODUCTION_FACADE = ROOT / "src" / "jrbar" / "_status_bar_production.py"
 
 
 def _tree(path: Path) -> ast.Module:

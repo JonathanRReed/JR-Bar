@@ -5,8 +5,8 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.presentation_policy import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.presentation_policy import (
     CapacityGlance,
     FiniteCue,
     GlanceInputs,
@@ -19,7 +19,7 @@ from sidepulse.presentation_policy import (
     enforce_temporal_safety,
     resolve_glance,
 )
-from sidepulse.temporal_safety import (
+from jrbar.temporal_safety import (
     CalibrationState,
     StaticSemanticFallback,
     TemporalFrame,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.deck_actions import DeckAction
+from jrbar.deck_actions import DeckAction
 
 
 def test_open_app_round_trips_as_bounded_data() -> None:

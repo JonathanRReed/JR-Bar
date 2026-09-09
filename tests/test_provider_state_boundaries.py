@@ -4,17 +4,17 @@ import ast
 import json
 from pathlib import Path
 
-from sidepulse.provider_usage_runtime import (
+from jrbar.provider_usage_runtime import (
     ProviderUsageState,
     RefreshPublicationOutcome,
     RefreshPublicationReceipt,
 )
-from sidepulse.provider_usage_settings import (
+from jrbar.provider_usage_settings import (
     default_provider_usage_settings,
     save_provider_usage_settings,
 )
-from sidepulse.provider_usage_store import save_provider_usage_state
-from sidepulse.provider_usage_sync_settings import (
+from jrbar.provider_usage_store import save_provider_usage_state
+from jrbar.provider_usage_sync_settings import (
     default_provider_sync_settings,
     save_provider_sync_settings,
 )
@@ -99,13 +99,13 @@ def test_runtime_usage_cache_does_not_serialize_settings_permissions_or_capabili
 
 def test_provider_state_modules_keep_direct_ownership_boundaries() -> None:
     usage_settings = _direct_imports(
-        ROOT / "src" / "sidepulse" / "provider_usage_settings.py"
+        ROOT / "src" / "jrbar" / "provider_usage_settings.py"
     )
     usage_store = _direct_imports(
-        ROOT / "src" / "sidepulse" / "provider_usage_store.py"
+        ROOT / "src" / "jrbar" / "provider_usage_store.py"
     )
     consent = _direct_imports(
-        ROOT / "src" / "sidepulse" / "provider_browser_consent.py"
+        ROOT / "src" / "jrbar" / "provider_browser_consent.py"
     )
 
     assert not usage_settings.intersection(

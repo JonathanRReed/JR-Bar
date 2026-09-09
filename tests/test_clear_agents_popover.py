@@ -12,8 +12,8 @@ from AppKit import (
     NSWindowStyleMaskTitled,
 )
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import (
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import (
     ClearAgentsFence,
     ClearAgentsPreview,
     ClearAgentsPreviewItem,
@@ -23,7 +23,7 @@ from sidepulse.clear_agents import (
     plan_clear_agents_commit,
     plan_clear_agents_undo,
 )
-from sidepulse.clear_agents_popover import (
+from jrbar.clear_agents_popover import (
     CLEAR_AGENTS_PRESERVATION_TEXT,
     ClearAgentsPopoverAction,
     ClearAgentsPopoverPresentation,

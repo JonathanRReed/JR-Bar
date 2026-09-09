@@ -21,9 +21,9 @@ import json
 
 import pytest
 
-from sidepulse import draw_guard, ipc
-from sidepulse.capacity_types import SourceKey
-from sidepulse.operator_state import (
+from jrbar import draw_guard, ipc
+from jrbar.capacity_types import SourceKey
+from jrbar.operator_state import (
     TIMING_RECOVERY_CONFIRMATIONS,
     TIMING_UNCERTAINTY_LEASE_SECONDS,
     BootIdentifier,
@@ -32,7 +32,7 @@ from sidepulse.operator_state import (
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -89,7 +89,7 @@ def test_repeated_failures_stay_bounded() -> None:
 
 def test_the_usage_graph_survives_a_model_it_cannot_plot() -> None:
     """365 days of history reach this view; one bad value must not be fatal."""
-    status_bar = pytest.importorskip("sidepulse.status_bar")
+    status_bar = pytest.importorskip("jrbar.status_bar")
     draw_guard.reset_draw_failures()
 
     view = status_bar.UsageGraphView.alloc().initWithFrame_(((0, 0), (400, 200)))
@@ -111,7 +111,7 @@ def test_the_usage_graph_survives_a_model_it_cannot_plot() -> None:
 
 def test_a_model_that_crossed_the_main_thread_boundary_is_still_read() -> None:
     """An NSDictionary proxy is not a `dict`; rejecting it drew an empty year."""
-    status_bar = pytest.importorskip("sidepulse.status_bar")
+    status_bar = pytest.importorskip("jrbar.status_bar")
     Foundation = pytest.importorskip("Foundation")
 
     view = status_bar.UsageGraphView.alloc().initWithFrame_(((0, 0), (400, 200)))
@@ -390,7 +390,7 @@ def test_quiescent_only_quarantine_survives_the_v2_round_trip() -> None:
     per-source stamps from the global uncertain_since -- impossible in
     that shape -- so the app's own latest.json failed its own validator
     and every restart lost its warm start."""
-    from sidepulse._collector_legacy import (
+    from jrbar._collector_legacy import (
         _state_to_document,
         _v2_state_from_document,
     )
@@ -431,7 +431,7 @@ def test_a_rebooted_strip_voids_the_write_dedupe(tmp_path):
     tick assumed the steady program was still showing. A firmware
     uptime that goes BACKWARDS voids the dedupe so the next tick
     repaints unconditionally."""
-    from sidepulse._led_status_legacy import AgentLedController
+    from jrbar._led_status_legacy import AgentLedController
 
     status = tmp_path / "STATUS.TXT"
     status.write_text("serial SPP-000067\nuptime_ms 5000000\nstate idle\n")

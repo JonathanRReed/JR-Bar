@@ -1,13 +1,13 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from sidepulse.ambient_effect_consumer import active_ambient_presentation
-from sidepulse.ambient_effect_dispatch import (
+from jrbar.ambient_effect_consumer import active_ambient_presentation
+from jrbar.ambient_effect_dispatch import (
     AmbientEffectSurface,
     AmbientSemanticColors,
     compile_ambient_effect_dispatch,
 )
-from sidepulse.semantic_effect_router import (
+from jrbar.semantic_effect_router import (
     SemanticEffectCandidate,
     SemanticEventKind,
     route_semantic_effects,
@@ -32,7 +32,7 @@ def test_consumer_adapts_one_staged_output_for_existing_render_boundaries(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.time.monotonic",
+        "jrbar.ambient_effect_runtime.time.monotonic",
         lambda: 10.1,
     )
 
@@ -55,7 +55,7 @@ def test_consumer_adapts_one_staged_output_for_existing_render_boundaries(
 
 def test_consumer_uses_static_fallback_under_reduce_motion(monkeypatch) -> None:
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.time.monotonic",
+        "jrbar.ambient_effect_runtime.time.monotonic",
         lambda: 10.1,
     )
 

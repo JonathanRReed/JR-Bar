@@ -4,8 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.local_triage import (
+from jrbar.capacity_types import SourceKey
+from jrbar.local_triage import (
     LocalAcknowledgement,
     LocalTriageMutationKind,
     LocalTriageState,
@@ -13,14 +13,14 @@ from sidepulse.local_triage import (
     apply_local_triage_mutation,
     reconcile_local_triage,
 )
-from sidepulse.operator_state import (
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalRequestTruth,
     RequestPhase,
     SemanticEventKey,
     TransitionKind,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ProviderWatermark,
@@ -283,7 +283,7 @@ def test_controller_refresh_prunes_terminal_acknowledgements_and_saves() -> None
     acknowledgement ever made was retained forever."""
     from types import SimpleNamespace
 
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     resolved = _request(phase=RequestPhase.RESOLVED)
     live = _request(_request_key("request:live"), event_token="event:live")

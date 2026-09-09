@@ -10,7 +10,7 @@ identity colors with no session to attach to (2026-08-27 owner report).
 
 import json
 
-from sidepulse.providers import parse_log_line
+from jrbar.providers import parse_log_line
 
 
 def _normalized(event_name: str, work_id: str, parent: str | None) -> str:

@@ -4,10 +4,10 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.colors import ColorSettings, StudioPreviewSession
-from sidepulse.effect_packs import EffectPackError
-from sidepulse.effect_registry import EffectDefinition, EffectRegistry
-from sidepulse.effect_studio import (
+from jrbar.colors import ColorSettings, StudioPreviewSession
+from jrbar.effect_packs import EffectPackError
+from jrbar.effect_registry import EffectDefinition, EffectRegistry
+from jrbar.effect_studio import (
     MAX_PHYSICAL_PREVIEW_SECONDS,
     MAX_SYNTHETIC_EVENTS,
     PHYSICAL_PREVIEW_RELEASE_TRIGGERS,
@@ -36,7 +36,7 @@ from sidepulse.effect_studio import (
     project_gallery_pack,
     project_why_effect,
 )
-from sidepulse.scenes import Scene
+from jrbar.scenes import Scene
 
 
 def _pack(**overrides: object) -> dict[str, object]:

@@ -249,7 +249,7 @@ def _is_sidepulse_hook_invocation(parts) -> bool:
     if any(Path(part).name == "hook_entry.py" for part in parts):
         return True
     if "-m" in parts and any(
-        module in parts for module in ("sidepulse.hook_entry", "sidepulse.hook_client")
+        module in parts for module in ("jrbar.hook_entry", "jrbar.hook_client")
     ):
         return True
     return "agent-monitor" in parts and any(
@@ -294,7 +294,7 @@ def _valid_opencode_hook_arguments(
         and Path(arguments[0]).is_absolute()
         and executable_trusted
         and arguments[1] == "-m"
-        and arguments[2] in ("sidepulse.hook_entry", "sidepulse.hook_client")
+        and arguments[2] in ("jrbar.hook_entry", "jrbar.hook_client")
         and arguments[3:6] == ["--provider", "opencode", "--log"]
     )
     frozen_shape = (
@@ -459,7 +459,7 @@ def _valid_openclaw_hook_arguments(arguments: object) -> tuple[str, ...] | None:
         for argument in arguments
     ):
         return None
-    module_shape = arguments[1:3] == ["-m", "sidepulse.hook_client"]
+    module_shape = arguments[1:3] == ["-m", "jrbar.hook_client"]
     frozen_shape = arguments[1:3] == ["agent-monitor", "hook-client"]
     if not (module_shape or frozen_shape):
         return None
@@ -831,7 +831,7 @@ def detect_devin_config(home: Path | None = None) -> ProviderConfig:
 
 def default_grok_hook_config_path(home: Path | None = None) -> Path:
     base = home or Path.home()
-    return base / ".grok" / "hooks" / "sidepulse.json"
+    return base / ".grok" / "hooks" / "jrbar.json"
 
 
 def detect_grok_config(home: Path | None = None) -> ProviderConfig:
@@ -1077,7 +1077,7 @@ def detect_antigravity_config(home: Path | None = None) -> ProviderConfig:
 
 def default_opencode_plugin_path(home: Path | None = None) -> Path:
     base = home or Path.home()
-    return base / ".config" / "opencode" / "plugins" / "sidepulse.js"
+    return base / ".config" / "opencode" / "plugins" / "jrbar.js"
 
 
 def detect_opencode_plugin(home: Path | None = None) -> ProviderConfig:
@@ -1110,7 +1110,7 @@ def detect_opencode_plugin(home: Path | None = None) -> ProviderConfig:
 
 def default_kiro_agent_config_path(home: Path | None = None) -> Path:
     base = home or Path.home()
-    return base / ".kiro" / "agents" / "sidepulse.json"
+    return base / ".kiro" / "agents" / "jrbar.json"
 
 
 def detect_kiro_config(home: Path | None = None) -> ProviderConfig:

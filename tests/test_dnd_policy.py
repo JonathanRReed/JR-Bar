@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from sidepulse.dnd_policy import (
+from jrbar.dnd_policy import (
     DEFAULT_DND_DIM_FRACTION,
     MAX_DND_OVERRIDE_SECONDS,
     DisplayAdmission,
@@ -22,7 +22,7 @@ from sidepulse.dnd_policy import (
     parse_dnd_settings,
     serialize_dnd_settings,
 )
-from sidepulse.local_time_boundary import resolve_local_epoch
+from jrbar.local_time_boundary import resolve_local_epoch
 
 
 @pytest.mark.parametrize(
@@ -594,7 +594,7 @@ def test_models_reject_wrong_types_and_nonfinite_values() -> None:
 
 
 def test_pure_policy_does_not_import_appkit_or_own_stateful_authorities() -> None:
-    import sidepulse.dnd_policy as policy
+    import jrbar.dnd_policy as policy
 
     source = open(policy.__file__, encoding="utf-8").read()
     assert "AppKit" not in source

@@ -4,18 +4,18 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from sidepulse.agent_browser import (
+from jrbar.agent_browser import (
     AgentBrowserDocument,
     ApprovedSearchLabel,
     SearchLabelSource,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.mailbox import MailboxRow
-from sidepulse.navigation_policy import (
+from jrbar.capacity_types import SourceKey
+from jrbar.mailbox import MailboxRow
+from jrbar.navigation_policy import (
     OperatorActionDescriptor,
     OperatorActionKind,
 )
-from sidepulse.operator_accessibility import (
+from jrbar.operator_accessibility import (
     MAX_ACCESSIBILITY_HELP_LENGTH,
     MAX_ACCESSIBILITY_LABEL_LENGTH,
     MAX_ACCESSIBILITY_VALUE_LENGTH,
@@ -30,7 +30,7 @@ from sidepulse.operator_accessibility import (
     normalize_semantic_text_scale,
     status_item_accessibility,
 )
-from sidepulse.operator_state import (
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalOperatorEvent,
     CanonicalRequestTruth,
@@ -41,7 +41,7 @@ from sidepulse.operator_state import (
     TransitionKind,
     empty_operator_state,
 )
-from sidepulse.presentation_policy import (
+from jrbar.presentation_policy import (
     FiniteCue,
     FiniteCueState,
     GlanceOverrideReason,
@@ -49,7 +49,7 @@ from sidepulse.presentation_policy import (
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,

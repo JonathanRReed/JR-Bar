@@ -14,7 +14,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from sidepulse.status_bar_launch import (
+from jrbar.status_bar_launch import (
     build_launch_agent_plist,
     development_python_executable,
     install_launch_agent,
@@ -126,7 +126,7 @@ def verify(bundle: Path, **runner_options):
 
 
 def test_source_default_launch_agent_fails_closed_without_mutable_wrapper() -> None:
-    with patch("sidepulse.status_bar_launch.sys.frozen", False, create=True):
+    with patch("jrbar.status_bar_launch.sys.frozen", False, create=True):
         with pytest.raises(RuntimeError, match=r"packaged SidePulse\.app"):
             build_launch_agent_plist()
 
@@ -135,11 +135,11 @@ def test_source_install_launch_agent_uses_current_interpreter(tmp_path: Path) ->
     plist_path = tmp_path / "LaunchAgents" / "io.sidepulse.agentstatus.plist"
     state_dir = tmp_path / "state"
     with (
-        patch("sidepulse.status_bar_launch.sys.frozen", False, create=True),
-        patch("sidepulse._status_bar_launch_legacy.default_state_dir", return_value=state_dir),
-        patch("sidepulse._status_bar_launch_legacy.restart_launch_agent"),
-        patch("sidepulse._status_bar_launch_legacy.launch_agent_running", return_value=False),
-        patch("sidepulse._status_bar_launch_legacy.remove_legacy_launch_agent", return_value=False),
+        patch("jrbar.status_bar_launch.sys.frozen", False, create=True),
+        patch("jrbar._status_bar_launch_legacy.default_state_dir", return_value=state_dir),
+        patch("jrbar._status_bar_launch_legacy.restart_launch_agent"),
+        patch("jrbar._status_bar_launch_legacy.launch_agent_running", return_value=False),
+        patch("jrbar._status_bar_launch_legacy.remove_legacy_launch_agent", return_value=False),
     ):
         result = install_launch_agent(start=False, plist_path=plist_path)
 
@@ -149,7 +149,7 @@ def test_source_install_launch_agent_uses_current_interpreter(tmp_path: Path) ->
 
 
 def test_development_python_is_absent_when_frozen() -> None:
-    with patch("sidepulse.status_bar_launch.sys.frozen", True, create=True):
+    with patch("jrbar.status_bar_launch.sys.frozen", True, create=True):
         assert development_python_executable() is None
 
 
@@ -186,8 +186,8 @@ def test_frozen_launch_agent_uses_packaged_argument_shape_without_python_overrid
     executable.chmod(0o755)
 
     with (
-        patch("sidepulse.status_bar_launch.sys.frozen", True, create=True),
-        patch("sidepulse.status_bar_launch.sys.executable", str(executable)),
+        patch("jrbar.status_bar_launch.sys.frozen", True, create=True),
+        patch("jrbar.status_bar_launch.sys.executable", str(executable)),
     ):
         plist = build_launch_agent_plist(
             stdout_path=tmp_path / "out.log",
@@ -524,7 +524,7 @@ def test_packaged_bundle_accepts_loader_relative_rpath_that_stays_inside_bundle(
 
 
 def test_trusted_tool_allowlist_returns_canonical_apple_paths() -> None:
-    from sidepulse.trusted_tools import trusted_system_tool
+    from jrbar.trusted_tools import trusted_system_tool
 
     expected = {
         "security": Path("/usr/bin/security"),
@@ -543,7 +543,7 @@ def test_trusted_tool_allowlist_returns_canonical_apple_paths() -> None:
 
 @pytest.mark.parametrize("name", ["codex", "python3", "bash", "unknown"])
 def test_trusted_tool_rejects_user_or_unknown_tools(name: str) -> None:
-    from sidepulse.trusted_tools import trusted_system_tool
+    from jrbar.trusted_tools import trusted_system_tool
 
     with pytest.raises(ValueError, match="not an allowed Apple system tool"):
         trusted_system_tool(name)
@@ -551,7 +551,7 @@ def test_trusted_tool_rejects_user_or_unknown_tools(name: str) -> None:
 
 @pytest.mark.parametrize("kind", ["missing", "symlink", "directory", "not-executable", "substituted"])
 def test_trusted_tool_rejects_untrusted_filesystem_objects(tmp_path: Path, kind: str) -> None:
-    from sidepulse import trusted_tools
+    from jrbar import trusted_tools
 
     candidate = tmp_path / "security"
     if kind == "symlink":
@@ -574,7 +574,7 @@ def test_trusted_tool_rejects_untrusted_filesystem_objects(tmp_path: Path, kind:
 
 
 def test_battery_reader_uses_trusted_ioreg_path() -> None:
-    from sidepulse.battery import read_battery_snapshot
+    from jrbar.battery import read_battery_snapshot
 
     commands: list[list[str]] = []
 
@@ -588,7 +588,7 @@ def test_battery_reader_uses_trusted_ioreg_path() -> None:
 
 
 def test_claude_quota_exposes_no_credential_or_subprocess_route() -> None:
-    from sidepulse import claude_quota
+    from jrbar import claude_quota
 
     assert not hasattr(claude_quota, "subprocess")
     assert not hasattr(claude_quota, "access_token")
@@ -604,14 +604,14 @@ def test_claude_quota_exposes_no_credential_or_subprocess_route() -> None:
 
 
 def test_log_follow_uses_trusted_tail_path(tmp_path: Path) -> None:
-    from sidepulse import cli
+    from jrbar import cli
 
     log = tmp_path / "guard.log"
     log.write_text("line\n")
     args = SimpleNamespace(scope="user", follow=True, lines=12)
     with (
         patch(
-            "sidepulse.sd_eject_guard_launch.log_paths_for_requested_scope",
+            "jrbar.sd_eject_guard_launch.log_paths_for_requested_scope",
             return_value=(log,),
         ),
         patch.object(
@@ -626,7 +626,7 @@ def test_log_follow_uses_trusted_tail_path(tmp_path: Path) -> None:
 
 
 def test_sd_guard_compile_and_launch_use_trusted_system_paths(tmp_path: Path) -> None:
-    from sidepulse import sd_eject_guard_launch
+    from jrbar import sd_eject_guard_launch
 
     source = tmp_path / "guard.c"
     target = tmp_path / "guard"
@@ -651,7 +651,7 @@ def test_sd_guard_compile_and_launch_use_trusted_system_paths(tmp_path: Path) ->
 
 
 def test_sd_guard_requires_an_explicit_volume_uuid_before_registration() -> None:
-    source = (REPO_ROOT / "src" / "sidepulse" / "resources" / "sd_eject_guard.c").read_text()
+    source = (REPO_ROOT / "src" / "jrbar" / "resources" / "sd_eject_guard.c").read_text()
 
     assert "--volume-uuid" in source
     assert "g_selected_volume_uuid" in source
@@ -675,7 +675,7 @@ def test_field_diagnostics_redacts_paths_and_device_serials() -> None:
 
 def test_status_bar_shortcut_quit_and_openers_use_trusted_system_paths() -> None:
     try:
-        from sidepulse import status_bar
+        from jrbar import status_bar
     except (ImportError, SystemExit) as exc:
         pytest.skip(str(exc))
 

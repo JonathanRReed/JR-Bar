@@ -4,8 +4,8 @@ from dataclasses import fields
 
 import pytest
 
-from sidepulse.activity_ledger import ActivityEntry, ActivityKind, ActivityLedger, record_activity
-from sidepulse.away_summary import (
+from jrbar.activity_ledger import ActivityEntry, ActivityKind, ActivityLedger, record_activity
+from jrbar.away_summary import (
     MAX_AWAY_SUMMARY_ITEMS,
     AwaySummaryConsent,
     AwaySummaryKind,
@@ -14,9 +14,9 @@ from sidepulse.away_summary import (
     acknowledge_away_summary,
     project_away_summary,
 )
-from sidepulse.operator_history import HistoryCoverage, OperatorHistoryDay
-from sidepulse.operator_history_store import OperatorHistoryState
-from sidepulse.provider_contracts import ProviderIdentifier
+from jrbar.operator_history import HistoryCoverage, OperatorHistoryDay
+from jrbar.operator_history_store import OperatorHistoryState
+from jrbar.provider_contracts import ProviderIdentifier
 
 NOW = 1_800_000_000.0
 
@@ -187,7 +187,7 @@ def test_projection_models_have_no_content_storage_fields() -> None:
     fields_by_model = {
         model.__name__: {field.name for field in fields(model)}
         for model in (
-            __import__("sidepulse.away_summary", fromlist=["AwaySummaryEntry"]).AwaySummaryEntry,
+            __import__("jrbar.away_summary", fromlist=["AwaySummaryEntry"]).AwaySummaryEntry,
         )
     }
     assert not fields_by_model["AwaySummaryEntry"] & {

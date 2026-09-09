@@ -12,20 +12,20 @@ from AppKit import (
 )
 from Foundation import NSObject
 
-from sidepulse import dnd_settings_pane
-from sidepulse.dnd_policy import (
+from jrbar import dnd_settings_pane
+from jrbar.dnd_policy import (
     DndMode,
     DndOverride,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.focus_status import (
+from jrbar.focus_status import (
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
 )
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.settings import AgentMonitorSettings
 
 
 class _DndSettingsTarget(NSObject):
@@ -484,7 +484,7 @@ def test_configured_focus_rules_keep_three_controls_and_refresh_every_axis(
 
 
 def test_settings_window_delegates_focus_without_adding_navigation(monkeypatch) -> None:
-    from sidepulse import settings_navigation, settings_window
+    from jrbar import settings_navigation, settings_window
 
     sentinel = (object(), {"field": object()}, {"button": object()})
     monkeypatch.setattr(

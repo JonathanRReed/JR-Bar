@@ -18,8 +18,8 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sidepulse import colors as colors_module
-from sidepulse.colors import (
+from jrbar import colors as colors_module
+from jrbar.colors import (
     BRAND_SEED_COLORS,
     CURATED_PALETTE,
     PROVIDER_ANIMATION_CHOICES,
@@ -36,8 +36,8 @@ from sidepulse.colors import (
     provider_color_rows,
     swatch_name,
 )
-from sidepulse.led_status import ASK_AMBER, DONE_GREEN, IDLE_DIM, WORKING_CYAN
-from sidepulse.providers import PROVIDER_SPECS
+from jrbar.led_status import ASK_AMBER, DONE_GREEN, IDLE_DIM, WORKING_CYAN
+from jrbar.providers import PROVIDER_SPECS
 
 MOTION_CHASE = colors_module.MOTION_CHASE
 MOTION_BLINK = colors_module.MOTION_BLINK
@@ -49,7 +49,7 @@ MOTION_BLINK = colors_module.MOTION_BLINK
 def is_brand_color(hex_value):
     """Local guard over the live brand table (the src helper was deleted
     2026-08-26: tests were its only callers; the TABLE is load-bearing)."""
-    from sidepulse.colors import _BRAND_NAME_BY_HEX, normalize_hex
+    from jrbar.colors import _BRAND_NAME_BY_HEX, normalize_hex
 
     return normalize_hex(hex_value, "#000000").upper() in _BRAND_NAME_BY_HEX
 
@@ -270,9 +270,9 @@ class ThrowawayLocalTests(unittest.TestCase):
         )
         before = self.controller.settings
         with (
-            patch("sidepulse.status_bar_legacy.save_settings") as save_settings,
+            patch("jrbar.status_bar_legacy.save_settings") as save_settings,
             patch(
-                "sidepulse.status_bar_legacy.refresh_blend_and_speed_fields"
+                "jrbar.status_bar_legacy.refresh_blend_and_speed_fields"
             ) as refresh_fields,
             patch.object(self.controller, "refresh_colors_window") as refresh_colors_window,
             patch.object(self.controller, "refresh_colors_preview") as refresh_colors_preview,
@@ -538,7 +538,7 @@ class AnimationControlTests(unittest.TestCase):
     def test_every_state_animation_thumb_carries_a_visible_name(self) -> None:
         """They were identified by setToolTip_ alone and told apart only by
         position -- the exact failure the Studio exists to end."""
-        from sidepulse.status_bar import ANIMATION_STYLE_DISPLAY_LABELS
+        from jrbar.status_bar import ANIMATION_STYLE_DISPLAY_LABELS
 
         found = 0
         for key, thumbs in self.controller.colors_animation_thumbs.items():
@@ -676,7 +676,7 @@ class StudioChromeTests(unittest.TestCase):
         push to a device, and default True where it decided how to draw the
         switch: a controller without the attribute would have shown a switch
         that was ON while behaving as OFF."""
-        from sidepulse.settings_window import hardware_preview_enabled
+        from jrbar.settings_window import hardware_preview_enabled
 
         self.assertFalse(hardware_preview_enabled(SimpleNamespace()))
         self.assertFalse(hardware_preview_enabled(SimpleNamespace(color_preview_enabled=False)))

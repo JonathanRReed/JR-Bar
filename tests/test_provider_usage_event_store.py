@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.provider_reset_events import ResetDeliverySettings, ResetDeliveryState, begin_reset_delivery
-from sidepulse.provider_usage_event_store import (
+from jrbar.provider_reset_events import ResetDeliverySettings, ResetDeliveryState, begin_reset_delivery
+from jrbar.provider_usage_event_store import (
     load_reset_delivery_state,
     save_reset_delivery_state,
 )
-from sidepulse.provider_usage_qol import ResetEvent
-from sidepulse.provider_usage_settings import (
+from jrbar.provider_usage_qol import ResetEvent
+from jrbar.provider_usage_settings import (
     default_provider_usage_settings,
     load_provider_usage_settings,
     save_provider_usage_settings,

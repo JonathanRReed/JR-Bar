@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.dnd_policy import DndMode, DndSource
-from sidepulse.menu_projection import (
+from jrbar.dnd_policy import DndMode, DndSource
+from jrbar.menu_projection import (
     MenuProjectionInputs,
     MenuRowKind,
     project_dnd_submenu,

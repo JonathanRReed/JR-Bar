@@ -1,4 +1,4 @@
-from sidepulse.deck_input import DeckInputRouter
+from jrbar.deck_input import DeckInputRouter
 
 
 def event(key="AG03", action=1, **extra):

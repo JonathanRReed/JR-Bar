@@ -34,9 +34,9 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.capacity_authority import CapacityProjection
-from sidepulse.capacity_history import HistoryInterval
-from sidepulse.capacity_types import (
+from jrbar.capacity_authority import CapacityProjection
+from jrbar.capacity_history import HistoryInterval
+from jrbar.capacity_types import (
     CapacitySourceHealth,
     CapacityUnit,
     CapacityValue,
@@ -50,9 +50,9 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.capacity_view import CapacityDetailModel
-from sidepulse.decision_trace import CAPACITY_SECTION_TITLE, capacity_detail_text
-from sidepulse.persistence_writer import SerialPersistenceWriter
+from jrbar.capacity_view import CapacityDetailModel
+from jrbar.decision_trace import CAPACITY_SECTION_TITLE, capacity_detail_text
+from jrbar.persistence_writer import SerialPersistenceWriter
 from tests.test_activity_ledger import _limits, _run_codex_refresh
 from tests.test_sidepulse import isolate_controller
 
@@ -79,7 +79,7 @@ def controller(request, tmp_path):
     isolate_controller(case)
     history_path = tmp_path / "capacity-history.json"
     patcher = patch(
-        "sidepulse.capacity_history_runtime.default_capacity_history_path",
+        "jrbar.capacity_history_runtime.default_capacity_history_path",
         return_value=history_path,
     )
     patcher.start()

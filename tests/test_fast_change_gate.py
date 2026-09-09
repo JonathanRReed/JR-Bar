@@ -33,8 +33,8 @@ def test_fast_gate_has_explicit_ordered_evidence_layers() -> None:
     )
     assert all(type(step.command) is tuple for step in steps)
     import_smoke = next(step.command for step in steps if step.name == "Import smoke")
-    assert "sidepulse._status_bar_production" in import_smoke[-1]
-    assert "sidepulse.adaptive_refresh" in import_smoke[-1]
+    assert "jrbar._status_bar_production" in import_smoke[-1]
+    assert "jrbar.adaptive_refresh" in import_smoke[-1]
 
 
 def test_fast_gate_never_contains_expensive_or_mutating_release_work() -> None:

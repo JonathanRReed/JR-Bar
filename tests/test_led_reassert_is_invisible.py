@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepulse._led_status_legacy import (
+from jrbar._led_status_legacy import (
     AgentLedController,
     LedDisplayState,
     _steady_state_variant,
@@ -71,11 +71,11 @@ def test_a_done_agent_rests_dark_beside_a_working_one() -> None:
     from datetime import datetime, timezone
     from types import SimpleNamespace
 
-    from sidepulse.attention import project_attention
-    from sidepulse.colors import ColorSettings, program_for_projection
-    from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
-    from sidepulse.models import AgentMode, AgentStatus
-    from sidepulse.settings import AgentMonitorSettings
+    from jrbar.attention import project_attention
+    from jrbar.colors import ColorSettings, program_for_projection
+    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    from jrbar.models import AgentMode, AgentStatus
+    from jrbar.settings import AgentMonitorSettings
 
     def status(provider, sid, mode, event):
         return AgentStatus(

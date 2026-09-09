@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_sync import MergedProviderSync
-from sidepulse.provider_usage_sync_projection import apply_merged_sync_to_state
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_sync import MergedProviderSync
+from jrbar.provider_usage_sync_projection import apply_merged_sync_to_state
 
 
 def snapshot(observed, remaining, *, input_tokens, source_instance_id="default"):

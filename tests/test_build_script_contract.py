@@ -39,8 +39,8 @@ def test_source_install_drops_only_the_incompatible_build_constraint() -> None:
 def test_package_builder_embeds_creator_micro_backend() -> None:
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert "--hidden-import sidepulse.creator_micro_adapter" in text
-    assert "--hidden-import sidepulse.creator_micro_hidapi" in text
+    assert "--hidden-import jrbar.creator_micro_adapter" in text
+    assert "--hidden-import jrbar.creator_micro_hidapi" in text
     assert "--hidden-import hid" in text
 
 
@@ -151,10 +151,10 @@ def test_clean_install_verifies_t3_integration_artifacts_and_commands() -> None:
     text = (ROOT / "scripts" / "verify_clean_install.py").read_text(encoding="utf-8")
 
     assert '"integration_compatibility.json"' in text
-    assert '"sidepulse-integrations"' in text
+    assert '"jrbar-integrations"' in text
     assert '"integrations", "status", "--json"' in text
-    assert '"sidepulse.t3_compat"' in text
-    assert "sidepulse.codexbar_compat" not in text
+    assert '"jrbar.t3_compat"' in text
+    assert "jrbar.codexbar_compat" not in text
 
 
 def test_hook_ingress_benchmark_has_bounded_content_free_report_contract() -> None:

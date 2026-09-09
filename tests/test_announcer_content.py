@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.announcer_content import project_announcer_content
-from sidepulse.attention import LifecycleMode, ProjectedAgentRow
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.announcer_content import project_announcer_content
+from jrbar.attention import LifecycleMode, ProjectedAgentRow
+from jrbar.models import AgentMode, AgentStatus
 
 
 def _row(

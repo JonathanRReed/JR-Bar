@@ -7,23 +7,23 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse import status_bar
-from sidepulse.attention import AttentionProjection, LifecycleMode
-from sidepulse.dnd_controller import DndController
-from sidepulse.dnd_policy import (
+from jrbar import status_bar
+from jrbar.attention import AttentionProjection, LifecycleMode
+from jrbar.dnd_controller import DndController
+from jrbar.dnd_policy import (
     DndMode,
     DndOverride,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.focus_status import (
+from jrbar.focus_status import (
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
 )
-from sidepulse.models import AgentMode
-from sidepulse.presentation_policy import FiniteCue, GlanceSemantic
+from jrbar.models import AgentMode
+from jrbar.presentation_policy import FiniteCue, GlanceSemantic
 
 DND_DARK_DISPLAY = "dnd_dark"
 
@@ -160,7 +160,7 @@ def test_settings_and_menu_summary_share_the_gated_focus_view(
     controller,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sidepulse.settings_window import refresh_dnd_settings_controls
+    from jrbar.settings_window import refresh_dnd_settings_controls
 
     secret = "private-focus-must-not-reach-surfaces"
     controller.settings = controller.settings.with_focus_sync_enabled(True)
@@ -249,13 +249,13 @@ def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis(controller) -> N
 @pytest.mark.parametrize(
     ("mode", "event", "expected"),
     (
-        (DndMode.MUTE, "sidepulse.completion", False),
-        (DndMode.DIM, "sidepulse.completion", True),
-        (DndMode.PAUSE, "sidepulse.completion", False),
-        (DndMode.PAUSE, "sidepulse.escalation", True),
-        (DndMode.ASKS_ONLY, "sidepulse.completion", False),
-        (DndMode.ASKS_ONLY, "sidepulse.escalation", True),
-        (DndMode.DARK, "sidepulse.escalation", False),
+        (DndMode.MUTE, "jrbar.completion", False),
+        (DndMode.DIM, "jrbar.completion", True),
+        (DndMode.PAUSE, "jrbar.completion", False),
+        (DndMode.PAUSE, "jrbar.escalation", True),
+        (DndMode.ASKS_ONLY, "jrbar.completion", False),
+        (DndMode.ASKS_ONLY, "jrbar.escalation", True),
+        (DndMode.DARK, "jrbar.escalation", False),
     ),
 )
 def test_webhook_effect_site_consumes_the_exact_outbound_axis(

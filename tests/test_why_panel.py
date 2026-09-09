@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from sidepulse.why_panel import set_text_preserving_position
+from jrbar.why_panel import set_text_preserving_position
 
 
 @dataclass

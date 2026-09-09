@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from sidepulse.persistence_writer import (
+from jrbar.persistence_writer import (
     PersistenceDisposition,
     PersistenceOutcome,
     SerialPersistenceWriter,

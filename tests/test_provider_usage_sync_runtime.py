@@ -3,30 +3,30 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 
-from sidepulse.provider_feature_settings import (
+from jrbar.provider_feature_settings import (
     ProviderInstanceSharingPolicy,
     ProviderInstanceSharingProjection,
 )
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_sync import (
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_sync import (
     ProviderSyncPacket,
     decode_signed_packet,
     encode_signed_packet,
 )
-from sidepulse.provider_usage_sync_runtime import (
+from jrbar.provider_usage_sync_runtime import (
     ProviderSyncRuntime,
     build_local_sync_packet,
 )
-from sidepulse.provider_usage_sync_settings import (
+from jrbar.provider_usage_sync_settings import (
     ProviderSyncPeer,
     ProviderSyncSettings,
 )
-from sidepulse.provider_usage_sync_transport import SftpFetchResult
+from jrbar.provider_usage_sync_transport import SftpFetchResult
 
 
 class Credentials:
@@ -255,7 +255,7 @@ def test_runtime_publishes_peer_specific_signed_packet_and_merges_remote(tmp_pat
 
 
 def test_stale_remote_packet_is_reported_as_stale_not_merged(tmp_path: Path):
-    from sidepulse.provider_usage_sync import SYNC_PACKET_MAX_AGE_SECONDS
+    from jrbar.provider_usage_sync import SYNC_PACKET_MAX_AGE_SECONDS
 
     secret = b"x" * 32
     stale_now = 1100.0 + SYNC_PACKET_MAX_AGE_SECONDS + 1.0
@@ -288,8 +288,8 @@ def test_stale_remote_packet_is_reported_as_stale_not_merged(tmp_path: Path):
 
 
 def test_cached_merged_sync_reads_local_documents_without_fetching(tmp_path: Path):
-    from sidepulse.provider_usage_sync_runtime import load_cached_merged_sync
-    from sidepulse.provider_usage_sync_transport import publish_local_packet
+    from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
+    from jrbar.provider_usage_sync_transport import publish_local_packet
 
     secret = b"x" * 32
     remote_packet = ProviderSyncPacket(
@@ -319,9 +319,9 @@ def test_cached_merged_sync_reads_local_documents_without_fetching(tmp_path: Pat
 
 
 def test_cached_merged_sync_rejects_future_dated_verified_packet(tmp_path: Path) -> None:
-    from sidepulse.provider_usage_sync import SYNC_PACKET_FUTURE_SKEW_SECONDS
-    from sidepulse.provider_usage_sync_runtime import load_cached_merged_sync
-    from sidepulse.provider_usage_sync_transport import publish_local_packet
+    from jrbar.provider_usage_sync import SYNC_PACKET_FUTURE_SKEW_SECONDS
+    from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
+    from jrbar.provider_usage_sync_transport import publish_local_packet
 
     secret = b"x" * 32
     now = 1200.0
@@ -355,8 +355,8 @@ def test_cached_merged_sync_rejects_future_dated_verified_packet(tmp_path: Path)
 def test_cached_merge_keeps_verified_remote_when_local_policy_loader_fails(
     tmp_path: Path,
 ):
-    from sidepulse.provider_usage_sync_runtime import load_cached_merged_sync
-    from sidepulse.provider_usage_sync_transport import publish_local_packet
+    from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
+    from jrbar.provider_usage_sync_transport import publish_local_packet
 
     secret = b"x" * 32
     remote_packet = ProviderSyncPacket(
@@ -389,7 +389,7 @@ def test_cached_merge_keeps_verified_remote_when_local_policy_loader_fails(
 
 
 def test_cached_merged_sync_is_none_when_sync_is_disabled(tmp_path: Path):
-    from sidepulse.provider_usage_sync_runtime import load_cached_merged_sync
+    from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
 
     configured = settings(tmp_path)
     disabled = ProviderSyncSettings(

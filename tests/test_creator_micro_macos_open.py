@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.creator_micro_hidapi import HidApiTransport
+from jrbar.creator_micro_hidapi import HidApiTransport
 
 
 @pytest.fixture

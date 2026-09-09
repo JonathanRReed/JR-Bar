@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.collector import LiveAgentMonitor
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.collector import LiveAgentMonitor
+from jrbar.models import AgentMode, AgentStatus
 
 
 def _status(agent_id: str, *, stale: bool = False) -> AgentStatus:

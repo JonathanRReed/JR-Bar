@@ -7,8 +7,8 @@ picking "Breathe" for a solo Codex changed nothing (reported live
 
 from __future__ import annotations
 
-from sidepulse.colors import ColorSettings
-from sidepulse.presentation_policy import (
+from jrbar.colors import ColorSettings
+from jrbar.presentation_policy import (
     AccessibilityDisplayPreferences,
     GlanceInputs,
     GlanceOverrideReason,
@@ -109,7 +109,7 @@ def test_every_animation_style_renders_a_distinct_program() -> None:
     """The expanded vocabulary (heartbeat/scanner/comet/flicker) must
     each survive the safety compiler as its own shape -- a style that
     fails closed to the static glyph is a dead menu entry."""
-    from sidepulse.colors import PROVIDER_ANIMATION_CHOICES
+    from jrbar.colors import PROVIDER_ANIMATION_CHOICES
 
     base = ColorSettings.defaults()
     programs = {}
@@ -126,8 +126,8 @@ def test_every_animation_style_renders_a_distinct_program() -> None:
 def test_multi_agent_segments_support_the_new_rhythms() -> None:
     """The per-LED segment builder must give heartbeat and flicker real
     shapes and degrade positional sweeps to the travelling wave."""
-    from sidepulse.colors import _motion_segments
-    from sidepulse.led_status import LedDisplayState
+    from jrbar.colors import _motion_segments
+    from jrbar.led_status import LedDisplayState
 
     base = ColorSettings.defaults()
 
@@ -168,9 +168,9 @@ def test_new_motions_pass_firmware_grammar_and_byte_budget() -> None:
     the 2-LED Dot -- their loops landed under the safety envelope's 1s
     minimum and fell closed with no test at that count to notice
     (audit, 2026-08-26)."""
-    from sidepulse.animation import MAX_LED_BYTES, MAX_LED_LINES
-    from sidepulse.colors import PROVIDER_ANIMATION_CHOICES
-    from sidepulse.firmware_validation import validate_firmware_program
+    from jrbar.animation import MAX_LED_BYTES, MAX_LED_LINES
+    from jrbar.colors import PROVIDER_ANIMATION_CHOICES
+    from jrbar.firmware_validation import validate_firmware_program
 
     base = ColorSettings.defaults()
     moving = tuple(

@@ -1,23 +1,23 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
-from sidepulse.ambient_effect_consumer import active_hardware_ambient_presentation
-from sidepulse.ambient_effect_dispatch import AmbientEffectFamily, AmbientEffectSurface
-from sidepulse.ambient_effect_runtime import (
+from jrbar.ambient_effect_consumer import active_hardware_ambient_presentation
+from jrbar.ambient_effect_dispatch import AmbientEffectFamily, AmbientEffectSurface
+from jrbar.ambient_effect_runtime import (
     active_ambient_surface_output,
     install_ambient_effect_runtime,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.dnd_policy import compose_dnd_contributions
-from sidepulse.effect_assignment_store import (
+from jrbar.capacity_types import SourceKey
+from jrbar.dnd_policy import compose_dnd_contributions
+from jrbar.effect_assignment_store import (
     EffectAssignmentCache,
     EffectAssignmentDocument,
     EffectAssignmentRecord,
 )
-from sidepulse.effect_history import EffectOutcome
-from sidepulse.effect_studio import AssignmentScope
-from sidepulse.glance_light import GlanceLightState
-from sidepulse.operator_state import (
+from jrbar.effect_history import EffectOutcome
+from jrbar.effect_studio import AssignmentScope
+from jrbar.glance_light import GlanceLightState
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalOperatorEvent,
     CanonicalRequestTruth,
@@ -29,7 +29,7 @@ from sidepulse.operator_state import (
     classify_operator_event,
     empty_operator_state,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -178,7 +178,7 @@ def test_runtime_projects_successful_delivery_and_acknowledgement_across_surface
     receipt = install_ambient_effect_runtime(controller_type)
     assert install_ambient_effect_runtime(controller_type) is receipt
     controller = controller_type()
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 100.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 100.0)
 
     assert controller._deliver_semantic_notification(
         _Event(),
@@ -200,7 +200,7 @@ def test_runtime_projects_successful_delivery_and_acknowledgement_across_surface
         "glance-light",
     }
 
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 101.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 101.0)
     assert controller._activate_notification_action("opaque-token")
 
     assert controller._glance_light_plan.notification_count == 0
@@ -238,7 +238,7 @@ def test_runtime_consumes_cached_provider_assignment_without_reading_disk(
         )
     )
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.load_effect_assignments",
+        "jrbar.ambient_effect_runtime.load_effect_assignments",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("runtime route must use the cache")
         ),
@@ -286,9 +286,9 @@ def test_hardware_consumption_resolves_device_assignments_without_mutating_globa
             )
         )
     )
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 100.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 100.0)
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.time.monotonic",
+        "jrbar.ambient_effect_runtime.time.monotonic",
         lambda: 50.0,
     )
 
@@ -363,9 +363,9 @@ def test_device_assignment_cannot_replace_higher_priority_urgent_output(
             )
         )
     )
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 100.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 100.0)
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.time.monotonic",
+        "jrbar.ambient_effect_runtime.time.monotonic",
         lambda: 50.0,
     )
 
@@ -386,7 +386,7 @@ def test_device_assignment_cannot_replace_higher_priority_urgent_output(
     )
 
     assert presentation is not None
-    assert presentation.output.effect_identity == "sidepulse.ask-heartbeat-sync:v1"
+    assert presentation.output.effect_identity == "jrbar.ask-heartbeat-sync:v1"
     assert presentation.led_state.value == "ask"
 
 
@@ -422,7 +422,7 @@ def test_runtime_projects_canonical_events_through_the_shared_ambient_seam(
         _operator_event(work_key, TransitionKind.BECAME_ACTIVE, watermark),
         _operator_event(request_key, TransitionKind.REQUEST_OPENED, watermark),
     )
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
 
     controller.observe_operator_history_events(events, state)
 
@@ -448,7 +448,7 @@ def test_turn_length_ember_does_not_mask_multiple_active_works(monkeypatch) -> N
     state = replace(state, works=(*state.works, second_work))
     events = (_operator_event(work_key, TransitionKind.BECAME_ACTIVE, watermark),)
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.time.time",
+        "jrbar.ambient_effect_runtime.time.time",
         lambda: 1_800_000_010.0,
     )
 
@@ -469,7 +469,7 @@ def test_completion_event_projects_the_finite_completion_effect_family(
         lifecycle=WorkLifecycle.COMPLETED,
     )
     event = _operator_event(work_key, TransitionKind.COMPLETED, watermark)
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0)
 
     controller.observe_operator_history_events((event,), state)
 
@@ -495,10 +495,10 @@ def test_runtime_dispatch_expires_without_bypassing_the_surface_owner(
         lifecycle=WorkLifecycle.COMPLETED,
     )
     event = _operator_event(work_key, TransitionKind.COMPLETED, watermark)
-    monkeypatch.setattr("sidepulse.ambient_effect_runtime.time.time", lambda: 100.0)
+    monkeypatch.setattr("jrbar.ambient_effect_runtime.time.time", lambda: 100.0)
     clock = [50.0]
     monkeypatch.setattr(
-        "sidepulse.ambient_effect_runtime.time.monotonic",
+        "jrbar.ambient_effect_runtime.time.monotonic",
         lambda: clock[0],
     )
 

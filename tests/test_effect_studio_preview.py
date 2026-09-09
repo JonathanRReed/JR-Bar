@@ -1,12 +1,12 @@
-from sidepulse.effect_registry import EFFECT_REGISTRY
-from sidepulse.effect_studio import (
+from jrbar.effect_registry import EFFECT_REGISTRY
+from jrbar.effect_studio import (
     ColorVisionMode,
     StudioSurface,
     SyntheticScenario,
     build_gallery_rows,
     build_surface_simulations,
 )
-from sidepulse.effect_studio_preview import deterministic_preview_samples
+from jrbar.effect_studio_preview import deterministic_preview_samples
 
 
 def test_twelve_sample_frame_is_total_stable_and_color_vision_aware() -> None:

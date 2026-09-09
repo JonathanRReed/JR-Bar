@@ -7,7 +7,7 @@ from datetime import datetime
 
 import pytest
 
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacityUnit,
     CapacityValue,
     ObservationState,
@@ -17,7 +17,7 @@ from sidepulse.capacity_types import (
     ResetState,
     SourceKey,
 )
-from sidepulse.reset_policy import (
+from jrbar.reset_policy import (
     ResetBoundaryPlan,
     ResetCountdown,
     derive_reset_countdown,
@@ -26,7 +26,7 @@ from sidepulse.reset_policy import (
     parse_reset_epoch,
     plan_reset_boundary_refresh,
 )
-from sidepulse.usage_view import UsageWindowViewModel, adapt_legacy_usage_windows
+from jrbar.usage_view import UsageWindowViewModel, adapt_legacy_usage_windows
 
 
 def _source(provider: str, instance: str = "local") -> SourceKey:

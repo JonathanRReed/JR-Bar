@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.settings import (
+from jrbar.settings import (
     AgentMonitorSettings,
     SettingsConcurrentWriteError,
     load_settings_document,

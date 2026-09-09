@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from sidepulse.effect_packs import (
+from jrbar.effect_packs import (
     EffectPack,
     EffectPackError,
     LicenseMetadata,
@@ -13,7 +13,7 @@ from sidepulse.effect_packs import (
     registry_with_pack,
     validate_pack,
 )
-from sidepulse.effect_registry import EffectRegistry
+from jrbar.effect_registry import EffectRegistry
 
 
 def pack(**overrides):

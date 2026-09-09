@@ -2,10 +2,10 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import firmware_validation
-from sidepulse.animation import loop_duration_ms, parse_animation
-from sidepulse.device_writer import DeviceWriteError, write_led_program
-from sidepulse.presentation_compiler import MIN_PRESENTATION_CYCLE_MS
+from jrbar import firmware_validation
+from jrbar.animation import loop_duration_ms, parse_animation
+from jrbar.device_writer import DeviceWriteError, write_led_program
+from jrbar.presentation_compiler import MIN_PRESENTATION_CYCLE_MS
 
 
 def test_exact_post_safety_program_is_validated_before_the_file_is_opened(

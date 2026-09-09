@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.settings import (
+from jrbar.settings import (
     CLAUDE_PLAN_LIMITS_CONSENT_VERSION,
     CURRENT_SETTINGS_SCHEMA_VERSION,
     LED_DISPLAY_QUOTA_RUNWAY,
@@ -448,7 +448,7 @@ def test_removing_a_provider_animation_actually_persists(tmp_path: Path) -> None
     """Runtime-owned collections must honour deletions: the lossless merge
     used to resurrect removed entries from the remembered source document,
     so switching a provider's animation back to Automatic never stuck."""
-    from sidepulse.colors import PROVIDER_ANIMATION_AUTO
+    from jrbar.colors import PROVIDER_ANIMATION_AUTO
 
     path = tmp_path / "settings.json"
     first = AgentMonitorSettings()

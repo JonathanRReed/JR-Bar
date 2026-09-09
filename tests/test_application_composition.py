@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src" / "sidepulse"
+SRC = ROOT / "src" / "jrbar"
 APPLICATION_COMPOSITION = SRC / "application_composition.py"
 STATUS_BAR = SRC / "status_bar.py"
 PRODUCTION_STATUS_BAR = SRC / "_status_bar_production.py"
@@ -174,20 +174,20 @@ def guarded_start(self, *args, **kwargs):
 
 threading.Thread.start = guarded_start
 
-from sidepulse import status_bar_legacy as legacy
+from jrbar import status_bar_legacy as legacy
 
 controller_before = legacy.StatusBarController
 menu_before = legacy.build_menu
 
-from sidepulse import _status_bar_production as production
-from sidepulse import provider_usage_status_bar as provider
-from sidepulse import status_bar as public_status_bar
+from jrbar import _status_bar_production as production
+from jrbar import provider_usage_status_bar as provider
+from jrbar import status_bar as public_status_bar
 
 assert legacy.StatusBarController is controller_before
 assert legacy.build_menu is menu_before
 assert not thread_starts
 
-from sidepulse.application_composition import compose_status_bar_application
+from jrbar.application_composition import compose_status_bar_application
 
 receipt = compose_status_bar_application()
 second = compose_status_bar_application()
@@ -230,9 +230,9 @@ print(json.dumps({"ok": True}))
 
 def test_provider_foreground_main_composes_once_before_appkit() -> None:
     script = """
-from sidepulse import application_composition
-from sidepulse import provider_usage_status_bar as provider
-from sidepulse import status_bar_legacy as legacy
+from jrbar import application_composition
+from jrbar import provider_usage_status_bar as provider
+from jrbar import status_bar_legacy as legacy
 
 calls = []
 application_composition.compose_status_bar_application = (

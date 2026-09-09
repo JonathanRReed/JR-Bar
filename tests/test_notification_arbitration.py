@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.interruption_policy import ActionTokenBinding
-from sidepulse.notification_arbitration import (
+from jrbar.capacity_types import SourceKey
+from jrbar.interruption_policy import ActionTokenBinding
+from jrbar.notification_arbitration import (
     issue_notification_action_binding,
     plan_semantic_notification,
     prune_notification_action_bindings,
     resolve_notification_work_key,
     should_post_completion_notification,
 )
-from sidepulse.operator_state import InterruptionClass, SemanticEventKey, TransitionKind
-from sidepulse.product_identity import PRODUCT_DISPLAY_NAME
-from sidepulse.provider_facts import (
+from jrbar.operator_state import InterruptionClass, SemanticEventKey, TransitionKind
+from jrbar.product_identity import PRODUCT_DISPLAY_NAME
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     RequestIdentifier,

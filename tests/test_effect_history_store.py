@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.effect_history import (
+from jrbar.effect_history import (
     EffectAcknowledgementSource,
     EffectEvent,
     EffectHistory,
@@ -17,7 +17,7 @@ from sidepulse.effect_history import (
     EffectSuppressionReason,
     EffectSurface,
 )
-from sidepulse.effect_history_store import (
+from jrbar.effect_history_store import (
     EFFECT_HISTORY_STORE_NAME,
     EFFECT_HISTORY_STORE_VERSION,
     MAX_EFFECT_HISTORY_STORE_BYTES,
@@ -178,7 +178,7 @@ def test_restore_health_distinguishes_size_version_corruption_and_availability(
     assert load_effect_history(target).health is EffectHistoryRestoreHealth.OVERSIZED
 
     with patch(
-        "sidepulse.effect_history_store.read_private_text",
+        "jrbar.effect_history_store.read_private_text",
         side_effect=PermissionError("/private/path must not escape"),
     ):
         unavailable = load_effect_history(target)
@@ -250,7 +250,7 @@ def test_oversized_store_is_classified_without_reading_payload(tmp_path: Path) -
         bytes_read += len(chunk)
         return chunk
 
-    with patch("sidepulse.private_io.os.read", side_effect=observing_read):
+    with patch("jrbar.private_io.os.read", side_effect=observing_read):
         restored = load_effect_history(target)
 
     assert restored.health is EffectHistoryRestoreHealth.OVERSIZED
@@ -293,7 +293,7 @@ def test_failed_atomic_replace_preserves_previous_history(tmp_path: Path) -> Non
     previous = target.read_bytes()
 
     with (
-        patch("sidepulse.private_io.os.replace", side_effect=OSError("replace failed")),
+        patch("jrbar.private_io.os.replace", side_effect=OSError("replace failed")),
         pytest.raises(OSError, match="replace failed"),
     ):
         save_effect_history(target, new)

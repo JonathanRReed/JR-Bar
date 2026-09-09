@@ -7,7 +7,7 @@ import pytest
 
 def test_installed_surface_registry_exposes_typed_domain_boundary() -> None:
     """Removing the registry types would leave inventory without a pure boundary."""
-    from sidepulse.installed_agents import (
+    from jrbar.installed_agents import (
         InstalledSurfaceKey,
         InstalledSurfaceKind,
         InstalledSurfaceObservation,
@@ -26,7 +26,7 @@ def test_installed_surface_registry_exposes_typed_domain_boundary() -> None:
 
 def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> None:
     """Reordering or omitting a surface would make installed-agent rows unstable."""
-    from sidepulse.installed_agents import installed_surface_registrations
+    from jrbar.installed_agents import installed_surface_registrations
 
     assert tuple(
         (row.provider_id, row.surface_id, row.label, row.kind.value, row.support.value)
@@ -56,7 +56,7 @@ def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> N
 
 def test_registration_rejects_duplicate_surface_keys_and_executable_detectors() -> None:
     """A duplicate or executable detector could create ambiguous or active inventory work."""
-    from sidepulse.installed_agents import (
+    from jrbar.installed_agents import (
         InstalledSurfaceKey,
         InstalledSurfaceKind,
         InstalledSurfaceRegistration,
@@ -98,7 +98,7 @@ def test_registration_rejects_duplicate_surface_keys_and_executable_detectors() 
 
 def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage() -> None:
     """Treating installation as activity would fabricate agent work and alerts."""
-    from sidepulse.installed_agents import (
+    from jrbar.installed_agents import (
         InstalledSurfaceEvidence,
         InstalledSurfaceKey,
         SurfaceDetectorKind,
@@ -149,7 +149,7 @@ def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage() -
 
 def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secret_values() -> None:
     """Accepting untrusted detector data could expose host paths or activate unknown surfaces."""
-    from sidepulse.installed_agents import (
+    from jrbar.installed_agents import (
         InstalledSurfaceEvidence,
         InstalledSurfaceKey,
         InstalledSurfaceValidationError,
@@ -202,7 +202,7 @@ def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secr
 
 def test_observation_rejects_raw_paths_credentials_and_oversized_product_values() -> None:
     """Persisting detector internals would disclose private host or account data."""
-    from sidepulse.installed_agents import (
+    from jrbar.installed_agents import (
         InstalledSurfaceKey,
         InstalledSurfaceKind,
         InstalledSurfaceObservation,
@@ -247,7 +247,7 @@ def test_observation_rejects_raw_paths_credentials_and_oversized_product_values(
 
 def test_reduction_fails_closed_for_malformed_rows() -> None:
     """A malformed caller result must raise the registry error, not leak an attribute error."""
-    from sidepulse.installed_agents import (
+    from jrbar.installed_agents import (
         InstalledSurfaceReduction,
         InstalledSurfaceValidationError,
     )

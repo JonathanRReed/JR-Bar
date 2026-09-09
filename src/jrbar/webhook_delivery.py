@@ -79,7 +79,7 @@ class WebhookDeliveryRequest:
 
     @property
     def event(self) -> str:
-        return str(dict(self.payload).get("event") or "sidepulse.event")[:64]
+        return str(dict(self.payload).get("event") or "jrbar.event")[:64]
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +185,7 @@ def sanitize_webhook_payload(payload: Mapping[str, object]) -> dict[str, object]
         else:
             safe[key] = collapsed[:96]
     if "event" not in safe:
-        safe["event"] = "sidepulse.event"
+        safe["event"] = "jrbar.event"
     return safe
 
 

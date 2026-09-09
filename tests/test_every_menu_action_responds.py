@@ -17,22 +17,22 @@ from types import SimpleNamespace
 import pytest
 from test_sidepulse import isolate_controller
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.dnd_policy import (
+from jrbar.capacity_types import SourceKey
+from jrbar.dnd_policy import (
     DndMode,
     DndOverride,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.global_actions import (
+from jrbar.global_actions import (
     GlobalActionID,
     ShortcutChord,
     ShortcutModifier,
     format_shortcut,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import WorkIdentifier, WorkKey
 
 
 def _status(provider, sid, mode, event="PreToolUse"):
@@ -142,7 +142,7 @@ def test_open_agent_browser_survives_stale_menus_and_missing_payloads(request):
     snapshot = CanonicalAgentBrowserIntegrationTests._canonical_snapshot(2)
     controller.last_snapshot = snapshot
 
-    from sidepulse.agent_browser_window import AgentBrowserOpenPayload
+    from jrbar.agent_browser_window import AgentBrowserOpenPayload
 
     stale = SimpleNamespace(
         representedObject=lambda: AgentBrowserOpenPayload(999_999, None, None)
@@ -344,8 +344,8 @@ def test_compact_dnd_contextual_actions_are_visible_and_resolve(request):
 def test_sampler_serves_frames_from_one_batched_engine_call() -> None:
     """Wave 1: the bar's sampler must amortize JavaScriptCore round-trips
     by prefetching frame batches, with byte-identical output."""
-    from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
-    from sidepulse.screen_bar_pipeline import ScreenBarSampler, TwoSampleBuffer
+    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    from jrbar.screen_bar_pipeline import ScreenBarSampler, TwoSampleBuffer
 
     try:
         raw = SdLedWasmController(led_count=8)
@@ -408,7 +408,7 @@ def test_every_hook_provider_has_install_and_uninstall_actions(request):
     isolate_controller(case)
     controller = case.controller
 
-    from sidepulse.providers import HOOK_PROVIDERS
+    from jrbar.providers import HOOK_PROVIDERS
 
     dead: list[str] = []
     for provider in HOOK_PROVIDERS:

@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
-from sidepulse.provider_reset_events import ResetChannel, ResetChannelOutcome
-from sidepulse.provider_usage_feedback import deliver_reset_channels
-from sidepulse.provider_usage_qol import ResetEvent
+from jrbar.provider_reset_events import ResetChannel, ResetChannelOutcome
+from jrbar.provider_usage_feedback import deliver_reset_channels
+from jrbar.provider_usage_qol import ResetEvent
 
 
 def test_quiet_visuals_do_not_block_notification_fallback() -> None:

@@ -3,7 +3,7 @@
 import json
 from collections import deque
 
-from sidepulse.creator_micro_adapter import CreatorMicro2Adapter
+from jrbar.creator_micro_adapter import CreatorMicro2Adapter
 
 
 class Transport:

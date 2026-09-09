@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidepulse._collector_legacy import (
+from jrbar._collector_legacy import (
     POST_TOOL_WORKING_VISIBLE_SECONDS,
     WORKING_SILENCE_SECONDS,
     status_counts_active,
     status_for_snapshot,
 )
-from sidepulse.attention import LifecycleMode, _lifecycle_mode
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.attention import LifecycleMode, _lifecycle_mode
+from jrbar.models import AgentMode, AgentStatus
 
 _NOW = datetime.now(timezone.utc)
 
@@ -74,7 +74,7 @@ def test_replayed_normalized_records_keep_their_own_time() -> None:
     events as seconds old on every replay-built refresh."""
     import json
 
-    from sidepulse.providers import parse_log_line
+    from jrbar.providers import parse_log_line
 
     epoch = 1_787_100_000.0
     line = json.dumps(
@@ -99,11 +99,11 @@ def test_a_silent_active_work_claims_active_nowhere() -> None:
     title, the mailbox count, and the LIGHTS kept reading raw lifecycle
     ACTIVE -- 'it says an agent's running even though it's been done for
     10 minutes.'"""
-    from sidepulse._settings_legacy import AgentMonitorSettings
-    from sidepulse.attention import project_attention_from_operator_state
-    from sidepulse.capacity_types import SourceKey
-    from sidepulse.mailbox import project_canonical_mailbox
-    from sidepulse.operator_state import (
+    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.attention import project_attention_from_operator_state
+    from jrbar.capacity_types import SourceKey
+    from jrbar.mailbox import project_canonical_mailbox
+    from jrbar.operator_state import (
         ACTIVE_SILENCE_SECONDS,
         BootIdentifier,
         ClockSample,
@@ -111,7 +111,7 @@ def test_a_silent_active_work_claims_active_nowhere() -> None:
         empty_operator_state,
         reduce_operator_state,
     )
-    from sidepulse.provider_facts import (
+    from jrbar.provider_facts import (
         EventToken,
         NextActor,
         ObservationAuthority,
@@ -189,13 +189,13 @@ def test_completed_settles_to_idle_after_the_recent_window() -> None:
     which also fed the keep-awake grace) until the presence horizon
     dropped the row, up to an hour later. COMPLETED is a moment: past
     COMPLETED_RECENT_SECONDS the row settles to the idle whisper."""
-    from sidepulse._settings_legacy import AgentMonitorSettings
-    from sidepulse.attention import (
+    from jrbar._settings_legacy import AgentMonitorSettings
+    from jrbar.attention import (
         LifecycleMode,
         project_attention_from_operator_state,
     )
-    from sidepulse.capacity_types import SourceKey
-    from sidepulse.operator_state import (
+    from jrbar.capacity_types import SourceKey
+    from jrbar.operator_state import (
         COMPLETED_RECENT_SECONDS,
         BootIdentifier,
         ClockSample,
@@ -203,7 +203,7 @@ def test_completed_settles_to_idle_after_the_recent_window() -> None:
         empty_operator_state,
         reduce_operator_state,
     )
-    from sidepulse.provider_facts import (
+    from jrbar.provider_facts import (
         EventToken,
         NextActor,
         ObservationAuthority,
@@ -289,8 +289,8 @@ def test_sparse_cadence_providers_get_a_longer_silence_line() -> None:
     flat four-minute silence window flipped it to invisible mid-thought
     on any long turn (upstream PR #20's false-Completed). Sparse
     providers carry their own line; everyone else keeps the default."""
-    from sidepulse.capacity_types import SourceKey
-    from sidepulse.operator_state import (
+    from jrbar.capacity_types import SourceKey
+    from jrbar.operator_state import (
         ACTIVE_SILENCE_SECONDS,
         BootIdentifier,
         ClockSample,
@@ -299,7 +299,7 @@ def test_sparse_cadence_providers_get_a_longer_silence_line() -> None:
         empty_operator_state,
         reduce_operator_state,
     )
-    from sidepulse.provider_facts import (
+    from jrbar.provider_facts import (
         EventToken,
         NextActor,
         ObservationAuthority,

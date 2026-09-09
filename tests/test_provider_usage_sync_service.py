@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import threading
 
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_sync_runtime import ProviderSyncRefresh
-from sidepulse.provider_usage_sync_service import ProviderSyncService
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_sync_runtime import ProviderSyncRefresh
+from jrbar.provider_usage_sync_service import ProviderSyncService
 
 
 class Runtime:

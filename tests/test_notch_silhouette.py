@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from itertools import pairwise
 
-from sidepulse.alcove_observation import capture_display_region_image
-from sidepulse.virtual_device import (
+from jrbar.alcove_observation import capture_display_region_image
+from jrbar.virtual_device import (
     LED_BAND_HEIGHT,
     NotchCaptureRequest,
     NotchSilhouetteProbe,
@@ -60,7 +60,7 @@ def test_notch_probe_schedules_one_capture_and_serves_the_cached_result() -> Non
 
 
 def test_macos_15_notch_capture_uses_screen_capture_kit_only(monkeypatch) -> None:
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     image = object()
     monkeypatch.setattr(virtual_device, "_macos_major_version", lambda: 15)
@@ -84,7 +84,7 @@ def test_macos_15_notch_capture_uses_screen_capture_kit_only(monkeypatch) -> Non
 
 
 def test_pre_macos_15_notch_capture_keeps_the_legacy_fallback(monkeypatch) -> None:
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     image = object()
     monkeypatch.setattr(virtual_device, "_macos_major_version", lambda: 14)
@@ -276,7 +276,7 @@ def test_classic_draw_is_contained_and_feathers_to_black_at_the_corners() -> Non
     # body silhouette.
     import AppKit
 
-    from sidepulse import virtual_device as vd
+    from jrbar import virtual_device as vd
 
     wing = 30.0
     notch = 220.0

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from sidepulse import provider_usage_sync_cache as sync_cache
-from sidepulse.provider_feature_settings import ProviderInstanceSharingProjection
-from sidepulse.provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_sync import MergedProviderSync
+from jrbar import provider_usage_sync_cache as sync_cache
+from jrbar.provider_feature_settings import ProviderInstanceSharingProjection
+from jrbar.provider_usage_platform import ProviderSourceState, ProviderUsageSnapshot
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_sync import MergedProviderSync
 
 
 def _snapshot(observed_at: float = 1000.0) -> ProviderUsageSnapshot:
@@ -119,7 +119,7 @@ def test_policy_invalidation_drops_worker_result_that_finishes_late(monkeypatch)
 def test_default_worker_refresh_injects_privacy_safe_sharing_projection(
     monkeypatch,
 ) -> None:
-    from sidepulse import provider_usage_sync_runtime
+    from jrbar import provider_usage_sync_runtime
 
     captured = {}
 

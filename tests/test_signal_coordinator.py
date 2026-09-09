@@ -6,20 +6,20 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.attention import (
+from jrbar.attention import (
     AttentionProjection,
     LifecycleMode,
     ProjectedAgentRow,
     SignalKind,
     TransientSignal,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.presentation_policy import (
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.presentation_policy import (
     FiniteCue,
     FiniteCueBudget,
     GlanceSemantic,
 )
-from sidepulse.signal_coordinator import FiniteCueCoordinator, FiniteSignalCoordinator
+from jrbar.signal_coordinator import FiniteCueCoordinator, FiniteSignalCoordinator
 
 
 def failure(event_key: str) -> TransientSignal:

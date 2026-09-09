@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sidepulse.provider_feature_settings import (
+from jrbar.provider_feature_settings import (
     ProviderInstancePolicyProjection,
     ProviderInstanceRetentionProjection,
     ProviderInstanceSessionActionProjection,
@@ -12,12 +12,12 @@ from sidepulse.provider_feature_settings import (
     ProviderInstanceVisualPolicy,
     ProviderInstanceVisualProjection,
 )
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.quota_runway import (
+from jrbar.quota_runway import (
     QuotaRunwayState,
     quota_runway_state_for_controller,
     runway_state_for_lane,
@@ -135,7 +135,7 @@ def test_runway_state_matches_the_renderer_and_claim_shape() -> None:
     assert state.remaining_percent == 30.0
     assert state.reset_at == NOW + 3_600.0
     # And the renderer accepts the pair directly.
-    from sidepulse.led_status import quota_runway_program
+    from jrbar.led_status import quota_runway_program
 
     program = quota_runway_program(state[0], led_count=8, brightness=255, color=state[1])
     assert "repeat" in program

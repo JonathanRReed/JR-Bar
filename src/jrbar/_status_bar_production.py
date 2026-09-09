@@ -1246,7 +1246,7 @@ else:
             )
             if reason is not None:
                 event_name = str(
-                    payload_dict.get("event") or "sidepulse.event"
+                    payload_dict.get("event") or "jrbar.event"
                 )[:64]
                 _legacy.log_status_bar(
                     f"webhook refused ({event_name}): {reason.value}"

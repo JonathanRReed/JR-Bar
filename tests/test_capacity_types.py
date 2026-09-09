@@ -5,7 +5,7 @@ from math import inf, nan
 
 import pytest
 
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     MAX_EXECUTION_CONTEXT_MEMBERS,
     MAX_LANES_PER_OBSERVATION,
     CapacityAccountBinding,

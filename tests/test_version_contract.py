@@ -17,7 +17,7 @@ def _project() -> dict:
 
 
 def test_package_versions_match() -> None:
-    init_text = (ROOT / "src" / "sidepulse" / "__init__.py").read_text(encoding="utf-8")
+    init_text = (ROOT / "src" / "jrbar" / "__init__.py").read_text(encoding="utf-8")
     match = re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, re.MULTILINE)
 
     assert match is not None
@@ -43,5 +43,9 @@ def test_declared_pyobjc_frameworks_match_reachable_features() -> None:
 def test_compatibility_packages_are_included() -> None:
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
-    assert '"agent_monitor*"' in text
-    assert '"sidepulse_cli*"' in text
+    assert '"jrbar*"' in text
+    # The import-compat shim ships for one release so pre-rename hook
+    # commands (`python -m sidepulse.hook_client`) keep resolving.
+    assert '"sidepulse*"' in text
+    assert "agent_monitor" not in text
+    assert "sidepulse_cli" not in text

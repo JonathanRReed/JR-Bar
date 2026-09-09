@@ -4,9 +4,9 @@ from argparse import Namespace
 
 import pytest
 
-from sidepulse import integration_cli
-from sidepulse.integration_cli import build_parser
-from sidepulse.integration_settings import IntegrationSettings
+from jrbar import integration_cli
+from jrbar.integration_cli import build_parser
+from jrbar.integration_settings import IntegrationSettings
 
 
 def test_integration_cli_exposes_t3_configuration_and_probe_commands() -> None:
@@ -94,7 +94,7 @@ def test_disable_routes_to_the_selected_integration(
 def test_creator_micro_enable_approves_the_only_connected_stable_identity(
     monkeypatch,
 ) -> None:
-    from sidepulse import creator_micro_hidapi
+    from jrbar import creator_micro_hidapi
 
     settings = IntegrationSettings()
     loaded = type("Loaded", (), {"settings": settings})()
@@ -126,8 +126,8 @@ def test_integration_cli_rejects_codexbar() -> None:
 
 
 def test_status_document_exposes_only_t3_compatibility_window() -> None:
-    from sidepulse.integration_cli import _status_document
-    from sidepulse.integration_settings import load_integration_settings
+    from jrbar.integration_cli import _status_document
+    from jrbar.integration_settings import load_integration_settings
 
     document = _status_document(load_integration_settings())
 

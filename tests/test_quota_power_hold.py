@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacityAccountBinding,
     CapacityEvidenceClass,
     CapacitySnapshot,
@@ -20,9 +20,9 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.models import AgentMode
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
-from sidepulse.quota_power_hold import (
+from jrbar.models import AgentMode
+from jrbar.provider_facts import WorkIdentifier, WorkKey
+from jrbar.quota_power_hold import (
     AgentPowerHoldKey,
     CapacitySignal,
     QuotaPowerHoldCoordinator,

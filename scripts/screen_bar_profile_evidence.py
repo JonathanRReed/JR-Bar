@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from sidepulse.screen_bar_profile import (
+from jrbar.screen_bar_profile import (
     ProfileEvidenceError,
     build_profile_matrix,
     create_instruments_profile,

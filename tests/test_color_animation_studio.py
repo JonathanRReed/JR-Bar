@@ -23,8 +23,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse import colors as colors_module
-from sidepulse.colors import (
+from jrbar import colors as colors_module
+from jrbar.colors import (
     BRAND_SEED_COLORS,
     CURATED_PALETTE,
     CUSTOM_SWATCH_NAME,
@@ -51,20 +51,20 @@ from sidepulse.colors import (
     studio_preview_program,
     swatch_name,
 )
-from sidepulse.effect_selection import (
+from jrbar.effect_selection import (
     BLEND_MODE_OPTIONS,
     COLOR_PRESET_OPTIONS,
     PREVIEW_SCENARIO_OPTIONS,
 )
-from sidepulse.led_status import LedDisplayState
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.providers import PROVIDER_SPECS
+from jrbar.led_status import LedDisplayState
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.providers import PROVIDER_SPECS
 
 
 def is_brand_color(hex_value):
     """Local guard over the live brand table (the src helper was deleted
     2026-08-26: tests were its only callers; the TABLE is load-bearing)."""
-    from sidepulse.colors import _BRAND_NAME_BY_HEX, normalize_hex
+    from jrbar.colors import _BRAND_NAME_BY_HEX, normalize_hex
 
     return normalize_hex(hex_value, "#000000").upper() in _BRAND_NAME_BY_HEX
 
@@ -572,7 +572,7 @@ class _RecordingDevice:
     """A VirtualStatusDevice with its one AppKit-touching method replaced."""
 
     def __init__(self):
-        from sidepulse.virtual_device import VirtualStatusDevice
+        from jrbar.virtual_device import VirtualStatusDevice
 
         self.device = VirtualStatusDevice.alloc().init()
         self.applied: list[tuple[str, dict]] = []
@@ -637,7 +637,7 @@ def test_a_hold_nobody_released_expires_instead_of_owning_the_bar_forever(
 ) -> None:
     """The backstop for a preview whose exit event never arrived -- the
     window closed under the pointer, the pane was torn down mid-hover."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     clock = [1000.0]
     monkeypatch.setattr(virtual_device.time, "monotonic", lambda: clock[0])
@@ -789,7 +789,7 @@ class StudioPaneTests(unittest.TestCase):
             self.actions.animation_popups["claude"].titleOfSelectedItem(),
             PROVIDER_ANIMATION_LABELS[MOTION_CHASE],
         )
-        from sidepulse.settings import load_settings
+        from jrbar.settings import load_settings
 
         self.assertEqual(
             load_settings(self._settings_path).colors.agent_animation("claude"),
@@ -950,7 +950,7 @@ class StudioPaneTests(unittest.TestCase):
     def test_every_swatch_caption_fits_inside_its_own_column(self) -> None:
         """A name that spills into the chip beside it is the same failure as
         having no name at all -- you cannot tell which colour it belongs to."""
-        from sidepulse.settings_window import STUDIO_SWATCH_COLUMN_WIDTH
+        from jrbar.settings_window import STUDIO_SWATCH_COLUMN_WIDTH
 
         for button in self.controller.color_swatches.values():
             caption = button.studio_caption

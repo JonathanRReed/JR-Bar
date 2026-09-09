@@ -5,7 +5,7 @@ from dataclasses import fields
 
 import pytest
 
-from sidepulse.effect_history import (
+from jrbar.effect_history import (
     EFFECT_EVENT_VERSION,
     MAX_EFFECT_EVENTS,
     MAX_EFFECT_HISTORY_BYTES,

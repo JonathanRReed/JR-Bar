@@ -3,9 +3,9 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
-import sidepulse.deck_actions_macos as deck_actions_macos
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_actions_macos import MacDeckActionExecutor
+import jrbar.deck_actions_macos as deck_actions_macos
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_actions_macos import MacDeckActionExecutor
 
 
 class FakeMacBridge:

@@ -4,8 +4,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.dnd_policy import DisplayAdmission
-from sidepulse.fleet_arrival_departure import (
+from jrbar.dnd_policy import DisplayAdmission
+from jrbar.fleet_arrival_departure import (
     DEFAULT_CUE_HOLD_SECONDS,
     DEFAULT_DEPARTURE_SETTLE_SECONDS,
     DEFAULT_JOIN_SETTLE_SECONDS,
@@ -26,7 +26,7 @@ from sidepulse.fleet_arrival_departure import (
     TrustedRemoteMachineLiveness,
     observe_fleet_arrival_departure,
 )
-from sidepulse.semantic_effect_router import CourtesySuppression
+from jrbar.semantic_effect_router import CourtesySuppression
 
 
 def _observation(

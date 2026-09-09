@@ -1,8 +1,8 @@
 import json
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.dnd_policy import DisplayAdmission
-from sidepulse.scenes import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.dnd_policy import DisplayAdmission
+from jrbar.scenes import (
     DEFAULT_SCENE,
     SCENE_POLICIES,
     DeviceSelection,
@@ -15,7 +15,7 @@ from sidepulse.scenes import (
     scene_from_value,
     scene_options,
 )
-from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
 
 def test_all_scenes_have_bounded_policies():

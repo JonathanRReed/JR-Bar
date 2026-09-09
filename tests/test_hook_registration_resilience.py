@@ -2,7 +2,7 @@
 
 The outage this guards against: the installer wrote a hardcoded
 absolute path into site-packages, nobody ever executed it, and the
-package was later installed editable -- so `import sidepulse` kept
+package was later installed editable -- so `import jrbar` kept
 working (the app looked healthy, logs kept growing) while that exact
 file no longer existed. Claude Code treats a failing hook as a hard
 block, so one wrong path took down every prompt in every session
@@ -16,13 +16,13 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.install import hook_command_arguments, verify_hook_command
-from sidepulse.providers import _is_sidepulse_hook_invocation
+from jrbar.install import hook_command_arguments, verify_hook_command
+from jrbar.providers import _is_sidepulse_hook_invocation
 
 
 def test_hook_command_does_not_bake_a_package_file_path() -> None:
     arguments = hook_command_arguments("claude", Path("/tmp/claude.jsonl"))
-    assert arguments[1:3] == ["-m", "sidepulse.hook_client"]
+    assert arguments[1:3] == ["-m", "jrbar.hook_client"]
     # No argument may be a filesystem path INTO the package: that is the
     # assumption that broke when the install layout changed.
     assert not any(argument.endswith("hook_entry.py") for argument in arguments)
@@ -40,7 +40,7 @@ def test_verification_catches_a_broken_command() -> None:
     broken = [sys.executable, "/nonexistent/hook_entry.py", "--provider", "claude"]
     assert verify_hook_command(broken) is not None
     assert verify_hook_command([]) is not None
-    assert verify_hook_command(["/nonexistent/python", "-m", "sidepulse.hook_entry"]) is not None
+    assert verify_hook_command(["/nonexistent/python", "-m", "jrbar.hook_entry"]) is not None
 
 
 def test_every_shape_we_have_ever_registered_is_recognized_as_ours() -> None:
@@ -48,11 +48,11 @@ def test_every_shape_we_have_ever_registered_is_recognized_as_ours() -> None:
     as 'not installed' and re-registers duplicates over it."""
     legacy = ["/venv/bin/python", "/venv/lib/python3.13/site-packages/sidepulse/hook_entry.py",
               "--provider", "claude", "--log", "/tmp/claude.jsonl"]
-    module = ["/venv/bin/python", "-m", "sidepulse.hook_entry",
+    module = ["/venv/bin/python", "-m", "jrbar.hook_entry",
               "--provider", "claude", "--log", "/tmp/claude.jsonl"]
     frozen = ["/Applications/SidePulse.app/Contents/MacOS/SidePulse", "agent-monitor", "hook-log",
               "--provider", "claude", "--log", "/tmp/claude.jsonl"]
-    current_module = ["/venv/bin/python", "-m", "sidepulse.hook_client",
+    current_module = ["/venv/bin/python", "-m", "jrbar.hook_client",
                       "--provider", "claude", "--log", "/tmp/claude.jsonl"]
     current_frozen = ["/Applications/SidePulse.app/Contents/MacOS/SidePulse", "agent-monitor", "hook-client",
                       "--provider", "claude", "--log", "/tmp/claude.jsonl"]
@@ -67,7 +67,7 @@ def test_registration_is_gated_on_the_probe_run(tmp_path: Path) -> None:
     cannot run blocks every prompt in every session."""
     from unittest.mock import patch
 
-    from sidepulse.install import HookVerificationError, install_provider_hooks
+    from jrbar.install import HookVerificationError, install_provider_hooks
 
     config = tmp_path / "claude" / "settings.json"
     config.parent.mkdir(parents=True)
@@ -78,7 +78,7 @@ def test_registration_is_gated_on_the_probe_run(tmp_path: Path) -> None:
 
     with (
         patch(
-            "sidepulse.install.verify_hook_command",
+            "jrbar.install.verify_hook_command",
             return_value="interpreter not found: /nonexistent/python",
         ),
         pytest.raises(HookVerificationError, match="does not run"),
@@ -98,7 +98,7 @@ def test_dry_run_registration_skips_the_probe(tmp_path: Path) -> None:
     """A dry run must stay side-effect free -- including the probe subprocess."""
     from unittest.mock import patch
 
-    from sidepulse.install import install_provider_hooks
+    from jrbar.install import install_provider_hooks
 
     config = tmp_path / "claude" / "settings.json"
     config.parent.mkdir(parents=True)
@@ -112,7 +112,7 @@ def test_dry_run_registration_skips_the_probe(tmp_path: Path) -> None:
     log.chmod(0o600)
 
     with patch(
-        "sidepulse.install.verify_hook_command",
+        "jrbar.install.verify_hook_command",
         side_effect=AssertionError("probe must not run on dry_run"),
     ):
         result = install_provider_hooks(

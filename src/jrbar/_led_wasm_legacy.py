@@ -37,7 +37,7 @@ class LedWasmParseResult:
 
 def load_packaged_wasm() -> bytes:
     return (
-        resources.files("sidepulse.resources")
+        resources.files("jrbar.resources")
         .joinpath(LED_WASM_RESOURCE)
         .read_bytes()
     )

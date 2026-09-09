@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.mailbox_preferences import LegacyMailboxPreference, MailboxPreference
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
-from sidepulse.snooze_scope import filter_snoozed_statuses, status_snoozed
+from jrbar.capacity_types import SourceKey
+from jrbar.mailbox_preferences import LegacyMailboxPreference, MailboxPreference
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import WorkIdentifier, WorkKey
+from jrbar.snooze_scope import filter_snoozed_statuses, status_snoozed
 
 NOW = 1_787_000_000.0
 

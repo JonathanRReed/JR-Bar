@@ -29,7 +29,7 @@ from __future__ import annotations
 import threading
 import time
 
-from sidepulse import status_bar, virtual_device
+from jrbar import status_bar, virtual_device
 
 
 class _RecordingMenuItem:

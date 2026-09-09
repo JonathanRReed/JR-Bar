@@ -8,13 +8,13 @@ from itertools import permutations
 
 import pytest
 
-from sidepulse.capacity_authority import CapacityProjection, select_binding_lanes
-from sidepulse.capacity_history import (
+from jrbar.capacity_authority import CapacityProjection, select_binding_lanes
+from jrbar.capacity_history import (
     NO_OBSERVATION,
     CapacityHistorySummary,
     HistoryInterval,
 )
-from sidepulse.capacity_refresh import (
+from jrbar.capacity_refresh import (
     RefreshCause,
     RefreshCoordinatorSnapshot,
     RefreshDecision,
@@ -25,7 +25,7 @@ from sidepulse.capacity_refresh import (
     RefreshSourceState,
     RefreshStatusKind,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacitySnapshot,
     CapacitySourceHealth,
     CapacityUnit,
@@ -42,7 +42,7 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.capacity_view import (
+from jrbar.capacity_view import (
     MAX_CAPACITY_CARD_ROWS,
     MAX_CAPACITY_HISTORY_SUMMARIES,
     CapacityCardModel,

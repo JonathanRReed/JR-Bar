@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from sidepulse.remote_observation import (
+from jrbar.remote_observation import (
     DEFAULT_CONSENT,
     RemoteObservation,
     RemoteObservationPolicy,
@@ -234,7 +234,7 @@ def test_default_consent_always_contains_status_and_outcome() -> None:
 
 
 def test_remote_peer_facade_exposes_only_authenticated_event_streaming() -> None:
-    from sidepulse.remote_peers import collect_authenticated_remote_observations
+    from jrbar.remote_peers import collect_authenticated_remote_observations
 
     class EventStream:
         authenticated_event_stream = True

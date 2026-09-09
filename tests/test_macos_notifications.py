@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import sidepulse.macos_notifications as notifications
-from sidepulse.macos_notifications import (
+import jrbar.macos_notifications as notifications
+from jrbar.macos_notifications import (
     MacOSNotificationClient,
     NotificationAuthorizationState,
 )

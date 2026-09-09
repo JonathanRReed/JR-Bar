@@ -6,14 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse import _status_bar_production as production
-from sidepulse.dnd_policy import DndMode, DndSource, compose_dnd_contributions, contribution_for_mode
-from sidepulse.effect_studio_physical_preview import PreviewReleaseReason
-from sidepulse.local_health import LocalHealthMonitor
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.performance_metrics import PerformanceRegistry
-from sidepulse.runtime_scheduler import RuntimeWorkerDomain, RuntimeWorkerSnapshot
-from sidepulse.screen_bar_pipeline import PresentationMetrics
+from jrbar import _status_bar_production as production
+from jrbar.dnd_policy import DndMode, DndSource, compose_dnd_contributions, contribution_for_mode
+from jrbar.effect_studio_physical_preview import PreviewReleaseReason
+from jrbar.local_health import LocalHealthMonitor
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.performance_metrics import PerformanceRegistry
+from jrbar.runtime_scheduler import RuntimeWorkerDomain, RuntimeWorkerSnapshot
+from jrbar.screen_bar_pipeline import PresentationMetrics
 
 
 class _WorkerRegistry:
@@ -151,7 +151,7 @@ def test_refresh_records_duration_before_sampling_local_health() -> None:
     source = (
         Path(__file__).parents[1]
         / "src"
-        / "sidepulse"
+        / "jrbar"
         / "_status_bar_production.py"
     )
     text = source.read_text(encoding="utf-8")

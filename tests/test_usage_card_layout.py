@@ -27,8 +27,8 @@ import itertools
 
 import pytest
 
-from sidepulse import usage_card
-from sidepulse.usage_card import (
+from jrbar import usage_card
+from jrbar.usage_card import (
     CardRow,
     TextMetrics,
     UsageCardLayoutError,
@@ -36,7 +36,7 @@ from sidepulse.usage_card import (
     usage_card_layout,
 )
 
-status_bar = pytest.importorskip("sidepulse.status_bar")
+status_bar = pytest.importorskip("jrbar.status_bar")
 
 
 # --------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sidepulse.settings import (
+from jrbar.settings import (
     DEVICE_SETTING_PERSISTED_FIELDS,
     AgentMonitorSettings,
     DeviceDisplaySetting,

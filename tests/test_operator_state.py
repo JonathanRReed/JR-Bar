@@ -5,8 +5,8 @@ from math import inf, nan
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.operator_state import (
     MAX_CANONICAL_REQUESTS,
     MAX_CANONICAL_WORKS,
     MAX_CLOCK_DELTA_DIVERGENCE_SECONDS,
@@ -30,7 +30,7 @@ from sidepulse.operator_state import (
     semantic_event_key_from_payload,
     semantic_event_key_to_payload,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -1274,7 +1274,7 @@ def test_day_old_work_is_retired_from_the_canonical_catalog() -> None:
     a days-old work with no Stop sat in the Agent Browser as "active"
     forever. A later batch from ANY source retires works whose newest
     event is older than CANONICAL_WORK_RETENTION_SECONDS."""
-    from sidepulse.operator_state import CANONICAL_WORK_RETENTION_SECONDS
+    from jrbar.operator_state import CANONICAL_WORK_RETENTION_SECONDS
 
     state, _batch_used, work_key, request_key = _initial_active_request()
     assert any(work.key == work_key for work in state.works)
@@ -1306,7 +1306,7 @@ def test_retention_fires_even_while_dead_sources_hold_timing_quarantine() -> Non
     send again, so global continuity can sit UNCERTAIN indefinitely after
     a restart. Age retirement must not be held hostage by that -- only a
     genuinely distrusted clock (discontinuity / future facts) blocks it."""
-    from sidepulse.operator_state import CANONICAL_WORK_RETENTION_SECONDS
+    from jrbar.operator_state import CANONICAL_WORK_RETENTION_SECONDS
 
     state, _batch_used, work_key, _request_key = _initial_active_request()
 
@@ -1346,7 +1346,7 @@ def test_quiescent_source_quarantines_expire_by_lease_on_any_reduction() -> None
     clock continuity at UNCERTAIN forever. A full quiet lease now clears
     quiescent entries on any other source's reduction, letting
     continuity recover to STABLE."""
-    from sidepulse.operator_state import TIMING_UNCERTAINTY_LEASE_SECONDS
+    from jrbar.operator_state import TIMING_UNCERTAINTY_LEASE_SECONDS
 
     state, _batch_used, _work_key_used, _request_key = _initial_active_request()
 

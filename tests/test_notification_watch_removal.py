@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
 
 def test_legacy_foreign_notification_preferences_migrate_inertly(tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ def test_trusted_controller_has_no_foreign_notification_watcher_lifecycle(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     monkeypatch.setattr(
         status_bar,
@@ -74,14 +74,14 @@ def test_trusted_controller_has_no_foreign_notification_watcher_lifecycle(
 
 
 def test_private_usernoted_watcher_is_not_packaged() -> None:
-    assert importlib.util.find_spec("sidepulse.notification_watch") is None
+    assert importlib.util.find_spec("jrbar.notification_watch") is None
 
 
 def test_application_launch_schedules_no_foreign_notification_poll(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     selectors: list[str] = []
 

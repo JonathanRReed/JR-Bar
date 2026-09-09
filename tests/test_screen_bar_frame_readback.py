@@ -62,7 +62,7 @@ def test_the_reposition_path_reads_the_frame_back() -> None:
     """Guards the actual source, so a refactor cannot quietly drop it."""
     from pathlib import Path
 
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     source = Path(virtual_device.__file__).read_text(encoding="utf-8")
     marker = source.rindex("_apply_alcove_frame(")

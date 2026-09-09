@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.provider_usage_sync_settings import (
+from jrbar.provider_usage_sync_settings import (
     PROVIDER_SYNC_SETTINGS_SCHEMA_VERSION,
     ProviderSyncSettingsWriteRefusedError,
     default_provider_sync_settings,

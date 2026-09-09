@@ -10,7 +10,7 @@ import pytest
 
 
 def _adaptive_refresh():
-    from sidepulse import adaptive_refresh
+    from jrbar import adaptive_refresh
 
     return adaptive_refresh
 
@@ -24,8 +24,8 @@ def _refresh_state(
     in_flight: bool = False,
     retry_not_before: float = 0.0,
 ):
-    from sidepulse.capacity_types import SourceKey
-    from sidepulse.refresh_policy import ProviderRefreshState
+    from jrbar.capacity_types import SourceKey
+    from jrbar.refresh_policy import ProviderRefreshState
 
     return ProviderRefreshState(
         SourceKey(provider_id, "quota", "local", "remote_quota_windows"),
@@ -42,7 +42,7 @@ def _usage_snapshot(
     state="ready",
     reset_at: float | None = None,
 ):
-    from sidepulse.provider_usage_platform import (
+    from jrbar.provider_usage_platform import (
         ProviderSourceState,
         ProviderUsageSnapshot,
         UsageLane,
@@ -81,7 +81,7 @@ def _usage_snapshot(
 
 
 def _menu_controller_with_refresh_states(*, controller=None):
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     target = controller if controller is not None else SimpleNamespace()
     target._usage_provider_states = {
@@ -141,7 +141,7 @@ def test_adaptive_cadence_plan_preserves_current_interval_precedence() -> None:
     assert isinstance(plan, adaptive_refresh.AdaptiveRefreshPlan)
     assert plan.reason == adaptive_refresh.AdaptiveRefreshReason.CONSTRAINED
     assert plan.interval_seconds == 1800.0
-    from sidepulse.provider_usage_runtime import _interval_for
+    from jrbar.provider_usage_runtime import _interval_for
 
     assert plan.interval_seconds == _interval_for(
         (_usage_snapshot(reset_at=10_120.0),),
@@ -286,9 +286,9 @@ def test_maybe_refresh_usage_summary_does_not_run_io_on_the_caller_thread(monkey
         return original_request(*args, **kwargs)
 
     controller.request_usage_refresh = record_request
-    monkeypatch.setattr("sidepulse.status_bar_legacy.time.monotonic", lambda: 10_000.0)
+    monkeypatch.setattr("jrbar.status_bar_legacy.time.monotonic", lambda: 10_000.0)
     monkeypatch.setattr(
-        "sidepulse.status_bar_legacy.runtime_render_environment",
+        "jrbar.status_bar_legacy.runtime_render_environment",
         lambda **_kwargs: SimpleNamespace(low_power=False),
     )
     monkeypatch.setattr(Path, "read_text", refuse_io)
@@ -314,7 +314,7 @@ def test_maybe_refresh_usage_summary_does_not_run_io_on_the_caller_thread(monkey
 def test_provider_usage_service_exposes_the_current_cadence_plan() -> None:
     adaptive_refresh = _adaptive_refresh()
 
-    from sidepulse.provider_usage_runtime import ProviderUsageService, ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageService, ProviderUsageState
 
     service = ProviderUsageService(
         settings_loader=lambda: SimpleNamespace(),
@@ -332,8 +332,8 @@ def test_provider_usage_service_cadence_receipt_tracks_the_last_accepted_refresh
     tmp_path,
 ) -> None:
     adaptive_refresh = _adaptive_refresh()
-    from sidepulse.provider_usage_runtime import ProviderUsageService
-    from sidepulse.provider_usage_settings import default_provider_usage_settings
+    from jrbar.provider_usage_runtime import ProviderUsageService
+    from jrbar.provider_usage_settings import default_provider_usage_settings
 
     clock = [10_000.0]
     service = ProviderUsageService(
@@ -363,8 +363,8 @@ def test_menu_attention_pulls_the_cached_due_time_forward_without_collection(
     tmp_path,
 ) -> None:
     adaptive_refresh = _adaptive_refresh()
-    from sidepulse.provider_usage_runtime import ProviderUsageService
-    from sidepulse.provider_usage_settings import default_provider_usage_settings
+    from jrbar.provider_usage_runtime import ProviderUsageService
+    from jrbar.provider_usage_settings import default_provider_usage_settings
 
     clock = [10_000.0]
     collection_times: list[float] = []
@@ -418,8 +418,8 @@ def test_ambient_visibility_pulls_the_cached_due_time_forward_without_collection
     tmp_path,
 ) -> None:
     adaptive_refresh = _adaptive_refresh()
-    from sidepulse.provider_usage_runtime import ProviderUsageService
-    from sidepulse.provider_usage_settings import default_provider_usage_settings
+    from jrbar.provider_usage_runtime import ProviderUsageService
+    from jrbar.provider_usage_settings import default_provider_usage_settings
 
     clock = [10_000.0]
     collection_times: list[float] = []

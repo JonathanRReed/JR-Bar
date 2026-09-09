@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from sidepulse.core_state import CoreDomain, CoreStateStore, stable_digest
+from jrbar.core_state import CoreDomain, CoreStateStore, stable_digest
 
 
 @dataclass(frozen=True)

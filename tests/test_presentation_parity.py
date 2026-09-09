@@ -8,24 +8,24 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.attention import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.attention import (
     AttentionProjection,
     LifecycleMode,
     ProjectedAgentRow,
     SignalKind,
     TransientSignal,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.led_status import LedDisplayState, LedStatusWrite
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.led_status import LedDisplayState, LedStatusWrite
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     CanonicalOperatorEvent,
     InterruptionClass,
     SemanticEventKey,
     TransitionKind,
 )
-from sidepulse.presentation_policy import (
+from jrbar.presentation_policy import (
     CapacityGlance,
     GlanceOverrideReason,
     GlanceSemantic,
@@ -33,7 +33,7 @@ from sidepulse.presentation_policy import (
     SemanticGlyph,
     compose_presentation_program,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     RequestIdentifier,
@@ -43,14 +43,14 @@ from sidepulse.provider_facts import (
     WorkIdentifier,
     WorkKey,
 )
-from sidepulse.status_bar import (
+from jrbar.status_bar import (
     HardwareWriteRequest,
     HardwareWriteResult,
     StatusBarController,
     StatusBarDevice,
     hardware_presentation_sync_for_result,
 )
-from sidepulse.virtual_device import VirtualStatusDevice
+from jrbar.virtual_device import VirtualStatusDevice
 
 _SOURCE = SourceKey("codex", "hooks", "local:test", "live_agent_events")
 _WORK_KEY = WorkKey(_SOURCE, WorkIdentifier("work:test"))

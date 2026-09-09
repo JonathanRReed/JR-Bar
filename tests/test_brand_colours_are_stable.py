@@ -26,8 +26,8 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse import colors as colors_module
-from sidepulse.colors import (
+from jrbar import colors as colors_module
+from jrbar.colors import (
     PROVIDER_BRAND_COLORS,
     ColorSettings,
     default_agent_color,
@@ -35,13 +35,13 @@ from sidepulse.colors import (
     palette_defaults_by_provider,
     provider_identity_colors_for_agents,
 )
-from sidepulse.presentation_policy import (
+from jrbar.presentation_policy import (
     GlanceOverrideReason,
     GlanceSemantic,
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.status_bar import color_for_resolved_glance
+from jrbar.status_bar import color_for_resolved_glance
 
 
 def _glance(semantic: GlanceSemantic) -> ResolvedGlance:
@@ -205,7 +205,7 @@ def test_applying_a_palette_never_repaints_a_declared_brand() -> None:
 
 def test_the_settings_windows_brand_chips_are_the_brand_colours() -> None:
     """One table cannot disagree with the other if there is one table."""
-    from sidepulse import settings_window
+    from jrbar import settings_window
 
     assert settings_window.BRAND_SWATCHES is colors_module.BRAND_SEED_COLORS
     assert dict(settings_window.BRAND_SWATCHES)["Codex"] == PROVIDER_BRAND_COLORS["codex"]
@@ -224,7 +224,7 @@ def test_both_surfaces_route_a_crowd_the_same_way() -> None:
     """
     import inspect
 
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     def _combined_source(name: str) -> str:
         # The production facade wraps these methods; the routing lives in
@@ -296,9 +296,9 @@ def test_one_engaged_agent_is_a_solo_whatever_else_is_remembered() -> None:
     crowd is counted from ENGAGED rows (working or waiting) only."""
     from datetime import datetime, timezone
 
-    from sidepulse.attention import LifecycleMode, ProjectedAgentRow
-    from sidepulse.models import AgentMode, AgentStatus
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.attention import LifecycleMode, ProjectedAgentRow
+    from jrbar.models import AgentMode, AgentStatus
+    from jrbar.status_bar import StatusBarController
 
     def row(provider: str, lifecycle: LifecycleMode) -> ProjectedAgentRow:
         when = datetime(2026, 8, 20, 20, 0, 0, tzinfo=timezone.utc)
@@ -322,7 +322,7 @@ def test_one_engaged_agent_is_a_solo_whatever_else_is_remembered() -> None:
         )
 
     def projection(*rows: ProjectedAgentRow):
-        from sidepulse.attention import AttentionProjection
+        from jrbar.attention import AttentionProjection
 
         return AttentionProjection(
             lifecycle_mode=LifecycleMode.ACTIVE,

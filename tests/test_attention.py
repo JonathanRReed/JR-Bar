@@ -3,17 +3,17 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from sidepulse.attention import (
+from jrbar.attention import (
     LifecycleMode,
     SignalKind,
     project_attention,
     project_attention_from_operator_state,
     stable_event_key,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.collector import MonitorSnapshot, aggregate_status
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.collector import MonitorSnapshot, aggregate_status
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalOperatorEvent,
     CanonicalOperatorState,
@@ -26,7 +26,7 @@ from sidepulse.operator_state import (
     SemanticEventKey,
     TransitionKind,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -41,7 +41,7 @@ from sidepulse.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.settings import AgentMonitorSettings
 
 
 def status(
@@ -312,7 +312,7 @@ def test_completed_settles_to_idle_on_the_live_projection_path() -> None:
     # snapshot's own collected_at (a clock that actually advances).
     from datetime import timedelta
 
-    from sidepulse.operator_state import COMPLETED_RECENT_SECONDS
+    from jrbar.operator_state import COMPLETED_RECENT_SECONDS
 
     finished_at = datetime(2026, 8, 12, 12, 0, 0, tzinfo=timezone.utc)
     done = status(

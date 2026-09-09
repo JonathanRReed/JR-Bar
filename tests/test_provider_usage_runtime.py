@@ -6,22 +6,22 @@ from dataclasses import replace as dataclass_replace
 
 import pytest
 
-from sidepulse.provider_feature_settings import (
+from jrbar.provider_feature_settings import (
     ProviderCollectionFeature,
     project_presentation_settings,
 )
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import (
+from jrbar.provider_usage_runtime import (
     ProviderUsageApply,
     ProviderUsageService,
     ProviderUsageState,
     RefreshPublicationOutcome,
 )
-from sidepulse.provider_usage_settings import default_provider_usage_settings
+from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
 def snapshot(provider, *, state=ProviderSourceState.READY, remaining=50, observed=1000):
@@ -96,7 +96,7 @@ def test_refresh_attaches_only_a_confirmed_provider_incident(tmp_path):
 
 
 def test_default_incident_lookup_starts_only_the_requested_provider(monkeypatch):
-    from sidepulse.provider_usage_runtime import _default_incident_lookup
+    from jrbar.provider_usage_runtime import _default_incident_lookup
 
     starts: list[tuple[str, ...]] = []
 
@@ -110,7 +110,7 @@ def test_default_incident_lookup_starts_only_the_requested_provider(monkeypatch)
             return None
 
     monkeypatch.setattr(
-        "sidepulse.status_feeds.shared_status_feed_poller", lambda: Poller()
+        "jrbar.status_feeds.shared_status_feed_poller", lambda: Poller()
     )
 
     assert _default_incident_lookup("codex", 1000.0) is None
@@ -313,7 +313,7 @@ def test_disabled_provider_skips_collector_and_credential_filesystem_probe(
         raise AssertionError("disabled provider performed I/O")
 
     monkeypatch.setattr(
-        "sidepulse.provider_usage_runtime.credential_fingerprint",
+        "jrbar.provider_usage_runtime.credential_fingerprint",
         forbidden,
     )
     service = ProviderUsageService(
@@ -404,7 +404,7 @@ def test_a_low_meter_is_not_a_reason_to_poll_harder(tmp_path):
 
 
 def test_the_cadence_ladder_is_pure_and_ordered():
-    from sidepulse.provider_usage_runtime import _interval_for
+    from jrbar.provider_usage_runtime import _interval_for
 
     assert _interval_for((), 10_000.0, menu_last_opened_at=9_900.0) == 120.0
     assert _interval_for((), 10_000.0, menu_last_opened_at=9_000.0) == 300.0
@@ -419,7 +419,7 @@ def test_the_cadence_ladder_is_pure_and_ordered():
 def test_an_imminent_reset_is_still_watched_closely(tmp_path):
     """Our one deliberate divergence: we celebrate resets, so we have to
     see the boundary cross -- 120s, not the old 30s hammer."""
-    from sidepulse.provider_usage_runtime import _interval_for
+    from jrbar.provider_usage_runtime import _interval_for
 
     soon = snapshot("codex", remaining=50, observed=1000)
     lane = soon.lanes[0]
@@ -1011,7 +1011,7 @@ def test_forced_request_during_callback_delivery_is_not_swallowed(tmp_path):
 def test_a_visible_quota_strip_counts_as_attention():
     """Our one adaptation of CodexBar's ladder: they only have a menu,
     we can be showing the number on the LED bar the whole time."""
-    from sidepulse.provider_usage_runtime import _interval_for
+    from jrbar.provider_usage_runtime import _interval_for
 
     assert _interval_for((), 10_000.0, menu_last_opened_at=None) == 1800.0
     assert (

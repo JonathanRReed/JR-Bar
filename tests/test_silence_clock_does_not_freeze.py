@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse._settings_legacy import AgentMonitorSettings
-from sidepulse.attention import project_attention_from_operator_state
-from sidepulse.capacity_types import SourceKey
-from sidepulse.mailbox import project_canonical_mailbox
-from sidepulse.operator_state import (
+from jrbar._settings_legacy import AgentMonitorSettings
+from jrbar.attention import project_attention_from_operator_state
+from jrbar.capacity_types import SourceKey
+from jrbar.mailbox import project_canonical_mailbox
+from jrbar.operator_state import (
     ACTIVE_SILENCE_SECONDS,
     BootIdentifier,
     ClockSample,
@@ -31,7 +31,7 @@ from sidepulse.operator_state import (
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -46,7 +46,7 @@ from sidepulse.provider_facts import (
     WorkLifecycle,
     _expected_safe_label,
 )
-from sidepulse.providers import PROVIDER_SPECS
+from jrbar.providers import PROVIDER_SPECS
 
 LAST_EVENT_AT = 1_800_000_000.0
 
@@ -101,7 +101,7 @@ def state_that_went_quiet(provider: str, lifecycle: WorkLifecycle):
 
 def freeze_wall_clock(monkeypatch, seconds_after_last_event: float) -> None:
     monkeypatch.setattr(
-        "sidepulse.operator_state.time.time",
+        "jrbar.operator_state.time.time",
         lambda: LAST_EVENT_AT + seconds_after_last_event,
     )
 

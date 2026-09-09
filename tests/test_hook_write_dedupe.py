@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse import hook
+from jrbar import hook
 
 
 def test_hook_log_main_appends_and_notifies_once_per_event_token(

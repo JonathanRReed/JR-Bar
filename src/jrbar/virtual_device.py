@@ -2396,8 +2396,8 @@ class AnnouncerPill:
             fade.setFromValue_(NSNumber.numberWithDouble_(0.0))
             fade.setToValue_(NSNumber.numberWithDouble_(1.0))
             fade.setDuration_(0.2)
-            layer.addAnimation_forKey_(spring, "sidepulse.pill.entrance")
-            layer.addAnimation_forKey_(fade, "sidepulse.pill.fade")
+            layer.addAnimation_forKey_(spring, "jrbar.pill.entrance")
+            layer.addAnimation_forKey_(fade, "jrbar.pill.fade")
         except Exception:
             # A missing Quartz symbol or layer quirk costs the flourish,
             # never the words.

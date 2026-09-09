@@ -10,8 +10,8 @@ already correct. Two surfaces disagreeing about one work is the defect.
 
 from __future__ import annotations
 
-from sidepulse.agent_browser import ACTIVE_AGE_STALE_SECONDS
-from sidepulse.operator_state import ACTIVE_SILENCE_SECONDS
+from jrbar.agent_browser import ACTIVE_AGE_STALE_SECONDS
+from jrbar.operator_state import ACTIVE_SILENCE_SECONDS
 
 
 def test_the_list_ages_out_exactly_when_the_lights_do() -> None:

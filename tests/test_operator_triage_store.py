@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.local_triage import LocalAcknowledgement, LocalTriageState
-from sidepulse.operator_triage_store import load_operator_triage, save_operator_triage
-from sidepulse.provider_facts import (
+from jrbar.capacity_types import SourceKey
+from jrbar.local_triage import LocalAcknowledgement, LocalTriageState
+from jrbar.operator_triage_store import load_operator_triage, save_operator_triage
+from jrbar.provider_facts import (
     RequestIdentifier,
     RequestKey,
     WorkIdentifier,
@@ -132,7 +132,7 @@ def test_load_uses_held_parent_during_parent_path_swap(tmp_path: Path) -> None:
             swapped = True
         return real_open(path, flags, mode, dir_fd=dir_fd)
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         loaded = load_operator_triage(target)
 
     assert loaded == inside_state
@@ -153,7 +153,7 @@ def test_load_refuses_oversized_file_before_reading_payload(tmp_path: Path) -> N
         bytes_read += len(chunk)
         return chunk
 
-    with patch("sidepulse.private_io.os.read", side_effect=observing_read):
+    with patch("jrbar.private_io.os.read", side_effect=observing_read):
         assert load_operator_triage(target) == LocalTriageState(())
 
     assert bytes_read == 0
@@ -174,7 +174,7 @@ def test_load_refuses_file_growth_beyond_bound(tmp_path: Path) -> None:
             grew = True
         return chunk
 
-    with patch("sidepulse.private_io.os.read", side_effect=growing_read):
+    with patch("jrbar.private_io.os.read", side_effect=growing_read):
         assert load_operator_triage(target) == LocalTriageState(())
 
 
@@ -230,7 +230,7 @@ def test_mapping_subclass_from_decoder_is_rejected(tmp_path: Path) -> None:
         {"version": 1, "acknowledgements": [_entry(_request_key())]}
     )
 
-    with patch("sidepulse.operator_triage_store._decode_document", return_value=forged):
+    with patch("jrbar.operator_triage_store._decode_document", return_value=forged):
         assert load_operator_triage(target) == LocalTriageState(())
 
 
@@ -242,7 +242,7 @@ def test_failed_replace_preserves_exact_previous_bytes(tmp_path: Path) -> None:
     previous = target.read_bytes()
 
     with (
-        patch("sidepulse.private_io.os.replace", side_effect=OSError("replace failed")),
+        patch("jrbar.private_io.os.replace", side_effect=OSError("replace failed")),
         pytest.raises(OSError, match="replace failed"),
     ):
         save_operator_triage(target, new_state)

@@ -11,9 +11,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.local_time_boundary import resolve_local_epoch
-from sidepulse.mailbox_preference_store import (
+from jrbar.capacity_types import SourceKey
+from jrbar.local_time_boundary import resolve_local_epoch
+from jrbar.mailbox_preference_store import (
     LegacyMailboxPreference,
     MailboxPreferenceDocument,
     MailboxSnoozePreset,
@@ -21,13 +21,13 @@ from sidepulse.mailbox_preference_store import (
     resolve_mailbox_snooze_preset,
     save_mailbox_preferences_v2,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     MailboxPreference as CanonicalMailboxPreference,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     MailboxPreferenceMode,
 )
-from sidepulse.provider_facts import WorkIdentifier, WorkKey, work_key_to_payload
+from jrbar.provider_facts import WorkIdentifier, WorkKey, work_key_to_payload
 
 MailboxPreference = LegacyMailboxPreference
 
@@ -157,7 +157,7 @@ def test_load_uses_held_parent_when_path_is_swapped(tmp_path: Path) -> None:
         lambda leaf: leaf == target.name,
     )
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         loaded = load_mailbox_preference_document(target)
 
     assert loaded.preferences == (inside,)
@@ -187,7 +187,7 @@ def test_save_uses_held_parent_when_path_is_swapped(tmp_path: Path) -> None:
     # sees the swapped (symlinked) parent, and reports failure instead of
     # trusting a read it can no longer attribute.
     with (
-        patch("sidepulse.private_io.os.open", side_effect=swapping_open),
+        patch("jrbar.private_io.os.open", side_effect=swapping_open),
         pytest.raises(OSError),
     ):
         save_mailbox_preferences_v2(target, (new,))
@@ -300,7 +300,7 @@ def test_oversized_store_is_refused_from_opened_size_before_payload_read(
         payload_bytes_read += len(chunk)
         return chunk
 
-    with patch("sidepulse.private_io.os.read", side_effect=observing_read):
+    with patch("jrbar.private_io.os.read", side_effect=observing_read):
         assert load_mailbox_preference_document(target).degraded
 
     assert payload_bytes_read == 0
@@ -658,7 +658,7 @@ def test_strict_v1_document_decodes_only_legacy_fields(tmp_path: Path) -> None:
 
 def _seed_v1_store(target: Path) -> bytes:
     """Write a strict v1 document the way the deleted v1 saver did."""
-    from sidepulse.private_io import atomic_private_write
+    from jrbar.private_io import atomic_private_write
 
     atomic_private_write(
         target,
@@ -687,7 +687,7 @@ def test_failed_v2_replace_preserves_exact_v1_bytes(tmp_path: Path) -> None:
     before = _seed_v1_store(target)
 
     with (
-        patch("sidepulse.private_io.os.replace", side_effect=OSError("replace failed")),
+        patch("jrbar.private_io.os.replace", side_effect=OSError("replace failed")),
         pytest.raises(OSError, match="replace failed"),
     ):
         save_mailbox_preferences_v2(
@@ -707,7 +707,7 @@ def test_v2_save_rereads_and_restores_previous_bytes_on_verification_failure(
 
     with (
         patch(
-            "sidepulse.mailbox_preference_store.load_mailbox_preference_document",
+            "jrbar.mailbox_preference_store.load_mailbox_preference_document",
             return_value=wrong,
         ),
         pytest.raises(OSError, match="verification"),

@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
-from sidepulse.provider_usage_collectors import (
+from jrbar.provider_usage_collectors import (
     ProviderHttpError,
     collect_antigravity,
     collect_cursor,
@@ -14,7 +14,7 @@ from sidepulse.provider_usage_collectors import (
     collect_openai_api,
     collect_opencode,
 )
-from sidepulse.provider_usage_settings import default_provider_usage_settings
+from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
 class FixtureCredentials:
@@ -313,7 +313,7 @@ def test_antigravity_multi_port_discovery_tries_candidate_ports():
 
 
 def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process():
-    import sidepulse.provider_usage_collectors as puc
+    import jrbar.provider_usage_collectors as puc
 
     puc._cached_antigravity_connection.clear()
     puc._cached_antigravity_connection["endpoint"] = "http://127.0.0.1:9999"
@@ -381,7 +381,7 @@ def test_antigravity_discovery_rejects_process_name_spoof_before_http():
 
 
 def test_antigravity_cache_is_dropped_when_pid_identity_changes():
-    import sidepulse.provider_usage_collectors as puc
+    import jrbar.provider_usage_collectors as puc
 
     old_identity = (
         12345,
@@ -540,7 +540,7 @@ def test_codex_reading_that_stopped_moving_is_reported_stale():
     96": the 48 was computed from a rollout written three days earlier.
     Codex quota is only as fresh as the newest rollout, and usage burned
     elsewhere is invisible here, so a frozen reading must say so."""
-    from sidepulse.provider_usage_codex_claude import (
+    from jrbar.provider_usage_codex_claude import (
         CODEX_READING_STALE_SECONDS,
         collect_codex,
     )
@@ -566,7 +566,7 @@ def test_codex_reading_that_stopped_moving_is_reported_stale():
 
 
 def test_a_fresh_codex_reading_is_not_flagged():
-    from sidepulse.provider_usage_codex_claude import collect_codex
+    from jrbar.provider_usage_codex_claude import collect_codex
 
     now = 1_000_000.0
 

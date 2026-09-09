@@ -6,20 +6,20 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-import sidepulse.usage_menu_injection as usage_menu_injection
+import jrbar.usage_menu_injection as usage_menu_injection
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE = ROOT / "src" / "sidepulse" / "provider_usage_status_bar.py"
+MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_bar.py"
 # The usage-row builder was extracted here for the facade's size ratchet
 # (2026-08-27); the menu-composition contract spans both files.
-MENU_MODULE = ROOT / "src" / "sidepulse" / "usage_menu_injection.py"
-SETTINGS_CATEGORY_MODULE = ROOT / "src" / "sidepulse" / "settings_category_runtime.py"
-SETTINGS_WINDOW_MODULE = ROOT / "src" / "sidepulse" / "settings_window.py"
-ONBOARDING_MODULE = ROOT / "src" / "sidepulse" / "onboarding_runtime.py"
-RESET_ACTION_MODULE = ROOT / "src" / "sidepulse" / "provider_reset_settings_action.py"
-STATUS_PROJECTION_MODULE = ROOT / "src" / "sidepulse" / "provider_usage_status_projection.py"
-SETTINGS_REFRESH_MODULE = ROOT / "src" / "sidepulse" / "settings_destination_refresh.py"
-FEEDBACK_ACTIONS_MODULE = ROOT / "src" / "sidepulse" / "provider_usage_feedback_actions.py"
+MENU_MODULE = ROOT / "src" / "jrbar" / "usage_menu_injection.py"
+SETTINGS_CATEGORY_MODULE = ROOT / "src" / "jrbar" / "settings_category_runtime.py"
+SETTINGS_WINDOW_MODULE = ROOT / "src" / "jrbar" / "settings_window.py"
+ONBOARDING_MODULE = ROOT / "src" / "jrbar" / "onboarding_runtime.py"
+RESET_ACTION_MODULE = ROOT / "src" / "jrbar" / "provider_reset_settings_action.py"
+STATUS_PROJECTION_MODULE = ROOT / "src" / "jrbar" / "provider_usage_status_projection.py"
+SETTINGS_REFRESH_MODULE = ROOT / "src" / "jrbar" / "settings_destination_refresh.py"
+FEEDBACK_ACTIONS_MODULE = ROOT / "src" / "jrbar" / "provider_usage_feedback_actions.py"
 
 
 def _tree():
@@ -338,13 +338,13 @@ def test_why_panel_override_preserves_the_base_context_keyword_contract():
 
 
 _STATUS_BAR_PROBE_PREAMBLE = """
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_status_bar import JRProviderUsageStatusBarController
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_status_bar import JRProviderUsageStatusBarController
 
 class FakeController:
     def __init__(self, state=None):

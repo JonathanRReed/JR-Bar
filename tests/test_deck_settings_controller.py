@@ -3,10 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-import sidepulse.deck_settings_controller as controller_module
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_control_settings import DeckControlSettings
-from sidepulse.deck_settings_controller import (
+import jrbar.deck_settings_controller as controller_module
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_control_settings import DeckControlSettings
+from jrbar.deck_settings_controller import (
     DeckSettingsApplyResult,
     apply_deck_settings_result,
     save_deck_mapping,

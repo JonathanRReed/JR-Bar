@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sidepulse.audit import TRIM_THRESHOLD_BYTES
-from sidepulse.capacity_types import (
+from jrbar.audit import TRIM_THRESHOLD_BYTES
+from jrbar.capacity_types import (
     CapacityUnit,
     CapacityValue,
     ObservationState,
@@ -22,17 +22,17 @@ from sidepulse.capacity_types import (
     ResetState,
     SourceKey,
 )
-from sidepulse.collector import LiveAgentMonitor, RestoreHealth
-from sidepulse.hook import write_normalized_hook_record
-from sidepulse.ipc import (
+from jrbar.collector import LiveAgentMonitor, RestoreHealth
+from jrbar.hook import write_normalized_hook_record
+from jrbar.ipc import (
     MAX_HINT_BYTES,
     HookEventServer,
     ProviderRefreshHint,
     _hint_from_wire,
     send_refresh_hint,
 )
-from sidepulse.models import HookEvent
-from sidepulse.operator_state import (
+from jrbar.models import HookEvent
+from jrbar.operator_state import (
     BootIdentifier,
     ClockContinuityStatus,
     ClockSample,
@@ -41,12 +41,12 @@ from sidepulse.operator_state import (
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_adapters import (
+from jrbar.provider_adapters import (
     minimize_hook_event,
     normalized_provider_record_to_payload,
     provider_facts_for_record,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -66,9 +66,9 @@ from sidepulse.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from sidepulse.providers import negotiated_provider_sources
-from sidepulse.reset_policy import plan_reset_boundary_refresh
-from sidepulse.usage_view import UsageWindowViewModel
+from jrbar.providers import negotiated_provider_sources
+from jrbar.reset_policy import plan_reset_boundary_refresh
+from jrbar.usage_view import UsageWindowViewModel
 
 _BASE = 1_786_536_000.0
 _BOOT = BootIdentifier("boot:canonical")
@@ -675,8 +675,8 @@ def _privacy_surfaces(root: Path) -> tuple[object, ...]:
     normalized_payload = normalized_provider_record_to_payload(normalized)
     normalized_path = root / "state" / "normalized.jsonl"
     with (
-        patch("sidepulse.audit.TRIM_THRESHOLD_BYTES", 1),
-        patch("sidepulse.audit.TRIM_KEEP_LINES", 1),
+        patch("jrbar.audit.TRIM_THRESHOLD_BYTES", 1),
+        patch("jrbar.audit.TRIM_KEEP_LINES", 1),
     ):
         write_normalized_hook_record(normalized_path, normalized)
         write_normalized_hook_record(normalized_path, normalized)
@@ -1297,8 +1297,8 @@ def test_reconcile_reads_the_tail_of_an_over_cap_log(tmp_path: Path) -> None:
     crossed the collector's cap while the audit trim threshold sat above
     it, every reconcile aborted on OSError, and the menu said "writing to
     the log, nothing arriving" while the hook side was perfectly healthy."""
-    from sidepulse import _collector_legacy
-    from sidepulse.hook import _normalized_hook_record, routed_hook_payload
+    from jrbar import _collector_legacy
+    from jrbar.hook import _normalized_hook_record, routed_hook_payload
 
     log_path = tmp_path / "claude.jsonl"
     payload = json.dumps(

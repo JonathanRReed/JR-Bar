@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from AppKit import NSApplication, NSBitmapImageRep, NSImage
 
-from sidepulse import screen_bar_runtime, virtual_device
+from jrbar import screen_bar_runtime, virtual_device
 
 
 def _view():

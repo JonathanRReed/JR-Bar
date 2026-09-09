@@ -8,13 +8,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepulse.lid_sleep import (
+from jrbar.lid_sleep import (
     CAFFEINATE_CLOSED_LID_COMMAND,
     RENEWAL_STALE_SECONDS,
     ClosedLidAwakeController,
     watchdog_script,
 )
-from sidepulse.settings import CLOSED_LID_AWAKE_AGENTS, CLOSED_LID_AWAKE_NEVER
+from jrbar.settings import CLOSED_LID_AWAKE_AGENTS, CLOSED_LID_AWAKE_NEVER
 
 
 class FakeProcess:

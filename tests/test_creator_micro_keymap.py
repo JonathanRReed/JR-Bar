@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.creator_micro_keymap import keymap_digest, plan_keymap
+from jrbar.creator_micro_keymap import keymap_digest, plan_keymap
 
 
 def _stock_config() -> dict[str, object]:

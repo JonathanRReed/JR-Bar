@@ -7,17 +7,17 @@ from threading import Event
 
 import pytest
 
-from sidepulse import ipc as ipc_module
-from sidepulse import providers
-from sidepulse.capacity_types import SourceKey
-from sidepulse.ipc import (
+from jrbar import ipc as ipc_module
+from jrbar import providers
+from jrbar.capacity_types import SourceKey
+from jrbar.ipc import (
     HookEventServer,
     ProviderRefreshHint,
     send_hook_event,
     send_refresh_hint,
 )
-from sidepulse.provider_facts import EventToken
-from sidepulse.providers import default_state_dir
+from jrbar.provider_facts import EventToken
+from jrbar.providers import default_state_dir
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ from typing import ClassVar
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-MODULE = ROOT / "src" / "sidepulse" / "provider_usage_window.py"
+MODULE = ROOT / "src" / "jrbar" / "provider_usage_window.py"
 
 
 class _FakeView:
@@ -62,8 +62,8 @@ def _load_controller_module(monkeypatch: pytest.MonkeyPatch):
     fake_objc = SimpleNamespace(super=super)
     monkeypatch.setitem(sys.modules, "AppKit", fake_appkit)
     monkeypatch.setitem(sys.modules, "objc", fake_objc)
-    monkeypatch.delitem(sys.modules, "sidepulse.provider_usage_window", raising=False)
-    return importlib.import_module("sidepulse.provider_usage_window")
+    monkeypatch.delitem(sys.modules, "jrbar.provider_usage_window", raising=False)
+    return importlib.import_module("jrbar.provider_usage_window")
 
 
 def _controller_for_refresh(module, *, wall_clock, monotonic_clock):
@@ -116,7 +116,7 @@ def test_usage_window_passes_cached_merged_sync_and_never_fetches():
 
 
 def test_usage_window_cache_lookup_is_memory_only_and_worker_refreshed():
-    cache = ROOT / "src" / "sidepulse" / "provider_usage_sync_cache.py"
+    cache = ROOT / "src" / "jrbar" / "provider_usage_sync_cache.py"
     source = cache.read_text(encoding="utf-8")
     tree = ast.parse(source)
 
@@ -198,7 +198,7 @@ def test_usage_window_privacy_mode_can_follow_live_settings(
         monotonic_clock=lambda: 100.0,
     )
 
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     state = ProviderUsageState((), None, None, False)
     controller._last_state = state
@@ -215,7 +215,7 @@ def test_usage_window_projection_uses_injected_wall_clock(
     monkeypatch: pytest.MonkeyPatch,
 ):
     module = _load_controller_module(monkeypatch)
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     wall_reads: list[str] = []
     controller = _controller_for_refresh(
@@ -251,7 +251,7 @@ def test_usage_window_message_expires_at_exact_monotonic_deadline(
     banner_visible: bool,
 ):
     module = _load_controller_module(monkeypatch)
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     controller = _controller_for_refresh(
         module,
@@ -279,7 +279,7 @@ def test_usage_window_message_deadline_uses_injected_monotonic_clock(
     monkeypatch: pytest.MonkeyPatch,
 ):
     module = _load_controller_module(monkeypatch)
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     monotonic_reads: list[str] = []
     controller = _controller_for_refresh(
@@ -300,14 +300,14 @@ def test_usage_window_passes_only_the_privacy_safe_visual_projection(
     monkeypatch: pytest.MonkeyPatch,
 ):
     module = _load_controller_module(monkeypatch)
-    from sidepulse.provider_feature_settings import (
+    from jrbar.provider_feature_settings import (
         ProviderInstancePolicyProjection,
         ProviderInstanceRetentionProjection,
         ProviderInstanceSessionActionProjection,
         ProviderInstanceSharingProjection,
         ProviderInstanceVisualProjection,
     )
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     visual = ProviderInstanceVisualProjection(())
     policies = ProviderInstancePolicyProjection(
@@ -345,7 +345,7 @@ def test_usage_window_passes_privacy_mode_to_safe_identity_projection(
     monkeypatch: pytest.MonkeyPatch,
 ):
     module = _load_controller_module(monkeypatch)
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     controller = _controller_for_refresh(
         module,

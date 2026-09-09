@@ -16,8 +16,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sidepulse.device_identity import DeviceKind
-from sidepulse.device_inventory import (
+from jrbar.device_identity import DeviceKind
+from jrbar.device_inventory import (
     hardware_status_serial,
     inventory_mounts,
     refine_facts_with_hardware_status,
@@ -130,7 +130,7 @@ def test_symlinked_mount_candidate_is_not_inventoried(tmp_path: Path) -> None:
 
 
 def test_refine_is_a_noop_without_serial(tmp_path: Path) -> None:
-    from sidepulse.device_identity import DeviceHardwareFacts
+    from jrbar.device_identity import DeviceHardwareFacts
 
     facts = DeviceHardwareFacts(mount_path="/Volumes/SidePulse", product_name="SIDEPULSE")
     assert refine_facts_with_hardware_status(facts, tmp_path) is facts
@@ -143,8 +143,8 @@ def test_rekeyed_ghost_entry_is_not_persistable() -> None:
     "SidePulse Dot" row whose junk preferences (brightness 0) linger in
     settings forever.
     """
-    from sidepulse import status_bar
-    from sidepulse.device_identity import StableDeviceIdentity
+    from jrbar import status_bar
+    from jrbar.device_identity import StableDeviceIdentity
 
     pro = StableDeviceIdentity(
         key="sidepulse:pro:serial:abc123",
@@ -176,7 +176,7 @@ def test_rekeyed_ghost_entry_is_not_persistable() -> None:
 
 
 def _working_status(event_name: str, age_seconds: float):
-    from sidepulse.models import AgentMode, AgentStatus
+    from jrbar.models import AgentMode, AgentStatus
 
     now = datetime.now(timezone.utc)
     return (
@@ -194,8 +194,8 @@ def _working_status(event_name: str, age_seconds: float):
 
 
 def test_working_after_tool_failure_demotes_like_post_tool() -> None:
-    from sidepulse._collector_legacy import status_for_snapshot
-    from sidepulse.models import AgentMode
+    from jrbar._collector_legacy import status_for_snapshot
+    from jrbar.models import AgentMode
 
     status, now = _working_status("PostToolUseFailure", 3 * 60.0)
     effective = status_for_snapshot(
@@ -208,11 +208,11 @@ def test_hook_silent_working_demotes_after_silence_window() -> None:
     """A "working" agent with no hook events for 10 minutes is a dead one
     (crashed turn, killed terminal) -- it must not pulse for the full
     hour-long stale window as a phantom."""
-    from sidepulse._collector_legacy import (
+    from jrbar._collector_legacy import (
         WORKING_SILENCE_SECONDS,
         status_for_snapshot,
     )
-    from sidepulse.models import AgentMode
+    from jrbar.models import AgentMode
 
     status, now = _working_status("UserPromptSubmit", WORKING_SILENCE_SECONDS + 1.0)
     effective = status_for_snapshot(
@@ -222,8 +222,8 @@ def test_hook_silent_working_demotes_after_silence_window() -> None:
 
 
 def test_recent_working_stays_working() -> None:
-    from sidepulse._collector_legacy import status_for_snapshot
-    from sidepulse.models import AgentMode
+    from jrbar._collector_legacy import status_for_snapshot
+    from jrbar.models import AgentMode
 
     for event in ("PostToolUse", "PostToolUseFailure", "UserPromptSubmit"):
         status, now = _working_status(event, 30.0)
@@ -237,11 +237,11 @@ def test_long_thinking_turn_survives_the_post_tool_window() -> None:
     """WORKING that is NOT post-tool (agent mid-turn, thinking) gets the
     LONGER silence window, not the 2-minute post-tool one -- derived
     from the shared constant so the pin moves with the ratified line."""
-    from sidepulse._collector_legacy import (
+    from jrbar._collector_legacy import (
         WORKING_SILENCE_SECONDS,
         status_for_snapshot,
     )
-    from sidepulse.models import AgentMode
+    from jrbar.models import AgentMode
 
     status, now = _working_status("UserPromptSubmit", WORKING_SILENCE_SECONDS - 60.0)
     effective = status_for_snapshot(
@@ -264,7 +264,7 @@ def test_a_whisper_too_dim_to_hold_its_hue_goes_honestly_dark():
     #010101 rendered as a clearly GREEN glow -- 'why is the SidePulse
     green when it should be off.' A whole LED whose brightest drive
     lands below STRIP_HUE_HOLDING_DRIVE goes dark instead of lying."""
-    from sidepulse._led_status_legacy import (
+    from jrbar._led_status_legacy import (
         NEUTRAL_CHANNEL_GAINS,
         apply_strip_transfer_to_hex,
     )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from sidepulse import providers
-from sidepulse.capacity_types import SourceKey
-from sidepulse.provider_contracts import (
+from jrbar import providers
+from jrbar.capacity_types import SourceKey
+from jrbar.provider_contracts import (
     AdapterIdentifier,
     CapabilityIdentifier,
     ContractStatus,
@@ -10,8 +10,8 @@ from sidepulse.provider_contracts import (
     SchemaVersion,
     SourceInstanceIdentifier,
 )
-from sidepulse.provider_facts import ObservationAuthority
-from sidepulse.providers import (
+from jrbar.provider_facts import ObservationAuthority
+from jrbar.providers import (
     HOOK_PROVIDERS,
     NegotiatedProviderSource,
     ProviderSourceRegistration,
@@ -22,7 +22,7 @@ from sidepulse.providers import (
 def provider_source_registrations():
     """Local view over the live static table (the src thin wrappers were
     deleted 2026-08-26: tests were their only callers)."""
-    from sidepulse import providers
+    from jrbar import providers
 
     return providers._PROVIDER_SOURCE_REGISTRATIONS
 

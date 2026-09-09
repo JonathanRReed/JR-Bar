@@ -38,23 +38,23 @@ from unittest.mock import patch
 import pytest
 from test_sidepulse import isolate_controller
 
-from sidepulse import doctor as doctor_module
-from sidepulse import settings_window
-from sidepulse.doctor import (
+from jrbar import doctor as doctor_module
+from jrbar import settings_window
+from jrbar.doctor import (
     DiagnosticCheck,
     DiagnosticCode,
     DiagnosticProbe,
     collect_diagnostics,
     render_diagnostic_result,
 )
-from sidepulse.install import (
+from jrbar.install import (
     CodexHookTrust,
     CodexHookTrustStatus,
     InstallResult,
     install_codex_hooks,
     resolve_codex_hook_trust,
 )
-from sidepulse.virtual_device import ScreenBarWingState, screen_bar_wing_state
+from jrbar.virtual_device import ScreenBarWingState, screen_bar_wing_state
 
 # --- Auto-Brightness -----------------------------------------------------
 
@@ -391,12 +391,12 @@ def test_no_codex_binary_is_not_the_same_as_nothing_to_trust() -> None:
     is the difference between "installed" and "installed, and it will
     not run until you approve it".
     """
-    with patch("sidepulse.install.codex_cli_path", return_value=None):
+    with patch("jrbar.install.codex_cli_path", return_value=None):
         missing = resolve_codex_hook_trust(Path("/tmp/config.toml"))
     with (
-        patch("sidepulse.install.local_codex_hook_hashes", return_value={}),
-        patch("sidepulse.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
-        patch("sidepulse.install.resolve_codex_hook_hashes", return_value={}),
+        patch("jrbar.install.local_codex_hook_hashes", return_value={}),
+        patch("jrbar.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
+        patch("jrbar.install.resolve_codex_hook_hashes", return_value={}),
     ):
         silent = resolve_codex_hook_trust(Path("/tmp/config.toml"))
 
@@ -408,9 +408,9 @@ def test_no_codex_binary_is_not_the_same_as_nothing_to_trust() -> None:
 
 def test_a_confirmed_handshake_carries_its_hashes() -> None:
     with (
-        patch("sidepulse.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
+        patch("jrbar.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
         patch(
-            "sidepulse.install.resolve_codex_hook_hashes",
+            "jrbar.install.resolve_codex_hook_hashes",
             return_value={"key": "sha256:abc"},
         ),
     ):
@@ -436,8 +436,8 @@ def test_an_install_that_could_not_get_trusted_says_so() -> None:
         config.write_text("[features]\nhooks = true\n")
 
         with (
-            patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True),
-            patch("sidepulse.install.codex_cli_path", return_value=None),
+            patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True),
+            patch("jrbar.install.codex_cli_path", return_value=None),
         ):
             result = install_codex_hooks(
                 log_path=log, config_path=config, python_executable="python3"
@@ -458,12 +458,12 @@ def test_a_trusted_install_carries_no_warning() -> None:
         config.write_text("[features]\nhooks = true\n")
 
         with (
-            patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True),
+            patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True),
             patch(
-                "sidepulse.install.codex_cli_path", return_value=Path("/usr/bin/codex")
+                "jrbar.install.codex_cli_path", return_value=Path("/usr/bin/codex")
             ),
             patch(
-                "sidepulse.install.resolve_codex_hook_hashes",
+                "jrbar.install.resolve_codex_hook_hashes",
                 return_value={key: "sha256:new"},
             ),
         ):
@@ -592,7 +592,7 @@ class SweepSettingsSurfaceTests(unittest.TestCase):
         and the position the slider claimed WAS automatic were 12pt
         apart, on a control whose whole job is to show a measurement.
         """
-        from sidepulse.screen_bar_design import WINDOW_WIDTH
+        from jrbar.screen_bar_design import WINDOW_WIDTH
 
         with patch.object(
             settings_window,
@@ -609,7 +609,7 @@ class SweepSettingsSurfaceTests(unittest.TestCase):
     def test_use_automatic_size_keeps_the_design_width_when_screen_is_unreadable(
         self,
     ) -> None:
-        from sidepulse.screen_bar_design import WINDOW_WIDTH
+        from jrbar.screen_bar_design import WINDOW_WIDTH
 
         self.controller.show_settings_window()
         self.controller.ensure_settings_pane("colors_screen_bar")

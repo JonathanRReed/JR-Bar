@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.capacity_refresh import (
+from jrbar.capacity_refresh import (
     MAX_REFRESH_DEADLINE_SECONDS,
     MAX_REFRESH_SOURCE_RECORDS,
     CapacityRefreshCoordinator,
@@ -21,7 +21,7 @@ from sidepulse.capacity_refresh import (
     RefreshStatusKind,
     RefreshValidationError,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacityAccountBinding,
     CapacityEvidenceClass,
     CapacitySnapshot,

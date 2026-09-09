@@ -29,8 +29,8 @@ from unittest.mock import patch
 
 from test_sidepulse import isolate_controller
 
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.remote_peers import (
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.remote_peers import (
     PeerHealth,
     PeerRefreshResult,
     RemotePeerSettings,
@@ -125,8 +125,8 @@ class RemotePeerWiringTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.ledger_path = Path(self.tmp.name) / "remote-ledger.json"
         for target in (
-            "sidepulse.remote_peers.default_remote_ledger_path",
-            "sidepulse.status_bar.default_remote_ledger_path",
+            "jrbar.remote_peers.default_remote_ledger_path",
+            "jrbar.status_bar.default_remote_ledger_path",
         ):
             patcher = patch(target, return_value=self.ledger_path)
             patcher.start()
@@ -259,8 +259,8 @@ class RemotePeerWiringTests(unittest.TestCase):
         wire. This one hands the merge a sub-agent row directly, the way a
         peer on a build we have not written yet would.
         """
-        from sidepulse.remote_peers import LedgerRow, MergedLedger
-        from sidepulse.status_bar import mark_remote_ledger_origins
+        from jrbar.remote_peers import LedgerRow, MergedLedger
+        from jrbar.status_bar import mark_remote_ledger_origins
 
         merged = MergedLedger(
             local_machine="mac-a",
@@ -419,11 +419,11 @@ class _SynchronousLedgerPublisher:
         self.publishes = 0
 
     def request(self, *, statuses, generated_at, settings, signature, callback):
-        from sidepulse.ledger_runtime import (
+        from jrbar.ledger_runtime import (
             LedgerPublishRequest,
             LedgerPublishResult,
         )
-        from sidepulse.remote_peers import publish_local_ledger
+        from jrbar.remote_peers import publish_local_ledger
 
         self._generation += 1
         request = LedgerPublishRequest(
@@ -461,8 +461,8 @@ class RemotePublishWiringTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.ledger_path = Path(self.tmp.name) / "remote-ledger.json"
         for target in (
-            "sidepulse.remote_peers.default_remote_ledger_path",
-            "sidepulse.status_bar.default_remote_ledger_path",
+            "jrbar.remote_peers.default_remote_ledger_path",
+            "jrbar.status_bar.default_remote_ledger_path",
         ):
             patcher = patch(target, return_value=self.ledger_path)
             patcher.start()
@@ -600,7 +600,7 @@ class CloudIngestWiringTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         token = patch(
-            "sidepulse.cloud_ingest.default_token_path",
+            "jrbar.cloud_ingest.default_token_path",
             return_value=Path(self.tmp.name) / "cloud-ingest.token",
         )
         token.start()
@@ -633,7 +633,7 @@ class CloudIngestWiringTests(unittest.TestCase):
     def _post(self, server, body: dict) -> int:
         import http.client
 
-        from sidepulse.cloud_ingest import default_token_path, read_ingest_token
+        from jrbar.cloud_ingest import default_token_path, read_ingest_token
 
         host, port = server.address
         payload = json.dumps(body).encode("utf-8")
@@ -711,7 +711,7 @@ class CloudIngestWiringTests(unittest.TestCase):
             [row.agent_id for row in rows],
             "sub-agents belong in the model but never on a surface",
         )
-        from sidepulse.status_bar import mailbox_attention_statuses
+        from jrbar.status_bar import mailbox_attention_statuses
 
         visible = mailbox_attention_statuses(
             SimpleNamespace(statuses=tuple(rows), stale_statuses=(), collected_at=NOW)
@@ -738,7 +738,7 @@ class StudioAnimationWiringTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.library_path = Path(self.tmp.name) / "animation-library.json"
         patcher = patch(
-            "sidepulse.status_bar.default_animation_library_path",
+            "jrbar.status_bar.default_animation_library_path",
             return_value=self.library_path,
         )
         patcher.start()
@@ -894,7 +894,7 @@ class StudioAnimationWiringTests(unittest.TestCase):
         )
         writes: list = []
         with patch(
-            "sidepulse.device_writer.write_led_program",
+            "jrbar.device_writer.write_led_program",
             side_effect=lambda *a, **k: (
                 writes.append((a, k)) or Path("/Volumes/SidePulsePro/INIT.LED")
             ),
@@ -942,8 +942,8 @@ class SettingsAreaWiringTests(unittest.TestCase):
                 self.assertIn(key, self.controller.settings_panes, key)
 
     def test_agents_offers_a_motion_per_provider_and_it_saves(self) -> None:
-        from sidepulse.colors import PROVIDER_ANIMATION_LABELS
-        from sidepulse.providers import PROVIDER_SPECS
+        from jrbar.colors import PROVIDER_ANIMATION_LABELS
+        from jrbar.providers import PROVIDER_SPECS
 
         self.controller.ensure_settings_pane("agents")
         for spec in PROVIDER_SPECS:
@@ -977,7 +977,7 @@ class SettingsAreaWiringTests(unittest.TestCase):
             )
         self.controller.toggleRemotePeers_(SimpleNamespace(state=lambda: 1))
         self.assertTrue(self.controller.settings.remote_peers.enabled)
-        from sidepulse.settings import load_settings
+        from jrbar.settings import load_settings
 
         self.assertTrue(load_settings(self._settings_path).remote_peers.enabled)
 
@@ -1051,7 +1051,7 @@ class RemotePeerRefreshCadenceTests(unittest.TestCase):
         )
         calls: list = []
         with patch(
-            "sidepulse.status_bar.collect_remote_ledgers",
+            "jrbar.status_bar.collect_remote_ledgers",
             side_effect=lambda **kwargs: calls.append(kwargs) or PeerRefreshResult(),
         ):
             self.controller.monitor = SimpleNamespace(
@@ -1073,7 +1073,7 @@ class RemotePeerRefreshCadenceTests(unittest.TestCase):
     def test_the_fetch_is_inert_while_the_feature_is_off(self) -> None:
         calls: list = []
         with patch(
-            "sidepulse.status_bar.collect_remote_ledgers",
+            "jrbar.status_bar.collect_remote_ledgers",
             side_effect=lambda **kwargs: calls.append(kwargs) or PeerRefreshResult(),
         ):
             self.controller.refresh_remote_peers()
@@ -1083,7 +1083,7 @@ class RemotePeerRefreshCadenceTests(unittest.TestCase):
         """Without this a dead Mac is retried every single minute, forever."""
         from dataclasses import replace
 
-        from sidepulse.remote_peers import PeerBreaker
+        from jrbar.remote_peers import PeerBreaker
 
         self.controller.settings = self.controller.settings.with_remote_peers(
             replace(self.controller.settings.remote_peers, enabled=True)
@@ -1093,7 +1093,7 @@ class RemotePeerRefreshCadenceTests(unittest.TestCase):
         )
         seen: list = []
         with patch(
-            "sidepulse.status_bar.collect_remote_ledgers",
+            "jrbar.status_bar.collect_remote_ledgers",
             side_effect=lambda **kwargs: (
                 seen.append(tuple(kwargs["breakers"])) or PeerRefreshResult()
             ),
@@ -1122,7 +1122,7 @@ class RemotePeerSettingsPersistenceTests(unittest.TestCase):
     def test_the_record_round_trips_and_defaults_to_silence(self) -> None:
         from dataclasses import replace
 
-        from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+        from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
         settings = AgentMonitorSettings()
         self.assertEqual(settings.remote_peers, RemotePeerSettings())
@@ -1146,7 +1146,7 @@ class RemotePeerSettingsPersistenceTests(unittest.TestCase):
         self.assertTrue(restored.cloud_ingest_enabled)
 
     def test_a_corrupt_peer_block_degrades_to_off_rather_than_crashing(self) -> None:
-        from sidepulse.settings import load_settings
+        from jrbar.settings import load_settings
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"

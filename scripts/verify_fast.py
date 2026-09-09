@@ -16,14 +16,14 @@ ROOT: Final = Path(__file__).resolve().parents[1]
 CHECK_PATHS: Final = ("src", "tests", "packaging", "scripts")
 IMPORT_MODULES: Final = (
     "sidepulse",
-    "sidepulse.adaptive_refresh",
-    "sidepulse.hook_client",
-    "sidepulse.settings",
-    "sidepulse.status_bar",
-    "sidepulse._status_bar_production",
-    "sidepulse.provider_usage_controller_actions",
-    "sidepulse.provider_usage_status_bar",
-    "sidepulse.why_light_context",
+    "jrbar.adaptive_refresh",
+    "jrbar.hook_client",
+    "jrbar.settings",
+    "jrbar.status_bar",
+    "jrbar._status_bar_production",
+    "jrbar.provider_usage_controller_actions",
+    "jrbar.provider_usage_status_bar",
+    "jrbar.why_light_context",
 )
 CONTRACT_TESTS: Final = (
     "tests/test_deterministic_timing_contract.py",

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import CompletionPresentationKey
-from sidepulse.completion_meniscus import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import CompletionPresentationKey
+from jrbar.completion_meniscus import (
     RIPPLE_DURATION_MS,
     STATIC_HIGHLIGHT_DURATION_MS,
     CompletionMeniscusGeometry,

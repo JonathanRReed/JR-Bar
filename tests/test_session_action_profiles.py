@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
-from sidepulse.provider_feature_settings import (
+from jrbar.capacity_types import SourceKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import WorkIdentifier, WorkKey
+from jrbar.provider_feature_settings import (
     ProviderInstanceSessionActionPolicy,
     ProviderInstanceSessionActionProjection,
 )
-from sidepulse.session_actions import (
+from jrbar.session_actions import (
     ProfileSessionActionResolutionKind,
     resolve_profile_session_action,
     resolve_profile_session_action_for_status,

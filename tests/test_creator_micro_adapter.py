@@ -4,7 +4,7 @@ from collections import deque
 
 import pytest
 
-from sidepulse.creator_micro_adapter import (
+from jrbar.creator_micro_adapter import (
     CreatorMicro2Adapter,
     CreatorMicro2Framer,
     DeviceCapability,
@@ -12,7 +12,7 @@ from sidepulse.creator_micro_adapter import (
     RpcStreamDecoder,
     SemanticState,
 )
-from sidepulse.creator_micro_hidapi import HidApiTransport, NoDeviceError
+from jrbar.creator_micro_hidapi import HidApiTransport, NoDeviceError
 
 INFO = {"vendor_id": 0x303A, "product_id": 0x8297, "usage_page": 0xFF00, "usage": 1}
 
@@ -302,7 +302,7 @@ def test_semantic_priority_is_explicit_and_user_priority_is_exact():
 
 
 def test_hidapi_transport_is_injectable_read_only_until_opt_in_and_uses_timeout_contract(monkeypatch):
-    monkeypatch.setattr("sidepulse.creator_micro_hidapi._enable_macos_nonexclusive", lambda _: None)
+    monkeypatch.setattr("jrbar.creator_micro_hidapi._enable_macos_nonexclusive", lambda _: None)
     class Device:
         def open_path(self, path):
             self.path = path
@@ -343,7 +343,7 @@ def test_hidapi_transport_is_injectable_read_only_until_opt_in_and_uses_timeout_
 
 
 def test_hidapi_output_requires_one_approved_stable_device_identity(monkeypatch):
-    monkeypatch.setattr("sidepulse.creator_micro_hidapi._enable_macos_nonexclusive", lambda _: None)
+    monkeypatch.setattr("jrbar.creator_micro_hidapi._enable_macos_nonexclusive", lambda _: None)
     opened = []
 
     class Device:

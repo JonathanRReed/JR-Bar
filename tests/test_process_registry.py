@@ -5,7 +5,7 @@ import os
 import time
 from pathlib import Path
 
-from sidepulse import process_registry as pr
+from jrbar import process_registry as pr
 
 
 def _table(*rows):

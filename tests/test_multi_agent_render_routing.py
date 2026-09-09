@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from sidepulse.presentation_policy import (
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.presentation_policy import (
     GlanceOverrideReason,
     GlanceSemantic,
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.status_bar import StatusBarController
+from jrbar.status_bar import StatusBarController
 
 
 def _row(agent_id: str, provider: str) -> ProjectedAgentRow:

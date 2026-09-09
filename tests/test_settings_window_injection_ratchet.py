@@ -11,7 +11,7 @@ import ast
 import builtins
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "sidepulse"
+SRC = Path(__file__).resolve().parent.parent / "src" / "jrbar"
 
 
 def _settings_window_tree() -> ast.Module:

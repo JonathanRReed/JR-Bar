@@ -14,19 +14,19 @@ pytest.importorskip("AppKit")
 def controller(tmp_path, monkeypatch):
     settings_path = tmp_path / "settings.json"
     for target in (
-        "sidepulse.settings.default_settings_path",
-        "sidepulse.status_bar.default_settings_path",
+        "jrbar.settings.default_settings_path",
+        "jrbar.status_bar.default_settings_path",
     ):
         monkeypatch.setattr(target, lambda _p=settings_path: _p)
     monkeypatch.setattr(
-        "sidepulse.status_bar.default_latest_state_path",
+        "jrbar.status_bar.default_latest_state_path",
         lambda: tmp_path / "latest.json",
     )
-    monkeypatch.setattr("sidepulse.status_bar.discover_devices", lambda: [])
+    monkeypatch.setattr("jrbar.status_bar.discover_devices", lambda: [])
     monkeypatch.setattr(
-        "sidepulse.focus_sync.active_focus_mode_identifiers", lambda: []
+        "jrbar.focus_sync.active_focus_mode_identifiers", lambda: []
     )
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     built = status_bar.StatusBarController.alloc().init()
     yield built

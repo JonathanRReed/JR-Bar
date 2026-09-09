@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.dot_binary_heartbeat import (
+from jrbar.dot_binary_heartbeat import (
     DOT_BINARY_HEARTBEAT_ACCESSIBILITY,
     DOT_BINARY_HEARTBEAT_LEGEND,
     MAX_ACTIVE_SEMANTICS,
@@ -20,7 +20,7 @@ from sidepulse.dot_binary_heartbeat import (
     fleet_size_band,
     plan_dot_binary_heartbeat,
 )
-from sidepulse.semantic_effect_router import SemanticEventKind
+from jrbar.semantic_effect_router import SemanticEventKind
 
 
 def test_led_one_uses_the_existing_highest_priority_semantic_order() -> None:

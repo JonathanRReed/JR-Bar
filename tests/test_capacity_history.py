@@ -5,7 +5,7 @@ from math import inf, nan
 
 import pytest
 
-from sidepulse.capacity_history import (
+from jrbar.capacity_history import (
     ACTIVITY_HISTORY_SCHEMA_VERSION,
     CAPACITY_HISTORY_SCHEMA_VERSION,
     NO_OBSERVATION,
@@ -20,7 +20,7 @@ from sidepulse.capacity_history import (
     prune_capacity_history,
     summarize_capacity_history,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     QuotaEffect,
     QuotaLaneKey,
     SampleDisposition,

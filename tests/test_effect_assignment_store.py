@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepulse.effect_assignment_store import (
+from jrbar.effect_assignment_store import (
     AssignmentRestoreHealth,
     EffectAssignmentCache,
     EffectAssignmentContext,
@@ -10,9 +10,9 @@ from sidepulse.effect_assignment_store import (
     resolve_effect_assignment,
     save_effect_assignments,
 )
-from sidepulse.effect_studio import AssignmentScope
-from sidepulse.scenes import Scene
-from sidepulse.semantic_effect_router import SemanticEventKind
+from jrbar.effect_studio import AssignmentScope
+from jrbar.scenes import Scene
+from jrbar.semantic_effect_router import SemanticEventKind
 
 
 def _record(

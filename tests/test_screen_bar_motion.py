@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.presentation_policy import MotionClass
-from sidepulse.presentation_scheduler import plan_presentation_schedule
-from sidepulse.render_policy import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.presentation_policy import MotionClass
+from jrbar.presentation_scheduler import plan_presentation_schedule
+from jrbar.render_policy import (
     RenderDriverKind,
     RenderEnvironment,
     alcove_bracket_corner_radius,
@@ -32,8 +32,8 @@ from sidepulse.render_policy import (
 def test_alcove_recovery_motion_transitions_are_bounded(
     monkeypatch, previous, current, reduce_motion, animated
 ) -> None:
-    from sidepulse.alcove_observation import AlcoveConfidenceState
-    from sidepulse.virtual_device import _apply_alcove_frame
+    from jrbar.alcove_observation import AlcoveConfidenceState
+    from jrbar.virtual_device import _apply_alcove_frame
 
     class Window:
         def __init__(self):
@@ -77,8 +77,8 @@ def test_alcove_recovery_motion_transitions_are_bounded(
 
 
 def test_alcove_recovery_animation_failure_applies_frame_once(monkeypatch) -> None:
-    from sidepulse.alcove_observation import AlcoveConfidenceState
-    from sidepulse.virtual_device import _apply_alcove_frame
+    from jrbar.alcove_observation import AlcoveConfidenceState
+    from jrbar.virtual_device import _apply_alcove_frame
 
     class Window:
         def __init__(self):
@@ -108,8 +108,8 @@ def test_alcove_recovery_animation_failure_applies_frame_once(monkeypatch) -> No
 
 
 def test_alcove_recovery_post_apply_failure_does_not_retry(monkeypatch) -> None:
-    from sidepulse.alcove_observation import AlcoveConfidenceState
-    from sidepulse.virtual_device import _apply_alcove_frame
+    from jrbar.alcove_observation import AlcoveConfidenceState
+    from jrbar.virtual_device import _apply_alcove_frame
 
     class Window:
         def __init__(self):
@@ -143,8 +143,8 @@ def test_alcove_recovery_post_apply_failure_does_not_retry(monkeypatch) -> None:
 
 
 def test_reposition_passes_ordered_alcove_motion_state_to_frame_boundary(monkeypatch) -> None:
-    from sidepulse import virtual_device
-    from sidepulse.alcove_observation import AlcoveConfidenceState, AlcoveGeometryIntent
+    from jrbar import virtual_device
+    from jrbar.alcove_observation import AlcoveConfidenceState, AlcoveGeometryIntent
 
     class Screen:
         def frame(self):
@@ -246,13 +246,13 @@ def _real_window_presentation(monkeypatch):
     (The gate exists because the suite once yanked the owner's focus
     for minutes; see tests/test_window_presentation.py.)"""
     monkeypatch.setattr(
-        "sidepulse.window_presentation.desktop_takeover_suppressed",
+        "jrbar.window_presentation.desktop_takeover_suppressed",
         lambda: False,
     )
 
 
 def test_alcove_idle_pulse_keeps_the_dark_gap_between_breaths() -> None:
-    from sidepulse.virtual_device import VirtualLedView
+    from jrbar.virtual_device import VirtualLedView
 
     view = VirtualLedView.alloc().initWithFrame_(((0, 0), (213.0, 37.0)))
     view.setMinGlow_(0.1)
@@ -264,7 +264,7 @@ def test_alcove_idle_pulse_keeps_the_dark_gap_between_breaths() -> None:
 
 
 def test_explicit_off_program_remains_invisible_with_a_minimum_glow() -> None:
-    from sidepulse.virtual_device import VirtualLedView
+    from jrbar.virtual_device import VirtualLedView
 
     view = VirtualLedView.alloc().initWithFrame_(((0, 0), (213.0, 37.0)))
     view.setMinGlow_(0.1)
@@ -276,14 +276,14 @@ def test_explicit_off_program_remains_invisible_with_a_minimum_glow() -> None:
 
 
 def test_alcove_view_boundaries_are_typed_and_change_gated(monkeypatch) -> None:
-    from sidepulse.alcove_observation import (
+    from jrbar.alcove_observation import (
         AlcoveConfidenceProjection,
         AlcoveConfidenceState,
         AlcoveGeometryIntent,
         AlcoveMotionIntent,
         AlcoveSilhouette,
     )
-    from sidepulse.virtual_device import VirtualLedView
+    from jrbar.virtual_device import VirtualLedView
 
     view = VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
     repaints: list[bool] = []
@@ -308,13 +308,13 @@ def test_alcove_view_boundaries_are_typed_and_change_gated(monkeypatch) -> None:
 
 
 def test_alcove_confidence_accessibility_failures_are_headless_safe(monkeypatch) -> None:
-    from sidepulse.alcove_observation import (
+    from jrbar.alcove_observation import (
         AlcoveConfidenceProjection,
         AlcoveConfidenceState,
         AlcoveGeometryIntent,
         AlcoveMotionIntent,
     )
-    from sidepulse.virtual_device import VirtualLedView
+    from jrbar.virtual_device import VirtualLedView
 
     view = VirtualLedView.alloc().initWithFrame_(((0, 0), (220.0, 37.0)))
     monkeypatch.setattr(view, "setNeedsDisplay_", lambda _value: None)
@@ -521,7 +521,7 @@ def _active_device(
     maximum_fps: int = 60,
 ):
     """Create one visible device with AppKit's driver boundary replaced by doubles."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     run_loop = _RunLoop(fail_timer_registration=fail_timer_registration)
     timer_factory = _TimerFactory()
@@ -750,7 +750,7 @@ def test_screen_bar_fallback_never_creates_a_second_local_timer(monkeypatch) -> 
 
 def test_screen_bar_partial_workspace_observer_install_rolls_back(monkeypatch) -> None:
     """Catches a wake-registration failure leaking the already registered sleep observer."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     class Center:
         def __init__(self) -> None:
@@ -785,7 +785,7 @@ def test_screen_bar_partial_workspace_observer_install_rolls_back(monkeypatch) -
 
 def test_screen_bar_failed_observer_rollback_remains_owned_for_teardown_retry(monkeypatch) -> None:
     """Catches a failed rollback being forgotten, duplicated, or skipped by later teardown."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     class Center:
         def __init__(self) -> None:
@@ -880,7 +880,7 @@ def test_screen_bar_display_samples_follow_target_timestamp_not_arrival(
     display_interval: float, middle_frame: tuple[tuple[float, float, float, float], ...]
 ) -> None:
     """Catches 60 or 120 Hz motion advancing by callback count or callback arrival."""
-    from sidepulse.screen_bar_pipeline import (
+    from jrbar.screen_bar_pipeline import (
         ColorSample,
         PresentationTick,
         SamplePair,
@@ -994,7 +994,7 @@ def test_screen_bar_redraw_reads_target_time_and_only_dirties_quantized_changes(
     monkeypatch,
 ) -> None:
     """Catches a frame callback parsing, sampling, rescheduling, or repainting equal output."""
-    from sidepulse.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
+    from jrbar.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
 
     link = _DisplayLink(target_timestamps=(10.5, 10.5001))
     view = _DisplayLinkView()
@@ -1053,7 +1053,7 @@ def test_screen_bar_frame_callback_never_observes_or_scans_alcove(monkeypatch) -
 
 def test_screen_bar_draw_rect_never_captures_or_scans_alcove(monkeypatch) -> None:
     """Catches pixel observation being hidden inside the AppKit paint callback."""
-    from sidepulse import alcove_observation, virtual_device
+    from jrbar import alcove_observation, virtual_device
 
     monkeypatch.setattr(
         alcove_observation,
@@ -1082,8 +1082,8 @@ def test_reposition_submits_plain_alcove_request_and_applies_validated_center(
     monkeypatch,
 ) -> None:
     """Catches main-thread identity loss or a worker result being recentered by guess."""
-    from sidepulse import virtual_device
-    from sidepulse.alcove_observation import AlcoveObservation
+    from jrbar import virtual_device
+    from jrbar.alcove_observation import AlcoveObservation
 
     class Rect:
         def __init__(self, x: float, y: float, width: float, height: float) -> None:
@@ -1257,7 +1257,7 @@ def test_reposition_submits_plain_alcove_request_and_applies_validated_center(
     inset = virtual_device._screen_bar_edge_inset()
     assert device.window.current.origin.x == pytest.approx(464.0 - inset)
     assert device.window.current.size.width == pytest.approx(272.0 + 2 * inset)
-    from sidepulse.alcove_observation import AlcoveSilhouette
+    from jrbar.alcove_observation import AlcoveSilhouette
 
     assert device.view.silhouettes[-1] == AlcoveSilhouette(600.0, 272.0, 32.0, contour)
 
@@ -1266,7 +1266,7 @@ def test_reposition_submits_plain_alcove_request_and_applies_validated_center(
     device.reposition()
     assert device.view.silhouettes[-1] is None
     assert device.view.confidence.state.value == "recovering"
-    from sidepulse.alcove_observation import latest_alcove_status
+    from jrbar.alcove_observation import latest_alcove_status
 
     assert latest_alcove_status() is None
 
@@ -1337,7 +1337,7 @@ def test_screen_bar_late_callback_clamps_last_sample_without_waking_sampler(
     monkeypatch,
 ) -> None:
     """Catches a late display tick advancing WASM or submitting work from the callback."""
-    from sidepulse.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
+    from jrbar.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
 
     link = _DisplayLink(target_timestamps=(15.0,))
     device, view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
@@ -1684,7 +1684,7 @@ def test_screen_bar_stale_program_or_screen_publication_never_reaches_paint(
     monkeypatch,
 ) -> None:
     """Catches an old worker publication crossing either generation fence."""
-    from sidepulse.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
+    from jrbar.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
 
     link = _DisplayLink(target_timestamps=(20.5,))
     device, view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
@@ -1903,8 +1903,8 @@ def test_reanchor_program_snaps_phase_to_the_hardware_write_moment() -> None:
     picks up a changed LEDS.LED; the bar snaps its clock to that moment so
     the same pulse loops together on both surfaces instead of a few
     hundred milliseconds apart."""
-    from sidepulse import virtual_device
-    from sidepulse.screen_bar_pipeline import SamplerCommand
+    from jrbar import virtual_device
+    from jrbar.screen_bar_pipeline import SamplerCommand
 
     device = virtual_device.VirtualStatusDevice.alloc().init()
 
@@ -1972,7 +1972,7 @@ def test_a_full_screen_space_hides_the_bar_unless_opted_in():
     from types import SimpleNamespace
     from unittest.mock import MagicMock
 
-    from sidepulse.virtual_device import VirtualStatusDevice, space_hides_menu_bar
+    from jrbar.virtual_device import VirtualStatusDevice, space_hides_menu_bar
 
     def screen(top_inset: float):
         return SimpleNamespace(
@@ -2019,7 +2019,7 @@ def test_show_never_fronts_the_bar_over_a_full_screen_space():
     from types import SimpleNamespace
     from unittest.mock import MagicMock
 
-    from sidepulse.virtual_device import VirtualStatusDevice
+    from jrbar.virtual_device import VirtualStatusDevice
 
     def screen(top_inset: float):
         return SimpleNamespace(
@@ -2065,7 +2065,7 @@ def test_announcer_pill_entrance_springs_from_its_top_anchor(monkeypatch) -> Non
     """The pill used to teleport: frame set, orderFrontRegardless, done.
     Its entrance is now a top-anchored spring + fade (wired 2026-08-26,
     Dynamic Island grammar), and Reduce Motion keeps the instant show."""
-    from sidepulse.virtual_device import AnnouncerPill
+    from jrbar.virtual_device import AnnouncerPill
 
     pill = AnnouncerPill()
     pill._ensure_window()
@@ -2073,19 +2073,19 @@ def test_announcer_pill_entrance_springs_from_its_top_anchor(monkeypatch) -> Non
 
     layer = pill.view.layer()
     assert layer is not None
-    assert layer.animationForKey_("sidepulse.pill.entrance") is not None
-    assert layer.animationForKey_("sidepulse.pill.fade") is not None
+    assert layer.animationForKey_("jrbar.pill.entrance") is not None
+    assert layer.animationForKey_("jrbar.pill.fade") is not None
     assert tuple(layer.anchorPoint()) == (0.5, 1.0)
 
     # Reduce Motion: no animation is queued at all.
 
     layer.removeAllAnimations()
     monkeypatch.setattr(
-        "sidepulse.accessibility_display.read_accessibility_display_preferences",
+        "jrbar.accessibility_display.read_accessibility_display_preferences",
         lambda: type("P", (), {"reduce_motion": True})(),
     )
     pill._animate_entrance()
-    assert layer.animationForKey_("sidepulse.pill.entrance") is None
+    assert layer.animationForKey_("jrbar.pill.entrance") is None
     pill.close()
 
 
@@ -2093,8 +2093,8 @@ def test_follow_window_height_tracks_the_capsules_measured_depth() -> None:
     """An expanded Alcove capsule runs far taller than the hardware
     notch; keeping hardware-notch height rendered the band mid-capsule
     as a detached smear (fixed 2026-08-27)."""
-    from sidepulse import virtual_device
-    from sidepulse.screen_bar_runtime import install_screen_bar_runtime
+    from jrbar import virtual_device
+    from jrbar.screen_bar_runtime import install_screen_bar_runtime
 
     install_screen_bar_runtime()
     screen = SimpleNamespace(
@@ -2140,7 +2140,7 @@ def test_alcove_relevance_wakes_from_a_cached_presence_read() -> None:
     cadence: the schedule inputs refresh relevance from the probe's
     cached answer instead of waiting for an unrelated reposition
     (fixed 2026-08-27)."""
-    from sidepulse.virtual_device import VirtualStatusDevice
+    from jrbar.virtual_device import VirtualStatusDevice
 
     device = VirtualStatusDevice.alloc().init()
     device.wraps_menu_bar = True
@@ -2163,8 +2163,8 @@ def test_alcove_relevance_wakes_from_a_cached_presence_read() -> None:
 
 def test_compact_mode_keeps_the_alcove_observation_schedule_alive() -> None:
     """Compact changes bar geometry, not whether Alcove is observed."""
-    from sidepulse.runtime_scheduler import RuntimeFeature
-    from sidepulse.virtual_device import VirtualStatusDevice
+    from jrbar.runtime_scheduler import RuntimeFeature
+    from jrbar.virtual_device import VirtualStatusDevice
 
     device = VirtualStatusDevice.alloc().init()
     device.window = SimpleNamespace(isVisible=lambda: True)
@@ -2188,8 +2188,8 @@ def test_compact_mode_width_follows_the_capsule_too() -> None:
     to stay at raw hardware-slot width while height and center followed
     Alcove -- a fixed 232pt band overhanging a ~200pt capsule read as a
     wider shadow box behind the app (2026-08-27 owner screenshot)."""
-    from sidepulse import virtual_device
-    from sidepulse.screen_bar_runtime import install_screen_bar_runtime
+    from jrbar import virtual_device
+    from jrbar.screen_bar_runtime import install_screen_bar_runtime
 
     install_screen_bar_runtime()
     screen = SimpleNamespace(
@@ -2224,7 +2224,7 @@ def test_compact_mode_width_follows_the_capsule_too() -> None:
 
 def test_announcer_suppression_gate_includes_fullscreen_and_compact_modes() -> None:
     """A visible Screen Bar must not leak an announcer into either exclusion."""
-    from sidepulse.virtual_device import VirtualStatusDevice
+    from jrbar.virtual_device import VirtualStatusDevice
 
     device = VirtualStatusDevice.alloc().init()
     device.window = SimpleNamespace(isVisible=lambda: True)

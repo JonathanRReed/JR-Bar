@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from sidepulse.hardware_write_policy import hardware_write_policy
-from sidepulse.presentation_policy import (
+from jrbar.hardware_write_policy import hardware_write_policy
+from jrbar.presentation_policy import (
     FiniteCue,
     GlanceOverrideReason,
     GlanceSemantic,
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.runtime_scheduler import RuntimeWorkPriority
+from jrbar.runtime_scheduler import RuntimeWorkPriority
 
 
 def _glance(

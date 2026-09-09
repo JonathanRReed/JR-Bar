@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.colors import (
+from jrbar.colors import (
     PROVIDER_BRAND_COLORS,
     STATE_SEED_COLORS,
     default_agent_color,
 )
-from sidepulse.providers import PROVIDER_SPECS
+from jrbar.providers import PROVIDER_SPECS
 
 # Below this, two colours read as the same light. ~2.3 is "just noticeable";
 # 10 is "clearly a different colour". Providers must clear the latter, with

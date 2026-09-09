@@ -7,7 +7,7 @@ one even when the accessory policy never renders it (wired 2026-08-26).
 
 from __future__ import annotations
 
-from sidepulse.main_menu import build_main_menu
+from jrbar.main_menu import build_main_menu
 
 
 def _flatten(menu):

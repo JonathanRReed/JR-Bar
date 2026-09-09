@@ -9,13 +9,13 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.install import (
+from jrbar.install import (
     install_claude_hooks,
     install_codex_hooks,
     install_openclaw_hooks,
     install_provider_hooks,
 )
-from sidepulse.status_bar_launch import install_launch_agent
+from jrbar.status_bar_launch import install_launch_agent
 
 MAX_CONFIG_BYTES = 1024 * 1024
 
@@ -41,11 +41,11 @@ def _assert_no_installer_scratch(root: Path) -> None:
 @pytest.mark.parametrize(
     ("stage", "patch_target"),
     (
-        ("create scratch", "sidepulse.private_io.os.open"),
-        ("write", "sidepulse.private_io._write_all"),
-        ("fsync", "sidepulse.private_io.os.fsync"),
-        ("replace", "sidepulse.private_io._replace_private_leaf"),
-        ("directory fsync", "sidepulse.install._fsync_provider_parent"),
+        ("create scratch", "jrbar.private_io.os.open"),
+        ("write", "jrbar.private_io._write_all"),
+        ("fsync", "jrbar.private_io.os.fsync"),
+        ("replace", "jrbar.private_io._replace_private_leaf"),
+        ("directory fsync", "jrbar.install._fsync_provider_parent"),
     ),
 )
 def test_claude_install_failure_before_commit_preserves_original_config(
@@ -70,7 +70,7 @@ def test_claude_install_failure_before_commit_preserves_original_config(
 
         effect = fail_scratch
     elif stage == "write":
-        from sidepulse.private_io import _write_all as real_write_all
+        from jrbar.private_io import _write_all as real_write_all
 
         def fail_config_write(descriptor: int, data: bytes):
             if b'"hooks"' in data:
@@ -89,7 +89,7 @@ def test_claude_install_failure_before_commit_preserves_original_config(
 
         effect = fail_config_fsync
     elif stage == "replace":
-        from sidepulse.private_io import _replace_private_leaf as real_replace
+        from jrbar.private_io import _replace_private_leaf as real_replace
 
         def fail_config_replace(scratch_name: str, target_name: str, parent_descriptor: int):
             if target_name == config.name:
@@ -100,7 +100,7 @@ def test_claude_install_failure_before_commit_preserves_original_config(
     else:
         effect = OSError(stage)
 
-    patch_options = {"create": True} if patch_target.startswith("sidepulse.install") else {}
+    patch_options = {"create": True} if patch_target.startswith("jrbar.install") else {}
     with (
         patch(patch_target, side_effect=effect, **patch_options),
         pytest.raises(OSError, match=stage),
@@ -125,9 +125,9 @@ def test_codex_trust_refresh_failure_rolls_back_only_this_provider(tmp_path: Pat
     _private_log(log)
 
     with (
-        patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True),
-        patch("sidepulse.install.local_codex_hook_hashes", return_value={}),
-        patch("sidepulse.install.resolve_codex_hook_hashes", side_effect=OSError("trust refresh")),
+        patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True),
+        patch("jrbar.install.local_codex_hook_hashes", return_value={}),
+        patch("jrbar.install.resolve_codex_hook_hashes", side_effect=OSError("trust refresh")),
         pytest.raises(OSError, match="trust refresh"),
     ):
         install_codex_hooks(log, config, python_executable="python3")
@@ -148,7 +148,7 @@ def test_claude_post_verify_failure_rolls_back_config_and_preserves_log(tmp_path
 
     with (
         patch(
-            "sidepulse.install._verify_provider_install",
+            "jrbar.install._verify_provider_install",
             side_effect=OSError("post-verify"),
             create=True,
         ),
@@ -178,7 +178,7 @@ def test_rollback_failure_is_reported_without_overwriting_replacement(tmp_path: 
 
     with (
         patch(
-            "sidepulse.install._verify_provider_install",
+            "jrbar.install._verify_provider_install",
             side_effect=replace_before_verification,
             create=True,
         ),
@@ -247,7 +247,7 @@ def test_json_installer_validate_stage_refuses_unsafe_config_without_mutation(
 
     original = config.lstat()
     original_bytes = None if config.is_symlink() else config.read_bytes()
-    context = context if mutation == "non_owner" else patch("sidepulse.install._NOOP", create=True)
+    context = context if mutation == "non_owner" else patch("jrbar.install._NOOP", create=True)
     with context, pytest.raises((OSError, ValueError, json.JSONDecodeError)):
         install_claude_hooks(log, config, python_executable="python3")
 
@@ -277,7 +277,7 @@ def test_config_growth_during_bounded_read_is_refused_before_mutation(tmp_path: 
         return real_read(descriptor, size)
 
     with (
-        patch("sidepulse.private_io.os.read", side_effect=grow_then_read),
+        patch("jrbar.private_io.os.read", side_effect=grow_then_read),
         pytest.raises(OSError, match="maximum size"),
     ):
         install_claude_hooks(log, config, python_executable="python3")
@@ -310,7 +310,7 @@ def test_parent_swap_after_publish_is_rolled_back_through_the_held_parent(
 
     with (
         patch(
-            "sidepulse.install._fsync_provider_parent",
+            "jrbar.install._fsync_provider_parent",
             side_effect=swap_before_directory_fsync,
             create=True,
         ),
@@ -334,7 +334,7 @@ def test_openclaw_late_write_failure_rolls_back_all_provider_owned_files(tmp_pat
     _private_file(config, original)
     _private_log(log)
 
-    from sidepulse.private_io import _write_all as real_write_all
+    from jrbar.private_io import _write_all as real_write_all
 
     def fail_hook_md(descriptor: int, data: bytes):
         if b"# JR-Bar Status" in data:
@@ -342,7 +342,7 @@ def test_openclaw_late_write_failure_rolls_back_all_provider_owned_files(tmp_pat
         return real_write_all(descriptor, data)
 
     with (
-        patch("sidepulse.private_io._write_all", side_effect=fail_hook_md),
+        patch("jrbar.private_io._write_all", side_effect=fail_hook_md),
         pytest.raises(OSError, match="late write"),
     ):
         install_openclaw_hooks(log, config, python_executable="python3")
@@ -404,12 +404,12 @@ def test_provider_backups_are_bounded_and_retain_exact_preinstall_bytes(
     (
         ("codex", "config.toml", "# preserve codex comment\n"),
         ("claude", "settings.json", '{"unrelated": true}\n'),
-        ("grok", "sidepulse.json", '{"unrelated": true}\n'),
+        ("grok", "jrbar.json", '{"unrelated": true}\n'),
         ("devin", "hooks.json", '{"unrelated": true}\n'),
         ("cursor", "hooks.json", '{"unrelated": true}\n'),
         ("hermes", "config.yaml", "# preserve hermes comment\nunrelated: true\n"),
         ("openclaw", "openclaw.json", '{"unrelated": true}\n'),
-        ("opencode", "sidepulse.js", None),
+        ("opencode", "jrbar.js", None),
     ),
 )
 def test_each_provider_post_verify_failure_rolls_back_only_its_owned_files(
@@ -431,7 +431,7 @@ def test_each_provider_post_verify_failure_rolls_back_only_its_owned_files(
     }
 
     with (
-        patch("sidepulse.install._verify_provider_install", side_effect=OSError("post-verify")),
+        patch("jrbar.install._verify_provider_install", side_effect=OSError("post-verify")),
         pytest.raises(OSError, match="post-verify"),
     ):
         install_provider_hooks(provider, **kwargs)
@@ -461,9 +461,9 @@ def test_launch_agent_trust_refresh_failure_restores_and_restarts_previous_job(
             raise OSError("trust refresh")
 
     with (
-        patch("sidepulse._status_bar_launch_legacy.default_state_dir", return_value=tmp_path / "state"),
-        patch("sidepulse._status_bar_launch_legacy.launch_agent_running", return_value=True),
-        patch("sidepulse._status_bar_launch_legacy.restart_launch_agent", side_effect=restart),
+        patch("jrbar._status_bar_launch_legacy.default_state_dir", return_value=tmp_path / "state"),
+        patch("jrbar._status_bar_launch_legacy.launch_agent_running", return_value=True),
+        patch("jrbar._status_bar_launch_legacy.restart_launch_agent", side_effect=restart),
         pytest.raises(OSError, match="trust refresh"),
     ):
         install_launch_agent(

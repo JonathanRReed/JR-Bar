@@ -4,10 +4,10 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.dnd_policy import DisplayAdmission
-from sidepulse.effect_registry import EffectDefinition, EffectRegistry
-from sidepulse.scenes import Scene
-from sidepulse.semantic_effect_router import (
+from jrbar.dnd_policy import DisplayAdmission
+from jrbar.effect_registry import EffectDefinition, EffectRegistry
+from jrbar.scenes import Scene
+from jrbar.semantic_effect_router import (
     DEFAULT_SEMANTIC_EFFECT_MAP,
     SEMANTIC_PRIORITY,
     CourtesySuppression,

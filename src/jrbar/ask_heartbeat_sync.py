@@ -26,7 +26,7 @@ MAX_ASK_HEARTBEAT_PRESENTATIONS: Final = 64
 
 # This is a protocol signature, not a user-selectable provider animation.  The
 # exact name keeps it distinct from the general-purpose ``heartbeat`` motion.
-ASK_HEARTBEAT_SIGNATURE: Final = "sidepulse.ask-heartbeat-sync:v1"
+ASK_HEARTBEAT_SIGNATURE: Final = "jrbar.ask-heartbeat-sync:v1"
 
 # One familiar lub-dub, followed by a long rest.  Two onsets in one second is
 # the absolute rate, so the reserved cadence stays at the existing 2 Hz limit.

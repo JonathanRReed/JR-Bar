@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.announcer_stack import AnnouncerAlertIdentity
-from sidepulse.answer_in_place import (
+from jrbar.announcer_stack import AnnouncerAlertIdentity
+from jrbar.answer_in_place import (
     ANSWER_IN_PLACE_RUNTIME_SURFACE,
     MAX_ANSWER_REPLY_LENGTH,
     AnswerActionKind,
@@ -14,12 +14,12 @@ from sidepulse.answer_in_place import (
     reconcile_answer_attempt,
     reduce_answer_intent,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     ProductCapability,
     ProductCapabilityInvocation,
     negotiate_provider_contract,
 )
-from sidepulse.provider_facts import RequestKind
+from jrbar.provider_facts import RequestKind
 
 
 def _version(major: int, minor: int) -> dict[str, int]:

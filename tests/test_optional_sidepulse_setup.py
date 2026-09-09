@@ -2,7 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sidepulse import cli
+from jrbar import cli
 
 
 def test_bare_setup_does_not_request_the_sd_eject_guard() -> None:
@@ -40,9 +40,9 @@ def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> Non
 
     with (
         patch.object(cli, "install_hook_results", return_value=[hook_result]),
-        patch("sidepulse.sd_eject_guard_launch.install_sd_eject_guard") as guard,
+        patch("jrbar.sd_eject_guard_launch.install_sd_eject_guard") as guard,
         patch(
-            "sidepulse.status_bar_launch.install_launch_agent",
+            "jrbar.status_bar_launch.install_launch_agent",
             return_value=launch_result,
         ) as launch,
     ):
@@ -60,7 +60,7 @@ def test_no_sd_eject_guard_still_overrides_an_explicit_guard_request() -> None:
 
     with (
         patch.object(cli, "install_hook_results", return_value=[]),
-        patch("sidepulse.sd_eject_guard_launch.install_sd_eject_guard") as guard,
+        patch("jrbar.sd_eject_guard_launch.install_sd_eject_guard") as guard,
     ):
         result = cli.cmd_sidepulse_setup(args)
 

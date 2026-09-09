@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import (
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import (
     MAX_CLEAR_TARGETS,
     MAX_COMPLETION_RECEIPTS,
     ClearAgentsBatchReceipt,
@@ -18,7 +18,7 @@ from sidepulse.clear_agents import (
     CompletionPresentationKey,
     CompletionPresentationReceipt,
 )
-from sidepulse.clear_agents_store import (
+from jrbar.clear_agents_store import (
     CLEAR_AGENTS_STORE_NAME,
     MAX_CLEAR_AGENTS_STORE_BYTES,
     ClearAgentsRestore,
@@ -193,7 +193,7 @@ def test_restore_health_distinguishes_missing_unsupported_corrupt_and_unavailabl
     assert corrupt.health is ClearAgentsRestoreHealth.CORRUPT
 
     with patch(
-        "sidepulse.clear_agents_store.read_private_text",
+        "jrbar.clear_agents_store.read_private_text",
         side_effect=OSError("/private/path must not escape"),
     ):
         unavailable = load_clear_agents_state(target)
@@ -205,7 +205,7 @@ def test_restore_health_distinguishes_missing_unsupported_corrupt_and_unavailabl
 def test_permission_denial_restores_empty_unavailable_state(tmp_path: Path) -> None:
     target = tmp_path / CLEAR_AGENTS_STORE_NAME
     with patch(
-        "sidepulse.clear_agents_store.read_private_text",
+        "jrbar.clear_agents_store.read_private_text",
         side_effect=PermissionError("permission denied"),
     ):
         restored = load_clear_agents_state(target)
@@ -306,7 +306,7 @@ def test_oversized_store_is_unavailable_without_reading_payload(tmp_path: Path) 
         bytes_read += len(chunk)
         return chunk
 
-    with patch("sidepulse.private_io.os.read", side_effect=observing_read):
+    with patch("jrbar.private_io.os.read", side_effect=observing_read):
         restored = load_clear_agents_state(target)
 
     assert restored.state == ClearAgentsState()
@@ -350,7 +350,7 @@ def test_failed_atomic_replace_preserves_exact_previous_bytes(tmp_path: Path) ->
     previous = target.read_bytes()
 
     with (
-        patch("sidepulse.private_io.os.replace", side_effect=OSError("replace failed")),
+        patch("jrbar.private_io.os.replace", side_effect=OSError("replace failed")),
         pytest.raises(OSError, match="replace failed"),
     ):
         save_clear_agents_state(target, new_state)

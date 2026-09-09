@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 from Foundation import NSObject
 
-from sidepulse import settings_category_runtime as runtime
-from sidepulse import settings_navigation as navigation
-from sidepulse.settings import AgentMonitorSettings
+from jrbar import settings_category_runtime as runtime
+from jrbar import settings_navigation as navigation
+from jrbar.settings import AgentMonitorSettings
 
 
 class _OverviewContentTarget(NSObject):
@@ -22,7 +22,7 @@ def target(monkeypatch):
     controller.global_action_lifecycle = SimpleNamespace(registry=None)
     # The chart builder normally starts a local transcript scan. This test
     # checks real native controls without reading the user's transcripts.
-    monkeypatch.setattr("sidepulse.usage_graph_worker.refresh_usage_graph", lambda _: None)
+    monkeypatch.setattr("jrbar.usage_graph_worker.refresh_usage_graph", lambda _: None)
     return controller
 
 
@@ -60,7 +60,7 @@ def test_usage_activity_is_reachable_with_chart_heatmap_and_no_global_recorder(t
 
 @pytest.mark.parametrize("mode", ["sessions", "percent"])
 def test_activity_legend_names_only_selected_providers(mode):
-    from sidepulse.settings_window import usage_graph_legend_text
+    from jrbar.settings_window import usage_graph_legend_text
 
     settings = AgentMonitorSettings().with_usage_graph_providers(("grok",)).with_usage_display_mode(mode)
     legend = usage_graph_legend_text(settings)

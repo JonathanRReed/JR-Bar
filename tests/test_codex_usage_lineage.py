@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse import usage_stats
+from jrbar import usage_stats
 
 
 def _meta(

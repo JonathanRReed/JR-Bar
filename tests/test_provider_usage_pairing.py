@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.provider_usage_pairing import (
+from jrbar.provider_usage_pairing import (
     PAIRING_DOCUMENT_SCHEMA_VERSION,
     export_pairing_document,
     import_pairing_document,

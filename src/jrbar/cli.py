@@ -75,10 +75,10 @@ def main(argv: list[str] | None = None, *, prog: str = "agent-monitor") -> int:
     return args.func(args)
 
 
-def sidepulse_main(argv: list[str] | None = None) -> int:
+def jrbar_main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["agent-monitor"]:
-        return main(args[1:], prog="sidepulse agent-monitor")
+        return main(args[1:], prog="jrbar agent-monitor")
 
     parser = build_sidepulse_parser()
     if not args:
@@ -91,7 +91,7 @@ def sidepulse_main(argv: list[str] | None = None) -> int:
 
 def build_sidepulse_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="sidepulse",
+        prog="jrbar",
         description=f"{PRODUCT_DISPLAY_NAME} command line tools.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

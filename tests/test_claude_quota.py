@@ -6,7 +6,7 @@ def test_the_redirect_guard_refuses_a_cross_origin_hop():
     whoever answered it. Ported from CodexBar's ProviderHTTPClient."""
     from types import SimpleNamespace
 
-    from sidepulse.claude_quota import _redirect_guard_class
+    from jrbar.claude_quota import _redirect_guard_class
 
     guard = _redirect_guard_class().alloc().initWithOrigin_(
         ("https", "api.anthropic.com", None)

@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.cli import sidepulse_main
-from sidepulse.doctor import (
+from jrbar.cli import jrbar_main
+from jrbar.doctor import (
     DIAGNOSTIC_MANIFEST,
     DOCTOR_VERSION,
     MAX_DOCTOR_EXPORT_BYTES,
@@ -27,7 +27,7 @@ from sidepulse.doctor import (
     render_diagnostic_result,
     write_diagnostic_export,
 )
-from sidepulse.private_export import PUBLIC_EXPORT_ERROR_MESSAGE, PrivateExportError
+from jrbar.private_export import PUBLIC_EXPORT_ERROR_MESSAGE, PrivateExportError
 
 
 def _finding(
@@ -181,18 +181,18 @@ def test_default_collection_uses_only_read_only_local_probes(tmp_path: Path) -> 
     launch_agent = tmp_path / "missing.plist"
 
     with (
-        patch("sidepulse.doctor.running_inside_bundle", return_value=False),
-        patch("sidepulse.doctor.launch_agent_path", return_value=launch_agent),
-        patch("sidepulse.doctor.default_state_dir", return_value=state),
-        patch("sidepulse.doctor.default_log_path", side_effect=lambda provider: state / f"{provider}.jsonl"),
-        patch("sidepulse.doctor.detect_provider_configs", return_value=[]),
-        patch("sidepulse.doctor.negotiated_provider_sources", return_value=()),
-        patch("sidepulse.doctor.discover_devices", return_value=[]),
+        patch("jrbar.doctor.running_inside_bundle", return_value=False),
+        patch("jrbar.doctor.launch_agent_path", return_value=launch_agent),
+        patch("jrbar.doctor.default_state_dir", return_value=state),
+        patch("jrbar.doctor.default_log_path", side_effect=lambda provider: state / f"{provider}.jsonl"),
+        patch("jrbar.doctor.detect_provider_configs", return_value=[]),
+        patch("jrbar.doctor.negotiated_provider_sources", return_value=()),
+        patch("jrbar.doctor.discover_devices", return_value=[]),
         # Otherwise this probe reads the real settings file and the live
         # window list, and the assertion below would depend on whether
         # Alcove happens to be running on the machine under test.
-        patch("sidepulse.doctor._alcove_following_enabled", return_value=False),
-        patch("sidepulse.doctor.subprocess.run") as run,
+        patch("jrbar.doctor._alcove_following_enabled", return_value=False),
+        patch("jrbar.doctor.subprocess.run") as run,
     ):
         result = collect_diagnostics()
 
@@ -228,7 +228,7 @@ def test_private_export_writes_one_exact_0600_json_leaf(tmp_path: Path) -> None:
 def test_private_export_failure_has_stable_path_free_public_copy(tmp_path: Path) -> None:
     raw = f"could not replace {tmp_path}/private-user-token.json"
     with (
-        patch("sidepulse.doctor.write_private_export", side_effect=PrivateExportError(raw)),
+        patch("jrbar.doctor.write_private_export", side_effect=PrivateExportError(raw)),
         pytest.raises(DoctorExportError) as raised,
     ):
         write_diagnostic_export(tmp_path / "doctor.json", _result())
@@ -244,10 +244,10 @@ def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths(
 ) -> None:
     target = tmp_path / "private-user" / "doctor.json"
     with (
-        patch("sidepulse.cli.collect_diagnostics", return_value=_result()),
-        patch("sidepulse.cli.write_diagnostic_export", return_value=target),
+        patch("jrbar.cli.collect_diagnostics", return_value=_result()),
+        patch("jrbar.cli.write_diagnostic_export", return_value=target),
     ):
-        exit_code = sidepulse_main(["doctor", "--json", "--export", str(target)])
+        exit_code = jrbar_main(["doctor", "--json", "--export", str(target)])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -262,8 +262,8 @@ def test_sidepulse_doctor_cli_uses_stable_public_collection_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     raw = f"provider error for /Users/private-user at {tmp_path}"
-    with patch("sidepulse.cli.collect_diagnostics", side_effect=RuntimeError(raw)):
-        exit_code = sidepulse_main(["doctor"])
+    with patch("jrbar.cli.collect_diagnostics", side_effect=RuntimeError(raw)):
+        exit_code = jrbar_main(["doctor"])
 
     captured = capsys.readouterr()
     assert exit_code == 1
@@ -278,10 +278,10 @@ def test_sidepulse_doctor_cli_sanitizes_encoding_failures(
 ) -> None:
     raw = f"encoding failed for /Users/private-user at {tmp_path}"
     with (
-        patch("sidepulse.cli.collect_diagnostics", return_value=_result()),
-        patch("sidepulse.cli.encode_diagnostic_result", side_effect=RuntimeError(raw)),
+        patch("jrbar.cli.collect_diagnostics", return_value=_result()),
+        patch("jrbar.cli.encode_diagnostic_result", side_effect=RuntimeError(raw)),
     ):
-        exit_code = sidepulse_main(["doctor", "--json"])
+        exit_code = jrbar_main(["doctor", "--json"])
 
     captured = capsys.readouterr()
     assert exit_code == 1

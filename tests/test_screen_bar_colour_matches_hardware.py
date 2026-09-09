@@ -21,9 +21,9 @@ So the property is now the reverse: the Screen Bar uses its OWN gains, always.
 
 from __future__ import annotations
 
-from sidepulse.led_status import NEUTRAL_CHANNEL_GAINS
-from sidepulse.settings import AgentMonitorSettings, DeviceDisplaySetting
-from sidepulse.status_bar import VIRTUAL_DEVICE_ID, StatusBarController
+from jrbar.led_status import NEUTRAL_CHANNEL_GAINS
+from jrbar.settings import AgentMonitorSettings, DeviceDisplaySetting
+from jrbar.status_bar import VIRTUAL_DEVICE_ID, StatusBarController
 
 
 HARDWARE_GAINS = (1.0, 0.38041666666666674, 1.0)
@@ -101,7 +101,7 @@ def test_both_surfaces_emit_matching_light_without_borrowing() -> None:
     draws nominal sRGB. Same logical colour, same emitted light, no shared
     calibration.
     """
-    from sidepulse.led_status import apply_strip_transfer_to_program
+    from jrbar.led_status import apply_strip_transfer_to_program
 
     for nominal in ("#FFFFFF", "#FFFF00", "#00FFFF", "#00FF66"):
         strip_drive = apply_strip_transfer_to_program(nominal, HARDWARE_GAINS)

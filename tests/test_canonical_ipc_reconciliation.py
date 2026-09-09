@@ -8,11 +8,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.collector import LiveAgentMonitor
-from sidepulse.hook import hook_log_main
-from sidepulse.ipc import HookEventServer, ProviderRefreshHint, send_refresh_hint
-from sidepulse.provider_facts import EventToken, WorkLifecycle
+from jrbar.capacity_types import SourceKey
+from jrbar.collector import LiveAgentMonitor
+from jrbar.hook import hook_log_main
+from jrbar.ipc import HookEventServer, ProviderRefreshHint, send_refresh_hint
+from jrbar.provider_facts import EventToken, WorkLifecycle
 
 SOURCE = SourceKey("codex", "hooks", "global", "live_agent_events")
 
@@ -181,8 +181,8 @@ def test_hook_persists_normalized_content_free_record_before_hint(
         return True
 
     with (
-        patch("sidepulse.hook.sys.stdin.read", return_value=_codex_line()),
-        patch("sidepulse.hook.send_refresh_hint", side_effect=observe_send),
+        patch("jrbar.hook.sys.stdin.read", return_value=_codex_line()),
+        patch("jrbar.hook.send_refresh_hint", side_effect=observe_send),
     ):
         assert hook_log_main("codex", log) == 0
 
@@ -216,10 +216,10 @@ def test_inert_hook_record_is_persisted_before_its_refresh_hint(
 
     with (
         patch(
-            "sidepulse.hook.sys.stdin.read",
+            "jrbar.hook.sys.stdin.read",
             return_value=_codex_line(event_name="Notification"),
         ),
-        patch("sidepulse.hook.send_refresh_hint", side_effect=observe_send),
+        patch("jrbar.hook.send_refresh_hint", side_effect=observe_send),
     ):
         assert hook_log_main("codex", log) == 0
 

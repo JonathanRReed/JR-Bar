@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_qol import (
+from jrbar.provider_usage_qol import (
     detect_reset_events,
     format_reset_countdown,
     threshold_crossings,
@@ -118,8 +118,8 @@ def test_usage_totals_add_machine_local_usage_without_summing_quota_lanes():
 def test_codex_banked_credits_ride_evidence_into_the_snapshot():
     """rollout rate_limits carries {"credits": ...}; it must surface as
     credits_remaining, never as a phantom usage lane."""
-    from sidepulse.provider_usage_parsers import parse_codex_usage
-    from sidepulse.usage_stats import codex_windows_from_limits
+    from jrbar.provider_usage_parsers import parse_codex_usage
+    from jrbar.usage_stats import codex_windows_from_limits
 
     windows = codex_windows_from_limits(
         {
@@ -171,7 +171,7 @@ def test_reconnect_outcome_reporter_tells_the_truth():
     ready and name the fix when the server still rejects."""
     from types import SimpleNamespace
 
-    from sidepulse.provider_usage_feedback import report_reconnect_outcome
+    from jrbar.provider_usage_feedback import report_reconnect_outcome
 
     logs = []
     messages = []
@@ -214,8 +214,8 @@ def test_degraded_interlude_does_not_wipe_the_reset_baseline():
     """A vendor incident's degraded snapshot, published between two good
     readings, must not swallow the reset crossing (the owner's Codex
     refill went uncelebrated behind exactly that interlude)."""
-    from sidepulse.provider_usage_qol import merged_edge_baseline
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_qol import merged_edge_baseline
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     good_before = snapshot(990, (lane(5, 1000),))
     degraded = snapshot(
@@ -237,8 +237,8 @@ def test_degraded_interlude_does_not_wipe_the_reset_baseline():
 
 
 def test_comparable_publish_replaces_the_baseline_and_absent_rows_persist():
-    from sidepulse.provider_usage_qol import merged_edge_baseline
-    from sidepulse.provider_usage_runtime import ProviderUsageState
+    from jrbar.provider_usage_qol import merged_edge_baseline
+    from jrbar.provider_usage_runtime import ProviderUsageState
 
     old = snapshot(990, (lane(5, 1000),))
     fresh = snapshot(1001, (lane(100, 2000),))

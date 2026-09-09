@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from sidepulse.screen_bar_design import (
+from jrbar.screen_bar_design import (
     MAX_BAND_WIDTH,
     MIN_BAND_WIDTH,
     ScreenBarSemantic,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidepulse.today_menu import (
+from jrbar.today_menu import (
     TodaySnapshot,
     _relative_start,
     project_today_rows,

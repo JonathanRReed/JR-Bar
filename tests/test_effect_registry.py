@@ -1,7 +1,7 @@
 import pytest
 
-from sidepulse import colors as colors_module
-from sidepulse.effect_registry import (
+from jrbar import colors as colors_module
+from jrbar.effect_registry import (
     SAFE_BLINK_CADENCES,
     EffectDefinition,
     EffectParameter,
