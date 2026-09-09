@@ -37,6 +37,10 @@ operator export, architecture-policing meta-tests, dead code.
 | E | Swift Settings, Control Center, Usage, Effects, Calibration, Activity History | pending |
 | F | Hardware verification (Pro, Dot, linked mode, Creator Micro 2), Pi + Gemini providers, Sparkle + notarization | pending |
 
+## Definition of done
+
+When the work is declared done, the Mac must be running the latest commit: rebuild `app/build/JR-Bar.app`, reinstall the LaunchAgent(s), restart, and verify the running daemon and app come from HEAD (`git rev-parse HEAD` recorded in the doctor output).
+
 ## Open items needing Jonathan
 
 - `xcrun notarytool store-credentials jrbar-notary --apple-id ... --team-id AJ9VWBRNZN`
