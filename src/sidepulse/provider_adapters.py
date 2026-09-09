@@ -148,6 +148,7 @@ class ProviderEventName(str, Enum):
     SESSION_END = "session_end"
     SESSION_FINALIZE = "session_finalize"
     API_REQUEST_ERROR = "api_request_error"
+    INTERRUPT = "interrupt"
 
 
 class NotificationKind(str, Enum):
@@ -372,6 +373,19 @@ _SESSION_END = _rule(
     request_state=ProviderRequestState.RESOLVED,
     request_kind=RequestKind.UNKNOWN,
 )
+# Codex "Interrupt": the operator aborted the turn (Esc / Ctrl-C inside the
+# TUI). The session stays open and idle, awaiting the next prompt, so it
+# lands on the same lifecycle as SessionStart. Rank sits between Stop and
+# SessionEnd so an interrupt after a Stop tie-breaks as the newer truth
+# without outranking a real SessionEnd.
+_INTERRUPT = _rule(
+    ProviderEventName.INTERRUPT,
+    WorkLifecycle.IDLE,
+    NextActor.USER,
+    83,
+    request_state=ProviderRequestState.RESOLVED,
+    request_kind=RequestKind.UNKNOWN,
+)
 _SESSION_FINALIZE = _rule(
     ProviderEventName.SESSION_FINALIZE,
     WorkLifecycle.UNKNOWN,
@@ -405,6 +419,8 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
         "StopFailure": _STOP_FAILURE,
+        "Interrupt": _INTERRUPT,
+        "SessionEnd": _SESSION_END,
     },
     "claude": {
         "SessionStart": _SESSION_START,

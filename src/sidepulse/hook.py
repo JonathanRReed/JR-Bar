@@ -217,7 +217,14 @@ def process_hook_payload(
 
 def hook_log_main(provider: str, log_path: Path) -> int:
     try:
-        process_hook_payload(provider, log_path, sys.stdin.read())
+        payload_text = sys.stdin.read()
+        try:
+            from .process_registry import note_hook_payload
+
+            note_hook_payload(provider, payload_text)
+        except Exception:
+            pass
+        process_hook_payload(provider, log_path, payload_text)
     except Exception:
         return 0
     finally:

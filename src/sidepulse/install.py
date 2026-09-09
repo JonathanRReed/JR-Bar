@@ -49,6 +49,7 @@ from .providers import (
     KIRO_MANAGED_DESCRIPTION,
     KIRO_NATIVE_EVENT_NAMES,
     OPENCLAW_HOOK_NAME,
+    _is_sidepulse_hook_invocation,
     default_antigravity_config_path,
     default_cursor_config_path,
     default_devin_config_path,
@@ -1617,16 +1618,20 @@ def codex_hook_block(
         "# Provider-neutral status collection. Do not edit inside this block.",
     ]
     for event_name in CODEX_EVENTS:
-        lines.extend(
-            [
-                f"[[hooks.{event_name}]]",
-                'matcher = "*"',
-                f"[[hooks.{event_name}.hooks]]",
-                'type = "command"',
-                f"command = '''{command}'''",
-                "",
-            ]
-        )
+        entry = [
+            f"[[hooks.{event_name}]]",
+            'matcher = "*"',
+            f"[[hooks.{event_name}.hooks]]",
+            'type = "command"',
+            f"command = '''{command}'''",
+        ]
+        if event_name in {"SessionEnd", "Interrupt"}:
+            # Codex runs these during teardown with a one-second default
+            # and a three-second cap. Ask for the cap: a cold interpreter
+            # must still land the record before the process is gone.
+            entry.append("timeout = 3")
+        entry.append("")
+        lines.extend(entry)
     lines.append(MANAGED_END)
     return "\n".join(lines) + "\n"
 
@@ -1652,12 +1657,38 @@ def resolve_codex_hook_trust(
     The install path treated all three as "nothing to do", which is how
     an install could report success and leave a hook Codex will not run.
     """
+    # Codex's trust hash is a pure function of the hook's config identity
+    # (see codex_hook_trust). Compute it locally first: it is instant,
+    # works while Codex is busy, and needs no app-server round trip. The
+    # RPC remains the fallback for a config shape the local model does
+    # not understand.
+    local = local_codex_hook_hashes(config_path)
+    if local:
+        return CodexHookTrust(CodexHookTrustStatus.TRUSTED, local)
     if codex_cli_path() is None:
         return CodexHookTrust(CodexHookTrustStatus.CLI_NOT_FOUND)
     hashes = resolve_codex_hook_hashes(config_path, cwd, timeout_seconds)
     if not hashes:
         return CodexHookTrust(CodexHookTrustStatus.NOT_CONFIRMED)
     return CodexHookTrust(CodexHookTrustStatus.TRUSTED, dict(hashes))
+
+
+def local_codex_hook_hashes(config_path: Path) -> dict[str, str]:
+    from .codex_hook_trust import trusted_hashes_for_config
+
+    try:
+        text = read_private_text(config_path.expanduser(), tighten=False)
+    except (OSError, ValueError):
+        return {}
+
+    def is_ours(command: str) -> bool:
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return False
+        return _is_sidepulse_hook_invocation(parts)
+
+    return trusted_hashes_for_config(text, config_path.expanduser(), is_ours=is_ours)
 
 
 def resolve_codex_hook_hashes(
