@@ -16,9 +16,9 @@ def _module():
 
 
 def _app_bundle(tmp_path: Path, *, version: str = "0.5.0") -> Path:
-    app = tmp_path / "build" / "SidePulse.app"
+    app = tmp_path / "build" / "JR-Bar.app"
     contents = app / "Contents"
-    executable = contents / "MacOS" / "SidePulse"
+    executable = contents / "MacOS" / "JR-Bar"
     resources = contents / "Resources"
     executable.parent.mkdir(parents=True)
     resources.mkdir()
@@ -29,7 +29,7 @@ def _app_bundle(tmp_path: Path, *, version: str = "0.5.0") -> Path:
     with (contents / "Info.plist").open("wb") as stream:
         plistlib.dump(
             {
-                "CFBundleIdentifier": "io.sidepulse.app",
+                "CFBundleIdentifier": "com.jonathanreed.jrbar",
                 "CFBundleShortVersionString": version,
                 "CFBundleVersion": "50",
             },
@@ -43,7 +43,7 @@ def test_package_archive_contains_only_sidepulse_app_and_preserves_bundle_tree(
 ) -> None:
     package_sparkle_archive = _module()
     app = _app_bundle(tmp_path)
-    output = tmp_path / "dist" / "SidePulse-0.5.0-arm64.zip"
+    output = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.zip"
     output.parent.mkdir(parents=True)
 
     result = package_sparkle_archive.package_archive(app=app, output=output)
@@ -52,7 +52,7 @@ def test_package_archive_contains_only_sidepulse_app_and_preserves_bundle_tree(
     with zipfile.ZipFile(output) as archive:
         members = archive.namelist()
     assert members
-    assert {Path(member).parts[0] for member in members} == {"SidePulse.app"}
+    assert {Path(member).parts[0] for member in members} == {"JR-Bar.app"}
 
     extracted = tmp_path / "extracted"
     subprocess.run(
@@ -62,21 +62,21 @@ def test_package_archive_contains_only_sidepulse_app_and_preserves_bundle_tree(
         text=True,
         timeout=30,
     )
-    extracted_app = extracted / "SidePulse.app"
+    extracted_app = extracted / "JR-Bar.app"
     assert (extracted_app / "Contents" / "Resources" / "JR Bar.txt").read_bytes() == b"resource bytes\n"
     link = extracted_app / "Contents" / "Resources" / "current"
     assert link.is_symlink()
     assert os.readlink(link) == "JR Bar.txt"
-    assert os.access(extracted_app / "Contents" / "MacOS" / "SidePulse", os.X_OK)
+    assert os.access(extracted_app / "Contents" / "MacOS" / "JR-Bar", os.X_OK)
 
 
 @pytest.mark.parametrize(
     ("app_name", "output_name", "message"),
     (
-        ("Other.app", "SidePulse-0.5.0-arm64.zip", "SidePulse.app"),
-        ("SidePulse.app", "SidePulse-9.9.9-arm64.zip", "bundle version"),
-        ("SidePulse.app", "SidePulse-0.5.0-../escape.zip", "archive name"),
-        ("SidePulse.app", "latest.zip", "archive name"),
+        ("Other.app", "JR-Bar-0.5.0-arm64.zip", "JR-Bar.app"),
+        ("JR-Bar.app", "JR-Bar-9.9.9-arm64.zip", "bundle version"),
+        ("JR-Bar.app", "JR-Bar-0.5.0-../escape.zip", "archive name"),
+        ("JR-Bar.app", "latest.zip", "archive name"),
     ),
 )
 def test_package_archive_rejects_unsafe_or_inexact_identity(
@@ -104,9 +104,9 @@ def test_package_archive_rejects_symlinked_inputs_outputs_and_output_inside_bund
 ) -> None:
     package_sparkle_archive = _module()
     app = _app_bundle(tmp_path)
-    linked_app = tmp_path / "SidePulse.app"
+    linked_app = tmp_path / "JR-Bar.app"
     linked_app.symlink_to(app, target_is_directory=True)
-    output = tmp_path / "SidePulse-0.5.0-arm64.zip"
+    output = tmp_path / "JR-Bar-0.5.0-arm64.zip"
 
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match="symlink"):
         package_sparkle_archive.package_archive(app=linked_app, output=output)
@@ -115,7 +115,7 @@ def test_package_archive_rejects_symlinked_inputs_outputs_and_output_inside_bund
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match=r"output.*symlink"):
         package_sparkle_archive.package_archive(app=app, output=output)
 
-    nested_output = app / "SidePulse-0.5.0-arm64.zip"
+    nested_output = app / "JR-Bar-0.5.0-arm64.zip"
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match="inside"):
         package_sparkle_archive.package_archive(app=app, output=nested_output)
 
@@ -125,7 +125,7 @@ def test_package_archive_surfaces_missing_tool_failure_and_missing_output(
 ) -> None:
     package_sparkle_archive = _module()
     app = _app_bundle(tmp_path)
-    output = tmp_path / "SidePulse-0.5.0-arm64.zip"
+    output = tmp_path / "JR-Bar-0.5.0-arm64.zip"
 
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match=r"ditto.*missing"):
         package_sparkle_archive.package_archive(
@@ -151,7 +151,7 @@ def test_package_archive_surfaces_missing_tool_failure_and_missing_output(
 
 def test_package_archive_cli_accepts_exact_builder_contract(tmp_path: Path) -> None:
     app = _app_bundle(tmp_path)
-    output = tmp_path / "dist" / "SidePulse-0.5.0-x86_64.zip"
+    output = tmp_path / "dist" / "JR-Bar-0.5.0-x86_64.zip"
     output.parent.mkdir()
 
     result = subprocess.run(
@@ -175,13 +175,13 @@ def test_package_archive_cli_accepts_exact_builder_contract(tmp_path: Path) -> N
 
 def test_validate_archive_rejects_an_escaping_symlink_target(tmp_path: Path) -> None:
     package_sparkle_archive = _module()
-    archive = tmp_path / "SidePulse-0.5.0-arm64.zip"
+    archive = tmp_path / "JR-Bar-0.5.0-arm64.zip"
     with zipfile.ZipFile(archive, mode="w") as bundle_zip:
-        root = zipfile.ZipInfo("SidePulse.app/")
+        root = zipfile.ZipInfo("JR-Bar.app/")
         root.create_system = 3
         root.external_attr = (0o040755 << 16) | 0x10
         bundle_zip.writestr(root, b"")
-        link = zipfile.ZipInfo("SidePulse.app/Contents/Resources/escape")
+        link = zipfile.ZipInfo("JR-Bar.app/Contents/Resources/escape")
         link.create_system = 3
         link.external_attr = 0o120777 << 16
         bundle_zip.writestr(link, b"../../../../outside")

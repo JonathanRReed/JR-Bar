@@ -1,13 +1,16 @@
 #!/bin/sh
 set -eu
 
-APP_BINARY="/Applications/SidePulse.app/Contents/MacOS/SidePulse"
+APP_BINARY="/Applications/JR-Bar.app/Contents/MacOS/JR-Bar"
 CLI_DIR="/usr/local/bin"
-CLI_LINK="$CLI_DIR/sidepulse"
-RECEIPT_DIR="/var/db/sidepulse"
+CLI_LINK="$CLI_DIR/jrbar"
+RECEIPT_DIR="/var/db/jrbar"
 PENDING_RECEIPT="$RECEIPT_DIR/setup-pending"
 COMPLETE_RECEIPT="$RECEIPT_DIR/setup-complete"
-LAUNCH_AGENT_NAME="io.sidepulse.agentstatus.plist"
+LAUNCH_AGENT_NAME="com.jonathanreed.jrbar.app.plist"
+# Pre-rename LaunchAgent: its presence also means an explicit setup exists,
+# and the app replaces it with the current one on first launch.
+LEGACY_LAUNCH_AGENT_NAME="io.sidepulse.agentstatus.plist"
 
 log() {
     /bin/echo "JR-Bar postinstall: $*"
@@ -26,7 +29,7 @@ fi
 /bin/chmod 755 "$CLI_DIR" "$RECEIPT_DIR"
 
 # Never replace an unrelated user-managed command. We own the link only when
-# it is absent or already points at the packaged SidePulse executable.
+# it is absent or already points at the packaged JR-Bar executable.
 if [ ! -e "$CLI_LINK" ] && [ ! -L "$CLI_LINK" ]; then
     /bin/ln -s "$APP_BINARY" "$CLI_LINK"
 elif [ -L "$CLI_LINK" ] && [ "$(/usr/bin/readlink "$CLI_LINK")" = "$APP_BINARY" ]; then
@@ -45,7 +48,7 @@ if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ] && [ "$CONSOLE_USER" 
     CONSOLE_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
 fi
 
-if [ -n "$CONSOLE_HOME" ] && [ -f "$CONSOLE_HOME/Library/LaunchAgents/$LAUNCH_AGENT_NAME" ]; then
+if [ -n "$CONSOLE_HOME" ] && { [ -f "$CONSOLE_HOME/Library/LaunchAgents/$LAUNCH_AGENT_NAME" ] || [ -f "$CONSOLE_HOME/Library/LaunchAgents/$LEGACY_LAUNCH_AGENT_NAME" ]; }; then
     /bin/date -u '+%Y-%m-%dT%H:%M:%SZ' > "$COMPLETE_RECEIPT"
     /bin/chmod 644 "$COMPLETE_RECEIPT"
     /bin/rm -f "$PENDING_RECEIPT"

@@ -17,9 +17,9 @@ from .app_bundle import APP_BUNDLE_IDENTIFIER, APP_BUNDLE_NAME
 
 STABLE_CHANNEL = "stable"
 BETA_CHANNEL = "beta"
-UPDATE_CHANNEL_DEFAULTS_KEY = "SidePulseUpdateChannel"
+UPDATE_CHANNEL_DEFAULTS_KEY = "JRBarUpdateChannel"
 UPDATE_FEED_URL = (
-    "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+    "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
 EXPECTED_PUBLIC_ED_KEY = "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
@@ -41,7 +41,7 @@ def _selected_channel(defaults: object) -> str:
 try:
     import objc as _objc
     from Foundation import NSObject, NSSet
-except ImportError:  # pragma: no cover - SidePulse ships only on macOS.
+except ImportError:  # pragma: no cover - JR-Bar ships only on macOS.
     _objc = None
     NSObject = object  # type: ignore[assignment,misc]
     NSSet = None
@@ -56,16 +56,16 @@ class SparkleUpdaterDelegate(NSObject):
             self = _objc.super(SparkleUpdaterDelegate, self).init()
             if self is None:
                 return None
-            self._sidepulse_defaults = defaults
+            self._jrbar_defaults = defaults
             return self
 
     else:  # pragma: no cover - portable import fallback only.
 
         def __init__(self, defaults) -> None:
-            self._sidepulse_defaults = defaults
+            self._jrbar_defaults = defaults
 
     def allowedChannelsForUpdater_(self, _updater):
-        channel = _selected_channel(self._sidepulse_defaults)
+        channel = _selected_channel(self._jrbar_defaults)
         if NSSet is None:  # pragma: no cover - portable import fallback only.
             return frozenset({BETA_CHANNEL}) if channel == BETA_CHANNEL else frozenset()
         if channel == BETA_CHANNEL:
@@ -197,7 +197,7 @@ def _validated_bundle(bundle: object) -> tuple[Path, Mapping[str, object]]:
         raise ValueError("main bundle Info.plist is unavailable")
     info = dict(raw_info)
     if path.name != APP_BUNDLE_NAME:
-        raise ValueError("updater requires the packaged SidePulse.app")
+        raise ValueError("updater requires the packaged JR-Bar.app")
     if bundle.bundleIdentifier() != APP_BUNDLE_IDENTIFIER:
         raise ValueError("updater bundle identifier is invalid")
     if info.get("CFBundleIdentifier") != APP_BUNDLE_IDENTIFIER:

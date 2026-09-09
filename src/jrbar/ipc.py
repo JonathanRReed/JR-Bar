@@ -758,7 +758,7 @@ class HookEventServer:
                 self.running = True
                 self.thread = threading.Thread(
                     target=self._serve,
-                    name="sidepulse-ipc-accept",
+                    name="jrbar-ipc-accept",
                     daemon=True,
                 )
                 self.thread.start()
@@ -851,7 +851,7 @@ class HookEventServer:
                 worker = threading.Thread(
                     target=self._serve_peer,
                     args=(connection,),
-                    name="sidepulse-ipc-peer",
+                    name="jrbar-ipc-peer",
                     daemon=True,
                 )
                 with self._peer_lock:

@@ -20,7 +20,7 @@ DOCUMENT_NAME = "jr-bar-release-evidence"
 SCHEMA_VERSION = 3
 RECEIPT_SCHEMA_VERSION = 1
 MAX_OUTPUT_BYTES = 32 * 1024
-EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
+EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
 
 REQUIRED_RECEIPT_KINDS = frozenset(
     {
@@ -343,7 +343,7 @@ def create_candidate(
         raise EvidenceError("candidate PKG must be a regular .pkg file")
     if app_record["kind"] != "tree" or not str(app_record["path"]).endswith(".app"):
         raise EvidenceError("candidate app must be an .app tree")
-    expected_archive_name = f"SidePulse-{version}-{architecture}.zip"
+    expected_archive_name = f"JR-Bar-{version}-{architecture}.zip"
     if (
         update_archive_record["kind"] != "file"
         or Path(str(update_archive_record["path"])).name != expected_archive_name
@@ -1026,9 +1026,9 @@ def _package_contents_receipt(args: argparse.Namespace) -> int:
             if completed.stderr:
                 print(completed.stderr, end="", file=sys.stderr)
             return completed.returncode
-        apps = tuple(expanded.rglob("SidePulse.app"))
+        apps = tuple(expanded.rglob("JR-Bar.app"))
         if len(apps) != 1:
-            raise EvidenceError("expanded PKG must contain exactly one SidePulse.app")
+            raise EvidenceError("expanded PKG must contain exactly one JR-Bar.app")
         packaged_app_sha256 = sha256_tree(apps[0])
         payload_entries = []
         for item in _tree_entries(expanded):

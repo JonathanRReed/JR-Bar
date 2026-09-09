@@ -81,7 +81,7 @@ def _dispatch_target():
     )
     settings = DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),))
     dispatch = DeckInputDispatch(target, settings)
-    target._sidepulse_optional_integration_runtime = SimpleNamespace(_deck_dispatch=dispatch)
+    target._jrbar_optional_integration_runtime = SimpleNamespace(_deck_dispatch=dispatch)
     return target, dispatch, calls
 
 

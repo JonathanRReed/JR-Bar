@@ -21,10 +21,10 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
     assert document == {
         "schema_version": 3,
         "product_display_name": "JR-Bar",
-        "compatibility_app_bundle": "SidePulse.app",
+        "compatibility_app_bundle": "JR-Bar.app",
         "authoritative_macos_artifact": {
             "kind": "pkg",
-            "name": "SidePulse-0.5.0-arm64.pkg",
+            "name": "JR-Bar-0.5.0-arm64.pkg",
             "primary": True,
             "required": True,
         },
@@ -37,13 +37,13 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
         "developer_release_artifacts": [
             {
                 "kind": "wheel",
-                "name": "sidepulse-0.5.0-py3-none-any.whl",
+                "name": "jrbar-0.5.0-py3-none-any.whl",
                 "authoritative_macos_product": False,
                 "required_for_github_release": True,
             },
             {
                 "kind": "sdist",
-                "name": "sidepulse-0.5.0.tar.gz",
+                "name": "jrbar-0.5.0.tar.gz",
                 "authoritative_macos_product": False,
                 "required_for_github_release": True,
             },
@@ -51,11 +51,11 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
         "supplemental_macos_artifacts": [
             {
                 "kind": "sparkle_update_archive",
-                "name": "SidePulse-0.5.0-arm64.zip",
+                "name": "JR-Bar-0.5.0-arm64.zip",
                 "authoritative_macos_product": False,
                 "primary": False,
                 "required_for_github_release": True,
-                "contents": ["SidePulse.app"],
+                "contents": ["JR-Bar.app"],
             },
             {
                 "kind": "sparkle_appcast",
@@ -100,7 +100,7 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
                 ),
             },
             "feed_url": (
-                "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+                "https://github.com/JonathanRReed/JR-Bar/"
                 "releases/download/updates/appcast.xml"
             ),
             "channels": {
@@ -126,25 +126,25 @@ def test_authoritative_artifact_path_is_exact_and_not_a_glob(tmp_path: Path) -> 
             version="0.5.0",
             architecture="x86_64",
         )
-        == tmp_path / "SidePulse-0.5.0-x86_64.pkg"
+        == tmp_path / "JR-Bar-0.5.0-x86_64.pkg"
     )
 
     assert release_artifact_contract.developer_artifact_paths(
         tmp_path,
         version="0.5.0",
     ) == (
-        tmp_path / "sidepulse-0.5.0-py3-none-any.whl",
-        tmp_path / "sidepulse-0.5.0.tar.gz",
+        tmp_path / "jrbar-0.5.0-py3-none-any.whl",
+        tmp_path / "jrbar-0.5.0.tar.gz",
     )
     assert release_artifact_contract.updater_archive_name(
         version="0.5.0",
         architecture="x86_64",
-    ) == "SidePulse-0.5.0-x86_64.zip"
+    ) == "JR-Bar-0.5.0-x86_64.zip"
     assert release_artifact_contract.updater_archive_path(
         tmp_path,
         version="0.5.0",
         architecture="x86_64",
-    ) == (tmp_path / "SidePulse-0.5.0-x86_64.zip")
+    ) == (tmp_path / "JR-Bar-0.5.0-x86_64.zip")
     assert release_artifact_contract.appcast_name() == "appcast.xml"
     assert release_artifact_contract.appcast_path(tmp_path) == tmp_path / "appcast.xml"
     assert release_artifact_contract.channel_metadata_name() == "jr-bar-update-channel.json"
@@ -237,16 +237,16 @@ def test_contract_cli_outputs_the_exact_path_and_machine_readable_policy(
         timeout=30,
     )
 
-    assert path_result.stdout.strip() == str(tmp_path / "SidePulse-0.5.0-arm64.pkg")
+    assert path_result.stdout.strip() == str(tmp_path / "JR-Bar-0.5.0-arm64.pkg")
     assert json.loads(json_result.stdout) == release_artifact_contract.contract_document(
         version="0.5.0",
         architecture="arm64",
     )
     assert developer_result.stdout.splitlines() == [
-        str(tmp_path / "sidepulse-0.5.0-py3-none-any.whl"),
-        str(tmp_path / "sidepulse-0.5.0.tar.gz"),
+        str(tmp_path / "jrbar-0.5.0-py3-none-any.whl"),
+        str(tmp_path / "jrbar-0.5.0.tar.gz"),
     ]
-    assert updater_result.stdout.strip() == str(tmp_path / "SidePulse-0.5.0-arm64.zip")
+    assert updater_result.stdout.strip() == str(tmp_path / "JR-Bar-0.5.0-arm64.zip")
     assert appcast_result.stdout.strip() == str(tmp_path / "appcast.xml")
     assert channel_metadata_result.stdout.strip() == str(
         tmp_path / "jr-bar-update-channel.json"
@@ -260,7 +260,7 @@ def test_release_shell_surfaces_delegate_to_the_contract() -> None:
 
     for source in (builder, gate, publisher):
         assert "release_artifact_contract.py" in source
-    assert 'dist/SidePulse-"$version"-*.pkg' not in publisher
+    assert 'dist/JR-Bar-"$version"-*.pkg' not in publisher
     assert "--python-only" not in publisher
     assert "PYTHON_ONLY" not in publisher
     assert "dist/*.whl" not in gate

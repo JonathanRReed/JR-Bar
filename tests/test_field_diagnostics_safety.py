@@ -12,7 +12,7 @@ def test_field_diagnostics_sanitizes_bounded_log_and_firmware_output(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    state = home / ".local" / "state" / "sidepulse" / "agent-monitor"
+    state = home / ".local" / "state" / "jrbar"
     state.mkdir(parents=True)
     log_line = (
         b"state=ready serial=private-device "
@@ -37,7 +37,7 @@ def test_field_diagnostics_sanitizes_bounded_log_and_firmware_output(
     environment = os.environ.copy()
     environment.update(
         HOME=str(home),
-        SIDEPULSE_TEST_VOLUME_ROOT=str(volumes),
+        JRBAR_TEST_VOLUME_ROOT=str(volumes),
         LC_ALL="C",
     )
     result = subprocess.run(

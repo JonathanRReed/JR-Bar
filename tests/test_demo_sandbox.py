@@ -127,9 +127,9 @@ def test_unknown_scenario_is_rejected_without_io() -> None:
 
 
 def test_demo_is_reachable_from_both_cli_surfaces() -> None:
-    from jrbar.cli import build_parser, build_sidepulse_parser, cmd_demo
+    from jrbar.cli import build_jrbar_parser, build_parser, cmd_demo
 
-    for parser in (build_sidepulse_parser(), build_parser()):
+    for parser in (build_jrbar_parser(), build_parser()):
         parsed = parser.parse_args(["demo", "notification_light", "--seed", "9"])
         assert parsed.func is cmd_demo
         assert parsed.scenario == "notification_light"

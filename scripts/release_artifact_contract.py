@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 PRODUCT_DISPLAY_NAME = "JR-Bar"
-COMPATIBILITY_APP_BUNDLE = "SidePulse.app"
+COMPATIBILITY_APP_BUNDLE = "JR-Bar.app"
 AUTHORITATIVE_ARTIFACT_KIND = "pkg"
 REQUIRED_SIGNING_INPUTS = (
     "APP_SIGN_IDENTITY",
@@ -20,7 +20,7 @@ REQUIRED_SIGNING_INPUTS = (
 )
 UPDATER_KIND = "sparkle"
 APPCAST_SUPPORTED = True
-DEVELOPER_DISTRIBUTION_NAME = "sidepulse"
+DEVELOPER_DISTRIBUTION_NAME = "jrbar"
 SPARKLE_VERSION = "2.9.6"
 SPARKLE_ARCHIVE_URL = (
     "https://github.com/sparkle-project/Sparkle/releases/"
@@ -28,7 +28,7 @@ SPARKLE_ARCHIVE_URL = (
 )
 SPARKLE_ARCHIVE_SHA256 = "52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192"
 SPARKLE_FEED_URL = (
-    "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+    "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
 STABLE_CHANNEL = "stable"
@@ -58,7 +58,7 @@ def artifact_name(*, version: str, architecture: str) -> str:
         label="architecture",
         pattern=_ARCHITECTURE_PATTERN,
     )
-    return f"SidePulse-{safe_version}-{safe_architecture}.pkg"
+    return f"JR-Bar-{safe_version}-{safe_architecture}.pkg"
 
 
 def artifact_path(
@@ -84,7 +84,7 @@ def updater_archive_name(*, version: str, architecture: str) -> str:
         label="architecture",
         pattern=_ARCHITECTURE_PATTERN,
     )
-    return f"SidePulse-{safe_version}-{safe_architecture}.zip"
+    return f"JR-Bar-{safe_version}-{safe_architecture}.zip"
 
 
 def updater_archive_path(

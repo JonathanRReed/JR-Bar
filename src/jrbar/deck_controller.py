@@ -39,7 +39,7 @@ def reconfigure_deck_runtime(target, *, runtime_factory=None) -> threading.Threa
     if lock is None:
         lock = threading.Lock()
         target._deck_runtime_restart_lock = lock
-    old = getattr(target, "_sidepulse_optional_integration_runtime", None)
+    old = getattr(target, "_jrbar_optional_integration_runtime", None)
     if old is not None:
         old.revoke_deck_input()
 
@@ -47,7 +47,7 @@ def reconfigure_deck_runtime(target, *, runtime_factory=None) -> threading.Threa
         with lock:
             if target._deck_runtime_generation is not generation:
                 return
-            current = getattr(target, "_sidepulse_optional_integration_runtime", None)
+            current = getattr(target, "_jrbar_optional_integration_runtime", None)
             if current is not None:
                 current.close()
                 if not current.wait_until_stopped(17.0):
@@ -63,7 +63,7 @@ def reconfigure_deck_runtime(target, *, runtime_factory=None) -> threading.Threa
                     or getattr(target, "_deck_runtime_stopping", False)
                 ):
                     return
-                target._sidepulse_optional_integration_runtime = factory(target)
+                target._jrbar_optional_integration_runtime = factory(target)
 
     thread = threading.Thread(target=restart, name="JRBarDeckReconfigure", daemon=True)
     thread.start()
@@ -91,6 +91,6 @@ def stop_deck_runtime_reconfiguration(target) -> None:
     with _lifecycle_lock(target):
         target._deck_runtime_stopping = True
         target._deck_runtime_generation = object()
-        runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+        runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
     if runtime is not None:
         runtime.revoke_deck_input()

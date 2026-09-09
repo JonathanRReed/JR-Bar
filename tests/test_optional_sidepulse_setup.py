@@ -6,13 +6,13 @@ from jrbar import cli
 
 
 def test_bare_setup_does_not_request_the_sd_eject_guard() -> None:
-    args = cli.build_sidepulse_parser().parse_args(["setup"])
+    args = cli.build_jrbar_parser().parse_args(["setup"])
 
     assert args.sd_eject_guard is False
 
 
 def test_existing_guard_configuration_flags_remain_explicit_opt_ins() -> None:
-    parser = cli.build_sidepulse_parser()
+    parser = cli.build_jrbar_parser()
 
     assert parser.parse_args(["setup", "--sd-eject-guard"]).sd_eject_guard is True
     assert parser.parse_args(
@@ -24,7 +24,7 @@ def test_existing_guard_configuration_flags_remain_explicit_opt_ins() -> None:
 
 
 def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> None:
-    args = cli.build_sidepulse_parser().parse_args(["setup"])
+    args = cli.build_jrbar_parser().parse_args(["setup"])
     hook_result = SimpleNamespace(
         provider="codex",
         config_path=Path("/tmp/codex.toml"),
@@ -33,7 +33,7 @@ def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> Non
         backup_path=None,
     )
     launch_result = SimpleNamespace(
-        plist_path=Path("/tmp/io.sidepulse.agentstatus.plist"),
+        plist_path=Path("/tmp/com.jonathanreed.jrbar.app.plist"),
         changed=False,
         started=True,
     )
@@ -46,7 +46,7 @@ def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> Non
             return_value=launch_result,
         ) as launch,
     ):
-        result = cli.cmd_sidepulse_setup(args)
+        result = cli.cmd_jrbar_setup(args)
 
     assert result == 0
     guard.assert_not_called()
@@ -54,7 +54,7 @@ def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> Non
 
 
 def test_no_sd_eject_guard_still_overrides_an_explicit_guard_request() -> None:
-    args = cli.build_sidepulse_parser().parse_args(
+    args = cli.build_jrbar_parser().parse_args(
         ["setup", "--sd-eject-guard", "--no-sd-eject-guard", "--no-status-bar"]
     )
 
@@ -62,7 +62,7 @@ def test_no_sd_eject_guard_still_overrides_an_explicit_guard_request() -> None:
         patch.object(cli, "install_hook_results", return_value=[]),
         patch("jrbar.sd_eject_guard_launch.install_sd_eject_guard") as guard,
     ):
-        result = cli.cmd_sidepulse_setup(args)
+        result = cli.cmd_jrbar_setup(args)
 
     assert result == 0
     guard.assert_not_called()

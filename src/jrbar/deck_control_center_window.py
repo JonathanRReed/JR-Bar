@@ -222,7 +222,7 @@ class DeckControlCenterWindow(NSObject):
 
     def runSelectedMapping_(self, _sender):
         from .deck_input import ControlInput
-        dispatch = getattr(getattr(self.target, "_sidepulse_optional_integration_runtime", None), "_deck_dispatch", None)
+        dispatch = getattr(getattr(self.target, "_jrbar_optional_integration_runtime", None), "_deck_dispatch", None)
         settings = getattr(self.target, "_deck_control_settings", None)
         index = int(self.slot_popup.indexOfSelectedItem())
         if dispatch is None or settings is None or not settings.enabled:
@@ -261,7 +261,7 @@ class DeckControlCenterWindow(NSObject):
         if self.target._deck_input_check_active and runner is not None:
             self.target._deck_automation_runner = None
             runner.close()
-        dispatch = getattr(getattr(self.target, "_sidepulse_optional_integration_runtime", None), "_deck_dispatch", None)
+        dispatch = getattr(getattr(self.target, "_jrbar_optional_integration_runtime", None), "_deck_dispatch", None)
         if dispatch is not None:
             dispatch.reset_connection()
         self.refresh_(None)

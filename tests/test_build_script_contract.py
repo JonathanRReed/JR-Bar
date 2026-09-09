@@ -47,7 +47,7 @@ def test_package_builder_embeds_creator_micro_backend() -> None:
 def test_package_builder_embeds_distribution_metadata_for_runtime_version() -> None:
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert "--copy-metadata sidepulse" in text
+    assert "--copy-metadata jrbar" in text
 
 
 def test_package_builder_sets_display_name_without_changing_bundle_identity() -> None:
@@ -58,8 +58,8 @@ def test_package_builder_sets_display_name_without_changing_bundle_identity() ->
     assert ":CFBundleName string $PRODUCT_DISPLAY_NAME" in text
     assert 'MINIMUM_SUPPORTED_MACOS="11.0"' in text
     assert ":LSMinimumSystemVersion string $MINIMUM_SUPPORTED_MACOS" in text
-    assert "--name SidePulse" in text
-    assert 'APP_ID="io.sidepulse.app"' in text
+    assert "--name JR-Bar" in text
+    assert 'APP_ID="com.jonathanreed.jrbar"' in text
 
 
 def test_package_builder_verifies_delivered_signature_identity() -> None:

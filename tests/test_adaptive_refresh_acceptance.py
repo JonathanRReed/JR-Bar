@@ -109,9 +109,9 @@ def _menu_controller_with_refresh_states(*, controller=None):
     target.mailbox_retained_order = {}
     target._runtime_started = False
     target.refresh_capacity_settings_projection = lambda: None
-    target._sidepulse_provider_usage_service = None
+    target._jrbar_provider_usage_service = None
     target._provider_usage_log = lambda _message: None
-    target._sidepulse_provider_usage_window = None
+    target._jrbar_provider_usage_window = None
     target._alert_new_critical_pace = lambda *_args: None
     target._alert_connection_loss = lambda *_args: None
     target._report_reconnect_outcome = lambda *_args: None
@@ -223,7 +223,7 @@ def test_menu_open_admission_returns_a_bounded_receipt() -> None:
         note_menu_opened=lambda *, now: notifications.append(now)
     )
     controller = SimpleNamespace(
-        _sidepulse_provider_usage_service=service,
+        _jrbar_provider_usage_service=service,
         maybe_refresh_usage_summary=lambda *, reason: plans.append(reason),
     )
 
@@ -253,7 +253,7 @@ def test_menu_open_admission_preserves_planner_failure_semantics() -> None:
         raise RuntimeError("planner failed")
 
     controller = SimpleNamespace(
-        _sidepulse_provider_usage_service=SimpleNamespace(
+        _jrbar_provider_usage_service=SimpleNamespace(
             note_menu_opened=lambda *, now: notifications.append(now)
         ),
         maybe_refresh_usage_summary=fail_planning,
@@ -266,7 +266,7 @@ def test_menu_open_admission_preserves_planner_failure_semantics() -> None:
         )
 
     assert notifications == [1_000.0]
-    assert not hasattr(controller, "_sidepulse_adaptive_refresh_visit_receipt")
+    assert not hasattr(controller, "_jrbar_adaptive_refresh_visit_receipt")
 
 
 def test_maybe_refresh_usage_summary_does_not_run_io_on_the_caller_thread(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from jrbar.install import hook_command_arguments, verify_hook_command
-from jrbar.providers import _is_sidepulse_hook_invocation
+from jrbar.providers import _is_jrbar_hook_invocation
 
 
 def test_hook_command_does_not_bake_a_package_file_path() -> None:
@@ -57,8 +57,8 @@ def test_every_shape_we_have_ever_registered_is_recognized_as_ours() -> None:
     current_frozen = ["/Applications/SidePulse.app/Contents/MacOS/SidePulse", "agent-monitor", "hook-client",
                       "--provider", "claude", "--log", "/tmp/claude.jsonl"]
     for shape in (legacy, module, frozen, current_module, current_frozen):
-        assert _is_sidepulse_hook_invocation(shape) is True, shape
-    assert _is_sidepulse_hook_invocation(["/bin/echo", "hello"]) is False
+        assert _is_jrbar_hook_invocation(shape) is True, shape
+    assert _is_jrbar_hook_invocation(["/bin/echo", "hello"]) is False
 
 
 def test_registration_is_gated_on_the_probe_run(tmp_path: Path) -> None:

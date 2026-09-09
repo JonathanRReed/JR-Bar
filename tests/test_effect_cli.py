@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from jrbar.cli import build_sidepulse_parser, cmd_effects, jrbar_main
+from jrbar.cli import build_jrbar_parser, cmd_effects, jrbar_main
 from jrbar.effect_cli import dispatch_effect_command
 from jrbar.effect_history import (
     EffectEvent,
@@ -327,7 +327,7 @@ def test_sidepulse_effects_parser_reaches_the_data_only_store(
     source = tmp_path / "pack.json"
     source.write_text(json.dumps(_pack()), encoding="utf-8")
     store = tmp_path / "store"
-    parser = build_sidepulse_parser()
+    parser = build_jrbar_parser()
     parsed = parser.parse_args(
         ["effects", "install", str(source), "--store-dir", str(store), "--json"]
     )

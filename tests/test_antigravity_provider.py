@@ -190,7 +190,7 @@ def test_install_uses_the_grouped_shape_only_for_tool_events(tmp_path: Path) -> 
     """Antigravity requires {matcher, hooks} for PostToolUse and a flat list
     for PreInvocation and Stop. The wrong shape is silently inert config."""
     config, _log = _install(tmp_path)
-    entry = json.loads(config.read_text())["sidepulse-status"]
+    entry = json.loads(config.read_text())["jrbar-status"]
 
     assert entry["enabled"] is True
     assert list(entry["PostToolUse"][0]) == ["matcher", "hooks"]
@@ -215,7 +215,7 @@ def test_install_preserves_other_tools_named_hooks(tmp_path: Path) -> None:
     data = json.loads(config.read_text())
 
     assert data["team-linter"] == foreign["team-linter"]
-    assert "sidepulse-status" in data
+    assert "jrbar-status" in data
 
 
 def test_reinstall_changes_nothing_and_uninstall_removes_only_our_entry(
@@ -232,7 +232,7 @@ def test_reinstall_changes_nothing_and_uninstall_removes_only_our_entry(
     install.uninstall_antigravity_hooks(log_path=log, config_path=config)
     data = json.loads(config.read_text())
 
-    assert "sidepulse-status" not in data
+    assert "jrbar-status" not in data
     assert data["team-linter"] == foreign["team-linter"]
 
 
@@ -242,7 +242,7 @@ def test_install_refuses_to_overwrite_an_unowned_hook_of_the_same_name(
     config = providers.default_antigravity_config_path(tmp_path)
     config.parent.mkdir(parents=True)
     config.write_text(
-        json.dumps({"sidepulse-status": {"Stop": [{"command": "./not-ours.sh"}]}}) + "\n"
+        json.dumps({"jrbar-status": {"Stop": [{"command": "./not-ours.sh"}]}}) + "\n"
     )
 
     with pytest.raises(OSError):
@@ -264,7 +264,7 @@ def test_detection_reports_installed_only_for_our_own_enabled_commands(
     assert detected.log_paths == (log,)
 
     data = json.loads(config.read_text())
-    data["sidepulse-status"]["enabled"] = False
+    data["jrbar-status"]["enabled"] = False
     config.write_text(json.dumps(data))
     disabled = providers.detect_antigravity_config(tmp_path)
 
@@ -281,7 +281,7 @@ def test_detection_ignores_a_foreign_command_under_our_hook_name(
     config.parent.mkdir(parents=True)
     config.write_text(
         json.dumps(
-            {"sidepulse-status": {"Stop": [{"command": "echo hi --log /tmp/x.jsonl"}]}}
+            {"jrbar-status": {"Stop": [{"command": "echo hi --log /tmp/x.jsonl"}]}}
         )
     )
 
@@ -298,7 +298,7 @@ def test_installed_command_writes_a_record_when_run_by_a_real_shell(
 ) -> None:
     """The whole point: registered, executed by sh, and actually heard."""
     config, log = _install(tmp_path)
-    command = json.loads(config.read_text())["sidepulse-status"]["Stop"][0]["command"]
+    command = json.loads(config.read_text())["jrbar-status"]["Stop"][0]["command"]
 
     result = _run_installed_command(
         command,
@@ -330,7 +330,7 @@ def test_installed_command_stamps_the_event_name_the_registration_site_knows(
     the provider would install cleanly and report nothing forever.
     """
     config, log = _install(tmp_path)
-    entry = json.loads(config.read_text())["sidepulse-status"]
+    entry = json.loads(config.read_text())["jrbar-status"]
     payload = json.dumps({"conversationId": _CONVERSATION, "invocationNum": 1})
 
     _run_installed_command(entry["PreInvocation"][0]["command"], payload)
@@ -347,7 +347,7 @@ def test_installed_command_returns_the_documented_no_op_and_never_fails(
     non-zero exit to it as an error. SidePulse must be silent and harmless
     even when it is completely broken -- here, pointed at an unwritable log."""
     config, _log = _install(tmp_path)
-    command = json.loads(config.read_text())["sidepulse-status"]["Stop"][0]["command"]
+    command = json.loads(config.read_text())["jrbar-status"]["Stop"][0]["command"]
     broken = command.replace(str(_log_path_in(command)), "/proc/nonexistent/x.jsonl")
 
     healthy = _run_installed_command(command, json.dumps({"conversationId": _CONVERSATION}))
@@ -368,7 +368,7 @@ def test_installed_command_survives_an_empty_payload(tmp_path: Path) -> None:
     exit 0 with {} so a surprise from Antigravity cannot surface in the
     user's session."""
     config, _log = _install(tmp_path)
-    command = json.loads(config.read_text())["sidepulse-status"]["Stop"][0]["command"]
+    command = json.loads(config.read_text())["jrbar-status"]["Stop"][0]["command"]
 
     result = _run_installed_command(command, "")
 

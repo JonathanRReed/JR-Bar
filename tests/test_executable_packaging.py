@@ -29,7 +29,7 @@ def _write_executable(path: Path, body: str) -> None:
 def _package_fixture(
     tmp_path: Path,
 ) -> tuple[package_macos_artifact.PackageRequest, Path]:
-    app = tmp_path / "SidePulse.app"
+    app = tmp_path / "JR-Bar.app"
     app.mkdir()
     scripts = tmp_path / "scripts"
     scripts.mkdir()
@@ -52,9 +52,9 @@ def _package_fixture(
     request = package_macos_artifact.PackageRequest(
         app_path=app,
         scripts_dir=scripts,
-        component_pkg=tmp_path / "SidePulse-component.pkg",
-        output_pkg=tmp_path / "SidePulse-0.5.0-arm64.pkg",
-        identifier="io.sidepulse.app",
+        component_pkg=tmp_path / "JR-Bar-component.pkg",
+        output_pkg=tmp_path / "JR-Bar-0.5.0-arm64.pkg",
+        identifier="com.jonathanreed.jrbar",
         version="0.5.0",
         installer_sign_identity=None,
         toolchain=package_macos_artifact.PackageToolchain(
@@ -75,12 +75,12 @@ def test_unsigned_pkg_assembly_executes_tools_and_creates_exact_pkg(
 
     output = package_macos_artifact.assemble_package(request)
 
-    assert output == tmp_path / "SidePulse-0.5.0-arm64.pkg"
+    assert output == tmp_path / "JR-Bar-0.5.0-arm64.pkg"
     assert output.is_file()
     assert log.read_text(encoding="utf-8").splitlines() == [
         "pkgbuild:--component "
         f"{request.app_path} --install-location /Applications --identifier "
-        "io.sidepulse.app --version 0.5.0 --scripts "
+        "com.jonathanreed.jrbar --version 0.5.0 --scripts "
         f"{request.scripts_dir} {request.component_pkg}",
         f"productbuild:--package {request.component_pkg} {request.output_pkg}",
     ]
@@ -252,7 +252,7 @@ def test_checksum_manifest_rejects_duplicate_outside_and_output_aliases(
 def test_checksum_manifest_rejects_assets_changed_after_release_evidence(
     tmp_path: Path,
 ) -> None:
-    artifact = tmp_path / "dist" / "SidePulse-0.5.0-arm64.pkg"
+    artifact = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.pkg"
     artifact.parent.mkdir()
     artifact.write_bytes(b"candidate")
     evidence = tmp_path / "dist" / "release-verification.json"
@@ -262,7 +262,7 @@ def test_checksum_manifest_rejects_assets_changed_after_release_evidence(
                 "document": "jr-bar-release-evidence",
                 "artifacts": [
                     {
-                        "path": "dist/SidePulse-0.5.0-arm64.pkg",
+                        "path": "dist/JR-Bar-0.5.0-arm64.pkg",
                         "kind": "file",
                         "bytes": len(b"candidate"),
                         "sha256": hashlib.sha256(b"candidate").hexdigest(),
@@ -383,8 +383,8 @@ def test_python_release_artifacts_replace_only_exact_stale_outputs(
     staging = root / "build" / "python-release"
     output = root / "dist"
     output.mkdir()
-    stale_wheel = output / "sidepulse-0.5.0-py3-none-any.whl"
-    stale_sdist = output / "sidepulse-0.5.0.tar.gz"
+    stale_wheel = output / "jrbar-0.5.0-py3-none-any.whl"
+    stale_sdist = output / "jrbar-0.5.0.tar.gz"
     unrelated = output / "other-0.1.0-py3-none-any.whl"
     stale_wheel.write_bytes(b"stale-wheel")
     stale_sdist.write_bytes(b"stale-sdist")
@@ -402,8 +402,8 @@ if [ "$1" = "-m" ] && [ "$2" = "build" ]; then
         esac
     done
     /bin/mkdir -p "$out"
-    printf fresh-wheel > "$out/sidepulse-0.5.0-py3-none-any.whl"
-    printf fresh-sdist > "$out/sidepulse-0.5.0.tar.gz"
+    printf fresh-wheel > "$out/jrbar-0.5.0-py3-none-any.whl"
+    printf fresh-sdist > "$out/jrbar-0.5.0.tar.gz"
     exit 0
 fi
 if [ "$1" = "-m" ] && [ "$2" = "twine" ]; then
@@ -490,12 +490,12 @@ def test_packaging_contract_requires_exact_sparkle_release_assets(
     assert contract["schema_version"] == 3
     assert contract["authoritative_macos_artifact"] == {
         "kind": "pkg",
-        "name": "SidePulse-0.5.0-arm64.pkg",
+        "name": "JR-Bar-0.5.0-arm64.pkg",
         "primary": True,
         "required": True,
     }
     assert [item["name"] for item in contract["supplemental_macos_artifacts"]] == [
-        "SidePulse-0.5.0-arm64.zip",
+        "JR-Bar-0.5.0-arm64.zip",
         "appcast.xml",
         "jr-bar-update-channel.json",
     ]
@@ -506,7 +506,7 @@ def test_packaging_contract_requires_exact_sparkle_release_assets(
 @pytest.mark.parametrize(
     ("format_name", "expected"),
     (
-        ("updater-path", "SidePulse-0.5.0-arm64.zip"),
+        ("updater-path", "JR-Bar-0.5.0-arm64.zip"),
         ("appcast-path", "appcast.xml"),
         ("channel-metadata-path", "jr-bar-update-channel.json"),
     ),
@@ -548,13 +548,13 @@ def _publisher_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     dist = root / "dist"
     dist.mkdir()
     for name in (
-        "sidepulse-0.5.0-py3-none-any.whl",
-        "sidepulse-0.5.0.tar.gz",
+        "jrbar-0.5.0-py3-none-any.whl",
+        "jrbar-0.5.0.tar.gz",
         "release-environment.txt",
         "performance-evidence.json",
-        "sidepulse-sbom.cdx.json",
-        "SidePulse-0.5.0-arm64.pkg",
-        "SidePulse-0.5.0-arm64.zip",
+        "jrbar-sbom.cdx.json",
+        "JR-Bar-0.5.0-arm64.pkg",
+        "JR-Bar-0.5.0-arm64.zip",
         "appcast.xml",
         "jr-bar-update-channel.json",
         "release-verification.json",
@@ -574,9 +574,9 @@ def _publisher_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         shift
     done
     case "$format" in
-        path) printf 'dist/SidePulse-0.5.0-arm64.pkg\\n' ;;
-        developer-paths) printf 'dist/sidepulse-0.5.0-py3-none-any.whl\\ndist/sidepulse-0.5.0.tar.gz\\n' ;;
-        updater-path) printf 'dist/SidePulse-0.5.0-arm64.zip\\n' ;;
+        path) printf 'dist/JR-Bar-0.5.0-arm64.pkg\\n' ;;
+        developer-paths) printf 'dist/jrbar-0.5.0-py3-none-any.whl\\ndist/jrbar-0.5.0.tar.gz\\n' ;;
+        updater-path) printf 'dist/JR-Bar-0.5.0-arm64.zip\\n' ;;
         appcast-path) printf 'dist/appcast.xml\\n' ;;
         channel-metadata-path) printf 'dist/jr-bar-update-channel.json\\n' ;;
         *) exit 89 ;;
@@ -615,7 +615,7 @@ esac
         """printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
 if [ "$1 $2 $3" = "release view v0.5.0" ]; then
     if [ -f "$FAKE_GH_STATE/version-published" ]; then
-        printf 'SidePulse-0.5.0-arm64.zip\\n'
+        printf 'JR-Bar-0.5.0-arm64.zip\\n'
         exit 0
     fi
     exit 1
@@ -628,7 +628,7 @@ fi
 if [ "$1 $2 $3" = "release upload v0.5.0" ]; then
     if [ "${FAKE_GH_FAIL_VERSION_UPLOAD:-0}" = "1" ]; then exit 42; fi
     case "$*" in
-        *SidePulse-0.5.0-arm64.zip*) : > "$FAKE_GH_STATE/archive-uploaded" ;;
+        *JR-Bar-0.5.0-arm64.zip*) : > "$FAKE_GH_STATE/archive-uploaded" ;;
         *) exit 43 ;;
     esac
     exit 0
@@ -677,7 +677,7 @@ def test_publisher_publishes_version_archive_before_mutating_durable_feed(
     version_upload = next(index for index, line in enumerate(commands) if line.startswith("release upload v0.5.0"))
     version_publish = next(index for index, line in enumerate(commands) if line.startswith("release edit v0.5.0"))
     feed_uploads = [index for index, line in enumerate(commands) if line.startswith("release upload updates")]
-    assert "SidePulse-0.5.0-arm64.zip" in commands[version_upload]
+    assert "JR-Bar-0.5.0-arm64.zip" in commands[version_upload]
     assert feed_uploads and version_upload < version_publish < min(feed_uploads)
     assert "jr-bar-update-channel.json" in commands[feed_uploads[0]]
     assert "appcast.xml" in commands[feed_uploads[-1]]

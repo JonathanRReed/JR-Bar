@@ -9,8 +9,8 @@ from packaging.sign_macos_app import build_sign_plan, sign_macos_app
 
 
 def _candidate(tmp_path: Path) -> tuple[Path, Path, tuple[Path, ...]]:
-    app = tmp_path / "SidePulse.app"
-    executable = app / "Contents" / "MacOS" / "SidePulse"
+    app = tmp_path / "JR-Bar.app"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
     framework_binary = (
         app
         / "Contents"

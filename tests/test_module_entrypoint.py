@@ -61,7 +61,7 @@ class ModuleEntrypointTests(unittest.TestCase):
             set(payload),
             {"document", "findings", "last_failure_class", "version"},
         )
-        self.assertEqual(payload["document"], "sidepulse-doctor")
+        self.assertEqual(payload["document"], "jrbar-doctor")
         # v4 expands alcove_follow_state from capture outcomes into the
         # seven semantic confidence states used by the product surfaces.
         self.assertEqual(payload["version"], 4)
@@ -98,7 +98,7 @@ class ModuleEntrypointTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
         self.assertTrue(result.stderr.startswith("usage: jrbar "), result.stderr)
-        self.assertIn("sidepulse: error:", result.stderr)
+        self.assertIn("jrbar: error:", result.stderr)
 
 
 if __name__ == "__main__":

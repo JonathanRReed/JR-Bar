@@ -86,7 +86,7 @@ class AlcoveWindowProbe:
     def _start_thread(task: Callable[[], None]) -> None:
         threading.Thread(
             target=task,
-            name="sidepulse-alcove-window-probe",
+            name="jrbar-alcove-window-probe",
             daemon=True,
         ).start()
 

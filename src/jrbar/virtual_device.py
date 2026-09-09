@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
 import threading
 import time
 from dataclasses import dataclass
@@ -37,6 +36,7 @@ from AppKit import (
 from Foundation import NSObject, NSRunLoop, NSRunLoopCommonModes, NSString
 from Quartz import CGContextFillRect, CGContextSetRGBFillColor
 
+from .env import env_value
 from .accessibility_display import AccessibilityDisplayPreferences
 from .colors import hex_to_rgb, normalize_hex
 from .alcove_window_probe import (
@@ -539,7 +539,7 @@ class NotchSilhouetteProbe:
     def _start_thread(task) -> None:
         threading.Thread(
             target=task,
-            name="sidepulse-notch-silhouette-probe",
+            name="jrbar-notch-silhouette-probe",
             daemon=True,
         ).start()
 
@@ -860,7 +860,7 @@ class AlcovePresenceProbe:
     def _start_refresh(self) -> None:
         thread = threading.Thread(
             target=self._refresh,
-            name="sidepulse-alcove-probe",
+            name="jrbar-alcove-probe",
             daemon=True,
         )
         thread.start()
@@ -2488,11 +2488,11 @@ class VirtualStatusDevice(NSObject):
             self._profile_stop = None
             self._profile_wake = None
             self._profile_thread = None
-            profile_output = os.environ.get("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", "").strip()
+            profile_output = (env_value("JRBAR_SCREEN_BAR_PROFILE_OUTPUT") or "").strip()
             if profile_output:
                 from .screen_bar_profile import ProfileScenarioTracker
 
-                scenario = os.environ.get("SIDEPULSE_SCREEN_BAR_PROFILE_SCENARIO", "").strip()
+                scenario = (env_value("JRBAR_SCREEN_BAR_PROFILE_SCENARIO") or "").strip()
                 self._profile_tracker = ProfileScenarioTracker(scenario)
                 self._profile_stop = threading.Event()
                 self._profile_wake = threading.Event()
@@ -3565,10 +3565,10 @@ class VirtualStatusDevice(NSObject):
         self,
         summary: dict[str, object] | None = None,
     ) -> Path | None:
-        output_value = os.environ.get("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", "").strip()
+        output_value = (env_value("JRBAR_SCREEN_BAR_PROFILE_OUTPUT") or "").strip()
         if not output_value:
             return None
-        scenario = os.environ.get("SIDEPULSE_SCREEN_BAR_PROFILE_SCENARIO", "").strip()
+        scenario = (env_value("JRBAR_SCREEN_BAR_PROFILE_SCENARIO") or "").strip()
         if not scenario or summary is None:
             raise ValueError("Screen Bar profile scenario observations are required")
 

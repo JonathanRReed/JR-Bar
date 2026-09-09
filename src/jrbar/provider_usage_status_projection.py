@@ -33,7 +33,7 @@ def screen_bar_quota_ember_level(controller) -> float:
 
 
 def capacity_settings_text(controller, provider_id, *, wall_clock=time.time):
-    state = getattr(controller, "_sidepulse_provider_usage_state", None)
+    state = getattr(controller, "_jrbar_provider_usage_state", None)
     snapshot = next(
         (row for row in getattr(state, "snapshots", ()) if row.provider_id == provider_id),
         None,
@@ -156,7 +156,7 @@ def provider_usage_why_panel_body(controller, body: str, *, wall_clock=time.time
 
     settings = controller._usage_menu_settings()
     privacy_mode = False if settings is None else settings.menu_display.privacy_mode
-    policies = getattr(controller, "_sidepulse_provider_instance_policies", None)
+    policies = getattr(controller, "_jrbar_provider_instance_policies", None)
     projection = project_usage_menu(
         controller.provider_usage_state,
         now=float(wall_clock()),

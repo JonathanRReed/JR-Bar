@@ -175,7 +175,7 @@ def quota_runway_state_for_controller(controller) -> QuotaRunwayState | None:
     except Exception:
         color = RUNWAY_FALLBACK_COLOR
     label = provider_descriptor(lane.provider_id).label
-    policies = getattr(controller, "_sidepulse_provider_instance_policies", None)
+    policies = getattr(controller, "_jrbar_provider_instance_policies", None)
     if type(policies) is ProviderInstancePolicyProjection:
         try:
             visual = policies.visual.provider(lane.provider_id, source_instance_id)

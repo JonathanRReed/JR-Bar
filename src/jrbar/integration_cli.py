@@ -23,7 +23,7 @@ INTEGRATION_NAMES = frozenset({"creator-micro", "t3code"})
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="sidepulse-integrations",
+        prog="jrbar-integrations",
         description=f"Configure and inspect {PRODUCT_DISPLAY_NAME} compatibility integrations.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -124,7 +124,7 @@ def _save_updated(loaded, settings) -> int:
         IntegrationSettingsWriteRefusedError,
         OSError,
     ) as exc:
-        print(f"sidepulse-integrations: {exc}", file=sys.stderr)
+        print(f"jrbar-integrations: {exc}", file=sys.stderr)
         return 1
     print(f"settings: {path}")
     print(f"apply: restart the {PRODUCT_DISPLAY_NAME} status-bar app")
@@ -148,7 +148,7 @@ def cmd_enabled(args: argparse.Namespace) -> int:
         try:
             serial = select_unique_stable_serial(HidApiTransport().enumerate())
         except (DeviceIdentityError, OSError) as exc:
-            print(f"sidepulse-integrations: {exc}", file=sys.stderr)
+            print(f"jrbar-integrations: {exc}", file=sys.stderr)
             return 1
         settings = settings.with_creator_micro(
             enabled=True,
@@ -164,11 +164,11 @@ def cmd_enabled(args: argparse.Namespace) -> int:
 
 def cmd_configure_t3code(args: argparse.Namespace) -> int:
     if args.base_dir is not None and args.clear_base_dir:
-        print("sidepulse-integrations: choose --base-dir or --clear-base-dir", file=sys.stderr)
+        print("jrbar-integrations: choose --base-dir or --clear-base-dir", file=sys.stderr)
         return 2
     if args.environment_id is not None and args.clear_environment_id:
         print(
-            "sidepulse-integrations: choose --environment-id or --clear-environment-id",
+            "jrbar-integrations: choose --environment-id or --clear-environment-id",
             file=sys.stderr,
         )
         return 2

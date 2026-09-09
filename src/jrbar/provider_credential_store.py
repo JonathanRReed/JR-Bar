@@ -1,4 +1,4 @@
-"""SidePulse-owned provider secrets stored in the operating-system keychain."""
+"""JR-Bar-owned provider secrets stored in the operating-system keychain."""
 
 from __future__ import annotations
 
@@ -48,9 +48,40 @@ class CredentialRead:
         )
 
 
+KEYCHAIN_SERVICE_PREFIX = "com.jonathanreed.jrbar.provider."
+# Service prefix used before the JR-Bar rename. Reads that miss under the new
+# service try this one and copy the secret forward, so nobody re-enters keys.
+LEGACY_KEYCHAIN_SERVICE_PREFIX = "io.sidepulse.provider."
+
+
+def legacy_keychain_service(service: str) -> str | None:
+    if not service.startswith(KEYCHAIN_SERVICE_PREFIX):
+        return None
+    return LEGACY_KEYCHAIN_SERVICE_PREFIX + service[len(KEYCHAIN_SERVICE_PREFIX):]
+
+
 class ProviderCredentialStore:
     def __init__(self, *, backend=None) -> None:
         self._backend = backend or _KeyringBackend()
+
+    def _read_with_copy_forward(self, service: str, account: str) -> str | None:
+        """Read under the current service; on a miss, read the pre-rename
+        service and copy the secret forward. Copy failures are ignored: the
+        read still succeeds and the next read retries the copy."""
+        secret = self._backend.get_password(service, account)
+        if isinstance(secret, str) and secret:
+            return secret
+        legacy_service = legacy_keychain_service(service)
+        if legacy_service is None:
+            return secret
+        legacy_secret = self._backend.get_password(legacy_service, account)
+        if not isinstance(legacy_secret, str) or not legacy_secret:
+            return secret
+        try:
+            self._backend.set_password(service, account, legacy_secret)
+        except Exception:
+            pass
+        return legacy_secret
 
     @staticmethod
     def _identity(provider_id: str, account: str) -> tuple[str, str]:
@@ -58,7 +89,7 @@ class ProviderCredentialStore:
             raise ValueError("invalid provider credential identity")
         if not isinstance(account, str) or _ACCOUNT.fullmatch(account) is None:
             raise ValueError("invalid provider credential account")
-        return f"io.sidepulse.provider.{provider_id}", account
+        return f"{KEYCHAIN_SERVICE_PREFIX}{provider_id}", account
 
     def set(self, provider_id: str, account: str, secret: str) -> None:
         service, normalized_account = self._identity(provider_id, account)
@@ -115,7 +146,7 @@ class ProviderCredentialStore:
     def get(self, provider_id: str, account: str) -> CredentialRead:
         service, normalized_account = self._identity(provider_id, account)
         try:
-            secret = self._backend.get_password(service, normalized_account)
+            secret = self._read_with_copy_forward(service, normalized_account)
         except Exception:
             return CredentialRead(
                 provider_id,
@@ -143,7 +174,7 @@ class ProviderCredentialStore:
             self._instance_identity(key, account)
         )
         try:
-            secret = self._backend.get_password(service, normalized_account)
+            secret = self._read_with_copy_forward(service, normalized_account)
         except Exception:
             return CredentialRead(
                 provider_id,

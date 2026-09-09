@@ -207,7 +207,7 @@ def test_controller_seam_uses_exact_instance_profile_identity() -> None:
         ),
         settings=SimpleNamespace(colors=Colors()),
         _usage_menu_settings=lambda: None,
-        _sidepulse_provider_instance_policies=_instance_policies(
+        _jrbar_provider_instance_policies=_instance_policies(
             ProviderInstanceVisualPolicy(
                 provider_id="claude",
                 source_instance_id="work",
@@ -244,7 +244,7 @@ def test_controller_seam_keeps_provider_color_without_exact_override() -> None:
         ),
         settings=SimpleNamespace(colors=Colors()),
         _usage_menu_settings=lambda: None,
-        _sidepulse_provider_instance_policies=_instance_policies(
+        _jrbar_provider_instance_policies=_instance_policies(
             ProviderInstanceVisualPolicy(
                 provider_id="claude",
                 source_instance_id="work",

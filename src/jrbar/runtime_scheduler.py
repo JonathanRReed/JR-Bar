@@ -584,7 +584,7 @@ class LatestWinsWorker:
             if first_start:
                 thread = threading.Thread(
                     target=self._run,
-                    name=f"sidepulse-runtime-{self._domain.value.replace('_', '-')}",
+                    name=f"jrbar-runtime-{self._domain.value.replace('_', '-')}",
                     daemon=True,
                 )
                 self._thread = thread

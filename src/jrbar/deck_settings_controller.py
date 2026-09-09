@@ -32,7 +32,7 @@ class DeckSettingsApplyResult:
 
 
 def _start_background(target):
-    thread = threading.Thread(target=target, name="sidepulse-deck-settings-save", daemon=True)
+    thread = threading.Thread(target=target, name="jrbar-deck-settings-save", daemon=True)
     thread.start()
     return thread
 
@@ -85,7 +85,7 @@ def toggle_deck_controls(controller: object, sender: object) -> None:
         return
     candidate = replace(previous, enabled=bool(sender.state()))
     if previous.enabled and not candidate.enabled:
-        runtime = getattr(controller, "_sidepulse_optional_integration_runtime", None)
+        runtime = getattr(controller, "_jrbar_optional_integration_runtime", None)
         if runtime is None:
             runtime = getattr(controller, "deck_runtime", None)
         revoke = getattr(runtime, "revoke_deck_input", None)
@@ -101,7 +101,7 @@ def toggle_deck_option(controller: object, sender: object, option: str) -> None:
     if type(previous) is not DeckControlSettings:
         controller.deck_settings_pane.set_status("Device action settings are unavailable.")
         return
-    runtime = getattr(controller, "_sidepulse_optional_integration_runtime", None)
+    runtime = getattr(controller, "_jrbar_optional_integration_runtime", None)
     dispatch = getattr(runtime, "_deck_dispatch", None)
     if dispatch is not None:
         dispatch.reset_connection()

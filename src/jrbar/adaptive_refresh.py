@@ -170,7 +170,7 @@ def admit_menu_open_refresh(
     """Notify the usage service and invoke only the refresh admission planner."""
     observed = float(wall_clock())
     service_notified = False
-    service = getattr(controller, "_sidepulse_provider_usage_service", None)
+    service = getattr(controller, "_jrbar_provider_usage_service", None)
     note_menu_opened = getattr(service, "note_menu_opened", None)
     if callable(note_menu_opened):
         try:
@@ -191,7 +191,7 @@ def admit_menu_open_refresh(
         observed,
     )
     try:
-        controller._sidepulse_adaptive_refresh_visit_receipt = receipt
+        controller._jrbar_adaptive_refresh_visit_receipt = receipt
     except Exception:
         pass
     return receipt

@@ -475,7 +475,7 @@ def run_provider_usage_action(
     # Arm the outcome watcher before starting the asynchronous refresh so a
     # fast collector cannot publish before the click has an identity.
     try:
-        controller._sidepulse_reconnect_watch = (
+        controller._jrbar_reconnect_watch = (
             provider_id,
             source_instance_id,
             time.time(),

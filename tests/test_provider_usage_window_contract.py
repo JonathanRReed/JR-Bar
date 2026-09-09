@@ -322,7 +322,7 @@ def test_usage_window_passes_only_the_privacy_safe_visual_projection(
         monotonic_clock=lambda: 100.0,
     )
     controller.action_target = SimpleNamespace(
-        _sidepulse_provider_instance_policies=policies,
+        _jrbar_provider_instance_policies=policies,
     )
     received: list[object] = []
     monkeypatch.setattr(module, "cached_merged_sync", lambda _state: None)

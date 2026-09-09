@@ -17,8 +17,8 @@ except ImportError:  # Direct execution adds scripts/, not the repository root.
     import release_evidence  # type: ignore[no-redef]
 
 
-EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
-PACKAGE_IDENTIFIER = "io.sidepulse.app"
+EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
+PACKAGE_IDENTIFIER = "com.jonathanreed.jrbar"
 
 
 def _team_identifier(app: Path) -> str:
@@ -40,7 +40,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--pkg", type=Path, required=True)
-    parser.add_argument("--app", type=Path, default=Path("/Applications/SidePulse.app"))
+    parser.add_argument("--app", type=Path, default=Path("/Applications/JR-Bar.app"))
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -76,7 +76,7 @@ def main() -> int:
             timeout=30,
             check=True,
         )
-        executable = args.app / "Contents" / "MacOS" / "SidePulse"
+        executable = args.app / "Contents" / "MacOS" / "JR-Bar"
         if not executable.is_file() or not os.access(executable, os.X_OK):
             raise ValueError("clean-installed executable is missing")
         subprocess.run(

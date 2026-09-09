@@ -121,7 +121,7 @@ def _controller_class():
 
 def _valid_info() -> dict[str, object]:
     return {
-        "CFBundleIdentifier": "io.sidepulse.app",
+        "CFBundleIdentifier": "com.jonathanreed.jrbar",
         "SUFeedURL": sparkle_updater.UPDATE_FEED_URL,
         "SUPublicEDKey": VALID_PUBLIC_KEY,
         "SURequireSignedFeed": True,
@@ -130,7 +130,7 @@ def _valid_info() -> dict[str, object]:
 
 
 def _valid_bundle(tmp_path: Path) -> _FakeMainBundle:
-    path = tmp_path / "SidePulse.app"
+    path = tmp_path / "JR-Bar.app"
     (path / "Contents" / "Frameworks" / "Sparkle.framework").mkdir(
         parents=True
     )
@@ -239,7 +239,7 @@ def test_updater_starts_on_the_main_thread_from_the_exact_embedded_framework(
     assert paths == [
         str(
             tmp_path
-            / "SidePulse.app"
+            / "JR-Bar.app"
             / "Contents"
             / "Frameworks"
             / "Sparkle.framework"
@@ -476,7 +476,7 @@ def test_final_status_menu_includes_the_available_update_submenu(
 
     runtime, *_rest = _start_valid_runtime(tmp_path)
     target = provider_host.JRProviderUsageStatusBarController.alloc()
-    target._sidepulse_sparkle_updater = runtime
+    target._jrbar_sparkle_updater = runtime
 
     def base_menu(_snapshot, _state, _target):
         menu = NSMenu.alloc().init()
@@ -534,7 +534,7 @@ def test_final_controller_starts_updater_before_base_launch_and_first_menu(
     class FakeBase:
         @staticmethod
         def applicationDidFinishLaunching_(target, _notification):
-            events.append(("base", target._sidepulse_sparkle_updater))
+            events.append(("base", target._jrbar_sparkle_updater))
             return "launched"
 
     class SparkleLaunchTarget(provider_host.JRProviderUsageStatusBarController):
@@ -562,7 +562,7 @@ def test_final_controller_starts_updater_before_base_launch_and_first_menu(
 
     assert result == "launched"
     assert events[:2] == [("sparkle", runtime), ("base", runtime)]
-    assert target._sidepulse_sparkle_updater is runtime
+    assert target._jrbar_sparkle_updater is runtime
 
 
 def test_final_controller_selectors_delegate_without_forcing_a_check() -> None:
@@ -583,7 +583,7 @@ def test_final_controller_selectors_delegate_without_forcing_a_check() -> None:
 
     runtime = Runtime()
     target = JRProviderUsageStatusBarController.alloc()
-    target._sidepulse_sparkle_updater = runtime
+    target._jrbar_sparkle_updater = runtime
     target._menu_signature = "rendered"
     sender = object()
 

@@ -129,7 +129,7 @@ def build_menu(snapshot, state, target):
     inject_software_update_submenu(
         menu,
         target,
-        getattr(target, "_sidepulse_sparkle_updater", None),
+        getattr(target, "_jrbar_sparkle_updater", None),
     )
     center = _legacy.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
         "Control Center…", "openDeckControlCenter:", "")
@@ -159,7 +159,7 @@ else:
         def provider_usage_state(self) -> ProviderUsageState:
             return getattr(
                 self,
-                "_sidepulse_provider_usage_state",
+                "_jrbar_provider_usage_state",
                 ProviderUsageState((), None, None, False),
             )
 
@@ -338,7 +338,7 @@ else:
         # --- Native provider usage --------------------------------------
 
         def _provider_usage_service(self) -> ProviderUsageService:
-            service = getattr(self, "_sidepulse_provider_usage_service", None)
+            service = getattr(self, "_jrbar_provider_usage_service", None)
             if type(service) is ProviderUsageService:
                 return service
             service = ProviderUsageService(
@@ -348,8 +348,8 @@ else:
                 state_loader=load_provider_usage_state,
                 state_saver=save_provider_usage_state,
             )
-            self._sidepulse_provider_usage_service = service
-            self._sidepulse_provider_usage_state = service.snapshot()
+            self._jrbar_provider_usage_service = service
+            self._jrbar_provider_usage_state = service.snapshot()
             return service
 
         def _request_provider_usage(
@@ -364,7 +364,7 @@ else:
                 force=force,
                 providers=providers,
             )
-            self._sidepulse_provider_usage_state = current
+            self._jrbar_provider_usage_state = current
             refresh_native_usage_summary(self)
 
         def _provider_usage_log(self, message: str) -> None:
@@ -426,24 +426,24 @@ else:
                     self,
                     payload.usage_settings,
                 )
-            self._sidepulse_provider_presentation_settings = presentation
+            self._jrbar_provider_presentation_settings = presentation
             settings = presentation
             # The edge BASELINE is owned by this method alone. It used
-            # to read _sidepulse_provider_usage_state, which every 15s
+            # to read _jrbar_provider_usage_state, which every 15s
             # tick overwrites with the service's current state -- so a
             # tick landing between the worker's publish and this apply
             # made previous == current and blinded EVERY edge detector
             # (resets, thresholds, pace, hooks, connection loss).
             previous_state = getattr(
                 self,
-                "_sidepulse_provider_usage_edge_baseline",
+                "_jrbar_provider_usage_edge_baseline",
                 ProviderUsageState((), None, None, False),
             )
             # Last COMPARABLE reading per provider -- a degraded
             # (vendor-incident) publish must not wipe the pre-reset
             # baseline the detectors compare against.
-            self._sidepulse_provider_usage_edge_baseline = merged_edge_baseline(previous_state, state)
-            self._sidepulse_provider_usage_state = state
+            self._jrbar_provider_usage_edge_baseline = merged_edge_baseline(previous_state, state)
+            self._jrbar_provider_usage_state = state
             # Percent history: every provider's "how much is left", so the
             # settings chart can show ALL of them.
             if (
@@ -455,7 +455,7 @@ else:
                 is False
             ):
                 self._provider_usage_log("usage percent history write not queued")
-            delivery_state = getattr(self, "_sidepulse_reset_delivery_state", ResetDeliveryState())
+            delivery_state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
             seen = {
                 event.event_id
                 for event in delivery_state.events
@@ -482,11 +482,11 @@ else:
                         ),
                         now=time.time(),
                 )
-                self._sidepulse_reset_delivery_state = delivery_state
+                self._jrbar_reset_delivery_state = delivery_state
                 self._persist_reset_delivery_state()
             self._deliver_pending_reset_events()
             thresholds = {preference.identity: preference.threshold_remaining for preference in settings.providers}
-            self._sidepulse_provider_threshold_crossings = threshold_crossings(
+            self._jrbar_provider_threshold_crossings = threshold_crossings(
                 previous_state.snapshots,
                 state.snapshots,
                 thresholds,
@@ -510,7 +510,7 @@ else:
             self._alert_new_critical_pace(previous_state, state)
             self._alert_connection_loss(previous_state, state)
             self._report_reconnect_outcome(state)
-            controller = getattr(self, "_sidepulse_provider_usage_window", None)
+            controller = getattr(self, "_jrbar_provider_usage_window", None)
             if controller is not None:
                 controller.refresh(state)
             refresh_native_usage_summary(self)
@@ -588,11 +588,11 @@ else:
 
         def _usage_menu_settings(self):
             """Immutable worker or explicit-action snapshot; never UI-path I/O."""
-            settings = getattr(self, "_sidepulse_provider_presentation_settings", None)
+            settings = getattr(self, "_jrbar_provider_presentation_settings", None)
             if type(settings) is not ProviderPresentationSettings:
                 durable = getattr(
                     self,
-                    "_sidepulse_provider_usage_settings_snapshot",
+                    "_jrbar_provider_usage_settings_snapshot",
                     None,
                 )
                 if type(durable) is ProviderUsageSettings:
@@ -683,7 +683,7 @@ else:
             celebrate_quota_resets(self, events, legacy=_legacy)
 
         def _persist_reset_delivery_state(self) -> None:
-            state = getattr(self, "_sidepulse_reset_delivery_state", ResetDeliveryState())
+            state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
             disposition = self._persistence_writer.submit(
                 "provider-reset-events",
                 lambda: save_reset_delivery_state(state),
@@ -698,26 +698,26 @@ else:
             deliver_pending_reset_events(self, legacy=_legacy)
 
         def _schedule_reset_delivery_retry(self, now: float) -> None:
-            state = getattr(self, "_sidepulse_reset_delivery_state", ResetDeliveryState())
+            state = getattr(self, "_jrbar_reset_delivery_state", ResetDeliveryState())
             delay = next_reset_retry_delay(state, now=now)
-            timer = getattr(self, "_sidepulse_reset_delivery_timer", None)
+            timer = getattr(self, "_jrbar_reset_delivery_timer", None)
             if delay is None:
                 if timer is not None:
                     timer.invalidate()
-                self._sidepulse_reset_delivery_timer = None
+                self._jrbar_reset_delivery_timer = None
                 return
             if timer is not None:
                 return
-            self._sidepulse_reset_delivery_timer = self._schedule_capacity_timer(
+            self._jrbar_reset_delivery_timer = self._schedule_capacity_timer(
                 max(0.05, delay),
                 "retryPendingResetDeliveries:",
             )
 
         @_legacy.objc.IBAction
         def retryPendingResetDeliveries_(self, timer) -> None:
-            if timer is not getattr(self, "_sidepulse_reset_delivery_timer", None):
+            if timer is not getattr(self, "_jrbar_reset_delivery_timer", None):
                 return
-            self._sidepulse_reset_delivery_timer = None
+            self._jrbar_reset_delivery_timer = None
             self._deliver_pending_reset_events()
 
         def _alert_connection_loss(self, previous_state, state) -> None:
@@ -755,10 +755,10 @@ else:
             from .provider_usage_window import ProviderUsageWindowController
 
             settings = self._usage_menu_settings()
-            controller = getattr(self, "_sidepulse_provider_usage_window", None)
+            controller = getattr(self, "_jrbar_provider_usage_window", None)
             if controller is None:
                 controller = ProviderUsageWindowController(action_target=self)
-                self._sidepulse_provider_usage_window = controller
+                self._jrbar_provider_usage_window = controller
             if settings is not None:
                 controller.set_privacy_mode(settings.menu_display.privacy_mode)
             controller.show(self.provider_usage_state)
@@ -783,12 +783,12 @@ else:
 
         @_legacy.objc.IBAction
         def checkForSoftwareUpdates_(self, sender) -> None:
-            runtime = getattr(self, "_sidepulse_sparkle_updater", None)
+            runtime = getattr(self, "_jrbar_sparkle_updater", None)
             if runtime is not None:
                 runtime.check_for_updates(sender)
 
         def _select_update_channel(self, channel: str) -> None:
-            runtime = getattr(self, "_sidepulse_sparkle_updater", None)
+            runtime = getattr(self, "_jrbar_sparkle_updater", None)
             if runtime is not None and runtime.select_channel(channel):
                 self._menu_signature = None
 
@@ -803,7 +803,7 @@ else:
         def applicationDidFinishLaunching_(self, notification):
             if getattr(self, "_runtime_started", False) or getattr(self, "_runtime_termination_started", False):
                 return None
-            self._sidepulse_sparkle_updater = start_sparkle_updater()
+            self._jrbar_sparkle_updater = start_sparkle_updater()
             result = _BaseStatusBarController.applicationDidFinishLaunching_(
                 self,
                 notification,
@@ -812,8 +812,8 @@ else:
                 start_optional_integration_runtime,
             )
 
-            self._sidepulse_optional_integration_runtime = start_optional_integration_runtime(self)
-            self._sidepulse_reset_delivery_state = load_reset_delivery_state()
+            self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
+            self._jrbar_reset_delivery_state = load_reset_delivery_state()
             self._deliver_pending_reset_events()
             # Seed the edge baseline from the persisted store: a reset
             # that passes while the app is down (or restarting) is still
@@ -821,7 +821,7 @@ else:
             # launch baseline made the first publish blind.
             from .provider_usage_store import load_provider_usage_state
 
-            self._sidepulse_provider_usage_edge_baseline = load_provider_usage_state()
+            self._jrbar_provider_usage_edge_baseline = load_provider_usage_state()
             self._request_provider_usage(force=True)
             return result
 
@@ -830,7 +830,7 @@ else:
             self._deliver_pending_reset_events()
             self._request_provider_usage(force=False)
             result = _BaseStatusBarController.refresh_(self, sender)
-            runtime = getattr(self, "_sidepulse_optional_integration_runtime", None)
+            runtime = getattr(self, "_jrbar_optional_integration_runtime", None)
             snapshot = getattr(self, "last_snapshot", None)
             if runtime is not None and snapshot is not None:
                 signal = (
@@ -868,12 +868,12 @@ else:
             from .deck_controller import stop_deck_runtime_reconfiguration
 
             stop_deck_runtime_reconfiguration(self)
-            service = getattr(self, "_sidepulse_provider_usage_service", None)
+            service = getattr(self, "_jrbar_provider_usage_service", None)
             if service is not None:
                 service.close()
             optional_runtime = getattr(
                 self,
-                "_sidepulse_optional_integration_runtime",
+                "_jrbar_optional_integration_runtime",
                 None,
             )
             if optional_runtime is not None:

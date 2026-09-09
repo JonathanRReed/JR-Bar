@@ -66,7 +66,7 @@ def test_plan_is_claude_only_and_uses_invocation_local_settings() -> None:
     plan = plan_watch_run(
         WatchRunProvider.CLAUDE,
         ("claude", "-p", "private prompt"),
-        observer_command=("sidepulse", "watch-event"),
+        observer_command=("jrbar", "watch-event"),
     )
 
     assert plan.provider is WatchRunProvider.CLAUDE
@@ -89,9 +89,9 @@ def test_plan_is_claude_only_and_uses_invocation_local_settings() -> None:
 
 
 def test_watch_run_is_reachable_from_both_cli_surfaces() -> None:
-    from jrbar.cli import build_parser, build_sidepulse_parser, cmd_watch_run
+    from jrbar.cli import build_jrbar_parser, build_parser, cmd_watch_run
 
-    for parser in (build_sidepulse_parser(), build_parser()):
+    for parser in (build_jrbar_parser(), build_parser()):
         parsed = parser.parse_args(
             ["watch-run", "claude", "--", "claude", "--version"]
         )

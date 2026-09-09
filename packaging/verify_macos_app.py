@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed verification for a packaged SidePulse.app candidate."""
+"""Fail-closed verification for a packaged JR-Bar.app candidate."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from pathlib import Path
 
 from jrbar.trusted_tools import trusted_system_tool
 
-EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
-EXPECTED_EXECUTABLE_NAME = "SidePulse"
+EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
+EXPECTED_EXECUTABLE_NAME = "JR-Bar"
 APPLE_LIBRARY_ROOTS = (Path("/System/Library"), Path("/usr/lib"))
 DANGEROUS_ENVIRONMENT_PREFIXES = ("PYTHON", "DYLD_")
 DANGEROUS_ENVIRONMENT_NAMES = {"LD_LIBRARY_PATH"}

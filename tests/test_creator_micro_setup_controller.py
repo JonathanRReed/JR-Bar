@@ -67,7 +67,7 @@ def _loaded(serial="approved", *, enabled=True):
 
 def _target(calls, runtime=None):
     target = SimpleNamespace(
-        _sidepulse_optional_integration_runtime=runtime,
+        _jrbar_optional_integration_runtime=runtime,
         _runtime_termination_started=False,
         _deck_runtime_stopping=False,
         reconfigureDeckRuntime_=lambda sender: calls.append("restart"),
@@ -79,7 +79,7 @@ def _target(calls, runtime=None):
 def test_inspection_revokes_and_stops_runtime_before_opening_setup_owner(tmp_path):
     calls = []
     target = _target(calls)
-    target._sidepulse_optional_integration_runtime = _Runtime(calls)
+    target._jrbar_optional_integration_runtime = _Runtime(calls)
 
     thread = begin_creator_micro_inspection(
         target,
@@ -95,7 +95,7 @@ def test_inspection_revokes_and_stops_runtime_before_opening_setup_owner(tmp_pat
     assert selector == "applyCreatorMicroSetupResult:"
     assert result.code == "inspection_ready"
     assert result.preview.plan is _plan() or result.preview.plan == _plan()
-    assert target._sidepulse_optional_integration_runtime is None
+    assert target._jrbar_optional_integration_runtime is None
 
 
 def test_inspection_never_opens_setup_owner_when_runtime_does_not_stop(tmp_path):

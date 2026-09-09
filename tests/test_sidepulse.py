@@ -504,8 +504,8 @@ class AgentMonitorTests(unittest.TestCase):
             for forged in (
                 source.replace(sys.executable, "/tmp/forged-executable", 1),
                 source.replace(
-                    "const SIDEPULSE_HOOK_ARGS = Object.freeze([",
-                    'const SIDEPULSE_HOOK_ARGS = Object.freeze(["/tmp/forged-prefix",',
+                    "const JRBAR_HOOK_ARGS = Object.freeze([",
+                    'const JRBAR_HOOK_ARGS = Object.freeze(["/tmp/forged-prefix",',
                     1,
                 ),
             ):
@@ -641,7 +641,7 @@ class AgentMonitorTests(unittest.TestCase):
             runner_path = base / "runner.mjs"
             runner_path.write_text(
                 """
-const { default: plugin } = await import(\"./sidepulse.js\");
+const { default: plugin } = await import(\"./jrbar.js\");
 const base = {
   properties: {
     sessionID: \"session-opaque\",
@@ -2781,7 +2781,7 @@ for (const event of [
                 "[features]",
                 "hooks = true",
                 "",
-                "# >>> agent-monitor hooks >>>",
+                "# >>> jrbar hooks >>>",
                 "# Provider-neutral status collection. Do not edit inside this block.",
             ]
             for event in events:
@@ -2798,7 +2798,7 @@ for (const event of [
                 )
             lines.extend(
                 [
-                    "# <<< agent-monitor hooks <<<",
+                    "# <<< jrbar hooks <<<",
                     "",
                     "[hooks.state]",
                     'source = "preserve-me"',
@@ -2822,7 +2822,9 @@ for (const event of [
             self.assertEqual(config.read_bytes(), original)
             self.assertEqual(list(base.glob("config.toml.bak.*")), [])
 
-    def test_codex_installer_replaces_stale_hook_alongside_exact_managed_block(self) -> None:
+    def test_codex_installer_migrates_pre_rename_managed_block_header(self) -> None:
+        """A block written under `# >>> agent-monitor hooks >>>` is found,
+        rewritten once under the current header, and never duplicated."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
             config = base / "config.toml"
@@ -2852,6 +2854,67 @@ for (const event of [
                 [
                     "# <<< agent-monitor hooks <<<",
                     "",
+                    "[hooks.state]",
+                    'source = "preserve-me"',
+                    "",
+                ]
+            )
+            config.write_text("\n".join(lines))
+
+            with (
+                patch("jrbar.install.hook_command", return_value=current_command),
+                patch("jrbar.install.local_codex_hook_hashes", return_value={}),
+            ):
+                result = install_codex_hooks(log_path=log, config_path=config)
+
+            self.assertTrue(result.changed)
+            text = config.read_text()
+            self.assertNotIn("agent-monitor hooks", text)
+            self.assertEqual(text.count("# >>> jrbar hooks >>>"), 1)
+            self.assertEqual(text.count("# <<< jrbar hooks <<<"), 1)
+            self.assertEqual(text.count(current_command), len(events))
+            self.assertIn('source = "preserve-me"', text)
+
+            migrated = config.read_bytes()
+            with (
+                patch("jrbar.install.hook_command", return_value=current_command),
+                patch("jrbar.install.local_codex_hook_hashes", return_value={}),
+            ):
+                repeat = install_codex_hooks(log_path=log, config_path=config)
+
+            self.assertFalse(repeat.changed)
+            self.assertEqual(config.read_bytes(), migrated)
+
+    def test_codex_installer_replaces_stale_hook_alongside_exact_managed_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            config = base / "config.toml"
+            log = base / "codex.jsonl"
+            current_command = f"fixture hook_entry.py --provider codex --log {log}"
+            events = CODEX_EVENTS
+            lines = [
+                "[features]",
+                "hooks = true",
+                "",
+                "# >>> jrbar hooks >>>",
+                "# Provider-neutral status collection. Do not edit inside this block.",
+            ]
+            for event in events:
+                lines.extend(
+                    [
+                        f"[[hooks.{event}]]",
+                        'matcher = "*"',
+                        f"[[hooks.{event}.hooks]]",
+                        'type = "command"',
+                        f"command = '''{current_command}'''",
+                    ]
+                    + (["timeout = 3"] if event in {"SessionEnd", "Interrupt"} else [])
+                    + [""]
+                )
+            lines.extend(
+                [
+                    "# <<< jrbar hooks <<<",
+                    "",
                     "[[hooks.PreToolUse]]",
                     'matcher = "*"',
                     "[[hooks.PreToolUse.hooks]]",
@@ -2879,8 +2942,8 @@ for (const event of [
             self.assertNotIn("legacy hook_entry.py", text)
             self.assertIn("echo preserve-unrelated-hook", text)
             self.assertEqual(text.count(current_command), len(events))
-            self.assertEqual(text.count("# >>> agent-monitor hooks >>>"), 1)
-            self.assertEqual(text.count("# <<< agent-monitor hooks <<<"), 1)
+            self.assertEqual(text.count("# >>> jrbar hooks >>>"), 1)
+            self.assertEqual(text.count("# <<< jrbar hooks <<<"), 1)
 
             first_update = config.read_bytes()
             with patch("jrbar.install.hook_command", return_value=current_command):
@@ -3111,13 +3174,13 @@ for (const event of [
             first = install_openclaw_hooks(log, config, python_executable="python3")
             second = install_openclaw_hooks(log, config, python_executable="python3")
             data = json.loads(config.read_text())
-            handler = base / "hooks" / "sidepulse-status" / "handler.ts"
+            handler = base / "hooks" / "jrbar-status" / "handler.ts"
 
             self.assertTrue(first.changed)
             self.assertFalse(second.changed)
             self.assertEqual(data["gateway"], {"port": 18789})
             self.assertTrue(data["hooks"]["internal"]["enabled"])
-            self.assertTrue(data["hooks"]["internal"]["entries"]["sidepulse-status"]["enabled"])
+            self.assertTrue(data["hooks"]["internal"]["entries"]["jrbar-status"]["enabled"])
             self.assertTrue(handler.exists())
             self.assertIn('"--provider","openclaw"', handler.read_text())
             self.assertIn('"-m","jrbar.hook_client"', handler.read_text())
@@ -3150,7 +3213,7 @@ for (const event of [
                         "hooks": {
                             "internal": {
                                 "enabled": True,
-                                "entries": {"sidepulse-status": {"enabled": True}},
+                                "entries": {"jrbar-status": {"enabled": True}},
                             }
                         }
                     }
@@ -3365,6 +3428,7 @@ for (const event of [
             self.assertIn("[hooks.state]", text)
             self.assertIn('source = "keep-me"', text)
             self.assertNotIn("agent-monitor hooks", text)
+            self.assertNotIn("jrbar hooks", text)
             self.assertNotIn(str(log), text)
 
     def test_claude_uninstaller_removes_monitor_hooks_and_preserves_other_hooks(self) -> None:
@@ -3452,7 +3516,7 @@ for (const event of [
             self.assertIn(log, detected.log_paths)
 
     def test_sidepulse_sidepulse_command_shape(self) -> None:
-        parser = build_parser(prog="sidepulse agent-monitor")
+        parser = build_parser(prog="jrbar agent-monitor")
 
         install = parser.parse_args(["install"])
         live = parser.parse_args(["live", "--recent-seconds", "120"])
@@ -3478,10 +3542,10 @@ for (const event of [
         self.assertTrue(status_bar_foreground.foreground)
         self.assertEqual(grok_hook_log.provider, "grok")
         self.assertEqual(grok_hook_client.provider, "grok")
-        self.assertIn("sidepulse agent-monitor", parser.format_usage())
+        self.assertIn("jrbar agent-monitor", parser.format_usage())
 
     def test_devin_cli_install_and_log_arguments_are_available(self) -> None:
-        parser = build_parser(prog="sidepulse agent-monitor")
+        parser = build_parser(prog="jrbar agent-monitor")
 
         install = parser.parse_args(["install", "devin", "--devin-log", "/tmp/devin.jsonl"])
         hook_log = parser.parse_args(["hook-log", "--provider", "devin", "--log", "/tmp/devin.jsonl"])
@@ -3495,10 +3559,10 @@ for (const event of [
             result = cli_module.jrbar_main(["agent-monitor", "live"])
 
         self.assertEqual(result, 17)
-        main.assert_called_once_with(["live"], prog="sidepulse agent-monitor")
+        main.assert_called_once_with(["live"], prog="jrbar agent-monitor")
 
     def test_sidepulse_battery_command_shape(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
 
         status = parser.parse_args(["battery", "status", "--json"])
         leds = parser.parse_args(["battery", "leds", "--once", "--dry-run", "--full-watts", "140"])
@@ -3515,7 +3579,7 @@ for (const event of [
         self.assertEqual(configure.display, "battery")
 
     def test_sidepulse_status_bar_root_command_shape(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
 
         default = parser.parse_args(["status-bar"])
         start = parser.parse_args(["status-bar", "start", "--foreground"])
@@ -3532,7 +3596,7 @@ for (const event of [
         self.assertTrue(helper.dry_run)
 
     def test_sidepulse_sdejectguard_command_shape(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
 
         start = parser.parse_args(["sdejectguard", "start", "--volume-uuid", "A1B2-C3D4"])
         interactive = parser.parse_args(
@@ -3566,7 +3630,7 @@ for (const event of [
         self.assertTrue(logs.follow)
 
     def test_sidepulse_sdejectguard_start_uses_launchd_installer(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(
             [
                 "sdejectguard",
@@ -3582,7 +3646,7 @@ for (const event of [
             changed=True,
             started=True,
             scope="user",
-            plist_path=Path("/tmp/io.sidepulse.sdejectguard.plist"),
+            plist_path=Path("/tmp/com.jonathanreed.jrbar.sdejectguard.plist"),
             binary_path=Path("/tmp/sd_eject_guard"),
             cleanup_removed=None,
             cleanup_skipped=None,
@@ -3592,7 +3656,7 @@ for (const event of [
             "jrbar.sd_eject_guard_launch.install_sd_eject_guard",
             return_value=guard_result,
         ) as install:
-            result = cli_module.cmd_sidepulse_sdejectguard_start(args)
+            result = cli_module.cmd_jrbar_sdejectguard_start(args)
 
         self.assertEqual(result, 0)
         install.assert_called_once_with(
@@ -3602,7 +3666,7 @@ for (const event of [
         )
 
     def test_sidepulse_sdejectguard_start_interactive_runs_foreground(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(
             [
                 "sdejectguard",
@@ -3619,17 +3683,17 @@ for (const event of [
             "jrbar.sd_eject_guard_launch.run_sd_eject_guard_interactive",
             return_value=0,
         ) as run:
-            result = cli_module.cmd_sidepulse_sdejectguard_start(args)
+            result = cli_module.cmd_jrbar_sdejectguard_start(args)
 
         self.assertEqual(result, 0)
         run.assert_called_once_with(scope="user", volume_uuid="A1B2-C3D4")
 
     def test_sidepulse_sdejectguard_stop_calls_guard_stop(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(["sdejectguard", "stop", "--scope", "user", "--dry-run"])
         stop_result = SimpleNamespace(
             scope="user",
-            plist_path=Path("/tmp/io.sidepulse.sdejectguard.plist"),
+            plist_path=Path("/tmp/com.jonathanreed.jrbar.sdejectguard.plist"),
             stopped=True,
             skipped=None,
         )
@@ -3638,18 +3702,18 @@ for (const event of [
             "jrbar.sd_eject_guard_launch.stop_sd_eject_guard",
             return_value=(stop_result,),
         ) as stop:
-            result = cli_module.cmd_sidepulse_sdejectguard_stop(args)
+            result = cli_module.cmd_jrbar_sdejectguard_stop(args)
 
         self.assertEqual(result, 0)
         stop.assert_called_once_with(scope="user", dry_run=True)
 
     def test_sidepulse_sdejectguard_uninstall_calls_guard_uninstall(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(["sdejectguard", "uninstall", "--scope", "user", "--dry-run"])
         uninstall_result = SimpleNamespace(
             scope="user",
-            plist_path=Path("/tmp/io.sidepulse.sdejectguard.plist"),
-            removed_paths=(Path("/tmp/io.sidepulse.sdejectguard.plist"),),
+            plist_path=Path("/tmp/com.jonathanreed.jrbar.sdejectguard.plist"),
+            removed_paths=(Path("/tmp/com.jonathanreed.jrbar.sdejectguard.plist"),),
             skipped=None,
             dry_run=True,
         )
@@ -3658,13 +3722,13 @@ for (const event of [
             "jrbar.sd_eject_guard_launch.uninstall_sd_eject_guard",
             return_value=(uninstall_result,),
         ) as uninstall:
-            result = cli_module.cmd_sidepulse_sdejectguard_uninstall(args)
+            result = cli_module.cmd_jrbar_sdejectguard_uninstall(args)
 
         self.assertEqual(result, 0)
         uninstall.assert_called_once_with(scope="user", dry_run=True)
 
     def test_sidepulse_setup_command_shape(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
 
         default = parser.parse_args(["setup"])
         codex_only = parser.parse_args(
@@ -3688,7 +3752,7 @@ for (const event of [
         self.assertTrue(codex_only.dry_run)
 
     def test_sidepulse_setup_installs_hooks_guard_and_status_bar_when_guard_is_requested(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(["setup", "--sd-eject-guard"])
         codex_result = SimpleNamespace(
             provider="codex",
@@ -3719,7 +3783,7 @@ for (const event of [
             backup_path=None,
         )
         launch_result = SimpleNamespace(
-            plist_path=Path("/tmp/io.sidepulse.agentstatus.plist"),
+            plist_path=Path("/tmp/com.jonathanreed.jrbar.app.plist"),
             changed=True,
             started=True,
         )
@@ -3728,7 +3792,7 @@ for (const event of [
             changed=True,
             started=True,
             scope="user",
-            plist_path=Path("/tmp/io.sidepulse.sdejectguard.plist"),
+            plist_path=Path("/tmp/com.jonathanreed.jrbar.sdejectguard.plist"),
             binary_path=Path("/tmp/sd_eject_guard"),
             cleanup_removed=None,
             cleanup_skipped=None,
@@ -3766,7 +3830,7 @@ for (const event of [
                 return_value=launch_result,
             ) as launch,
         ):
-            result = cli_module.cmd_sidepulse_setup(args)
+            result = cli_module.cmd_jrbar_setup(args)
 
         self.assertEqual(result, 0)
         self.assertEqual(
@@ -3788,7 +3852,7 @@ for (const event of [
         launch.assert_called_once_with(start=True)
 
     def test_sidepulse_setup_no_status_bar_still_installs_guard(self) -> None:
-        parser = cli_module.build_sidepulse_parser()
+        parser = cli_module.build_jrbar_parser()
         args = parser.parse_args(["setup", "--no-status-bar", "--sd-eject-guard-scope", "user"])
         hook_result = SimpleNamespace(
             provider="codex",
@@ -3802,7 +3866,7 @@ for (const event of [
             changed=False,
             started=True,
             scope="user",
-            plist_path=Path("/tmp/io.sidepulse.sdejectguard.plist"),
+            plist_path=Path("/tmp/com.jonathanreed.jrbar.sdejectguard.plist"),
             binary_path=Path("/tmp/sd_eject_guard"),
             cleanup_removed=None,
             cleanup_skipped=None,
@@ -3816,7 +3880,7 @@ for (const event of [
             ) as guard,
             patch("jrbar.status_bar_launch.install_launch_agent") as launch,
         ):
-            result = cli_module.cmd_sidepulse_setup(args)
+            result = cli_module.cmd_jrbar_setup(args)
 
         self.assertEqual(result, 0)
         guard.assert_called_once_with(scope="user", dry_run=False, volume_uuid=None)
@@ -4707,8 +4771,8 @@ for (const event of [
     def test_status_bar_launch_agent_plist_runs_foreground_command(self) -> None:
         plist = build_launch_agent_plist(
             python_executable="/usr/bin/python3",
-            stdout_path=Path("/tmp/sidepulse.out.log"),
-            stderr_path=Path("/tmp/sidepulse.err.log"),
+            stdout_path=Path("/tmp/jrbar.out.log"),
+            stderr_path=Path("/tmp/jrbar.err.log"),
         )
 
         self.assertEqual(plist["Label"], LAUNCH_AGENT_LABEL)
@@ -4717,14 +4781,14 @@ for (const event of [
             [
                 "/usr/bin/python3",
                 "-m",
-                "sidepulse",
+                "jrbar",
                 "status-bar",
                 "--foreground",
             ],
         )
         self.assertTrue(plist["RunAtLoad"])
-        self.assertEqual(plist["StandardOutPath"], "/tmp/sidepulse.out.log")
-        self.assertEqual(plist["StandardErrorPath"], "/tmp/sidepulse.err.log")
+        self.assertEqual(plist["StandardOutPath"], "/tmp/jrbar.out.log")
+        self.assertEqual(plist["StandardErrorPath"], "/tmp/jrbar.err.log")
         # Unconditional KeepAlive: a TCC grant quits the app with exit 0
         # (a SuccessfulExit condition would leave it dead); Quit boots
         # the job out instead of relying on exit codes.
@@ -4732,7 +4796,7 @@ for (const event of [
 
     def test_status_bar_launch_agent_installed_checks_plist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            plist = Path(tmp) / "io.sidepulse.agentstatus.plist"
+            plist = Path(tmp) / "com.jonathanreed.jrbar.app.plist"
 
             self.assertFalse(launch_agent_installed(plist))
             plist.write_bytes(b"plist")
@@ -4740,7 +4804,7 @@ for (const event of [
 
     def test_frozen_status_bar_launch_agent_uses_sidepulse_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            executable = Path(tmp) / "SidePulse.app" / "Contents" / "MacOS" / "SidePulse"
+            executable = Path(tmp) / "JR-Bar.app" / "Contents" / "MacOS" / "JR-Bar"
             executable.parent.mkdir(parents=True)
             executable.write_bytes(b"frozen")
             executable.chmod(0o755)
@@ -4749,8 +4813,8 @@ for (const event of [
                 patch("jrbar.status_bar_launch.sys.executable", str(executable)),
             ):
                 plist = build_launch_agent_plist(
-                    stdout_path=Path("/tmp/sidepulse.out.log"),
-                    stderr_path=Path("/tmp/sidepulse.err.log"),
+                    stdout_path=Path("/tmp/jrbar.out.log"),
+                    stderr_path=Path("/tmp/jrbar.err.log"),
                 )
 
         self.assertEqual(
@@ -4770,7 +4834,7 @@ for (const event of [
     def test_status_bar_install_removes_legacy_com_sidepulse_plist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
-            target = base / "io.sidepulse.agentstatus.plist"
+            target = base / "com.jonathanreed.jrbar.app.plist"
             legacy = base / "com.sidepulse.agentstatus.plist"
             legacy.write_bytes(b"old")
 
@@ -4795,7 +4859,7 @@ for (const event of [
         for scope in ("user", "system"):
             paths = SdEjectGuardPaths(
                 scope=scope,
-                plist_path=Path(f"/tmp/{scope}/io.sidepulse.sdejectguard.plist"),
+                plist_path=Path(f"/tmp/{scope}/com.jonathanreed.jrbar.sdejectguard.plist"),
                 binary_path=Path(f"/tmp/{scope}/sd_eject_guard"),
                 stdout_path=Path(f"/tmp/{scope}/sd-eject-guard.out.log"),
                 stderr_path=Path(f"/tmp/{scope}/sd-eject-guard.err.log"),
@@ -4818,14 +4882,14 @@ for (const event of [
             base = Path(tmp)
             user_paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / "sd_eject_guard",
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / "sd_eject_guard",
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -4868,14 +4932,14 @@ for (const event of [
             source.write_text("int main(void) { return 0; }\n")
             user_paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / "sd_eject_guard",
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / "sd_eject_guard",
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -4919,14 +4983,14 @@ for (const event of [
             source.write_text("int main(void) { return 0; }\n")
             user_paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / SD_EJECT_GUARD_BINARY_NAME,
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / SD_EJECT_GUARD_BINARY_NAME,
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -4963,14 +5027,14 @@ for (const event of [
             source.write_text("int main(void) { return 0; }\n")
             user_paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / "sd_eject_guard",
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / "sd_eject_guard",
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -5004,14 +5068,14 @@ for (const event of [
             base = Path(tmp)
             user_paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / "sd_eject_guard",
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / "sd_eject_guard",
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -5044,14 +5108,14 @@ for (const event of [
             base = Path(tmp)
             paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / SD_EJECT_GUARD_BINARY_NAME,
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / SD_EJECT_GUARD_BINARY_NAME,
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -5092,7 +5156,7 @@ for (const event of [
             source.write_text("int main(void) { return 0; }\n")
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / "sd_eject_guard",
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -5113,14 +5177,14 @@ for (const event of [
             source.write_text("int main(void) { return 0; }\n")
             user_paths = SdEjectGuardPaths(
                 scope="user",
-                plist_path=base / "user" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "user" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "user" / "sd_eject_guard",
                 stdout_path=base / "user" / "out.log",
                 stderr_path=base / "user" / "err.log",
             )
             system_paths = SdEjectGuardPaths(
                 scope="system",
-                plist_path=base / "system" / "io.sidepulse.sdejectguard.plist",
+                plist_path=base / "system" / "com.jonathanreed.jrbar.sdejectguard.plist",
                 binary_path=base / "system" / "sd_eject_guard",
                 stdout_path=base / "system" / "out.log",
                 stderr_path=base / "system" / "err.log",
@@ -11383,7 +11447,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             config.chmod(0o644)
 
             result = install_openclaw_hooks(log, config, python_executable="python3")
-            handler_dir = base / "hooks" / "sidepulse-status"
+            handler_dir = base / "hooks" / "jrbar-status"
             self.assertTrue(result.changed)
             self.assertEqual(json.loads(config.read_text())["unknown"], {"keep": True})
             self.assertEqual(result.backup_path.read_text(), json.dumps(original))
@@ -11428,7 +11492,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
             marker.write_text("outside remains")
             hook_parent = base / "hooks"
             hook_parent.mkdir()
-            hook_dir = hook_parent / "sidepulse-status"
+            hook_dir = hook_parent / "jrbar-status"
             hook_dir.symlink_to(outside, target_is_directory=True)
 
             with self.assertRaises(OSError):
@@ -11442,7 +11506,7 @@ class PrivateStateSecurityTests(unittest.TestCase):
                 "hooks": {
                     "internal": {
                         "enabled": True,
-                        "entries": {"sidepulse-status": {"enabled": True}},
+                        "entries": {"jrbar-status": {"enabled": True}},
                     }
                 },
             }
@@ -18478,7 +18542,7 @@ class ReminderObservationRuntimeTests(unittest.TestCase):
         self.assertEqual(len(reads), 2)
         self.assertEqual(
             [thread_name for thread_name, _lookback, _callback in reads],
-            ["sidepulse-runtime-os-poll", "sidepulse-runtime-os-poll"],
+            ["jrbar-runtime-os-poll", "jrbar-runtime-os-poll"],
         )
         self.assertEqual(len(drains), 1)
         drains.pop()()
@@ -19016,7 +19080,7 @@ class CalendarObservationRuntimeTests(unittest.TestCase):
         self.assertEqual(len(reads), 2)
         self.assertEqual(
             [thread_name for thread_name, _lead in reads],
-            ["sidepulse-runtime-os-poll", "sidepulse-runtime-os-poll"],
+            ["jrbar-runtime-os-poll", "jrbar-runtime-os-poll"],
         )
         self.assertEqual(len(drains), 1)
         drains.pop()()
@@ -20311,7 +20375,7 @@ class LidObservationRuntimeTests(unittest.TestCase):
 
         self.assertEqual(
             reads,
-            ["sidepulse-runtime-os-poll", "sidepulse-runtime-os-poll"],
+            ["jrbar-runtime-os-poll", "jrbar-runtime-os-poll"],
         )
         self.assertEqual(len(drains), 1)
         drains.pop()()
@@ -21175,7 +21239,7 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
             self.assertEqual(hardware.submitted, 100)
             self.assertEqual(hardware.replaced_pending, 98)
             self.assertEqual(
-                sum(thread.name == "sidepulse-runtime-hardware-write" for thread in threading.enumerate()),
+                sum(thread.name == "jrbar-runtime-hardware-write" for thread in threading.enumerate()),
                 1,
             )
 

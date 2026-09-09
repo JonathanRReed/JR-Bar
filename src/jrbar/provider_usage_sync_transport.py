@@ -117,7 +117,7 @@ def fetch_peer_packet(
         return SftpFetchResult(peer.peer_id, False, None, "unsafe_known_hosts")
     if not _safe_owned_regular(identity, private=True):
         return SftpFetchResult(peer.peer_id, False, None, "unsafe_identity_file")
-    with tempfile.TemporaryDirectory(prefix="sidepulse-provider-sync-") as directory:
+    with tempfile.TemporaryDirectory(prefix="jrbar-provider-sync-") as directory:
         root = Path(directory)
         output = root / "remote.packet"
         batch = root / "fetch.batch"

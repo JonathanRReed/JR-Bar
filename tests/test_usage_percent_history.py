@@ -287,7 +287,7 @@ def test_recording_advances_dedupe_only_after_writer_accepts(monkeypatch, tmp_pa
         )
         is False
     )
-    assert not hasattr(controller, "_sidepulse_percent_history_last")
+    assert not hasattr(controller, "_jrbar_percent_history_last")
 
     target = tmp_path / "usage-percent-history.jsonl"
     monkeypatch.setattr(
@@ -298,7 +298,7 @@ def test_recording_advances_dedupe_only_after_writer_accepts(monkeypatch, tmp_pa
     assert record_state_observations(controller, (snapshot,), writer=writer) is True
     assert writer.close(timeout_seconds=1.0) is True
     assert target.exists()
-    assert controller._sidepulse_percent_history_last
+    assert controller._jrbar_percent_history_last
 
 
 def test_recording_dedupes_exact_source_instances_independently(monkeypatch, tmp_path) -> None:
@@ -338,7 +338,7 @@ def test_recording_dedupes_exact_source_instances_independently(monkeypatch, tmp
 
     stored = [json.loads(line) for line in target.read_text().splitlines()]
     assert [row["source_instance_id"] for row in stored] == ["default", "work"]
-    assert set(controller._sidepulse_percent_history_last) == {
+    assert set(controller._jrbar_percent_history_last) == {
         ("claude", "default", "weekly"),
         ("claude", "work", "weekly"),
     }
@@ -382,7 +382,7 @@ def test_retention_change_prunes_disabled_instance_without_fresh_sample(
     assert writer.close(timeout_seconds=1.0) is True
 
     assert target.read_text() == ""
-    assert not getattr(controller, "_sidepulse_percent_history_last", {})
+    assert not getattr(controller, "_jrbar_percent_history_last", {})
 
 
 def test_accepted_append_failure_keeps_observation_retryable(monkeypatch, tmp_path) -> None:
@@ -400,8 +400,8 @@ def test_accepted_append_failure_keeps_observation_retryable(monkeypatch, tmp_pa
     failed_writer = SerialPersistenceWriter()
     assert record_state_observations(controller, (snapshot,), writer=failed_writer) is True
     assert failed_writer.close(timeout_seconds=1.0) is True
-    assert not getattr(controller, "_sidepulse_percent_history_last", {})
-    assert not controller._sidepulse_percent_history_pending
+    assert not getattr(controller, "_jrbar_percent_history_last", {})
+    assert not controller._jrbar_percent_history_pending
 
     target = tmp_path / "usage-percent-history.jsonl"
     monkeypatch.setattr(
@@ -417,7 +417,7 @@ def test_accepted_append_failure_keeps_observation_retryable(monkeypatch, tmp_pa
     assert retry_writer.close(timeout_seconds=1.0) is True
 
     assert target.exists()
-    assert controller._sidepulse_percent_history_last
+    assert controller._jrbar_percent_history_last
 
 
 def test_newer_sample_is_ordered_behind_a_pending_append(monkeypatch, tmp_path) -> None:
@@ -461,9 +461,9 @@ def test_newer_sample_is_ordered_behind_a_pending_append(monkeypatch, tmp_path) 
 
     stored = [json.loads(line) for line in target.read_text().splitlines()]
     assert [row["remaining_percent"] for row in stored] == [71.0, 68.0]
-    assert not controller._sidepulse_percent_history_pending
+    assert not controller._jrbar_percent_history_pending
     assert (
-        controller._sidepulse_percent_history_last[
+        controller._jrbar_percent_history_last[
             ("claude", "default", "weekly")
         ][0]
         == 68.0

@@ -123,7 +123,8 @@ MAX_TRANSFER_BYTES: Final = 8 * MAX_PAYLOAD_BYTES
 
 # --- Wire document ----------------------------------------------------
 
-REMOTE_LEDGER_DOCUMENT: Final = "sidepulse-remote-ledger"
+REMOTE_LEDGER_DOCUMENT: Final = "jrbar-remote-ledger"
+LEGACY_REMOTE_LEDGER_DOCUMENT: Final = "sidepulse-remote-ledger"
 REMOTE_LEDGER_VERSION: Final = 1
 REMOTE_LEDGER_FILE_NAME: Final = "remote-ledger.json"
 DEFAULT_REMOTE_LEDGER_PATH: Final = (
@@ -800,7 +801,7 @@ def parse_remote_ledger_document(
     fields = _exact_fields(document, _DOCUMENT_FIELDS)
     if fields is None:
         raise RemotePeerError(FAILURE_MALFORMED)
-    if fields["document"] != REMOTE_LEDGER_DOCUMENT:
+    if fields["document"] not in (REMOTE_LEDGER_DOCUMENT, LEGACY_REMOTE_LEDGER_DOCUMENT):
         raise RemotePeerError(FAILURE_MALFORMED)
     if fields["version"] != REMOTE_LEDGER_VERSION or type(fields["version"]) is bool:
         raise RemotePeerError(FAILURE_UNSUPPORTED_VERSION)

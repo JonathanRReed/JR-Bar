@@ -44,27 +44,27 @@ def apply_provider_usage_settings_snapshot(
     sharing_signature = sharing_projection_signature(policies.sharing)
     previous_sharing_signature = getattr(
         controller,
-        "_sidepulse_provider_sync_sharing_signature",
+        "_jrbar_provider_sync_sharing_signature",
         None,
     )
     if previous_sharing_signature != sharing_signature:
         invalidate_cached_merged_sync(sharing_signature=sharing_signature)
-    controller._sidepulse_provider_sync_sharing_signature = sharing_signature
-    controller._sidepulse_provider_usage_settings_snapshot = settings
-    controller._sidepulse_provider_presentation_settings = (
+    controller._jrbar_provider_sync_sharing_signature = sharing_signature
+    controller._jrbar_provider_usage_settings_snapshot = settings
+    controller._jrbar_provider_presentation_settings = (
         project_presentation_settings(settings)
     )
-    controller._sidepulse_provider_instance_policies = policies
-    window = getattr(controller, "_sidepulse_provider_usage_window", None)
+    controller._jrbar_provider_instance_policies = policies
+    window = getattr(controller, "_jrbar_provider_usage_window", None)
     set_privacy_mode = getattr(window, "set_privacy_mode", None)
     if callable(set_privacy_mode):
         set_privacy_mode(settings.menu_display.privacy_mode)
-    if getattr(controller, "_sidepulse_usage_menu_boxes", None):
+    if getattr(controller, "_jrbar_usage_menu_boxes", None):
         from .settings_category_runtime import refresh_native_usage_summary
 
         refresh_native_usage_summary(controller)
     if notify_service:
-        service = getattr(controller, "_sidepulse_provider_usage_service", None)
+        service = getattr(controller, "_jrbar_provider_usage_service", None)
         notify = getattr(service, "note_settings_updated", None)
         if callable(notify):
             notify(settings)
@@ -75,7 +75,7 @@ def profile_session_action(controller, status, action: str | None) -> str | None
 
     if action is not None:
         return action
-    policies = getattr(controller, "_sidepulse_provider_instance_policies", None)
+    policies = getattr(controller, "_jrbar_provider_instance_policies", None)
     if type(policies) is not ProviderInstancePolicyProjection:
         return None
     resolution = resolve_profile_session_action_for_status(
@@ -254,7 +254,7 @@ def connect_claude_usage_action(
     log,
     wall_clock: Callable[[], float] = time.time,
 ) -> None:
-    controller._sidepulse_reconnect_watch = (
+    controller._jrbar_reconnect_watch = (
         "claude",
         source_instance_id,
         wall_clock(),

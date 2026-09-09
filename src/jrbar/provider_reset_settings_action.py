@@ -60,7 +60,7 @@ def deliver_pending_reset_events(controller, *, legacy) -> None:
     )
     from .provider_usage_feedback import deliver_reset_channels
 
-    state = getattr(controller, "_sidepulse_reset_delivery_state", ResetDeliveryState())
+    state = getattr(controller, "_jrbar_reset_delivery_state", ResetDeliveryState())
     original = state
     epoch_now = time.time()
     monotonic_now = time.monotonic()
@@ -90,7 +90,7 @@ def deliver_pending_reset_events(controller, *, legacy) -> None:
                 reason=receipt.reason,
                 now=receipt.recorded_at,
             )
-    controller._sidepulse_reset_delivery_state = state
+    controller._jrbar_reset_delivery_state = state
     if state != original:
         controller._persist_reset_delivery_state()
     controller._schedule_reset_delivery_retry(epoch_now)

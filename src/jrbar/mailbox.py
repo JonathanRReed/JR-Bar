@@ -677,7 +677,7 @@ def _candidate_for_orphan_workers(workers: Sequence[ProjectedAgentRow]) -> _Cand
     providers = {row.provider for row in ordered}
     return _Candidate(
         agent_id=_ORPHAN_WORKERS_ID,
-        provider=next(iter(providers)) if len(providers) == 1 else "sidepulse",
+        provider=next(iter(providers)) if len(providers) == 1 else "jrbar",
         display_name="Background agents",
         lifecycle_mode=lifecycle_mode,
         activity_label=normalized_activity_label(representative.source_status),

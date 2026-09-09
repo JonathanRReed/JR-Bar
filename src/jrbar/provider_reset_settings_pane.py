@@ -123,7 +123,7 @@ def render_provider_reset_settings(target, stack, settings, ui) -> tuple:
 
 def sync_provider_reset_checkboxes(target, settings) -> None:
     preferences = {preference.identity: preference for preference in settings.providers}
-    for box in getattr(target, "_sidepulse_provider_reset_boxes", ()):
+    for box in getattr(target, "_jrbar_provider_reset_boxes", ()):
         payload = box.representedObject()
         if not isinstance(payload, dict):
             continue

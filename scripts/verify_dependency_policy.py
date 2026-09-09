@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify SidePulse's reviewed direct-dependency and build-tool policy."""
+"""Verify JR-Bar's reviewed direct-dependency and build-tool policy."""
 
 from __future__ import annotations
 

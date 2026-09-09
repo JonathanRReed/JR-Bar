@@ -21,12 +21,12 @@ def _write_executable(path: Path, text: str) -> None:
 def _run_bootstrap(tmp_path: Path) -> subprocess.CompletedProcess[str]:
     venv = tmp_path / "venv"
     env = os.environ.copy()
-    env.pop("SIDEPULSE_REQUIRED_HARDWARE", None)
-    env.pop("SIDEPULSE_HARDWARE_CONFIRM", None)
+    env.pop("JRBAR_REQUIRED_HARDWARE", None)
+    env.pop("JRBAR_HARDWARE_CONFIRM", None)
     env.update(
         {
             "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
-            "SIDEPULSE_DEV_VENV": str(venv),
+            "JRBAR_DEV_VENV": str(venv),
         }
     )
     env.pop("PYTHON", None)
@@ -106,15 +106,15 @@ def _run_release_ref_gate(
             "INSTALLER_SIGN_IDENTITY": "test-installer",
             "NOTARY_PROFILE": "test-notary",
             "SPARKLE_KEY_ACCOUNT": "test-sparkle",
-            "SIDEPULSE_PERFORMANCE_EVIDENCE": str(repo / "performance.json"),
-            "SIDEPULSE_RUN_INSTALLED_UPGRADE": "1",
-            "SIDEPULSE_RUN_UNINSTALL": "1",
+            "JRBAR_PERFORMANCE_EVIDENCE": str(repo / "performance.json"),
+            "JRBAR_RUN_INSTALLED_UPGRADE": "1",
+            "JRBAR_RUN_UNINSTALL": "1",
         }
     )
     if required_hardware is not None:
-        env["SIDEPULSE_REQUIRED_HARDWARE"] = required_hardware
+        env["JRBAR_REQUIRED_HARDWARE"] = required_hardware
     if confirm_hardware:
-        env["SIDEPULSE_HARDWARE_CONFIRM"] = "1"
+        env["JRBAR_HARDWARE_CONFIRM"] = "1"
     return subprocess.run(
         [str(repo / "scripts" / "verify_macos_release.sh")],
         cwd=repo,
@@ -254,7 +254,7 @@ def test_release_gate_defaults_to_software_only_without_hardware_authorization(
     result = _run_release_ref_gate(tmp_path, checkout="tip")
 
     assert result.returncode == 73
-    assert "SIDEPULSE_HARDWARE_CONFIRM" not in result.stderr
+    assert "JRBAR_HARDWARE_CONFIRM" not in result.stderr
 
 
 def test_release_gate_requires_authorization_for_an_explicit_hardware_profile(
@@ -267,7 +267,7 @@ def test_release_gate_requires_authorization_for_an_explicit_hardware_profile(
     )
 
     assert result.returncode == 2
-    assert "SIDEPULSE_HARDWARE_CONFIRM=1" in result.stderr
+    assert "JRBAR_HARDWARE_CONFIRM=1" in result.stderr
     assert "PACKAGING_REACHED" not in result.stdout
 
 
@@ -292,7 +292,7 @@ def test_authoritative_release_gate_requires_every_external_evidence_class() -> 
         "verify_uninstalled_candidate.py",
         "verify_clean_pkg_install.py",
         "release_evidence.py",
-        "SIDEPULSE_RUN_UNINSTALL",
+        "JRBAR_RUN_UNINSTALL",
         "git rev-parse origin/main",
         '"$installed_binary" status-bar start',
     ):
@@ -346,7 +346,7 @@ def test_installed_upgrade_gate_executes_doctor_integrations_and_launchagent() -
     assert '"doctor"' in text
     assert '"integrations", "status", "--json"' in text
     assert '"/bin/launchctl", "print"' in text
-    assert 'EXPECTED_LAUNCH_AGENT_LABEL = "io.sidepulse.agentstatus"' in text
+    assert 'EXPECTED_LAUNCH_AGENT_LABEL = "com.jonathanreed.jrbar.app"' in text
 
 
 def test_release_publication_is_draft_first_and_rolls_back_on_failure() -> None:
@@ -370,9 +370,9 @@ def test_release_gate_binds_exact_sparkle_assets_and_app_notary_evidence() -> No
         "app-notary-log.json",
         "app-notary-submitted-zip.sha256",
         "--update-archive",
-        "SIDEPULSE_RELEASE_CHANNEL",
+        "JRBAR_RELEASE_CHANNEL",
         '--channel "$RELEASE_CHANNEL"',
-        "SIDEPULSE_SPARKLE_HISTORY_DIR",
+        "JRBAR_SPARKLE_HISTORY_DIR",
         "--previous-appcast",
         "--previous-archive",
     ):

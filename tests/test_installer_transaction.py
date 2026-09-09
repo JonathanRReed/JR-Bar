@@ -449,7 +449,7 @@ def test_launch_agent_trust_refresh_failure_restores_and_restarts_previous_job(
     tmp_path: Path,
 ) -> None:
     """A rejected new job must restore both the old plist and its running state."""
-    plist = tmp_path / "LaunchAgents" / "io.sidepulse.agentstatus.plist"
+    plist = tmp_path / "LaunchAgents" / "com.jonathanreed.jrbar.app.plist"
     legacy = tmp_path / "LaunchAgents" / "com.sidepulse.agentstatus.plist"
     original = b"last-known-working-plist\n"
     _private_file(plist, original.decode("utf-8"))

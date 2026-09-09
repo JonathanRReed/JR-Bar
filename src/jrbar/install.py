@@ -45,11 +45,12 @@ from .providers import (
     DEVIN_EVENTS,
     GROK_EVENTS,
     HERMES_EVENTS,
+    HOOK_CLIENT_MODULES,
     KIRO_EVENTS,
     KIRO_MANAGED_DESCRIPTION,
     KIRO_NATIVE_EVENT_NAMES,
     OPENCLAW_HOOK_NAME,
-    _is_sidepulse_hook_invocation,
+    _is_jrbar_hook_invocation,
     default_antigravity_config_path,
     default_cursor_config_path,
     default_devin_config_path,
@@ -59,15 +60,20 @@ from .providers import (
     default_openclaw_config_path,
     default_opencode_plugin_path,
     detect_log_path,
-    is_sidepulse_hook_command,
+    is_jrbar_hook_command,
     managed_opencode_plugin_log_path,
     openclaw_handler_source_for_arguments,
     openclaw_hook_dir,
     opencode_plugin_source_for_arguments,
 )
 
-MANAGED_START = "# >>> agent-monitor hooks >>>"
-MANAGED_END = "# <<< agent-monitor hooks <<<"
+MANAGED_START = "# >>> jrbar hooks >>>"
+MANAGED_END = "# <<< jrbar hooks <<<"
+# Header written before the rename. Existing blocks are found under either
+# header and rewritten under the current one.
+LEGACY_MANAGED_START = "# >>> agent-monitor hooks >>>"
+LEGACY_MANAGED_END = "# <<< agent-monitor hooks <<<"
+MANAGED_MARKERS = frozenset({MANAGED_START, MANAGED_END, LEGACY_MANAGED_START, LEGACY_MANAGED_END})
 BACKUP_MAX_FILES = 5
 MAX_CONFIG_BYTES = 1024 * 1024
 
@@ -623,7 +629,7 @@ def install_kiro_hooks(
     new_text = (
         json.dumps(
             {
-                "name": "sidepulse",
+                "name": "jrbar",
                 "description": KIRO_MANAGED_DESCRIPTION,
                 "tools": ["*"],
                 "hooks": hooks,
@@ -709,7 +715,7 @@ def install_devin_hooks(
     return InstallResult("devin", config, target_log, changed, backup, dry_run)
 
 
-def _remove_flat_sidepulse_hooks(entries: list[Any], provider: str) -> list[Any]:
+def _remove_flat_jrbar_hooks(entries: list[Any], provider: str) -> list[Any]:
     """Drops SidePulse's own flat {"command": ...} hook entries, keeping
     everything else byte-identical -- for configs (Cursor, Hermes) whose
     hook entries hold the command directly rather than Claude's nested
@@ -718,7 +724,7 @@ def _remove_flat_sidepulse_hooks(entries: list[Any], provider: str) -> list[Any]
     for entry in entries:
         if isinstance(entry, dict):
             command = entry.get("command")
-            if isinstance(command, str) and is_sidepulse_hook_command(command, provider):
+            if isinstance(command, str) and is_jrbar_hook_command(command, provider):
                 continue
         cleaned.append(entry)
     return cleaned
@@ -748,7 +754,7 @@ def install_cursor_hooks(
         entries = hooks.get(event_name, [])
         if not isinstance(entries, list):
             raise ValueError(f"Expected hooks.{event_name} array in {config}")
-        cleaned = _remove_flat_sidepulse_hooks(entries, "cursor")
+        cleaned = _remove_flat_jrbar_hooks(entries, "cursor")
         cleaned.append({"command": command})
         hooks[event_name] = cleaned
 
@@ -781,7 +787,7 @@ def uninstall_cursor_hooks(
             entries = hooks.get(event_name)
             if event_name not in CURSOR_EVENTS or not isinstance(entries, list):
                 continue
-            cleaned = _remove_flat_sidepulse_hooks(entries, "cursor")
+            cleaned = _remove_flat_jrbar_hooks(entries, "cursor")
             if cleaned:
                 hooks[event_name] = cleaned
             else:
@@ -851,7 +857,7 @@ def install_hermes_hooks(
         entries = hooks.get(event_name)
         if not isinstance(entries, list):
             entries = []
-        cleaned = _remove_flat_sidepulse_hooks(list(entries), "hermes")
+        cleaned = _remove_flat_jrbar_hooks(list(entries), "hermes")
         # Hooks time out per invocation; ours just appends a JSON line,
         # so a tight timeout keeps a wedged filesystem from ever
         # stalling the agent loop.
@@ -896,7 +902,7 @@ def uninstall_hermes_hooks(
             entries = hooks.get(event_name)
             if event_name not in HERMES_EVENTS or not isinstance(entries, list):
                 continue
-            cleaned = _remove_flat_sidepulse_hooks(list(entries), "hermes")
+            cleaned = _remove_flat_jrbar_hooks(list(entries), "hermes")
             if cleaned:
                 hooks[event_name] = cleaned
             else:
@@ -977,7 +983,10 @@ def install_openclaw_hooks(
                 tighten=False,
                 max_bytes=MAX_CONFIG_BYTES,
             )
-            if current_handler and not current_handler.startswith("// Managed by SidePulse"):
+            if current_handler and not (
+                current_handler.startswith("// Managed by JR-Bar")
+                or current_handler.startswith("// Managed by SidePulse")
+            ):
                 raise OSError(f"refusing unowned OpenClaw handler: {handler_path}")
         if _existing_regular_kind(hook_md_path) is not None:
             current_hook_md = read_private_text(
@@ -985,7 +994,9 @@ def install_openclaw_hooks(
                 tighten=False,
                 max_bytes=MAX_CONFIG_BYTES,
             )
-            if current_hook_md and "Managed\nby SidePulse" not in current_hook_md:
+            if current_hook_md and not (
+                "Managed\nby JR-Bar" in current_hook_md or "Managed\nby SidePulse" in current_hook_md
+            ):
                 raise OSError(f"refusing unowned OpenClaw metadata: {hook_md_path}")
     wanted_hook_md = OPENCLAW_HOOK_MD.format(name=OPENCLAW_HOOK_NAME)
     files_changed = (
@@ -1106,7 +1117,7 @@ def verify_hook_command(arguments: list[str]) -> str | None:
     if not arguments:
         return "empty hook command"
     probe = json.dumps(
-        {"hook_event_name": "SessionStart", "session_id": "sidepulse-install-probe"}
+        {"hook_event_name": "SessionStart", "session_id": "jrbar-install-probe"}
     )
     try:
         result = subprocess.run(
@@ -1312,7 +1323,7 @@ def _antigravity_entry_is_ours(entry: Any) -> bool:
                     return False
                 commands.append(command)
     return bool(commands) and all(
-        is_sidepulse_hook_command(command, "antigravity") for command in commands
+        is_jrbar_hook_command(command, "antigravity") for command in commands
     )
 
 
@@ -1556,7 +1567,7 @@ def _probe_registration_command(provider: str, python_executable: str | None) ->
     """
     import tempfile
 
-    with tempfile.TemporaryDirectory(prefix="sidepulse-hook-probe-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="jrbar-hook-probe-") as scratch:
         error = verify_hook_command(
             hook_command_arguments(
                 provider,
@@ -1686,7 +1697,7 @@ def local_codex_hook_hashes(config_path: Path) -> dict[str, str]:
             parts = shlex.split(command)
         except ValueError:
             return False
-        return _is_sidepulse_hook_invocation(parts)
+        return _is_jrbar_hook_invocation(parts)
 
     return trusted_hashes_for_config(text, config_path.expanduser(), is_ours=is_ours)
 
@@ -1757,7 +1768,7 @@ def resolve_codex_hook_hashes(
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "clientInfo": {"name": "sidepulse", "version": "0"},
+                    "clientInfo": {"name": "jrbar", "version": "0"},
                     "capabilities": None,
                 },
             }
@@ -1801,8 +1812,7 @@ def resolve_codex_hook_hashes(
             continue
         if not isinstance(command, str) or not (
             "hook_entry.py" in command
-            or "jrbar.hook_entry" in command
-            or "jrbar.hook_client" in command
+            or any(module in command for module in HOOK_CLIENT_MODULES)
         ):
             continue
         if not isinstance(current_hash, str) or not isinstance(key, str):
@@ -1878,7 +1888,7 @@ def strip_managed_block(text: str) -> str:
     # Codex may append its own tables between these comments when it rewrites
     # config.toml.  Remove only the comments; hook tables are removed below.
     return "\n".join(
-        line for line in text.splitlines() if line.strip() not in {MANAGED_START, MANAGED_END}
+        line for line in text.splitlines() if line.strip() not in MANAGED_MARKERS
     ) + ("\n" if text.endswith("\n") else "")
 
 
@@ -1906,8 +1916,7 @@ def remove_codex_hook_blocks_for_log(text: str, log_path: Path) -> str:
                 or "sidepulse hook-client" in block
                 or "agent-monitor hook-client" in block
                 or "hook_entry.py" in block
-                or "jrbar.hook_entry" in block
-                or "jrbar.hook_client" in block
+                or any(module in block for module in HOOK_CLIENT_MODULES)
             ):
                 index = end
                 continue
@@ -1950,7 +1959,7 @@ def remove_json_command_hooks_for_log(
             if not isinstance(hook, dict):
                 continue
             command = hook.get("command")
-            if is_sidepulse_json_hook_command(command, log_path, provider):
+            if is_jrbar_json_hook_command(command, log_path, provider):
                 continue
             cleaned_hooks.append(hook)
         if cleaned_hooks:
@@ -1960,7 +1969,7 @@ def remove_json_command_hooks_for_log(
     return cleaned_entries
 
 
-def is_sidepulse_json_hook_command(
+def is_jrbar_json_hook_command(
     command: Any,
     log_path: Path,
     provider: str,
@@ -1982,10 +1991,7 @@ def is_sidepulse_json_hook_command(
         for argument in arguments
     ) or (
         "-m" in arguments
-        and any(
-            module in arguments
-            for module in ("jrbar.hook_entry", "jrbar.hook_client")
-        )
+        and any(module in arguments for module in HOOK_CLIENT_MODULES)
     )
     packaged_entrypoint = (
         any(Path(argument).name == "agent-monitor" for argument in arguments)

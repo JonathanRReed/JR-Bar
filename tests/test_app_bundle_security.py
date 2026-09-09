@@ -28,7 +28,7 @@ SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 
 def load_verifier_module():
     module_path = REPO_ROOT / "packaging" / "verify_macos_app.py"
-    spec = importlib.util.spec_from_file_location("sidepulse_macos_app_verifier", module_path)
+    spec = importlib.util.spec_from_file_location("jrbar_macos_app_verifier", module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load verifier from {module_path}")
     module = importlib.util.module_from_spec(spec)
@@ -40,12 +40,12 @@ def load_verifier_module():
 def make_bundle(
     root: Path,
     *,
-    identifier: str = "io.sidepulse.app",
+    identifier: str = "com.jonathanreed.jrbar",
     environment: dict[str, str] | None = None,
     include_runtime: bool = True,
 ) -> Path:
-    bundle = root / "SidePulse.app"
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    bundle = root / "JR-Bar.app"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"main-mach-o")
     executable.chmod(0o755)
@@ -56,7 +56,7 @@ def make_bundle(
         runtime.chmod(0o755)
     info = {
         "CFBundleIdentifier": identifier,
-        "CFBundleExecutable": "SidePulse",
+        "CFBundleExecutable": "JR-Bar",
         "CFBundlePackageType": "APPL",
     }
     if environment is not None:
@@ -73,7 +73,7 @@ def verifier_runner(
     rpaths: dict[str, tuple[str, ...]] | None = None,
     signature_valid: bool = True,
 ) -> Callable[..., subprocess.CompletedProcess[str]]:
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
     dependency_map = dependencies or {
         str(executable): (
@@ -127,12 +127,12 @@ def verify(bundle: Path, **runner_options):
 
 def test_source_default_launch_agent_fails_closed_without_mutable_wrapper() -> None:
     with patch("jrbar.status_bar_launch.sys.frozen", False, create=True):
-        with pytest.raises(RuntimeError, match=r"packaged SidePulse\.app"):
+        with pytest.raises(RuntimeError, match=r"packaged JR-Bar\.app"):
             build_launch_agent_plist()
 
 
 def test_source_install_launch_agent_uses_current_interpreter(tmp_path: Path) -> None:
-    plist_path = tmp_path / "LaunchAgents" / "io.sidepulse.agentstatus.plist"
+    plist_path = tmp_path / "LaunchAgents" / "com.jonathanreed.jrbar.app.plist"
     state_dir = tmp_path / "state"
     with (
         patch("jrbar.status_bar_launch.sys.frozen", False, create=True),
@@ -156,14 +156,14 @@ def test_development_python_is_absent_when_frozen() -> None:
 def test_explicit_development_interpreter_remains_available_with_system_path() -> None:
     plist = build_launch_agent_plist(
         python_executable="/usr/bin/python3",
-        stdout_path=Path("/tmp/sidepulse.out.log"),
-        stderr_path=Path("/tmp/sidepulse.err.log"),
+        stdout_path=Path("/tmp/jrbar.out.log"),
+        stderr_path=Path("/tmp/jrbar.err.log"),
     )
 
     assert plist["ProgramArguments"] == [
         "/usr/bin/python3",
         "-m",
-        "sidepulse",
+        "jrbar",
         "status-bar",
         "--foreground",
     ]
@@ -180,7 +180,7 @@ def test_launch_agent_path_is_only_apple_system_directories() -> None:
 def test_frozen_launch_agent_uses_packaged_argument_shape_without_python_overrides(
     tmp_path: Path,
 ) -> None:
-    executable = tmp_path / "SidePulse.app" / "Contents" / "MacOS" / "SidePulse"
+    executable = tmp_path / "JR-Bar.app" / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"frozen")
     executable.chmod(0o755)
@@ -207,7 +207,7 @@ def test_frozen_launch_agent_uses_packaged_argument_shape_without_python_overrid
 
 
 def test_production_bundle_executable_rejects_symlinked_executable(tmp_path: Path) -> None:
-    executable = tmp_path / "SidePulse.app" / "Contents" / "MacOS" / "SidePulse"
+    executable = tmp_path / "JR-Bar.app" / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
     executable.symlink_to("/bin/ls")
 
@@ -215,25 +215,25 @@ def test_production_bundle_executable_rejects_symlinked_executable(tmp_path: Pat
         production_bundle_executable(executable)
 
 
-@pytest.mark.parametrize("symlinked_ancestor", ["SidePulse.app", "Contents", "MacOS"])
+@pytest.mark.parametrize("symlinked_ancestor", ["JR-Bar.app", "Contents", "MacOS"])
 def test_production_bundle_executable_rejects_symlinked_bundle_ancestor(
     tmp_path: Path,
     symlinked_ancestor: str,
 ) -> None:
     launch_root = tmp_path / "launch"
     target_root = tmp_path / "target"
-    bundle = launch_root / "SidePulse.app"
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    bundle = launch_root / "JR-Bar.app"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
 
-    if symlinked_ancestor == "SidePulse.app":
-        target_bundle = target_root / "SidePulse.app"
-        real_executable = target_bundle / "Contents" / "MacOS" / "SidePulse"
+    if symlinked_ancestor == "JR-Bar.app":
+        target_bundle = target_root / "JR-Bar.app"
+        real_executable = target_bundle / "Contents" / "MacOS" / "JR-Bar"
         real_executable.parent.mkdir(parents=True)
         launch_root.mkdir()
         bundle.symlink_to(target_bundle, target_is_directory=True)
     elif symlinked_ancestor == "Contents":
         target_contents = target_root / "Contents"
-        real_executable = target_contents / "MacOS" / "SidePulse"
+        real_executable = target_contents / "MacOS" / "JR-Bar"
         real_executable.parent.mkdir(parents=True)
         bundle.mkdir(parents=True)
         (bundle / "Contents").symlink_to(target_contents, target_is_directory=True)
@@ -268,7 +268,7 @@ def test_packaged_bundle_rejects_dangerous_environment(
 
 def test_packaged_bundle_rejects_external_macho_dependency(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
 
     result = verify(
@@ -286,7 +286,7 @@ def test_packaged_bundle_rejects_external_macho_dependency(tmp_path: Path) -> No
 
 def test_packaged_bundle_rejects_external_rpath(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
 
     result = verify(bundle, rpaths={str(executable): ("/Users/example/work/runtime",)})
 
@@ -296,7 +296,7 @@ def test_packaged_bundle_rejects_external_rpath(tmp_path: Path) -> None:
 
 def test_packaged_bundle_rejects_rpath_traversal(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
 
     result = verify(
         bundle,
@@ -371,7 +371,7 @@ def test_packaged_bundle_requires_runtime_binary_not_only_base_library(tmp_path:
 
 def test_packaged_bundle_requires_runtime_payload_to_be_macho(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
 
     result = verify(
         bundle,
@@ -407,7 +407,7 @@ def test_packaged_bundle_rejects_hard_linked_nested_macho_payload(
     tmp_path: Path,
 ) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
     external_payload = tmp_path / "external-addon.dylib"
     external_payload.write_bytes(b"addon-mach-o")
@@ -443,7 +443,7 @@ def test_packaged_bundle_rejects_dependency_path_traversal(
     dependency: str,
 ) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
 
     result = verify(
@@ -461,7 +461,7 @@ def test_packaged_bundle_rejects_dependency_path_traversal(
 @pytest.mark.parametrize(
     ("bundle_options", "runner_options", "error_fragment"),
     [
-        ({"identifier": "io.sidepulse.cli"}, {}, "CFBundleIdentifier"),
+        ({"identifier": "com.jonathanreed.jrbar.cli"}, {}, "CFBundleIdentifier"),
         ({"include_runtime": False}, {}, "internal Python runtime"),
         ({}, {"signature_valid": False}, "signature"),
     ],
@@ -482,7 +482,7 @@ def test_packaged_bundle_rejects_identity_runtime_or_signature_failure(
 
 def test_packaged_bundle_accepts_internal_runtime_and_apple_dependencies(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
 
     result = verify(
@@ -499,7 +499,7 @@ def test_packaged_bundle_accepts_internal_runtime_and_apple_dependencies(tmp_pat
 
     assert result.accepted, result.errors
     assert result.bundle_path == bundle
-    assert result.executable_path == bundle / "Contents" / "MacOS" / "SidePulse"
+    assert result.executable_path == bundle / "Contents" / "MacOS" / "JR-Bar"
     assert "/usr/lib/libSystem.B.dylib" in result.dependencies
     assert "@loader_path" in result.rpaths
 
@@ -508,7 +508,7 @@ def test_packaged_bundle_accepts_loader_relative_rpath_that_stays_inside_bundle(
     tmp_path: Path,
 ) -> None:
     bundle = make_bundle(tmp_path)
-    executable = bundle / "Contents" / "MacOS" / "SidePulse"
+    executable = bundle / "Contents" / "MacOS" / "JR-Bar"
     runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
 
     result = verify(
@@ -620,7 +620,7 @@ def test_log_follow_uses_trusted_tail_path(tmp_path: Path) -> None:
             return_value=subprocess.CompletedProcess([], 0),
         ) as run,
     ):
-        assert cli.cmd_sidepulse_sdejectguard_logs(args) == 0
+        assert cli.cmd_jrbar_sdejectguard_logs(args) == 0
 
     assert run.call_args.args[0][0] == "/usr/bin/tail"
 
@@ -665,7 +665,7 @@ def test_sd_guard_requires_an_explicit_volume_uuid_before_registration() -> None
 def test_field_diagnostics_redacts_paths_and_device_serials() -> None:
     source = (REPO_ROOT / "scripts" / "field-diagnostics.sh").read_text()
 
-    assert 'APP_LABEL="user Applications/SidePulse.app"' in source
+    assert 'APP_LABEL="user Applications/JR-Bar.app"' in source
     assert 'echo "app: $APP (' not in source
     assert 'echo "$CONFIG:' not in source
     assert "ls -d /Volumes/SidePulse" not in source
@@ -737,7 +737,7 @@ def test_package_builder_strictly_verifies_ad_hoc_signatures() -> None:
 def test_package_builder_collects_the_resource_package_for_installed_manifests() -> None:
     source = (REPO_ROOT / "packaging" / "build_macos_pkg.sh").read_text()
 
-    assert "--collect-data sidepulse.resources" in source
+    assert "--collect-data jrbar.resources" in source
 
 
 def _write_executable(path: Path, source: str) -> None:
@@ -752,7 +752,7 @@ def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_p
     scripts_dir.mkdir(parents=True)
     shutil.copy2(REPO_ROOT / "packaging" / "build_macos_pkg.sh", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "entitlements.plist", packaging_dir)
-    shutil.copy2(REPO_ROOT / "packaging" / "sidepulse_entry.py", packaging_dir)
+    shutil.copy2(REPO_ROOT / "packaging" / "jrbar_entry.py", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "verify_macos_app.py", packaging_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "scripts" / "postinstall", scripts_dir)
     shutil.copy2(REPO_ROOT / "packaging" / "sign_macos_app.py", packaging_dir)
@@ -843,16 +843,16 @@ while [ "$#" -gt 0 ]; do
         *) shift ;;
     esac
 done
-app="$dist/SidePulse.app"
+app="$dist/JR-Bar.app"
 /bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks/Python.framework"
-/bin/cp /usr/bin/true "$app/Contents/MacOS/SidePulse"
+/bin/cp /usr/bin/true "$app/Contents/MacOS/JR-Bar"
 /bin/cp /usr/bin/true "$app/Contents/Frameworks/Python.framework/Python"
 /bin/cat > "$app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>$identifier</string>
-<key>CFBundleExecutable</key><string>SidePulse</string>
+<key>CFBundleExecutable</key><string>JR-Bar</string>
 </dict></plist>
 EOF
 """,
@@ -889,7 +889,7 @@ case "$1" in
                 *) exit 91 ;;
             esac
         done
-        printf '%s/SidePulse-%s-%s.pkg\n' "$dist_dir" "$version" "$architecture"
+        printf '%s/JR-Bar-%s-%s.pkg\n' "$dist_dir" "$version" "$architecture"
         exit 0
         ;;
 esac
@@ -925,9 +925,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     )
 
     assert result.returncode == 0, result.stderr
-    app = build_root / "pyinstaller" / "SidePulse.app"
+    app = build_root / "pyinstaller" / "JR-Bar.app"
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
-    assert info["CFBundleIdentifier"] == "io.sidepulse.app"
+    assert info["CFBundleIdentifier"] == "com.jonathanreed.jrbar"
     assert info["CFBundleDisplayName"] == "JR-Bar"
     assert info["NSAppleEventsUsageDescription"] == (
         "JR-Bar uses Automation only to open a reviewed resume command in "
@@ -948,6 +948,6 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "verify",
         "package",
     ]
-    assert list(output_root.glob("SidePulse-*.pkg"))
+    assert list(output_root.glob("JR-Bar-*.pkg"))
     assert not list(output_root.glob("*.zip"))
     assert not list(output_root.glob("*appcast*"))

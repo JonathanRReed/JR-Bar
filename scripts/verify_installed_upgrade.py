@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify an installed SidePulse upgrade preserved identity, state, and launch."""
+"""Verify an installed JR-Bar upgrade preserved identity, state, and launch."""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ try:
 except ImportError:  # Direct execution adds scripts/, not the repository root.
     import release_evidence  # type: ignore[no-redef]
 
-EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
-EXPECTED_LAUNCH_AGENT_LABEL = "io.sidepulse.agentstatus"
+EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
+EXPECTED_LAUNCH_AGENT_LABEL = "com.jonathanreed.jrbar.app"
 COMMAND_TIMEOUT_SECONDS = 30
 
 
@@ -65,9 +65,9 @@ def _preserved(before: dict[str, object], after: dict[str, object]) -> bool:
 
 
 def _run_installed_smoke(app: Path) -> None:
-    executable = app / "Contents" / "MacOS" / "SidePulse"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
     if not executable.is_file() or not os.access(executable, os.X_OK):
-        raise ValueError("installed SidePulse executable is missing")
+        raise ValueError("installed JR-Bar executable is missing")
     subprocess.run(
         [str(executable), "doctor"],
         capture_output=True,
@@ -108,7 +108,7 @@ def main() -> int:
     parser.add_argument(
         "--app",
         type=Path,
-        default=Path("/Applications/SidePulse.app"),
+        default=Path("/Applications/JR-Bar.app"),
     )
     parser.add_argument("--before-settings", type=Path, required=True)
     parser.add_argument("--settings", type=Path, required=True)

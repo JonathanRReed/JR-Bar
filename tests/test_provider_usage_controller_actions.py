@@ -103,7 +103,7 @@ def test_connect_action_is_armed_before_instance_scoped_claude_flow(monkeypatch)
         wall_clock=lambda: 1234.5,
     )
 
-    assert controller._sidepulse_reconnect_watch == ("claude", "work", 1234.5)
+    assert controller._jrbar_reconnect_watch == ("claude", "work", 1234.5)
     assert connected == [(controller, log, "work")]
     assert controller.refreshes == []
 
@@ -123,10 +123,10 @@ def test_settings_snapshot_cache_projects_all_consumer_domains() -> None:
     service_updates = []
     privacy_updates = []
     controller = SimpleNamespace(
-        _sidepulse_provider_usage_service=SimpleNamespace(
+        _jrbar_provider_usage_service=SimpleNamespace(
             note_settings_updated=service_updates.append,
         ),
-        _sidepulse_provider_usage_window=SimpleNamespace(
+        _jrbar_provider_usage_window=SimpleNamespace(
             set_privacy_mode=privacy_updates.append,
         ),
     )
@@ -137,10 +137,10 @@ def test_settings_snapshot_cache_projects_all_consumer_domains() -> None:
         notify_service=True,
     )
 
-    assert controller._sidepulse_provider_usage_settings_snapshot is settings
-    assert controller._sidepulse_provider_presentation_settings.provider("claude")
+    assert controller._jrbar_provider_usage_settings_snapshot is settings
+    assert controller._jrbar_provider_presentation_settings.provider("claude")
     assert (
-        controller._sidepulse_provider_instance_policies.visual.provider(
+        controller._jrbar_provider_instance_policies.visual.provider(
             "claude",
             "work",
         ).label
@@ -161,7 +161,7 @@ def test_provider_menu_toggle_updates_only_the_exact_instance() -> None:
     writes = []
     service_updates = []
     controller = SimpleNamespace(
-        _sidepulse_provider_usage_service=SimpleNamespace(
+        _jrbar_provider_usage_service=SimpleNamespace(
             note_settings_updated=service_updates.append,
         )
     )
@@ -180,7 +180,7 @@ def test_provider_menu_toggle_updates_only_the_exact_instance() -> None:
     assert updated.preference("claude", "default").menu_visible is True
     assert updated.preference("claude", "work").menu_visible is False
     assert writes == [(updated, loaded)]
-    assert controller._sidepulse_provider_usage_settings_snapshot is updated
+    assert controller._jrbar_provider_usage_settings_snapshot is updated
     assert service_updates == [updated]
 
 
@@ -312,7 +312,7 @@ def test_profile_control_update_saves_only_the_exact_instance() -> None:
     assert updated.profile("claude", "work").label == "Client Claude"
     assert updated.profile("claude").label == "Claude"
     assert writes == [(updated, loaded)]
-    assert controller._sidepulse_provider_usage_settings_snapshot is updated
+    assert controller._jrbar_provider_usage_settings_snapshot is updated
 
 
 def test_privacy_mode_rejects_profile_name_save_without_overwriting_alias() -> None:

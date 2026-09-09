@@ -134,7 +134,7 @@ def _hstack(*views, spacing: float = 8.0):
 
 
 def _visual_projection(action_target) -> ProviderInstanceVisualProjection | None:
-    policies = getattr(action_target, "_sidepulse_provider_instance_policies", None)
+    policies = getattr(action_target, "_jrbar_provider_instance_policies", None)
     if type(policies) is ProviderInstancePolicyProjection:
         return policies.visual
     return None

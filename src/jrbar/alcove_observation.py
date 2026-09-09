@@ -468,7 +468,7 @@ def _query_alcove_window_presence() -> bool | None:
 def _start_alcove_window_presence_refresh(task) -> None:
     threading.Thread(
         target=task,
-        name="sidepulse-alcove-window-presence",
+        name="jrbar-alcove-window-presence",
         daemon=True,
     ).start()
 
@@ -1349,7 +1349,7 @@ class AlcoveObservationWorker:
         self.dropped_requests = 0
         self._thread = threading.Thread(
             target=self._run,
-            name="sidepulse-alcove-observer",
+            name="jrbar-alcove-observer",
             daemon=True,
         )
         self._thread.start()

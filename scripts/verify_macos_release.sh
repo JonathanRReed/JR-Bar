@@ -3,14 +3,14 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="${PYTHON:-$ROOT_DIR/.venv/bin/python}"
-PERFORMANCE_SOURCE="${SIDEPULSE_PERFORMANCE_EVIDENCE:-}"
-REQUIRED_HARDWARE="${SIDEPULSE_REQUIRED_HARDWARE:-software}"
-SETTINGS_PATH="${SIDEPULSE_SETTINGS_PATH:-$HOME/.config/sidepulse/agent-monitor/settings.json}"
-RELEASE_USER="${SIDEPULSE_RELEASE_USER:-$(/usr/bin/id -un)}"
+PERFORMANCE_SOURCE="${JRBAR_PERFORMANCE_EVIDENCE:-${SIDEPULSE_PERFORMANCE_EVIDENCE:-}}"
+REQUIRED_HARDWARE="${JRBAR_REQUIRED_HARDWARE:-${SIDEPULSE_REQUIRED_HARDWARE:-software}}"
+SETTINGS_PATH="${JRBAR_SETTINGS_PATH:-${SIDEPULSE_SETTINGS_PATH:-$HOME/.config/jrbar/settings.json}}"
+RELEASE_USER="${JRBAR_RELEASE_USER:-${SIDEPULSE_RELEASE_USER:-$(/usr/bin/id -un)}}"
 EVIDENCE_DIR="$ROOT_DIR/dist/release-evidence"
 PERFORMANCE_EVIDENCE="$ROOT_DIR/dist/performance-evidence.json"
-RELEASE_CHANNEL="${SIDEPULSE_RELEASE_CHANNEL:-stable}"
-SPARKLE_HISTORY_DIR="${SIDEPULSE_SPARKLE_HISTORY_DIR:-}"
+RELEASE_CHANNEL="${JRBAR_RELEASE_CHANNEL:-${SIDEPULSE_RELEASE_CHANNEL:-stable}}"
+SPARKLE_HISTORY_DIR="${JRBAR_SPARKLE_HISTORY_DIR:-${SIDEPULSE_SPARKLE_HISTORY_DIR:-}}"
 
 if [ "$(uname -s)" != "Darwin" ]; then
     echo "The authoritative JR-Bar release gate requires macOS." >&2
@@ -26,32 +26,32 @@ fi
 : "${SPARKLE_KEY_ACCOUNT:?Set SPARKLE_KEY_ACCOUNT}"
 case "$RELEASE_CHANNEL" in
     stable|beta) ;;
-    *) echo "SIDEPULSE_RELEASE_CHANNEL must be stable or beta." >&2; exit 2 ;;
+    *) echo "JRBAR_RELEASE_CHANNEL must be stable or beta." >&2; exit 2 ;;
 esac
 if [ -z "$PERFORMANCE_SOURCE" ] || [ ! -f "$PERFORMANCE_SOURCE" ]; then
-    echo "Set SIDEPULSE_PERFORMANCE_EVIDENCE to measured JSON evidence." >&2
+    echo "Set JRBAR_PERFORMANCE_EVIDENCE to measured JSON evidence." >&2
     exit 2
 fi
-if [ "${SIDEPULSE_RUN_INSTALLED_UPGRADE:-0}" != "1" ]; then
-    echo "Set SIDEPULSE_RUN_INSTALLED_UPGRADE=1 to authorize the upgrade gate." >&2
+if [ "${JRBAR_RUN_INSTALLED_UPGRADE:-${SIDEPULSE_RUN_INSTALLED_UPGRADE:-0}}" != "1" ]; then
+    echo "Set JRBAR_RUN_INSTALLED_UPGRADE=1 to authorize the upgrade gate." >&2
     exit 2
 fi
-if [ "${SIDEPULSE_RUN_UNINSTALL:-0}" != "1" ]; then
-    echo "Set SIDEPULSE_RUN_UNINSTALL=1 to authorize uninstall verification." >&2
+if [ "${JRBAR_RUN_UNINSTALL:-${SIDEPULSE_RUN_UNINSTALL:-0}}" != "1" ]; then
+    echo "Set JRBAR_RUN_UNINSTALL=1 to authorize uninstall verification." >&2
     exit 2
 fi
 case "$REQUIRED_HARDWARE" in
     software) ;;
     any|pro|dot|both)
-        if [ "${SIDEPULSE_HARDWARE_CONFIRM:-0}" != "1" ]; then
-            echo "Set SIDEPULSE_HARDWARE_CONFIRM=1 to authorize reversible hardware writes." >&2
+        if [ "${JRBAR_HARDWARE_CONFIRM:-${SIDEPULSE_HARDWARE_CONFIRM:-0}}" != "1" ]; then
+            echo "Set JRBAR_HARDWARE_CONFIRM=1 to authorize reversible hardware writes." >&2
             exit 2
         fi
         ;;
-    *) echo "SIDEPULSE_REQUIRED_HARDWARE must be software, any, pro, dot, or both." >&2; exit 2 ;;
+    *) echo "JRBAR_REQUIRED_HARDWARE must be software, any, pro, dot, or both." >&2; exit 2 ;;
 esac
 if [ "$RELEASE_USER" != "$(/usr/bin/id -un)" ]; then
-    echo "Run the release gate while logged in as SIDEPULSE_RELEASE_USER." >&2
+    echo "Run the release gate while logged in as JRBAR_RELEASE_USER." >&2
     exit 2
 fi
 
@@ -121,7 +121,7 @@ fi
     --staging-dir "$ROOT_DIR/build/macos-pkg/python-release" \
     --output-dir "$ROOT_DIR/dist" \
     --version "$version"
-app="$ROOT_DIR/build/macos-pkg/pyinstaller/SidePulse.app"
+app="$ROOT_DIR/build/macos-pkg/pyinstaller/JR-Bar.app"
 environment_snapshot="$ROOT_DIR/dist/release-environment.txt"
 raw_evidence_dir="$ROOT_DIR/build/macos-pkg/release-evidence-raw"
 notary_response="$raw_evidence_dir/notary-submission.json"
@@ -175,7 +175,7 @@ candidate="$EVIDENCE_DIR/candidate.json"
     --pkg "$pkg" \
     --app "$app" \
     --update-archive "$update_archive" \
-    --bundle-identifier io.sidepulse.app \
+    --bundle-identifier com.jonathanreed.jrbar \
     --team-identifier "$expected_team"
 
 candidate_id="$("$PYTHON" -c \
@@ -192,7 +192,7 @@ sparkle_channel_args=(
 if [ -n "$SPARKLE_HISTORY_DIR" ]; then
     case "$SPARKLE_HISTORY_DIR" in
         /*) ;;
-        *) echo "SIDEPULSE_SPARKLE_HISTORY_DIR must be an absolute path." >&2; exit 2 ;;
+        *) echo "JRBAR_SPARKLE_HISTORY_DIR must be an absolute path." >&2; exit 2 ;;
     esac
     if [ ! -d "$SPARKLE_HISTORY_DIR" ] || [ ! -f "$SPARKLE_HISTORY_DIR/appcast.xml" ]; then
         echo "Sparkle history must contain appcast.xml: $SPARKLE_HISTORY_DIR" >&2
@@ -203,9 +203,9 @@ if [ -n "$SPARKLE_HISTORY_DIR" ]; then
     while IFS= read -r -d '' previous_archive; do
         sparkle_channel_args+=(--previous-archive "$previous_archive")
         previous_archive_count=$((previous_archive_count + 1))
-    done < <(/usr/bin/find "$SPARKLE_HISTORY_DIR" -maxdepth 1 -type f -name 'SidePulse-*.zip' -print0)
+    done < <(/usr/bin/find "$SPARKLE_HISTORY_DIR" -maxdepth 1 -type f -name 'JR-Bar-*.zip' -print0)
     if [ "$previous_archive_count" -eq 0 ]; then
-        echo "Sparkle history contains no retained SidePulse update archive." >&2
+        echo "Sparkle history contains no retained JR-Bar update archive." >&2
         exit 2
     fi
 fi
@@ -317,13 +317,13 @@ if [ ! -f "$SETTINGS_PATH" ]; then
     echo "Installed-upgrade verification requires settings: $SETTINGS_PATH" >&2
     exit 2
 fi
-installed_app="/Applications/SidePulse.app"
+installed_app="/Applications/JR-Bar.app"
 upgrade_baseline="$EVIDENCE_DIR/pre-upgrade-baseline.json"
 "$PYTHON" scripts/capture_installed_release_baseline.py \
     --app "$installed_app" \
     --settings "$SETTINGS_PATH" \
     --output "$upgrade_baseline"
-before_settings="$(/usr/bin/mktemp -t sidepulse-settings-before.XXXXXX.json)"
+before_settings="$(/usr/bin/mktemp -t jrbar-settings-before.XXXXXX.json)"
 before_uninstall_settings=""
 cleanup() {
     /bin/rm -f "$before_settings"
@@ -335,7 +335,7 @@ trap cleanup EXIT
 /bin/cp "$SETTINGS_PATH" "$before_settings"
 
 /usr/bin/sudo /usr/sbin/installer -pkg "$pkg" -target /
-installed_binary="/Applications/SidePulse.app/Contents/MacOS/SidePulse"
+installed_binary="/Applications/JR-Bar.app/Contents/MacOS/JR-Bar"
 if [ ! -x "$installed_binary" ]; then
     echo "Installed JR-Bar executable is missing at the compatibility path." >&2
     exit 1
@@ -357,7 +357,7 @@ receipt_files+=(
     "$EVIDENCE_DIR/settings-preservation.json"
 )
 
-before_uninstall_settings="$(/usr/bin/mktemp -t sidepulse-settings-before-uninstall.XXXXXX.json)"
+before_uninstall_settings="$(/usr/bin/mktemp -t jrbar-settings-before-uninstall.XXXXXX.json)"
 /bin/cp "$SETTINGS_PATH" "$before_uninstall_settings"
 
 uninstall_log="$EVIDENCE_DIR/uninstall.log"
@@ -396,7 +396,7 @@ artifacts=(
     "$appcast"
     "$channel_metadata"
 )
-sbom="$ROOT_DIR/dist/sidepulse-sbom.cdx.json"
+sbom="$ROOT_DIR/dist/jrbar-sbom.cdx.json"
 sbom_args=(
     --output "$sbom"
     --root "$ROOT_DIR"

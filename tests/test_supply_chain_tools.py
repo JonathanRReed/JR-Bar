@@ -218,8 +218,8 @@ def test_release_evidence_preserves_dist_relative_paths_for_same_named_artifacts
         root=tmp_path,
     )
     properties = {item["name"]: item["value"] for item in sbom["metadata"]["component"]["properties"]}
-    assert properties["sidepulse:artifact:dist/primary/candidate.pkg:bytes"] == "7"
-    assert properties["sidepulse:artifact:dist/secondary/candidate.pkg:bytes"] == "9"
+    assert properties["jrbar:artifact:dist/primary/candidate.pkg:bytes"] == "7"
+    assert properties["jrbar:artifact:dist/secondary/candidate.pkg:bytes"] == "9"
 
     assert generate_release_manifest._artifact_record(first, root=tmp_path)["path"] == ("dist/primary/candidate.pkg")
     assert generate_release_manifest._artifact_record(second, root=tmp_path)["path"] == ("dist/secondary/candidate.pkg")
@@ -232,7 +232,7 @@ def test_release_gate_generates_and_publisher_requires_evidence_artifacts() -> N
 
     assert "generate_sbom.py" in gate
     assert "generate_release_manifest.py" in gate
-    assert "sidepulse-sbom.cdx.json" in publish
+    assert "jrbar-sbom.cdx.json" in publish
     assert "release-verification.json" in publish
     assert "SHA256SUMS" in publish
     assert "--format updater-path" in gate
