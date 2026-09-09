@@ -2,7 +2,7 @@
 
 The signed and notarized PKG is JR-Bar's authoritative installer and manual
 recovery artifact.
-The release script builds the compatibility-named `SidePulse.app`, signs it
+The release script builds the compatibility-named `JR-Bar.app`, signs it
 with hardened runtime, wraps it in the signed PKG, submits it to Apple's notary
 service, and staples the ticket.
 
@@ -20,7 +20,7 @@ Requirements:
 - Xcode command-line tools
 - A notarytool keychain profile
 - The dedicated Sparkle signing key in the login Keychain under
-  `io.sidepulse.app`
+  `io.jrbar.app`
 
 Store notarization credentials once:
 
@@ -38,18 +38,18 @@ Build, sign, notarize, and staple:
 APP_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 INSTALLER_SIGN_IDENTITY="Developer ID Installer: Your Name (TEAMID)" \
 NOTARY_PROFILE="sidepulse-notary" \
-SPARKLE_KEY_ACCOUNT="io.sidepulse.app" \
+SPARKLE_KEY_ACCOUNT="io.jrbar.app" \
 ./packaging/build_macos_pkg.sh
 ```
 
 The resulting installer is written to `dist/`. On installation it places the
-app in `/Applications` and links the `sidepulse` command into `/usr/local/bin`.
+app in `/Applications` and links the `jrbar` command into `/usr/local/bin`.
 Hooks, per-user LaunchAgents, privileged helpers, and provider integrations are
 configured only through JR-Bar's explicit first-run or CLI actions.
 
 The production builder embeds pinned Sparkle 2.9.6, notarizes and staples the
 app before final packaging, and creates the supplemental
-`SidePulse-<version>-<architecture>.zip`. The authoritative release gate signs
+`JR-Bar-<version>-<architecture>.zip`. The authoritative release gate signs
 `appcast.xml` with the Keychain-held key, writes candidate-bound channel
 metadata, and verifies nested Sparkle code, app notarization and stapling, the
 ZIP, and the signed feed. Unsigned local packaging intentionally creates

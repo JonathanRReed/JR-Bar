@@ -44,7 +44,7 @@ from tests.test_capacity_resource_budget import (
     CODEX_QUOTA,
     CODEX_TRANSCRIPTS,
 )
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 NOW = 1_000.0
 

@@ -4,20 +4,20 @@ This guide describes how to add or extend a first-party provider source in JR-Ba
 
 ## The contract boundary
 
-The source of truth is `src/sidepulse/provider_contracts.py`. Contracts are data-only and are negotiated before any adapter work is accepted. Use the typed values `ProviderIdentifier`, `AdapterIdentifier`, `SourceInstanceIdentifier`, `CapabilityIdentifier`, and `SchemaVersion`. Identifiers are bounded, and a source instance is an opaque routing token, not a credential.
+The source of truth is `src/jrbar/provider_contracts.py`. Contracts are data-only and are negotiated before any adapter work is accepted. Use the typed values `ProviderIdentifier`, `AdapterIdentifier`, `SourceInstanceIdentifier`, `CapabilityIdentifier`, and `SchemaVersion`. Identifiers are bounded, and a source instance is an opaque routing token, not a credential.
 
 The built-in v1 capability vocabulary is closed in `_CAPABILITY_DEFINITIONS`. Capabilities have an authority: `DISCOVERY`, `OBSERVATION`, or `MUTATION`. The product mapping is a separate allowlist. For example, `live_agent_events` supplies lifecycle, `actionable_requests` supplies questions, and `transcript_usage` or `remote_quota_windows` supplies usage. `account_switching` is mutation-only and is deliberately not mapped to a product capability. Do not make a new product feature by inferring it from an adapter capability.
 
 Construct a declaration with `provider_contract_document(registration)`, then call `negotiate_provider_contract(document)`. A successful read target can be obtained with `contract.action_identity_for("live_agent_events")`, or a product-level target with `contract.product_invocation_for(ProductCapability.LIFECYCLE)`. Both fail closed when the capability is absent, incompatible, mutation-only, or from the wrong source. Unsupported schema major, provider, and adapter values remain visible as bounded identity envelopes, but their capability data is not read.
 
 ```python
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     AdapterIdentifier, CapabilityIdentifier, ProviderIdentifier,
     SchemaVersion, SourceInstanceIdentifier,
 )
-from sidepulse.providers import ProviderSourceRegistration
-from sidepulse.provider_facts import ObservationAuthority
-from sidepulse.provider_contracts import (
+from jrbar.providers import ProviderSourceRegistration
+from jrbar.provider_facts import ObservationAuthority
+from jrbar.provider_contracts import (
     negotiate_provider_contract, provider_contract_document,
 )
 
@@ -37,7 +37,7 @@ Use a real, reviewed provider ID in examples and code. The registry rejects a pr
 
 ## Provider registry versus adapter registry
 
-`src/sidepulse/providers.py` has two intentionally separate registries.
+`src/jrbar/providers.py` has two intentionally separate registries.
 
 `PROVIDER_SPECS` and `PROVIDER_REGISTRY` describe native hook integration: display label, native event names, config kind, config path, and the detector. `provider_spec("codex")`, `detect_provider_configs()`, `detect_log_path()`, `canonical_event_name()`, and `normalize_event_payload()` are the integration-facing APIs. The current provider list is Codex, Claude, Devin, Grok, Cursor, Hermes, OpenClaw, OpenCode, Antigravity, and Kiro. Preserve each provider's native config shape. Antigravity grouped events, OpenClaw handlers, OpenCode plugins, and Kiro's managed agent file are not interchangeable JSON hook files.
 
@@ -47,7 +47,7 @@ Use a real, reviewed provider ID in examples and code. The registry rejects a pr
 
 ## Adapter normalization
 
-The implementation boundary is `src/sidepulse/provider_adapters.py`.
+The implementation boundary is `src/jrbar/provider_adapters.py`.
 
 1. Accept the provider's native event only at the outer boundary as `HookEvent`.
 2. Call `minimize_hook_event(record, source_key=..., contract=..., observation_authority=...)`.
@@ -76,15 +76,15 @@ facts = provider_facts_for_record(
 
 ## Instances and settings ownership
 
-`src/sidepulse/provider_instances.py` owns non-secret instance identity and durable profile choices. `ProviderInstanceKey(provider_id, source_instance_id)` is safe for dictionary keys and diagnostics. `ProviderInstanceProfile` stores a bounded label, optional color, retention of `0`, `7`, `30`, or `90` days, `never` or `status_only` remote sharing, an `app`, `terminal`, or `vscode` open action, and opaque consent or credential-account references. It must never contain secret values.
+`src/jrbar/provider_instances.py` owns non-secret instance identity and durable profile choices. `ProviderInstanceKey(provider_id, source_instance_id)` is safe for dictionary keys and diagnostics. `ProviderInstanceProfile` stores a bounded label, optional color, retention of `0`, `7`, `30`, or `90` days, `never` or `status_only` remote sharing, an `app`, `terminal`, or `vscode` open action, and opaque consent or credential-account references. It must never contain secret values.
 
-`src/sidepulse/provider_feature_settings.py` gives each consumer a narrow immutable view. Collectors consume `ProviderCollectionSettings`; menus consume `ProviderPresentationSettings`; instance identity, retention, sharing, and session actions use their respective policy projections; sync consumes `ProviderSyncSettingsProjection`. Use `project_provider_feature_settings()` and the projection types instead of passing the durable settings document into a collector or UI. A provider feature must identify the exact `(provider_id, source_instance_id)` pair, and duplicate identities are rejected.
+`src/jrbar/provider_feature_settings.py` gives each consumer a narrow immutable view. Collectors consume `ProviderCollectionSettings`; menus consume `ProviderPresentationSettings`; instance identity, retention, sharing, and session actions use their respective policy projections; sync consumes `ProviderSyncSettingsProjection`. Use `project_provider_feature_settings()` and the projection types instead of passing the durable settings document into a collector or UI. A provider feature must identify the exact `(provider_id, source_instance_id)` pair, and duplicate identities are rejected.
 
 ## Fixture ownership and integration compatibility
 
-Synthetic fixtures live under `tests/fixtures/` and are owned by `src/sidepulse/resources/provider_fixture_ownership.json`. `validate_provider_fixture_ownership()` requires exactly one manifest entry for every provider in `PROVIDER_REGISTRY`, a bounded JSON file, a SHA-256 receipt, a review date, and `synthetic: true`. The validator rejects paths, prompts, transcripts, emails, token-shaped values, and unowned files. Add a fixture by updating the ownership manifest and its test, never by copying production traffic.
+Synthetic fixtures live under `tests/fixtures/` and are owned by `src/jrbar/resources/provider_fixture_ownership.json`. `validate_provider_fixture_ownership()` requires exactly one manifest entry for every provider in `PROVIDER_REGISTRY`, a bounded JSON file, a SHA-256 receipt, a review date, and `synthetic: true`. The validator rejects paths, prompts, transcripts, emails, token-shaped values, and unowned files. Add a fixture by updating the ownership manifest and its test, never by copying production traffic.
 
-External integrations have a different boundary. `src/sidepulse/integration_compatibility.py` loads the packaged `integration_compatibility.json`, and `docs/INTEGRATIONS.md` documents the current T3 Code read-only integration. Compatibility records must identify the reviewed upstream commit, protocol fingerprint, version window, fixture version, and connection mode. An integration adapter may read an approved projection, but it must not be silently promoted to a native provider source or gain mutation authority. If a future `docs/provider/integrations/` guide exists, keep it subordinate to the packaged manifest and current integration docs.
+External integrations have a different boundary. `src/jrbar/integration_compatibility.py` loads the packaged `integration_compatibility.json`, and `docs/INTEGRATIONS.md` documents the current T3 Code read-only integration. Compatibility records must identify the reviewed upstream commit, protocol fingerprint, version window, fixture version, and connection mode. An integration adapter may read an approved projection, but it must not be silently promoted to a native provider source or gain mutation authority. If a future `docs/provider/integrations/` guide exists, keep it subordinate to the packaged manifest and current integration docs.
 
 ## Safe extension workflow
 

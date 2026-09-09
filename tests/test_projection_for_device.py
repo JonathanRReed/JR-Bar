@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from test_sidepulse import isolate_controller
+from test_jrbar import isolate_controller
 
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
 from jrbar.status_bar_legacy import StatusBarDevice

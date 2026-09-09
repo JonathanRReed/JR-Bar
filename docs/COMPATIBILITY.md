@@ -52,7 +52,7 @@ string alone.
 ## Reporting compatibility problems
 
 Report reproducible, non-sensitive compatibility problems through the
-[GitHub issue tracker](https://github.com/JonathanRReed/sidepulse-JR-Fork/issues)
+[GitHub issue tracker](https://github.com/JonathanRReed/JR-Bar/issues)
 with the exact JR-Bar artifact, host and architecture, macOS version, provider
 or integration version, hardware, and sanitized evidence. Security and privacy
 reports remain private under [SECURITY.md](../SECURITY.md).

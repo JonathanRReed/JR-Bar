@@ -5,9 +5,6 @@ session status and usage in the menu bar and on an on-screen light bar.
 No physical hardware is required. SidePulse Pro, SidePulse Dot, and Creator
 Micro 2 are optional hardware components.
 
-Compatibility bundle identifiers, file paths, and the `sidepulse` CLI keep
-their legacy names.
-
 When Claude Code or Codex is working, the lights breathe in that
 session's color. When a task finishes, they sweep green. When an agent
 is blocked waiting on *you*, they turn amber and escalate — light,
@@ -54,8 +51,7 @@ ported behavior by behavior instead.
 ## Install
 
 The signed and notarized PKG built by `packaging/build_macos_pkg.sh` is the
-authoritative installer and manual recovery artifact. It installs the compatibility-named
-`SidePulse.app`, whose visible display name is JR-Bar. See
+authoritative installer and manual recovery artifact. It installs `JR-Bar.app`. See
 `docs/PRODUCTION-RELEASE.md` for the required Developer ID identities,
 notarization profile, and candidate gate.
 
@@ -66,15 +62,60 @@ are required release assets bound to the same verified app as the PKG. No
 public JR-Bar release or feed has been published by the current source work.
 The current arm64 application bundle requires macOS 11.0 or newer.
 
+## Migrating from SidePulse
+
+JR-Bar 0.8 is the first release under its own name; earlier releases shipped
+as SidePulse (`sidepulse`, `SidePulse.app`, `io.sidepulse.*`). Nothing has
+to be done by hand:
+
+- **Files move forward automatically.** On first launch, and again from
+  `jrbar setup`, the app copies `~/.config/sidepulse/agent-monitor/` and the
+  files beside it into `~/.config/jrbar/`, `~/.local/state/sidepulse/` into
+  `~/.local/state/jrbar/` (sockets and `*.pid` files are skipped), and
+  `~/.local/share/sidepulse/` and `~/Library/Application Support/SidePulse/`
+  into their JR-Bar counterparts. Everything is copied, never moved: the old
+  trees stay untouched, nothing already under a JR-Bar path is overwritten,
+  and `~/.local/state/jrbar/migrated-from-sidepulse.json` records what was
+  copied and when so it only happens once.
+- **The LaunchAgent is swapped.** Installing the status bar writes
+  `com.jonathanreed.jrbar.app.plist` and unloads and deletes both
+  `io.sidepulse.agentstatus.plist` and `com.sidepulse.agentstatus.plist`.
+  The SD eject guard moves from `io.sidepulse.sdejectguard` to
+  `com.jonathanreed.jrbar.sdejectguard` the same way.
+- **Provider hooks are rewritten in place.** `jrbar setup` recognises every
+  hook shape SidePulse ever registered (`python -m sidepulse.hook_client`,
+  `agent_monitor.hook_entry`, the old log paths under `sidepulse/agent-monitor`,
+  the `sidepulse-status` OpenClaw and Antigravity hooks, the
+  `sidepulse.js` OpenCode plugin, the `sidepulse.json` Kiro agent and Grok
+  file) and replaces it with the JR-Bar command and log path instead of
+  adding a second entry. Codex trust hashes are refreshed for the new
+  commands. Until you run setup, the old registrations keep working through
+  a small `sidepulse` import shim that forwards to `jrbar`.
+- **Keychain secrets follow lazily.** Provider secrets live under
+  `com.jonathanreed.jrbar.provider.<id>`; the first read that misses falls
+  back to the `io.sidepulse.provider.<id>` item and copies it forward.
+- **Environment variables** are `JRBAR_*`; the old `SIDEPULSE_*` names are
+  still read for one release. The `sidepulse` console script stays as an
+  alias of `jrbar` for one release too.
+
+Two things do need a one-time action, because macOS keys them to the new
+bundle identifier: **permissions** (Full Disk Access, Automation,
+Notifications, Focus Status, Calendar and Accessibility, whichever you had
+granted) must be granted again when JR-Bar asks, and the first Keychain
+read may prompt once for the copied provider secrets. Once JR-Bar is
+running and the hooks point at `-m jrbar.hook_client`, the old
+`~/.config/sidepulse`, `~/.local/state/sidepulse` and
+`~/.local/share/sidepulse` directories can be deleted.
+
 ## Quick start
 
 ```sh
 ./scripts/install-user.sh
-sidepulse setup
+jrbar setup
 ```
 
 The install script builds an isolated Python environment under
-`~/.local/share/sidepulse` and links the `sidepulse` command into
+`~/.local/share/jrbar` and links the `jrbar` command into
 `~/.local/bin` — it works on a stock Mac, where the system `python3`
 is too old for a bare `pip install -e .` and Homebrew Python refuses
 system-wide installs (PEP 668).
@@ -98,11 +139,11 @@ the pinned Python 3.12 environment, runs the full Mac source/package gates, and
 saves local logs and a JUnit report under `.jrbar-verification/`. See
 [Final testing](docs/FINAL-TESTING.md) for requirements and separate device/release checks.
 
-`sidepulse setup` installs provider hooks and the status-bar LaunchAgent so
+`jrbar setup` installs provider hooks and the status-bar LaunchAgent so
 the menu-bar app starts now and at login. It does not install a hardware
 helper by default. Add `--sd-eject-guard` if you want SidePulse Pro Eject
 Prevention. Existing explicit scope or volume-UUID options also opt in;
-`--no-sd-eject-guard` always skips it. The production `SidePulse.app` comes
+`--no-sd-eject-guard` always skips it. The production `JR-Bar.app` comes
 from the signed PKG built by `packaging/build_macos_pkg.sh`.
 The menu-bar app's own Setup window covers the same ground with
 buttons. Everything works with zero granted permissions; individual
@@ -199,8 +240,9 @@ keeps working.
 
 ---
 
-`sidepulse` is the command-line and macOS companion project for
-[SidePulse](https://sidepulse.io).
+This reference descends from the upstream `sidepulse` companion project for
+[SidePulse](https://sidepulse.io) hardware; the commands below are JR-Bar's
+(`jrbar`, with `sidepulse` kept as an alias for one release).
 
 They can display the status of an AI agent, battery level, or other system
 signals.
@@ -220,13 +262,13 @@ The LED control DSL is described in [`LEDS_FORMAT.md`](LEDS_FORMAT.md).
 ### TLDR
 ```sh
 ./scripts/install-user.sh
-sidepulse setup
+jrbar setup
 ```
 
 Write an LED program directly to a mounted SidePulse Pro or SidePulse Dot device:
 
 ```sh
-sidepulse write "off\n#ff3a00 1.6s pulse\nrepeat"
+jrbar write "off\n#ff3a00 1.6s pulse\nrepeat"
 ```
 
 The CLI auto-detects mounted devices under `/Volumes` by looking for a
@@ -234,8 +276,8 @@ SidePulse Pro/SidePulse Dot-style volume name or an existing `LEDS.LED`. If more
 one device is possible, pass the mounted folder or file explicitly:
 
 ```sh
-sidepulse write "off\n#ff3a00 1.6s pulse\nrepeat" --device /Volumes/SidePulsePro
-sidepulse write "off" --device /Volumes/SidePulsePro/LEDS.LED
+jrbar write "off\n#ff3a00 1.6s pulse\nrepeat" --device /Volumes/SidePulsePro
+jrbar write "off" --device /Volumes/SidePulsePro/LEDS.LED
 ```
 
 The writer decodes simple escapes such as `\n`, then enforces the controller's
@@ -246,16 +288,16 @@ The writer decodes simple escapes such as `\n`, then enforces the controller's
 Show the current Mac battery state:
 
 ```sh
-sidepulse battery status
-sidepulse battery status --json
+jrbar battery status
+jrbar battery status --json
 ```
 
 Mirror battery level to a mounted SidePulse Pro/SidePulse Dot:
 
 ```sh
-sidepulse battery leds
-sidepulse battery leds --once --dry-run
-sidepulse battery leds --device /Volumes/SidePulsePro --full-watts 140
+jrbar battery leds
+jrbar battery leds --once --dry-run
+jrbar battery leds --device /Volumes/SidePulsePro --full-watts 140
 ```
 
 SidePulse Pro uses all eight LEDs as a battery bar. At 50%, LEDs 0-3 are filled;
@@ -270,15 +312,15 @@ steady pulse.
 Save the status-bar LED display preference:
 
 ```sh
-sidepulse battery configure --display battery
-sidepulse battery configure --display agent
-sidepulse battery configure --full-watts auto
-sidepulse battery configure --show-on-power-change yes --power-change-preview-seconds 7
+jrbar battery configure --display battery
+jrbar battery configure --display agent
+jrbar battery configure --full-watts auto
+jrbar battery configure --show-on-power-change yes --power-change-preview-seconds 7
 ```
 
-## sidepulse
+## jrbar
 
-`sidepulse` includes a companion menu-bar app for macOS that controls
+`jrbar` includes a companion menu-bar app for macOS that controls
 SidePulse Pro and SidePulse Dot.
 
 ### Main Functionality
@@ -328,7 +370,7 @@ the display indefinitely.
 
 #### Agent Monitor Library
 
-The `sidepulse` Python package collects and normalizes local AI agent hook
+The `jrbar` Python package collects and normalizes local AI agent hook
 events. The macOS status-bar app receives hook events through a lightweight
 local Unix socket, keeps the latest agent states in memory, and writes only a
 small `latest.json` restart snapshot plus provider JSONL debug logs. The app
@@ -339,20 +381,20 @@ SidePulse Dot by writing the current LED program to `LEDS.LED`.
 
 The monitor supports every registered provider — Codex, Claude, Devin,
 Grok, Cursor, Hermes, OpenClaw, OpenCode, Antigravity, and Kiro
-(`sidepulse agent-monitor doctor` reports each provider's detected
+(`jrbar agent-monitor doctor` reports each provider's detected
 config and log paths). The founding four:
 
 | Provider | Config | Detected log |
 | --- | --- | --- |
-| Codex | `~/.codex/config.toml` | `${XDG_STATE_HOME:-~/.local/state}/sidepulse/agent-monitor/codex.jsonl` |
-| Claude | `~/.claude/settings.json` | `${XDG_STATE_HOME:-~/.local/state}/sidepulse/agent-monitor/claude.jsonl` |
-| Devin | `~/.config/devin/config.json` | `${XDG_STATE_HOME:-~/.local/state}/sidepulse/agent-monitor/devin.jsonl` |
-| Grok | `~/.grok/hooks/sidepulse.json` | `${XDG_STATE_HOME:-~/.local/state}/sidepulse/agent-monitor/grok.jsonl` |
+| Codex | `~/.codex/config.toml` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/codex.jsonl` |
+| Claude | `~/.claude/settings.json` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/claude.jsonl` |
+| Devin | `~/.config/devin/config.json` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/devin.jsonl` |
+| Grok | `~/.grok/hooks/jrbar.json` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/grok.jsonl` |
 
 Each provider adapter only adds JR-Bar's own hook commands. Existing hook
 entries, including other tools' hook entries, stay in place. Before a changed existing
 configuration is written, JR-Bar creates a timestamped backup beside it.
-Use `sidepulse agent-monitor uninstall <provider>` to remove only JR-Bar
+Use `jrbar agent-monitor uninstall <provider>` to remove only JR-Bar
 hooks, or restore that backup if you need to roll back the complete file.
 
 To add a future provider, add a `ProviderSpec` for its identity, supported
@@ -378,10 +420,10 @@ transcripts are ignored so app background work does not look like one of your
 agents.
 
 By default the monitor stores runtime logs under
-`~/.local/state/sidepulse/agent-monitor/`, following the XDG state directory
+`~/.local/state/jrbar/`, following the XDG state directory
 convention. Set `XDG_STATE_HOME` to place them somewhere else.
 
-Install locally for the `sidepulse` CLI:
+Install locally for the `jrbar` CLI:
 
 ```sh
 python3 -m pip install -e .
@@ -392,20 +434,20 @@ This also installs the Cocoa dependencies for the macOS status-bar app.
 Set up this Mac explicitly after package install:
 
 ```sh
-sidepulse setup
+jrbar setup
 ```
 
-`sidepulse setup` installs or refreshes hooks for every registered provider, installs
+`jrbar setup` installs or refreshes hooks for every registered provider, installs
 SidePulse Pro Eject Prevention, writes the status-bar LaunchAgent, starts both helpers
 immediately, and enables them at login. This is intentionally an explicit
 command instead of a `pip install` side effect. To set up only one provider,
-name it: `sidepulse setup codex`, `sidepulse setup claude`,
-`sidepulse setup cursor`, and so on. Every hook command is probe-run before
+name it: `jrbar setup codex`, `jrbar setup claude`,
+`jrbar setup cursor`, and so on. Every hook command is probe-run before
 any provider config is written; a command that cannot run is refused with a
 clear error. Existing hook entries are preserved for every setup
 command.
 To skip the status-bar app but still install hooks and SidePulse Pro Eject Prevention, use
-`sidepulse setup --no-status-bar`.
+`jrbar setup --no-status-bar`.
 
 SidePulse Pro Eject Prevention keeps the built-in SD reader attached after
 macOS hibernate or lock-screen mount refusals. By default setup installs it
@@ -413,9 +455,9 @@ system-wide when already running with system permissions, otherwise as a
 per-user LaunchAgent:
 
 ```sh
-sidepulse setup --sd-eject-guard-scope auto
-sidepulse setup --sd-eject-guard-scope user
-sidepulse setup --sd-eject-guard-scope system --no-status-bar
+jrbar setup --sd-eject-guard-scope auto
+jrbar setup --sd-eject-guard-scope user
+jrbar setup --sd-eject-guard-scope system --no-status-bar
 ```
 
 The system scope requires the command to already have system install
@@ -424,11 +466,11 @@ permissions.
 Manage SidePulse Pro Eject Prevention directly:
 
 ```sh
-sidepulse sdejectguard start
-sidepulse sdejectguard stop
-sidepulse sdejectguard uninstall
-sidepulse sdejectguard logs
-sidepulse sdejectguard start -it
+jrbar sdejectguard start
+jrbar sdejectguard stop
+jrbar sdejectguard uninstall
+jrbar sdejectguard logs
+jrbar sdejectguard start -it
 ```
 
 `start -it` runs the guard in the current terminal for interactive debugging.
@@ -437,7 +479,7 @@ On Homebrew Python, use the user-site install form:
 
 ```sh
 python3 -m pip install --user --break-system-packages -e .
-ln -sf "$(python3 -m site --user-base)/bin/sidepulse" ~/.local/bin/sidepulse
+ln -sf "$(python3 -m site --user-base)/bin/jrbar" ~/.local/bin/jrbar
 ```
 
 ### macOS installer
@@ -457,17 +499,17 @@ check requires a dedicated release account and separate explicit authorization.
 Check the current hook configuration:
 
 ```sh
-sidepulse agent-monitor doctor
+jrbar agent-monitor doctor
 ```
 
 Install or refresh the monitor hooks:
 
 ```sh
-sidepulse agent-monitor install
-sidepulse agent-monitor install codex
-sidepulse agent-monitor install claude
-sidepulse agent-monitor install devin
-sidepulse agent-monitor install grok
+jrbar agent-monitor install
+jrbar agent-monitor install codex
+jrbar agent-monitor install claude
+jrbar agent-monitor install devin
+jrbar agent-monitor install grok
 ```
 
 Any registered provider name works the same way (`cursor`, `hermes`,
@@ -486,13 +528,13 @@ shutdown snapshot includes the accepted tail.
 Show current aggregated status:
 
 ```sh
-sidepulse agent-monitor status
+jrbar agent-monitor status
 ```
 
 Watch a live dashboard of recently active agents:
 
 ```sh
-sidepulse agent-monitor live
+jrbar agent-monitor live
 ```
 
 The dashboard refreshes every second and shows agents updated in the last hour
@@ -500,8 +542,8 @@ by default. Use `--recent-seconds` to change that window, or `--all` to
 include stale/older sessions:
 
 ```sh
-sidepulse agent-monitor live --recent-seconds 120
-sidepulse agent-monitor live --all
+jrbar agent-monitor live --recent-seconds 120
+jrbar agent-monitor live --all
 ```
 
 By default, `Tool Running` events are not time-limited, so genuinely long tools
@@ -555,7 +597,7 @@ and no user response is needed, include `<!-- sidepulse:done -->`.
 Mirror the aggregate agent status to the LEDs in a foreground process:
 
 ```sh
-sidepulse agent-monitor leds
+jrbar agent-monitor leds
 ```
 
 The LED mirror writes only when the aggregate display state changes. Use
@@ -563,8 +605,8 @@ The LED mirror writes only when the aggregate display state changes. Use
 program:
 
 ```sh
-sidepulse agent-monitor leds --once --dry-run
-sidepulse agent-monitor leds --device /Volumes/SidePulseDot
+jrbar agent-monitor leds --once --dry-run
+jrbar agent-monitor leds --device /Volumes/SidePulseDot
 ```
 
 SidePulse Dot programs are generated for two LEDs. SidePulse Pro programs are generated
@@ -574,26 +616,26 @@ back to the eight-LED SidePulse Pro layout if the name is unknown.
 Remove monitor hooks:
 
 ```sh
-sidepulse agent-monitor uninstall
-sidepulse agent-monitor uninstall codex
-sidepulse agent-monitor uninstall claude
-sidepulse agent-monitor uninstall devin
-sidepulse agent-monitor uninstall grok
+jrbar agent-monitor uninstall
+jrbar agent-monitor uninstall codex
+jrbar agent-monitor uninstall claude
+jrbar agent-monitor uninstall devin
+jrbar agent-monitor uninstall grok
 ```
 
 Install and start the macOS status-bar app:
 
 ```sh
-sidepulse status-bar
-sidepulse status-bar start
+jrbar status-bar
+jrbar status-bar start
 ```
 
-This writes `~/Library/LaunchAgents/io.sidepulse.agentstatus.plist`, starts the
+This writes `~/Library/LaunchAgents/io.jrbar.agentstatus.plist`, starts the
 menu-bar app immediately, enables it at login, and mirrors the same aggregate
 state to the LEDs. For debugging, run it in the foreground:
 
 ```sh
-sidepulse status-bar start --foreground
+jrbar status-bar start --foreground
 ```
 
 On first launch, the status-bar app shows a JR-Bar Setup window. It can:
@@ -647,7 +689,7 @@ Open `Settings...` from the dropdown to manage agent integrations. The settings
 window can install or uninstall provider hooks. The transcript
 checkboxes control the file-based CLI/debug fallback; the status-bar app gets
 live updates from the local hook event socket. Settings are stored at
-`${XDG_CONFIG_HOME:-~/.config}/sidepulse/agent-monitor/settings.json`.
+`${XDG_CONFIG_HOME:-~/.config}/jrbar/settings.json`.
 Safe diagnostic export lives in the History pane; the old hook decision
 log and its CSV/HTML exporters were deleted 2026-08-26.
 
@@ -696,7 +738,7 @@ installer sets this up automatically; source/dev installs can run the one-time
 setup command:
 
 ```sh
-sudo "$(command -v sidepulse)" status-bar install-sleep-helper
+sudo "$(command -v jrbar)" status-bar install-sleep-helper
 ```
 
 The helper is a narrow sudoers rule for exactly
@@ -706,26 +748,26 @@ silently with non-interactive `sudo`. JR-Bar uses this automatically for
 it. Remove the helper with:
 
 ```sh
-sudo "$(command -v sidepulse)" status-bar uninstall-sleep-helper
+sudo "$(command -v jrbar)" status-bar uninstall-sleep-helper
 ```
 
 Open `Settings...` to edit and preview the Lid Closed and Lid Open LED
 animations. Animation programs use the same `LEDS.LED` syntax as
-`sidepulse write`; device brightness is applied automatically before writing.
+`jrbar write`; device brightness is applied automatically before writing.
 
 The app is also installed as a user LaunchAgent at
-`~/Library/LaunchAgents/io.sidepulse.agentstatus.plist`.
+`~/Library/LaunchAgents/io.jrbar.agentstatus.plist`.
 
 Stop and remove the LaunchAgent:
 
 ```sh
-sidepulse status-bar stop
+jrbar status-bar stop
 ```
 
 Use it from another Python app:
 
 ```python
-from sidepulse import AgentMonitor, LiveAgentMonitor
+from jrbar import AgentMonitor, LiveAgentMonitor
 
 snapshot = AgentMonitor.from_default_sources().snapshot()
 print(snapshot.aggregate.mode.value)
@@ -738,7 +780,7 @@ live = LiveAgentMonitor()
 Publish a hook-shaped event to the status-bar app from another local process:
 
 ```python
-from sidepulse import send_hook_event
+from jrbar import send_hook_event
 
 send_hook_event(
     "codex",

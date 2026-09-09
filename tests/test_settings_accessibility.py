@@ -24,7 +24,7 @@ from jrbar.global_actions import (
     ShortcutModifier,
     serialize_global_action_shortcuts,
 )
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 
 class SettingsAccessibilityRepairTests(unittest.TestCase):

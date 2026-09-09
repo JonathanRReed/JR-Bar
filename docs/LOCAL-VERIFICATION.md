@@ -314,7 +314,7 @@ shutdown, another Mac, or release readiness. The benchmark uses a temporary
 private home and state directory and reports only aggregate counts and timing.
 
 Raw hook bytes are not diagnostic output. Durable ingress failures live at
-`${XDG_STATE_HOME:-~/.local/state}/sidepulse/agent-monitor/hook-ingress-rejections.jsonl`
+`${XDG_STATE_HOME:-~/.local/state}/jrbar/hook-ingress-rejections.jsonl`
 and contain only version, time, sequence, provider, and reason. Provider logs
 contain the existing minimized canonical records.
 An acknowledgement lost after connection is an ambiguous submission, not an
@@ -479,7 +479,7 @@ The P2.25 brightness checkpoint extracts ambient and signal brightness policy
 into `brightness_policy.py` while retaining display-brightness reads, Focus
 observation, idle timing, night-hour checks, refresh triggers, and hardware
 writes in the controller. The required red first failed with
-`ModuleNotFoundError: No module named 'sidepulse.brightness_policy'`. The pure
+`ModuleNotFoundError: No module named 'jrbar.brightness_policy'`. The pure
 brightness contract then passed 13 tests. A focused policy, controller,
 global-brightness, display-brightness, architecture, Focus, Screen Bar, and
 device-brightness gate passed 82 tests in 2.56 seconds. `make fast` passed in
@@ -588,7 +588,7 @@ checkout or the self-hosted workflow
 APP_SIGN_IDENTITY='Developer ID Application: …' \
 INSTALLER_SIGN_IDENTITY='Developer ID Installer: …' \
 NOTARY_PROFILE='sidepulse-notary' \
-SIDEPULSE_VERIFY_MACOS_PACKAGE=1 \
+JRBAR_VERIFY_MACOS_PACKAGE=1 \
 ./scripts/verify.sh --no-bootstrap
 ```
 
@@ -606,10 +606,10 @@ external JR-Bar integrations before reinstalling the exact PKG.
 export APP_SIGN_IDENTITY='Developer ID Application: …'
 export INSTALLER_SIGN_IDENTITY='Developer ID Installer: …'
 export NOTARY_PROFILE='sidepulse-notary'
-export SIDEPULSE_PERFORMANCE_EVIDENCE='/absolute/path/performance-evidence.json'
-export SIDEPULSE_HARDWARE_CONFIRM=1
-export SIDEPULSE_RUN_INSTALLED_UPGRADE=1
-export SIDEPULSE_RUN_UNINSTALL=1
+export JRBAR_PERFORMANCE_EVIDENCE='/absolute/path/performance-evidence.json'
+export JRBAR_HARDWARE_CONFIRM=1
+export JRBAR_RUN_INSTALLED_UPGRADE=1
+export JRBAR_RUN_UNINSTALL=1
 ./scripts/verify_macos_release.sh
 
 # Publication remains a separate, explicit action.
@@ -622,7 +622,7 @@ candidate-bound verification receipts for source, performance, signatures,
 Gatekeeper, stapling, package contents, entitlements, hardware, upgrade,
 uninstall, clean install, checksums, SBOM, and manifest generation. Publication
 remains a separate explicit action through `./scripts/publish_release.sh`. It
-does not publish the upstream-owned `sidepulse` project name to PyPI.
+does not publish the upstream-owned `jrbar` project name to PyPI.
 
 The P2.24 explicit-application-composition-root checkpoint moved foreground
 assembly into `application_composition.compose_status_bar_application()`,

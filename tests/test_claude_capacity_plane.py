@@ -53,7 +53,7 @@ from jrbar.provider_capacity import (
     select_provider_capacity_policy,
 )
 from jrbar.providers import negotiated_provider_sources
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 NOW = 1_800_000_000.0
 

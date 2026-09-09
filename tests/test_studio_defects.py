@@ -78,7 +78,7 @@ class ThrowawayLocalTests(unittest.TestCase):
     """
 
     def setUp(self) -> None:
-        from tests.test_sidepulse import isolate_controller
+        from tests.test_jrbar import isolate_controller
 
         isolate_controller(self)
         self.controller.show_settings_window()
@@ -457,7 +457,7 @@ def test_every_state_swatch_has_a_name_and_a_labelled_group() -> None:
 
 class StateRowRenderingTests(unittest.TestCase):
     def setUp(self) -> None:
-        from tests.test_sidepulse import isolate_controller
+        from tests.test_jrbar import isolate_controller
 
         isolate_controller(self)
         self.controller.show_settings_window()
@@ -522,7 +522,7 @@ class StateRowRenderingTests(unittest.TestCase):
 
 class AnimationControlTests(unittest.TestCase):
     def setUp(self) -> None:
-        from tests.test_sidepulse import isolate_controller
+        from tests.test_jrbar import isolate_controller
 
         isolate_controller(self)
         self.controller.show_settings_window()
@@ -612,7 +612,7 @@ class AnimationControlTests(unittest.TestCase):
 
 class StudioChromeTests(unittest.TestCase):
     def setUp(self) -> None:
-        from tests.test_sidepulse import isolate_controller
+        from tests.test_jrbar import isolate_controller
 
         isolate_controller(self)
         self.controller.show_settings_window()

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-from test_sidepulse import isolate_controller
+from test_jrbar import isolate_controller
 
 from jrbar.capacity_types import SourceKey
 from jrbar.dnd_policy import (
@@ -132,7 +132,7 @@ def test_every_enabled_menu_action_resolves(request, fleet_name):
 def test_open_agent_browser_survives_stale_menus_and_missing_payloads(request):
     """The click that shipped dead: a payload from a stale menu (old
     generation), or no payload at all, must still open the browser."""
-    from test_sidepulse import CanonicalAgentBrowserIntegrationTests
+    from test_jrbar import CanonicalAgentBrowserIntegrationTests
 
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),

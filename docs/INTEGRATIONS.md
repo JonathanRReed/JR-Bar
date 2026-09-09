@@ -7,32 +7,32 @@ JR-Bar consumes read-only status from T3 Code and displays provider/account usag
 Show configuration and the packaged compatibility window:
 
 ```bash
-sidepulse integrations status
-sidepulse integrations status --json
+jrbar integrations status
+jrbar integrations status --json
 ```
 
 Enable or disable the integration:
 
 ```bash
-sidepulse integrations enable t3code
-sidepulse integrations disable t3code
+jrbar integrations enable t3code
+jrbar integrations disable t3code
 ```
 
 Run a bounded compatibility probe:
 
 ```bash
-sidepulse integrations probe t3code
-sidepulse integrations probe t3code --json
+jrbar integrations probe t3code
+jrbar integrations probe t3code --json
 ```
 
 Restart the JR-Bar status-bar app after changing integration settings:
 
 ```bash
-sidepulse status-bar stop
-sidepulse status-bar start
+jrbar status-bar stop
+jrbar status-bar start
 ```
 
-The separate `sidepulse-integrations` console script exposes the same subcommands. The signed macOS application routes `sidepulse integrations ...` through the same implementation.
+The separate `jrbar-integrations` console script exposes the same subcommands. The signed macOS application routes `jrbar integrations ...` through the same implementation.
 
 ## T3 Code
 
@@ -59,15 +59,15 @@ JR-Bar maps the projected lifecycle into its canonical agent states. A T3 approv
 T3 Code normally stores its state under `~/.t3`. Override the base directory only when T3 uses another location:
 
 ```bash
-sidepulse integrations configure t3code --base-dir ~/.t3
-sidepulse integrations configure t3code --environment-id local
+jrbar integrations configure t3code --base-dir ~/.t3
+jrbar integrations configure t3code --environment-id local
 ```
 
 Clear overrides:
 
 ```bash
-sidepulse integrations configure t3code --clear-base-dir
-sidepulse integrations configure t3code --clear-environment-id
+jrbar integrations configure t3code --clear-base-dir
+jrbar integrations configure t3code --clear-environment-id
 ```
 
 ### Ownership and safety
@@ -83,12 +83,12 @@ The current upstream projection does not expose pull-request metadata. JR-Bar th
 Integration settings are stored at:
 
 ```text
-${XDG_CONFIG_HOME:-~/.config}/sidepulse/integrations.json
+${XDG_CONFIG_HOME:-~/.config}/jrbar/integrations.json
 ```
 
 The document is versioned, preserves unknown fields, rejects concurrent replacement, and becomes read-only when written by a newer JR-Bar version. A malformed existing document is preserved and refused rather than silently replaced.
 
-The packaged compatibility manifest is `sidepulse.resources/integration_compatibility.json`. It records the exact reviewed upstream commit, protocol fingerprint, minimum version, maximum tested version, fixture version, and connection mode. The CLI exposes this information through `sidepulse integrations status --json`.
+The packaged compatibility manifest is `jrbar.resources/integration_compatibility.json`. It records the exact reviewed upstream commit, protocol fingerprint, minimum version, maximum tested version, fixture version, and connection mode. The CLI exposes this information through `jrbar integrations status --json`.
 
 Current reviewed compatibility:
 

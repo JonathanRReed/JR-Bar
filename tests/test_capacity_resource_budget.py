@@ -12,7 +12,7 @@ from jrbar.capacity_refresh import RefreshStatusKind
 from jrbar.capacity_types import SourceKey
 from jrbar.providers import negotiated_provider_sources
 from jrbar.usage_view import build_provider_usage_view
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 CODEX_QUOTA = SourceKey(
     "codex",

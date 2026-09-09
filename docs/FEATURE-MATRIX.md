@@ -19,8 +19,10 @@ program, or cadence changes, and it reports invalidated and shortened work
 separately from renderer fallbacks. This is source-verified behavior, not a
 claim that the 24-frame ceiling is hardware-optimal.
 
-JR-Bar (formerly SidePulse) is the product's display name going forward; bundle
-identifiers, file paths, and the `sidepulse` CLI keep the old name for now.
+JR-Bar is the product name. As of 0.8 the bundle identifier
+(`com.jonathanreed.jrbar`), the file paths (`~/.config/jrbar`,
+`~/.local/state/jrbar`) and the `jrbar` CLI carry it too; `sidepulse` remains a
+one-release command alias and SidePulse installs migrate automatically.
 This document is the status authority for product claims, rewritten today from
 the live source rather than patched. A feature is **shipped** only when it is
 reachable from the installed application and covered at its source-to-effect
@@ -109,7 +111,7 @@ gate has passed for that exact commit.
 | Cross-Mac usage sync: HMAC-SHA256-signed JSON over SSH (not encrypted; transport privacy comes from SSH), bounded replay window, totals render in the Usage Center | Shipped (0.4.0) | Off |
 | Memory-only steady-state Usage Center, menu, and settings-summary projection; settings, Keychain, and cached sync documents refresh on the provider worker | Shipped (Unreleased) | Automatic |
 | Loopback cloud-agent ingest | Shipped | Off |
-| `sidepulse serve` - schema-v2 redacted agent aggregates and provider quota summaries on loopback (Stream Deck, scripts) | Shipped | Manual |
+| `jrbar serve` - schema-v2 redacted agent aggregates and provider quota summaries on loopback (Stream Deck, scripts) | Shipped | Manual |
 | Calendar and Reminders glows | Shipped | Off |
 | T3 Code local-state compatibility (query-only SQLite projection, no mutation, no credentials) | Shipped, opt-in | Off |
 

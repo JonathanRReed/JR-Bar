@@ -76,7 +76,7 @@ from jrbar.capacity_types import (
 )
 from jrbar.completions import detect_attention_transitions
 from jrbar.models import AgentMode, AgentStatus
-from tests.test_sidepulse import isolate_controller
+from tests.test_jrbar import isolate_controller
 
 NOW = 1_800_000_000.0
 CODEX_QUOTA_SOURCE = SourceKey("codex", "quota", "local", "remote_quota_windows")
