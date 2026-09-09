@@ -1,4 +1,4 @@
-"""Controller adapters for asynchronously saving Agent Deck mappings."""
+"""Controller adapters for asynchronously saving Control Center mappings."""
 
 from __future__ import annotations
 

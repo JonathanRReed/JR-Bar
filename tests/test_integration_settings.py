@@ -143,28 +143,21 @@ def test_t3_activity_statistics_are_a_separate_default_off_setting() -> None:
     assert settings.with_t3code(activity_statistics_enabled=True).t3code_activity_statistics_enabled is True
 
 
-def test_agent_deck_and_creator_micro_integrations_are_default_off() -> None:
+def test_creator_micro_integration_is_default_off() -> None:
     settings = load_integration_settings().settings
 
-    assert settings.agent_deck_enabled is False
-    assert settings.agent_deck_snapshot_path is None
     assert settings.creator_micro_enabled is False
     assert settings.creator_micro_device_serial is None
 
 
-def test_agent_deck_and_creator_micro_settings_round_trip(tmp_path: Path) -> None:
+def test_creator_micro_settings_round_trip(tmp_path: Path) -> None:
     target = tmp_path / "integrations.json"
     loaded = load_integration_settings(target)
-    configured = loaded.settings.with_agent_deck(
-        enabled=True,
-        snapshot_path="/tmp/deck-snapshot.json",
-    ).with_creator_micro(enabled=True, device_serial="CM2-123")
+    configured = loaded.settings.with_creator_micro(enabled=True, device_serial="CM2-123")
 
     save_integration_settings(configured, target, loaded=loaded)
     restored = load_integration_settings(target).settings
 
-    assert restored.agent_deck_enabled is True
-    assert restored.agent_deck_snapshot_path == "/tmp/deck-snapshot.json"
     assert restored.creator_micro_enabled is True
     assert restored.creator_micro_device_serial == "CM2-123"
 

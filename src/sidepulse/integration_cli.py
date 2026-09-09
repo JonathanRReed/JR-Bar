@@ -18,7 +18,7 @@ from .integration_settings import (
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .t3_compat import read_t3_snapshot
 
-INTEGRATION_NAMES = frozenset({"agent-deck", "creator-micro", "t3code"})
+INTEGRATION_NAMES = frozenset({"creator-micro", "t3code"})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,10 +60,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include bounded T3 task-completion activity in usage history.",
     )
     t3code.set_defaults(func=cmd_configure_t3code)
-    agent_deck = configure_subparsers.add_parser("agent-deck")
-    agent_deck.add_argument("--snapshot-path", type=Path)
-    agent_deck.add_argument("--clear-snapshot-path", action="store_true")
-    agent_deck.set_defaults(func=cmd_configure_agent_deck)
 
     probe = subparsers.add_parser(
         "probe",
@@ -90,11 +86,6 @@ def _status_document(loaded) -> dict[str, object]:
             "minimumVersion": (compatibility.minimum_version if compatibility is not None else None),
             "maximumTestedVersion": (compatibility.maximum_tested_version if compatibility is not None else None),
             "connectionMode": (compatibility.connection_mode if compatibility is not None else None),
-        },
-        "agent-deck": {
-            "enabled": settings.agent_deck_enabled,
-            "snapshotPath": settings.agent_deck_snapshot_path,
-            "connectionMode": "configured-readonly-deck-snapshot-v1",
         },
         "creator-micro": {
             "enabled": settings.creator_micro_enabled,
@@ -195,21 +186,6 @@ def cmd_configure_t3code(args: argparse.Namespace) -> int:
         settings = settings.with_t3code(
             activity_statistics_enabled=args.activity_statistics,
         )
-    return _save_updated(loaded, settings)
-
-
-def cmd_configure_agent_deck(args: argparse.Namespace) -> int:
-    if args.snapshot_path is not None and args.clear_snapshot_path:
-        print(
-            "sidepulse-integrations: choose --snapshot-path or --clear-snapshot-path",
-            file=sys.stderr,
-        )
-        return 2
-    loaded = load_integration_settings()
-    path = None if args.clear_snapshot_path else args.snapshot_path
-    settings = loaded.settings.with_agent_deck(
-        snapshot_path=str(path.expanduser()) if path is not None else None,
-    )
     return _save_updated(loaded, settings)
 
 

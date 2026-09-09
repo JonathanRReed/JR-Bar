@@ -1,4 +1,4 @@
-"""Native, bounded controls for configuring Agent Deck actions."""
+"""Native, bounded controls for configuring Control Center actions."""
 
 from __future__ import annotations
 
@@ -243,7 +243,7 @@ class DeckSettingsPane(NSObject):
         self.view, content = native_ui.make_card("Control Center")
         self.view.setAccessibilityElement_(True)
         self.view.setAccessibilityRole_("AXGroup")
-        self.view.setAccessibilityLabel_("Agent Deck controls")
+        self.view.setAccessibilityLabel_("Control Center controls")
 
         self.description_field = native_ui.make_wrapping_label(
             "Choose what each device key does.",
@@ -256,7 +256,7 @@ class DeckSettingsPane(NSObject):
             "Enable device actions",
             self.target,
             "toggleDeckControls:",
-            help_text="Allow configured Agent Deck keys to run their saved actions.",
+            help_text="Allow configured Control Center keys to run their saved actions.",
         )
         self.enable_checkbox.setAccessibilityLabel_("Enable device actions")
         content.addArrangedSubview_(self.enable_checkbox)
@@ -309,10 +309,10 @@ class DeckSettingsPane(NSObject):
         self.save_row.addArrangedSubview_(self.save_button)
         content.addArrangedSubview_(self.save_row)
         self.summary_field = native_ui.make_wrapping_label("", secondary=True, size=11.0, max_width=560.0)
-        self.summary_field.setAccessibilityLabel_("Existing Agent Deck mappings")
+        self.summary_field.setAccessibilityLabel_("Existing Control Center mappings")
         content.addArrangedSubview_(self.summary_field)
         self.status_field = native_ui.make_wrapping_label("", secondary=True, size=11.0, max_width=560.0)
-        self.status_field.setAccessibilityLabel_("Agent Deck settings status")
+        self.status_field.setAccessibilityLabel_("Control Center settings status")
         content.addArrangedSubview_(self.status_field)
         self.hardware_note = native_ui.make_wrapping_label(
             "An active device layer must send AG key events. Inspect device setup to "

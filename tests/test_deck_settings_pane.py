@@ -48,7 +48,7 @@ def test_card_exposes_bounded_actions_and_explicit_keymap_setup() -> None:
         "Previous session bank",
         "Run system Shortcut",
     ]
-    assert pane.view.accessibilityLabel() == "Agent Deck controls"
+    assert pane.view.accessibilityLabel() == "Control Center controls"
     assert "active device layer" in pane.hardware_note.stringValue()
     assert "preview keymap changes before applying" in pane.hardware_note.stringValue()
     assert "Creator Micro master connection toggle" in pane.hardware_note.stringValue()

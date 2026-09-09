@@ -58,11 +58,10 @@ class _Setup:
         return Receipt("keymap_restored")
 
 
-def _loaded(serial="approved", *, agent_deck=False, enabled=True):
+def _loaded(serial="approved", *, enabled=True):
     return SimpleNamespace(settings=SimpleNamespace(
         creator_micro_enabled=enabled,
         creator_micro_device_serial=serial,
-        agent_deck_enabled=agent_deck,
     ))
 
 
@@ -115,8 +114,8 @@ def test_inspection_never_opens_setup_owner_when_runtime_does_not_stop(tmp_path)
     assert calls[-1][1].code == "previous_owner_stopping"
 
 
-def test_inspection_refuses_disabled_connection_and_competing_snapshot_owner(tmp_path):
-    for loaded in (_loaded(enabled=False), _loaded(agent_deck=True)):
+def test_inspection_refuses_disabled_connection(tmp_path):
+    for loaded in (_loaded(enabled=False),):
         calls = []
         target = _target(calls, _Runtime(calls))
         thread = begin_creator_micro_inspection(
@@ -128,7 +127,7 @@ def test_inspection_refuses_disabled_connection_and_competing_snapshot_owner(tmp
         thread.join(1)
         assert "opened" not in calls
         assert "revoke" not in calls
-        assert calls[-1][1].code in {"connection_required", "agent_deck_ownership"}
+        assert calls[-1][1].code == "connection_required"
 
 
 def test_superseded_or_terminating_work_does_not_dispatch_success(tmp_path):

@@ -56,9 +56,7 @@ HID writes away from AppKit. It maps input-needed, failure, active, completion,
 idle, quota warning, quota exhaustion, and reset signals to the adapter's
 semantic states. If firmware does not prove `v.oai.thstatus` support, the worker
 reports `unsupported_firmware` and sends no state output. A foreign response ID
-reports `device_conflict`, closes the adapter, and stops later output. Enabling
-Agent Deck and Creator Micro output together reports `agent_deck_ownership` and
-leaves the device with Agent Deck instead of competing for it.
+reports `device_conflict`, closes the adapter, and stops later output.
 
 The same worker now polls input while lighting is idle. Each poll has a report
 budget. Disconnects and foreign response IDs discard queued input. The decoder
@@ -71,8 +69,8 @@ The active hardware layer must map the keys to agent codes. The setup service
 can now plan and verify that change. Devices settings provides inspection,
 an explicit apply preview, and guarded restore. Live UI and hardware checks
 remain open.
-See [Agent Deck controls](agent-deck-compatibility.md) for app actions, the
-separate enable switch, and remaining hardware verification.
+The Control Center pane in Devices settings owns app actions and the
+separate enable switch; hardware verification remains open.
 
 ## Keymap setup and recovery
 

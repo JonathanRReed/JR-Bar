@@ -87,8 +87,6 @@ def _validated_serial(settings_loader: Callable[[], object], expected_serial: st
     serial = getattr(settings, "creator_micro_device_serial", None)
     if getattr(settings, "creator_micro_enabled", False) is not True or not isinstance(serial, str) or not serial.strip():
         return None, "connection_required"
-    if getattr(settings, "agent_deck_enabled", False) is True:
-        return None, "agent_deck_ownership"
     if expected_serial is not None and serial != expected_serial:
         return None, "approved_device_changed"
     return serial, None
@@ -292,7 +290,6 @@ def apply_creator_micro_setup_result(
         "keymap_restored": "Creator Micro 2 keymap restored and verified.",
         "already_restored": "Creator Micro 2 keymap is already restored.",
         "connection_required": "Connect and approve Creator Micro 2 before setup.",
-        "agent_deck_ownership": "Turn off Agent Deck snapshot compatibility before setup.",
         "approved_device_changed": "The approved Creator Micro 2 changed. Inspect it again.",
         "previous_owner_stopping": "Creator Micro 2 is still stopping. Try again in a moment.",
         "keymap_changed": "The device keymap changed. Inspect it again before applying.",
