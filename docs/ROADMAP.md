@@ -31,7 +31,7 @@ Integrate the roadmap, provider/effect authoring guidance, issue templates,
 community standards, data-only gallery, and bounded ecosystem refresh.
 Artifacts for the 72 recommendations now exist as reachable source
 implementations or governing documents. Source reachability includes the
-versioned local API plus a bounded Waybar client (47), data-only Effect and
+versioned local API (47; its bounded Waybar client was removed in 0.8), data-only Effect and
 Scene packs with import, preview, export, duplicate, and rename paths (48), the
 native Effect Studio and Preview Lab with scoped assignments and guarded
 single-writer hardware previews (50), the shared ambient compiler and existing

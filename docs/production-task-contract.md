@@ -30,7 +30,7 @@ Updated: 2026-09-05
 
 ## Deferred, external, and out of scope
 
-- Deferred: Linux headless and Waybar product support after the macOS release; Windows after the POSIX and AppKit boundaries are removed.
+- Deferred: Linux headless support after the macOS release (the Waybar client was removed in 0.8); Windows after the POSIX and AppKit boundaries are removed.
 - Removed in the 0.8 rebuild: iOS and the phone-glance listener, including their URL-write finding and trusted-device HTTPS checks. Installer signing and notarization are deferred for the current developer-signed local build.
 - External: Alcove has no documented geometry API, so precision following remains explicitly experimental until a vendor contract exists.
 - Out of scope: JR-Bar does not orchestrate T3Code or mutate T3Code databases.

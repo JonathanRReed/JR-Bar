@@ -4,6 +4,8 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Remove the `sidepulse-waybar` client and its console script; `sidepulse serve`
+  keeps the loopback status API.
 - Remove the external Agent Deck snapshot compatibility (`agent_deck_compat`,
   the `agent-deck` integration, and its ownership yield). The built-in deck
   modules remain as the Creator Micro Control Center.

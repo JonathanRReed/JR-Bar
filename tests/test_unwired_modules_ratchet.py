@@ -56,7 +56,6 @@ ENTRY_POINTS = {
     "hook",
     "hook_entry",
     "provider_fixture_ownership",
-    "waybar_client",
 }
 
 
