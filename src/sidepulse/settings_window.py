@@ -395,43 +395,6 @@ def _build_history_pane(target: StatusBarController):
     reel_inner.addArrangedSubview_(reel)
     stack.addArrangedSubview_(reel_outer)
 
-    export_outer, export_inner = native_ui.make_card("Local Export")
-    export_preview = native_ui.make_wrapping_label(
-        "History: sidepulse-history.json, up to 2 MiB. Diagnostics: "
-        "sidepulse-diagnostics.json, up to 512 KiB. Each export is a "
-        "separate local file. History contains retention_days and the "
-        "stored fields above. Diagnostics contains app_version, build_trust, "
-        "provider_health_counts, device_health_counts, and history_health. "
-        "No upload or sharing route is used.",
-        secondary=True,
-        size=11.0 * scale,
-        max_width=560.0,
-    )
-    export_inner.addArrangedSubview_(export_preview)
-    export_buttons = native_ui.make_stack(
-        orientation="horizontal",
-        spacing=native_ui.SPACE_S,
-    )
-    history_export = native_ui.make_button(
-        "Export History",
-        target,
-        "exportOperatorHistory:",
-    )
-    diagnostics_export = native_ui.make_button(
-        "Export Diagnostics",
-        target,
-        "exportOperatorDiagnostics:",
-    )
-    for button in (history_export, diagnostics_export):
-        button.setFont_(NSFont.systemFontOfSize_(13.0 * scale))
-        if button.accessibilityRole() == "AXUnknown":
-            button.setAccessibilityRole_("AXButton")
-    export_buttons.addArrangedSubview_(history_export)
-    export_buttons.addArrangedSubview_(diagnostics_export)
-    export_buttons.addArrangedSubview_(native_ui.make_hspacer())
-    export_inner.addArrangedSubview_(export_buttons)
-    stack.addArrangedSubview_(export_outer)
-
     clear_outer, clear_inner = native_ui.make_card("Clear History")
     clear_copy = native_ui.make_wrapping_label(
         f"Clear removes only {PRODUCT_DISPLAY_NAME} operator-history aggregates. It does "
@@ -465,8 +428,6 @@ def _build_history_pane(target: StatusBarController):
     keyboard_order = (
         *retention_controls.values(),
         *range_controls.values(),
-        history_export,
-        diagnostics_export,
         clear_button,
     )
     for current, following in zip(
@@ -485,13 +446,10 @@ def _build_history_pane(target: StatusBarController):
         "history_summary": summary,
         "history_field_manifest": manifest,
         "history_semantic_reel": reel,
-        "history_export_preview": export_preview,
         "history_operation_status": operation_status,
         "history_keyboard_order": keyboard_order,
     }
     buttons = {
-        "export_history": history_export,
-        "export_diagnostics": diagnostics_export,
         "clear_history": clear_button,
     }
     return native_ui.wrap_in_scroll_pane(stack), fields, buttons

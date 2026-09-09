@@ -10027,32 +10027,6 @@ class Task9HistorySettingsCompositionTests(unittest.TestCase):
                     "Operator history could not be restored.",
                 )
 
-    def test_history_exports_are_separate_local_json_actions_and_legacy_audit_is_absent(self) -> None:
-        pane = self._build_history()
-        buttons = self.controller.settings_buttons
-        self.assertEqual(buttons["export_history"].title(), "Export History")
-        self.assertEqual(buttons["export_diagnostics"].title(), "Export Diagnostics")
-        self.assertIsNot(buttons["export_history"], buttons["export_diagnostics"])
-        preview = self.controller.settings_fields["history_export_preview"].stringValue()
-        self.assertIn("sidepulse-history.json", preview)
-        self.assertIn("sidepulse-diagnostics.json", preview)
-        self.assertIn("local file", preview)
-        for field in (
-            "app_version",
-            "build_trust",
-            "provider_health_counts",
-            "device_health_counts",
-            "history_health",
-        ):
-            self.assertIn(field, preview)
-        rendered_titles = [
-            str(view.title())
-            for view in (pane, *self._descendants(pane))
-            if hasattr(view, "title") and str(view.title())
-        ]
-        self.assertNotIn("Export CSV", rendered_titles)
-        self.assertNotIn("Export HTML", rendered_titles)
-
     def test_clear_history_requires_confirmation_and_failure_stays_generic_and_visible(self) -> None:
         self._build_history()
         self.controller.operator_history_store.state = OperatorHistoryState((self._day(),))
@@ -10088,14 +10062,7 @@ class Task9HistorySettingsCompositionTests(unittest.TestCase):
         self.assertNotIn("session", reel.casefold())
         self.assertNotIn("path", reel.casefold())
 
-        from sidepulse.operator_export import HistoryExportV1, encode_history_export
-
-        payload = encode_history_export(
-            HistoryExportV1(time.time(), 7, self.controller.operator_history_store.state.rows)
-        )
-        self.assertNotIn(b"Agent became active", payload)
-
-    def test_local_acknowledge_and_resume_reach_content_free_history_export(self) -> None:
+    def test_local_acknowledge_and_resume_update_content_free_history(self) -> None:
         snapshot = CanonicalAgentBrowserIntegrationTests._canonical_snapshot(1)
         state = snapshot.operator_state
         request = state.requests[0]
@@ -10134,20 +10101,6 @@ class Task9HistorySettingsCompositionTests(unittest.TestCase):
             self.controller.operator_history_store.state.rows[0].sample_count,
             2,
         )
-
-        export_path = Path(self._tmp.name) / "sidepulse-history.json"
-        with patch(
-            "sidepulse.status_bar.choose_operator_export_path",
-            return_value=export_path,
-        ):
-            self.controller.exportOperatorHistory_(None)
-        document = json.loads(export_path.read_text(encoding="utf-8"))
-        self.assertEqual(document["days"][0]["acknowledged"], 1)
-        self.assertEqual(document["days"][0]["sample_count"], 2)
-        serialized = export_path.read_text(encoding="utf-8")
-        self.assertNotIn(request.key.request_id.value, serialized)
-        self.assertNotIn(work_key.work_id.value, serialized)
-        self.assertNotIn(state.works[0].safe_label, serialized)
         self.assertEqual(self.controller.current_operator_state.requests[0].phase, original_phase)
         self.assertEqual(self.controller.local_triage_state.acknowledgements, ())
         self.assertEqual(
