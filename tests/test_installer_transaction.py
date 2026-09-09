@@ -126,6 +126,7 @@ def test_codex_trust_refresh_failure_rolls_back_only_this_provider(tmp_path: Pat
 
     with (
         patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True),
+        patch("sidepulse.install.local_codex_hook_hashes", return_value={}),
         patch("sidepulse.install.resolve_codex_hook_hashes", side_effect=OSError("trust refresh")),
         pytest.raises(OSError, match="trust refresh"),
     ):
