@@ -363,6 +363,9 @@ def note_hook_payload(
     session_id = payload.get("session_id") or payload.get("sessionId")
     if not isinstance(session_id, str) or not session_id:
         return
+    if session_id.endswith("-install-probe"):
+        # The installer's self-test is not a session.
+        return
     event = str(payload.get("hook_event_name") or "")
     existing = load_record(provider, session_id, state_dir=state_dir)
     if event == "SessionEnd":
