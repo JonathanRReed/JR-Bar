@@ -49,6 +49,8 @@ from .providers import (
     KIRO_EVENTS,
     KIRO_MANAGED_DESCRIPTION,
     KIRO_NATIVE_EVENT_NAMES,
+    LEGACY_ANTIGRAVITY_HOOK_NAME,
+    LEGACY_OPENCLAW_HOOK_NAME,
     OPENCLAW_HOOK_NAME,
     _is_jrbar_hook_invocation,
     default_antigravity_config_path,
@@ -61,6 +63,10 @@ from .providers import (
     default_opencode_plugin_path,
     detect_log_path,
     is_jrbar_hook_command,
+    is_legacy_log_path,
+    legacy_kiro_agent_config_path,
+    legacy_openclaw_hook_dir,
+    legacy_opencode_plugin_path,
     managed_opencode_plugin_log_path,
     openclaw_handler_source_for_arguments,
     openclaw_hook_dir,
@@ -582,7 +588,50 @@ def install_grok_hooks(
             backup_config=True,
         )
 
+    legacy = config.with_name("sidepulse.json")
+    if _strip_legacy_grok_hook_file(legacy, target_log, dry_run=dry_run):
+        changed = True
     return InstallResult("grok", config, target_log, changed, backup, dry_run)
+
+
+def _strip_legacy_grok_hook_file(path: Path, target_log: Path, *, dry_run: bool) -> bool:
+    """Drop our hooks from the pre-rename ~/.grok/hooks/sidepulse.json.
+
+    Other tools' entries in that file stay; the file is deleted only when
+    nothing but our hooks lived in it.
+    """
+    if not path.is_file() or path.is_symlink():
+        return False
+    try:
+        data = json.loads(read_private_text(path, tighten=False, max_bytes=MAX_CONFIG_BYTES))
+    except (OSError, ValueError, UnicodeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    original = json.dumps(data, sort_keys=True)
+    for event_name, entries in list(hooks.items()):
+        if not isinstance(entries, list):
+            continue
+        cleaned = remove_json_command_hooks_for_log(entries, target_log, "grok")
+        if cleaned:
+            hooks[event_name] = cleaned
+        else:
+            hooks.pop(event_name)
+    if json.dumps(data, sort_keys=True) == original:
+        return False
+    if not hooks:
+        data.pop("hooks")
+    if dry_run:
+        return True
+    backup_file(path)
+    if data:
+        _private_config_write(path, json.dumps(data, indent=2, sort_keys=False) + "\n")
+    else:
+        path.unlink(missing_ok=True)
+    return True
 
 
 def install_kiro_hooks(
@@ -647,7 +696,33 @@ def install_kiro_hooks(
             writes={config: new_text},
             backup_config=bool(original),
         )
+    legacy = legacy_kiro_agent_config_path() if config_path is None else config.with_name("sidepulse.json")
+    if _remove_managed_kiro_agent_file(legacy, dry_run=dry_run):
+        changed = True
     return InstallResult("kiro", config, target_log, changed, backup, dry_run)
+
+
+def _kiro_agent_file_is_managed(path: Path) -> bool:
+    try:
+        original = path.read_text() if path.is_file() and not path.is_symlink() else ""
+    except OSError:
+        return False
+    if not original:
+        return False
+    try:
+        return json.loads(original).get("description") == KIRO_MANAGED_DESCRIPTION
+    except Exception:
+        return False
+
+
+def _remove_managed_kiro_agent_file(path: Path, *, dry_run: bool) -> bool:
+    """Delete a Kiro agent file only when it carries the managed description."""
+    if not _kiro_agent_file_is_managed(path):
+        return False
+    if not dry_run:
+        backup_file(path)
+        path.unlink(missing_ok=True)
+    return True
 
 
 def uninstall_kiro_hooks(
@@ -677,6 +752,9 @@ def uninstall_kiro_hooks(
     if changed and not dry_run:
         backup = backup_file(config)
         config.unlink(missing_ok=True)
+    legacy = legacy_kiro_agent_config_path() if config_path is None else config.with_name("sidepulse.json")
+    if _remove_managed_kiro_agent_file(legacy, dry_run=dry_run):
+        changed = True
     return InstallResult("kiro", config, target_log, changed, backup, dry_run)
 
 
@@ -956,6 +1034,9 @@ def install_openclaw_hooks(
     config = config_path or default_openclaw_config_path()
     target_log = (log_path or detect_log_path("openclaw")).expanduser()
     hook_dir = openclaw_hook_dir() if config_path is None else config.parent / "hooks" / OPENCLAW_HOOK_NAME
+    legacy_dir = (
+        legacy_openclaw_hook_dir() if config_path is None else config.parent / "hooks" / LEGACY_OPENCLAW_HOOK_NAME
+    )
     hook_info = _existing_directory_kind(hook_dir)
     config_leaf = _validated_optional_config(config, dry_run=dry_run)
     data = _strict_json_object(_decode_config(config_leaf), path=config)
@@ -970,6 +1051,12 @@ def install_openclaw_hooks(
     if not isinstance(entries, dict):
         raise ValueError(f"Expected hooks.internal.entries object in {config}")
     entries[OPENCLAW_HOOK_NAME] = {"enabled": True}
+    # The pre-rename entry is ours only when its handler directory is ours
+    # (or already gone); a foreign hook that happens to share the old name
+    # is left alone.
+    legacy_managed = _openclaw_dir_is_managed(legacy_dir)
+    if legacy_managed is not False:
+        entries.pop(LEGACY_OPENCLAW_HOOK_NAME, None)
 
     handler_source = openclaw_handler_source(target_log, python_executable)
     handler_path = hook_dir / "handler.ts"
@@ -1029,8 +1116,27 @@ def install_openclaw_hooks(
                 except OSError:
                     pass
             raise
+    if legacy_managed is True:
+        if not dry_run:
+            _remove_owned_tree(legacy_dir)
+        changed = True
 
     return InstallResult("openclaw", config, target_log, changed, backup, dry_run)
+
+
+def _openclaw_dir_is_managed(hook_dir: Path) -> bool | None:
+    """True when the handler is ours, None when the directory is absent,
+    False when something else owns it."""
+    if _existing_directory_kind(hook_dir) is None:
+        return None
+    handler_path = hook_dir / "handler.ts"
+    if _existing_regular_kind(handler_path) is None:
+        return False
+    try:
+        handler = read_private_text(handler_path, tighten=False, max_bytes=MAX_CONFIG_BYTES)
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return handler.startswith("// Managed by JR-Bar") or handler.startswith("// Managed by SidePulse")
 
 
 def uninstall_openclaw_hooks(
@@ -1043,6 +1149,10 @@ def uninstall_openclaw_hooks(
     config = config_path or default_openclaw_config_path()
     target_log = (log_path or detect_log_path("openclaw")).expanduser()
     hook_dir = openclaw_hook_dir() if config_path is None else config.parent / "hooks" / OPENCLAW_HOOK_NAME
+    legacy_dir = (
+        legacy_openclaw_hook_dir() if config_path is None else config.parent / "hooks" / LEGACY_OPENCLAW_HOOK_NAME
+    )
+    legacy_managed = _openclaw_dir_is_managed(legacy_dir)
     hook_info = _existing_directory_kind(hook_dir)
     data = read_json_config(config, tighten=not dry_run)
 
@@ -1052,10 +1162,12 @@ def uninstall_openclaw_hooks(
         entries = internal.get("entries")
         if isinstance(entries, dict):
             entries.pop(OPENCLAW_HOOK_NAME, None)
+            if legacy_managed is not False:
+                entries.pop(LEGACY_OPENCLAW_HOOK_NAME, None)
             if not entries:
                 internal.pop("entries", None)
 
-    changed = json.dumps(data, sort_keys=True) != original or hook_info is not None
+    changed = json.dumps(data, sort_keys=True) != original or hook_info is not None or legacy_managed is True
     backup = None
     if changed and not dry_run:
         if json.dumps(data, sort_keys=True) != original:
@@ -1063,6 +1175,8 @@ def uninstall_openclaw_hooks(
             _private_config_write(config, json.dumps(data, indent=2, sort_keys=False) + "\n")
         if hook_info is not None:
             _remove_owned_tree(hook_dir)
+        if legacy_managed is True:
+            _remove_owned_tree(legacy_dir)
 
     return InstallResult("openclaw", config, target_log, changed, backup, dry_run)
 
@@ -1199,7 +1313,26 @@ def install_opencode_plugin(
                 expected_identity=log_leaf.identity,
                 expected_parent_identity=log_leaf.parent_identity,
             )
+    legacy_plugin = legacy_opencode_plugin_path() if plugin_path is None else plugin.with_name("sidepulse.js")
+    if _remove_managed_opencode_plugin(legacy_plugin, dry_run=dry_run):
+        changed = True
     return InstallResult("opencode", plugin, target_log, changed, None, dry_run)
+
+
+def _remove_managed_opencode_plugin(plugin: Path, *, dry_run: bool) -> bool:
+    """Delete an OpenCode plugin file only when it is provably ours."""
+    try:
+        read_result = _read_opencode_plugin_source(plugin)
+    except (OSError, UnicodeError):
+        return False
+    if read_result is None:
+        return False
+    current, expected_identity = read_result
+    if managed_opencode_plugin_log_path(current) is None:
+        return False
+    if dry_run:
+        return True
+    return unlink_private_file_if_unchanged(plugin, expected_identity=expected_identity)
 
 
 def uninstall_opencode_plugin(
@@ -1210,15 +1343,17 @@ def uninstall_opencode_plugin(
     """Remove only an exact SidePulse-managed OpenCode plugin file."""
     plugin = plugin_path or default_opencode_plugin_path()
     target_log = (log_path or detect_log_path("opencode")).expanduser()
+    legacy_plugin = legacy_opencode_plugin_path() if plugin_path is None else plugin.with_name("sidepulse.js")
+    legacy_removed = _remove_managed_opencode_plugin(legacy_plugin, dry_run=dry_run)
     read_result = _read_opencode_plugin_source(plugin)
     if read_result is None:
-        return InstallResult("opencode", plugin, target_log, False, None, dry_run)
+        return InstallResult("opencode", plugin, target_log, legacy_removed, None, dry_run)
     current, expected_identity = read_result
     if managed_opencode_plugin_log_path(current) is None:
         raise OSError(f"refusing to remove unowned OpenCode plugin: {plugin}")
     if not dry_run:
         if not unlink_private_file_if_unchanged(plugin, expected_identity=expected_identity):
-            return InstallResult("opencode", plugin, target_log, False, None, dry_run)
+            return InstallResult("opencode", plugin, target_log, legacy_removed, None, dry_run)
     return InstallResult("opencode", plugin, target_log, True, None, dry_run)
 
 
@@ -1349,6 +1484,9 @@ def install_antigravity_hooks(
     if existing is not None and not _antigravity_entry_is_ours(existing):
         raise OSError(f"refusing to replace unowned Antigravity hook: {config}")
     data[ANTIGRAVITY_HOOK_NAME] = _antigravity_entry(target_log, python_executable)
+    legacy_entry = data.get(LEGACY_ANTIGRAVITY_HOOK_NAME)
+    if legacy_entry is not None and _antigravity_entry_is_ours(legacy_entry):
+        data.pop(LEGACY_ANTIGRAVITY_HOOK_NAME, None)
 
     changed = json.dumps(data, sort_keys=True) != original
     backup = None
@@ -1377,6 +1515,9 @@ def uninstall_antigravity_hooks(
     if entry is not None and not _antigravity_entry_is_ours(entry):
         raise OSError(f"refusing to remove unowned Antigravity hook: {config}")
     data.pop(ANTIGRAVITY_HOOK_NAME, None)
+    legacy_entry = data.get(LEGACY_ANTIGRAVITY_HOOK_NAME)
+    if legacy_entry is not None and _antigravity_entry_is_ours(legacy_entry):
+        data.pop(LEGACY_ANTIGRAVITY_HOOK_NAME, None)
 
     changed = json.dumps(data, sort_keys=True) != original
     backup = None
@@ -1959,7 +2100,9 @@ def remove_json_command_hooks_for_log(
             if not isinstance(hook, dict):
                 continue
             command = hook.get("command")
-            if is_jrbar_json_hook_command(command, log_path, provider):
+            if is_jrbar_json_hook_command(command, log_path, provider) or _is_legacy_managed_command(
+                command, provider
+            ):
                 continue
             cleaned_hooks.append(hook)
         if cleaned_hooks:
@@ -1967,6 +2110,20 @@ def remove_json_command_hooks_for_log(
             kept["hooks"] = cleaned_hooks
             cleaned_entries.append(kept)
     return cleaned_entries
+
+
+def _is_legacy_managed_command(command: Any, provider: str) -> bool:
+    """Ours for `provider`, registered before the rename against a log in
+    the old sidepulse state tree. Such entries are replaced, never kept
+    beside the current one."""
+    if not isinstance(command, str) or not is_jrbar_hook_command(command, provider):
+        return False
+    try:
+        arguments = shlex.split(command)
+    except ValueError:
+        return False
+    log = _command_option(arguments, "--log")
+    return log is not None and is_legacy_log_path(Path(log))
 
 
 def is_jrbar_json_hook_command(

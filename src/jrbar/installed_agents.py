@@ -268,7 +268,7 @@ _INSTALLED_SURFACE_REGISTRATIONS: Final = validate_installed_surface_registratio
         ),
         _registration(
             "opencode",
-            "sidepulse-plugin",
+            "jrbar-plugin",
             f"OpenCode {PRODUCT_DISPLAY_NAME} integration",
             InstalledSurfaceKind.LOCAL_HARNESS,
             SurfaceSupportLevel.LIFECYCLE,
@@ -378,7 +378,7 @@ _INSTALLED_SURFACE_REGISTRATIONS: Final = validate_installed_surface_registratio
         ),
         _registration(
             "kiro",
-            "sidepulse-agent",
+            "jrbar-agent",
             f"Kiro {PRODUCT_DISPLAY_NAME} agent",
             InstalledSurfaceKind.LOCAL_HARNESS,
             SurfaceSupportLevel.LIFECYCLE,
