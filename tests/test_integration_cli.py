@@ -35,13 +35,11 @@ def test_integration_cli_exposes_t3_configuration_and_probe_commands() -> None:
     assert probed.json is True
 
 
-def test_integration_cli_exposes_agent_deck_and_creator_micro_settings() -> None:
+def test_integration_cli_exposes_creator_micro_settings() -> None:
     parser = build_parser()
 
-    deck = parser.parse_args(["configure", "agent-deck", "--snapshot-path", "/tmp/deck.json"])
     creator = parser.parse_args(["enable", "creator-micro"])
 
-    assert str(deck.snapshot_path) == "/tmp/deck.json"
     assert creator.integration == "creator-micro"
 
 
@@ -58,7 +56,6 @@ def test_integration_cli_help_describes_the_shared_compatibility_surface() -> No
 @pytest.mark.parametrize(
     ("integration", "field"),
     [
-        ("agent-deck", "agent_deck_enabled"),
         ("creator-micro", "creator_micro_enabled"),
         ("t3code", "t3code_enabled"),
     ],
@@ -70,7 +67,6 @@ def test_disable_routes_to_the_selected_integration(
 ) -> None:
     settings = IntegrationSettings(
         t3code_enabled=True,
-        agent_deck_enabled=True,
         creator_micro_enabled=True,
         creator_micro_device_serial="CM2-123",
     )
@@ -89,7 +85,7 @@ def test_disable_routes_to_the_selected_integration(
 
     updated = saved.pop()
     assert getattr(updated, field) is False
-    for other in {"t3code_enabled", "agent_deck_enabled", "creator_micro_enabled"} - {
+    for other in {"t3code_enabled", "creator_micro_enabled"} - {
         field
     }:
         assert getattr(updated, other) is True

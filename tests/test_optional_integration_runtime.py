@@ -4,15 +4,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from test_agent_deck_compat import NOW, payload
 
-from sidepulse.agent_deck_compat import (
-    CompatibilityReceipt,
-    ReceiptReason,
-    SnapshotUpdate,
-    parse_snapshot,
-    prioritized_statuses,
-)
 from sidepulse.models import AgentMode
 from sidepulse.optional_integration_runtime import (
     CreatorMicroOutputService,
@@ -36,11 +28,10 @@ def test_default_off_runtime_does_not_construct_or_read_optional_sources():
         raise AssertionError("disabled optional source was touched")
 
     target = SimpleNamespace(monitor=Monitor())
-    settings = SimpleNamespace(agent_deck_enabled=False, creator_micro_enabled=False)
+    settings = SimpleNamespace(creator_micro_enabled=False)
     runtime = OptionalIntegrationRuntime(
         target,
         settings_loader=lambda: settings,
-        agent_service_factory=forbidden,
         creator_service_factory=forbidden,
     )
 
@@ -65,7 +56,7 @@ def test_close_does_not_wait_for_settings_io_or_publish_after_loader_returns():
     def load_settings():
         loading.set()
         assert release_loader.wait(1)
-        return SimpleNamespace(agent_deck_enabled=False, creator_micro_enabled=True)
+        return SimpleNamespace(creator_micro_enabled=True)
 
     runtime = OptionalIntegrationRuntime(
         target,
@@ -98,10 +89,7 @@ def test_close_does_not_wait_for_blocked_deck_settings_io():
 
     runtime = OptionalIntegrationRuntime(
         target,
-        settings_loader=lambda: SimpleNamespace(
-            agent_deck_enabled=False,
-            creator_micro_enabled=False,
-        ),
+        settings_loader=lambda: SimpleNamespace(creator_micro_enabled=False),
         deck_settings_loader=load_deck_settings,
     )
     runtime.start()
@@ -111,48 +99,6 @@ def test_close_does_not_wait_for_blocked_deck_settings_io():
     assert not release_loader.is_set()
     release_loader.set()
     assert runtime.wait_until_configured(1)
-
-
-def test_enabled_agent_deck_projects_statuses_into_canonical_monitor():
-    monitor = Monitor()
-    target = SimpleNamespace(monitor=monitor)
-    observations = parse_snapshot(payload(), now=NOW)
-    expected = prioritized_statuses(observations)
-
-    class Service:
-        def __init__(self, **kwargs):
-            self.callback = kwargs["callback"]
-
-        def start(self):
-            self.callback(
-                SnapshotUpdate(
-                    1,
-                    1.0,
-                    CompatibilityReceipt(True, True, True, ReceiptReason.OK, observations=observations),
-                    expected,
-                )
-            )
-            return True
-
-        def close(self):
-            pass
-
-    settings = SimpleNamespace(
-        agent_deck_enabled=True,
-        agent_deck_snapshot_path="/tmp/deck.json",
-        creator_micro_enabled=False,
-    )
-    runtime = OptionalIntegrationRuntime(
-        target,
-        settings_loader=lambda: settings,
-        agent_service_factory=Service,
-        creator_service_factory=lambda: (_ for _ in ()).throw(AssertionError("creator source touched")),
-    )
-
-    runtime.start()
-    assert monitor.ready.wait(1)
-    runtime.close()
-    assert monitor.calls == [("agent-deck", expected), ("agent-deck", ())]
 
 
 def test_enabled_creator_micro_discovery_runs_off_the_caller():
@@ -172,14 +118,12 @@ def test_enabled_creator_micro_discovery_runs_off_the_caller():
             pass
 
     settings = SimpleNamespace(
-        agent_deck_enabled=False,
         creator_micro_enabled=True,
         creator_micro_device_serial="CM2-123",
     )
     runtime = OptionalIntegrationRuntime(
         SimpleNamespace(monitor=Monitor()),
         settings_loader=lambda: settings,
-        agent_service_factory=lambda **_kwargs: None,
         creator_service_factory=CreatorService,
     )
     caller = threading.current_thread().name
@@ -190,33 +134,9 @@ def test_enabled_creator_micro_discovery_runs_off_the_caller():
     assert calls and calls[0] != caller
 
 
-def test_agent_deck_enablement_blocks_creator_micro_output_ownership():
-    target = SimpleNamespace(monitor=Monitor())
-    settings = SimpleNamespace(
-        agent_deck_enabled=True,
-        agent_deck_snapshot_path=None,
-        creator_micro_enabled=True,
-        creator_micro_device_serial="CM2-123",
-    )
-    runtime = OptionalIntegrationRuntime(
-        target,
-        settings_loader=lambda: settings,
-        agent_service_factory=lambda **_kwargs: None,
-        creator_service_factory=lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("creator output started while Agent Deck was enabled")
-        ),
-    )
-
-    runtime.start()
-    assert runtime.wait_until_configured(1)
-    runtime.close()
-    assert target._creator_micro_output_receipt.reason == "agent_deck_ownership"
-
-
 def test_enabled_creator_micro_without_approved_identity_fails_closed():
     target = SimpleNamespace(monitor=Monitor())
     settings = SimpleNamespace(
-        agent_deck_enabled=False,
         creator_micro_enabled=True,
         creator_micro_device_serial=None,
     )
@@ -402,7 +322,7 @@ def test_runtime_wires_saved_macros_and_revokes_delivery_when_disabled():
     runtime = OptionalIntegrationRuntime(
         target,
         settings_loader=lambda: SimpleNamespace(
-            agent_deck_enabled=False, creator_micro_enabled=True, creator_micro_device_serial="CM2-123",
+            creator_micro_enabled=True, creator_micro_device_serial="CM2-123",
         ),
         deck_settings_loader=lambda: DeckControlSettings(
             enabled=True, bindings=((3, DeckAction("open_usage")),),
@@ -503,7 +423,7 @@ def test_creator_output_uses_the_same_user_colors_and_brightness_policy_as_other
     runtime = OptionalIntegrationRuntime(
         target,
         settings_loader=lambda: SimpleNamespace(
-            agent_deck_enabled=False, creator_micro_enabled=True, creator_micro_device_serial="CM2",
+            creator_micro_enabled=True, creator_micro_device_serial="CM2",
         ),
         deck_settings_loader=DeckControlSettings,
         creator_service_factory=Service,

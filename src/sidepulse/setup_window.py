@@ -183,7 +183,6 @@ def build_setup_window(target):
         ("configure_physical_devices", "Physical devices…", "openSetupPhysicalDevices:"),
         ("configure_t3", "T3 Code…", "openSetupT3:"),
         ("configure_alcove", "Alcove…", "openSetupAlcove:"),
-        ("configure_agent_deck", "Agent Deck…", "openSetupAgentDeck:"),
     ):
         button = native_ui.make_button(title, target, action)
         optional_inner.addArrangedSubview_(button)

@@ -25,7 +25,7 @@ Updated: 2026-09-05
 ## Priority scope
 
 1. Security, provider correctness, reset delivery, and quota-aware liveness.
-2. One coherent JR-Bar menu and command center, unified lighting, T3Code and Alcove compatibility, Agent Deck, and Creator Micro 2.
+2. One coherent JR-Bar menu and command center, unified lighting, T3Code and Alcove compatibility, and Creator Micro 2 (the Agent Deck snapshot compatibility was removed in 0.8).
 3. Installed-app and hardware proof, performance, signing, notarization, updater, merge, push, and GitHub release.
 
 ## Deferred, external, and out of scope
@@ -112,11 +112,11 @@ The receipts below describe the candidate and source state at each checkpoint. T
 - A quiet agent with one unambiguous provider-reported account at zero percent releases its power hold after two readings and a 45-second quiet window. JR-Bar does not mark the agent complete or stop its process.
 - Reset events keep per-channel receipts and retry eligible suppressed channels for no more than five minutes. Notification, Screen Bar, physical light, and confetti behavior remain separately configurable.
 - The compact menu, Usage Center, settings categories, lighting controls, onboarding, and heatmap consume shared projections instead of separate polling planes.
-- T3 Code and optional Agent Deck snapshot compatibility are local and read-only. T3 Code is not orchestrated. Built-in Agent Deck controls independently map device keys to explicit app actions. Creator Micro 2 requires an approved device identity and yields ownership to external Agent Deck when snapshot compatibility is configured.
+- T3 Code compatibility is local and read-only. T3 Code is not orchestrated. Built-in Control Center controls map device keys to explicit app actions. Creator Micro 2 requires an approved device identity. The optional external Agent Deck snapshot compatibility was removed in 0.8.
 - Screen Bar glow layers use native Core Graphics gradients. Source and signed-candidate spot checks reduced steady CPU from the prior 19 to 23 percent loop to roughly 1 to 3 percent when static, with higher bounded work during animation and provider refresh.
 - Physical SidePulse smoke programming and byte-for-byte restoration passed on the mounted device.
 
-## Agent Deck implementation history
+## Control Center (formerly Agent Deck) implementation history
 
 - Added owner-private saved mappings, app selection, shortcut recording, and a separate action-enable switch in Devices settings. App bundle IDs remain in details rather than the primary labels.
 - One HID worker handles output and input. Device notifications only select saved actions. A half-second deadline and bounded main-thread handoff prevent stale input replay.

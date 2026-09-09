@@ -7,10 +7,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from .agent_deck_compat import AgentDeckSnapshotService, SnapshotUpdate, read_snapshot
 from .creator_micro_adapter import CreatorMicro2Adapter, SemanticState
 from .creator_micro_hidapi import HidApiTransport
 from .creator_micro_lighting import CreatorMicroBrightnessProfile, CreatorMicroLightFrame, creator_micro_light_frame
@@ -297,7 +295,6 @@ class OptionalIntegrationRuntime:
         *,
         settings_loader: Callable[[], object],
         deck_settings_loader: Callable[[], DeckControlSettings] = load_deck_controls,
-        agent_service_factory: Callable[..., object] = AgentDeckSnapshotService,
         creator_service_factory: Callable[..., object] = CreatorMicroOutputService,
         wall_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         monotonic: Callable[[], float] = time.monotonic,
@@ -305,7 +302,6 @@ class OptionalIntegrationRuntime:
         self._target = target
         self._settings_loader = settings_loader
         self._deck_settings_loader = deck_settings_loader
-        self._agent_service_factory = agent_service_factory
         self._creator_service_factory = creator_service_factory
         self._wall_clock = wall_clock
         self._monotonic = monotonic
@@ -313,7 +309,6 @@ class OptionalIntegrationRuntime:
         self._closed = False
         self._started = False
         self._configured = threading.Event()
-        self._agent_service: object | None = None
         self._creator_service: object | None = None
         self._deck_dispatch: DeckInputDispatch | None = None
 
@@ -362,32 +357,7 @@ class OptionalIntegrationRuntime:
                     setattr(self._target, "_deck_control_settings", None)
                     setattr(self._target, "_deck_control_settings_error", controls_error)
                 self._deck_dispatch = DeckInputDispatch(self._target, controls)
-            if getattr(settings, "agent_deck_enabled", False) is True:
-                configured = getattr(settings, "agent_deck_snapshot_path", None)
-                if isinstance(configured, str) and configured.strip():
-                    path = Path(configured)
-                    service = self._agent_service_factory(
-                        enabled=True,
-                        reader=lambda: read_snapshot(
-                            path,
-                            enabled=True,
-                            now=self._wall_clock(),
-                        ),
-                        clock=self._monotonic,
-                        callback=self._publish_agent_deck,
-                    )
-                    with self._lock:
-                        if self._closed:
-                            self._close_service(service)
-                            return
-                        self._agent_service = service
-                        service.start()
             if getattr(settings, "creator_micro_enabled", False) is True:
-                if getattr(settings, "agent_deck_enabled", False) is True:
-                    self._publish_creator_receipt(
-                        CreatorMicroOutputReceipt(False, "agent_deck_ownership")
-                    )
-                    return
                 approved_serial = getattr(
                     settings,
                     "creator_micro_device_serial",
@@ -417,14 +387,6 @@ class OptionalIntegrationRuntime:
                     dispatch = getattr(self._target, "performSelectorOnMainThread_withObject_waitUntilDone_", None)
                     if callable(dispatch):
                         dispatch("applyDeckControlsLoaded:", getattr(self._target, "_deck_control_settings", None), False)
-
-    def _publish_agent_deck(self, update: SnapshotUpdate) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            replace_statuses = getattr(getattr(self._target, "monitor", None), "replace_external_statuses", None)
-            if callable(replace_statuses):
-                replace_statuses("agent-deck", update.statuses)
 
     def _publish_creator_receipt(self, receipt: CreatorMicroOutputReceipt) -> None:
         with self._lock:
@@ -509,16 +471,11 @@ class OptionalIntegrationRuntime:
             if self._closed:
                 return
             self._closed = True
-            agent_service = self._agent_service
             creator_service = self._creator_service
             deck_dispatch = self._deck_dispatch
         if deck_dispatch is not None:
             deck_dispatch.close()
-        self._close_service(agent_service)
         self._close_service(creator_service)
-        replace_statuses = getattr(getattr(self._target, "monitor", None), "replace_external_statuses", None)
-        if callable(replace_statuses) and agent_service is not None:
-            replace_statuses("agent-deck", ())
 
 
 def start_optional_integration_runtime(target: object) -> OptionalIntegrationRuntime:

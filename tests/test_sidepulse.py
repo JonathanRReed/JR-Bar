@@ -2624,7 +2624,6 @@ for (const event of [
             "configure_physical_devices",
             "configure_t3",
             "configure_alcove",
-            "configure_agent_deck",
         ):
             self.assertIn(key, target.setup_buttons)
 

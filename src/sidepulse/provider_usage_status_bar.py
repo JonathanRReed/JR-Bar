@@ -306,10 +306,6 @@ else:
         def openSetupAlcove_(self, _sender) -> None:
             self._open_setup_destination("colors_screen_bar")
 
-        @_legacy.objc.IBAction
-        def openSetupAgentDeck_(self, _sender) -> None:
-            self._open_setup_destination("installed_agents")
-
         def run_first_launch_setup(self) -> None:
             from .onboarding_runtime import run_first_launch_setup
 

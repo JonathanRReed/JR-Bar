@@ -356,7 +356,7 @@ config and log paths). The founding four:
 | Grok | `~/.grok/hooks/sidepulse.json` | `${XDG_STATE_HOME:-~/.local/state}/sidepulse/agent-monitor/grok.jsonl` |
 
 Each provider adapter only adds JR-Bar's own hook commands. Existing hook
-entries, including Agent Deck entries, stay in place. Before a changed existing
+entries, including other tools' hook entries, stay in place. Before a changed existing
 configuration is written, JR-Bar creates a timestamped backup beside it.
 Use `sidepulse agent-monitor uninstall <provider>` to remove only JR-Bar
 hooks, or restore that backup if you need to roll back the complete file.

@@ -13,7 +13,7 @@ from .product_identity import PRODUCT_DISPLAY_NAME
 
 INTEGRATION_SETTINGS_SCHEMA_VERSION = 5
 INTEGRATION_SETTINGS_MAX_BYTES = 64 * 1024
-INTEGRATION_NAMES = frozenset({"agent-deck", "creator-micro", "t3code"})
+INTEGRATION_NAMES = frozenset({"creator-micro", "t3code"})
 _RETIRED_CODEXBAR_KEYS = frozenset(
     {
         "codexbar_enabled",
@@ -52,8 +52,6 @@ class IntegrationSettings:
     t3code_activity_statistics_enabled: bool = False
     t3code_base_dir: str | None = None
     t3code_environment_id: str | None = None
-    agent_deck_enabled: bool = False
-    agent_deck_snapshot_path: str | None = None
     creator_micro_enabled: bool = False
     creator_micro_device_serial: str | None = None
 
@@ -61,11 +59,9 @@ class IntegrationSettings:
         if not (
             type(self.t3code_enabled) is bool
             and type(self.t3code_activity_statistics_enabled) is bool
-            and type(self.agent_deck_enabled) is bool
             and type(self.creator_micro_enabled) is bool
             and _optional_bounded_text(self.t3code_base_dir, 4096)
             and _optional_bounded_text(self.t3code_environment_id, 256)
-            and _optional_bounded_text(self.agent_deck_snapshot_path, 4096)
             and _optional_bounded_text(self.creator_micro_device_serial, 256)
             and (
                 not self.creator_micro_enabled
@@ -78,25 +74,10 @@ class IntegrationSettings:
         if integration not in INTEGRATION_NAMES or type(enabled) is not bool:
             raise IntegrationSettingsError("invalid integration selection")
         field = {
-            "agent-deck": "agent_deck_enabled",
             "creator-micro": "creator_micro_enabled",
             "t3code": "t3code_enabled",
         }[integration]
         return replace(self, **{field: enabled})
-
-    def with_agent_deck(
-        self,
-        *,
-        enabled: bool | object = _UNSET,
-        snapshot_path: str | object | None = _UNSET,
-    ) -> IntegrationSettings:
-        return replace(
-            self,
-            agent_deck_enabled=(self.agent_deck_enabled if enabled is _UNSET else enabled),
-            agent_deck_snapshot_path=(
-                self.agent_deck_snapshot_path if snapshot_path is _UNSET else _clean_optional_text(snapshot_path)
-            ),
-        )
 
     def with_creator_micro(
         self,
@@ -141,8 +122,6 @@ class IntegrationSettings:
             "t3code_activity_statistics_enabled": (self.t3code_activity_statistics_enabled),
             "t3code_base_dir": self.t3code_base_dir,
             "t3code_environment_id": self.t3code_environment_id,
-            "agent_deck_enabled": self.agent_deck_enabled,
-            "agent_deck_snapshot_path": self.agent_deck_snapshot_path,
             "creator_micro_enabled": self.creator_micro_enabled,
             "creator_micro_device_serial": self.creator_micro_device_serial,
         }
@@ -236,12 +215,6 @@ def _settings_from_document(document: dict[str, object]) -> IntegrationSettings:
             document,
             "t3code_environment_id",
             256,
-        ),
-        agent_deck_enabled=_bool(document, "agent_deck_enabled", False),
-        agent_deck_snapshot_path=_optional_text(
-            document,
-            "agent_deck_snapshot_path",
-            4096,
         ),
         creator_micro_enabled=(
             _bool(document, "creator_micro_enabled", False)

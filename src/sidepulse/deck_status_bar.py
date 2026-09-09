@@ -1,4 +1,4 @@
-"""Thin native selector host for Agent Deck controls."""
+"""Thin native selector host for Control Center controls."""
 
 from __future__ import annotations
 
@@ -19,7 +19,6 @@ def install_deck_status_bar(base):
                     "ready": "Creator Micro 2 ready.",
                     "unsupported_firmware": "Creator Micro 2 firmware does not expose agent-status output.",
                     "device_conflict": "Creator Micro 2 stopped after detecting conflicting device traffic.",
-                    "agent_deck_ownership": "Creator Micro 2 stays with Agent Deck while snapshot compatibility is enabled.",
                 }.get(receipt.reason, f"Creator Micro 2: {receipt.reason.replace('_', ' ')}.")
                 self.set_settings_message(label)
 
