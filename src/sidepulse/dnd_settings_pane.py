@@ -605,38 +605,6 @@ def _make_dnd_card(target, fields: dict[str, object], buttons: dict[str, object]
     return outer
 
 
-def _make_night_card(target, fields: dict[str, object], buttons: dict[str, object]):
-    outer, inner = native_ui.make_card("Night Warmth")
-    row, switch = native_ui.make_switch_row(
-        "Warm the lights from 7 PM to 7 AM",
-        target,
-        "toggleNightWarmth:",
-        help_text=(
-            "Eases green and blue down after dark, like Night Shift for your LEDs. "
-            "Composes with each device's calibration."
-        ),
-    )
-    inner.addArrangedSubview_(row)
-    buttons["night_warmth_enabled"] = switch
-    native_ui.add_separator(inner)
-    popup = native_ui.make_popup_button(target, "setNightDimFraction:")
-    for label, key in (
-        ("Don't dim at night", "1.0"),
-        ("Dim to 50%", "0.5"),
-        ("Dim to 30%", "0.3"),
-        ("Dim to 15%", "0.15"),
-    ):
-        popup.addItemWithTitle_(label)
-        popup.lastItem().setRepresentedObject_(key)
-        if abs(float(key) - target.settings.night_dim_fraction) < 1e-9:
-            popup.selectItem_(popup.lastItem())
-    inner.addArrangedSubview_(
-        native_ui.make_row("Night brightness (7 PM to 7 AM)", popup)
-    )
-    fields["night_dim_popup"] = popup
-    return outer
-
-
 def _configured_focus_modes() -> tuple[tuple[str, str], ...]:
     try:
         focus_modes = tuple(focus_sync.configured_focus_modes() or ())
@@ -845,8 +813,6 @@ def _install_key_view_loop(
         *(buttons[f"dnd_temporary_mode:{mode.value}"] for mode in DndMode),
         buttons["dnd_resume"],
         buttons["dnd_end_override"],
-        buttons["night_warmth_enabled"],
-        fields["night_dim_popup"],
     ]
     controls.extend(
         control
@@ -905,7 +871,6 @@ def build_dnd_settings_pane(target):
     stack.addArrangedSubview_(now_outer)
 
     stack.addArrangedSubview_(_make_dnd_card(target, fields, buttons))
-    stack.addArrangedSubview_(_make_night_card(target, fields, buttons))
     per_focus_outer, per_focus_container, focus_modes = _make_per_focus_card(
         target,
         fields,
@@ -960,17 +925,6 @@ def refresh_dnd_settings_controls(target, *, now_epoch: float | None = None) -> 
         value = target.active_focus_summary()
         now_label.setStringValue_(value)
         now_label.setAccessibilityValue_(value)
-
-    _set_switch_state(
-        buttons.get("night_warmth_enabled"),
-        target.settings.night_warmth_enabled,
-    )
-    night_dim = fields.get("night_dim_popup")
-    if night_dim is not None:
-        _select_represented_value(
-            night_dim,
-            f"{target.settings.night_dim_fraction:g}",
-        )
 
     for key, popup in fields.items():
         if type(key) is not str:

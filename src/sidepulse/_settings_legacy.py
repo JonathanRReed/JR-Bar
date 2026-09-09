@@ -419,12 +419,6 @@ class AgentMonitorSettings:
     usage_event_hook_path: str = ""
     # Named Studio programs -- a shelf of looks.
     studio_library: tuple[tuple[str, str], ...] = ()
-    night_warmth_enabled: bool = False
-    # Night DIM, the warmth shift's brightness sibling: between 19:00
-    # and 07:00 every surface's brightness is multiplied by this. 1.0
-    # (the default) means "no night dimming". Composes with the rest of
-    # the stack, so night + idle + a Focus all darken together.
-    night_dim_fraction: float = 1.0
     # One master dial over EVERY surface's brightness -- strip and
     # Screen Bar alike -- reachable from the dropdown. Composes with
     # per-device brightness, auto-brightness, idle and Focus dimming.
@@ -861,14 +855,6 @@ class AgentMonitorSettings:
 
     def with_subagent_asks_alert(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, subagent_asks_alert=bool(enabled))
-
-    def with_night_warmth_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, night_warmth_enabled=bool(enabled))
-
-    def with_night_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
-        return replace(
-            self, night_dim_fraction=max(0.0, min(1.0, float(fraction)))
-        )
 
     def with_completion_notification_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(
@@ -1517,8 +1503,6 @@ class AgentMonitorSettings:
             "escalation_webhook_url": self.escalation_webhook_url,
             "usage_event_hook_path": self.usage_event_hook_path,
             "studio_library": [list(item) for item in self.studio_library],
-            "night_warmth_enabled": self.night_warmth_enabled,
-            "night_dim_fraction": self.night_dim_fraction,
             "quota_alerts_enabled": self.quota_alerts_enabled,
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
@@ -1878,10 +1862,6 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         codex_percent_enabled=_bool_setting(data.get("codex_percent_enabled"), True),
         escalation_webhook_url=str(data.get("escalation_webhook_url") or "").strip(),
         usage_event_hook_path=str(data.get("usage_event_hook_path") or "").strip(),
-        night_warmth_enabled=_bool_setting(data.get("night_warmth_enabled"), False),
-        night_dim_fraction=max(
-            0.0, min(1.0, _float_setting(data.get("night_dim_fraction"), 1.0))
-        ),
         global_brightness_scale=max(
             0.05, _fraction_setting(data.get("global_brightness_scale"), 1.0)
         ),
