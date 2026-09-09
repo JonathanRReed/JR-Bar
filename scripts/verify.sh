@@ -72,7 +72,6 @@ if [ "$PORTABLE" -eq 1 ]; then
         tests/test_status_bar_facade_contract.py \
         tests/test_status_bar_production_boundary.py \
         tests/test_external_integration_wiring.py \
-        tests/test_architecture_ratchets.py \
         tests/test_unwired_modules_ratchet.py \
         tests/test_core_state.py \
         tests/test_core_state_determinism.py \

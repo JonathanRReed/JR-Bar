@@ -371,6 +371,10 @@ class WorkLifecycle(str, Enum):
 class ProviderTerminalCause(str, Enum):
     NONE = "none"
     CODEX_USAGE_LIMIT = "codex_usage_limit"
+    # The app observed the agent's OS process disappear and ended the
+    # session itself. Nobody confirmed a result; the row is "ended", not
+    # "completed".
+    PROCESS_EXITED = "process_exited"
 
 
 class NextActor(str, Enum):

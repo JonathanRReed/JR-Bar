@@ -33,6 +33,16 @@ def run_hook_client(
     except (TypeError, ValueError):
         return 0
 
+    # Only the hook process can see which agent spawned it. Register that
+    # process before handing the payload to the app, so the app can later
+    # notice the agent is gone even when no hook ever says so.
+    try:
+        from .process_registry import note_hook_payload
+
+        note_hook_payload(provider, payload_text)
+    except Exception:
+        pass
+
     try:
         disposition = submit(request)
         if disposition is HookIngressDisposition.UNAVAILABLE:

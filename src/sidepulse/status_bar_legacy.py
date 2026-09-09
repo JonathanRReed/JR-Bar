@@ -3211,6 +3211,7 @@ class StatusBarController(NSObject):
         self._refresh_dnd_environment("handle_environment_refresh")
         try:
             self.ingest_transcript_fallback()
+            self.reap_dead_agent_processes()
             try:
                 from .integration_settings import load_integration_settings
                 from .t3_compat import update_t3_snapshot_runtime
@@ -9910,6 +9911,50 @@ class StatusBarController(NSObject):
             )
             self._menu_signature = None
         self.schedule_event_refresh()
+
+    def reap_dead_agent_processes(self) -> None:
+        """End every live-looking session whose OS process is gone.
+
+        Hooks cannot report a kill. Without this, a Ctrl-C'd agent sat
+        "Working" for the silence window and then lingered as "ended
+        (unconfirmed)" for the presence horizon. The synthetic SessionEnd
+        goes through the ordinary hook pipeline so it is persisted and
+        reduced like a real one.
+        """
+        from .liveness_sweep import reap_dead_agents
+        from .process_registry import ProcessSweeper
+
+        sweeper = getattr(self, "_process_sweeper", None)
+        if sweeper is None:
+            sweeper = ProcessSweeper()
+            self._process_sweeper = sweeper
+        try:
+            statuses = tuple(self.monitor.current_statuses_by_key().values())
+        except Exception as exc:
+            log_status_bar(f"liveness sweep skipped: {exc}")
+            return
+
+        def _reconcile(hint):
+            self.monitor.reconcile_refresh_hint(
+                hint,
+                log_path=detect_log_path(hint.source_key.provider_id),
+            )
+
+        try:
+            result = reap_dead_agents(
+                statuses,
+                sweeper=sweeper,
+                refresh_hint_handler=_reconcile,
+            )
+        except Exception as exc:
+            log_status_bar(f"liveness sweep error: {exc}")
+            return
+        for dead in result.ended_sessions:
+            log_status_bar(
+                "liveness: ended "
+                f"{dead.record.provider} {dead.record.session_id[:8]} "
+                f"pid={dead.record.pid} reason={dead.reason}"
+            )
 
     def handle_hook_event_message(self, hint: ProviderRefreshHint) -> None:
         """Reconcile one authenticated hint from the persisted normalized log.

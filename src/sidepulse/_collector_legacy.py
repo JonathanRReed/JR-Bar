@@ -2642,6 +2642,10 @@ def mode_for_event(record: HookEvent) -> AgentMode | None:
         return AgentMode.COMPLETED
     if event == "SessionEnd":
         return AgentMode.COMPLETED
+    if event == "Interrupt":
+        # The operator aborted the turn; the session is alive and waiting
+        # for the next prompt, exactly like a fresh SessionStart.
+        return AgentMode.IDLE_READY
     if event == "SessionStart":
         return AgentMode.IDLE_READY
     return None

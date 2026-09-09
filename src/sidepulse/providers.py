@@ -48,6 +48,11 @@ CODEX_EVENTS = (
     "SubagentStart",
     "SubagentStop",
     "Stop",
+    # Codex 0.153+ runs these at turn abort and at teardown. SessionEnd is
+    # the only direct signal that a CLI session closed; without it a
+    # Ctrl-C'd Codex sat "Working" until the silence window expired.
+    "Interrupt",
+    "SessionEnd",
 )
 
 CLAUDE_EVENTS = (
@@ -1572,6 +1577,7 @@ def canonical_event_name(value: Any) -> str | None:
             "user_prompt_submit": "UserPromptSubmit",
             "session_start": "SessionStart",
             "session_end": "SessionEnd",
+            "interrupt": "Interrupt",
             "subagent_start": "SubagentStart",
             "subagent_stop": "SubagentStop",
             "subagent_end": "SubagentStop",
