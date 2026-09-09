@@ -351,8 +351,15 @@ def note_hook_payload(
     *,
     state_dir: Path | None = None,
     table_loader=list_processes,
+    start_pid: int | None = None,
+    start_pid_started: float | None = None,
 ) -> None:
-    """Called once per hook invocation in the hook process. Cheap when the
+    """Register the agent process behind one hook payload.
+
+    Called in the hook process by the Python hook client (the walk starts
+    at our own parent), or in the daemon for the compiled shim, which
+    reports its parent as ``start_pid`` plus that process' start time so a
+    replayed or delayed payload cannot pin a reused pid. Cheap when the
     session is already registered: one stat, no forks."""
     try:
         payload = json.loads(payload_text or "{}")
@@ -377,7 +384,18 @@ def note_hook_payload(
         return
     if existing is not None and existing.ended_at_epoch is None and event != "SessionStart":
         return
-    entry = discover_agent_process(provider, table=table_loader())
+    table = table_loader()
+    if start_pid is not None:
+        origin = table.get(start_pid)
+        if origin is None:
+            return
+        if (
+            start_pid_started is not None
+            and origin.started_at_epoch is not None
+            and abs(origin.started_at_epoch - start_pid_started) > START_TOLERANCE_SECONDS
+        ):
+            return
+    entry = discover_agent_process(provider, start_pid=start_pid, table=table)
     if entry is None:
         return
     cwd = payload.get("cwd")

@@ -30,6 +30,11 @@ MAX_HOOK_LOG_PATH_BYTES: Final = 4096
 _MAGIC: Final = b"JRBARHOOK\x01"
 _LENGTHS = struct.Struct("!II")
 _HEADER_FIELDS: Final = frozenset({"version", "provider", "log_path"})
+# Set by the compiled shim (hook/jrbar-hook.c): the hook process' parent
+# pid and that process' start time, so the daemon can register the agent
+# process itself instead of forking `ps` inside the hook.
+_OPTIONAL_HEADER_FIELDS: Final = frozenset({"ppid", "ppid_start"})
+MAX_HOOK_PPID: Final = 2**31 - 1
 _HOOK_PROVIDERS: Final = frozenset(
     {
         "antigravity",
@@ -60,8 +65,21 @@ class HookIngressRequest:
     provider: str
     log_path: str
     payload_text: str = field(repr=False)
+    ppid: int | None = None
+    ppid_start: float | None = None
 
     def __post_init__(self) -> None:
+        if self.ppid is not None and (
+            type(self.ppid) is not int or self.ppid <= 1 or self.ppid > MAX_HOOK_PPID
+        ):
+            raise ValueError("invalid hook ingress request")
+        if self.ppid_start is not None and (
+            isinstance(self.ppid_start, bool)
+            or not isinstance(self.ppid_start, (int, float))
+            or not math.isfinite(float(self.ppid_start))
+            or float(self.ppid_start) < 0.0
+        ):
+            raise ValueError("invalid hook ingress request")
         if (
             type(self.provider) is not str
             or self.provider not in _HOOK_PROVIDERS
@@ -105,12 +123,17 @@ def _reject_constant(_value: str) -> None:
 def encode_hook_ingress_request(request: HookIngressRequest) -> bytes:
     if type(request) is not HookIngressRequest:
         raise ValueError("invalid hook ingress request")
+    document: dict[str, object] = {
+        "version": HOOK_INGRESS_PROTOCOL_VERSION,
+        "provider": request.provider,
+        "log_path": request.log_path,
+    }
+    if request.ppid is not None:
+        document["ppid"] = request.ppid
+    if request.ppid_start is not None:
+        document["ppid_start"] = float(request.ppid_start)
     header = json.dumps(
-        {
-            "version": HOOK_INGRESS_PROTOCOL_VERSION,
-            "provider": request.provider,
-            "log_path": request.log_path,
-        },
+        document,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -155,15 +178,30 @@ def decode_hook_ingress_request(payload: bytes) -> HookIngressRequest | None:
         return None
     if (
         type(document) is not dict
-        or frozenset(document) != _HEADER_FIELDS
+        or not _HEADER_FIELDS <= frozenset(document)
+        or not frozenset(document) <= _HEADER_FIELDS | _OPTIONAL_HEADER_FIELDS
         or type(document["version"]) is not int
         or document["version"] != HOOK_INGRESS_PROTOCOL_VERSION
         or type(document["provider"]) is not str
         or type(document["log_path"]) is not str
     ):
         return None
+    ppid = document.get("ppid")
+    ppid_start = document.get("ppid_start")
+    if ppid is not None and type(ppid) is not int:
+        return None
+    if ppid_start is not None and (
+        type(ppid_start) not in (int, float) or not math.isfinite(float(ppid_start))
+    ):
+        return None
     try:
-        return HookIngressRequest(document["provider"], document["log_path"], body)
+        return HookIngressRequest(
+            document["provider"],
+            document["log_path"],
+            body,
+            ppid=ppid,
+            ppid_start=None if ppid_start is None else float(ppid_start),
+        )
     except ValueError:
         return None
 

@@ -119,12 +119,33 @@ class AppOwnedHookIngressProcessor:
     def __call__(self, request: HookIngressRequest) -> object:
         from .hook import process_hook_payload
 
+        register_shim_process(request)
         return process_hook_payload(
             request.provider,
             Path(request.log_path),
             request.payload_text,
             refresh_hint_handler=self.refresh_hint_handler,
         )
+
+
+def register_shim_process(request: HookIngressRequest) -> None:
+    """The compiled shim cannot walk the process table itself; it sends its
+    parent pid and the daemon registers the agent process here. Requests
+    from the Python hook client carry no ``ppid`` and registered themselves
+    before submitting."""
+    if request.ppid is None:
+        return
+    try:
+        from .process_registry import note_hook_payload
+
+        note_hook_payload(
+            request.provider,
+            request.payload_text,
+            start_pid=request.ppid,
+            start_pid_started=request.ppid_start,
+        )
+    except Exception:
+        pass
 
 
 def _bounded_increment(value: int, amount: int = 1) -> int:
@@ -147,6 +168,7 @@ def default_hook_ingress_rejection_path() -> Path:
 def _process_request(request: HookIngressRequest) -> object:
     from .hook import process_hook_payload
 
+    register_shim_process(request)
     return process_hook_payload(
         request.provider,
         Path(request.log_path),
@@ -679,4 +701,5 @@ __all__ = [
     "HookIngressService",
     "HookIngressSnapshot",
     "default_hook_ingress_rejection_path",
+    "register_shim_process",
 ]
