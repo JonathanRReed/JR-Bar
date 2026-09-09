@@ -9,7 +9,7 @@ import stat
 
 import pytest
 
-from sidepulse.creator_micro_adapter import Receipt
+from jrbar.creator_micro_adapter import Receipt
 
 
 def keymap():
@@ -79,8 +79,8 @@ class Device:
 
 
 def service(tmp_path, device=None, serial="test-device", **kwargs):
-    assert importlib.util.find_spec("sidepulse.creator_micro_setup"), "keymap setup is not implemented"
-    module = importlib.import_module("sidepulse.creator_micro_setup")
+    assert importlib.util.find_spec("jrbar.creator_micro_setup"), "keymap setup is not implemented"
+    module = importlib.import_module("jrbar.creator_micro_setup")
     return module.CreatorMicroSetup(device or Device(), serial, tmp_path / "backup.json", **kwargs)
 
 
@@ -242,7 +242,7 @@ def test_device_disconnect_during_readback_keeps_original_for_recovery(tmp_path)
 
 
 def test_a_backup_created_by_another_process_before_publish_is_never_overwritten(tmp_path, monkeypatch):
-    module = importlib.import_module("sidepulse.creator_micro_setup")
+    module = importlib.import_module("jrbar.creator_micro_setup")
     real_write = module.atomic_private_write
     backup = tmp_path / "backup.json"
 
@@ -270,7 +270,7 @@ def test_a_disconnected_device_is_not_misreported_as_an_edited_keymap(tmp_path):
 def test_large_keymap_round_trip_through_real_adapter_and_fragment_decoder(tmp_path):
     from collections import deque
 
-    from sidepulse.creator_micro_adapter import CreatorMicro2Adapter, CreatorMicro2Framer, RpcStreamDecoder
+    from jrbar.creator_micro_adapter import CreatorMicro2Adapter, CreatorMicro2Framer, RpcStreamDecoder
 
     document = json.loads(keymap())
     document["macro"] = "quoted \\\" braces {} é " * 1000

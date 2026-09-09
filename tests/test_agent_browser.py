@@ -6,7 +6,7 @@ from time import perf_counter
 
 import pytest
 
-from sidepulse.agent_browser import (
+from jrbar.agent_browser import (
     AgentBrowserDocument,
     AgentBrowserProjection,
     AgentBrowserQuery,
@@ -16,21 +16,21 @@ from sidepulse.agent_browser import (
     normalize_agent_query,
     project_agent_browser,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.local_triage import LocalAcknowledgement, LocalTriageState
-from sidepulse.mailbox import (
+from jrbar.capacity_types import SourceKey
+from jrbar.local_triage import LocalAcknowledgement, LocalTriageState
+from jrbar.mailbox import (
     AgentMailboxProjection,
     MailboxRow,
     MailboxSection,
     MailboxSectionKind,
     project_canonical_mailbox,
 )
-from sidepulse.mailbox_preferences import (
+from jrbar.mailbox_preferences import (
     MailboxPreference,
     MailboxPreferenceMode,
     MailboxPreferenceProjection,
 )
-from sidepulse.operator_state import (
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalOperatorState,
     CanonicalRequestTruth,
@@ -40,7 +40,7 @@ from sidepulse.operator_state import (
     TransitionKind,
     empty_operator_state,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,

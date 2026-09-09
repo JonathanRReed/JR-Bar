@@ -13,29 +13,29 @@ from AppKit import (
     NSWindow,
 )
 
-from sidepulse.agent_browser import (
+from jrbar.agent_browser import (
     AgentBrowserDocument,
     AgentBrowserProjection,
     ApprovedSearchLabel,
     SearchLabelSource,
 )
-from sidepulse.agent_browser_window import (
+from jrbar.agent_browser_window import (
     AgentBrowserActionPayload,
     AgentBrowserOpenPayload,
     AgentBrowserWindowController,
     build_agent_root_items,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.mailbox import MailboxSectionKind
-from sidepulse.menu_tracking import (
+from jrbar.capacity_types import SourceKey
+from jrbar.mailbox import MailboxSectionKind
+from jrbar.menu_tracking import (
     ExactBoundarySchedule,
     MenuItemState,
     MenuPublicationKind,
     StableNativeMenuRegistry,
     plan_menu_publication,
 )
-from sidepulse.navigation_policy import OperatorActionDescriptor, OperatorActionKind
-from sidepulse.provider_facts import (
+from jrbar.navigation_policy import OperatorActionDescriptor, OperatorActionKind
+from jrbar.provider_facts import (
     SourceFreshness,
     WorkIdentifier,
     WorkKey,
@@ -627,7 +627,7 @@ def test_browser_window_routes_bare_keys_to_the_command_vocabulary() -> None:
     """The window subclass is the wire (2026-08-26): handle_key_command
     existed with no keyDown_ ever calling it, so Return/Escape/Cmd-F
     only ever beeped in the shipped window."""
-    from sidepulse.agent_browser_window import (
+    from jrbar.agent_browser_window import (
         _KEY_NAMES,
         AgentBrowserWindowController,
         _AgentBrowserWindow,

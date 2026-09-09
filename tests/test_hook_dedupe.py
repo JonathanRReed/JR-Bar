@@ -3,7 +3,7 @@ from __future__ import annotations
 import multiprocessing
 from pathlib import Path
 
-from sidepulse.hook_dedupe import HookEventDeduplicator
+from jrbar.hook_dedupe import HookEventDeduplicator
 
 
 def test_same_token_is_accepted_once_across_instances(tmp_path: Path) -> None:

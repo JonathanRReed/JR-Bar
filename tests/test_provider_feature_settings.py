@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-import sidepulse.provider_feature_settings as feature_settings
-from sidepulse.provider_feature_settings import (
+import jrbar.provider_feature_settings as feature_settings
+from jrbar.provider_feature_settings import (
     ProviderCollectionSettings,
     ProviderPresentationSettings,
     ProviderSettingsChangeReceipt,
@@ -11,8 +11,8 @@ from sidepulse.provider_feature_settings import (
     ProviderSyncSettingsProjection,
     project_provider_feature_settings,
 )
-from sidepulse.provider_usage_settings import default_provider_usage_settings
-from sidepulse.provider_usage_sync_settings import default_provider_sync_settings
+from jrbar.provider_usage_settings import default_provider_usage_settings
+from jrbar.provider_usage_sync_settings import default_provider_sync_settings
 
 
 def test_projection_separates_collection_presentation_and_sync_settings() -> None:

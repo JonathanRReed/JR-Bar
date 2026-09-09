@@ -4,7 +4,7 @@ from itertools import pairwise
 
 import pytest
 
-from sidepulse.announcer_stack import (
+from jrbar.announcer_stack import (
     AnnouncerAlert,
     AnnouncerAlertIdentity,
     AnnouncerAlertPriority,
@@ -13,13 +13,13 @@ from sidepulse.announcer_stack import (
     AnnouncerStackPlan,
     AnnouncerStackVisibility,
 )
-from sidepulse.answer_in_place import (
+from jrbar.answer_in_place import (
     AnswerActionKind,
     AnswerAttemptState,
     AnswerCapability,
     AnswerControlPlan,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     AdapterIdentifier,
     LocalRuntimeSurfaceIdentifier,
     ProductCapability,
@@ -31,7 +31,7 @@ from sidepulse.provider_contracts import (
 
 @pytest.fixture(autouse=True)
 def _allow_explicit_pointer_keying_in_native_panel_tests(monkeypatch) -> None:
-    from sidepulse import announcer_stack_view
+    from jrbar import announcer_stack_view
 
     monkeypatch.setattr(
         announcer_stack_view,
@@ -227,7 +227,7 @@ _ANSWER_LAYOUT_CASES = (
 
 def test_collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open() -> None:
     """Removing the passive root or its open intent would make this fail."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -247,7 +247,7 @@ def test_collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open() 
 
 def test_multiple_collapsed_asks_expand_and_key_commands_keep_projected_identity() -> None:
     """Wrong keyboard mapping or a live, post-reconcile identity would fail."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -287,7 +287,7 @@ def test_multiple_collapsed_asks_expand_and_key_commands_keep_projected_identity
 
 def test_expanded_panel_uses_native_group_and_exact_button_labels() -> None:
     """Replacing native controls or their spoken actions would make this fail."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     plan = _plan(
@@ -315,7 +315,7 @@ def test_expanded_panel_uses_native_group_and_exact_button_labels() -> None:
 
 
 def test_expanded_panel_renders_binary_answer_controls_without_changing_footer_controls() -> None:
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     panel.update(
@@ -342,7 +342,7 @@ def test_expanded_panel_renders_binary_answer_controls_without_changing_footer_c
 
 
 def test_expanded_panel_renders_reply_send_cancel_retry_and_status_states() -> None:
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     expanded = _plan(AnnouncerStackVisibility.EXPANDED, count=1)
@@ -433,7 +433,7 @@ def test_all_answer_states_use_a_nonoverlapping_native_row_and_coherent_key_orde
     expected_titles: tuple[str, ...],
 ) -> None:
     """Every projected state must retain readable geometry and semantic order."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     panel.update(
@@ -512,7 +512,7 @@ def test_all_answer_states_use_a_nonoverlapping_native_row_and_coherent_key_orde
 
 
 def test_stale_answer_control_cannot_emit_after_reconciliation() -> None:
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -550,7 +550,7 @@ def test_stale_answer_control_cannot_emit_after_reconciliation() -> None:
 
 def test_real_native_open_control_emits_its_projected_intent() -> None:
     """A button disconnected from its native action would make this fail."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -564,7 +564,7 @@ def test_real_native_open_control_emits_its_projected_intent() -> None:
 
 def test_hidden_or_suppressed_plan_hides_and_resigns_key_status() -> None:
     """Leaving a key panel visible after suppression would make this fail."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     panel.update(
@@ -581,7 +581,7 @@ def test_hidden_or_suppressed_plan_hides_and_resigns_key_status() -> None:
 
 def test_reconciled_panel_rejects_a_stale_native_button() -> None:
     """An old control must not act on the reconciled selection."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -603,7 +603,7 @@ def test_reconciled_panel_rejects_a_stale_native_button() -> None:
 
 def test_virtual_device_uses_one_shared_announcer_suppression_predicate(monkeypatch) -> None:
     """Dropping fullscreen from the gate would leave its presenter visible."""
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     calls = []
 
@@ -639,7 +639,7 @@ def test_virtual_device_uses_one_shared_announcer_suppression_predicate(monkeypa
 
 def test_programmatic_expansion_stays_passive_until_collapsed_pointer_arms_it() -> None:
     """A reconciliation alone must never take keyboard focus."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -667,7 +667,7 @@ def test_programmatic_expansion_stays_passive_until_collapsed_pointer_arms_it() 
 def test_headless_suppression_blocks_pointer_authorized_key_acquisition(
     monkeypatch,
 ) -> None:
-    from sidepulse import announcer_stack_view
+    from jrbar import announcer_stack_view
 
     received = []
     panel = announcer_stack_view.AnnouncerStackPanel()
@@ -694,7 +694,7 @@ def test_headless_suppression_blocks_pointer_authorized_key_acquisition(
 
 def test_collapsed_reconciliation_revokes_pointer_authorization_before_later_expansion() -> None:
     """A later programmatic expansion needs a fresh collapsed pointer click."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     collapsed = _plan(AnnouncerStackVisibility.COLLAPSED, count=2, generation=46)
@@ -726,7 +726,7 @@ def test_collapsed_reconciliation_revokes_pointer_authorization_before_later_exp
 
 def test_suppressed_retained_control_cannot_emit_an_intent() -> None:
     """A queued control must be inert as soon as presentation is suppressed."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -744,7 +744,7 @@ def test_suppressed_retained_control_cannot_emit_an_intent() -> None:
 
 def test_stale_collapsed_pointer_cannot_authorize_a_programmatic_expansion() -> None:
     """An old mouse event must not turn a passive reconciled panel keyable."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
     panel = AnnouncerStackPanel()
@@ -770,7 +770,7 @@ def test_stale_collapsed_pointer_cannot_authorize_a_programmatic_expansion() -> 
 
 def test_expanded_reconciliation_reuses_controls_and_keeps_tab_focus() -> None:
     """Replacing the hierarchy would lose an in-progress native tab traversal."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     collapsed = _plan(AnnouncerStackVisibility.COLLAPSED, count=2, generation=61)
@@ -798,7 +798,7 @@ def test_expanded_reconciliation_reuses_controls_and_keeps_tab_focus() -> None:
 
 def test_question_field_uses_two_line_tail_truncation_without_view_slicing() -> None:
     """The native cell, not an extra presenter cap, owns visual truncation."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     plan = _plan(AnnouncerStackVisibility.EXPANDED, question="x" * 80)
@@ -812,7 +812,7 @@ def test_question_field_uses_two_line_tail_truncation_without_view_slicing() -> 
 
 def test_native_roots_have_solid_semantic_surfaces() -> None:
     """Text must never float directly over arbitrary desktop pixels."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     panel.update(_plan(), lambda _intent: None, center_x=500.0, top_y=700.0)
@@ -822,7 +822,7 @@ def test_native_roots_have_solid_semantic_surfaces() -> None:
 
 def test_visible_panel_presentation_uses_desktop_takeover_gate(monkeypatch) -> None:
     """Source-native tests must not raise the panel onto the owner's desktop."""
-    from sidepulse import announcer_stack_view
+    from jrbar import announcer_stack_view
 
     calls = []
     monkeypatch.setattr(
@@ -840,7 +840,7 @@ def test_visible_panel_presentation_uses_desktop_takeover_gate(monkeypatch) -> N
 
 def test_fixed_dark_surfaces_use_fixed_light_foregrounds_and_eight_point_controls() -> None:
     """Aqua must retain readable foregrounds on the fixed dark panel."""
-    from sidepulse.announcer_stack_view import AnnouncerStackPanel
+    from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
     collapsed = _plan(AnnouncerStackVisibility.COLLAPSED, count=2)

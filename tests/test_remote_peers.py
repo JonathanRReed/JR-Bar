@@ -30,8 +30,8 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import remote_peers
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar import remote_peers
+from jrbar.models import AgentMode, AgentStatus
 
 NOW = datetime(2026, 8, 14, 12, 0, 0, tzinfo=timezone.utc)
 

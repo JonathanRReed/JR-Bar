@@ -7,18 +7,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_actions_macos import MacDeckActionExecutor
-from sidepulse.deck_board_store import DeckBoardStore
-from sidepulse.deck_control_center import change_deck_bank
-from sidepulse.deck_control_settings import DeckControlSettings
-from sidepulse.deck_input import ControlInput
-from sidepulse.deck_input_dispatch import DeckInputDispatch
-from sidepulse.deck_session_board import DeckSessionBoard
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_actions_macos import MacDeckActionExecutor
+from jrbar.deck_board_store import DeckBoardStore
+from jrbar.deck_control_center import change_deck_bank
+from jrbar.deck_control_settings import DeckControlSettings
+from jrbar.deck_input import ControlInput
+from jrbar.deck_input_dispatch import DeckInputDispatch
+from jrbar.deck_session_board import DeckSessionBoard
 
 
 def test_latest_slot_save_can_return_to_the_last_written_value(tmp_path, monkeypatch):
-    from sidepulse import deck_board_store as module
+    from jrbar import deck_board_store as module
 
     entered, release, finished = threading.Event(), threading.Event(), threading.Event()
     writes = []
@@ -117,7 +117,7 @@ def test_shortcut_timeout_reaps_the_killed_child(monkeypatch):
     import signal
     import subprocess
 
-    from sidepulse import deck_automation
+    from jrbar import deck_automation
 
     waits, signals = [], []
 

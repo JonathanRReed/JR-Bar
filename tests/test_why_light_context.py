@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.dnd_policy import DndMode, DndSource
+from jrbar.dnd_policy import DndMode, DndSource
 
 
 def _why():
-    return importlib.import_module("sidepulse.why_light_context")
+    return importlib.import_module("jrbar.why_light_context")
 
 
 def _available_context(why):
@@ -396,7 +396,7 @@ def test_context_import_is_appkit_free() -> None:
             (
                 "import sys; "
                 "sys.path.insert(0, 'src'); "
-                "import sidepulse.why_light_context; "
+                "import jrbar.why_light_context; "
                 "raise SystemExit(1 if 'AppKit' in sys.modules else 0)"
             ),
         ],

@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.private_io import atomic_private_write
+from jrbar import usage_stats
+from jrbar.private_io import atomic_private_write
 
 
 DAY = 24 * 60 * 60

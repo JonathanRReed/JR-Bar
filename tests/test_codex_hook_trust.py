@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepulse.codex_hook_trust import (
+from jrbar.codex_hook_trust import (
     hook_identity_hash,
     hook_state_key,
     normalized_timeout,
@@ -13,7 +13,7 @@ from sidepulse.codex_hook_trust import (
 # command. The algorithm must reproduce them byte for byte.
 COMMAND = (
     "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/.venv/bin/python "
-    "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/src/sidepulse/hook_entry.py "
+    "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/src/jrbar/hook_entry.py "
     "--provider codex --log /Users/jonathanreed/.local/state/sidepulse/agent-monitor/codex.jsonl"
 )
 KNOWN = {

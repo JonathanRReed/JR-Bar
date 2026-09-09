@@ -5,7 +5,7 @@ from itertools import pairwise
 
 import pytest
 
-from sidepulse.turn_length_ember import (
+from jrbar.turn_length_ember import (
     DEFAULT_BREATHE_PERIOD_SECONDS,
     FAIR_THERMAL_BREATHE_PERIOD_SECONDS,
     SEMANTIC_DISCLOSURE,

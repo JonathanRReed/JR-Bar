@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "sidepulse"
+SRC = Path(__file__).resolve().parent.parent / "src" / "jrbar"
 
 CONTROLLER_FILES = (
     "status_bar_legacy.py",
@@ -60,7 +60,7 @@ def test_every_selector_shaped_callback_is_referenced() -> None:
     # Selectors built dynamically from the provider registry
     # (settings_window and the setup window both do
     # f"install{provider.title()}Hooks:").
-    from sidepulse.providers import HOOK_PROVIDERS
+    from jrbar.providers import HOOK_PROVIDERS
 
     dynamic = set()
     for provider in HOOK_PROVIDERS:

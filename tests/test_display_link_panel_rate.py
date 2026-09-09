@@ -34,8 +34,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.presentation_policy import MotionClass
-from sidepulse.render_policy import (
+from jrbar.presentation_policy import MotionClass
+from jrbar.render_policy import (
     DISPLAY_LINK_CEILINGS,
     DISPLAY_LINK_MAX_FPS,
     RenderDriverKind,
@@ -44,7 +44,7 @@ from sidepulse.render_policy import (
     choose_render_schedule,
     display_link_fps,
 )
-from sidepulse.screen_bar_pipeline import ColorSample, SamplePair
+from jrbar.screen_bar_pipeline import ColorSample, SamplePair
 
 LED_COUNT = 8
 _LIT = ((0.0, 0.9, 1.0, 1.0),) * LED_COUNT
@@ -164,7 +164,7 @@ class _RunLoopClass:
 
 
 def _install(monkeypatch, panel: float, clock: _Clock):
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     screen = _Screen(panel)
     monkeypatch.setattr(virtual_device, "NSScreen", _ScreenClass(screen))

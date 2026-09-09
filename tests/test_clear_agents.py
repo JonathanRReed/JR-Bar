@@ -5,9 +5,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-import sidepulse.clear_agents as clear_agents_module
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import (
+import jrbar.clear_agents as clear_agents_module
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import (
     MAX_CLEAR_TARGETS,
     ClearAgentsBatchReceipt,
     ClearAgentsPlanError,
@@ -20,8 +20,8 @@ from sidepulse.clear_agents import (
     plan_clear_agents_undo,
     project_clear_agents_preview,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import WorkIdentifier, WorkKey
 
 NOW = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
 NOW_EPOCH = NOW.timestamp()

@@ -4,10 +4,10 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse import colors as colors_module
-from sidepulse import settings_window_controls
-from sidepulse.effect_registry import provider_animation_effects
-from sidepulse.effect_selection import (
+from jrbar import colors as colors_module
+from jrbar import settings_window_controls
+from jrbar.effect_registry import provider_animation_effects
+from jrbar.effect_selection import (
     BLEND_MODE_OPTIONS,
     COLOR_PRESET_OPTIONS,
     PREVIEW_SCENARIO_OPTIONS,

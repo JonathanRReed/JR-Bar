@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from sidepulse import antigravity_process_identity as identity
+from jrbar import antigravity_process_identity as identity
 
 
 def test_signed_path_cannot_substitute_for_a_rejected_running_process(monkeypatch):

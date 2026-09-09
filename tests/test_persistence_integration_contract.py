@@ -4,11 +4,11 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_BAR = ROOT / "src" / "sidepulse" / "status_bar_legacy.py"
-USAGE_STATUS_BAR = ROOT / "src" / "sidepulse" / "provider_usage_status_bar.py"
-PERCENT_HISTORY = ROOT / "src" / "sidepulse" / "usage_percent_history.py"
+STATUS_BAR = ROOT / "src" / "jrbar" / "status_bar_legacy.py"
+USAGE_STATUS_BAR = ROOT / "src" / "jrbar" / "provider_usage_status_bar.py"
+PERCENT_HISTORY = ROOT / "src" / "jrbar" / "usage_percent_history.py"
 CAPACITY_HISTORY_RUNTIME = (
-    ROOT / "src" / "sidepulse" / "capacity_history_runtime.py"
+    ROOT / "src" / "jrbar" / "capacity_history_runtime.py"
 )
 
 

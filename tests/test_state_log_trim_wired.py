@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.audit import (
+from jrbar.audit import (
     TRIM_KEEP_LINES,
     TRIM_TARGET_BYTES,
     TRIM_THRESHOLD_BYTES,
@@ -93,7 +93,7 @@ def test_small_logs_are_left_alone(tmp_path: Path) -> None:
 
 def test_the_sweep_is_actually_called_at_launch() -> None:
     """It was imported into status_bar and never invoked. Reachable now."""
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     # inspect.getsource cannot read a PyObjC selector, so read the module.
     source = Path(status_bar.__file__).read_text(encoding="utf-8")
@@ -110,7 +110,7 @@ def test_the_sweep_survives_a_broken_state_dir(tmp_path: Path) -> None:
     class _Probe:
         pass
 
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     # No monkeypatching of the state dir: the real one is read, and whatever
     # it contains, this must return an int rather than raise.
@@ -124,7 +124,7 @@ def test_orphaned_debug_cache_is_removed(tmp_path: Path) -> None:
     Nothing in the tree reads or writes usage-debug-cache.json; it was left
     behind when a debug path was deleted, and it just sat there.
     """
-    from sidepulse.audit import remove_orphaned_state_files
+    from jrbar.audit import remove_orphaned_state_files
 
     orphan = tmp_path / "usage-debug-cache.json"
     sidecar = tmp_path / "usage-debug-cache.json.codex.transcripts.local"
@@ -137,7 +137,7 @@ def test_orphaned_debug_cache_is_removed(tmp_path: Path) -> None:
 
 def test_the_janitor_never_touches_live_state(tmp_path: Path) -> None:
     """A janitor that guesses is worse than the weight it removes."""
-    from sidepulse.audit import remove_orphaned_state_files
+    from jrbar.audit import remove_orphaned_state_files
 
     keep = {
         "usage-scan-cache.json": '{"version": 6}',
@@ -155,7 +155,7 @@ def test_the_janitor_never_touches_live_state(tmp_path: Path) -> None:
 
 
 def test_the_janitor_survives_a_missing_state_dir(tmp_path: Path) -> None:
-    from sidepulse.audit import remove_orphaned_state_files
+    from jrbar.audit import remove_orphaned_state_files
 
     assert remove_orphaned_state_files(tmp_path / "nope") == 0
 
@@ -169,7 +169,7 @@ def test_process_logs_are_bounded_without_losing_the_inode(tmp_path: Path) -> No
     """
     import os
 
-    from sidepulse.audit import TRIM_TARGET_BYTES, trim_process_log
+    from jrbar.audit import TRIM_TARGET_BYTES, trim_process_log
 
     log = tmp_path / "status-bar.err.log"
     with log.open("w", encoding="utf-8") as handle:
@@ -193,7 +193,7 @@ def test_process_logs_are_bounded_without_losing_the_inode(tmp_path: Path) -> No
 
 
 def test_process_log_trim_keeps_the_newest_lines(tmp_path: Path) -> None:
-    from sidepulse.audit import trim_process_log
+    from jrbar.audit import trim_process_log
 
     log = tmp_path / "status-bar.out.log"
     with log.open("w", encoding="utf-8") as handle:
@@ -207,7 +207,7 @@ def test_process_log_trim_keeps_the_newest_lines(tmp_path: Path) -> None:
 
 
 def test_small_process_logs_are_left_alone(tmp_path: Path) -> None:
-    from sidepulse.audit import trim_oversized_process_logs
+    from jrbar.audit import trim_oversized_process_logs
 
     log = tmp_path / "status-bar.out.log"
     log.write_text("just getting started\n")

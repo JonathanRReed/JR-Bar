@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.capacity_history import (
+from jrbar.capacity_history import (
     ACTIVITY_HISTORY_SCHEMA_VERSION,
     CAPACITY_HISTORY_SCHEMA_VERSION,
     ActivityHistorySample,
@@ -15,7 +15,7 @@ from sidepulse.capacity_history import (
     HistoryContinuity,
     HistoryInterval,
 )
-from sidepulse.capacity_history_store import (
+from jrbar.capacity_history_store import (
     MAX_ACTIVITY_HISTORY_SAMPLES,
     MAX_CAPACITY_HISTORY_SAMPLES,
     MAX_HISTORY_STORE_BYTES,
@@ -26,7 +26,7 @@ from sidepulse.capacity_history_store import (
     load_capacity_history,
     save_capacity_history,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     QuotaEffect,
     QuotaLaneKey,
     SampleDisposition,

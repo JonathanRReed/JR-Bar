@@ -4,16 +4,16 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.dnd_policy import DisplayAdmission
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.dnd_policy import DisplayAdmission
+from jrbar.operator_state import (
     TIMING_RECOVERY_CONFIRMATIONS,
     CanonicalOperatorEvent,
     SemanticEventKey,
     TransitionKind,
     classify_operator_event,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     SourceFreshness,
@@ -22,14 +22,14 @@ from sidepulse.provider_facts import (
     WorkIdentifier,
     WorkKey,
 )
-from sidepulse.recovery_grace_note import (
+from jrbar.recovery_grace_note import (
     ConfirmedRecoveryEvidence,
     RecoveryGraceDisposition,
     RecoveryGracePresentation,
     RecoveryGraceSuppressionReason,
     plan_recovery_grace_note,
 )
-from sidepulse.semantic_effect_router import CourtesySuppression
+from jrbar.semantic_effect_router import CourtesySuppression
 
 
 def _source() -> SourceKey:

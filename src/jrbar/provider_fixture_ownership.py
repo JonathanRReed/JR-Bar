@@ -73,7 +73,7 @@ class ProviderFixtureOwnershipManifest:
 
 def load_provider_fixture_ownership_manifest() -> ProviderFixtureOwnershipManifest:
     """Load and validate the packaged ownership manifest, without file I/O on fixtures."""
-    resource = files("sidepulse.resources").joinpath("provider_fixture_ownership.json")
+    resource = files("jrbar.resources").joinpath("provider_fixture_ownership.json")
     raw = resource.read_bytes()
     if not raw or len(raw) > PROVIDER_FIXTURE_OWNERSHIP_MAX_BYTES:
         raise ValueError("invalid provider fixture ownership manifest")

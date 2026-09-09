@@ -5,20 +5,20 @@ from dataclasses import replace
 from itertools import pairwise
 from unittest.mock import patch
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.alcove_observation import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.alcove_observation import (
     AlcoveCaptureStatus,
     note_alcove_status,
     reset_alcove_status,
     reset_screen_recording_cache,
 )
-from sidepulse.global_action_settings_pane import (
+from jrbar.global_action_settings_pane import (
     GLOBAL_ACTION_GROUP_LABEL,
     GLOBAL_ACTION_RECORDER_HELP,
     GLOBAL_ACTION_RECORDER_LABEL,
     GLOBAL_ACTION_STATUS_LABEL,
 )
-from sidepulse.global_actions import (
+from jrbar.global_actions import (
     GlobalActionID,
     ShortcutChord,
     ShortcutModifier,
@@ -106,7 +106,7 @@ class SettingsAccessibilityRepairTests(unittest.TestCase):
         )
 
     def test_shared_rows_name_the_actual_control_not_only_the_visual_label(self) -> None:
-        from sidepulse import native_ui
+        from jrbar import native_ui
 
         field = native_ui.make_field("")
         native_ui.make_row(
@@ -283,7 +283,7 @@ class SettingsAccessibilityRepairTests(unittest.TestCase):
         )
 
     def test_alcove_row_exposes_status_and_permission_action_to_voiceover(self) -> None:
-        from sidepulse import settings_window
+        from jrbar import settings_window
 
         reset_alcove_status()
         reset_screen_recording_cache()
@@ -309,7 +309,7 @@ class SettingsAccessibilityRepairTests(unittest.TestCase):
             self.assertTrue(button.isHidden())
 
     def test_permission_layout_keeps_alcove_subject_visible_and_collapses_action_row(self) -> None:
-        from sidepulse import settings_window
+        from jrbar import settings_window
 
         reset_alcove_status()
         reset_screen_recording_cache()
@@ -353,7 +353,7 @@ class SettingsAccessibilityRepairTests(unittest.TestCase):
             self.assertTrue(self.controller.settings_buttons["alcove_screen_recording_permission"].isHidden())
 
     def test_announcer_roots_expose_their_distinct_accessible_native_roles(self) -> None:
-        from sidepulse.announcer_stack_view import _CollapsedAnnouncerView, _ExpandedAnnouncerView
+        from jrbar.announcer_stack_view import _CollapsedAnnouncerView, _ExpandedAnnouncerView
 
         collapsed = _CollapsedAnnouncerView.alloc().initWithFrame_(((0.0, 0.0), (220.0, 22.0)))
         expanded = _ExpandedAnnouncerView.alloc().initWithFrame_(((0.0, 0.0), (360.0, 176.0)))

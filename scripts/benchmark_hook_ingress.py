@@ -24,7 +24,7 @@ CHILD_TIMEOUT_SECONDS: Final = 10.0
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from sidepulse.hook_ingress import HookIngressService  # noqa: E402
+from jrbar.hook_ingress import HookIngressService  # noqa: E402
 
 
 def _sample_count(value: str) -> int:
@@ -88,7 +88,7 @@ def _invoke_sample(
     command = [
         sys.executable,
         "-m",
-        "sidepulse.hook_client",
+        "jrbar.hook_client",
         "--provider",
         "claude",
         "--log",

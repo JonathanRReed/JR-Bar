@@ -4,17 +4,17 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.capacity_authority import select_binding_lanes
-from sidepulse.capacity_history import CapacityHistorySummary, HistoryInterval
-from sidepulse.capacity_refresh import (
+from jrbar import usage_stats
+from jrbar.capacity_authority import select_binding_lanes
+from jrbar.capacity_history import CapacityHistorySummary, HistoryInterval
+from jrbar.capacity_refresh import (
     CapacityRefreshCoordinator,
     RefreshCause,
     RefreshFailureKind,
     RefreshSourceKey,
     RefreshSourceRegistration,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacitySnapshot,
     CapacitySourceHealth,
     CapacityUnit,
@@ -30,14 +30,14 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.capacity_view import (
+from jrbar.capacity_view import (
     CapacityDetailSnapshot,
     CapacityHistoryPresentation,
     CapacityHistorySummaryInput,
     build_capacity_card,
     build_capacity_detail,
 )
-from sidepulse.usage_view import build_provider_usage_view
+from jrbar.usage_view import build_provider_usage_view
 from tests.test_capacity_resource_budget import (
     CLAUDE_QUOTA,
     CLAUDE_TRANSCRIPTS,
@@ -187,10 +187,10 @@ def test_one_exact_batch_keeps_transcript_and_capacity_truth_independent(
         target.applyUsageSummary_(payload)
 
     with (
-        patch("sidepulse.status_bar.threading.Thread", InlineThread),
-        patch("sidepulse.status_bar.usage_stats.scan_usage", return_value=totals) as scan,
+        patch("jrbar.status_bar.threading.Thread", InlineThread),
+        patch("jrbar.status_bar.usage_stats.scan_usage", return_value=totals) as scan,
         patch(
-            "sidepulse.status_bar.usage_stats.cached_codex_rate_limits",
+            "jrbar.status_bar.usage_stats.cached_codex_rate_limits",
             return_value={
                 "primary": {
                     "used_percent": 22,
@@ -198,7 +198,7 @@ def test_one_exact_batch_keeps_transcript_and_capacity_truth_independent(
                 }
             },
         ),
-        patch("sidepulse.status_bar.claude_quota.fetch_windows") as claude_remote,
+        patch("jrbar.status_bar.claude_quota.fetch_windows") as claude_remote,
         patch.object(
             target,
             "performSelectorOnMainThread_withObject_waitUntilDone_",

@@ -1,7 +1,7 @@
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_actions_macos import MacDeckActionExecutor
-from sidepulse.deck_control_settings import DeckControlSettings
-from sidepulse.deck_input_dispatch import DeckInputDispatch
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_actions_macos import MacDeckActionExecutor
+from jrbar.deck_control_settings import DeckControlSettings
+from jrbar.deck_input_dispatch import DeckInputDispatch
 
 
 class Target:

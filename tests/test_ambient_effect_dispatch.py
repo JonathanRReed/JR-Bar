@@ -4,29 +4,29 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.ambient_effect_dispatch import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.ambient_effect_dispatch import (
     MAX_AMBIENT_OUTPUT_DURATION_MS,
     AmbientEffectFamily,
     AmbientEffectSurface,
     AmbientSemanticColors,
     compile_ambient_effect_dispatch,
 )
-from sidepulse.animation import errors_only, read_program
-from sidepulse.announcer_stack import AnnouncerAlertIdentity
-from sidepulse.ask_heartbeat_sync import AskHeartbeatPresentation, plan_ask_heartbeat_sync
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import CompletionPresentationKey
-from sidepulse.completion_meniscus import (
+from jrbar.animation import errors_only, read_program
+from jrbar.announcer_stack import AnnouncerAlertIdentity
+from jrbar.ask_heartbeat_sync import AskHeartbeatPresentation, plan_ask_heartbeat_sync
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import CompletionPresentationKey
+from jrbar.completion_meniscus import (
     CompletionMeniscusGeometry,
     CompletionMeniscusSurface,
     SelectedUnseenCompletionEvidence,
     plan_completion_meniscus,
 )
-from sidepulse.courtesy_signatures import CourtesySemantic, plan_courtesy_signature
-from sidepulse.dot_binary_heartbeat import DotSecondaryPolicy, plan_dot_binary_heartbeat
-from sidepulse.firefly_completion import FireflyCompletionEvidence, plan_firefly_completion
-from sidepulse.fleet_arrival_departure import (
+from jrbar.courtesy_signatures import CourtesySemantic, plan_courtesy_signature
+from jrbar.dot_binary_heartbeat import DotSecondaryPolicy, plan_dot_binary_heartbeat
+from jrbar.firefly_completion import FireflyCompletionEvidence, plan_firefly_completion
+from jrbar.fleet_arrival_departure import (
     FleetArrivalDepartureAccessibility,
     FleetArrivalDepartureCue,
     FleetArrivalDepartureIdentity,
@@ -34,33 +34,33 @@ from sidepulse.fleet_arrival_departure import (
     FleetEndpointRole,
     FleetPresenceTransition,
 )
-from sidepulse.fleet_bands import FleetBand, FleetPlan
-from sidepulse.glance_light import (
+from jrbar.fleet_bands import FleetBand, FleetPlan
+from jrbar.glance_light import (
     GlanceKind,
     GlanceLightState,
     make_glance_notification,
     plan_glance_light,
 )
-from sidepulse.handoff_baton import HandoffEndpoint, plan_handoff_baton
-from sidepulse.milestone_odometer import (
+from jrbar.handoff_baton import HandoffEndpoint, plan_handoff_baton
+from jrbar.milestone_odometer import (
     MilestoneOdometerPreferences,
     MilestoneOdometerState,
     plan_milestone_odometer,
 )
-from sidepulse.rainstick_idle import plan_rainstick_idle
-from sidepulse.recovery_grace_note import (
+from jrbar.rainstick_idle import plan_rainstick_idle
+from jrbar.recovery_grace_note import (
     RECOVERY_WIPE_DURATION_SECONDS,
     RecoveryGraceDisposition,
     RecoveryGraceIdentity,
     RecoveryGracePlan,
     RecoveryGracePresentation,
 )
-from sidepulse.semantic_effect_router import (
+from jrbar.semantic_effect_router import (
     SemanticEffectCandidate,
     SemanticEventKind,
     route_semantic_effects,
 )
-from sidepulse.turn_length_ember import plan_turn_length_ember
+from jrbar.turn_length_ember import plan_turn_length_ember
 
 SOURCE = SourceKey("codex", "hooks", "local:test", "live_agent_events")
 
@@ -136,7 +136,7 @@ def _handoff():
 
 
 def _recovery():
-    from sidepulse.provider_facts import EventToken, ProviderWatermark, WatermarkBasis
+    from jrbar.provider_facts import EventToken, ProviderWatermark, WatermarkBasis
 
     watermark = ProviderWatermark(
         source_key=SOURCE,

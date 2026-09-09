@@ -5,17 +5,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.creator_micro_discovery import preferred_endpoints
-from sidepulse.creator_micro_lighting import CreatorMicroLightFrame, creator_micro_session_frame
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_actions_macos import MacDeckActionExecutor
-from sidepulse.deck_control_settings import DeckControlSettings, decode_deck_controls
-from sidepulse.deck_input import ControlInput, DeckInputRouter
-from sidepulse.deck_input_dispatch import DeckInputDispatch
-from sidepulse.deck_session_board import DeckSessionBoard, session_identity
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.provider_facts import SourceKey, WorkIdentifier, WorkKey
-from sidepulse.surface_placement import SurfacePlacement
+from jrbar.creator_micro_discovery import preferred_endpoints
+from jrbar.creator_micro_lighting import CreatorMicroLightFrame, creator_micro_session_frame
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_actions_macos import MacDeckActionExecutor
+from jrbar.deck_control_settings import DeckControlSettings, decode_deck_controls
+from jrbar.deck_input import ControlInput, DeckInputRouter
+from jrbar.deck_input_dispatch import DeckInputDispatch
+from jrbar.deck_session_board import DeckSessionBoard, session_identity
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import SourceKey, WorkIdentifier, WorkKey
+from jrbar.surface_placement import SurfacePlacement
 
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 
@@ -141,7 +141,7 @@ def test_single_edge_transform_includes_inward_hit_regions(edge):
 
 
 def test_composite_bluetooth_promotion_never_reclassifies_usb_keyboard(monkeypatch):
-    from sidepulse.creator_micro_hidapi import HidApiTransport
+    from jrbar.creator_micro_hidapi import HidApiTransport
     rows = [
         {"vendor_id": 0x303A, "product_id": 0x8297, "serial_number": "CM-1", "bus_type": 1,
          "usage_page": 1, "usage": 6, "path": "usb-keyboard"},
@@ -150,8 +150,8 @@ def test_composite_bluetooth_promotion_never_reclassifies_usb_keyboard(monkeypat
         {"vendor_id": 0x303A, "product_id": 0x8297, "serial_number": "CM-1", "bus_type": 2,
          "usage_page": 1, "usage": 6, "path": "bt-composite"},
     ]
-    monkeypatch.setattr("sidepulse.creator_micro_hidapi.sys.platform", "darwin")
-    monkeypatch.setattr("sidepulse.creator_micro_discovery.native_vendor_collections",
+    monkeypatch.setattr("jrbar.creator_micro_hidapi.sys.platform", "darwin")
+    monkeypatch.setattr("jrbar.creator_micro_discovery.native_vendor_collections",
                         lambda: frozenset({(0x303A, 0x8297, "CM-1", 1), (0x303A, 0x8297, "CM-1", 2)}))
     transport = HidApiTransport(SimpleNamespace(enumerate=lambda _: rows))
     assert [row["path"] for row in transport.enumerate()] == ["usb-vendor"]

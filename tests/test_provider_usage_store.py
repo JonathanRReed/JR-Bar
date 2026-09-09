@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_store import (
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_store import (
     PROVIDER_USAGE_STORE_SCHEMA_VERSION,
     load_provider_usage_state,
     save_provider_usage_state,

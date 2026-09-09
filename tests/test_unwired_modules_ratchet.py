@@ -38,7 +38,7 @@ from types import SimpleNamespace
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "sidepulse"
+SRC = Path(__file__).resolve().parents[1] / "src" / "jrbar"
 
 # module -> why it is not reachable yet. Empty is the goal state, not an
 # accident: an entry here is a decision deferred, and the deferral is what
@@ -78,11 +78,11 @@ def _imported_siblings(path: Path) -> frozenset[str]:
                 names.update(alias.name for alias in node.names)
             elif node.level == 1 and node.module:
                 names.add(node.module.split(".")[0])
-            elif node.module and node.module.startswith("sidepulse."):
+            elif node.module and node.module.startswith("jrbar."):
                 names.add(node.module.split(".")[1])
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith("sidepulse."):
+                if alias.name.startswith("jrbar."):
                     names.add(alias.name.split(".")[1])
     return frozenset(names)
 
@@ -160,7 +160,7 @@ def test_global_action_settings_pane_is_reachable_from_settings_window() -> None
 
 
 def test_cmd_effects_dispatches_through_the_runtime_owner(monkeypatch) -> None:
-    from sidepulse import cli, effect_cli
+    from jrbar import cli, effect_cli
 
     calls: list[tuple[object, object, object]] = []
 
@@ -184,7 +184,7 @@ def test_cmd_effects_dispatches_through_the_runtime_owner(monkeypatch) -> None:
 
 def test_status_bar_ambient_bar_uses_the_screen_consumer_runtime(monkeypatch) -> None:
     pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
-    from sidepulse import _status_bar_production as production
+    from jrbar import _status_bar_production as production
 
     calls: dict[str, object] = {}
 
@@ -232,8 +232,8 @@ def test_status_bar_ambient_bar_uses_the_screen_consumer_runtime(monkeypatch) ->
 
 def test_status_bar_hardware_sync_uses_the_hardware_consumer_runtime(monkeypatch) -> None:
     pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
-    from sidepulse import _status_bar_production as production
-    from sidepulse import status_bar_legacy as legacy
+    from jrbar import _status_bar_production as production
+    from jrbar import status_bar_legacy as legacy
 
     calls: dict[str, object] = {}
 

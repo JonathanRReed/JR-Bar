@@ -4,17 +4,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow, SignalKind, TransientSignal
-from sidepulse.colors import (
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow, SignalKind, TransientSignal
+from jrbar.colors import (
     BLEND_MODE_CLASSIC,
     ColorSettings,
     program_for_projection,
     program_for_snapshot,
 )
-from sidepulse.led_status import failure_signal_program, style_to_program
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.signal_coordinator import ActiveSignal
-from sidepulse.signals import DEFAULT_SIGNAL_STYLES, SIGNAL_COMPLETION
+from jrbar.led_status import failure_signal_program, style_to_program
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.signal_coordinator import ActiveSignal
+from jrbar.signals import DEFAULT_SIGNAL_STYLES, SIGNAL_COMPLETION
 
 
 def _status(provider: str, mode: AgentMode) -> AgentStatus:
@@ -50,7 +50,7 @@ def test_attention_arrival_is_explicit_finite_motion_over_a_static_base() -> Non
     # color, breathe down to the 55% hold -- never a repeated flash.
     lines = arrival.splitlines()
     assert lines.count("#123456 300ms cosine") == 1
-    from sidepulse.colors import (
+    from jrbar.colors import (
         ATTENTION_CREST_HOLD_FRACTION,
         ATTENTION_CREST_SETTLE_MS,
         scale_hex_brightness,

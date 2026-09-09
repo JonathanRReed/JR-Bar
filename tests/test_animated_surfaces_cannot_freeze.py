@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.presentation_policy import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.presentation_policy import (
     GlanceOverrideReason,
     GlanceSemantic,
     MotionClass,
@@ -65,7 +65,7 @@ class _Sampler:
 
 @pytest.fixture()
 def notch(monkeypatch):
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     clock = {"now": 1_000.0}
     monkeypatch.setattr(virtual_device.time, "monotonic", lambda: clock["now"])
@@ -147,7 +147,7 @@ def test_a_dead_sampler_does_not_hold_the_notch_frozen(notch) -> None:
 
 def test_the_notch_reasserts_on_a_timer_like_the_strip_does(notch) -> None:
     """The backstop, for a freeze the liveness check cannot see."""
-    from sidepulse.virtual_device import SCREEN_BAR_REASSERT_SECONDS
+    from jrbar.virtual_device import SCREEN_BAR_REASSERT_SECONDS
 
     device, clock, _module = notch
     presentation = _continuous_program()
@@ -170,7 +170,7 @@ def test_a_reassert_resumes_the_same_phase_rather_than_restarting_it(notch) -> N
     the same anchor resumes the animation where it is instead of
     snapping it back to frame zero.
     """
-    from sidepulse.virtual_device import SCREEN_BAR_REASSERT_SECONDS
+    from jrbar.virtual_device import SCREEN_BAR_REASSERT_SECONDS
 
     device, clock, _module = notch
     presentation = _continuous_program()
@@ -193,9 +193,9 @@ def test_the_strip_keeps_its_phase_free_dedupe(monkeypatch, tmp_path) -> None:
     """
     from datetime import datetime, timezone
 
-    from sidepulse.colors import BLEND_MODE_RELAY, ColorSettings
-    from sidepulse.led_status import AgentLedController
-    from sidepulse.models import AgentMode, AgentStatus
+    from jrbar.colors import BLEND_MODE_RELAY, ColorSettings
+    from jrbar.led_status import AgentLedController
+    from jrbar.models import AgentMode, AgentStatus
 
     statuses = tuple(
         AgentStatus(

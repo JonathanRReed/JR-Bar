@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from sidepulse.webhook_delivery import (
+from jrbar.webhook_delivery import (
     WebhookDeliveryService,
     WebhookEndpoint,
     WebhookReason,

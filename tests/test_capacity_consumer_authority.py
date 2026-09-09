@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sidepulse.capacity_authority import select_binding_lanes
-from sidepulse.capacity_types import (
+from jrbar.capacity_authority import select_binding_lanes
+from jrbar.capacity_types import (
     CapacitySnapshot,
     CapacitySourceHealth,
     CapacityUnit,
@@ -24,7 +24,7 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.settings import LED_DISPLAY_QUOTA_RUNWAY, AgentMonitorSettings
+from jrbar.settings import LED_DISPLAY_QUOTA_RUNWAY, AgentMonitorSettings
 from tests.test_sidepulse import isolate_controller
 
 NOW = 1_000.0

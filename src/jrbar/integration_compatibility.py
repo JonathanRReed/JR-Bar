@@ -36,7 +36,7 @@ class IntegrationCompatibilityManifest:
 
 
 def load_integration_compatibility_manifest() -> IntegrationCompatibilityManifest:
-    resource = files("sidepulse.resources").joinpath(
+    resource = files("jrbar.resources").joinpath(
         "integration_compatibility.json"
     )
     raw = resource.read_bytes()

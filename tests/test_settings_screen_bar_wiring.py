@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src" / "sidepulse"
+SRC = ROOT / "src" / "jrbar"
 
 
 def _classes(source: str) -> set[str]:

@@ -1077,7 +1077,7 @@ def hook_command_arguments(
     # Module invocation, NOT a baked absolute path into site-packages.
     # The path form assumed a copied install: the moment the package was
     # installed editable, moved, or symlinked, that exact file stopped
-    # existing while `import sidepulse` kept working -- so the app looked
+    # existing while `import jrbar` kept working -- so the app looked
     # healthy while EVERY registered hook died at the next prompt, and a
     # blocking hook takes every agent down with it. `-m` resolves the
     # package however it is laid out, so config and install cannot
@@ -1085,7 +1085,7 @@ def hook_command_arguments(
     return [
         executable,
         "-m",
-        "sidepulse.hook_client",
+        "jrbar.hook_client",
         "--provider",
         provider,
         "--log",
@@ -1240,7 +1240,7 @@ def antigravity_hook_command(
 
     `-m sidepulse.hook_client`, not a baked path into site-packages: the path
     form stops existing the moment the package is moved, symlinked or installed
-    editable, while `import sidepulse` keeps working -- which is how every
+    editable, while `import jrbar` keeps working -- which is how every
     registered hook once died at once.
     """
     if canonical_event not in ANTIGRAVITY_CANONICAL_EVENTS.values():
@@ -1801,8 +1801,8 @@ def resolve_codex_hook_hashes(
             continue
         if not isinstance(command, str) or not (
             "hook_entry.py" in command
-            or "sidepulse.hook_entry" in command
-            or "sidepulse.hook_client" in command
+            or "jrbar.hook_entry" in command
+            or "jrbar.hook_client" in command
         ):
             continue
         if not isinstance(current_hash, str) or not isinstance(key, str):
@@ -1906,8 +1906,8 @@ def remove_codex_hook_blocks_for_log(text: str, log_path: Path) -> str:
                 or "sidepulse hook-client" in block
                 or "agent-monitor hook-client" in block
                 or "hook_entry.py" in block
-                or "sidepulse.hook_entry" in block
-                or "sidepulse.hook_client" in block
+                or "jrbar.hook_entry" in block
+                or "jrbar.hook_client" in block
             ):
                 index = end
                 continue
@@ -1984,7 +1984,7 @@ def is_sidepulse_json_hook_command(
         "-m" in arguments
         and any(
             module in arguments
-            for module in ("sidepulse.hook_entry", "sidepulse.hook_client")
+            for module in ("jrbar.hook_entry", "jrbar.hook_client")
         )
     )
     packaged_entrypoint = (

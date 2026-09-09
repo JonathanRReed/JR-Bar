@@ -9,9 +9,9 @@ from AppKit import (
     NSEventTypeKeyDown,
 )
 
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_control_settings import DeckControlSettings
-from sidepulse.deck_settings_pane import (
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_control_settings import DeckControlSettings
+from jrbar.deck_settings_pane import (
     ACTION_CHOICES,
     build_deck_settings_card,
     deck_mapping_selection_changed,

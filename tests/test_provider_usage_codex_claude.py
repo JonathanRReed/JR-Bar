@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from sidepulse.provider_usage_codex_claude import collect_claude, collect_codex
-from sidepulse.provider_usage_settings import default_provider_usage_settings
+from jrbar.provider_usage_codex_claude import collect_claude, collect_codex
+from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
 class FixtureCredentials:
@@ -107,7 +107,7 @@ def test_codex_live_rate_limit_replaces_a_newer_but_stale_local_percentage(
 def test_codex_live_rate_limit_skips_the_default_cold_transcript_scan(
     tmp_path: Path,
 ):
-    import sidepulse.provider_usage_codex_claude as subject
+    import jrbar.provider_usage_codex_claude as subject
 
     with (
         patch.object(subject, "_cached_codex_local_scan", return_value=None) as cached,
@@ -176,7 +176,7 @@ def test_claude_combines_oauth_windows_and_local_tokens(tmp_path: Path):
 def test_claude_default_quota_refresh_never_falls_back_to_a_cold_scan(
     tmp_path: Path,
 ):
-    import sidepulse.provider_usage_codex_claude as subject
+    import jrbar.provider_usage_codex_claude as subject
 
     with (
         patch.object(subject, "_cached_claude_local_scan", return_value=None) as cached,
@@ -205,7 +205,7 @@ def test_claude_default_quota_refresh_never_falls_back_to_a_cold_scan(
 
 
 def test_claude_cached_local_scan_reuses_bounded_aggregate(tmp_path: Path):
-    import sidepulse.provider_usage_codex_claude as subject
+    import jrbar.provider_usage_codex_claude as subject
 
     cache = {
         "files": {
@@ -218,7 +218,7 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate(tmp_path: Path):
         "models": ["claude", "claude-sonnet"],
         "dedupes": ["event-1"],
     }
-    with patch("sidepulse.usage_stats._load_cache", return_value=cache) as load:
+    with patch("jrbar.usage_stats._load_cache", return_value=cache) as load:
         result = subject._cached_claude_local_scan(tmp_path, 1000)
 
     assert load.called

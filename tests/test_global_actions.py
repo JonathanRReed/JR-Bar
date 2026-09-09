@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.global_actions import (
+from jrbar.global_actions import (
     GlobalActionBindingState,
     GlobalActionID,
     ShortcutChord,

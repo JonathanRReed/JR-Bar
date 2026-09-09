@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import hook_client
-from sidepulse.hook_ingress_protocol import (
+from jrbar import hook_client
+from jrbar.hook_ingress_protocol import (
     HOOK_INGRESS_SOCKET_NAME,
     MAX_HOOK_INGRESS_PAYLOAD_BYTES,
     HookIngressDisposition,

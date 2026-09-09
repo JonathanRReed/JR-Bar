@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
-from sidepulse.announcer_stack import (
+from jrbar.announcer_stack import (
     AnnouncerStackAction,
     AnnouncerStackIntent,
     announcer_alert_identity,
@@ -12,18 +12,18 @@ from sidepulse.announcer_stack import (
     project_announcer_stack,
     reconcile_announcer_stack,
 )
-from sidepulse.answer_controller import AnswerBrowserCommand, AnswerController
-from sidepulse.answer_in_place import AnswerActionKind, AnswerAttemptState
-from sidepulse.attention import LifecycleMode, ProjectedAgentRow
-from sidepulse.capacity_types import SourceKey
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.answer_controller import AnswerBrowserCommand, AnswerController
+from jrbar.answer_in_place import AnswerActionKind, AnswerAttemptState
+from jrbar.attention import LifecycleMode, ProjectedAgentRow
+from jrbar.capacity_types import SourceKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     BootIdentifier,
     ClockSample,
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     AdapterIdentifier,
     ContractStatus,
     LocalRuntimeSurfaceIdentifier,
@@ -35,7 +35,7 @@ from sidepulse.provider_contracts import (
     SchemaVersion,
     SourceInstanceIdentifier,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -152,7 +152,7 @@ def _contract(source: SourceKey) -> NegotiatedProviderContract:
 
 def test_answer_controller_module_is_appkit_free() -> None:
     source = (
-        Path(__file__).parents[1] / "src" / "sidepulse" / "answer_controller.py"
+        Path(__file__).parents[1] / "src" / "jrbar" / "answer_controller.py"
     ).read_text(encoding="utf-8")
 
     assert "AppKit" not in source

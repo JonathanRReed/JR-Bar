@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
 
 
-def run_sidepulse_module(temp_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def run_jrbar_module(temp_root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     environment = {
         **os.environ,
         "HOME": str(temp_root / "home"),
@@ -21,7 +21,7 @@ def run_sidepulse_module(temp_root: Path, *arguments: str) -> subprocess.Complet
         "XDG_STATE_HOME": str(temp_root / "state"),
     }
     return subprocess.run(
-        [sys.executable, "-m", "sidepulse", *arguments],
+        [sys.executable, "-m", "jrbar", *arguments],
         cwd=PROJECT_ROOT,
         env=environment,
         capture_output=True,
@@ -36,23 +36,23 @@ def run_sidepulse_module(temp_root: Path, *arguments: str) -> subprocess.Complet
 class ModuleEntrypointTests(unittest.TestCase):
     def test_module_agent_monitor_help_begins_with_nested_cli_help(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = run_sidepulse_module(Path(temp_dir), "agent-monitor", "--help")
+            result = run_jrbar_module(Path(temp_dir), "agent-monitor", "--help")
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
-        self.assertTrue(result.stdout.startswith("usage: sidepulse agent-monitor "), result.stdout)
+        self.assertTrue(result.stdout.startswith("usage: jrbar agent-monitor "), result.stdout)
 
-    def test_module_help_begins_with_sidepulse_cli_help(self) -> None:
+    def test_module_help_begins_with_jrbar_cli_help(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = run_sidepulse_module(Path(temp_dir), "--help")
+            result = run_jrbar_module(Path(temp_dir), "--help")
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stderr, "")
-        self.assertTrue(result.stdout.startswith("usage: sidepulse "), result.stdout)
+        self.assertTrue(result.stdout.startswith("usage: jrbar "), result.stdout)
 
     def test_module_machine_mode_emits_one_json_document(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = run_sidepulse_module(Path(temp_dir), "agent-monitor", "doctor", "--json")
+            result = run_jrbar_module(Path(temp_dir), "agent-monitor", "doctor", "--json")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stderr, "")
@@ -85,19 +85,19 @@ class ModuleEntrypointTests(unittest.TestCase):
 
     def test_module_cli_diagnostics_are_stderr_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = run_sidepulse_module(Path(temp_dir), "not-a-command")
+            result = run_jrbar_module(Path(temp_dir), "not-a-command")
 
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
-        self.assertTrue(result.stderr.startswith("usage: sidepulse "), result.stderr)
+        self.assertTrue(result.stderr.startswith("usage: jrbar "), result.stderr)
 
     def test_module_unsupported_version_is_stderr_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = run_sidepulse_module(Path(temp_dir), "--version")
+            result = run_jrbar_module(Path(temp_dir), "--version")
 
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
-        self.assertTrue(result.stderr.startswith("usage: sidepulse "), result.stderr)
+        self.assertTrue(result.stderr.startswith("usage: jrbar "), result.stderr)
         self.assertIn("sidepulse: error:", result.stderr)
 
 

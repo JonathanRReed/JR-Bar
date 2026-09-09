@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.rainstick_idle import (
+from jrbar.rainstick_idle import (
     RAINSTICK_ACCESSIBILITY_DISCLOSURE,
     RAINSTICK_LIT_PIXEL_COUNT,
     RAINSTICK_RELATIVE_LUMINANCE,

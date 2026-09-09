@@ -8,23 +8,23 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.collector import (
+from jrbar.capacity_types import SourceKey
+from jrbar.collector import (
     CODEX_TRANSCRIPT_PROVIDER,
     AgentMonitor,
     LiveAgentMonitor,
     SourceSpec,
     status_is_stale,
 )
-from sidepulse.completions import detect_completion_batch
-from sidepulse.freshness import (
+from jrbar.completions import detect_completion_batch
+from jrbar.freshness import (
     FUTURE_CLOCK_SKEW_SECONDS,
     bounded_age_seconds,
     is_recent,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import BootIdentifier, ClockSample
-from sidepulse.provider_facts import (
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import BootIdentifier, ClockSample
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -38,7 +38,7 @@ from sidepulse.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.settings import AgentMonitorSettings
 
 
 def test_future_clock_skew_is_clamped_only_through_explicit_boundary() -> None:
@@ -105,7 +105,7 @@ def _status(
 
 def test_all_completion_surfaces_reject_same_implausible_future_time() -> None:
     """A future row must not celebrate, badge, or enter recent menu rows."""
-    from sidepulse.status_bar import recent_statuses, unseen_completions
+    from jrbar.status_bar import recent_statuses, unseen_completions
 
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     future = _status("codex:session:future", now + timedelta(minutes=10))
@@ -148,8 +148,8 @@ def test_collector_staleness_rejects_implausibly_future_status() -> None:
 
 def test_attention_projection_rejects_future_permission_outside_collector() -> None:
     """A direct projection caller must not turn future input into attention."""
-    from sidepulse.attention import project_attention
-    from sidepulse.collector import MonitorSnapshot, aggregate_status
+    from jrbar.attention import project_attention
+    from jrbar.collector import MonitorSnapshot, aggregate_status
 
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     future = _status(
@@ -174,8 +174,8 @@ def test_attention_projection_rejects_future_permission_outside_collector() -> N
 
 def test_attention_projection_excludes_implausibly_future_active_row() -> None:
     """Filtering only actionable rows would still let future work dominate."""
-    from sidepulse.attention import LifecycleMode, project_attention
-    from sidepulse.collector import MonitorSnapshot, aggregate_status
+    from jrbar.attention import LifecycleMode, project_attention
+    from jrbar.collector import MonitorSnapshot, aggregate_status
 
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     future = _status(
@@ -200,8 +200,8 @@ def test_attention_projection_excludes_implausibly_future_active_row() -> None:
 
 def test_attention_projection_excludes_future_failure_signal_but_accepts_small_skew() -> None:
     """Warm replay cannot pulse future failures, while small skew stays usable."""
-    from sidepulse.attention import project_attention
-    from sidepulse.collector import MonitorSnapshot, aggregate_status
+    from jrbar.attention import project_attention
+    from jrbar.collector import MonitorSnapshot, aggregate_status
 
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     future_failure = _status(
@@ -244,9 +244,9 @@ def test_failed_latest_state_replace_keeps_dirty_state_and_write_time() -> None:
         monitor._latest_state_written_at = 123.0
 
         with (
-            patch("sidepulse.collector.time.monotonic", return_value=456.0),
+            patch("jrbar.collector.time.monotonic", return_value=456.0),
             patch(
-                "sidepulse.private_io._replace_private_leaf",
+                "jrbar.private_io._replace_private_leaf",
                 side_effect=OSError("replace failed"),
             ),
         ):
@@ -415,7 +415,7 @@ def test_transcript_rotation_is_bounded_without_cross_root_eviction() -> None:
             transcript_file_list_cache_max_entries=2,
         )
 
-        with patch("sidepulse.collector.TRANSCRIPT_FILE_LIST_CACHE_SECONDS", 0.0):
+        with patch("jrbar.collector.TRANSCRIPT_FILE_LIST_CACHE_SECONDS", 0.0):
             tuple(monitor.iter_records())
             newest = _write_codex_transcript(root_a, 99, mtime=1000.0)
             tuple(monitor.iter_records())
@@ -497,7 +497,7 @@ def _write_usage_file(root: Path, name: str, rows: list[dict], *, mtime: float) 
 
 def test_usage_cache_rotation_is_bounded_without_changing_current_totals() -> None:
     """Applying the cache cap before aggregation would undercount this scan."""
-    from sidepulse.usage_stats import scan_usage
+    from jrbar.usage_stats import scan_usage
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "usage"
@@ -534,7 +534,7 @@ def test_usage_cache_rotation_is_bounded_without_changing_current_totals() -> No
 
 def test_usage_cache_preserves_unwalked_roots_without_counting_them() -> None:
     """Treating an unwalked root as deleted loses valid warm cache state."""
-    from sidepulse.usage_stats import scan_usage
+    from jrbar.usage_stats import scan_usage
 
     with tempfile.TemporaryDirectory() as tmp:
         root_a = Path(tmp) / "a"
@@ -565,7 +565,7 @@ def test_usage_cache_preserves_unwalked_roots_without_counting_them() -> None:
 
 def test_usage_totals_records_exclude_rows_before_since_epoch() -> None:
     """Filtering totals but retaining old records bloats every downstream view."""
-    from sidepulse.usage_stats import scan_usage
+    from jrbar.usage_stats import scan_usage
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -590,7 +590,7 @@ def test_usage_totals_records_exclude_rows_before_since_epoch() -> None:
 
 def test_pre_window_duplicate_does_not_suppress_in_window_usage() -> None:
     """Adding old dedupe keys to seen would undercount the requested window."""
-    from sidepulse.usage_stats import scan_usage
+    from jrbar.usage_stats import scan_usage
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -616,7 +616,7 @@ def test_pre_window_duplicate_does_not_suppress_in_window_usage() -> None:
 
 def test_usage_records_match_cross_file_deduped_totals() -> None:
     """Returning duplicate records would disagree with deduped totals."""
-    from sidepulse.usage_stats import scan_usage
+    from jrbar.usage_stats import scan_usage
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -633,7 +633,7 @@ def test_usage_records_match_cross_file_deduped_totals() -> None:
 
 def test_failed_usage_read_does_not_cache_a_durable_empty_result() -> None:
     """A failed read must not look like a valid empty warm cache on the next scan."""
-    import sidepulse.usage_stats as usage_stats
+    import jrbar.usage_stats as usage_stats
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "usage"
@@ -646,7 +646,7 @@ def test_failed_usage_read_does_not_cache_a_durable_empty_result() -> None:
         )
 
         with patch(
-            "sidepulse.usage_stats._read_verified_prefix",
+            "jrbar.usage_stats._read_verified_prefix",
             return_value=None,
         ):
             failed = usage_stats.scan_usage(root, cache)
@@ -666,7 +666,7 @@ def test_bare_session_starts_never_reach_the_recent_fallback() -> None:
     """A session that only ever emitted SessionStart is a CLI launch
     (shell completions, --version), not work -- listing it in the
     stale-only fallback read as "grok is running" with no session."""
-    from sidepulse.status_bar import recent_statuses
+    from jrbar.status_bar import recent_statuses
 
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     bare_start = _status(

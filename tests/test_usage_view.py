@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from sidepulse import claude_quota, usage_stats
-from sidepulse.capacity_types import ObservationState, ResetState
-from sidepulse.usage_view import (
+from jrbar import claude_quota, usage_stats
+from jrbar.capacity_types import ObservationState, ResetState
+from jrbar.usage_view import (
     CostEstimateSection,
     LocalActivitySection,
     adapt_legacy_usage_windows,

@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.capacity_types import (
+from jrbar import usage_stats
+from jrbar.capacity_types import (
     CapacityUnit,
     CapacityValue,
     ObservationState,
@@ -17,19 +17,19 @@ from sidepulse.capacity_types import (
     ResetState,
     SourceKey,
 )
-from sidepulse.provider_contracts import CapabilityIdentifier
-from sidepulse.provider_facts import (
+from jrbar.provider_contracts import CapabilityIdentifier
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     WatermarkBasis,
 )
-from sidepulse.providers import (
+from jrbar.providers import (
     NegotiatedProviderSource,
     negotiated_provider_sources,
 )
-from sidepulse.refresh_policy import ProviderRefreshState, plan_menu_open_refresh
-from sidepulse.reset_policy import ResetBoundaryPlan, plan_reset_boundary_refresh
-from sidepulse.usage_stats import (
+from jrbar.refresh_policy import ProviderRefreshState, plan_menu_open_refresh
+from jrbar.reset_policy import ResetBoundaryPlan, plan_reset_boundary_refresh
+from jrbar.usage_stats import (
     CACHE_VERSION,
     PricingCoverage,
     ProviderUsageResult,
@@ -37,7 +37,7 @@ from sidepulse.usage_stats import (
     scan_usage,
     usage_summary_line,
 )
-from sidepulse.usage_view import UsageWindowViewModel
+from jrbar.usage_view import UsageWindowViewModel
 
 
 def scan_provider_usage(source, root, cache_path, *, since_epoch):
@@ -218,7 +218,7 @@ def test_provider_local_failure_cache_and_health_never_cross_source_keys(
             raise PermissionError("private failure detail")
         return real_scandir(path)
 
-    with patch("sidepulse.usage_stats.os.scandir", side_effect=refuse_claude):
+    with patch("jrbar.usage_stats.os.scandir", side_effect=refuse_claude):
         claude = scan_provider_usage(
             _source("claude", "transcript_usage"),
             claude_root,
@@ -263,7 +263,7 @@ def test_old_or_other_source_cache_forces_one_cold_scan_and_warm_scan_writes_not
     assert cold.coverage.files_read == 1
     assert cold.coverage.cache_hits == 0
 
-    with patch("sidepulse.usage_stats.atomic_private_write") as write:
+    with patch("jrbar.usage_stats.atomic_private_write") as write:
         warm = scan_provider_usage(source, root, cache, since_epoch=0.0)
 
     assert warm.input_tokens == cold.input_tokens

@@ -3,28 +3,28 @@
 
 # Security and private-state boundaries
 /SECURITY.md @JonathanRReed
-/src/sidepulse/private_io.py @JonathanRReed
-/src/sidepulse/credentials.py @JonathanRReed
-/src/sidepulse/cloud_ingest.py @JonathanRReed
-/src/sidepulse/remote_peers.py @JonathanRReed
-/src/sidepulse/webhook_delivery.py @JonathanRReed
-/src/sidepulse/navigation_policy.py @JonathanRReed
+/src/jrbar/private_io.py @JonathanRReed
+/src/jrbar/credentials.py @JonathanRReed
+/src/jrbar/cloud_ingest.py @JonathanRReed
+/src/jrbar/remote_peers.py @JonathanRReed
+/src/jrbar/webhook_delivery.py @JonathanRReed
+/src/jrbar/navigation_policy.py @JonathanRReed
 
 # Physical-device and visual safety boundaries
-/src/sidepulse/device_writer.py @JonathanRReed
-/src/sidepulse/firmware_validation.py @JonathanRReed
-/src/sidepulse/presentation_compiler.py @JonathanRReed
-/src/sidepulse/animation.py @JonathanRReed
-/src/sidepulse/led_status.py @JonathanRReed
+/src/jrbar/device_writer.py @JonathanRReed
+/src/jrbar/firmware_validation.py @JonathanRReed
+/src/jrbar/presentation_compiler.py @JonathanRReed
+/src/jrbar/animation.py @JonathanRReed
+/src/jrbar/led_status.py @JonathanRReed
 
 # Runtime architecture and macOS ownership
-/src/sidepulse/status_bar.py @JonathanRReed
-/src/sidepulse/status_bar_legacy.py @JonathanRReed
-/src/sidepulse/core_state.py @JonathanRReed
-/src/sidepulse/refresh_admission.py @JonathanRReed
-/src/sidepulse/runtime_scheduler.py @JonathanRReed
-/src/sidepulse/settings.py @JonathanRReed
-/src/sidepulse/settings_window.py @JonathanRReed
+/src/jrbar/status_bar.py @JonathanRReed
+/src/jrbar/status_bar_legacy.py @JonathanRReed
+/src/jrbar/core_state.py @JonathanRReed
+/src/jrbar/refresh_admission.py @JonathanRReed
+/src/jrbar/runtime_scheduler.py @JonathanRReed
+/src/jrbar/settings.py @JonathanRReed
+/src/jrbar/settings_window.py @JonathanRReed
 
 # Installer, signing, and release chain
 /packaging/ @JonathanRReed

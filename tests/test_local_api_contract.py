@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from sidepulse.local_api_contract import (
+from jrbar.local_api_contract import (
     LocalAPIRequest,
     ReplayGuard,
     decode_request,

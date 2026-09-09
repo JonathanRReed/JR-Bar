@@ -8,12 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import screen_bar_profile_evidence
-from sidepulse.screen_bar_pipeline import (
+from jrbar.screen_bar_pipeline import (
     PresentationMetricKind,
     PresentationMetrics,
 )
-from sidepulse.screen_bar_profile import (
+from jrbar.screen_bar_profile import (
     REQUIRED_SCENARIOS,
     ProfileEvidenceError,
     ProfileScenarioTracker,
@@ -24,6 +23,7 @@ from sidepulse.screen_bar_profile import (
     validate_profile_matrix,
     validate_runtime_profile,
 )
+from scripts import screen_bar_profile_evidence
 
 
 def _runtime_profile(
@@ -107,7 +107,7 @@ def test_runtime_export_is_explicit_and_writes_one_private_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     output = tmp_path / "profile.json"
     monkeypatch.setenv("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", str(output))
@@ -142,7 +142,7 @@ def test_runtime_export_is_explicit_and_writes_one_private_profile(
 def test_runtime_export_does_nothing_without_explicit_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     monkeypatch.delenv("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
     monkeypatch.delenv("SIDEPULSE_SCREEN_BAR_PROFILE_SCENARIO", raising=False)
@@ -155,7 +155,7 @@ def test_runtime_export_does_nothing_without_explicit_opt_in(
 def test_termination_quiesces_frame_and_sampler_work_before_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     monkeypatch.delenv("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
     device = virtual_device.VirtualStatusDevice.alloc().init()

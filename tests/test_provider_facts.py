@@ -6,18 +6,18 @@ from math import inf, nan
 
 import pytest
 
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacityValidationError,
     QuotaEffect,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     QuotaLaneKey as CapacityQuotaLaneKey,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     SourceKey as CapacitySourceKey,
 )
-from sidepulse.provider_contracts import DiagnosticIdentifier
-from sidepulse.provider_facts import (
+from jrbar.provider_contracts import DiagnosticIdentifier
+from jrbar.provider_facts import (
     MAX_DIAGNOSTICS_PER_BATCH,
     MAX_REQUEST_FACTS_PER_BATCH,
     MAX_WORK_FACTS_PER_BATCH,

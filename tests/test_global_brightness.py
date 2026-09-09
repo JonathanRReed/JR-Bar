@@ -12,8 +12,8 @@ from types import SimpleNamespace
 
 from test_sidepulse import isolate_controller
 
-from sidepulse._settings_legacy import AgentMonitorSettings
-from sidepulse.status_bar_legacy import BRIGHTNESS_PRESET_CHOICES, StatusBarDevice
+from jrbar._settings_legacy import AgentMonitorSettings
+from jrbar.status_bar_legacy import BRIGHTNESS_PRESET_CHOICES, StatusBarDevice
 
 
 def _device() -> StatusBarDevice:
@@ -33,7 +33,7 @@ def _device() -> StatusBarDevice:
 def test_scale_round_trips_and_clamps(tmp_path) -> None:
     import json
 
-    from sidepulse._settings_legacy import load_settings
+    from jrbar._settings_legacy import load_settings
 
     settings = AgentMonitorSettings().with_global_brightness_scale(0.5)
     assert settings.global_brightness_scale == 0.5

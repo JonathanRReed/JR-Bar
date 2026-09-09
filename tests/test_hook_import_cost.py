@@ -20,17 +20,17 @@ SRC = str(Path(__file__).resolve().parents[1] / "src")
 # Modules the hook process has no business loading. Each one was measured
 # costing tens of milliseconds, per event, for nothing.
 FORBIDDEN = (
-    "sidepulse.battery",
-    "sidepulse.collector",
-    "sidepulse.led_status",
-    "sidepulse.lid_sleep",
-    "sidepulse.status_bar",
-    "sidepulse.settings",
-    "sidepulse.device_writer",
-    "sidepulse.usage_stats",
-    "sidepulse.hook",
-    "sidepulse.provider_adapters",
-    "sidepulse.providers",
+    "jrbar.battery",
+    "jrbar.collector",
+    "jrbar.led_status",
+    "jrbar.lid_sleep",
+    "jrbar.status_bar",
+    "jrbar.settings",
+    "jrbar.device_writer",
+    "jrbar.usage_stats",
+    "jrbar.hook",
+    "jrbar.provider_adapters",
+    "jrbar.providers",
 )
 
 
@@ -38,7 +38,7 @@ def _imported_modules(statement: str) -> set[str]:
     probe = (
         f"{statement}\n"
         "import sys, json\n"
-        "print(json.dumps([m for m in sys.modules if m.startswith('sidepulse')]))\n"
+        "print(json.dumps([m for m in sys.modules if m.startswith('jrbar')]))\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", probe],
@@ -54,10 +54,10 @@ def _imported_modules(statement: str) -> set[str]:
 
 
 def test_hook_entry_does_not_drag_in_the_app() -> None:
-    loaded = _imported_modules("import sidepulse.hook_entry")
+    loaded = _imported_modules("import jrbar.hook_entry")
     leaked = sorted(loaded & set(FORBIDDEN))
     assert not leaked, (
-        f"importing sidepulse.hook_entry now also loads {leaked}; "
+        f"importing jrbar.hook_entry now also loads {leaked}; "
         "every hook event pays for this"
     )
 
@@ -68,40 +68,40 @@ def test_the_module_the_hook_actually_runs_stays_lean() -> None:
     Testing only `hook_entry` would pass while the module it loads a
     microsecond later drags in the entire app.
     """
-    loaded = _imported_modules("from sidepulse.hook import hook_log_main")
+    loaded = _imported_modules("from jrbar.hook import hook_log_main")
     legacy_forbidden = set(FORBIDDEN) - {
-        "sidepulse.hook",
-        "sidepulse.provider_adapters",
-        "sidepulse.providers",
+        "jrbar.hook",
+        "jrbar.provider_adapters",
+        "jrbar.providers",
     }
     leaked = sorted(loaded & legacy_forbidden)
     assert not leaked, f"the synchronous fallback path now loads {leaked}"
 
 
 def test_thin_hook_client_does_not_load_processing_or_app_modules() -> None:
-    loaded = _imported_modules("import sidepulse.hook_client")
+    loaded = _imported_modules("import jrbar.hook_client")
     leaked = sorted(loaded & set(FORBIDDEN))
     assert not leaked, f"the hook admission client now loads {leaked}"
 
 
 def test_package_import_is_lazy() -> None:
-    """`import sidepulse` alone must not walk the whole package."""
-    loaded = _imported_modules("import sidepulse")
+    """`import jrbar` alone must not walk the whole package."""
+    loaded = _imported_modules("import jrbar")
     leaked = sorted(loaded & set(FORBIDDEN))
-    assert not leaked, f"`import sidepulse` eagerly loads {leaked}"
+    assert not leaked, f"`import jrbar` eagerly loads {leaked}"
 
 
 @pytest.mark.parametrize("name", ["AgentMode", "HookEventServer", "AgentLedController"])
 def test_lazy_exports_still_resolve(name: str) -> None:
     """Laziness must be invisible to callers."""
-    import sidepulse
+    import jrbar
 
-    assert getattr(sidepulse, name) is not None
-    assert name in dir(sidepulse)
+    assert getattr(jrbar, name) is not None
+    assert name in dir(jrbar)
 
 
 def test_unknown_attribute_still_raises_attribute_error() -> None:
-    import sidepulse
+    import jrbar
 
     with pytest.raises(AttributeError):
-        sidepulse.definitely_not_exported
+        jrbar.definitely_not_exported

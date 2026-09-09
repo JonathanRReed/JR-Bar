@@ -4,8 +4,8 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from sidepulse.capacity_types import CapacityEvidenceClass, QuotaEffect, SourceKey
-from sidepulse.provider_capacity import (
+from jrbar.capacity_types import CapacityEvidenceClass, QuotaEffect, SourceKey
+from jrbar.provider_capacity import (
     AccountCapacitySourceRegistration,
     CapacityPolicyState,
     ProviderCapacityPolicy,
@@ -15,12 +15,12 @@ from sidepulse.provider_capacity import (
     select_opencode_capacity_policy,
     select_provider_capacity_policy,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     MAX_CAPABILITY_DECLARATIONS,
     ContractValidationError,
     negotiate_capacity_source_contract,
 )
-from sidepulse.providers import negotiated_provider_sources
+from jrbar.providers import negotiated_provider_sources
 
 
 def _summary(policy: ProviderCapacityPolicy) -> tuple[object, ...]:

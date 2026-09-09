@@ -39,7 +39,7 @@ def _payload(*, access: str, expires_at: float, refresh: str) -> str:
 
 
 def test_credentials_has_no_third_party_keychain_write_surface():
-    from sidepulse import credentials
+    from jrbar import credentials
 
     source = inspect.getsource(credentials)
     assert not hasattr(credentials, "write_keychain_secret")
@@ -50,8 +50,8 @@ def test_credentials_has_no_third_party_keychain_write_surface():
 def test_expired_claude_credential_never_reaches_network_process_or_store(
     monkeypatch,
 ):
-    from sidepulse import claude_quota, credentials
-    from sidepulse.provider_reconnect import RepairOutcome, repair_claude_credential
+    from jrbar import claude_quota, credentials
+    from jrbar.provider_reconnect import RepairOutcome, repair_claude_credential
 
     calls: list[str] = []
 
@@ -90,8 +90,8 @@ def test_expired_claude_credential_never_reaches_network_process_or_store(
 def test_hostile_expired_payload_cannot_become_an_argument_or_stored_secret(
     monkeypatch,
 ):
-    from sidepulse import claude_quota, credentials
-    from sidepulse.provider_reconnect import RepairOutcome, repair_claude_credential
+    from jrbar import claude_quota, credentials
+    from jrbar.provider_reconnect import RepairOutcome, repair_claude_credential
 
     calls: list[object] = []
     monkeypatch.setattr(
@@ -123,7 +123,7 @@ def test_hostile_expired_payload_cannot_become_an_argument_or_stored_secret(
 
 
 def test_valid_claude_access_token_is_copied_into_jr_bar_store_with_expiry():
-    from sidepulse.provider_reconnect import RepairOutcome, repair_claude_credential
+    from jrbar.provider_reconnect import RepairOutcome, repair_claude_credential
 
     store = FakeStore()
     result = repair_claude_credential(
@@ -143,9 +143,9 @@ def test_valid_claude_access_token_is_copied_into_jr_bar_store_with_expiry():
 def test_background_sync_reads_under_standing_grant_and_only_copies_access_token(
     tmp_path, monkeypatch
 ):
-    from sidepulse import credentials, providers
-    from sidepulse.credentials import CredentialOutcome, CredentialResult
-    from sidepulse.provider_reconnect import sync_claude_credential_in_background
+    from jrbar import credentials, providers
+    from jrbar.credentials import CredentialOutcome, CredentialResult
+    from jrbar.provider_reconnect import sync_claude_credential_in_background
 
     payload = _payload(
         access="new-external-token", expires_at=2_000_000.0, refresh="not-consumed"
@@ -167,7 +167,7 @@ def test_background_sync_reads_under_standing_grant_and_only_copies_access_token
 
 
 def test_runtime_terminal_gate_has_no_claude_credential_mutation_bypass():
-    from sidepulse import provider_usage_runtime
+    from jrbar import provider_usage_runtime
 
     source = inspect.getsource(provider_usage_runtime.ProviderUsageService._run_refresh)
     assert "renew_claude_credential_in_background" not in source

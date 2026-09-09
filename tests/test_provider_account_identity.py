@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.provider_account_identity import project_provider_account_identity
+from jrbar.provider_account_identity import project_provider_account_identity
 
 
 def test_user_alias_precedes_safe_account_label() -> None:

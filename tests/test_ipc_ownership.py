@@ -9,11 +9,11 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import ipc
-from sidepulse.capacity_types import SourceKey
-from sidepulse.ipc import HookEventServer, ProviderRefreshHint, send_refresh_hint
-from sidepulse.private_io import ensure_private_directory
-from sidepulse.provider_facts import EventToken
+from jrbar import ipc
+from jrbar.capacity_types import SourceKey
+from jrbar.ipc import HookEventServer, ProviderRefreshHint, send_refresh_hint
+from jrbar.private_io import ensure_private_directory
+from jrbar.provider_facts import EventToken
 
 SOURCE = SourceKey("codex", "hooks", "global", "live_agent_events")
 
@@ -140,7 +140,7 @@ def test_start_fails_closed_when_parent_is_swapped_before_binding(
     server = HookEventServer(lambda _hint_value: None, socket_path=socket_path)
     error: OSError | None = None
     try:
-        with patch("sidepulse.ipc.ensure_private_directory", side_effect=swap_parent):
+        with patch("jrbar.ipc.ensure_private_directory", side_effect=swap_parent):
             try:
                 server.start()
             except OSError as exc:
@@ -189,7 +189,7 @@ def test_start_bind_is_anchored_when_parent_swaps_inside_bind(
     server = HookEventServer(lambda _hint_value: None, socket_path=socket_path)
     try:
         with (
-            patch("sidepulse.ipc.socket.socket", side_effect=BindSwapSocket),
+            patch("jrbar.ipc.socket.socket", side_effect=BindSwapSocket),
             pytest.raises(OSError, match=r"parent|changed"),
         ):
             server.start()
@@ -228,7 +228,7 @@ def test_start_cleans_bound_inode_when_thread_directory_reset_fails(
     try:
         with (
             patch(
-                "sidepulse.ipc._set_darwin_thread_directory",
+                "jrbar.ipc._set_darwin_thread_directory",
                 side_effect=report_reset_failure,
             ),
             pytest.raises(OSError, match="simulated reset failure"),
@@ -290,7 +290,7 @@ def test_client_leaf_swap_fails_before_sending_to_replacement_peer(
             return self.inner.connect(address)
 
     try:
-        with patch("sidepulse.ipc.socket.socket", side_effect=SwappingClient):
+        with patch("jrbar.ipc.socket.socket", side_effect=SwappingClient):
             sent = send_refresh_hint(
                 _hint("event:redirected"),
                 socket_path=socket_path,

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import usage_stats
+from jrbar import usage_stats
 
 DEDUPE_SECRET = b"\x07" * 32
 

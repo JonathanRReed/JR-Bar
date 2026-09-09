@@ -7,15 +7,15 @@ import threading
 from datetime import datetime
 from types import SimpleNamespace
 
-from sidepulse.persistence_writer import (
+from jrbar.persistence_writer import (
     PersistenceDisposition,
     SerialPersistenceWriter,
 )
-from sidepulse.provider_feature_settings import (
+from jrbar.provider_feature_settings import (
     ProviderInstanceRetentionPolicy,
     ProviderInstanceRetentionProjection,
 )
-from sidepulse.usage_percent_history import (
+from jrbar.usage_percent_history import (
     append_percent_observations,
     filter_new_observations,
     percent_graph_model,
@@ -291,7 +291,7 @@ def test_recording_advances_dedupe_only_after_writer_accepts(monkeypatch, tmp_pa
 
     target = tmp_path / "usage-percent-history.jsonl"
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.default_percent_history_path",
+        "jrbar.usage_percent_history.default_percent_history_path",
         lambda: target,
     )
     writer = SerialPersistenceWriter()
@@ -317,7 +317,7 @@ def test_recording_dedupes_exact_source_instances_independently(monkeypatch, tmp
     )
     target = tmp_path / "usage-percent-history.jsonl"
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.default_percent_history_path",
+        "jrbar.usage_percent_history.default_percent_history_path",
         lambda: target,
     )
     writer = SerialPersistenceWriter()
@@ -365,7 +365,7 @@ def test_retention_change_prunes_disabled_instance_without_fresh_sample(
         lanes=(SimpleNamespace(lane_id="weekly", remaining_percent=71.0),),
     )
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.default_percent_history_path",
+        "jrbar.usage_percent_history.default_percent_history_path",
         lambda: target,
     )
     writer = SerialPersistenceWriter()
@@ -394,7 +394,7 @@ def test_accepted_append_failure_keeps_observation_retryable(monkeypatch, tmp_pa
         raise OSError("private payload must not surface")
 
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.append_percent_observations",
+        "jrbar.usage_percent_history.append_percent_observations",
         fail_append,
     )
     failed_writer = SerialPersistenceWriter()
@@ -405,11 +405,11 @@ def test_accepted_append_failure_keeps_observation_retryable(monkeypatch, tmp_pa
 
     target = tmp_path / "usage-percent-history.jsonl"
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.append_percent_observations",
+        "jrbar.usage_percent_history.append_percent_observations",
         append_percent_observations,
     )
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.default_percent_history_path",
+        "jrbar.usage_percent_history.default_percent_history_path",
         lambda: target,
     )
     retry_writer = SerialPersistenceWriter()
@@ -444,11 +444,11 @@ def test_newer_sample_is_ordered_behind_a_pending_append(monkeypatch, tmp_path) 
         return append_percent_observations(path, records)
 
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.default_percent_history_path",
+        "jrbar.usage_percent_history.default_percent_history_path",
         lambda: target,
     )
     monkeypatch.setattr(
-        "sidepulse.usage_percent_history.append_percent_observations",
+        "jrbar.usage_percent_history.append_percent_observations",
         delayed_append,
     )
     writer = SerialPersistenceWriter()

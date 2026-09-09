@@ -14,9 +14,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sidepulse.colors import BLEND_MODE_RELAY, ColorSettings
-from sidepulse.led_status import AgentLedController
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.colors import BLEND_MODE_RELAY, ColorSettings
+from jrbar.led_status import AgentLedController
+from jrbar.models import AgentMode, AgentStatus
 
 
 def _status(provider: str, mode: AgentMode = AgentMode.WORKING) -> AgentStatus:
@@ -79,7 +79,7 @@ def test_screen_bar_borrows_the_hardware_animation_by_default() -> None:
     animation than the LEDs -- two surfaces disagreeing about the same
     moment is the bug this option exists to prevent.
     """
-    from sidepulse.settings import AgentMonitorSettings, DeviceDisplaySetting
+    from jrbar.settings import AgentMonitorSettings, DeviceDisplaySetting
 
     settings = AgentMonitorSettings(
         devices=(
@@ -98,7 +98,7 @@ def test_screen_bar_borrows_the_hardware_animation_by_default() -> None:
     class _Controller:
         pass
 
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     controller = _Controller()
     controller.settings = settings

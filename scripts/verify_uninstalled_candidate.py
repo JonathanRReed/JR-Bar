@@ -15,9 +15,9 @@ try:
 except ImportError:  # Direct execution adds scripts/, not the repository root.
     import release_evidence  # type: ignore[no-redef]
 
-from sidepulse.lid_sleep import SLEEP_HELPER_SUDOERS_PATH
-from sidepulse.providers import detect_provider_configs
-from sidepulse.sd_eject_guard_launch import (
+from jrbar.lid_sleep import SLEEP_HELPER_SUDOERS_PATH
+from jrbar.providers import detect_provider_configs
+from jrbar.sd_eject_guard_launch import (
     SD_EJECT_GUARD_LABEL,
     SD_EJECT_GUARD_LEGACY_BINARY_NAMES,
     system_sd_eject_guard_paths,

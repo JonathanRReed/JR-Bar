@@ -5,14 +5,14 @@ from itertools import permutations
 
 import pytest
 
-from sidepulse.capacity_authority import (
+from jrbar.capacity_authority import (
     MAX_CAPACITY_BINDING_AGE_SECONDS,
     classify_applicability,
     evaluate_lane_authority,
     project_source_health,
     select_binding_lanes,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacityAccountBinding,
     CapacityEvidenceClass,
     CapacitySnapshot,

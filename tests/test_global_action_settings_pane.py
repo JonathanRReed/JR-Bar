@@ -19,8 +19,8 @@ from AppKit import (
     NSWindowStyleMaskTitled,
 )
 
-from sidepulse.global_action_controller import GlobalActionChangeResult
-from sidepulse.global_action_settings_pane import (
+from jrbar.global_action_controller import GlobalActionChangeResult
+from jrbar.global_action_settings_pane import (
     GLOBAL_ACTION_GROUP_LABEL,
     GLOBAL_ACTION_RECORDER_HELP,
     GLOBAL_ACTION_RECORDER_LABEL,
@@ -31,7 +31,7 @@ from sidepulse.global_action_settings_pane import (
     build_global_action_settings_pane,
     refresh_global_action_settings_controls,
 )
-from sidepulse.global_actions import (
+from jrbar.global_actions import (
     GlobalActionID,
     PersistedShortcutRefusal,
     ShortcutChord,
@@ -40,8 +40,8 @@ from sidepulse.global_actions import (
     parse_global_action_shortcuts,
     serialize_global_action_shortcuts,
 )
-from sidepulse.global_hotkeys import HotkeyRegistrationRefusal
-from sidepulse.settings import AgentMonitorSettings
+from jrbar.global_hotkeys import HotkeyRegistrationRefusal
+from jrbar.settings import AgentMonitorSettings
 
 
 def _chord(
@@ -657,7 +657,7 @@ def test_non_recording_keydown_delegates_without_consuming_text_input() -> None:
 
 def test_source_uses_no_event_monitor_or_cgeventtap() -> None:
     source = (
-        Path(__file__).parents[1] / "src/sidepulse/global_action_settings_pane.py"
+        Path(__file__).parents[1] / "src/jrbar/global_action_settings_pane.py"
     ).read_text()
 
     assert "addGlobalMonitorForEvents" not in source

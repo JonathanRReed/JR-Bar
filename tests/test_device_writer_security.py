@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import device_writer
+from jrbar import device_writer
 
 PROGRAM_A = "1:#00FF00 1s"
 PROGRAM_B = "1:#FF0000 1s"
@@ -26,7 +26,7 @@ def _capture_write_error(
             device_writer.write_led_program(program, device_path=device)
         else:
             with patch(
-                "sidepulse.device_writer.os.replace",
+                "jrbar.device_writer.os.replace",
                 side_effect=replace_error,
             ):
                 device_writer.write_led_program(program, device_path=device)
@@ -308,7 +308,7 @@ def test_leaf_replacement_that_triggers_enospc_fallback_is_refused(
 
     with (
         patch(
-            "sidepulse.device_writer.os.replace",
+            "jrbar.device_writer.os.replace",
             side_effect=replace_with_link_then_report_full,
         ),
         pytest.raises(OSError),
@@ -337,7 +337,7 @@ def test_parent_replacement_that_triggers_enospc_fallback_is_refused(
 
     with (
         patch(
-            "sidepulse.device_writer.os.replace",
+            "jrbar.device_writer.os.replace",
             side_effect=replace_parent_then_report_full,
         ),
         pytest.raises(OSError),
@@ -368,7 +368,7 @@ def test_concurrent_same_target_writes_use_independent_scratch_files(
             return error
         return None
 
-    with patch("sidepulse.device_writer.os.replace", side_effect=synchronized_replace):
+    with patch("jrbar.device_writer.os.replace", side_effect=synchronized_replace):
         with ThreadPoolExecutor(max_workers=2) as executor:
             errors = list(executor.map(write, (PROGRAM_A, PROGRAM_B)))
 
@@ -399,13 +399,13 @@ def test_success_requires_bounded_exact_readback(
 
     replace = (
         patch(
-            "sidepulse.device_writer.os.replace",
+            "jrbar.device_writer.os.replace",
             side_effect=OSError(errno.ENOSPC, "No space left on device"),
         )
         if fallback
-        else patch("sidepulse.device_writer.os.replace", wraps=os.replace)
+        else patch("jrbar.device_writer.os.replace", wraps=os.replace)
     )
-    with replace, patch("sidepulse.device_writer.os.read", side_effect=observing_read):
+    with replace, patch("jrbar.device_writer.os.read", side_effect=observing_read):
         target = device_writer.write_led_program(PROGRAM_B, device_path=tmp_path)
 
     assert target.read_text(encoding="utf-8") == PROGRAM_B
@@ -421,16 +421,16 @@ def test_readback_mismatch_never_reports_success(
     device_writer.write_led_program(PROGRAM_A, device_path=tmp_path)
     replace = (
         patch(
-            "sidepulse.device_writer.os.replace",
+            "jrbar.device_writer.os.replace",
             side_effect=OSError(errno.ENOSPC, "No space left on device"),
         )
         if fallback
-        else patch("sidepulse.device_writer.os.replace", wraps=os.replace)
+        else patch("jrbar.device_writer.os.replace", wraps=os.replace)
     )
 
     with (
         replace,
-        patch("sidepulse.device_writer.os.read", return_value=b"corrupt"),
+        patch("jrbar.device_writer.os.read", return_value=b"corrupt"),
         pytest.raises(device_writer.DeviceWriteError, match="readback"),
     ):
         device_writer.write_led_program(PROGRAM_B, device_path=tmp_path)
@@ -443,7 +443,7 @@ def test_failed_scratch_write_preserves_prior_complete_target(
 
     with (
         patch(
-            "sidepulse.device_writer.os.write",
+            "jrbar.device_writer.os.write",
             side_effect=OSError(errno.EIO, "device disconnected"),
         ),
         pytest.raises(OSError, match="device disconnected"),

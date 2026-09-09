@@ -4,8 +4,8 @@ import signal
 
 import pytest
 
-from sidepulse.provider_contracts import ProductCapability
-from sidepulse.watch_run import (
+from jrbar.provider_contracts import ProductCapability
+from jrbar.watch_run import (
     CleanupStatus,
     SignalRestoreStatus,
     WatchRunCleanupReceipt,
@@ -89,7 +89,7 @@ def test_plan_is_claude_only_and_uses_invocation_local_settings() -> None:
 
 
 def test_watch_run_is_reachable_from_both_cli_surfaces() -> None:
-    from sidepulse.cli import build_parser, build_sidepulse_parser, cmd_watch_run
+    from jrbar.cli import build_parser, build_sidepulse_parser, cmd_watch_run
 
     for parser in (build_sidepulse_parser(), build_parser()):
         parsed = parser.parse_args(

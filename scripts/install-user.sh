@@ -2,8 +2,8 @@
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-INSTALL_ROOT="${SIDEPULSE_INSTALL_ROOT:-$HOME/.local/share/sidepulse}"
-BIN_DIR="${SIDEPULSE_BIN_DIR:-$HOME/.local/bin}"
+INSTALL_ROOT="${JRBAR_INSTALL_ROOT:-${SIDEPULSE_INSTALL_ROOT:-$HOME/.local/share/jrbar}}"
+BIN_DIR="${JRBAR_BIN_DIR:-${SIDEPULSE_BIN_DIR:-$HOME/.local/bin}}"
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="$INSTALL_ROOT/venv"
 
@@ -20,10 +20,10 @@ fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/python" -m pip install --upgrade "$SOURCE_DIR"
 
-for command in sidepulse agent-monitor agent-status-bar; do
+for command in jrbar jrbar-integrations sidepulse; do
     ln -sfn "$VENV_DIR/bin/$command" "$BIN_DIR/$command"
 done
 
 printf '%s\n' "JR-Bar installed in $VENV_DIR"
 printf '%s\n' "Commands linked in $BIN_DIR"
-printf '%s\n' "Run: $BIN_DIR/sidepulse setup"
+printf '%s\n' "Run: $BIN_DIR/jrbar setup"

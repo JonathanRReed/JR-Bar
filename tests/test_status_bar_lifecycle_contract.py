@@ -10,21 +10,21 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sidepulse import status_bar
-from sidepulse.announcer_stack import empty_announcer_stack_state
-from sidepulse.global_action_controller import (
+from jrbar import status_bar
+from jrbar.announcer_stack import empty_announcer_stack_state
+from jrbar.global_action_controller import (
     GlobalActionChangeResult,
     GlobalActionLifecycleCoordinator,
 )
-from sidepulse.global_actions import (
+from jrbar.global_actions import (
     GlobalActionID,
     PersistedShortcutRefusal,
     ShortcutChord,
     ShortcutModifier,
     ShortcutValidationCode,
 )
-from sidepulse.global_hotkeys import HotkeyCleanupError, HotkeyRegistrationRefusal
-from sidepulse.settings import (
+from jrbar.global_hotkeys import HotkeyCleanupError, HotkeyRegistrationRefusal
+from jrbar.settings import (
     SettingsConcurrentWriteError,
     SettingsWriteRefusedError,
 )
@@ -42,7 +42,7 @@ CONTROL_SHIFT_K = ShortcutChord(
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_BAR_LEGACY = ROOT / "src" / "sidepulse" / "status_bar_legacy.py"
+STATUS_BAR_LEGACY = ROOT / "src" / "jrbar" / "status_bar_legacy.py"
 
 
 class _Registry:
@@ -230,7 +230,7 @@ def _prepare_launch_controller(controller, status_bar_module, monkeypatch):
     )
     monkeypatch.setattr(status_bar_module, "image_for_symbol", lambda *_args: None)
     monkeypatch.setattr(status_bar_module.threading, "Thread", _Thread)
-    monkeypatch.setattr("sidepulse.main_menu.install_main_menu", lambda: None)
+    monkeypatch.setattr("jrbar.main_menu.install_main_menu", lambda: None)
 
 
 def _prepare_terminate_controller(controller, monkeypatch):
@@ -602,7 +602,7 @@ def test_application_launches_global_actions_once_after_main_menu_installation(
         launch=MagicMock(side_effect=lambda: order.append("global-actions"))
     )
     monkeypatch.setattr(
-        "sidepulse.main_menu.install_main_menu",
+        "jrbar.main_menu.install_main_menu",
         lambda: order.append("main-menu"),
     )
 
@@ -634,7 +634,7 @@ def test_application_starts_dnd_once_after_menu_lifecycle_and_status_item(
         projection=target.current_dnd_projection(),
     )
     monkeypatch.setattr(
-        "sidepulse.main_menu.install_main_menu",
+        "jrbar.main_menu.install_main_menu",
         lambda: order.append("main-menu"),
     )
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from sidepulse.device_projection import light_rows_for_provider, projection_for_provider
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.device_projection import light_rows_for_provider, projection_for_provider
 
 _NOW = datetime(2026, 8, 15, 12, 0, tzinfo=timezone.utc)
 

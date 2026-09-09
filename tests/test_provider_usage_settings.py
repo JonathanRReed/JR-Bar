@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
-from sidepulse.provider_usage_settings import (
+from jrbar.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
+from jrbar.provider_usage_settings import (
     PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
     ProviderUsageSettingsWriteRefusedError,
     default_provider_usage_settings,
@@ -144,7 +144,7 @@ def test_menu_display_tolerates_old_documents_and_junk(tmp_path) -> None:
 def test_menu_flag_rejects_unknown_names() -> None:
     import pytest
 
-    from sidepulse.provider_usage_settings import ProviderUsageSettingsError
+    from jrbar.provider_usage_settings import ProviderUsageSettingsError
 
     with pytest.raises(ProviderUsageSettingsError):
         default_provider_usage_settings().with_menu_flag("show_everything", True)

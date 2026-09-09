@@ -4,9 +4,9 @@ from dataclasses import FrozenInstanceError, fields
 
 import pytest
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.announcer_stack import AnnouncerAlertIdentity
-from sidepulse.ask_heartbeat_sync import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.announcer_stack import AnnouncerAlertIdentity
+from jrbar.ask_heartbeat_sync import (
     ASK_HEARTBEAT_BURST_SECONDS,
     ASK_HEARTBEAT_CYCLE_SECONDS,
     ASK_HEARTBEAT_PULSE_COUNT,

@@ -1,8 +1,8 @@
 import threading
 from pathlib import Path
 
-from sidepulse.intake_runtime import INTAKE_REASON_UNAVAILABLE, IntakeProbeService
-from sidepulse.ledger_runtime import RemoteLedgerPublisher
+from jrbar.intake_runtime import INTAKE_REASON_UNAVAILABLE, IntakeProbeService
+from jrbar.ledger_runtime import RemoteLedgerPublisher
 
 
 def test_intake_probe_runs_off_caller_and_coalesces_identical_requests() -> None:

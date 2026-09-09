@@ -14,7 +14,7 @@ import pytest
 
 def test_inventory_exposes_a_content_free_read_only_collection_boundary() -> None:
     """Removing the collector would make host inventory impossible to fence."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InstalledAgentInventoryResult,
         InventoryCandidate,
         InventoryRoot,
@@ -31,8 +31,8 @@ def test_inventory_exposes_a_content_free_read_only_collection_boundary() -> Non
 
 def test_antigravity_cli_uses_the_official_agy_name_with_bounded_common_install_roots() -> None:
     """Using the obsolete antigravity name would silently miss the official CLI."""
-    from sidepulse.installed_agent_inventory import default_inventory_candidates
-    from sidepulse.installed_agents import InstalledSurfaceKey
+    from jrbar.installed_agent_inventory import default_inventory_candidates
+    from jrbar.installed_agents import InstalledSurfaceKey
 
     candidate = next(
         row
@@ -49,8 +49,8 @@ def test_antigravity_cli_uses_the_official_agy_name_with_bounded_common_install_
 
 def test_reviewed_path_marker_surfaces_use_only_home_homebrew_and_usr_local_literals() -> None:
     """Dropping a package-manager location would regress normal installed-agent inventory."""
-    from sidepulse.installed_agent_inventory import default_inventory_candidates
-    from sidepulse.installed_agents import InstalledSurfaceKey
+    from jrbar.installed_agent_inventory import default_inventory_candidates
+    from jrbar.installed_agents import InstalledSurfaceKey
 
     candidates = {candidate.key: candidate for candidate in default_inventory_candidates()}
     expected = {
@@ -77,8 +77,8 @@ def test_reviewed_path_marker_surfaces_use_only_home_homebrew_and_usr_local_lite
 
 
 def test_gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal() -> None:
-    from sidepulse.installed_agent_inventory import default_inventory_candidates
-    from sidepulse.installed_agents import InstalledSurfaceKey
+    from jrbar.installed_agent_inventory import default_inventory_candidates
+    from jrbar.installed_agents import InstalledSurfaceKey
 
     candidates = {candidate.key: candidate for candidate in default_inventory_candidates()}
     desktop = candidates[InstalledSurfaceKey("google", "gemini-desktop")]
@@ -88,7 +88,7 @@ def test_gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal() -> None:
 
 
 def test_exact_package_manager_roots_allow_safe_group_writable_directories() -> None:
-    from sidepulse.installed_agent_inventory import InventoryRoot
+    from jrbar.installed_agent_inventory import InventoryRoot
 
     owners = frozenset({0, os.getuid()})
     for root_id, path in (
@@ -117,8 +117,8 @@ def test_system_applications_root_allows_only_the_reviewed_root_mode_exception(
     tmp_path: Path,
 ) -> None:
     """Treating arbitrary group-writable parents as trusted would allow attacker-controlled apps."""
-    import sidepulse.installed_agent_inventory as inventory
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    import jrbar.installed_agent_inventory as inventory
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     system_root = inventory.InventoryRoot(
         "applications",
@@ -168,8 +168,8 @@ def test_trusted_system_applications_root_refuses_world_writable_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Allowing 0777 would make the fixed system-root exception attacker writable."""
-    import sidepulse.installed_agent_inventory as inventory
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    import jrbar.installed_agent_inventory as inventory
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     root = inventory.InventoryRoot(
         "applications",
@@ -201,12 +201,12 @@ def test_versioned_macos_intellij_plugin_layout_is_deferred_without_directory_en
     tmp_path: Path,
 ) -> None:
     """Guessing a JetBrains product version would make inventory both incomplete and unbounded."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryRoot,
         collect_installed_agent_inventory,
         default_inventory_candidates,
     )
-    from sidepulse.installed_agents import installed_surface_registrations
+    from jrbar.installed_agents import installed_surface_registrations
 
     home = tmp_path / "home"
     plugin = (
@@ -236,12 +236,12 @@ def test_alternate_literal_install_location_emits_one_surface_row_and_refuses_mi
     tmp_path: Path,
 ) -> None:
     """Scanning alternates or emitting duplicate evidence would make installed state ambiguous."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryRoot,
         collect_installed_agent_inventory,
         default_inventory_candidates,
     )
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     home = tmp_path / "home"
     homebrew = tmp_path / "homebrew"
@@ -278,12 +278,12 @@ def test_reviewed_executable_marker_accepts_only_a_trusted_leaf_symlink_and_conf
     tmp_path: Path,
 ) -> None:
     """Rejecting package-manager shims or accepting a config link would misstate safe presence."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryRoot,
         collect_installed_agent_inventory,
         default_inventory_candidates,
     )
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     root = tmp_path / "home"
     root.mkdir()
@@ -318,7 +318,7 @@ def test_reviewed_executable_marker_accepts_only_a_trusted_leaf_symlink_and_conf
 
 def test_inventory_candidate_locations_are_globally_bounded() -> None:
     """Allowing more than 64 literal locations would permit an unbounded host inventory."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         MAX_INVENTORY_CANDIDATES,
         default_inventory_candidates,
     )
@@ -331,8 +331,8 @@ def test_inventory_rejects_duplicate_literal_locations_across_surface_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reusing a location for two surfaces would fabricate ambiguous inventory evidence."""
-    import sidepulse.installed_agent_inventory as inventory
-    from sidepulse.installed_agents import InstalledSurfaceKey
+    import jrbar.installed_agent_inventory as inventory
+    from jrbar.installed_agents import InstalledSurfaceKey
 
     candidates = inventory.default_inventory_candidates()
     agy = next(
@@ -358,7 +358,7 @@ def test_inventory_rejects_duplicate_literal_locations_across_surface_keys(
 
 
 def _roots(tmp_path: Path):
-    from sidepulse.installed_agent_inventory import InventoryRoot
+    from jrbar.installed_agent_inventory import InventoryRoot
 
     names = ("home", "applications", "vscode")
     return tuple(
@@ -381,12 +381,12 @@ def _materialize(root: Path, relative_path: tuple[str, ...], *, mode: int) -> Pa
 
 def test_inventory_collects_only_matching_safe_markers_without_lifecycle_outputs(tmp_path: Path) -> None:
     """Replacing marker validation with a broad scan would leak unsafe host state."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryMarkerKind,
         collect_installed_agent_inventory,
         default_inventory_candidates,
     )
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     roots = _roots(tmp_path)
     for root in roots:
@@ -434,12 +434,12 @@ def test_inventory_collects_only_matching_safe_markers_without_lifecycle_outputs
 @pytest.mark.parametrize("mutation", ("world_writable_parent", "wrong_owner", "not_executable"))
 def test_inventory_refuses_untrusted_or_wrong_shape_markers(tmp_path: Path, mutation: str) -> None:
     """Accepting this marker would let a link or untrusted file claim installation."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryRoot,
         collect_installed_agent_inventory,
         default_inventory_candidates,
     )
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     roots = _roots(tmp_path)
     for root in roots:
@@ -476,7 +476,7 @@ def test_inventory_rejects_unbounded_or_unreviewed_candidate_declarations(
     tmp_path: Path,
 ) -> None:
     """Allowing more or arbitrary candidates would turn inventory into a host scan."""
-    import sidepulse.installed_agent_inventory as inventory
+    import jrbar.installed_agent_inventory as inventory
 
     roots = _roots(tmp_path)
     for root in roots:
@@ -494,8 +494,8 @@ def test_inventory_refuses_parent_replacement_before_emitting_an_observation(
     tmp_path: Path,
 ) -> None:
     """Dropping identity revalidation would accept a path after its trusted parent changed."""
-    import sidepulse.installed_agent_inventory as inventory
-    from sidepulse.installed_agents import InstalledSurfaceKey, SurfacePresence
+    import jrbar.installed_agent_inventory as inventory
+    from jrbar.installed_agents import InstalledSurfaceKey, SurfacePresence
 
     roots = _roots(tmp_path)
     for root in roots:
@@ -532,11 +532,11 @@ def test_inventory_refuses_parent_replacement_before_emitting_an_observation(
 
 def test_inventory_result_is_worker_payload_safe_and_rejects_noninventory_commands(tmp_path: Path) -> None:
     """Accepting another worker key would let unreviewed work enter OS polling."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryRoot,
         execute_inventory_command,
     )
-    from sidepulse.runtime_scheduler import RuntimeWorkCommand, RuntimeWorkerDomain
+    from jrbar.runtime_scheduler import RuntimeWorkCommand, RuntimeWorkerDomain
 
     root = tmp_path / "home"
     root.mkdir()
@@ -570,11 +570,11 @@ def test_one_hundred_inventory_refreshes_keep_the_worker_to_one_running_and_one_
     tmp_path: Path,
 ) -> None:
     """Removing the shared key would create an unbounded inventory queue."""
-    from sidepulse.installed_agent_inventory import (
+    from jrbar.installed_agent_inventory import (
         InventoryRoot,
         execute_inventory_command,
     )
-    from sidepulse.runtime_scheduler import (
+    from jrbar.runtime_scheduler import (
         LatestWinsWorker,
         RuntimeWorkCommand,
         RuntimeWorkerDomain,

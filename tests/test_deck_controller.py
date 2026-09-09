@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_control_settings import DeckControlSettings
-from sidepulse.deck_controller import apply_deck_input
-from sidepulse.deck_input_dispatch import DeckInputDispatch
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_control_settings import DeckControlSettings
+from jrbar.deck_controller import apply_deck_input
+from jrbar.deck_input_dispatch import DeckInputDispatch
 
 
 def test_controller_routes_a_hardware_press_to_the_existing_usage_center():
@@ -36,7 +36,7 @@ def test_controller_ignores_input_during_termination():
 def test_reconfiguration_revokes_input_then_waits_for_old_device_owner_before_starting():
     import threading
 
-    from sidepulse.deck_controller import reconfigure_deck_runtime
+    from jrbar.deck_controller import reconfigure_deck_runtime
 
     stopping, allow_stop = threading.Event(), threading.Event()
     calls = []
@@ -70,7 +70,7 @@ def test_reconfiguration_revokes_input_then_waits_for_old_device_owner_before_st
 
 
 def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop():
-    from sidepulse.deck_controller import reconfigure_deck_runtime
+    from jrbar.deck_controller import reconfigure_deck_runtime
 
     calls = []
     old = SimpleNamespace(revoke_deck_input=lambda: None, close=lambda: None, wait_until_stopped=lambda timeout: False)
@@ -87,7 +87,7 @@ def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop():
 def test_termination_revokes_a_waiting_restart_before_old_owner_finishes():
     import threading
 
-    from sidepulse.deck_controller import reconfigure_deck_runtime, stop_deck_runtime_reconfiguration
+    from jrbar.deck_controller import reconfigure_deck_runtime, stop_deck_runtime_reconfiguration
 
     waiting, stopped = threading.Event(), threading.Event()
     created = []

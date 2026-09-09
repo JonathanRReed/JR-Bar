@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacitySourceHealth,
     CapacityUnit,
     CapacityValue,
@@ -19,7 +19,7 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.reset_policy import evaluate_reset_continuity
+from jrbar.reset_policy import evaluate_reset_continuity
 
 SOURCE = SourceKey("codex", "local", "desktop", "capacity-v1")
 OTHER_SOURCE = SourceKey("codex", "local", "laptop", "capacity-v1")

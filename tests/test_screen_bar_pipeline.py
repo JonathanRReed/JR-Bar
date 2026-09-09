@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.presentation_policy import MotionClass
-from sidepulse.screen_bar_pipeline import (
+from jrbar.presentation_policy import MotionClass
+from jrbar.screen_bar_pipeline import (
     DEFAULT_PRESENTATION_METRICS,
     MAX_METRIC_COUNTER,
     MAX_METRIC_DURATION_NS,
@@ -587,7 +587,7 @@ def test_sampler_constructs_default_controller_only_on_worker(
         construction_threads.append(threading.get_ident())
         return controller
 
-    monkeypatch.setattr("sidepulse.screen_bar_pipeline._default_controller_factory", factory)
+    monkeypatch.setattr("jrbar.screen_bar_pipeline._default_controller_factory", factory)
     sampler = ScreenBarSampler(TwoSampleBuffer(), led_count=2)
     try:
         sampler.reconcile(_command(1, "first"))

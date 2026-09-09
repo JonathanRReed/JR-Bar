@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.handoff_baton import (
+from jrbar.handoff_baton import (
     DEFAULT_HANDOFF_WINDOW_SECONDS,
     MAX_HANDOFF_WINDOW_SECONDS,
     HandoffBatonMotionVariant,

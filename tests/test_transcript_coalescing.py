@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from sidepulse.transcript_runtime import TranscriptFallbackService
+from jrbar.transcript_runtime import TranscriptFallbackService
 
 
 @dataclass(frozen=True)

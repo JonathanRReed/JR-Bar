@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.sd_eject_guard_launch import (
+from jrbar.sd_eject_guard_launch import (
     SdEjectGuardInstallError,
     SdEjectGuardPaths,
     build_sd_eject_guard_plist,
@@ -51,11 +51,11 @@ def test_interactive_guard_passes_exact_selected_identity(tmp_path: Path) -> Non
 
     with (
         patch(
-            "sidepulse.sd_eject_guard_launch.ensure_sd_eject_guard_binary",
+            "jrbar.sd_eject_guard_launch.ensure_sd_eject_guard_binary",
             return_value=target,
         ),
         patch(
-            "sidepulse.sd_eject_guard_launch.subprocess.run",
+            "jrbar.sd_eject_guard_launch.subprocess.run",
             return_value=completed,
         ) as run,
     ):

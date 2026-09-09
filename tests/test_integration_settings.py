@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.integration_settings import (
+from jrbar.integration_settings import (
     INTEGRATION_SETTINGS_SCHEMA_VERSION,
     IntegrationSettingsConcurrentWriteError,
     IntegrationSettingsError,

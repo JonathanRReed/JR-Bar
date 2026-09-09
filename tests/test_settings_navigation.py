@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.settings_navigation import (
+from jrbar.settings_navigation import (
     NATIVE_EFFECT_STUDIO_PAGE,
     NATIVE_USAGE_PAGE,
     SETTINGS_CATEGORIES,

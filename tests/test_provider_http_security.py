@@ -7,7 +7,7 @@ from typing import ClassVar
 
 import pytest
 
-from sidepulse.provider_usage_collectors import ProviderHttpError, _default_http_json
+from jrbar.provider_usage_collectors import ProviderHttpError, _default_http_json
 
 
 class _RedirectHandler(BaseHTTPRequestHandler):

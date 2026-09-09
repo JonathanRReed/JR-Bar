@@ -1,5 +1,5 @@
-from sidepulse.core_state import CoreDomain, StateDelta
-from sidepulse.refresh_admission import admit_refresh
+from jrbar.core_state import CoreDomain, StateDelta
+from jrbar.refresh_admission import admit_refresh
 
 
 def delta(*domains: CoreDomain, urgent: bool = False) -> StateDelta:

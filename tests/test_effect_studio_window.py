@@ -4,24 +4,24 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 
-from sidepulse.effect_assignment_store import (
+from jrbar.effect_assignment_store import (
     EffectAssignmentCache,
     EffectAssignmentStore,
 )
-from sidepulse.effect_pack_store import EffectPackStore
-from sidepulse.effect_studio import (
+from jrbar.effect_pack_store import EffectPackStore
+from jrbar.effect_studio import (
     AssignmentScope,
     ColorVisionMode,
     StudioSurface,
     SyntheticScenario,
     build_surface_simulations,
 )
-from sidepulse.effect_studio_preview import deterministic_preview_samples
-from sidepulse.effect_studio_window import (
+from jrbar.effect_studio_preview import deterministic_preview_samples
+from jrbar.effect_studio_window import (
     EffectStudioWindowController,
     load_effect_studio_catalog,
 )
-from sidepulse.product_identity import PRODUCT_DISPLAY_NAME
+from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -116,19 +116,19 @@ class _PhysicalPreviewRuntime:
         self.released = []
 
     def devices(self):
-        from sidepulse.effect_studio_physical_preview import PhysicalPreviewDevice
+        from jrbar.effect_studio_physical_preview import PhysicalPreviewDevice
 
         return (
             PhysicalPreviewDevice("preview-device-1", "Desk SidePulse", 8),
         )
 
     def availability(self, effect_id, preview_device_id, *, reduce_motion, registry):
-        from sidepulse.effect_studio_physical_preview import PhysicalPreviewAvailability
+        from jrbar.effect_studio_physical_preview import PhysicalPreviewAvailability
 
         return PhysicalPreviewAvailability(True, "Ready for a temporary preview")
 
     def start(self, **kwargs):
-        from sidepulse.effect_studio_physical_preview import PhysicalPreviewStartReceipt
+        from jrbar.effect_studio_physical_preview import PhysicalPreviewStartReceipt
 
         self.started.append(kwargs)
         session_id = f"session-{len(self.started)}"
@@ -337,12 +337,12 @@ def test_pack_management_actions_use_the_validated_owner_private_store(tmp_path)
 
 def test_native_studio_is_reachable_from_the_production_menu() -> None:
     lighting = ast.parse(
-        (ROOT / "src" / "sidepulse" / "lighting_settings_pane.py").read_text(
+        (ROOT / "src" / "jrbar" / "lighting_settings_pane.py").read_text(
             encoding="utf-8"
         )
     )
     production = ast.parse(
-        (ROOT / "src" / "sidepulse" / "_status_bar_production.py").read_text(
+        (ROOT / "src" / "jrbar" / "_status_bar_production.py").read_text(
             encoding="utf-8"
         )
     )

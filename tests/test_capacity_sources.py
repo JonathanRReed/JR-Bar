@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.capacity_sources import (
+from jrbar.capacity_sources import (
     EvidenceMetricKind,
     SupportedCapacityEvidence,
     SupportedLaneEvidence,
     normalize_supported_quota_evidence,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     ObservationState,
     QuotaEffect,
     QuotaHorizon,
@@ -22,7 +22,7 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     AdapterIdentifier,
     CapabilityIdentifier,
     CapacityLaneDescriptor,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepulse.device_identity import (
+from jrbar.device_identity import (
     DeviceHardwareFacts,
     DeviceKind,
     RememberedDeviceRow,

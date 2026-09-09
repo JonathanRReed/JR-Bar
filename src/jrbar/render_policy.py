@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Generic, TypeVar
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.presentation_scheduler import FRAME_FALLBACK_INTERVAL_SECONDS
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.presentation_scheduler import FRAME_FALLBACK_INTERVAL_SECONDS
 
 ACTIVE_RENDER_FPS = 60.0
 STATIC_WATCH_FPS = 4.0

@@ -1,5 +1,5 @@
-from sidepulse.animation import loop_duration_ms, parse_animation
-from sidepulse.presentation_compiler import (
+from jrbar.animation import loop_duration_ms, parse_animation
+from jrbar.presentation_compiler import (
     MIN_PRESENTATION_CYCLE_MS,
     MIN_SATURATED_RED_CYCLE_MS,
     compile_presentation_program,

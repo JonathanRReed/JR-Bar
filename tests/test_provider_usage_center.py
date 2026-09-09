@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from sidepulse.provider_feature_settings import (
+from jrbar.provider_feature_settings import (
     ProviderInstanceVisualPolicy,
     ProviderInstanceVisualProjection,
 )
-from sidepulse.provider_usage_center import project_usage_center, usage_center_text
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_center import project_usage_center, usage_center_text
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_runtime import ProviderUsageState
 
 
 def test_usage_center_projects_dynamic_lanes_and_quality_of_life_fields():

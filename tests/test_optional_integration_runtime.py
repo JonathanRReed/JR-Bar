@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse.models import AgentMode
-from sidepulse.optional_integration_runtime import (
+from jrbar.models import AgentMode
+from jrbar.optional_integration_runtime import (
     CreatorMicroOutputService,
     OptionalIntegrationRuntime,
     creator_semantic_state,
@@ -242,7 +242,7 @@ def test_output_service_reports_unsupported_firmware_without_applying():
 def test_input_is_delivered_while_output_is_idle_on_the_same_transport_owner():
     from collections import deque
 
-    from sidepulse.creator_micro_adapter import CreatorMicro2Adapter, CreatorMicro2Framer, RpcStreamDecoder
+    from jrbar.creator_micro_adapter import CreatorMicro2Adapter, CreatorMicro2Framer, RpcStreamDecoder
 
     received, ready = threading.Event(), threading.Event()
     inputs, owners = [], set()
@@ -300,9 +300,9 @@ def test_input_is_delivered_while_output_is_idle_on_the_same_transport_owner():
 
 
 def test_runtime_wires_saved_macros_and_revokes_delivery_when_disabled():
-    from sidepulse.deck_actions import DeckAction
-    from sidepulse.deck_actions_macos import MacDeckActionExecutor
-    from sidepulse.deck_control_settings import DeckControlSettings
+    from jrbar.deck_actions import DeckAction
+    from jrbar.deck_actions_macos import MacDeckActionExecutor
+    from jrbar.deck_control_settings import DeckControlSettings
 
     batches, opened = [], []
     target = SimpleNamespace(
@@ -340,8 +340,8 @@ def test_runtime_wires_saved_macros_and_revokes_delivery_when_disabled():
 
 
 def test_master_device_switch_uses_serialized_reconfiguration_instead_of_starting_a_second_owner(monkeypatch):
-    from sidepulse import integration_settings
-    from sidepulse.optional_integration_runtime import set_creator_micro_output_enabled_async
+    from jrbar import integration_settings
+    from jrbar.optional_integration_runtime import set_creator_micro_output_enabled_async
 
     settings = integration_settings.IntegrationSettings(creator_micro_enabled=True, creator_micro_device_serial="CM2")
     saved, calls, ready = [], [], threading.Event()
@@ -361,8 +361,8 @@ def test_master_device_switch_uses_serialized_reconfiguration_instead_of_startin
 
 
 def test_master_device_settings_last_intent_wins_during_a_slow_save(monkeypatch):
-    from sidepulse import integration_settings
-    from sidepulse.optional_integration_runtime import set_creator_micro_output_enabled_async
+    from jrbar import integration_settings
+    from jrbar.optional_integration_runtime import set_creator_micro_output_enabled_async
 
     current = [integration_settings.IntegrationSettings(creator_micro_device_serial="CM2")]
     first_saving, finish_first, done = threading.Event(), threading.Event(), threading.Event()
@@ -393,8 +393,8 @@ def test_master_device_settings_last_intent_wins_during_a_slow_save(monkeypatch)
 
 
 def test_creator_output_uses_the_same_user_colors_and_brightness_policy_as_other_devices():
-    from sidepulse.colors import ColorSettings
-    from sidepulse.deck_control_settings import DeckControlSettings
+    from jrbar.colors import ColorSettings
+    from jrbar.deck_control_settings import DeckControlSettings
 
     frames, brightness_targets = [], []
 

@@ -8,7 +8,7 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.alcove_observation import (
+from jrbar.alcove_observation import (
     ALCOVE_HOLD_SECONDS,
     AlcoveCaptureRequest,
     AlcoveCaptureStatus,
@@ -140,7 +140,7 @@ def test_recovery_hold_expires_after_eight_seconds() -> None:
 
 
 def test_note_captured_status_records_fresh_geometry_by_default() -> None:
-    import sidepulse.alcove_observation as observation_module
+    import jrbar.alcove_observation as observation_module
 
     observation_module.reset_alcove_status()
     note_alcove_status(AlcoveCaptureStatus.CAPTURED, now=100.0)

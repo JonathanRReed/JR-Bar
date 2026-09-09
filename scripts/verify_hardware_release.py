@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from sidepulse.device_writer import discover_devices, write_led_program
+from jrbar.device_writer import discover_devices, write_led_program
 
 SMOKE_PROGRAM = "#00E5FF 1s pulse\noff 1s none"
 MAX_BACKUP_BYTES = 512

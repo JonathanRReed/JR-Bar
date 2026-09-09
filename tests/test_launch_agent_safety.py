@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-from sidepulse import status_bar_launch
+from jrbar import status_bar_launch
 
 
 def test_launch_agent_declares_restart_throttle_and_exit_timeout() -> None:

@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import animation_store as store
-from sidepulse.animation import (
+from jrbar import animation_store as store
+from jrbar.animation import (
     MAX_PROGRAM_BYTES,
     MAX_PROGRAM_LINES,
     OFF,
@@ -47,14 +47,14 @@ from sidepulse.animation import (
     render_animation,
     validate_animation,
 )
-from sidepulse.led_status import style_to_program
-from sidepulse.signals import SIGNAL_PATTERNS, SignalStyle
+from jrbar.led_status import style_to_program
+from jrbar.signals import SIGNAL_PATTERNS, SignalStyle
 
 # --- helpers ---------------------------------------------------------------
 
 
 def _firmware(led_count: int = 8):
-    from sidepulse.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
 
     try:
         return SdLedWasmController(led_count=led_count)
@@ -492,7 +492,7 @@ def test_a_saved_animation_can_be_burned_by_name_through_led_status(tmp_path) ->
     Deleted led_status.burn_saved_animation_to_power_up: the editor has no
     device-facing entry point and the module is unreachable.
     """
-    from sidepulse.led_status import burn_saved_animation_to_power_up
+    from jrbar.led_status import burn_saved_animation_to_power_up
 
     _firmware()
     path = tmp_path / "animation-library.json"

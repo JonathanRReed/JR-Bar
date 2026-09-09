@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sidepulse.creator_micro_adapter import Receipt
-from sidepulse.creator_micro_keymap import KeymapPlan
-from sidepulse.creator_micro_setup_controller import (
+from jrbar.creator_micro_adapter import Receipt
+from jrbar.creator_micro_keymap import KeymapPlan
+from jrbar.creator_micro_setup_controller import (
     SetupPreview,
     apply_creator_micro_setup_result,
     begin_creator_micro_apply,

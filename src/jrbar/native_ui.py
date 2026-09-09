@@ -1111,7 +1111,7 @@ def cascade_pane_cards(pane, *, reduce_motion: bool = False) -> None:
                         "easeOut"
                     )
                 )
-            layer.addAnimation_forKey_(fade, "sidepulse.card.fade")
-            layer.addAnimation_forKey_(rise, "sidepulse.card.rise")
+            layer.addAnimation_forKey_(fade, "jrbar.card.fade")
+            layer.addAnimation_forKey_(rise, "jrbar.card.rise")
     except Exception:
         pass

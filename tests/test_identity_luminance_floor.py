@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sidepulse.collector import AgentMode, AgentStatus
-from sidepulse.colors import (
+from jrbar.collector import AgentMode, AgentStatus
+from jrbar.colors import (
     IDENTITY_LUMINANCE_FLOOR,
     PROVIDER_BRAND_COLORS,
     ColorSettings,
@@ -85,8 +85,8 @@ def test_a_custom_near_black_pick_still_lights_the_crowd_render() -> None:
 
 
 def test_solo_active_glyph_floors_a_dark_identity_but_rest_stays_dim() -> None:
-    from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-    from sidepulse.presentation_policy import (
+    from jrbar.accessibility_display import AccessibilityDisplayPreferences
+    from jrbar.presentation_policy import (
         GlanceOverrideReason,
         GlanceSemantic,
         ResolvedGlance,

@@ -8060,7 +8060,7 @@ class StatusBarController(NSObject):
                 try:
                     self.post_webhook(
                         {
-                            "event": "sidepulse.completion",
+                            "event": "jrbar.completion",
                             "provider": status.provider,
                             "label": status.display_name[:80],
                             "color": completion_color(status),
@@ -8755,8 +8755,8 @@ class StatusBarController(NSObject):
         if type(payload_dict) is not dict:
             return None
         return {
-            "sidepulse.completion": signals_module.SIGNAL_COMPLETION,
-            "sidepulse.escalation": signals_module.INTERRUPT_ESCALATION,
+            "jrbar.completion": signals_module.SIGNAL_COMPLETION,
+            "jrbar.escalation": signals_module.INTERRUPT_ESCALATION,
         }.get(payload_dict.get("event"))
 
     def webhook_effect_allowed(self, payload_dict: object) -> bool:
@@ -8992,7 +8992,7 @@ class StatusBarController(NSObject):
             oldest_age = max(0.0, time.monotonic() - self.ask_blocked_since)
         self.post_webhook(
             {
-                "event": "sidepulse.escalation",
+                "event": "jrbar.escalation",
                 "stage": stage,
                 "ask_count": len(asks),
                 "oldest_ask_seconds": round(oldest_age),

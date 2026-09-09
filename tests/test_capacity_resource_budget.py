@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.capacity_refresh import RefreshStatusKind
-from sidepulse.capacity_types import SourceKey
-from sidepulse.providers import negotiated_provider_sources
-from sidepulse.usage_view import build_provider_usage_view
+from jrbar import usage_stats
+from jrbar.capacity_refresh import RefreshStatusKind
+from jrbar.capacity_types import SourceKey
+from jrbar.providers import negotiated_provider_sources
+from jrbar.usage_view import build_provider_usage_view
 from tests.test_sidepulse import isolate_controller
 
 CODEX_QUOTA = SourceKey(
@@ -86,7 +86,7 @@ def test_disabled_remote_capacity_never_owns_a_timer_or_healthy_state(
     assert CLAUDE_QUOTA not in rows
 
     with (
-        patch("sidepulse.status_bar.threading.Thread") as thread_type,
+        patch("jrbar.status_bar.threading.Thread") as thread_type,
         patch.object(target, "update_usage_menu_fields"),
     ):
         assert target.request_usage_refresh((CLAUDE_QUOTA,), reason="menu-open") == ()
@@ -162,7 +162,7 @@ def test_canonical_menu_open_still_requests_usage_sources(controller) -> None:
     )
 
     with (
-        patch("sidepulse.status_bar._canonical_agent_browser_projection"),
+        patch("jrbar.status_bar._canonical_agent_browser_projection"),
         patch.object(target, "maybe_refresh_usage_summary") as refresh,
     ):
         target.menuWillOpen_(None)
@@ -203,7 +203,7 @@ def test_duplicate_exact_sources_create_one_generation_and_one_batch_worker(
 
     with (
         patch.object(status_bar, "NSTimer", timer_api),
-        patch("sidepulse.status_bar.threading.Thread") as thread_type,
+        patch("jrbar.status_bar.threading.Thread") as thread_type,
     ):
         started = target.request_usage_refresh(
             (
@@ -255,7 +255,7 @@ def test_warm_unchanged_exact_usage_source_performs_zero_disk_writes(
     )
 
     cold = scan_provider_usage(source, root, cache, since_epoch=0.0)
-    with patch("sidepulse.usage_stats.atomic_private_write") as write:
+    with patch("jrbar.usage_stats.atomic_private_write") as write:
         warm = scan_provider_usage(source, root, cache, since_epoch=0.0)
 
     assert warm.input_tokens == cold.input_tokens == 17
@@ -289,10 +289,10 @@ def test_countdown_tick_performs_no_disk_or_source_work(controller) -> None:
     target._capacity_countdown_timer = timer
 
     with (
-        patch("sidepulse.status_bar.usage_stats.scan_usage") as scan,
-        patch("sidepulse.status_bar.usage_stats.codex_rate_limits") as codex,
-        patch("sidepulse.status_bar.claude_quota.fetch_windows") as claude,
-        patch("sidepulse.usage_stats.atomic_private_write") as write,
+        patch("jrbar.status_bar.usage_stats.scan_usage") as scan,
+        patch("jrbar.status_bar.usage_stats.codex_rate_limits") as codex,
+        patch("jrbar.status_bar.claude_quota.fetch_windows") as claude,
+        patch("jrbar.usage_stats.atomic_private_write") as write,
         patch.object(target, "_schedule_capacity_timer", return_value=MagicMock()),
     ):
         target.capacityCountdown_(timer)

@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.completions import completion_events, detect_completion_batch
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.completions import completion_events, detect_completion_batch
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     CanonicalOperatorEvent,
     InterruptionClass,
     SemanticEventKey,
     TransitionKind,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     SourceFreshness,

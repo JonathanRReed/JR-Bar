@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.provider_browser_consent import BrowserConsentStore
-from sidepulse.provider_usage_settings import default_provider_usage_settings
+from jrbar.provider_browser_consent import BrowserConsentStore
+from jrbar.provider_usage_settings import default_provider_usage_settings
 
 
 class Credentials:
@@ -44,8 +44,8 @@ def _grant(
 
 
 def test_browser_sources_setting_alone_never_invokes_a_browser_reader(monkeypatch):
-    from sidepulse import browser_session_import
-    from sidepulse import provider_usage_collectors as collectors
+    from jrbar import browser_session_import
+    from jrbar import provider_usage_collectors as collectors
 
     monkeypatch.setattr(
         browser_session_import,
@@ -72,8 +72,8 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader(monkeypatc
 
 
 def test_explicit_import_never_falls_back_to_a_broad_browser_scan(monkeypatch):
-    from sidepulse import browser_session_import, provider_browser_access
-    from sidepulse.provider_browser_consent import LoadedBrowserConsents
+    from jrbar import browser_session_import, provider_browser_access
+    from jrbar.provider_browser_consent import LoadedBrowserConsents
 
     monkeypatch.setattr(
         provider_browser_access,
@@ -81,7 +81,7 @@ def test_explicit_import_never_falls_back_to_a_broad_browser_scan(monkeypatch):
         lambda: (_ for _ in ()).throw(AssertionError("no session should be saved")),
     )
     monkeypatch.setattr(
-        "sidepulse.provider_browser_consent.load_browser_consents",
+        "jrbar.provider_browser_consent.load_browser_consents",
         lambda: LoadedBrowserConsents(
             BrowserConsentStore.empty(), read_only=False, unknown_fields=()
         ),
@@ -105,12 +105,12 @@ def test_explicit_import_never_falls_back_to_a_broad_browser_scan(monkeypatch):
 
 
 def test_unauthorized_background_repair_requires_exact_persisted_consent(monkeypatch):
-    from sidepulse import browser_session_import
-    from sidepulse import provider_usage_collectors as collectors
-    from sidepulse.provider_browser_consent import LoadedBrowserConsents
+    from jrbar import browser_session_import
+    from jrbar import provider_usage_collectors as collectors
+    from jrbar.provider_browser_consent import LoadedBrowserConsents
 
     monkeypatch.setattr(
-        "sidepulse.provider_browser_consent.load_browser_consents",
+        "jrbar.provider_browser_consent.load_browser_consents",
         lambda: LoadedBrowserConsents(
             BrowserConsentStore.empty(), read_only=False, unknown_fields=()
         ),
@@ -145,7 +145,7 @@ def test_unauthorized_background_repair_requires_exact_persisted_consent(monkeyp
 def test_consent_resolver_fails_closed_before_reading_for_missing_or_wrong_scope(
     tmp_path: Path,
 ):
-    from sidepulse.provider_browser_access import _consented_devin_session
+    from jrbar.provider_browser_access import _consented_devin_session
 
     reads = []
 
@@ -182,7 +182,7 @@ def test_consent_resolver_fails_closed_before_reading_for_missing_or_wrong_scope
 
 
 def test_consent_resolver_refuses_ambiguous_profiles_before_reading(tmp_path: Path):
-    from sidepulse.provider_browser_access import _consented_devin_session
+    from jrbar.provider_browser_access import _consented_devin_session
 
     consents = _grant(profile="Default").grant(
         provider_id="devin",
@@ -208,8 +208,8 @@ def test_consent_resolver_refuses_ambiguous_profiles_before_reading(tmp_path: Pa
 def test_consent_resolver_reads_only_the_exact_granted_browser_profile(
     tmp_path: Path,
 ):
-    from sidepulse.browser_session_import import BrowserSession
-    from sidepulse.provider_browser_access import _consented_devin_session
+    from jrbar.browser_session_import import BrowserSession
+    from jrbar.provider_browser_access import _consented_devin_session
 
     expected = BrowserSession(
         token="auth1_exact-profile-token",
@@ -233,7 +233,7 @@ def test_consent_resolver_reads_only_the_exact_granted_browser_profile(
 
 
 def test_exact_firefox_family_reader_never_scans_sibling_profiles(tmp_path: Path):
-    from sidepulse.browser_session_import import (
+    from jrbar.browser_session_import import (
         DEVIN_ORIGIN,
         import_devin_session_from_profile,
         origin_directory_name,
@@ -277,7 +277,7 @@ def test_firefox_reader_never_returns_unconsented_local_storage_fields(
 ):
     import sqlite3
 
-    from sidepulse.browser_session_import import read_local_storage
+    from jrbar.browser_session_import import read_local_storage
 
     database = tmp_path / "data.sqlite"
     with sqlite3.connect(database) as connection:
@@ -299,7 +299,7 @@ def test_firefox_reader_never_returns_unconsented_local_storage_fields(
 
 
 def test_profile_name_cannot_escape_the_consented_browser_root(tmp_path: Path):
-    from sidepulse.browser_session_import import import_devin_session_from_profile
+    from jrbar.browser_session_import import import_devin_session_from_profile
 
     assert (
         import_devin_session_from_profile(

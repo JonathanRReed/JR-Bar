@@ -4,14 +4,14 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.animation import (
+from jrbar.animation import (
     Animation,
     PaintStep,
     RepeatStep,
     Timing,
     WholeBar,
 )
-from sidepulse.finite_effect_policy import (
+from jrbar.finite_effect_policy import (
     MAX_FINITE_REPETITIONS,
     MAX_FINITE_TOTAL_DURATION_MS,
     MAX_SAFE_CADENCE_HZ,

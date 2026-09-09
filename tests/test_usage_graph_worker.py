@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse import usage_graph_worker
-from sidepulse.t3_compat import project_t3_read_only_policy
+from jrbar import usage_graph_worker
+from jrbar.t3_compat import project_t3_read_only_policy
 
 
 class FakeView:
@@ -121,7 +121,7 @@ def test_scan_lands_model_and_resolves_loading_label(
 
 
 def test_scan_lands_the_same_immutable_heatmap_payload(monkeypatch, synchronous_worker):
-    from sidepulse.usage_heatmap import build_usage_heatmap
+    from jrbar.usage_heatmap import build_usage_heatmap
 
     target = make_target(providers=("claude", "codex"))
     stamp = datetime.now().timestamp()
@@ -839,8 +839,8 @@ def test_cost_graph_discloses_api_equivalent_semantics(monkeypatch) -> None:
 
 @pytest.mark.parametrize("mode", ["tokens", "cost", "sessions", "percent"])
 def test_activity_selection_applies_to_chart_heatmap_and_summary(monkeypatch, tmp_path, mode):
-    from sidepulse import session_history, usage_percent_history
-    from sidepulse.private_io import atomic_private_write
+    from jrbar import session_history, usage_percent_history
+    from jrbar.private_io import atomic_private_write
 
     now = datetime.now()
     selected = ("devin",) if mode in ("sessions", "percent") else ("claude",)
@@ -881,7 +881,7 @@ def test_activity_selection_applies_to_chart_heatmap_and_summary(monkeypatch, tm
 
 
 def test_antigravity_steps_contribute_sessions_but_not_measured_token_heatmap(monkeypatch):
-    from sidepulse import session_history
+    from jrbar import session_history
 
     now = datetime.now().timestamp()
     monkeypatch.setattr(usage_graph_worker.usage_stats, "scan_usage", lambda *_args, **_kwargs:

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.global_actions import GlobalActionID, ShortcutChord, ShortcutModifier
-from sidepulse.global_hotkeys import (
+from jrbar.global_actions import GlobalActionID, ShortcutChord, ShortcutModifier
+from jrbar.global_hotkeys import (
     BackendHotkeyRegistration,
     CarbonBackendError,
     CarbonHotkeyBackend,
@@ -626,7 +626,7 @@ def test_carbon_handler_removal_failure_retains_callback_and_target_for_retry() 
 
 def test_registry_source_cannot_observe_ordinary_keys_or_event_text() -> None:
     source = (
-        Path(__file__).resolve().parents[1] / "src" / "sidepulse" / "global_hotkeys.py"
+        Path(__file__).resolve().parents[1] / "src" / "jrbar" / "global_hotkeys.py"
     ).read_text(encoding="utf-8")
 
     forbidden = (

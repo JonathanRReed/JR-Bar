@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sidepulse.demo_sandbox import (
+from jrbar.demo_sandbox import (
     DEMO_SCENARIOS,
     MAX_EVENTS,
     DemoLightMode,
@@ -127,7 +127,7 @@ def test_unknown_scenario_is_rejected_without_io() -> None:
 
 
 def test_demo_is_reachable_from_both_cli_surfaces() -> None:
-    from sidepulse.cli import build_parser, build_sidepulse_parser, cmd_demo
+    from jrbar.cli import build_parser, build_sidepulse_parser, cmd_demo
 
     for parser in (build_sidepulse_parser(), build_parser()):
         parsed = parser.parse_args(["demo", "notification_light", "--seed", "9"])

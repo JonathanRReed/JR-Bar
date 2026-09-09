@@ -4,7 +4,7 @@ from unittest.mock import call, patch
 
 import pytest
 
-from sidepulse import display_brightness
+from jrbar import display_brightness
 
 
 def test_display_services_read_is_authoritative_for_active_display() -> None:

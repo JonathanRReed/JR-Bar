@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sidepulse.provider_credential_store import ProviderCredentialStore
-from sidepulse.provider_instances import ProviderInstanceKey
+from jrbar.provider_credential_store import ProviderCredentialStore
+from jrbar.provider_instances import ProviderInstanceKey
 
 
 class FakeBackend:

@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from sidepulse.brightness_policy import (
+from jrbar.brightness_policy import (
     MIN_AMBIENT_VISIBLE_BRIGHTNESS,
     MIN_ESCALATION_VISIBLE_BRIGHTNESS,
     BrightnessPolicyResult,
@@ -22,7 +22,7 @@ def _names(trace: tuple[BrightnessTraceStep, ...]) -> tuple[str, ...]:
 def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer() -> None:
     probe = (
         "import json, sys\n"
-        "import sidepulse.brightness_policy\n"
+        "import jrbar.brightness_policy\n"
         "print(json.dumps(sorted(m for m in sys.modules if m.startswith('sidepulse'))))\n"
     )
     result = subprocess.run(
@@ -34,8 +34,8 @@ def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer() -> Non
     )
 
     assert result.returncode == 0, result.stderr
-    assert '"sidepulse._led_status_legacy"' not in result.stdout
-    assert '"sidepulse.led_status"' not in result.stdout
+    assert '"jrbar._led_status_legacy"' not in result.stdout
+    assert '"jrbar.led_status"' not in result.stdout
 
 
 def test_ambient_brightness_preserves_the_current_factor_order() -> None:

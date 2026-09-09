@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sidepulse.completions import SUBAGENT_HOLD_SECONDS, detect_completion_batch
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.completions import SUBAGENT_HOLD_SECONDS, detect_completion_batch
+from jrbar.models import AgentMode, AgentStatus
 
 
 def _main(mode: AgentMode) -> AgentStatus:

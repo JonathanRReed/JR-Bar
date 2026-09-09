@@ -4,8 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.collector import (
+from jrbar.capacity_types import SourceKey
+from jrbar.collector import (
     LATEST_STATE_MAX_BYTES,
     AgentMonitor,
     LiveAgentMonitor,
@@ -13,9 +13,9 @@ from sidepulse.collector import (
     SourceSpec,
     agent_status_from_canonical_work,
 )
-from sidepulse.models import AgentMode, HookEvent
-from sidepulse.operator_state import BootIdentifier, ClockSample, TransitionKind
-from sidepulse.provider_facts import (
+from jrbar.models import AgentMode, HookEvent
+from jrbar.operator_state import BootIdentifier, ClockSample, TransitionKind
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,

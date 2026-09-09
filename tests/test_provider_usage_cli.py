@@ -4,13 +4,13 @@ import io
 import json
 from pathlib import Path
 
-from sidepulse import provider_usage_cli
-from sidepulse.provider_browser_import import BrowserImportResult, BrowserImportState
-from sidepulse.provider_usage_platform import (
+from jrbar import provider_usage_cli
+from jrbar.provider_browser_import import BrowserImportResult, BrowserImportState
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_runtime import ProviderUsageState
 
 
 class Credentials:

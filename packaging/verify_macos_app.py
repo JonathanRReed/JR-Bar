@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from sidepulse.trusted_tools import trusted_system_tool
+from jrbar.trusted_tools import trusted_system_tool
 
 EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
 EXPECTED_EXECUTABLE_NAME = "SidePulse"

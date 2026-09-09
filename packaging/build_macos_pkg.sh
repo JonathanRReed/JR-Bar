@@ -194,8 +194,8 @@ LC_ALL=C "$VENV_DIR/bin/python" -m pip list --format=freeze \
     --collect-submodules Cocoa \
     --collect-data sidepulse.resources \
     --copy-metadata sidepulse \
-    --hidden-import sidepulse.creator_micro_adapter \
-    --hidden-import sidepulse.creator_micro_hidapi \
+    --hidden-import jrbar.creator_micro_adapter \
+    --hidden-import jrbar.creator_micro_hidapi \
     --hidden-import hid \
     "$ROOT_DIR/packaging/sidepulse_entry.py"
 

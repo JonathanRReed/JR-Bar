@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sidepulse.core_state import CoreDomain, CoreStateStore, stable_digest
+from jrbar.core_state import CoreDomain, CoreStateStore, stable_digest
 
 
 def test_stable_digest_is_independent_of_mapping_and_set_order() -> None:

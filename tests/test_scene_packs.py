@@ -4,14 +4,14 @@ import json
 
 import pytest
 
-from sidepulse.scene_pack_preview import plan_scene_pack_import
-from sidepulse.scene_packs import (
+from jrbar.scene_pack_preview import plan_scene_pack_import
+from jrbar.scene_packs import (
     CURRENT_SCENE_PACK_VERSION,
     ScenePackError,
     export_scene_pack,
     validate_scene_pack,
 )
-from sidepulse.scenes import MotionLevel, Scene
+from jrbar.scenes import MotionLevel, Scene
 
 
 def _pack(**overrides: object) -> dict[str, object]:

@@ -8,31 +8,31 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sidepulse import status_bar
-from sidepulse.agent_browser_window import AgentBrowserAnswerPayload
-from sidepulse.announcer_stack import (
+from jrbar import status_bar
+from jrbar.agent_browser_window import AgentBrowserAnswerPayload
+from jrbar.announcer_stack import (
     AnnouncerStackAction,
     AnnouncerStackIntent,
     AnnouncerStackVisibility,
     announcer_alert_identity,
 )
-from sidepulse.answer_in_place import AnswerActionKind, AnswerAttemptState
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from sidepulse.capacity_types import SourceKey
-from sidepulse.dnd_policy import (
+from jrbar.answer_in_place import AnswerActionKind, AnswerAttemptState
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.capacity_types import SourceKey
+from jrbar.dnd_policy import (
     DndMode,
     DndSource,
     compose_dnd_contributions,
     contribution_for_mode,
 )
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     BootIdentifier,
     ClockSample,
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     AdapterIdentifier,
     ContractStatus,
     LocalRuntimeSurfaceIdentifier,
@@ -44,7 +44,7 @@ from sidepulse.provider_contracts import (
     SchemaVersion,
     SourceInstanceIdentifier,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -63,7 +63,7 @@ from sidepulse.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from sidepulse.virtual_device import VirtualStatusDevice
+from jrbar.virtual_device import VirtualStatusDevice
 
 NOW = datetime(2026, 8, 30, tzinfo=timezone.utc)
 

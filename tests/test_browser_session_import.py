@@ -16,7 +16,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from sidepulse.browser_session_import import (
+from jrbar.browser_session_import import (
     DEVIN_ORIGIN,
     devin_session_from_entries,
     firefox_profile_directories,

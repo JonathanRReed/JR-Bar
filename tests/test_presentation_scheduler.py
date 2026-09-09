@@ -11,7 +11,7 @@ from itertools import product
 
 import pytest
 
-from sidepulse.presentation_scheduler import (
+from jrbar.presentation_scheduler import (
     ALCOVE_INTERVAL_SECONDS,
     ALCOVE_TOLERANCE_SECONDS,
     FRAME_FALLBACK_INTERVAL_SECONDS,
@@ -22,7 +22,7 @@ from sidepulse.presentation_scheduler import (
     PresentationSchedulerState,
     plan_presentation_schedule,
 )
-from sidepulse.runtime_scheduler import (
+from jrbar.runtime_scheduler import (
     RUNTIME_TIMER_SELECTOR,
     AppKitTimerRegistry,
     RuntimeFeature,

@@ -10,12 +10,12 @@ from collections import deque
 
 import pytest
 
-from sidepulse.creator_micro_adapter import (
+from jrbar.creator_micro_adapter import (
     CreatorMicro2Adapter,
     CreatorMicro2Framer,
     RpcStreamDecoder,
 )
-from sidepulse.creator_micro_hidapi import HidApiTransport, NoDeviceError
+from jrbar.creator_micro_hidapi import HidApiTransport, NoDeviceError
 
 INFO = {"vendor_id": 0x303A, "product_id": 0x8298, "usage_page": 0xFF00, "usage": 1}
 SERIAL = "CM2-CONFORMANCE-FIXTURE"
@@ -183,7 +183,7 @@ class FakeHid:
 
 def open_transport(monkeypatch, **kwargs):
     # Do not call a native Darwin symbol in an OS-independent protocol test.
-    monkeypatch.setattr("sidepulse.creator_micro_hidapi._enable_macos_nonexclusive", lambda _: None)
+    monkeypatch.setattr("jrbar.creator_micro_hidapi._enable_macos_nonexclusive", lambda _: None)
     device = FakeHidDevice(**kwargs)
     transport = HidApiTransport(FakeHid(device), approved_serial=SERIAL)
     transport.open()

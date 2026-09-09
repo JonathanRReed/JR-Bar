@@ -31,16 +31,16 @@ import time
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.capacity_types import ObservationState
-from sidepulse.provider_capacity import negotiate_provider_capacity_policies
-from sidepulse.providers import negotiated_provider_sources
-from sidepulse.usage_view import (
+from jrbar import usage_stats
+from jrbar.capacity_types import ObservationState
+from jrbar.provider_capacity import negotiate_provider_capacity_policies
+from jrbar.providers import negotiated_provider_sources
+from jrbar.usage_view import (
     LocalActivitySection,
     build_provider_usage_view,
 )
 
-status_bar = pytest.importorskip("sidepulse.status_bar")
+status_bar = pytest.importorskip("jrbar.status_bar")
 
 
 _NOW = 1_800_000_000.0

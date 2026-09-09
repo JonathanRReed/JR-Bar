@@ -5,16 +5,16 @@ from datetime import UTC, datetime
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.models import HookEvent
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.models import HookEvent
+from jrbar.operator_state import (
     BootIdentifier,
     ClockSample,
     TransitionKind,
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_adapters import (
+from jrbar.provider_adapters import (
     InertProviderRecord,
     NormalizedProviderRecord,
     NotificationKind,
@@ -24,8 +24,8 @@ from sidepulse.provider_adapters import (
     normalized_provider_record_to_payload,
     provider_facts_for_record,
 )
-from sidepulse.provider_contracts import negotiate_provider_contract
-from sidepulse.provider_facts import (
+from jrbar.provider_contracts import negotiate_provider_contract
+from jrbar.provider_facts import (
     NextActor,
     ObservationAuthority,
     ProviderRequestState,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sidepulse import firmware_validation
+from jrbar import firmware_validation
 
 
 @dataclass(frozen=True)

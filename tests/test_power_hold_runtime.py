@@ -3,10 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from sidepulse.keep_awake import KeepAwakeController
-from sidepulse.lid_sleep import ClosedLidAwakeController
-from sidepulse.models import AgentMode
-from sidepulse.settings import (
+from jrbar.keep_awake import KeepAwakeController
+from jrbar.lid_sleep import ClosedLidAwakeController
+from jrbar.models import AgentMode
+from jrbar.settings import (
     CLOSED_LID_AWAKE_AGENTS,
     CLOSED_LID_AWAKE_ALWAYS,
     AgentMonitorSettings,
@@ -150,7 +150,7 @@ def test_battery_release_does_not_rewrite_display_choice() -> None:
 
 
 def test_status_controller_reads_agent_and_display_choices_each_sync() -> None:
-    from sidepulse import status_bar
+    from jrbar import status_bar
 
     calls: list[tuple[str, object]] = []
 

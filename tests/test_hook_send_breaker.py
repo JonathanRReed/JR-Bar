@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.ipc import (
+from jrbar.ipc import (
     HOOK_BREAKER_TRIP_AFTER,
     HOOK_EVENT_SEND_TIMEOUT_SECONDS,
     TERMINAL_HOOK_EVENTS,

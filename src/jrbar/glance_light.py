@@ -15,8 +15,12 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Final
 
-GLANCE_LIGHT_DOCUMENT_SCHEMA: Final = "sidepulse.glance-light"
-GLANCE_LIGHT_DOCUMENT_VERSION: Final = 1
+GLANCE_LIGHT_DOCUMENT_SCHEMA: Final = "jrbar.glance-light"
+# Documents written before the JR-Bar rename carry the old schema string.
+_LEGACY_GLANCE_LIGHT_DOCUMENT_SCHEMA: Final = "sidepulse.glance-light"
+_ACCEPTED_GLANCE_LIGHT_SCHEMAS: Final = frozenset({GLANCE_LIGHT_DOCUMENT_SCHEMA, _LEGACY_GLANCE_LIGHT_DOCUMENT_SCHEMA})
+GLANCE_LIGHT_DOCUMENT_VERSION: Final = 2
+_ACCEPTED_GLANCE_LIGHT_VERSIONS: Final = frozenset({1, GLANCE_LIGHT_DOCUMENT_VERSION})
 MAX_GLANCE_NOTIFICATIONS: Final = 64
 MAX_GLANCE_DOCUMENT_BYTES: Final = 64 * 1024
 
@@ -802,9 +806,9 @@ def restore_glance_light_document(document: object) -> GlanceLightState | None:
         if type(value) is not dict or set(value) != _DOCUMENT_FIELDS:
             return None
         if (
-            value["schema"] != GLANCE_LIGHT_DOCUMENT_SCHEMA
+            value["schema"] not in _ACCEPTED_GLANCE_LIGHT_SCHEMAS
             or type(value["version"]) is not int
-            or value["version"] != GLANCE_LIGHT_DOCUMENT_VERSION
+            or value["version"] not in _ACCEPTED_GLANCE_LIGHT_VERSIONS
             or type(value["notifications"]) is not list
             or len(value["notifications"]) > MAX_GLANCE_NOTIFICATIONS
         ):

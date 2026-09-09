@@ -4,8 +4,8 @@ import json
 import stat
 from pathlib import Path
 
-from sidepulse.effect_pack_store import PackMutationStatus
-from sidepulse.scene_pack_store import ScenePackStore
+from jrbar.effect_pack_store import PackMutationStatus
+from jrbar.scene_pack_store import ScenePackStore
 
 
 def _pack(*, name: str = "Quiet Work", version: int = 2) -> dict[str, object]:

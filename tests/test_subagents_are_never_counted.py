@@ -23,36 +23,36 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from sidepulse.agent_browser import (
+from jrbar.agent_browser import (
     AgentBrowserQuery,
     build_agent_browser_documents,
     project_agent_browser,
 )
-from sidepulse.attention import (
+from jrbar.attention import (
     AttentionProjection,
     LifecycleMode,
     ProjectedAgentRow,
     project_attention,
 )
-from sidepulse.capacity_types import SourceKey
-from sidepulse.collector import aggregate_status
-from sidepulse.colors import ColorSettings, program_for_projection
-from sidepulse.local_triage import LocalTriageState
-from sidepulse.mailbox import project_canonical_mailbox, project_mailbox
-from sidepulse.mailbox_preferences import MailboxPreferenceProjection
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_accessibility import status_item_accessibility
-from sidepulse.operator_state import (
+from jrbar.capacity_types import SourceKey
+from jrbar.collector import aggregate_status
+from jrbar.colors import ColorSettings, program_for_projection
+from jrbar.local_triage import LocalTriageState
+from jrbar.mailbox import project_canonical_mailbox, project_mailbox
+from jrbar.mailbox_preferences import MailboxPreferenceProjection
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_accessibility import status_item_accessibility
+from jrbar.operator_state import (
     CanonicalWorkTruth,
     empty_operator_state,
 )
-from sidepulse.presentation_policy import (
+from jrbar.presentation_policy import (
     GlanceOverrideReason,
     GlanceSemantic,
     ResolvedGlance,
     SemanticGlyph,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -64,8 +64,8 @@ from sidepulse.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-from sidepulse.settings import AgentMonitorSettings
-from sidepulse.status_bar import StatusBarController
+from jrbar.settings import AgentMonitorSettings
+from jrbar.status_bar import StatusBarController
 
 
 _NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
@@ -215,7 +215,7 @@ def test_the_strip_is_coloured_by_main_agents_only() -> None:
     multi-agent renderer could never switch off and the provider colour
     was structurally unreachable, so Claude drew palette magenta.
     """
-    from sidepulse.colors import MODE_WORKING, scale_hex_brightness
+    from jrbar.colors import MODE_WORKING, scale_hex_brightness
 
     statuses = [
         _main("a", AgentMode.WORKING),
@@ -382,7 +382,7 @@ def test_the_menu_bar_title_is_a_ledger_not_a_spoken_sentence() -> None:
     value verbatim and AppKit cut it off mid-word:
     "Agents active, Active: 34, Source partially availabl..."
     """
-    from sidepulse.operator_accessibility import (
+    from jrbar.operator_accessibility import (
         MAX_STATUS_ITEM_TITLE_LENGTH,
         status_item_title,
     )
@@ -415,7 +415,7 @@ def test_collector_refreshes_a_delegating_parents_presence() -> None:
     its workers streamed events aged out entirely -- the count said
     one, and the strip painted orphan murk (2026-08-27 owner report).
     """
-    from sidepulse.delegation import _reconcile_delegating_parents
+    from jrbar.delegation import _reconcile_delegating_parents
 
     hour_old = _NOW - timedelta(seconds=3700)
     stopped_main = replace(
@@ -437,7 +437,7 @@ def test_collector_refreshes_a_delegating_parents_presence() -> None:
 
 
 def test_collector_leaves_a_parent_with_finished_children_alone() -> None:
-    from sidepulse.delegation import _reconcile_delegating_parents
+    from jrbar.delegation import _reconcile_delegating_parents
 
     stopped_main = _main("main", AgentMode.COMPLETED)
     finished_child = _worker(1, AgentMode.COMPLETED)
@@ -450,7 +450,7 @@ def test_collector_leaves_a_parent_with_finished_children_alone() -> None:
 
 
 def test_collector_never_rewrites_an_asking_or_failed_parent() -> None:
-    from sidepulse.delegation import _reconcile_delegating_parents
+    from jrbar.delegation import _reconcile_delegating_parents
 
     asking = _main("asker", AgentMode.WAITING_FOR_INPUT)
     failed = replace(
@@ -470,7 +470,7 @@ def test_collector_never_rewrites_an_asking_or_failed_parent() -> None:
 
 
 def test_a_stale_child_stops_vouching_for_its_parent() -> None:
-    from sidepulse.delegation import (
+    from jrbar.delegation import (
         DELEGATION_CHILD_FRESH_SECONDS,
         _reconcile_delegating_parents,
     )
@@ -492,7 +492,7 @@ def test_idle_sessions_do_not_claim_strip_slots_while_anyone_works() -> None:
     """A dozen retained-but-idle sessions must not bury the real work
     in identity whispers (the live Devin plane listed 13 idle sessions;
     the working strip read as unattributable murk)."""
-    from sidepulse.colors import program_for_snapshot
+    from jrbar.colors import program_for_snapshot
 
     statuses = tuple(
         [_main("busy", AgentMode.WORKING)]
@@ -524,8 +524,8 @@ def test_idle_sessions_do_not_claim_strip_slots_while_anyone_works() -> None:
 
 
 def test_an_idle_only_fleet_keeps_its_ambient_presence() -> None:
-    from sidepulse.colors import program_for_snapshot
-    from sidepulse.led_status import LedDisplayState
+    from jrbar.colors import program_for_snapshot
+    from jrbar.led_status import LedDisplayState
 
     statuses = tuple(
         replace(
@@ -545,7 +545,7 @@ def test_an_idle_only_fleet_keeps_its_ambient_presence() -> None:
 
 def test_a_resting_companion_keeps_its_whisper_while_slots_are_free() -> None:
     """Slot pressure, not mere activity, is what evicts idle rows."""
-    from sidepulse.colors import program_for_snapshot
+    from jrbar.colors import program_for_snapshot
 
     statuses = (
         _main("busy", AgentMode.WORKING),

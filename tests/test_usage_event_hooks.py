@@ -5,12 +5,12 @@ from __future__ import annotations
 import os
 import stat
 
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.usage_event_hooks import (
+from jrbar.usage_event_hooks import (
     detect_usage_hook_events,
     run_usage_hooks,
 )
@@ -130,7 +130,7 @@ def test_runner_invokes_the_executable_with_event_argv(tmp_path) -> None:
 
 
 def test_hook_path_message_expands_home(tmp_path, monkeypatch) -> None:
-    from sidepulse.usage_event_hooks import hook_path_message
+    from jrbar.usage_event_hooks import hook_path_message
 
     script = tmp_path / "hook.sh"
     script.write_text("#!/bin/sh\n")

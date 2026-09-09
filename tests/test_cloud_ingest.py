@@ -17,8 +17,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sidepulse import cloud_ingest
-from sidepulse.cloud_ingest import (
+from jrbar import cloud_ingest
+from jrbar.cloud_ingest import (
     INGEST_PATH,
     WIRE_VERSION,
     CloudAgentEvent,
@@ -36,14 +36,14 @@ from sidepulse.cloud_ingest import (
     rotate_ingest_token,
     start_cloud_ingest,
 )
-from sidepulse.collector import (
+from jrbar.collector import (
     LiveAgentMonitor,
     metadata_for_record,
     status_from_event,
 )
-from sidepulse.models import AgentMode, HookEvent
-from sidepulse.provider_adapters import minimize_hook_event
-from sidepulse.providers import negotiated_provider_sources, parse_log_line
+from jrbar.models import AgentMode, HookEvent
+from jrbar.provider_adapters import minimize_hook_event
+from jrbar.providers import negotiated_provider_sources, parse_log_line
 
 TOKEN = "cloud-ingest-test-token-0123456789abcdef"
 
@@ -207,7 +207,7 @@ def test_start_cloud_ingest_returns_none_without_opt_in(tmp_path):
 
 @pytest.mark.parametrize(
     "host",
-    ["0.0.0.0", "::", "192.168.1.20", "evil.example.com", "sidepulse.io", ""],
+    ["0.0.0.0", "::", "192.168.1.20", "evil.example.com", "jrbar.io", ""],
 )
 def test_server_refuses_non_loopback_host(host):
     """Deletion: drop the `is_loopback_host(self.config.host)` ctor guard."""

@@ -4,9 +4,9 @@ from unittest.mock import patch
 
 from AppKit import NSApplication, NSImage
 
-from sidepulse import virtual_device
-from sidepulse.presentation_policy import MotionClass
-from sidepulse.render_policy import RenderEnvironment
+from jrbar import virtual_device
+from jrbar.presentation_policy import MotionClass
+from jrbar.render_policy import RenderEnvironment
 
 
 def _view():

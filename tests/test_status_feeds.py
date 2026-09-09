@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sidepulse.status_feeds import (
+from jrbar.status_feeds import (
     STATUS_FEED_THREAD_NAME,
     FeedState,
     StatusFeedPoller,
@@ -118,7 +118,7 @@ def test_status_feed_worker_uses_current_product_identity_and_scoped_start(
         def start(self):
             return None
 
-    monkeypatch.setattr("sidepulse.status_feeds.threading.Thread", Thread)
+    monkeypatch.setattr("jrbar.status_feeds.threading.Thread", Thread)
 
     poller = StatusFeedPoller()
     poller.start(provider_ids=("codex",))

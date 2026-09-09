@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from sidepulse.provider_browser_consent import (
+from jrbar.provider_browser_consent import (
     BROWSER_CONSENT_SCHEMA_VERSION,
     BrowserConsentStore,
     ChromiumRecord,

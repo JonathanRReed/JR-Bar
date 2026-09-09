@@ -4,9 +4,9 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sidepulse import process_registry as pr
-from sidepulse.liveness_sweep import reap_dead_agents, synthetic_end_payloads
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar import process_registry as pr
+from jrbar.liveness_sweep import reap_dead_agents, synthetic_end_payloads
+from jrbar.models import AgentMode, AgentStatus
 
 
 def _status(provider, agent_id, session_id, mode=AgentMode.WORKING):

@@ -2,13 +2,13 @@
 
 import sys
 
-from sidepulse.cli_entry import sidepulse_main
+from jrbar.cli_entry import jrbar_main
 
 
 def main() -> int:
     if len(sys.argv) > 1:
-        return sidepulse_main()
-    from sidepulse.provider_usage_status_bar import main as status_bar_main
+        return jrbar_main()
+    from jrbar.provider_usage_status_bar import main as status_bar_main
 
     return status_bar_main()
 

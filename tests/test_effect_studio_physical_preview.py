@@ -2,16 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepulse import status_bar_legacy as legacy
-from sidepulse.effect_registry import EFFECT_REGISTRY
-from sidepulse.effect_studio import MAX_PHYSICAL_PREVIEW_SECONDS, SyntheticScenario
-from sidepulse.effect_studio_physical_preview import (
+from jrbar import status_bar_legacy as legacy
+from jrbar.effect_registry import EFFECT_REGISTRY
+from jrbar.effect_studio import MAX_PHYSICAL_PREVIEW_SECONDS, SyntheticScenario
+from jrbar.effect_studio_physical_preview import (
     EffectStudioPhysicalPreviewAdapter,
     PreviewReleaseReason,
     compile_effect_studio_physical_preview,
 )
-from sidepulse.presentation_compiler import compile_presentation_program
-from sidepulse.runtime_scheduler import SubmissionDisposition
+from jrbar.presentation_compiler import compile_presentation_program
+from jrbar.runtime_scheduler import SubmissionDisposition
 
 
 class _Worker:

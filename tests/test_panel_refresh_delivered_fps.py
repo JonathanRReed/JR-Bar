@@ -42,15 +42,15 @@ import itertools
 
 import pytest
 
-from sidepulse import render_policy
-from sidepulse.render_policy import (
+from jrbar import render_policy
+from jrbar.render_policy import (
     RenderDriverKind,
     RenderEnvironment,
     RenderSchedule,
     choose_render_cadence,
     choose_render_schedule,
 )
-from sidepulse.screen_bar_pipeline import ColorSample, SamplePair
+from jrbar.screen_bar_pipeline import ColorSample, SamplePair
 
 LED_COUNT = 8
 _LIT = ((0.0, 0.9, 1.0, 1.0),) * LED_COUNT
@@ -96,7 +96,7 @@ def _delivered_fps(monkeypatch, schedule: RenderSchedule, seconds: float = 8.0) 
     driver this schedule chose will really fire at. Zero jitter: this measures
     the deterministic loss, not a jitter effect.
     """
-    from sidepulse import virtual_device
+    from jrbar import virtual_device
 
     clock = {"now": 1000.0}
     monkeypatch.setattr(virtual_device.time, "monotonic", lambda: clock["now"])

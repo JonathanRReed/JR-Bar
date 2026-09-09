@@ -4,8 +4,8 @@ import pytest
 from AppKit import NSApplication, NSMakeRect, NSWindow, NSWindowStyleMaskTitled
 from Foundation import NSObject
 
-import sidepulse.settings_category_runtime as settings_runtime
-from sidepulse.provider_feature_settings import (
+import jrbar.settings_category_runtime as settings_runtime
+from jrbar.provider_feature_settings import (
     ProviderInstancePolicyProjection,
     ProviderInstanceRetentionPolicy,
     ProviderInstanceRetentionProjection,
@@ -17,10 +17,10 @@ from sidepulse.provider_feature_settings import (
     ProviderInstanceVisualProjection,
     project_instance_policies,
 )
-from sidepulse.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
-from sidepulse.provider_usage_controller_actions import apply_provider_usage_settings_snapshot
-from sidepulse.provider_usage_settings import default_provider_usage_settings
-from sidepulse.settings_category_runtime import (
+from jrbar.provider_instances import ProviderInstanceKey, ProviderInstanceProfile
+from jrbar.provider_usage_controller_actions import apply_provider_usage_settings_snapshot
+from jrbar.provider_usage_settings import default_provider_usage_settings
+from jrbar.settings_category_runtime import (
     MAX_PROVIDER_PROFILE_SETTINGS_ROWS,
     ProviderInstanceProfileSettingsModel,
     ProviderInstanceProfileSettingsRow,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sidepulse.settings import AgentMonitorSettings, load_settings, save_settings
+from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
 
 def test_power_hold_defaults_keep_system_working_but_allow_display_sleep() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "src" / "sidepulse" / "status_bar.py"
+SOURCE = ROOT / "src" / "jrbar" / "status_bar.py"
 
 
 def test_status_bar_adapters_preserve_originals_on_the_runtime_module() -> None:

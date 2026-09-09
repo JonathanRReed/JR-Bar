@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from sidepulse.integration_compatibility import (
+from jrbar.integration_compatibility import (
     load_integration_compatibility_manifest,
 )
-from sidepulse.t3_compat import (
+from jrbar.t3_compat import (
     T3_MAXIMUM_TESTED_VERSION,
     T3_MINIMUM_VERSION,
     T3_PROTOCOL_FINGERPRINT,

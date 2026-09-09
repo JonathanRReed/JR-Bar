@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.integration_compatibility import (
+from jrbar.integration_compatibility import (
     load_integration_compatibility_manifest,
 )
-from sidepulse.provider_fixture_ownership import (
+from jrbar.provider_fixture_ownership import (
     load_provider_fixture_ownership_manifest,
     validate_provider_fixture_ownership,
 )
-from sidepulse.providers import PROVIDER_REGISTRY
+from jrbar.providers import PROVIDER_REGISTRY
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "providers"
 
@@ -91,7 +91,7 @@ def test_fixture_ownership_allowlist_is_explicit_and_can_name_cross_provider_ids
     with pytest.raises(ValueError, match="cross-provider"):
         validate_provider_fixture_ownership(copied)
 
-    manifest_path = Path(__file__).parents[1] / "src" / "sidepulse" / "resources" / "provider_fixture_ownership.json"
+    manifest_path = Path(__file__).parents[1] / "src" / "jrbar" / "resources" / "provider_fixture_ownership.json"
     manifest_document = json.loads(manifest_path.read_text())
     manifest_document["crossProviderIdentifiers"] = ["claude"]
     next(row for row in manifest_document["fixtures"] if row["provider"] == "codex")[
@@ -99,7 +99,7 @@ def test_fixture_ownership_allowlist_is_explicit_and_can_name_cross_provider_ids
     ] = "sha256:" + hashlib.sha256(target.read_bytes()).hexdigest()
     # The production manifest is immutable in this test. The module-level
     # document parser exercises the explicit allowlist without editing it.
-    from sidepulse.provider_fixture_ownership import validate_provider_fixture_document
+    from jrbar.provider_fixture_ownership import validate_provider_fixture_document
 
     validated = validate_provider_fixture_document(manifest_document, copied)
     assert "claude" in validated.cross_provider_identifiers

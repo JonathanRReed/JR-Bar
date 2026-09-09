@@ -8,7 +8,7 @@ from examples.audio_monitor import (
     rms_to_level,
     smooth_level,
 )
-from sidepulse.device_writer import MAX_LED_BYTES, validate_led_text
+from jrbar.device_writer import MAX_LED_BYTES, validate_led_text
 
 
 class AudioMonitorExampleTests(unittest.TestCase):

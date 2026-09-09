@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.usage_file_index import UsageFileIndex
+from jrbar.usage_file_index import UsageFileIndex
 
 SOURCE = {"provider": "claude", "root": "projects-v1"}
 SECRET = "ab" * 32
@@ -50,7 +50,7 @@ def test_reopens_and_reads_committed_documents(tmp_path: Path) -> None:
 
 
 def test_repeated_usage_metadata_fits_bounded_disk_and_round_trips(tmp_path, monkeypatch):
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_DATABASE_BYTES", 64 * 1024)
     path = tmp_path / "usage.sqlite"
@@ -70,7 +70,7 @@ def test_repeated_usage_metadata_fits_bounded_disk_and_round_trips(tmp_path, mon
 
 @pytest.mark.parametrize("damage", ["oversize", "truncated", "trailing", "invalid_json"])
 def test_compressed_corruption_is_a_bounded_per_row_miss(tmp_path, monkeypatch, damage):
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     path = tmp_path / "usage.sqlite"
     index = _open(path)
@@ -136,7 +136,7 @@ def test_prune_retains_only_live_keys(tmp_path: Path) -> None:
 
 
 def test_row_and_document_caps_reject_new_rows_without_evicting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_ROWS", 2)
     monkeypatch.setattr(usage_file_index, "MAX_DOCUMENT_BYTES", 180)
@@ -154,7 +154,7 @@ def test_row_and_document_caps_reject_new_rows_without_evicting(tmp_path: Path, 
 
 
 def test_disk_cap_rejects_growth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_DATABASE_BYTES", 1)
     index = _open(tmp_path / "usage.sqlite")
@@ -165,7 +165,7 @@ def test_disk_cap_rejects_growth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_disk_full_does_not_rollback_earlier_successful_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     path = tmp_path / "usage.sqlite"
     initial = _open(path)
@@ -211,7 +211,7 @@ def test_compatible_warm_open_reads_while_another_index_has_pending_writes(tmp_p
 
 
 def test_two_open_writers_recheck_row_capacity_after_other_writer_commits(tmp_path, monkeypatch):
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_ROWS", 2)
     path = tmp_path / "usage.sqlite"
@@ -228,7 +228,7 @@ def test_two_open_writers_recheck_row_capacity_after_other_writer_commits(tmp_pa
 
 
 def test_compressed_size_boundary_and_concatenated_members(tmp_path, monkeypatch):
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_DOCUMENT_BYTES", 8192)
     path = tmp_path / "usage.sqlite"
@@ -250,7 +250,7 @@ def test_compressed_size_boundary_and_concatenated_members(tmp_path, monkeypatch
 
 
 def test_get_rejects_payload_larger_than_document_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from sidepulse import usage_file_index
+    from jrbar import usage_file_index
 
     path = tmp_path / "usage.sqlite"
     index = _open(path)

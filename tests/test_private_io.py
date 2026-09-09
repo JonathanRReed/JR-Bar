@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.private_io import (
+from jrbar.private_io import (
     REDACTION_MARKER,
     RetentionPolicy,
     append_private_text,
@@ -89,7 +89,7 @@ def test_create_only_private_publish_has_one_winner_when_two_writers_race(tmp_pa
             return None
         return value
 
-    with patch("sidepulse.private_io.os.link", side_effect=competing_link), ThreadPoolExecutor(2) as executor:
+    with patch("jrbar.private_io.os.link", side_effect=competing_link), ThreadPoolExecutor(2) as executor:
         outcomes = list(executor.map(publish, ("first", "second")))
     winners = [value for value in outcomes if value is not None]
     assert len(winners) == 1
@@ -141,7 +141,7 @@ def test_failed_atomic_replace_preserves_target_and_removes_scratch(
     atomic_private_write(target, "old state")
 
     with (
-        patch("sidepulse.private_io.os.replace", side_effect=OSError("replace failed")),
+        patch("jrbar.private_io.os.replace", side_effect=OSError("replace failed")),
         pytest.raises(OSError, match="replace failed"),
     ):
         atomic_private_write(target, "new state")
@@ -182,7 +182,7 @@ def test_atomic_write_parent_descriptor_prevents_path_swap_redirect(
         lambda leaf: leaf.startswith("latest.json.") and leaf.endswith(".tmp"),
     )
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         atomic_private_write(target, "new state")
 
     assert (held_parent / "latest.json").read_text() == "new state"
@@ -204,7 +204,7 @@ def test_ensure_file_parent_descriptor_prevents_path_swap_redirect(
         lambda leaf: leaf == target.name,
     )
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         ensure_private_file(target)
 
     assert (held_parent / target.name).is_file()
@@ -224,7 +224,7 @@ def test_append_parent_descriptor_prevents_path_swap_redirect(tmp_path: Path) ->
         lambda leaf: leaf == target.name,
     )
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         append_private_text(target, "inside two\n")
 
     assert (held_parent / target.name).read_text() == "inside one\ninside two\n"
@@ -245,7 +245,7 @@ def test_read_parent_descriptor_prevents_path_swap_redirect(tmp_path: Path) -> N
         lambda leaf: leaf == target.name,
     )
 
-    with patch("sidepulse.private_io.os.open", side_effect=swapping_open):
+    with patch("jrbar.private_io.os.open", side_effect=swapping_open):
         result = read_private_text(target, max_bytes=1_024)
 
     assert result == "inside settings"
@@ -285,7 +285,7 @@ def test_bounded_read_refuses_oversized_opened_leaf_before_payload_read(
         return chunk
 
     with (
-        patch("sidepulse.private_io.os.read", side_effect=observing_read),
+        patch("jrbar.private_io.os.read", side_effect=observing_read),
         pytest.raises(OSError, match="maximum size"),
     ):
         read_private_text(target, max_bytes=8)
@@ -314,7 +314,7 @@ def test_bounded_read_caps_growth_at_limit_plus_one(tmp_path: Path) -> None:
         return chunk
 
     with (
-        patch("sidepulse.private_io.os.read", side_effect=grow_then_read),
+        patch("jrbar.private_io.os.read", side_effect=grow_then_read),
         pytest.raises(OSError, match="maximum size"),
     ):
         read_private_text(target, max_bytes=8)
@@ -343,7 +343,7 @@ def test_bounded_read_refuses_leaf_replacement_during_read(tmp_path: Path) -> No
         return chunk
 
     with (
-        patch("sidepulse.private_io.os.read", side_effect=replace_after_read),
+        patch("jrbar.private_io.os.read", side_effect=replace_after_read),
         pytest.raises(OSError, match="changed during operation"),
     ):
         read_private_text(target, max_bytes=1_024)
@@ -423,7 +423,7 @@ def test_retention_skips_hard_links_outside_selected_root(tmp_path: Path) -> Non
 
 
 def test_retention_refuses_hard_link_created_after_scan(tmp_path: Path) -> None:
-    from sidepulse import private_io
+    from jrbar import private_io
 
     root = tmp_path / "retained"
     root.mkdir()
@@ -438,7 +438,7 @@ def test_retention_refuses_hard_link_created_after_scan(tmp_path: Path) -> None:
         return entries
 
     with patch(
-        "sidepulse.private_io._retention_entries",
+        "jrbar.private_io._retention_entries",
         side_effect=entries_then_link,
     ):
         removed = enforce_retention(root, RetentionPolicy(max_files=0))

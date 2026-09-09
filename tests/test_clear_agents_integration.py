@@ -7,21 +7,21 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import (
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import (
     ClearAgentsState,
     CompletionPresentationReceipt,
     completion_presentation_key,
 )
-from sidepulse.clear_agents_popover import ClearAgentsPopoverState
-from sidepulse.clear_agents_store import load_clear_agents_state
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.persistence_writer import (
+from jrbar.clear_agents_popover import ClearAgentsPopoverState
+from jrbar.clear_agents_store import load_clear_agents_state
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.persistence_writer import (
     PersistenceDisposition,
     PersistenceOutcome,
     PersistenceReceipt,
 )
-from sidepulse.provider_facts import WorkIdentifier, WorkKey
+from jrbar.provider_facts import WorkIdentifier, WorkKey
 from tests.test_sidepulse import isolate_controller
 
 
@@ -158,7 +158,7 @@ class ClearAgentsControllerIntegrationTests(unittest.TestCase):
 
         anchor = SimpleNamespace(bounds=lambda: ((0.0, 0.0), (20.0, 20.0)))
         with patch(
-            "sidepulse.status_bar_legacy.ClearAgentsPopoverPresenter",
+            "jrbar.status_bar_legacy.ClearAgentsPopoverPresenter",
             side_effect=build_presenter,
         ):
             self.controller.clearAgents_(anchor)

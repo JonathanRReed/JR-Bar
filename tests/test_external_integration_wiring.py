@@ -4,7 +4,7 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_BAR = ROOT / "src" / "sidepulse" / "status_bar.py"
+STATUS_BAR = ROOT / "src" / "jrbar" / "status_bar.py"
 BACKGROUND_MODULES = (
     "_integration_settings_legacy.py",
     "integration_compatibility.py",
@@ -32,7 +32,7 @@ def test_public_status_bar_facade_defines_no_integration_worker_or_controller() 
 
 
 def test_t3_compatibility_remains_available_through_the_cli() -> None:
-    source = (ROOT / "src" / "sidepulse" / "integration_cli.py").read_text(
+    source = (ROOT / "src" / "jrbar" / "integration_cli.py").read_text(
         encoding="utf-8"
     )
     assert "read_t3_snapshot" in source
@@ -42,7 +42,7 @@ def test_t3_compatibility_remains_available_through_the_cli() -> None:
 
 def test_integration_workers_are_appkit_free() -> None:
     for name in BACKGROUND_MODULES:
-        source = (ROOT / "src" / "sidepulse" / name).read_text(encoding="utf-8")
+        source = (ROOT / "src" / "jrbar" / name).read_text(encoding="utf-8")
         assert "import AppKit" not in source
         assert "from AppKit" not in source
         assert "import Foundation" not in source

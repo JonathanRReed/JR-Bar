@@ -50,26 +50,27 @@ def main() -> int:
         probe = """
 import importlib.metadata
 import importlib.resources
-import sidepulse
+import jrbar
 
 assert importlib.metadata.version("sidepulse") == sidepulse.__version__
-resources = importlib.resources.files("sidepulse.resources")
+resources = importlib.resources.files("jrbar.resources")
 assert (resources / "sdled.wasm").is_file()
 assert (resources / "sd_eject_guard.c").is_file()
 assert (resources / "integration_compatibility.json").is_file()
 assert (resources / "provider_fixture_ownership.json").is_file()
 for module in (
-    "sidepulse.cli",
-    "sidepulse.cli_entry",
-    "sidepulse.hook_dedupe",
+    "jrbar.cli",
+    "jrbar.cli_entry",
+    "jrbar.hook_dedupe",
+    "jrbar.hook_entry",
+    "jrbar.integration_cli",
+    "jrbar.integration_compatibility",
+    "jrbar.integration_settings",
+    "jrbar.status_bar_launch",
+    "jrbar.t3_compat",
+    "sidepulse",
+    "sidepulse.hook_client",
     "sidepulse.hook_entry",
-    "sidepulse.integration_cli",
-    "sidepulse.integration_compatibility",
-    "sidepulse.integration_settings",
-    "sidepulse.status_bar_launch",
-    "sidepulse.t3_compat",
-    "agent_monitor.hook_entry",
-    "sidepulse_cli.hook_entry",
 ):
     __import__(module)
 """
@@ -77,24 +78,25 @@ for module in (
 
         bin_dir = environment / "bin"
         for name in (
+            "jrbar",
+            "jrbar-integrations",
+            # Transitional alias kept for one release after the rename.
             "sidepulse",
-            "sidepulse-integrations",
-            "agent-monitor",
-            "agent-status-bar",
         ):
             path = bin_dir / name
             if not path.is_file() or not os.access(path, os.X_OK):
                 raise RuntimeError(f"missing installed console script: {path}")
 
+        run(bin_dir / "jrbar", "--help", cwd=root)
+        run(bin_dir / "jrbar", "integrations", "status", "--json", cwd=root)
+        run(bin_dir / "jrbar-integrations", "status", "--json", cwd=root)
+        run(bin_dir / "jrbar", "agent-monitor", "--help", cwd=root)
         run(bin_dir / "sidepulse", "--help", cwd=root)
-        run(bin_dir / "sidepulse", "integrations", "status", "--json", cwd=root)
-        run(bin_dir / "sidepulse-integrations", "status", "--json", cwd=root)
-        run(bin_dir / "agent-monitor", "--help", cwd=root)
-        run(python, "-m", "agent_monitor.hook_entry", cwd=root)
-        run(python, "-m", "sidepulse_cli.hook_entry", cwd=root)
+        run(python, "-m", "sidepulse.hook_client", cwd=root)
+        run(python, "-m", "sidepulse.hook_entry", cwd=root)
 
         if platform.system() == "Darwin":
-            run(python, "-c", "import sidepulse.status_bar", cwd=root)
+            run(python, "-c", "import jrbar.status_bar", cwd=root)
 
     print(f"Clean-install verification passed: {wheel.name}")
     return 0

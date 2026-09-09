@@ -108,16 +108,16 @@ def test_clear_agents_native_receipts_pin_current_production_and_harness_sources
         assert _sha256(ROOT / relative) == metadata["sha256"]
     pinned = manifest["pinned_sha256"]
     assert pinned["production_clear_agents"] == _sha256(
-        ROOT / "src/sidepulse/clear_agents.py"
+        ROOT / "src/jrbar/clear_agents.py"
     )
     assert pinned["production_clear_agents_popover"] == _sha256(
-        ROOT / "src/sidepulse/clear_agents_popover.py"
+        ROOT / "src/jrbar/clear_agents_popover.py"
     )
     assert pinned["production_status_bar_legacy"] == _sha256(
-        ROOT / "src/sidepulse/status_bar_legacy.py"
+        ROOT / "src/jrbar/status_bar_legacy.py"
     )
     assert pinned["production_clear_agents_store"] == _sha256(
-        ROOT / "src/sidepulse/clear_agents_store.py"
+        ROOT / "src/jrbar/clear_agents_store.py"
     )
     assert pinned["receipt_harness"] == _sha256(HARNESS_PATH)
     assert "Source-only AppKit evidence" in manifest["source_only_disclaimer"]

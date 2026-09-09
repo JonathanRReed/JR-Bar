@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from sidepulse.focus_status import (
+from jrbar.focus_status import (
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
@@ -55,7 +55,7 @@ class _Center:
 
 
 def test_module_import_does_not_load_objc_or_intents(monkeypatch: pytest.MonkeyPatch) -> None:
-    module_name = "sidepulse.focus_status"
+    module_name = "jrbar.focus_status"
     module = sys.modules.pop(module_name)
     imported: list[str] = []
     original_import = builtins.__import__

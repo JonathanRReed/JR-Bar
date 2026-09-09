@@ -5,7 +5,7 @@ from dataclasses import fields
 
 import pytest
 
-from sidepulse.glance_light import (
+from jrbar.glance_light import (
     GLANCE_LIGHT_DESTINATIONS,
     GLANCE_LIGHT_DOCUMENT_SCHEMA,
     GLANCE_LIGHT_DOCUMENT_VERSION,
@@ -317,8 +317,8 @@ def test_restore_fails_closed_for_non_exact_or_invalid_documents(mutate) -> None
         "",
         "[]",
         "not json",
-        '{"schema":"sidepulse.glance-light","schema":"sidepulse.glance-light","version":1,"notifications":[]}',
-        '{"schema":"sidepulse.glance-light","version":1,"notifications":NaN}',
+        '{"schema":"jrbar.glance-light","schema":"jrbar.glance-light","version":1,"notifications":[]}',
+        '{"schema":"jrbar.glance-light","version":1,"notifications":NaN}',
     ),
 )
 def test_restore_fails_closed_without_a_partial_state(document: object) -> None:

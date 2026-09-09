@@ -4,8 +4,8 @@ import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_BAR = ROOT / "src" / "sidepulse" / "status_bar.py"
-PRODUCTION_STATUS_BAR = ROOT / "src" / "sidepulse" / "_status_bar_production.py"
+STATUS_BAR = ROOT / "src" / "jrbar" / "status_bar.py"
+PRODUCTION_STATUS_BAR = ROOT / "src" / "jrbar" / "_status_bar_production.py"
 STATUS_BAR_FILES = (STATUS_BAR, PRODUCTION_STATUS_BAR)
 BACKGROUND_MODULES = (
     "battery_runtime.py",
@@ -119,7 +119,7 @@ def test_hook_bursts_use_the_legacy_refresh_floor() -> None:
         path.read_text(encoding="utf-8")
         for path in (
             *STATUS_BAR_FILES,
-            ROOT / "src" / "sidepulse" / "status_bar_legacy.py",
+            ROOT / "src" / "jrbar" / "status_bar_legacy.py",
         )
     )
 
@@ -142,7 +142,7 @@ def test_full_refresh_heartbeat_uses_the_normal_status_interval() -> None:
 
 def test_background_runtime_modules_cannot_import_appkit_or_objc() -> None:
     for name in BACKGROUND_MODULES:
-        text = (ROOT / "src" / "sidepulse" / name).read_text(encoding="utf-8")
+        text = (ROOT / "src" / "jrbar" / name).read_text(encoding="utf-8")
         assert "import AppKit" not in text
         assert "from AppKit" not in text
         assert "import Foundation" not in text

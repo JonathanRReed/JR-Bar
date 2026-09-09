@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.provider_reset_events import (
+from jrbar.provider_reset_events import (
     RESET_DELIVERY_PRIORITY,
     ResetChannel,
     ResetChannelOutcome,
@@ -18,7 +18,7 @@ from sidepulse.provider_reset_events import (
     pending_reset_channels,
     reset_event_is_terminal,
 )
-from sidepulse.provider_usage_qol import ResetEvent
+from jrbar.provider_usage_qol import ResetEvent
 
 
 def _event(event_id: str = "claude:acct:weekly:boundary") -> ResetEvent:

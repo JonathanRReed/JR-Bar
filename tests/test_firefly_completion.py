@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.clear_agents import CompletionPresentationKey
-from sidepulse.firefly_completion import (
+from jrbar.capacity_types import SourceKey
+from jrbar.clear_agents import CompletionPresentationKey
+from jrbar.firefly_completion import (
     FIREFLY_DURATION_SECONDS,
     REDUCE_MOTION_HOLD_SECONDS,
     FireflyCompletionEvidence,
@@ -12,7 +12,7 @@ from sidepulse.firefly_completion import (
     FireflyCompletionRefusal,
     plan_firefly_completion,
 )
-from sidepulse.fleet_bands import FleetBand, FleetMember, FleetPlan, plan_fleet_bands
+from jrbar.fleet_bands import FleetBand, FleetMember, FleetPlan, plan_fleet_bands
 
 
 def _completion(*, completed_at: float = 100.0) -> CompletionPresentationKey:

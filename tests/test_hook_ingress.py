@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import hook_client
-from sidepulse.hook_ingress import (
+from jrbar import hook_client
+from jrbar.hook_ingress import (
     HookIngressOutcome,
     HookIngressReceipt,
     HookIngressService,
 )
-from sidepulse.hook_ingress_protocol import (
+from jrbar.hook_ingress_protocol import (
     HookIngressDisposition,
     HookIngressRequest,
     submit_hook_ingress,
@@ -337,13 +337,13 @@ def test_direct_and_queued_paths_write_the_same_minimized_record(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sidepulse.hook import process_hook_payload
+    from jrbar.hook import process_hook_payload
 
     # This contract compares the durable minimized records. Refresh delivery
     # is covered by the app-owned handler tests below and must not make this
     # byte-equivalence check depend on whichever installed app owns the live
     # event socket while the source suite runs.
-    monkeypatch.setattr("sidepulse.hook.send_refresh_hint", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr("jrbar.hook.send_refresh_hint", lambda *_args, **_kwargs: False)
 
     payload = json.dumps(
         {
@@ -374,7 +374,7 @@ def test_direct_and_queued_paths_write_the_same_minimized_record(
 def test_close_waits_until_app_owned_refresh_handler_finishes(
     tmp_path: Path,
 ) -> None:
-    from sidepulse.hook import process_hook_payload
+    from jrbar.hook import process_hook_payload
 
     payload = json.dumps(
         {

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sidepulse.deck_status_bar import install_deck_status_bar
-from sidepulse.settings_window import _build_devices_pane
+from jrbar.deck_status_bar import install_deck_status_bar
+from jrbar.settings_window import _build_devices_pane
 
 
 class _BaseController:

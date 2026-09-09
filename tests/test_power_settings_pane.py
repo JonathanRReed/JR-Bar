@@ -7,9 +7,9 @@ import objc
 from AppKit import NSPopUpButton, NSSwitch
 from Foundation import NSObject
 
-from sidepulse import power_settings_pane
-from sidepulse.models import AgentMode
-from sidepulse.settings import AgentMonitorSettings
+from jrbar import power_settings_pane
+from jrbar.models import AgentMode
+from jrbar.settings import AgentMonitorSettings
 
 
 class _Target(NSObject):
@@ -153,10 +153,10 @@ def test_power_pane_exposes_accessible_controls_and_retains_action_target() -> N
 
 
 def test_settings_window_delegates_power_pane_and_shrinks(monkeypatch) -> None:
-    from sidepulse import settings_window
+    from jrbar import settings_window
 
     root = Path(__file__).resolve().parents[1]
-    source = (root / "src/sidepulse/settings_window.py").read_text()
+    source = (root / "src/jrbar/settings_window.py").read_text()
     refreshed: list[str] = []
     monkeypatch.setattr(
         settings_window,
@@ -172,4 +172,4 @@ def test_settings_window_delegates_power_pane_and_shrinks(monkeypatch) -> None:
     assert "return build_power_settings_pane(" in source
     settings_window.refresh_power_settings_controls(object())
     assert refreshed == ["power", "global_actions"]
-    assert (root / "src/sidepulse/settings_window.py").stat().st_size < 218_442
+    assert (root / "src/jrbar/settings_window.py").stat().st_size < 218_442

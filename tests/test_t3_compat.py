@@ -9,9 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from sidepulse import t3_compat
-from sidepulse.models import AgentMode
-from sidepulse.t3_compat import (
+from jrbar import t3_compat
+from jrbar.models import AgentMode
+from jrbar.t3_compat import (
     T3_REASON_FAILED,
     T3Snapshot,
     T3SnapshotService,

@@ -10,11 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.local_api_contract import LocalAPIRequest, ReplayGuard
-from sidepulse.product_identity import PRODUCT_DISPLAY_NAME
-from sidepulse.provider_usage_store import default_provider_usage_state_path
-from sidepulse.providers import default_state_dir
-from sidepulse.serve import (
+from jrbar.local_api_contract import LocalAPIRequest, ReplayGuard
+from jrbar.product_identity import PRODUCT_DISPLAY_NAME
+from jrbar.provider_usage_store import default_provider_usage_state_path
+from jrbar.providers import default_state_dir
+from jrbar.serve import (
     _read_json,
     build_authenticated_local_api_response,
     build_serve_document,
@@ -247,7 +247,7 @@ def test_unknown_public_values_are_omitted(tmp_path: Path) -> None:
 
 
 def test_oversized_state_files_fail_closed(tmp_path: Path, monkeypatch) -> None:
-    from sidepulse import serve
+    from jrbar import serve
 
     _write_private_state(tmp_path)
     monkeypatch.setattr(serve, "_MAX_STATE_BYTES", 1)
@@ -350,11 +350,11 @@ def test_status_endpoint_has_no_anonymous_default_even_without_a_token() -> None
 def test_cli_status_requires_token_unless_anonymous_compatibility_is_explicit(
     monkeypatch, capsys
 ) -> None:
-    from sidepulse.cli import SERVE_ACCESS_TOKEN_ENV, build_sidepulse_parser, cmd_serve
+    from jrbar.cli import SERVE_ACCESS_TOKEN_ENV, build_sidepulse_parser, cmd_serve
 
     parser = build_sidepulse_parser()
     calls = []
-    monkeypatch.setattr("sidepulse.serve.serve", lambda **kwargs: calls.append(kwargs))
+    monkeypatch.setattr("jrbar.serve.serve", lambda **kwargs: calls.append(kwargs))
     monkeypatch.delenv(SERVE_ACCESS_TOKEN_ENV, raising=False)
 
     assert cmd_serve(parser.parse_args(["serve"])) == 2

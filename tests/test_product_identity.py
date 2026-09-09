@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepulse.app_bundle import (
+from jrbar.app_bundle import (
     APP_BUNDLE_IDENTIFIER,
     APP_BUNDLE_NAME,
     APP_EXECUTABLE_NAME,
 )
-from sidepulse.cli import build_parser, build_sidepulse_parser
-from sidepulse.device_identity import DeviceKind, normalize_device_label
-from sidepulse.product_identity import PRODUCT_DISPLAY_NAME
+from jrbar.cli import build_parser, build_sidepulse_parser
+from jrbar.device_identity import DeviceKind, normalize_device_label
+from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 
 ROOT = Path(__file__).resolve().parents[1]
 

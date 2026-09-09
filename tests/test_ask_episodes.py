@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sidepulse.ask_episodes import ASK_BATCH_SECONDS, batched_episode_key
+from jrbar.ask_episodes import ASK_BATCH_SECONDS, batched_episode_key
 
 
 def test_burst_within_window_reuses_the_first_episode() -> None:

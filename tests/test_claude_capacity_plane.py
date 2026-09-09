@@ -26,16 +26,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from sidepulse import claude_quota, usage_card
-from sidepulse.capacity_authority import select_binding_lanes
-from sidepulse.capacity_refresh import RefreshCause
-from sidepulse.capacity_sources import (
+from jrbar import claude_quota, usage_card
+from jrbar.capacity_authority import select_binding_lanes
+from jrbar.capacity_refresh import RefreshCause
+from jrbar.capacity_sources import (
     EvidenceMetricKind,
     SupportedCapacityEvidence,
     SupportedLaneEvidence,
     normalize_supported_quota_evidence,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacityAccountBinding,
     CapacityEvidenceClass,
     CapacitySnapshot,
@@ -48,11 +48,11 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.provider_capacity import (
+from jrbar.provider_capacity import (
     negotiate_provider_capacity_policies,
     select_provider_capacity_policy,
 )
-from sidepulse.providers import negotiated_provider_sources
+from jrbar.providers import negotiated_provider_sources
 from tests.test_sidepulse import isolate_controller
 
 NOW = 1_800_000_000.0

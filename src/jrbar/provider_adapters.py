@@ -120,6 +120,8 @@ _CREDENTIAL_SHAPED_IDENTITY: Final = re.compile(
     r"(?:$|[._~:-])",
     re.ASCII | re.IGNORECASE,
 )
+# Persisted hash domain: kept at the pre-rename value so Cursor work ids in
+# existing ledgers stay continuous across the JR-Bar migration.
 _CURSOR_CONVERSATION_HASH_DOMAIN: Final = b"sidepulse.cursor.conversation.v1\0"
 _ANTIGRAVITY_ENVELOPE_KEY: Final = "antigravity"
 

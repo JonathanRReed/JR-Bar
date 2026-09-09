@@ -31,10 +31,10 @@ import json
 
 import pytest
 
-from sidepulse import claude_quota
-from sidepulse.capacity_types import CapacityEvidenceClass, QuotaEffect
-from sidepulse.provider_capacity import CapacityPolicyState
-from sidepulse.settings import AgentMonitorSettings
+from jrbar import claude_quota
+from jrbar.capacity_types import CapacityEvidenceClass, QuotaEffect
+from jrbar.provider_capacity import CapacityPolicyState
+from jrbar.settings import AgentMonitorSettings
 
 
 # --------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def test_the_fetch_is_no_longer_a_stub() -> None:
 
 def test_the_credential_path_is_hardened() -> None:
     """Reading a credential must never happen on a background timer."""
-    from sidepulse.credentials import CLAUDE_CODE_KEYCHAIN, read_keychain_secret
+    from jrbar.credentials import CLAUDE_CODE_KEYCHAIN, read_keychain_secret
 
     result = read_keychain_secret(
         CLAUDE_CODE_KEYCHAIN,
@@ -95,7 +95,7 @@ def test_consumer_claude_declares_every_window_it_can_observe() -> None:
     including both per-model weekly sub-caps -- an Opus ceiling the owner
     cannot see is the one that stops their work without warning.
     """
-    from sidepulse.provider_capacity import provider_capacity_policies
+    from jrbar.provider_capacity import provider_capacity_policies
 
     consumer = next(
         policy
@@ -127,7 +127,7 @@ def test_the_toggle_is_real_but_still_starts_off() -> None:
 
 def test_claude_declares_exactly_one_negotiated_capacity_source() -> None:
     """Switch 3. Two eligible sources for one provider is a scheduling bug."""
-    from sidepulse.providers import negotiated_provider_sources
+    from jrbar.providers import negotiated_provider_sources
 
     capacity_rows = tuple(
         row
@@ -153,7 +153,7 @@ def test_the_coordinator_follows_the_setting_rather_than_a_hardcoded_name() -> N
     behaviour is unchanged today -- but the moment the policy above declares
     lanes, this stops being a special case that has to be remembered.
     """
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     class _Probe:
         settings = AgentMonitorSettings()
@@ -185,7 +185,7 @@ def test_the_scheduler_follows_the_setting_too() -> None:
     and every refresh plan, which quietly overrode it. Both sides have to ask
     the setting or the opt-in still does nothing.
     """
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     class _Probe:
         def __init__(self, settings) -> None:

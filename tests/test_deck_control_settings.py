@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from sidepulse.deck_actions import DeckAction
-from sidepulse.deck_control_settings import DeckControlSettings, load_deck_controls, save_deck_controls
+from jrbar.deck_actions import DeckAction
+from jrbar.deck_control_settings import DeckControlSettings, load_deck_controls, save_deck_controls
 
 
 def test_missing_settings_are_disabled_and_saved_bindings_roundtrip_privately(tmp_path):
@@ -46,7 +46,7 @@ def test_save_refuses_changed_settings_instead_of_losing_another_edit(tmp_path):
     {"version": 1, "enabled": True, "bindings": [], "script": "unsafe"},
 ])
 def test_malformed_or_future_configuration_is_never_enabled_or_overwritten(tmp_path, document):
-    from sidepulse.private_io import atomic_private_write
+    from jrbar.private_io import atomic_private_write
 
     path = tmp_path / "private" / "deck-controls.json"
     atomic_private_write(path, json.dumps(document))

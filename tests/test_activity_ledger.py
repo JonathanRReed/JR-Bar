@@ -38,7 +38,7 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse.activity_ledger import (
+from jrbar.activity_ledger import (
     MAX_ACTIVITY_ENTRIES,
     MAX_ACTIVITY_LEDGER_BYTES,
     ActivityEntry,
@@ -53,14 +53,14 @@ from sidepulse.activity_ledger import (
     relative_age_label,
     safe_activity_text,
 )
-from sidepulse.activity_ledger_store import (
+from jrbar.activity_ledger_store import (
     ACTIVITY_LEDGER_NAME,
     default_activity_ledger_path,
     load_activity_ledger,
     save_activity_ledger,
 )
-from sidepulse.capacity_refresh import RefreshCause
-from sidepulse.capacity_types import (
+from jrbar.capacity_refresh import RefreshCause
+from jrbar.capacity_types import (
     CapacitySourceHealth,
     CapacityUnit,
     CapacityValue,
@@ -74,8 +74,8 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.completions import detect_attention_transitions
-from sidepulse.models import AgentMode, AgentStatus
+from jrbar.completions import detect_attention_transitions
+from jrbar.models import AgentMode, AgentStatus
 from tests.test_sidepulse import isolate_controller
 
 NOW = 1_800_000_000.0
@@ -721,7 +721,7 @@ def test_the_menu_rebuilds_when_the_ledger_changes(controller) -> None:
     target.status_bar_devices = lambda *args, **kwargs: []
     snapshot = _snapshot()
 
-    with patch("sidepulse.status_bar.time.monotonic", return_value=100.0):
+    with patch("jrbar.status_bar.time.monotonic", return_value=100.0):
         before = status_bar.menu_content_signature(
             snapshot, status_bar.STATE_IDLE, target
         )

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from sidepulse.provider_usage_center import project_usage_center
-from sidepulse.provider_usage_runtime import ProviderUsageState
-from sidepulse.provider_usage_sync import MergedProviderSync
+from jrbar.provider_usage_center import project_usage_center
+from jrbar.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_sync import MergedProviderSync
 
 
 def test_usage_center_uses_synced_totals_when_available():

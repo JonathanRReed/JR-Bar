@@ -27,10 +27,10 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse import install, providers
-from sidepulse.capacity_types import SourceKey
-from sidepulse.models import HookEvent, parse_datetime
-from sidepulse.provider_adapters import (
+from jrbar import install, providers
+from jrbar.capacity_types import SourceKey
+from jrbar.models import HookEvent, parse_datetime
+from jrbar.provider_adapters import (
     InertProviderRecord,
     NormalizedProviderRecord,
     ProviderEventName,
@@ -38,9 +38,9 @@ from sidepulse.provider_adapters import (
     normalized_provider_record_to_payload,
     provider_facts_for_record,
 )
-from sidepulse.provider_contracts import CapabilityIdentifier
-from sidepulse.provider_facts import ObservationAuthority, WorkLifecycle
-from sidepulse.providers import negotiated_provider_sources
+from jrbar.provider_contracts import CapabilityIdentifier
+from jrbar.provider_facts import ObservationAuthority, WorkLifecycle
+from jrbar.providers import negotiated_provider_sources
 
 _CONVERSATION = "ec33ebf9-0cba-4100-8142-c61503f6c587"
 _SOURCE = SourceKey("antigravity", "hooks", "global", "live_agent_events")

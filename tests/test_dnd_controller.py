@@ -6,11 +6,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from sidepulse.dnd_controller import (
+from jrbar.dnd_controller import (
     DndChangeFailure,
     DndController,
 )
-from sidepulse.dnd_policy import (
+from jrbar.dnd_policy import (
     DisplayAdmission,
     DndMode,
     DndOverride,
@@ -18,12 +18,12 @@ from sidepulse.dnd_policy import (
     DndSource,
     OutboundAdmission,
 )
-from sidepulse.focus_status import (
+from jrbar.focus_status import (
     FocusActivity,
     FocusAuthorization,
     FocusStatusObservation,
 )
-from sidepulse.settings import (
+from jrbar.settings import (
     AgentMonitorSettings,
     SettingsConcurrentWriteError,
     SettingsWriteRefusedError,

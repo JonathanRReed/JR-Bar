@@ -5,19 +5,19 @@ from dataclasses import dataclass
 
 import pytest
 
-from sidepulse.announcer_stack import AnnouncerAlertIdentity
-from sidepulse.answer_in_place import (
+from jrbar.announcer_stack import AnnouncerAlertIdentity
+from jrbar.answer_in_place import (
     AnswerActionKind,
     AnswerAttemptState,
     AnswerCapability,
     project_answer_controls,
 )
-from sidepulse.answer_runtime import (
+from jrbar.answer_runtime import (
     ANSWER_TIMEOUT_SECONDS,
     AnswerHandlerRegistry,
     AnswerRuntime,
 )
-from sidepulse.provider_contracts import (
+from jrbar.provider_contracts import (
     AdapterIdentifier,
     LocalRuntimeSurfaceIdentifier,
     ProductCapability,
@@ -25,7 +25,7 @@ from sidepulse.provider_contracts import (
     ProviderIdentifier,
     SourceInstanceIdentifier,
 )
-from sidepulse.provider_facts import RequestKind
+from jrbar.provider_facts import RequestKind
 
 
 def _invocation(

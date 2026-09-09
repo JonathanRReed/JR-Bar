@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
-PACKAGE_INIT = ROOT / "src" / "sidepulse" / "__init__.py"
+PACKAGE_INIT = ROOT / "src" / "jrbar" / "__init__.py"
 CHANGELOG = ROOT / "CHANGELOG.md"
 _VERSION_PATTERN = re.compile(r'^version\s*=\s*"([^"]+)"\s*$', re.MULTILINE)
 
@@ -31,7 +31,7 @@ def package_version() -> str:
             value = ast.literal_eval(statement.value)
             if type(value) is str and value:
                 return value
-    raise RuntimeError("sidepulse.__version__ is missing or not a string literal")
+    raise RuntimeError("jrbar.__version__ is missing or not a string literal")
 
 
 def changelog_has_release(text: str, version: str) -> bool:

@@ -20,11 +20,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from sidepulse.accessibility_display import AccessibilityDisplayPreferences
-from sidepulse.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
-from sidepulse.doctor import DiagnosticCheck, DiagnosticCode
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.presentation_policy import (
+from jrbar.accessibility_display import AccessibilityDisplayPreferences
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from jrbar.doctor import DiagnosticCheck, DiagnosticCode
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.presentation_policy import (
     CapacityGlance,
     FiniteCue,
     GlanceInputs,
@@ -34,7 +34,7 @@ from sidepulse.presentation_policy import (
     SemanticGlyph,
     resolve_glance,
 )
-from sidepulse import decision_trace, intake_health
+from jrbar import decision_trace, intake_health
 
 NOW = 1_800_000_000.0
 
@@ -107,21 +107,21 @@ def isolated_controller(case):
     tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
     case.addCleanup(tmp.cleanup)
     for target in (
-        "sidepulse.settings.default_settings_path",
-        "sidepulse.status_bar.default_settings_path",
+        "jrbar.settings.default_settings_path",
+        "jrbar.status_bar.default_settings_path",
     ):
         patcher = patch(target, return_value=Path(tmp.name) / "settings.json")
         patcher.start()
         case.addCleanup(patcher.stop)
     for target, value in (
-        ("sidepulse.status_bar.default_latest_state_path", Path(tmp.name) / "latest.json"),
-        ("sidepulse.status_bar.discover_devices", []),
+        ("jrbar.status_bar.default_latest_state_path", Path(tmp.name) / "latest.json"),
+        ("jrbar.status_bar.discover_devices", []),
     ):
         patcher = patch(target, return_value=value)
         patcher.start()
         case.addCleanup(patcher.stop)
     try:
-        from sidepulse import status_bar
+        from jrbar import status_bar
     except SystemExit as exc:  # pragma: no cover - non-macOS runners
         case.skipTest(str(exc))
     controller = status_bar.StatusBarController.alloc().init()
@@ -213,7 +213,7 @@ class IdleIsThreeDifferentThingsTests(unittest.TestCase):
         """set_status writes the title once and the accessibility pass
         writes it again. Both must agree, or the reassuring version wins
         by being second."""
-        from sidepulse.operator_state import empty_operator_state
+        from jrbar.operator_state import empty_operator_state
 
         self.controller.current_intake_report = report(
             [probe("claude", "Claude", installed=False)]
@@ -399,7 +399,7 @@ class IntakeMenuTests(unittest.TestCase):
     """The dropdown half: the fault, the one click, and the ledger."""
 
     def _menu(self, current):
-        from sidepulse import status_bar
+        from jrbar import status_bar
         from AppKit import NSMenu
 
         menu = NSMenu.alloc().init()
@@ -473,8 +473,8 @@ class IntakeMenuTests(unittest.TestCase):
         )
 
     def _build_menu(self, current=None):
-        from sidepulse import status_bar
-        from sidepulse.settings import AgentMonitorSettings
+        from jrbar import status_bar
+        from jrbar.settings import AgentMonitorSettings
 
         snapshot = SimpleNamespace(
             statuses=[],
@@ -511,8 +511,8 @@ class IntakeMenuTests(unittest.TestCase):
     def test_connecting_an_agent_forces_the_dropdown_to_rebuild(self) -> None:
         """menu_content_signature decides whether the menu is rebuilt at
         all. Intake has to be in it, or the alarm outlives its cause."""
-        from sidepulse import status_bar
-        from sidepulse.settings import AgentMonitorSettings
+        from jrbar import status_bar
+        from jrbar.settings import AgentMonitorSettings
 
         snapshot = SimpleNamespace(
             statuses=[],
@@ -821,7 +821,7 @@ class IntakeRefreshTests(unittest.TestCase):
         # The probe runs off-main in production; a synchronous stand-in
         # delivers its result inline so the caching contract is observable.
         probes = (probe("claude", "Claude", wire=NOW - 60.0),)
-        from sidepulse.intake_runtime import IntakeProbeResult
+        from jrbar.intake_runtime import IntakeProbeResult
 
         controller = self.controller
         status_bar = self.status_bar

@@ -4,14 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from sidepulse.battery import (
+from jrbar.battery import (
     BATTERY_MODEL_TIMEOUT_SECONDS,
     BATTERY_READ_TIMEOUT_SECONDS,
     BatterySnapshot,
     default_full_charge_watts,
     read_battery_snapshot,
 )
-from sidepulse.battery_runtime import (
+from jrbar.battery_runtime import (
     BATTERY_REASON_TIMED_OUT,
     BatteryObservationService,
 )
@@ -21,7 +21,7 @@ from sidepulse.battery_runtime import (
 def _stub_apple_tool_identity(monkeypatch):
     # The subprocess is injected below. Tool validation has its own tests;
     # portable timeout tests must not require an installed macOS binary.
-    monkeypatch.setattr("sidepulse._battery_legacy.trusted_system_tool", lambda name: Path("/usr/bin") / name)
+    monkeypatch.setattr("jrbar._battery_legacy.trusted_system_tool", lambda name: Path("/usr/bin") / name)
 
 
 def test_battery_reader_has_a_strict_subprocess_timeout() -> None:

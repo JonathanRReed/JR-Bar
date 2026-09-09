@@ -4,8 +4,8 @@ from dataclasses import replace
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.navigation_policy import (
+from jrbar.capacity_types import SourceKey
+from jrbar.navigation_policy import (
     NavigationCandidate,
     NavigationResolution,
     NavigationResolutionKind,
@@ -14,7 +14,7 @@ from sidepulse.navigation_policy import (
     build_operator_actions,
     resolve_navigation,
 )
-from sidepulse.operator_state import (
+from jrbar.operator_state import (
     AcknowledgementEligibility,
     CanonicalRequestTruth,
     CanonicalWorkTruth,
@@ -22,7 +22,7 @@ from sidepulse.operator_state import (
     SemanticEventKey,
     TransitionKind,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,

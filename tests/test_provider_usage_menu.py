@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from sidepulse.provider_feature_settings import (
+from jrbar.provider_feature_settings import (
     ProviderInstanceVisualPolicy,
     ProviderInstanceVisualProjection,
 )
-from sidepulse.provider_usage_menu import project_usage_menu
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_menu import project_usage_menu
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_runtime import ProviderUsageState
+from jrbar.provider_usage_runtime import ProviderUsageState
 
 
 def snapshot(
@@ -136,7 +136,7 @@ def test_lane_lines_render_codebar_style_meters():
 
 
 def test_lane_meter_never_shows_empty_while_something_remains():
-    from sidepulse.provider_usage_qol import format_lane_meter as _lane_meter
+    from jrbar.provider_usage_qol import format_lane_meter as _lane_meter
 
     assert _lane_meter(100.0) == "▰▰▰▰▰▰▰▰"
     assert _lane_meter(50.0) == "▰▰▰▰▱▱▱▱"
@@ -164,7 +164,7 @@ def test_lane_without_percent_still_lists_its_reset():
 
 
 def test_display_flags_curate_meters_totals_cost_and_detail_lanes():
-    from sidepulse.provider_usage_settings import MenuUsageDisplay
+    from jrbar.provider_usage_settings import MenuUsageDisplay
 
     state = ProviderUsageState((snapshot("claude", "5-hour", 74),), 1000, 1100, False)
     quiet = project_usage_menu(
@@ -519,7 +519,7 @@ def test_dense_account_menu_orders_quota_and_collapses_only_healthy_rows():
 
 
 def test_menu_bar_glance_prefers_running_providers_then_tightest():
-    from sidepulse.provider_usage_menu import menu_bar_quota_glance
+    from jrbar.provider_usage_menu import menu_bar_quota_glance
 
     state = ProviderUsageState(
         (snapshot("claude", "5-hour", 36), snapshot("codex", "Weekly", 71)),
@@ -571,7 +571,7 @@ def test_menu_bar_glance_prefers_running_providers_then_tightest():
 
 
 def test_pace_verdicts_cover_fast_surplus_on_pace_and_critical():
-    from sidepulse.usage_pace import lane_pace, pace_phrase
+    from jrbar.usage_pace import lane_pace, pace_phrase
 
     hour = 3600.0
     # Halfway through a 5-hour window (2.5h elapsed, 2.5h to reset).
@@ -613,7 +613,7 @@ def test_lane_lines_carry_the_pace_tag():
 
 
 def test_a_lane_alerts_once_per_reset_window_when_it_turns_critical():
-    from sidepulse.usage_pace import critical_pace_transitions
+    from jrbar.usage_pace import critical_pace_transitions
 
     hour = 3600.0
     base = 1_000_000.0
@@ -676,7 +676,7 @@ def test_one_heavy_evening_cannot_condemn_a_fresh_weekly_window():
     one heavy session extrapolated to runs-dry-before-reset and painted
     93%-left RED. A critical verdict needs a baseline: before 15% of
     the window has elapsed the worst pace may say is 'spending fast'."""
-    from sidepulse.usage_pace import lane_pace
+    from jrbar.usage_pace import lane_pace
 
     day = 86_400.0
     now = 1_000_000.0
@@ -758,7 +758,7 @@ def test_jr_plane_owns_the_usage_menu_row() -> None:
     facade = (
         Path(__file__).resolve().parents[1]
         / "src"
-        / "sidepulse"
+        / "jrbar"
         / "provider_usage_status_bar.py"
     ).read_text()
     marker = "def jr_plane_owns_usage_menu_item(self) -> bool:"
@@ -773,7 +773,7 @@ def test_native_base_keeps_its_usage_menu_row() -> None:
     import pytest
 
     pytest.importorskip("AppKit", reason="Native menu ownership requires macOS")
-    from sidepulse.status_bar import StatusBarController
+    from jrbar.status_bar import StatusBarController
 
     assert StatusBarController.jr_plane_owns_usage_menu_item(SimpleNamespace()) is False
 

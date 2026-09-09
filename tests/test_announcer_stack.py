@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sidepulse.announcer_stack import (
+from jrbar.announcer_stack import (
     AnnouncerAlertPriority,
     AnnouncerStackAction,
     AnnouncerStackIntent,
@@ -21,16 +21,16 @@ from sidepulse.announcer_stack import (
     select_next_announcer_alert,
     select_previous_announcer_alert,
 )
-from sidepulse.attention import LifecycleMode, ProjectedAgentRow
-from sidepulse.capacity_types import SourceKey
-from sidepulse.models import AgentMode, AgentStatus
-from sidepulse.operator_state import (
+from jrbar.attention import LifecycleMode, ProjectedAgentRow
+from jrbar.capacity_types import SourceKey
+from jrbar.models import AgentMode, AgentStatus
+from jrbar.operator_state import (
     BootIdentifier,
     ClockSample,
     empty_operator_state,
     reduce_operator_state,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     NextActor,
     ObservationAuthority,

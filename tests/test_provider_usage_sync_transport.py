@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sidepulse.provider_usage_sync_settings import ProviderSyncPeer
-from sidepulse.provider_usage_sync_transport import (
+from jrbar.provider_usage_sync_settings import ProviderSyncPeer
+from jrbar.provider_usage_sync_transport import (
     SftpFetchResult,
     build_sftp_fetch_command,
     fetch_peer_packet,

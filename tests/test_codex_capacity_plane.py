@@ -32,15 +32,15 @@ from unittest.mock import patch
 
 import pytest
 
-from sidepulse import usage_stats
-from sidepulse.capacity_refresh import RefreshCause
-from sidepulse.capacity_sources import (
+from jrbar import usage_stats
+from jrbar.capacity_refresh import RefreshCause
+from jrbar.capacity_sources import (
     EvidenceMetricKind,
     SupportedCapacityEvidence,
     SupportedLaneEvidence,
     normalize_supported_quota_evidence,
 )
-from sidepulse.capacity_types import (
+from jrbar.capacity_types import (
     CapacitySnapshot,
     CapacitySourceHealth,
     CapacityUnit,
@@ -55,8 +55,8 @@ from sidepulse.capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
-from sidepulse.provider_capacity import negotiate_provider_capacity_policies
-from sidepulse.providers import negotiated_provider_sources
+from jrbar.provider_capacity import negotiate_provider_capacity_policies
+from jrbar.providers import negotiated_provider_sources
 from tests.test_sidepulse import isolate_controller
 
 NOW = 1_800_000_000.0
@@ -202,7 +202,7 @@ def test_a_codex_window_with_no_credible_reset_stays_reset_less() -> None:
 
 
 def test_the_producer_only_speaks_for_its_own_declared_source() -> None:
-    from sidepulse import claude_quota
+    from jrbar import claude_quota
 
     claude_descriptor = next(
         row.descriptor
@@ -851,7 +851,7 @@ def test_a_registered_source_is_still_authorised(controller) -> None:
 
 def test_a_context_cannot_name_pairs_that_contradict_its_identities() -> None:
     """The pairs are derived from the identities, never asserted beside them."""
-    from sidepulse.capacity_types import CapacityValidationError, ExecutionContext
+    from jrbar.capacity_types import CapacityValidationError, ExecutionContext
 
     with pytest.raises(CapacityValidationError):
         ExecutionContext(

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from sidepulse.provider_usage_platform import (
+from jrbar.provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
     UsageLane,
 )
-from sidepulse.provider_usage_sync import (
+from jrbar.provider_usage_sync import (
     SYNC_OBSERVATION_MAX_PACKET_DELTA_SECONDS,
     SYNC_PACKET_FUTURE_SKEW_SECONDS,
     SYNC_PACKET_MAX_AGE_SECONDS,

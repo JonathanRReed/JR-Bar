@@ -14,9 +14,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from sidepulse import window_presentation
+from jrbar import window_presentation
 
-SRC = Path(__file__).resolve().parent.parent / "src" / "sidepulse"
+SRC = Path(__file__).resolve().parent.parent / "src" / "jrbar"
 
 _TAKEOVER_CALLS = re.compile(
     r"activateIgnoringOtherApps_|orderFrontRegardless|makeKeyAndOrderFront_"

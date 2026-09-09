@@ -111,13 +111,13 @@ def test_console_script_targets_exist() -> None:
             for node in tree.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         }
-        if module_name == "sidepulse.status_bar":
+        if module_name == "jrbar.status_bar":
             # The final facade delegates through _status_bar_production, which
             # in turn owns the direct status_bar_legacy import. Validate the
             # complete chain instead of requiring the historical implementation
             # to be imported directly from the public entrypoint.
             public_imports = _relative_imports(modules[module_name])
-            production_module = modules.get("sidepulse._status_bar_production")
+            production_module = modules.get("jrbar._status_bar_production")
             assert production_module is not None
             production_imports = _relative_imports(production_module)
             assert "_status_bar_production" in public_imports, (
@@ -132,7 +132,7 @@ def test_console_script_targets_exist() -> None:
 
 def test_version_declarations_agree() -> None:
     declared = _pyproject()["project"]["version"]
-    init_path = SRC_ROOT / "sidepulse" / "__init__.py"
+    init_path = SRC_ROOT / "jrbar" / "__init__.py"
     tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
     version = None
     for node in tree.body:

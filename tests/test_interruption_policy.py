@@ -11,8 +11,8 @@ import re
 
 import pytest
 
-from sidepulse.capacity_types import SourceKey
-from sidepulse.interruption_policy import (
+from jrbar.capacity_types import SourceKey
+from jrbar.interruption_policy import (
     ActionTokenBinding,
     GenericNotificationCopy,
     InterruptionPolicyValidationError,
@@ -22,14 +22,14 @@ from sidepulse.interruption_policy import (
     issue_action_token,
     resolve_action_token,
 )
-from sidepulse.operator_state import (
+from jrbar.operator_state import (
     CanonicalOperatorEvent,
     InterruptionClass,
     SemanticEventKey,
     TransitionKind,
     classify_operator_event,
 )
-from sidepulse.provider_facts import (
+from jrbar.provider_facts import (
     EventToken,
     ProviderWatermark,
     RequestIdentifier,

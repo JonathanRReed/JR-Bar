@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src" / "sidepulse"
+SRC = ROOT / "src" / "jrbar"
 
 
 def test_status_bar_has_no_codexbar_runtime_dependency() -> None:
@@ -42,4 +42,4 @@ def test_clean_install_does_not_import_codexbar() -> None:
     source = (ROOT / "scripts" / "verify_clean_install.py").read_text(
         encoding="utf-8"
     )
-    assert "sidepulse.codexbar_compat" not in source
+    assert "jrbar.codexbar_compat" not in source

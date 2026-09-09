@@ -4,8 +4,8 @@ import math
 
 import pytest
 
-from sidepulse.presentation_policy import GlanceSemantic
-from sidepulse.why_light_context import (
+from jrbar.presentation_policy import GlanceSemantic
+from jrbar.why_light_context import (
     FocusDNDDecision,
     FocusObservation,
     FocusOutcome,
@@ -18,7 +18,7 @@ from sidepulse.why_light_context import (
     ValueAvailability,
     WinningPriority,
 )
-from sidepulse.why_light_projection import project_why_light_context
+from jrbar.why_light_projection import project_why_light_context
 
 
 def _facts(**changes: object) -> dict[str, object]:

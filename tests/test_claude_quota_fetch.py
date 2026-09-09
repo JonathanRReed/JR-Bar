@@ -12,8 +12,8 @@ import json
 
 import pytest
 
-from sidepulse import claude_quota
-from sidepulse.claude_quota import (
+from jrbar import claude_quota
+from jrbar.claude_quota import (
     ClaudeQuotaUnavailableError,
     fetch_windows,
 )
