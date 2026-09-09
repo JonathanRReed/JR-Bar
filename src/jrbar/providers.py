@@ -445,7 +445,8 @@ export default JRBarPlugin;
 def managed_opencode_plugin_log_path(text: str) -> Path | None:
     marker = f"// {OPENCODE_PLUGIN_MARKER}\nconst JRBAR_HOOK_ARGS = Object.freeze("
     legacy_marker = f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\nconst SIDEPULSE_HOOK_ARGS = Object.freeze("
-    if text.startswith(legacy_marker):
+    legacy = text.startswith(legacy_marker)
+    if legacy:
         marker = legacy_marker
     elif not text.startswith(marker):
         return None
@@ -459,7 +460,12 @@ def managed_opencode_plugin_log_path(text: str) -> Path | None:
     valid_arguments = _valid_opencode_hook_arguments(arguments)
     if valid_arguments is None:
         return None
-    if text != opencode_plugin_source_for_arguments(valid_arguments):
+    expected = (
+        legacy_opencode_plugin_source_for_arguments(valid_arguments)
+        if legacy
+        else opencode_plugin_source_for_arguments(valid_arguments)
+    )
+    if text != expected:
         return None
     return Path(valid_arguments[-1])
 
@@ -574,7 +580,8 @@ def managed_openclaw_handler_log_path(text: str) -> Path | None:
         f"// Managed by SidePulse -- {LEGACY_OPENCLAW_HANDLER_MARKER}\n"
         "const SIDEPULSE_HOOK_ARGS = Object.freeze("
     )
-    if text.startswith(legacy_marker):
+    legacy = text.startswith(legacy_marker)
+    if legacy:
         marker = legacy_marker
     elif not text.startswith(marker):
         return None
@@ -588,7 +595,12 @@ def managed_openclaw_handler_log_path(text: str) -> Path | None:
     valid_arguments = _valid_openclaw_hook_arguments(arguments)
     if valid_arguments is None:
         return None
-    if text != openclaw_handler_source_for_arguments(valid_arguments):
+    expected = (
+        legacy_openclaw_handler_source_for_arguments(valid_arguments)
+        if legacy
+        else openclaw_handler_source_for_arguments(valid_arguments)
+    )
+    if text != expected:
         return None
     return Path(valid_arguments[-1])
 
@@ -984,6 +996,12 @@ def openclaw_hook_dir(home: Path | None = None) -> Path:
     return base / ".openclaw" / "hooks" / OPENCLAW_HOOK_NAME
 
 
+def legacy_openclaw_hook_dir(home: Path | None = None) -> Path:
+    """Handler directory written before the rename; the installer removes it."""
+    base = home or Path.home()
+    return base / ".openclaw" / "hooks" / LEGACY_OPENCLAW_HOOK_NAME
+
+
 def detect_openclaw_config(home: Path | None = None) -> ProviderConfig:
     """Installed-ness for OpenClaw means BOTH halves are present: the
     handler directory under ~/.openclaw/hooks/ AND the enabled entry in
@@ -1001,10 +1019,17 @@ def detect_openclaw_config(home: Path | None = None) -> ProviderConfig:
     if isinstance(data, dict):
         internal = ((data.get("hooks") or {}).get("internal")) or {}
         if isinstance(internal, dict):
-            entry = (internal.get("entries") or {}).get(OPENCLAW_HOOK_NAME)
+            entries = internal.get("entries") or {}
+            entry = entries.get(OPENCLAW_HOOK_NAME)
+            if not isinstance(entry, dict):
+                entry = entries.get(LEGACY_OPENCLAW_HOOK_NAME)
             entry_enabled = bool(isinstance(entry, dict) and entry.get("enabled"))
 
     handler = openclaw_hook_dir(home) / "handler.ts"
+    if not handler.exists():
+        legacy_handler = legacy_openclaw_hook_dir(home) / "handler.ts"
+        if legacy_handler.exists():
+            handler = legacy_handler
     managed_log_path: Path | None = None
     try:
         handler_text = read_private_text(
@@ -1076,7 +1101,11 @@ def detect_antigravity_config(home: Path | None = None) -> ProviderConfig:
     except Exception:
         return ProviderConfig("antigravity", config_path, True, False, (), ())
 
-    entry = data.get(ANTIGRAVITY_HOOK_NAME) if isinstance(data, dict) else None
+    entry = None
+    if isinstance(data, dict):
+        entry = data.get(ANTIGRAVITY_HOOK_NAME)
+        if entry is None:
+            entry = data.get(LEGACY_ANTIGRAVITY_HOOK_NAME)
     hook_events: list[str] = []
     paths: list[Path] = []
     if isinstance(entry, dict) and entry.get("enabled", True) is not False:
@@ -1103,9 +1132,14 @@ def default_opencode_plugin_path(home: Path | None = None) -> Path:
     return base / ".config" / "opencode" / "plugins" / "jrbar.js"
 
 
-def detect_opencode_plugin(home: Path | None = None) -> ProviderConfig:
-    """Recognize only the exact SidePulse-managed OpenCode global plugin."""
-    plugin_path = default_opencode_plugin_path(home)
+def legacy_opencode_plugin_path(home: Path | None = None) -> Path:
+    """Plugin file written before the rename; the installer removes it."""
+    base = home or Path.home()
+    return base / ".config" / "opencode" / "plugins" / "sidepulse.js"
+
+
+def _managed_opencode_plugin_at(plugin_path: Path) -> Path | None:
+    """The log path of an exact JR-Bar-managed plugin at ``plugin_path``, else None."""
     try:
         info = plugin_path.lstat()
         if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode):
@@ -1117,9 +1151,24 @@ def detect_opencode_plugin(home: Path | None = None) -> ProviderConfig:
             tighten=False,
             max_bytes=_OPENCODE_PLUGIN_MAX_SOURCE_BYTES,
         )
-        log_path = managed_opencode_plugin_log_path(text)
+        return managed_opencode_plugin_log_path(text)
     except (FileNotFoundError, OSError, UnicodeError):
-        log_path = None
+        return None
+
+
+def detect_opencode_plugin(home: Path | None = None) -> ProviderConfig:
+    """Recognize only the exact JR-Bar-managed OpenCode global plugin.
+
+    The current file name is checked first; a plugin still under the
+    pre-rename name counts too, so an un-migrated install reads as ours.
+    """
+    plugin_path = default_opencode_plugin_path(home)
+    log_path = _managed_opencode_plugin_at(plugin_path)
+    if log_path is None:
+        legacy_path = legacy_opencode_plugin_path(home)
+        legacy_log_path = _managed_opencode_plugin_at(legacy_path)
+        if legacy_log_path is not None:
+            plugin_path, log_path = legacy_path, legacy_log_path
     installed = log_path is not None
     return ProviderConfig(
         "opencode",
@@ -1136,10 +1185,23 @@ def default_kiro_agent_config_path(home: Path | None = None) -> Path:
     return base / ".kiro" / "agents" / "jrbar.json"
 
 
+def legacy_kiro_agent_config_path(home: Path | None = None) -> Path:
+    """Agent file written before the rename; the installer removes it."""
+    base = home or Path.home()
+    return base / ".kiro" / "agents" / "sidepulse.json"
+
+
 def detect_kiro_config(home: Path | None = None) -> ProviderConfig:
     config_path = default_kiro_agent_config_path(home)
     if not config_path.exists():
+        legacy_path = legacy_kiro_agent_config_path(home)
+        if legacy_path.exists():
+            return _detect_kiro_config_at(legacy_path)
         return ProviderConfig("kiro", config_path, False, False, (), ())
+    return _detect_kiro_config_at(config_path)
+
+
+def _detect_kiro_config_at(config_path: Path) -> ProviderConfig:
     try:
         data = json.loads(config_path.read_text())
     except Exception:
@@ -1473,13 +1535,23 @@ def detect_provider_configs(home: Path | None = None) -> list[ProviderConfig]:
     return [spec.detector(home) for spec in PROVIDER_SPECS]
 
 
+def is_legacy_log_path(path: Path) -> bool:
+    """True for a hook log under the pre-rename ``sidepulse`` state tree.
+
+    Hooks registered before the rename still name those logs; installs must
+    replace them with the current location instead of adopting them.
+    """
+    return "sidepulse" in Path(path).expanduser().parts
+
+
 def detect_log_path(provider: str, home: Path | None = None) -> Path:
     try:
         config = provider_spec(provider).detector(home)
     except ValueError:
         config = ProviderConfig(provider, default_log_path(provider, home), False, False, (), ())
-    if config.log_paths:
-        return config.log_paths[0]
+    current = [path for path in config.log_paths if not is_legacy_log_path(path)]
+    if current:
+        return current[0]
     return default_log_path(provider, home)
 
 
@@ -1745,3 +1817,33 @@ def _first_string(data: dict[str, Any], *keys: str) -> str | None:
 _is_sidepulse_hook_invocation = _is_jrbar_hook_invocation
 is_sidepulse_hook_command = is_jrbar_hook_command
 is_sidepulse_devin_command = is_jrbar_devin_command
+
+
+def legacy_opencode_plugin_source_for_arguments(arguments) -> str:
+    """The OpenCode plugin exactly as the pre-rename installer wrote it.
+
+    The rename touched only the marker line, the ``SIDEPULSE_*`` constants
+    and the plugin object name, so the old source is the current template
+    with those tokens restored. Detection compares a file that opens with
+    the old marker against this, so a pre-rename install is still
+    recognised as ours (and replaced) instead of being refused as foreign.
+    """
+    return (
+        opencode_plugin_source_for_arguments(arguments)
+        .replace(f"// {OPENCODE_PLUGIN_MARKER}\n", f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\n", 1)
+        .replace("JRBAR_", "SIDEPULSE_")
+        .replace("JRBarPlugin", "SidePulsePlugin")
+    )
+
+
+def legacy_openclaw_handler_source_for_arguments(arguments) -> str:
+    """The OpenClaw handler exactly as the pre-rename installer wrote it."""
+    return (
+        openclaw_handler_source_for_arguments(arguments)
+        .replace(
+            f"// Managed by JR-Bar -- {OPENCLAW_HANDLER_MARKER}\n",
+            f"// Managed by SidePulse -- {LEGACY_OPENCLAW_HANDLER_MARKER}\n",
+            1,
+        )
+        .replace("JRBAR_", "SIDEPULSE_")
+    )

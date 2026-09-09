@@ -40,7 +40,7 @@ def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> N
         ("hermes", "cli", "Hermes CLI", "cli", "lifecycle"),
         ("openclaw", "cli", "OpenClaw CLI", "cli", "lifecycle"),
         ("opencode", "cli", "OpenCode CLI", "cli", "inventory"),
-        ("opencode", "sidepulse-plugin", "OpenCode JR-Bar integration", "local_harness", "lifecycle"),
+        ("opencode", "jrbar-plugin", "OpenCode JR-Bar integration", "local_harness", "lifecycle"),
         ("opencode", "desktop", "OpenCode Desktop", "desktop", "inventory"),
         ("google", "antigravity-cli", "Google Antigravity CLI", "cli", "inventory"),
         ("google", "antigravity-desktop", "Google Antigravity Desktop", "desktop", "inventory"),
@@ -50,7 +50,7 @@ def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> N
         ("google", "gemini-code-assist-vscode", "Gemini Code Assist for VS Code", "ide_extension", "inventory"),
         ("github", "copilot-ide", "GitHub Copilot", "ide_extension", "inventory"),
         ("kiro", "cli", "Kiro CLI", "cli", "lifecycle"),
-        ("kiro", "sidepulse-agent", "Kiro JR-Bar agent", "local_harness", "lifecycle"),
+        ("kiro", "jrbar-agent", "Kiro JR-Bar agent", "local_harness", "lifecycle"),
     )
 
 
@@ -109,7 +109,7 @@ def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage() -
     reduction = reduce_installed_surface_evidence(
         (
             InstalledSurfaceEvidence(
-                key=InstalledSurfaceKey("opencode", "sidepulse-plugin"),
+                key=InstalledSurfaceKey("opencode", "jrbar-plugin"),
                 detector_kind=SurfaceDetectorKind.CONFIG_MARKER,
                 detector_id="opencode-plugin",
                 detected=True,
@@ -129,7 +129,7 @@ def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage() -
     )
 
     observations = {row.key: row for row in reduction.observations}
-    plugin_key = InstalledSurfaceKey("opencode", "sidepulse-plugin")
+    plugin_key = InstalledSurfaceKey("opencode", "jrbar-plugin")
     assert observations[plugin_key].presence is SurfacePresence.CONFIGURED
     assert observations[plugin_key].capability_ids == (
         "live_agent_events",
@@ -158,7 +158,7 @@ def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secr
     )
 
     opencode_evidence = InstalledSurfaceEvidence(
-        key=InstalledSurfaceKey("opencode", "sidepulse-plugin"),
+        key=InstalledSurfaceKey("opencode", "jrbar-plugin"),
         detector_kind=SurfaceDetectorKind.CONFIG_MARKER,
         detector_id="opencode-plugin",
         detected=True,
@@ -171,7 +171,7 @@ def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secr
         reduce_installed_surface_evidence(
             (
                 InstalledSurfaceEvidence(
-                    key=InstalledSurfaceKey("opencode", "sidepulse-plugin"),
+                    key=InstalledSurfaceKey("opencode", "jrbar-plugin"),
                     detector_kind=SurfaceDetectorKind.PATH_MARKER,
                     detector_id="opencode-plugin",
                     detected=True,
@@ -182,7 +182,7 @@ def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secr
         )
     with pytest.raises(InstalledSurfaceValidationError, match="evidence"):
         InstalledSurfaceEvidence(
-            key=InstalledSurfaceKey("opencode", "sidepulse-plugin"),
+            key=InstalledSurfaceKey("opencode", "jrbar-plugin"),
             detector_kind=SurfaceDetectorKind.CONFIG_MARKER,
             detector_id="opencode-plugin",
             detected=True,
@@ -191,7 +191,7 @@ def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secr
         )
     with pytest.raises(InstalledSurfaceValidationError, match="evidence"):
         InstalledSurfaceEvidence(
-            key=InstalledSurfaceKey("opencode", "sidepulse-plugin"),
+            key=InstalledSurfaceKey("opencode", "jrbar-plugin"),
             detector_kind=SurfaceDetectorKind.CONFIG_MARKER,
             detector_id="api-key",
             detected=True,

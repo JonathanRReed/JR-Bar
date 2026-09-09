@@ -21433,7 +21433,7 @@ class LatestFeatureSettingsCompositionTests(unittest.TestCase):
         registrations = installed_surface_registrations()
         status_fields = self.controller.settings_fields["installed_agent_status_fields"]
         opencode_cli_key = ("opencode", "cli")
-        opencode_plugin_key = ("opencode", "sidepulse-plugin")
+        opencode_plugin_key = ("opencode", "jrbar-plugin")
         stable_cli = status_fields[opencode_cli_key]
         stable_plugin = status_fields[opencode_plugin_key]
         refresh = self.controller.settings_buttons["refresh_installed_agents"]

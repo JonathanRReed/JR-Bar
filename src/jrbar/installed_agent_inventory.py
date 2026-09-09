@@ -198,7 +198,7 @@ _INVENTORY_CANDIDATES: Final = (
     _candidate("hermes", "cli", SurfaceDetectorKind.PATH_MARKER, "hermes-cli", "home", (".local", "bin", "hermes"), InventoryMarkerKind.EXECUTABLE_LINK_OR_FILE, alternate_locations=(("homebrew", ("bin", "hermes")), ("local_bin", ("bin", "hermes")))),
     _candidate("openclaw", "cli", SurfaceDetectorKind.CONFIG_MARKER, "openclaw-config", "home", (".config", "openclaw"), InventoryMarkerKind.DIRECTORY, configured=True),
     _candidate("opencode", "cli", SurfaceDetectorKind.PATH_MARKER, "opencode-cli", "home", (".local", "bin", "opencode"), InventoryMarkerKind.EXECUTABLE_LINK_OR_FILE, alternate_locations=(("homebrew", ("bin", "opencode")), ("local_bin", ("bin", "opencode")))),
-    _candidate("opencode", "sidepulse-plugin", SurfaceDetectorKind.CONFIG_MARKER, "opencode-plugin", "home", (".config", "opencode", "plugins", "jrbar.js"), InventoryMarkerKind.REGULAR_FILE, configured=True),
+    _candidate("opencode", "jrbar-plugin", SurfaceDetectorKind.CONFIG_MARKER, "opencode-plugin", "home", (".config", "opencode", "plugins", "jrbar.js"), InventoryMarkerKind.REGULAR_FILE, configured=True, alternate_locations=(("home", (".config", "opencode", "plugins", "sidepulse.js")),)),
     _candidate("opencode", "desktop", SurfaceDetectorKind.BUNDLE_IDENTIFIER, "opencode", "applications", ("OpenCode.app",), InventoryMarkerKind.DIRECTORY),
     _candidate(
         "google",
@@ -220,7 +220,7 @@ _INVENTORY_CANDIDATES: Final = (
     _candidate("google", "gemini-code-assist-vscode", SurfaceDetectorKind.EXTENSION_IDENTIFIER, "gemini-code-assist-vscode", "vscode", ("google.geminicodeassist",), InventoryMarkerKind.DIRECTORY),
     _candidate("github", "copilot-ide", SurfaceDetectorKind.EXTENSION_IDENTIFIER, "github-copilot", "vscode", ("github.copilot",), InventoryMarkerKind.DIRECTORY),
     _candidate("kiro", "cli", SurfaceDetectorKind.PATH_MARKER, "kiro-cli", "home", (".local", "bin", "kiro-cli"), InventoryMarkerKind.EXECUTABLE_LINK_OR_FILE, alternate_locations=(("homebrew", ("bin", "kiro-cli")), ("local_bin", ("bin", "kiro-cli")))),
-    _candidate("kiro", "sidepulse-agent", SurfaceDetectorKind.CONFIG_MARKER, "kiro-hooks-v1", "home", (".kiro", "agents", "jrbar.json"), InventoryMarkerKind.REGULAR_FILE, configured=True),
+    _candidate("kiro", "jrbar-agent", SurfaceDetectorKind.CONFIG_MARKER, "kiro-hooks-v1", "home", (".kiro", "agents", "jrbar.json"), InventoryMarkerKind.REGULAR_FILE, configured=True, alternate_locations=(("home", (".kiro", "agents", "sidepulse.json")),)),
 )
 
 

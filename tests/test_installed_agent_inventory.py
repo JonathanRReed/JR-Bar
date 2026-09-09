@@ -71,9 +71,14 @@ def test_reviewed_path_marker_surfaces_use_only_home_homebrew_and_usr_local_lite
             ("homebrew", ("bin", executable)),
             ("local_bin", ("bin", executable)),
         )
-    plugin = candidates[InstalledSurfaceKey("opencode", "sidepulse-plugin")]
+    # Config markers we own carry exactly one alternate: the file name the
+    # pre-rename installer wrote, so an un-migrated install still shows up.
+    plugin = candidates[InstalledSurfaceKey("opencode", "jrbar-plugin")]
     assert plugin.marker_kind.value == "regular_file"
-    assert plugin.alternate_locations == ()
+    assert plugin.alternate_locations == (("home", (".config", "opencode", "plugins", "sidepulse.js")),)
+    agent = candidates[InstalledSurfaceKey("kiro", "jrbar-agent")]
+    assert agent.marker_kind.value == "regular_file"
+    assert agent.alternate_locations == (("home", (".kiro", "agents", "sidepulse.json")),)
 
 
 def test_gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal() -> None:
@@ -294,7 +299,7 @@ def test_reviewed_executable_marker_accepts_only_a_trusted_leaf_symlink_and_conf
     plugin = next(
         row
         for row in candidates
-        if row.key == InstalledSurfaceKey("opencode", "sidepulse-plugin")
+        if row.key == InstalledSurfaceKey("opencode", "jrbar-plugin")
     )
     codex_leaf = root.joinpath(*codex.relative_path)
     codex_leaf.parent.mkdir(parents=True)
@@ -398,7 +403,7 @@ def test_inventory_collects_only_matching_safe_markers_without_lifecycle_outputs
     plugin = next(
         candidate
         for candidate in candidates
-        if candidate.key == InstalledSurfaceKey("opencode", "sidepulse-plugin")
+        if candidate.key == InstalledSurfaceKey("opencode", "jrbar-plugin")
     )
     desktop = next(candidate for candidate in candidates if candidate.key == InstalledSurfaceKey("opencode", "desktop"))
     extension = next(
