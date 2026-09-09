@@ -1,0 +1,8 @@
+{"t":"lights","v":1,
+ "surfaces":{
+   "hardware":{"program":"#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms\nrepeat","led_count":8,"anchor":1788982891.31,"motion":"pulse","static_fallback":"#1D050A","brightness":0.79,"why":"completed_unseen"},
+   "screen_bar":{"program":"off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat","led_count":8,"anchor":1788982891.31,"motion":"beat","static_fallback":"#FF3A00","why":"needs_you","future_surface_field":1},
+   "dot":{"program":"off\n","led_count":2,"anchor":1788982891.31},
+   "future_surface":{"program":"off","led_count":16}
+ },
+ "linked":true}

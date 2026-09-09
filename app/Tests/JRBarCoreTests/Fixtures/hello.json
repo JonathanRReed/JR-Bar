@@ -1,0 +1,3 @@
+{"t":"hello","v":1,"core_version":"0.8.0","pid":123,
+ "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest"],
+ "future_field":{"nested":true}}
