@@ -22,7 +22,7 @@ Two clocks, one unit (provider event epochs, the same field on both sides):
   wire_written_at    newest ``occurred_at_epoch`` in the provider's own
                      hook log -- proof the HOOK RAN.
   event_accepted_at  newest provider watermark in canonical operator
-                     state -- proof SIDEPULSE UNDERSTOOD it.
+                     state -- proof JR-Bar UNDERSTOOD it.
 
 A healthy pair is equal: the hook writes the record and the same epoch
 arrives as a watermark. A wire ahead of an accepted event is the exact

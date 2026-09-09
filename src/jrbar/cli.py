@@ -175,13 +175,13 @@ def build_jrbar_parser() -> argparse.ArgumentParser:
     write.add_argument("--dry-run", action="store_true", help="Show the target without writing.")
     write.set_defaults(func=cmd_jrbar_write)
 
-    add_sidepulse_status_bar_parser(subparsers)
-    add_sidepulse_sdejectguard_parser(subparsers)
-    add_sidepulse_battery_parser(subparsers)
+    add_jrbar_status_bar_parser(subparsers)
+    add_jrbar_sdejectguard_parser(subparsers)
+    add_jrbar_battery_parser(subparsers)
     return parser
 
 
-def add_sidepulse_status_bar_parser(subparsers: argparse._SubParsersAction) -> None:
+def add_jrbar_status_bar_parser(subparsers: argparse._SubParsersAction) -> None:
     status_bar = subparsers.add_parser(
         "status-bar",
         help=f"Start or stop the macOS {PRODUCT_DISPLAY_NAME} menu-bar app.",
@@ -212,7 +212,7 @@ def add_sidepulse_status_bar_parser(subparsers: argparse._SubParsersAction) -> N
     status_bar.set_defaults(func=cmd_jrbar_status_bar)
 
 
-def add_sidepulse_sdejectguard_parser(subparsers: argparse._SubParsersAction) -> None:
+def add_jrbar_sdejectguard_parser(subparsers: argparse._SubParsersAction) -> None:
     guard = subparsers.add_parser(
         "sdejectguard",
         help="Start, stop, uninstall, or inspect SidePulse Pro Eject Prevention.",
@@ -261,7 +261,7 @@ def add_sdejectguard_scope_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_sidepulse_battery_parser(subparsers: argparse._SubParsersAction) -> None:
+def add_jrbar_battery_parser(subparsers: argparse._SubParsersAction) -> None:
     battery = subparsers.add_parser(
         "battery",
         help="Show or mirror Mac battery state to SidePulse Pro/SidePulse Dot LEDs.",
