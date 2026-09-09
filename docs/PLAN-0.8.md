@@ -30,7 +30,7 @@ operator export, architecture-policing meta-tests, dead code.
 
 | Phase | Deliverable | Status |
 | --- | --- | --- |
-| A | Stale-session truth in the Python core: liveness, Claude session files, Codex tailing; hooks reinstalled from this checkout | in progress |
+| A | Stale-session truth: process registry + 5 s liveness sweep, Codex SessionEnd/Interrupt hooks, local Codex trust hashes; hooks reinstalled from this checkout; dev checkout runs as the LaunchAgent | done 2026-09-09 (kill-to-ended measured at 2 s; Codex turn testing deferred to 2026-09-14 when the usage limit resets) |
 | B | Deletions + rename of the Python core, migration, signed PKG installed | pending |
 | C | Daemon boundary: socket protocol, compiled hook shim, `jrbar-core` | pending |
 | D | Swift app: status item, glass panel, Screen Bar; replaces Python UI for those | pending |
