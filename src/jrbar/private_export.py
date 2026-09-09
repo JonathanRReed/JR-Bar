@@ -154,7 +154,7 @@ def _write_in_parent(
 
     target_descriptor: int | None = None
     scratch_descriptor: int | None = None
-    scratch_name = f".sidepulse-export-{uuid.uuid4().hex}.tmp"
+    scratch_name = f".jrbar-export-{uuid.uuid4().hex}.tmp"
     scratch_identity: tuple[int, int] | None = None
     try:
         if expected is not None:

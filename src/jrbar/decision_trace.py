@@ -253,7 +253,7 @@ def decision_trace_text(trace: DecisionTrace) -> str:
     lines.append(f"  {trace.driver}" if trace.driver else "  No agent is driving the light.")
     lines.append("")
 
-    lines.append("WHAT SIDEPULSE CAN HEAR")
+    lines.append("WHAT JR-Bar CAN HEAR")
     lines.append("")
     report = trace.intake
     if report is None:
