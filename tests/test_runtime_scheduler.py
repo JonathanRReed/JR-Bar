@@ -827,7 +827,7 @@ def test_lid_observation_burst_has_one_os_poll_execution_and_one_latest_pending(
     assert snapshot.queued == 1
     assert snapshot.replaced_pending == 98
     assert sum(
-        thread.name == "sidepulse-runtime-os-poll"
+        thread.name == "jrbar-runtime-os-poll"
         for thread in threading.enumerate()
     ) == 1
 
@@ -1095,7 +1095,7 @@ def test_ten_thousand_commands_and_reconciliations_stay_bounded() -> None:
     assert worker_snapshot.result_count == 0
     assert worker_snapshot.submitted == MAX_RUNTIME_METRIC_COUNT
     assert worker_snapshot.thread_alive
-    assert sum(thread.name == "sidepulse-runtime-screen-bar-sampler" for thread in threading.enumerate()) == 1
+    assert sum(thread.name == "jrbar-runtime-screen-bar-sampler" for thread in threading.enumerate()) == 1
 
     release.set()
     assert worker.close(timeout_seconds=1.0)

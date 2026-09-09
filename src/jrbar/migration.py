@@ -311,6 +311,23 @@ def migrate_from_sidepulse(
     return report
 
 
+def run_startup_migration() -> MigrationReport | None:
+    """Bring a SidePulse install's files forward before anything reads them.
+
+    Called by the one retained foreground main. Never blocks startup: a
+    failure is logged content-free, the app starts with whatever is present,
+    and the next start retries.
+    """
+    try:
+        report = migrate_from_sidepulse()
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        _log.warning("migration: skipped at startup (%s)", type(exc).__name__)
+        return None
+    for line in report.summary_lines():
+        print(line, flush=True)
+    return report
+
+
 __all__ = [
     "MIGRATION_MARKER_NAME",
     "AreaResult",
@@ -322,4 +339,5 @@ __all__ = [
     "legacy_data_dir",
     "migrate_from_sidepulse",
     "migration_areas",
+    "run_startup_migration",
 ]

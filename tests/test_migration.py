@@ -228,32 +228,52 @@ def test_default_areas_honour_xdg_and_home(tmp_path: Path, monkeypatch: pytest.M
     assert os.environ["XDG_STATE_HOME"] == str(tmp_path / "xs")
 
 
-def test_status_bar_entry_migrates_before_the_host_main(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jrbar import provider_usage_status_bar
-
-    order: list[str] = []
-
+def test_startup_migration_runs_and_prints_the_summary(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     def fake_migrate(*args: object, **kwargs: object) -> migration.MigrationReport:
-        order.append("migrate")
-        return migration.MigrationReport(Path("/dev/null"), already_migrated=True)
+        return migration.MigrationReport(
+            Path("/dev/null"),
+            (migration.AreaResult("state", Path("/new/state"), ("claude.jsonl",)),),
+        )
 
     monkeypatch.setattr(migration, "migrate_from_sidepulse", fake_migrate)
-    monkeypatch.setattr(provider_usage_status_bar._host, "main", lambda: order.append("host") or 0, raising=False)
 
-    assert provider_usage_status_bar.main() == 0
-    assert order == ["migrate", "host"]
+    report = migration.run_startup_migration()
+
+    assert report is not None and report.performed
+    assert "migration: copied 1 SidePulse entries" in capsys.readouterr().out
 
 
-def test_status_bar_entry_survives_a_migration_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    from jrbar import provider_usage_status_bar
-
+def test_startup_migration_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     def broken(*args: object, **kwargs: object) -> migration.MigrationReport:
         raise RuntimeError("disk on fire")
 
     monkeypatch.setattr(migration, "migrate_from_sidepulse", broken)
-    monkeypatch.setattr(provider_usage_status_bar._host, "main", lambda: 7, raising=False)
 
-    assert provider_usage_status_bar.main() == 7
+    assert migration.run_startup_migration() is None
+
+
+def test_foreground_main_migrates_before_composing_the_application() -> None:
+    """The one retained foreground main runs the migration first; the
+    packaged entry stays a pure delegate to it."""
+    import ast
+
+    root = Path(__file__).resolve().parents[1] / "src" / "jrbar"
+
+    def calls_in_main(path: Path) -> list[str]:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        main = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+        names = []
+        for node in ast.walk(main):
+            if isinstance(node, ast.Call):
+                func = node.func
+                names.append(func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "?"))
+        return names
+
+    legacy_calls = calls_in_main(root / "status_bar_legacy.py")
+    assert legacy_calls.index("run_startup_migration") < legacy_calls.index("compose_status_bar_application")
+    assert calls_in_main(root / "provider_usage_status_bar.py") == ["main"]
 
 
 def test_cli_setup_runs_the_migration_first(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

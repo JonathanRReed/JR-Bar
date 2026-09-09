@@ -19203,7 +19203,11 @@ def main() -> int:
         print(f"{PRODUCT_DISPLAY_NAME} is already running; this instance is exiting.")
         return 0
     from .application_composition import compose_status_bar_application
+    from .migration import run_startup_migration
 
+    # A SidePulse install's settings, ledgers and history come forward
+    # before composition reads any of them.
+    run_startup_migration()
     compose_status_bar_application()
     run_status_bar()
     return 0
