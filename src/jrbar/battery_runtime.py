@@ -119,7 +119,7 @@ class BatteryObservationService:
         threading.Thread(
             target=self._run,
             args=(request,),
-            name="SidePulseBatteryObservation",
+            name="JRBarBatteryObservation",
             daemon=True,
         ).start()
 

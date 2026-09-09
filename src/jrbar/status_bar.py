@@ -1,11 +1,11 @@
-"""Public facade for SidePulse's single production AppKit controller.
+"""Public facade for JR-Bar's single production AppKit controller.
 
 All controller behavior lives in ``_status_bar_production``. This module keeps
 legacy imports, monkeypatches, direct module execution, and source
 introspection compatible without defining or rebinding another Objective-C
 subclass. Small module-level adapters provide stable device identity and a
 compact menu without adding business logic to the retained controller. The
-adapters are installed only by ``sidepulse.application_composition``.
+adapters are installed only by ``jrbar.application_composition``.
 """
 
 from __future__ import annotations

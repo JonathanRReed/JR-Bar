@@ -662,7 +662,7 @@ def another_instance_alive(socket_path: Path | None = None, timeout: float = 0.3
     """True when a LIVE server owns the hook socket. A stale socket
     file (crashed instance) refuses the connection and reads as dead --
     HookEventServer.start() unlinks and rebinds over it exactly as
-    before. This is the single-instance probe: a second SidePulse used
+    before. This is the single-instance probe: a second JR-Bar used
     to steal the socket, and quitting it unlinked the path and
     permanently deafened the survivor."""
     for target in _event_socket_targets(socket_path):

@@ -1,7 +1,7 @@
 """Native Effect Studio and Preview Lab.
 
-The window consumes the pure projections in :mod:`sidepulse.effect_studio`
-and validated manifests from :mod:`sidepulse.effect_pack_store`. Explicit user
+The window consumes the pure projections in :mod:`jrbar.effect_studio`
+and validated manifests from :mod:`jrbar.effect_pack_store`. Explicit user
 actions may persist data-only packs or scoped assignments. On-screen preview
 rendering never executes pack content or talks to hardware. A separate,
 explicit-consent adapter may temporarily submit one compiled preview through

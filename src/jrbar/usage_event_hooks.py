@@ -207,7 +207,7 @@ def run_usage_hooks(
                 continue
 
     worker = threading.Thread(
-        target=_run, name="SidePulseUsageHooks", daemon=True
+        target=_run, name="JRBarUsageHooks", daemon=True
     )
     worker.start()
     return worker

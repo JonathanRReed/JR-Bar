@@ -1,4 +1,4 @@
-"""One deterministic timestamp-freshness policy for SidePulse.
+"""One deterministic timestamp-freshness policy for JR-Bar.
 
 Naive datetimes are interpreted as UTC. A timestamp up to five seconds in
 the future is treated as age zero to tolerate small clock skew. Anything

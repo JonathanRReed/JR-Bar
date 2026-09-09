@@ -319,7 +319,7 @@ class CodexHookTrustStatus(str, Enum):
     Writing the hook into config.toml is half the install. Codex refuses
     to execute a hook whose hash it has not trusted, so without this
     handshake the user gets "Codex hooks installed." and a Codex that
-    never calls SidePulse. Every ending here used to be one empty dict:
+    never calls JR-Bar. Every ending here used to be one empty dict:
     no Codex binary to ask, a handshake that never answered, and a
     handshake that answered without our hook in it -- all `{}`, all
     swallowed by ``if not trusted_hashes: return``.
@@ -641,11 +641,11 @@ def install_kiro_hooks(
     dry_run: bool = False,
     python_executable: str | None = None,
 ) -> InstallResult:
-    """Publish SidePulse's dedicated Kiro agent file, and only that file.
+    """Publish JR-Bar's dedicated Kiro agent file, and only that file.
 
     Kiro scopes hooks to agent configuration files rather than one global
     hooks document, so SidePulse owns ``~/.kiro/agents/sidepulse.json``
-    outright -- launched with ``kiro-cli --agent sidepulse``. An existing
+    outright -- launched with ``kiro-cli --agent jrbar``. An existing
     file is overwritten only when it carries the managed description.
     """
     config = config_path or default_kiro_agent_config_path()
@@ -795,7 +795,7 @@ def install_devin_hooks(
 
 
 def _remove_flat_jrbar_hooks(entries: list[Any], provider: str) -> list[Any]:
-    """Drops SidePulse's own flat {"command": ...} hook entries, keeping
+    """Drops JR-Bar's own flat {"command": ...} hook entries, keeping
     everything else byte-identical -- for configs (Cursor, Hermes) whose
     hook entries hold the command directly rather than Claude's nested
     {"hooks": [...]} shape."""
@@ -815,7 +815,7 @@ def install_cursor_hooks(
     dry_run: bool = False,
     python_executable: str | None = None,
 ) -> InstallResult:
-    """Adds SidePulse's command to ~/.cursor/hooks.json (shared user-level
+    """Adds JR-Bar's command to ~/.cursor/hooks.json (shared user-level
     file: other tools' hooks and unknown keys are preserved untouched)."""
     config = config_path or default_cursor_config_path()
     target_log = (log_path or detect_log_path("cursor")).expanduser()
@@ -905,7 +905,7 @@ def install_hermes_hooks(
     dry_run: bool = False,
     python_executable: str | None = None,
 ) -> InstallResult:
-    """Adds SidePulse's shell hooks to ~/.hermes/config.yaml's hooks:
+    """Adds JR-Bar's shell hooks to ~/.hermes/config.yaml's hooks:
     block. Edited with a round-trip YAML parser (ruamel) specifically so
     the user's own comments and formatting survive -- config.yaml is a
     hand-maintained file for most Hermes users."""
@@ -1018,7 +1018,7 @@ metadata:
 # {PRODUCT_DISPLAY_NAME} Status
 
 Forwards OpenClaw gateway events to the {PRODUCT_DISPLAY_NAME} agent monitor. Managed
-by SidePulse -- `sidepulse agent-monitor uninstall openclaw` removes it.
+by JR-Bar -- `jrbar agent-monitor uninstall openclaw` removes it.
 """
 
 
@@ -1145,7 +1145,7 @@ def uninstall_openclaw_hooks(
     config_path: Path | None = None,
     dry_run: bool = False,
 ) -> InstallResult:
-    """Removes only SidePulse's own entry and handler directory --
+    """Removes only JR-Bar's own entry and handler directory --
     hooks.internal.enabled stays as-is (other entries may rely on it)."""
     config = config_path or default_openclaw_config_path()
     target_log = (log_path or detect_log_path("openclaw")).expanduser()
@@ -1282,7 +1282,7 @@ def install_opencode_plugin(
     dry_run: bool = False,
     python_executable: str | None = None,
 ) -> InstallResult:
-    """Install only SidePulse's global OpenCode plugin, without touching config."""
+    """Install only JR-Bar's global OpenCode plugin, without touching config."""
     plugin = plugin_path or default_opencode_plugin_path()
     target_log = (log_path or detect_log_path("opencode")).expanduser()
     source = opencode_plugin_source(target_log, python_executable)
@@ -1341,7 +1341,7 @@ def uninstall_opencode_plugin(
     plugin_path: Path | None = None,
     dry_run: bool = False,
 ) -> InstallResult:
-    """Remove only an exact SidePulse-managed OpenCode plugin file."""
+    """Remove only an exact JR-Bar-managed OpenCode plugin file."""
     plugin = plugin_path or default_opencode_plugin_path()
     target_log = (log_path or detect_log_path("opencode")).expanduser()
     legacy_plugin = legacy_opencode_plugin_path() if plugin_path is None else plugin.with_name("sidepulse.js")
@@ -1378,10 +1378,10 @@ def antigravity_hook_command(
        conversation and which step, but never which hook fired, so the name has
        to come from the registration site -- the same job the OpenClaw handler
        and the OpenCode plugin do for their gateways.
-    2. It sends SidePulse's own output to /dev/null and prints `{}` itself.
+    2. It sends JR-Bar's own output to /dev/null and prints `{}` itself.
        Antigravity feeds a command hook's stdout back into the agent, and every
        event we register documents `{}` (or an absent decision) as the no-op
-       result. Without this, SidePulse could put text into a user's session.
+       result. Without this, JR-Bar could put text into a user's session.
     3. It always exits 0. A hook error is reported to the agent, so a broken
        status bar must not become the agent's problem.
 
@@ -1439,7 +1439,7 @@ def _antigravity_entry(
 
 
 def _antigravity_entry_is_ours(entry: Any) -> bool:
-    """True only when every command under our named hook is SidePulse's own."""
+    """True only when every command under our named hook is JR-Bar's own."""
     if not isinstance(entry, dict):
         return False
     commands: list[str] = []

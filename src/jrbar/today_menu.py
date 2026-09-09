@@ -60,7 +60,7 @@ class TodayFeed:
                 threading.Thread(
                     target=self._refresh,
                     args=(settings,),
-                    name="SidePulseToday",
+                    name="JRBarToday",
                     daemon=True,
                 ).start()
         return current

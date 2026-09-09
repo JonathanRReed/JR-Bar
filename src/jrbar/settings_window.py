@@ -1704,7 +1704,7 @@ def alcove_actions_for(target):
     """
     actions = getattr(target, "alcove_actions", None)
     if actions is None:
-        actions = SidePulseAlcoveActions.alloc().initWithController_(target)
+        actions = JRBarAlcoveActions.alloc().initWithController_(target)
         target.alcove_actions = actions
     return actions
 
@@ -1737,10 +1737,10 @@ def refresh_alcove_follow_controls(target) -> None:
     )
 
 
-class SidePulseAlcoveActions(NSObject):
+class JRBarAlcoveActions(NSObject):
     """Action target for the Alcove permission button.
 
-    Same reason SidePulseStudioActions exists: every other selector in
+    Same reason JRBarStudioActions exists: every other selector in
     this window belongs to StatusBarController, which lives in a file
     this one may not edit, and PyObjC dispatches target/action through
     respondsToSelector: — which a plain Python object cannot satisfy.
@@ -1748,7 +1748,7 @@ class SidePulseAlcoveActions(NSObject):
     """
 
     def initWithController_(self, controller):
-        self = objc.super(SidePulseAlcoveActions, self).init()
+        self = objc.super(JRBarAlcoveActions, self).init()
         if self is None:
             return None
         self.controller = controller
@@ -1760,7 +1760,7 @@ class SidePulseAlcoveActions(NSObject):
     def grantScreenRecording_(self, _sender):
         """Explicit user action — the ONLY place a prompt is allowed.
 
-        Requesting first is what puts SidePulse in the Screen Recording
+        Requesting first is what puts JR-Bar in the Screen Recording
         list at all; an app that never asked does not appear there, so
         sending someone straight to the pane would show them a list
         without the row they were told to switch on. Then open the pane,
@@ -1823,7 +1823,7 @@ SIGNAL_THUMB_SIZE = (52.0, 20.0)
 # modern well is SwiftUI-backed and SEGFAULTed inside Swift
 # Concurrency's executor checks in this Python-hosted process the
 # moment its "add a color" picker was touched (crash report
-# SidePulse-2026-08-11-202021.ips).
+# JR-Bar-2026-08-11-202021.ips).
 #
 # Read out of colors.BRAND_SEED_COLORS, never restated. The literal that
 # used to live here still named Codex #FF3A00 — which is this app's own
@@ -2172,7 +2172,7 @@ def _build_led_behavior_pane(target: StatusBarController):
 
 
 def _build_notifications_pane(target: StatusBarController):
-    """Messages: everything SidePulse may say to you in WORDS.
+    """Messages: everything JR-Bar may say to you in WORDS.
 
     Split out of Signals, which had grown into a seven-subject pane
     holding dimming, notifications, calendars, quota and
@@ -2183,7 +2183,7 @@ def _build_notifications_pane(target: StatusBarController):
     stack = native_ui.make_fill_stack(spacing=native_ui.SPACE_L)
     fields: dict[str, object] = {}
 
-    # SidePulse-owned agent lifecycle notifications only. Foreign app
+    # JR-Bar-owned agent lifecycle notifications only. Foreign app
     # notifications are never observed or mirrored into the lights.
     notif_outer, notif_inner = native_ui.make_card("Agent Notifications")
     completion_row, completion_switch = native_ui.make_switch_row(
@@ -2561,7 +2561,7 @@ def refresh_event_access_controls(target) -> None:
 
 
 def _build_agents_pane(target: StatusBarController):
-    """Everything about how SidePulse talks to coding agents: hook
+    """Everything about how JR-Bar talks to coding agents: hook
     installs, the transcript-watching fallback, and which app opens a
     provider's sessions."""
     stack = native_ui.make_fill_stack(spacing=native_ui.SPACE_L)
@@ -2683,7 +2683,7 @@ def _provider_display_label(provider: str) -> str:
 def make_agent_animation_popup(row, target):
     """One provider's motion picker, bound straight to the controller.
 
-    The Studio's own version of this row talks to SidePulseStudioActions,
+    The Studio's own version of this row talks to JRBarStudioActions,
     which only exists while the Studio pane is built. This one targets the
     controller, so the two panes can hold the same choice without either
     needing the other to be on screen.
@@ -3461,7 +3461,7 @@ def hardware_preview_enabled(target) -> bool:
     return bool(getattr(target, "color_preview_enabled", False))
 
 
-class SidePulseStudioActions(NSObject):
+class JRBarStudioActions(NSObject):
     """Action target for the Studio's own controls.
 
     StatusBarController owns every other selector in this window, but it
@@ -3472,7 +3472,7 @@ class SidePulseStudioActions(NSObject):
     """
 
     def initWithController_(self, controller):
-        self = objc.super(SidePulseStudioActions, self).init()
+        self = objc.super(JRBarStudioActions, self).init()
         if self is None:
             return None
         self.controller = controller
@@ -3874,7 +3874,7 @@ def _build_swatch_group_row(
     ``action_target`` is which object the chips send their selector to, and
     it is NOT always ``actions``: the state rows' ``selectModeColorSwatch:``
     lives on StatusBarController, only the Studio's own selectors live on
-    SidePulseStudioActions. Defaults to ``actions`` when given, else target.
+    JRBarStudioActions. Defaults to ``actions`` when given, else target.
     """
     label = native_ui.make_label(group.label, secondary=True, size=11.0)
     native_ui.constrain_width(label, STUDIO_GROUP_LABEL_WIDTH)
@@ -4637,7 +4637,7 @@ def _build_color_studio_pane(target: StatusBarController) -> NSView:
     root = NSView.alloc().init()
     root.setTranslatesAutoresizingMaskIntoConstraints_(False)
 
-    actions = SidePulseStudioActions.alloc().initWithController_(target)
+    actions = JRBarStudioActions.alloc().initWithController_(target)
     target.studio_actions = actions
 
     swatches: dict[tuple[tuple[str, str], str], object] = {}

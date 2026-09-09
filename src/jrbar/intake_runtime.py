@@ -69,7 +69,7 @@ class IntakeProbeService:
             threading.Thread(
                 target=self._run,
                 args=(generation,),
-                name="SidePulseIntakeProbe",
+                name="JRBarIntakeProbe",
                 daemon=True,
             ).start()
             return generation
@@ -117,6 +117,6 @@ class IntakeProbeService:
             threading.Thread(
                 target=self._run,
                 args=(rerun_generation,),
-                name="SidePulseIntakeProbe",
+                name="JRBarIntakeProbe",
                 daemon=True,
             ).start()

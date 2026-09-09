@@ -169,7 +169,7 @@ def _draw_compact_accent(view) -> None:
 
 
 def _draw_wings_only(view) -> None:
-    # Alcove follows the measured center/width, but SidePulse remains a bounded
+    # Alcove follows the measured center/width, but JR-Bar remains a bounded
     # status band. Bracket risers appear only when the explicit bracket style
     # is selected, never as an automatic side effect of Alcove being present.
     _rounded_status_band(view, bracket_allowed=True)

@@ -96,7 +96,7 @@ class ProviderSyncService:
             self._state = replace(self._state, refreshing=True, reason=None)
             self._worker = threading.Thread(
                 target=self._worker_main,
-                name="SidePulseProviderSync",
+                name="JRBarProviderSync",
                 daemon=True,
             )
             self._worker.start()

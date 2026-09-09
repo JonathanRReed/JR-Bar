@@ -268,7 +268,7 @@ def test_sidepulse_doctor_cli_uses_stable_public_collection_error(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert captured.err.strip() == f"sidepulse doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
+    assert captured.err.strip() == f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
     assert raw not in captured.err
 
 
@@ -286,5 +286,5 @@ def test_sidepulse_doctor_cli_sanitizes_encoding_failures(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert captured.out == ""
-    assert captured.err.strip() == f"sidepulse doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
+    assert captured.err.strip() == f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
     assert raw not in captured.err

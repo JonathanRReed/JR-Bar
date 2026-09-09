@@ -17041,8 +17041,8 @@ class ResilienceHardeningTests(unittest.TestCase):
         return self.status_bar.StatusBarDevice(
             device_id="burn-test",
             name="SidePulse Burn Test",
-            root=Path("/Volumes/SidePulseBurnTest"),
-            target=Path("/Volumes/SidePulseBurnTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarBurnTest"),
+            target=Path("/Volumes/JRBarBurnTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -17079,7 +17079,7 @@ class ResilienceHardeningTests(unittest.TestCase):
         # otherwise "wrote nothing" is just a broken burn button.
         with patch(
             "jrbar.device_writer.write_led_program",
-            side_effect=lambda *a, **k: writes.append((a, k)) or Path("/Volumes/SidePulseBurnTest/INIT.LED"),
+            side_effect=lambda *a, **k: writes.append((a, k)) or Path("/Volumes/JRBarBurnTest/INIT.LED"),
         ):
             self.controller.applyStudioAsPowerUp_(None)
         self.assertEqual(len(writes), 1)
@@ -20697,8 +20697,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20756,8 +20756,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20811,8 +20811,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20880,8 +20880,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20907,8 +20907,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20937,8 +20937,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20965,8 +20965,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -20999,8 +20999,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -21067,8 +21067,8 @@ class DeviceRuntimeSchedulingTests(unittest.TestCase):
         device = self.status_bar.StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )
@@ -22974,8 +22974,8 @@ class Task10AccessibilityObservationTests(unittest.TestCase):
         physical = self.status_bar.StatusBarDevice(
             device_id="sidepulse-task10",
             name="SidePulse Task 10",
-            root=Path("/Volumes/SidePulseTask10"),
-            target=Path("/Volumes/SidePulseTask10/LEDS.LED"),
+            root=Path("/Volumes/JRBarTask10"),
+            target=Path("/Volumes/JRBarTask10/LEDS.LED"),
             connected=True,
             display=self.status_bar.LED_DISPLAY_AGENT,
         )

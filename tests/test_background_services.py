@@ -25,7 +25,7 @@ def test_intake_probe_runs_off_caller_and_coalesces_identical_requests() -> None
     release.set()
 
     assert completed.wait(1.0)
-    assert calls == ["SidePulseIntakeProbe"]
+    assert calls == ["JRBarIntakeProbe"]
     assert [label for label, _result in results] == ["first", "middle", "latest"]
     assert all(result.probes == ("probe",) for _label, result in results)
 
@@ -108,6 +108,6 @@ def test_remote_ledger_publication_is_latest_wins_and_off_caller() -> None:
 
     assert completed.wait(1.0)
     assert [call[0] for call in calls] == [("first",), ("latest",)]
-    assert all(call[3] == "SidePulseRemoteLedgerPublish" for call in calls)
+    assert all(call[3] == "JRBarRemoteLedgerPublish" for call in calls)
     assert [result.request.signature for result in results] == ["sig-3"]
     assert results[0].path == Path("/tmp/latest.json")

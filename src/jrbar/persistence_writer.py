@@ -120,7 +120,7 @@ class SerialPersistenceWriter:
         *,
         max_pending: int = MAX_PERSISTENCE_PENDING,
         receipt_handler: Callable[[PersistenceReceipt], None] | None = None,
-        thread_name: str = "SidePulsePersistence",
+        thread_name: str = "JRBarPersistence",
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         if (

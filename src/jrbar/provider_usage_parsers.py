@@ -1,4 +1,4 @@
-"""Bounded parsers that map provider-owned usage payloads into SidePulse facts."""
+"""Bounded parsers that map provider-owned usage payloads into JR-Bar facts."""
 
 from __future__ import annotations
 

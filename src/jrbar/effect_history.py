@@ -1,8 +1,8 @@
 """Pure, bounded, content-free effect history and browser projection.
 
-This is deliberately separate from :mod:`sidepulse.activity_ledger`. Activity
+This is deliberately separate from :mod:`jrbar.activity_ledger`. Activity
 history answers what changed in an agent's work. Effect history answers what
-SidePulse itself attempted to present, where it attempted it, and which
+JR-Bar itself attempted to present, where it attempted it, and which
 bounded policy outcome applied. It stores no provider text, prompt content,
 session identity, path, URL, or navigation target.
 """

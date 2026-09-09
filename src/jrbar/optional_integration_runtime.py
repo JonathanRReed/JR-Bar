@@ -122,7 +122,7 @@ class CreatorMicroOutputService:
                 return False
             self._thread = threading.Thread(
                 target=self._run,
-                name="SidePulseCreatorMicroOutput",
+                name="JRBarCreatorMicroOutput",
                 daemon=True,
             )
             self._thread.start()
@@ -319,7 +319,7 @@ class OptionalIntegrationRuntime:
             self._started = True
         threading.Thread(
             target=self._configure,
-            name="SidePulseOptionalIntegrations",
+            name="JRBarOptionalIntegrations",
             daemon=True,
         ).start()
         return True

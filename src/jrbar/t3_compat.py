@@ -1,6 +1,6 @@
 """Read-only T3 Code compatibility through its documented SQLite projection.
 
-T3 remains the orchestrator and credential owner. SidePulse opens the local
+T3 remains the orchestrator and credential owner. JR-Bar opens the local
 projection database in query-only mode, preserves the underlying provider, and
 publishes immutable supplemental statuses to its canonical monitor.
 """
@@ -737,7 +737,7 @@ class T3SnapshotService:
             threading.Thread(
                 target=self._run,
                 args=(generation, callback),
-                name="SidePulseT3Compatibility",
+                name="JRBarT3Compatibility",
                 daemon=True,
             ).start()
             return self._observation_locked()

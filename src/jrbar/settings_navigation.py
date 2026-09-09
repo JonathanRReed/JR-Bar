@@ -1,4 +1,4 @@
-"""Pure information architecture for SidePulse Settings.
+"""Pure information architecture for JR-Bar Settings.
 
 The retained AppKit panes are intentionally preserved, but they are no longer
 exposed as fifteen unrelated destinations.  This module owns the eight stable

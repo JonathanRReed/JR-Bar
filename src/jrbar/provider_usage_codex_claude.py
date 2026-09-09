@@ -58,7 +58,7 @@ def _default_provider_local_scan(
     home: Path,
     observed_at: float,
 ) -> dict[str, object] | None:
-    """Use SidePulse's bounded transcript scanner for exactly one provider."""
+    """Use JR-Bar's bounded transcript scanner for exactly one provider."""
     try:
         from . import usage_stats
         from .providers import negotiated_provider_sources

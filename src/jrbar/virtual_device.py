@@ -121,7 +121,7 @@ NOTCH_BOTTOM_RADIUS = 8.0
 
 # Alcove (https://henrikruscon.com) renders a Dynamic-Island-style notch
 # overlay and has no published compatibility API. Rather than compete with
-# it for the same black backdrop shape at the same position, SidePulse
+# it for the same black backdrop shape at the same position, JR-Bar
 # drops its own camera-housing rectangle and glow layers entirely and draws
 # just a thin colored accent line at the same position -- reads as a status
 # accent under Alcove's own shape, not a second competing widget. See
@@ -1624,7 +1624,7 @@ class VirtualLedView(NSView):
             except Exception:
                 _adopt()
 
-        threading.Thread(target=_warm, name="SidePulseLedWarm", daemon=True).start()
+        threading.Thread(target=_warm, name="JRBarLedWarm", daemon=True).start()
 
     def setPresentationProgram_startedAt_(self, program, started_at):
         """Record Screen Bar program identity without parsing it on AppKit's thread."""
@@ -3841,7 +3841,7 @@ class VirtualStatusDevice(NSObject):
         # compatibility setting was removed because with Alcove running,
         # every rendering style except the wings drew UNDERNEATH Alcove's
         # opaque backdrop, so the setting visibly did nothing. Semantics:
-        # while Alcove runs, SidePulse always rides one level above it,
+        # while Alcove runs, JR-Bar always rides one level above it,
         # drawing the bracket (wings + risers) when wrap is on or a thin
         # accent underline when it's off; without Alcove, the normal full
         # render at the normal status level. Automatic size is ALWAYS

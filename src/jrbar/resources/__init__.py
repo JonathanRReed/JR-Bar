@@ -1,1 +1,1 @@
-"""Packaged resources for SidePulse helper installers."""
+"""Packaged resources for JR-Bar helper installers."""

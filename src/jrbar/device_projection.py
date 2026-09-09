@@ -1,4 +1,4 @@
-"""Pure per-device filtering for SidePulse status surfaces.
+"""Pure per-device filtering for JR-Bar status surfaces.
 
 The AppKit controller owns device discovery and settings. This module owns the
 small, deterministic decision of which canonical rows one device may show. It

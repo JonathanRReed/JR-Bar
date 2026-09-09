@@ -3,7 +3,7 @@
 A Python exception raised inside a PyObjC `drawRect:` does not fail the draw.
 PyObjC converts it to an Objective-C exception (`PyObjCErr_ToObjCWithGILState`),
 AppKit hands that to `+[NSApplication _crashOnException:]`, and the process
-takes `EXC_BREAKPOINT`/`SIGTRAP` on the main thread. SidePulse died exactly that
+takes `EXC_BREAKPOINT`/`SIGTRAP` on the main thread. JR-Bar died exactly that
 way on 2026-08-14 at 10:38:22, one minute after launch, inside
 `_NSViewDrawRect` under `-[NSViewBackingLayer display]` -- and with no launchd
 job behind the status bar it stayed dead. Every stale row the owner then saw,

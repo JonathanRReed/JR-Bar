@@ -284,7 +284,7 @@ def handle_provider_usage_action(
         if url is not None:
             url_opener(url)
         return (
-            f"Grant one exact browser/profile with `sidepulse providers "
+            f"Grant one exact browser/profile with `jrbar providers "
             f"browser-consent grant {provider_id} --browser <browser> "
             "--profile <profile>` to use browser import. Or copy your "
             f"{title} API key"

@@ -1,4 +1,4 @@
-"""Pure root-menu projection for the compact SidePulse glance."""
+"""Pure root-menu projection for the compact JR-Bar glance."""
 
 from __future__ import annotations
 

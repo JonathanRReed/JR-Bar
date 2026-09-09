@@ -692,7 +692,7 @@ def refresh_usage_graph(
                 _apply()
 
     threading.Thread(
-        target=_work, name="SidePulseUsageGraph", daemon=True
+        target=_work, name="JRBarUsageGraph", daemon=True
     ).start()
 
 

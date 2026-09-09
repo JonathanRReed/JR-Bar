@@ -361,7 +361,7 @@ class WebhookDeliveryService:
             if self._worker is None or not self._worker.is_alive():
                 self._worker = threading.Thread(
                     target=self._run,
-                    name="SidePulseWebhookDelivery",
+                    name="JRBarWebhookDelivery",
                     daemon=True,
                 )
                 self._worker.start()
