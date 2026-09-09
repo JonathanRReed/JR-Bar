@@ -39,7 +39,7 @@ operator export, architecture-policing meta-tests, dead code.
 
 ## Definition of done
 
-When the work is declared done, the Mac must be running the latest commit: rebuild `app/build/JR-Bar.app`, reinstall the LaunchAgent(s), restart, and verify the running daemon and app come from HEAD (`git rev-parse HEAD` recorded in the doctor output).
+When the work is declared done, the Mac must be running the latest commit: rebuild `app/build/JR-Bar.app`, reinstall the LaunchAgent(s), restart, and verify the running daemon and app come from HEAD (`git rev-parse HEAD` recorded in the doctor output). Then commit everything and `git push origin main`.
 
 ## Open items needing Jonathan
 
