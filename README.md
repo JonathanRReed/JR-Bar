@@ -40,8 +40,7 @@ ported behavior by behavior instead.
   of live sessions (click one to jump to its terminal — or click the
   Screen Bar itself while an ask is live).
 - **Layers Mac signals on top**: calendar and reminder glows,
-  severe-weather warnings, battery, and quota
-  alerts share one precedence ladder. A blocked agent always outranks
+  battery, and quota alerts share one precedence ladder. A blocked agent always outranks
   the rest; per-Focus and per-device policies decide what else gets
   through (a Dot can be pinned to one provider, or to asks only).
 - **Tracks usage and cost**: today's tokens with approximate cost and
@@ -49,8 +48,8 @@ ported behavior by behavior instead.
   Anthropic's own usage endpoint, opt-in), and daily/hourly graphs
   from a week up to a year.
 - **Leaves the desk when needed**: a webhook bridge POSTs JSON moments
-  — agent blocked for minutes, task completed, quota crossed, severe
-  weather — to ntfy, Home Assistant, or anything with a URL.
+  — agent blocked for minutes, task completed, quota crossed — to
+  ntfy, Home Assistant, or anything with a URL.
 
 ## Install
 

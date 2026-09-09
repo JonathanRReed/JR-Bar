@@ -178,7 +178,6 @@ def controller(monkeypatch: pytest.MonkeyPatch, tmp_path):
 def _prepare_launch_controller(controller, status_bar_module, monkeypatch):
     _TimerAPI.calls.clear()
     controller.settings = SimpleNamespace(
-        weather_alerts_enabled=False,
         remote_peers=SimpleNamespace(enabled=False),
         virtual_status_device_enabled=False,
     )
@@ -291,9 +290,6 @@ def _prepare_terminate_controller(controller, monkeypatch):
     )
     controller._set_reminders_observation_active = MagicMock(
         name="_set_reminders_observation_active"
-    )
-    controller._set_weather_observation_active = MagicMock(
-        name="_set_weather_observation_active"
     )
 
 
@@ -682,7 +678,6 @@ def test_application_will_terminate_only_closes_once_when_called_twice(
     target._set_display_environment_active.assert_called_once_with(False)
     target._set_calendar_observation_active.assert_called_once_with(False)
     target._set_reminders_observation_active.assert_called_once_with(False)
-    target._set_weather_observation_active.assert_called_once_with(False)
     target._runtime_timer_registry.invalidate_all.assert_called_once_with()
     target._runtime_worker_registry.close_all.assert_called_once_with(
         timeout_seconds=1.0

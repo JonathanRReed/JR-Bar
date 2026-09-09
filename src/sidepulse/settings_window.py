@@ -1322,8 +1322,8 @@ def _build_devices_pane(target: StatusBarController):
                 help_text=(
                     "Asks only keeps this device to agent status and "
                     "blocked-on-you — completions, notifications, quota, "
-                    "calendar and reminder glows stay off it. Weather and "
-                    "low battery always land."
+                    "calendar and reminder glows stay off it. Low battery "
+                    "always lands."
                 ),
             )
         )
@@ -1884,7 +1884,6 @@ SIGNAL_STYLE_CARDS: tuple[tuple[str, str, bool], ...] = (
     ("low_battery", "Low Battery Style", True),
     ("reminders", "Reminder Style", True),
     ("calendar", "Calendar Style", True),
-    ("weather", "Weather Alert Style", True),
     ("completion", "Completion Sweep Style", True),
 )
 SIGNAL_THUMB_SIZE = (52.0, 20.0)
@@ -2195,7 +2194,6 @@ def _build_led_behavior_pane(target: StatusBarController):
     webhook_event_boxes: dict[str, object] = {}
     for label, event_key in (
         ("Completions", "completion"),
-        ("Weather", "weather"),
         ("Timebox", "timebox"),
     ):
         box = native_ui.make_checkbox(label, target, "toggleWebhookEvent:")
@@ -2210,7 +2208,7 @@ def _build_led_behavior_pane(target: StatusBarController):
             bridge_row,
             help_text=(
                 "Each ticked moment POSTs one JSON event to the same "
-                "URL: completions, severe-weather onset, or timebox finish."
+                "URL: completions or timebox finish."
             ),
         )
     )
@@ -2248,7 +2246,7 @@ def _build_notifications_pane(target: StatusBarController):
     """Messages: everything SidePulse may say to you in WORDS.
 
     Split out of Signals, which had grown into a seven-subject pane
-    holding dimming, notifications, calendars, weather, quota and
+    holding dimming, notifications, calendars, quota and
     escalation at once. The lights and the words are different jobs --
     a light is peripheral, a banner is an interruption with text in it --
     and the owner asked for the words to have their own place.
@@ -2402,7 +2400,7 @@ def _add_remote_machine_rows(target, inner) -> dict[str, object]:
 def _build_extras_pane(target: StatusBarController):
     """Extras: the non-agent things the bar can also tell you about.
 
-    Calendar, Reminders, weather and the (still withheld) quota effects
+    Calendar, Reminders and the (still withheld) quota effects
     used to live inside Signals, three cards below a dimming slider, with
     nothing tying them together except "we had nowhere else to put them".
     They are a coherent group — ambient facts that are not agents — and
@@ -2492,68 +2490,6 @@ def _build_extras_pane(target: StatusBarController):
     stack.addArrangedSubview_(cal_outer)
     fields["calendar_lead_field"] = lead_field
 
-    # Weather: the switch and ITS location fields, together.
-    weather_outer, weather_inner = native_ui.make_card("Weather")
-    weather_row, weather_switch = native_ui.make_switch_row(
-        "Flash on severe weather warnings",
-        target,
-        "toggleWeatherAlerts:",
-        help_text=(
-            "An urgent heartbeat while a Severe or Extreme National "
-            "Weather Service warning covers your area. Weather alerts stay off until you enter coordinates "
-            "or separately allow network-address location."
-        ),
-    )
-    weather_inner.addArrangedSubview_(weather_row)
-    native_ui.add_separator(weather_inner)
-    ip_row, ip_switch = native_ui.make_switch_row(
-        "Use network address for weather location",
-        target,
-        "applyWeatherLocation:",
-        help_text=(
-            "When enabled, weather checks send your public IP address to ipapi.co "
-            "to estimate latitude and longitude. This is separate from weather alerts."
-        ),
-    )
-    weather_inner.addArrangedSubview_(ip_row)
-    native_ui.add_separator(weather_inner)
-    lat_field = native_ui.make_field(
-        ""
-        if target.settings.weather_latitude is None
-        else f"{target.settings.weather_latitude:g}",
-        target=target,
-        action="applyWeatherLocation:",
-    )
-    lon_field = native_ui.make_field(
-        ""
-        if target.settings.weather_longitude is None
-        else f"{target.settings.weather_longitude:g}",
-        target=target,
-        action="applyWeatherLocation:",
-    )
-    native_ui.constrain_width(lat_field, 72.0)
-    native_ui.constrain_width(lon_field, 72.0)
-    location_controls = native_ui.make_stack(
-        orientation="horizontal", spacing=native_ui.SPACE_XS
-    )
-    location_controls.addArrangedSubview_(lat_field)
-    location_controls.addArrangedSubview_(native_ui.make_label("lat", secondary=True))
-    location_controls.addArrangedSubview_(lon_field)
-    location_controls.addArrangedSubview_(native_ui.make_label("lon", secondary=True))
-    weather_inner.addArrangedSubview_(
-        native_ui.make_row(
-            "Location override",
-            location_controls,
-            help_text=(
-                "Enter both values to avoid IP-based location. If both are blank, "
-                "weather checks run only when the separate network-address switch is on."
-            ),
-        )
-    )
-    fields["weather_latitude_field"] = lat_field
-    fields["weather_longitude_field"] = lon_field
-    stack.addArrangedSubview_(weather_outer)
-
     # Capacity EFFECTS remain withheld. Capacity HISTORY is a different
     # decision — it is a record kept on this Mac, not an outbound event --
     # and it is the owner's to make, which is why it has a switch and the
@@ -2597,8 +2533,6 @@ def _build_extras_pane(target: StatusBarController):
     buttons = {
         "calendar_alerts_enabled": cal_switch,
         "reminder_alerts_enabled": rem_switch,
-        "weather_alerts_enabled": weather_switch,
-        "weather_ip_geolocation_enabled": ip_switch,
         "capacity_history_enabled": history_switch,
         "quota_alerts_enabled": quota_switch,
     }

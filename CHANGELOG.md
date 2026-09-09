@@ -4,6 +4,10 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Remove severe-weather alerts: the NWS/ipapi fetchers, the weather signal,
+  style card, Today row, webhook event, demo scenario, and settings. Old
+  `weather_*` settings keys are ignored on load. `QUIET_HOUR_EXEMPT_KINDS`
+  is now empty.
 - Remove the `sidepulse-waybar` client and its console script; `sidepulse serve`
   keeps the loopback status API.
 - Remove the external Agent Deck snapshot compatibility (`agent_deck_compat`,

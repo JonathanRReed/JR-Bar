@@ -923,7 +923,6 @@ else:
                     getattr(self, "active_signal", None),
                     getattr(self, "current_calendar_alert", None),
                     getattr(self, "current_reminder_alert", None),
-                    getattr(self, "current_weather_alert", None),
                 ),
                 CoreDomain.BATTERY: getattr(
                     self,

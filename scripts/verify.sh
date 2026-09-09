@@ -105,7 +105,6 @@ if [ "$PORTABLE" -eq 1 ]; then
         tests/test_launch_agent_safety.py \
         tests/test_webhook_delivery.py \
         tests/test_webhook_queue.py \
-        tests/test_weather_network_bounds.py \
         tests/test_supply_chain_tools.py \
         tests/test_dependency_and_entitlements.py \
         tests/test_inside_out_signing.py \

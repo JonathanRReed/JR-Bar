@@ -118,7 +118,7 @@ SETTINGS_CATEGORIES: Final = (
         "What may interrupt you, when, and how strongly.",
     ),
     SettingsCategory(
-        # Calendar, Reminders, and weather are the FUN ambient half of
+        # Calendar and Reminders are the FUN ambient half of
         # the product, and filing them under "Advanced" hid them from
         # the exact person they were built for ("why is all of the
         # system-fun stuff hidden behind advanced menus?", 2026-08-21).
@@ -126,7 +126,7 @@ SETTINGS_CATEGORIES: Final = (
         "Today",
         "sun.max",
         (SettingsPage("extras", "Today"),),
-        "Calendar, Reminders, and weather — on your lights and in the menu.",
+        "Calendar and Reminders — on your lights and in the menu.",
     ),
     SettingsCategory(
         "advanced_diagnostics",

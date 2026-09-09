@@ -1,11 +1,10 @@
-"""The dropdown's "Today" section: calendar, reminders, weather — visible.
+"""The dropdown's "Today" section: calendar and reminders — visible.
 
-These three features existed only as LIGHT effects (a glow before an
-event, an amber pulse for a due reminder, a flash for severe weather)
-plus switches buried in Extras. The information itself was never
-readable anywhere. This section makes the menu answer the questions the
-lights only hint at: what's next on the calendar, what's due, whether a
-weather alert is active.
+These features existed only as LIGHT effects (a glow before an event,
+an amber pulse for a due reminder) plus switches buried in Extras. The
+information itself was never readable anywhere. This section makes the
+menu answer the questions the lights only hint at: what's next on the
+calendar, what's due.
 
 Ground rules: features the user has NOT enabled fetch nothing (their
 switches are permission prompts by design); fetching happens on a slow
@@ -30,7 +29,6 @@ MAX_REMINDER_ROWS = 3
 class TodaySnapshot:
     calendar_line: str | None = None
     reminder_lines: tuple[str, ...] = ()
-    weather_lines: tuple[str, ...] = ()
     fetched_at: float = 0.0
     enabled_count: int = 0
 
@@ -82,9 +80,6 @@ class TodayFeed:
         if getattr(settings, "reminder_alerts_enabled", False):
             fresh.enabled_count += 1
             fresh.reminder_lines = self._reminder_lines()
-        if getattr(settings, "weather_alerts_enabled", False):
-            fresh.enabled_count += 1
-            fresh.weather_lines = self._weather_lines(settings)
         with self._lock:
             self._snapshot = fresh
 
@@ -128,25 +123,6 @@ class TodayFeed:
             return ("Nothing due",)
         return tuple(collected)
 
-    def _weather_lines(self, settings) -> tuple[str, ...]:
-        try:
-            from . import weather_watch
-
-            latitude = getattr(settings, "weather_latitude", None)
-            longitude = getattr(settings, "weather_longitude", None)
-            if latitude is None or longitude is None:
-                if not getattr(settings, "weather_ip_geolocation_enabled", False):
-                    return ("Set a weather location in Settings",)
-                latitude, longitude = weather_watch.ip_location()
-            alerts = weather_watch.active_alerts(latitude, longitude)
-        except Exception:
-            return ("Weather check unavailable right now",)
-        if not alerts:
-            return ("No active weather alerts",)
-        return tuple(
-            f"⚠ {alert[0]}" for alert in alerts[:3]
-        )
-
 
 _shared_feed: TodayFeed | None = None
 _shared_lock = threading.Lock()
@@ -165,7 +141,7 @@ def project_today_rows(
 ) -> tuple[tuple[str, bool, str], ...]:
     """(text, is_alert, kind) rows for the submenu, in reading order.
 
-    ``kind`` names the app a click opens: calendar, reminders, weather.
+    ``kind`` names the app a click opens: calendar or reminders.
     """
     rows: list[tuple[str, bool, str]] = []
     if snapshot.calendar_line is not None:
@@ -173,8 +149,6 @@ def project_today_rows(
     for line in snapshot.reminder_lines:
         prefix = "Reminders · " if line == snapshot.reminder_lines[0] else "     "
         rows.append((f"{prefix}{line}", False, "reminders"))
-    for line in snapshot.weather_lines:
-        rows.append((line, line.startswith("⚠"), "weather"))
     return tuple(rows)
 
 
@@ -190,18 +164,11 @@ def open_today_target(kind: str) -> None:
             workspace.openURL_(
                 NSURL.URLWithString_("x-apple-reminderkit://")
             ) or workspace.launchApplication_("Reminders")
-        elif kind == "weather":
-            workspace.openURL_(
-                NSURL.URLWithString_("https://alerts.weather.gov")
-            )
     except Exception:
         pass
 
 
 def today_menu_title(snapshot: TodaySnapshot) -> str:
-    alerts = sum(1 for line in snapshot.weather_lines if line.startswith("⚠"))
-    if alerts:
-        return f"Today · ⚠ {alerts} weather alert{'s' if alerts != 1 else ''}"
     if (
         snapshot.calendar_line
         and "No events" not in snapshot.calendar_line
@@ -214,7 +181,7 @@ def today_menu_title(snapshot: TodaySnapshot) -> str:
 def build_today_menu_item(target):
     """The whole section as one NSMenuItem, or None when nothing is on.
 
-    With none of the three switched on, one quiet setup row points at
+    With neither switched on, one quiet setup row points at
     the switches instead of pretending there is nothing to say.
     """
     from AppKit import NSMenu, NSMenuItem
@@ -227,7 +194,6 @@ def build_today_menu_item(target):
         for flag in (
             "calendar_alerts_enabled",
             "reminder_alerts_enabled",
-            "weather_alerts_enabled",
         )
     )
     snapshot = shared_today_feed().snapshot(settings) if enabled else TodaySnapshot()
@@ -238,13 +204,13 @@ def build_today_menu_item(target):
     submenu.setAutoenablesItems_(False)
     if not enabled:
         setup = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            "Show calendar, reminders and weather here — Settings → Today…",
+            "Show calendar and reminders here — Settings → Today…",
             "openTipPane:",
             "",
         )
         setup.setTarget_(target)
         # Deep-link straight to the Today pane -- openSetup: opened the
-        # first-run wizard, which has no calendar/weather content at all
+        # first-run wizard, which has no calendar/reminder content at all
         # (adversarial review, story G).
         setup.setRepresentedObject_({"pane": "extras"})
         submenu.addItem_(setup)

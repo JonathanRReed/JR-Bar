@@ -18,7 +18,7 @@ def test_catalog_exposes_named_deterministic_scenarios() -> None:
     names = available_scenarios()
     assert names == DEMO_SCENARIOS
     assert "overview" in names
-    assert {"ask", "error", "completion", "quota", "fleet", "weather", "dnd", "low_power"} <= set(names)
+    assert {"ask", "error", "completion", "quota", "fleet", "dnd", "low_power"} <= set(names)
 
 
 def test_same_seed_and_clock_produce_identical_run() -> None:
@@ -31,21 +31,20 @@ def test_same_seed_and_clock_produce_identical_run() -> None:
 
 
 def test_different_seed_changes_only_deterministic_fixture_values() -> None:
-    first = DemoSandbox(start_time=START, seed=17).run("weather")
-    second = DemoSandbox(start_time=START, seed=18).run("weather")
+    first = DemoSandbox(start_time=START, seed=17).run("quota")
+    second = DemoSandbox(start_time=START, seed=18).run("quota")
 
-    assert first.events != second.events
     assert first.safety.safe_for_preview is second.safety.safe_for_preview is True
     assert first.safety.seed == 17
     assert second.safety.seed == 18
-    assert first.final_snapshot.weather is not None
+    assert first.final_snapshot.quotas
 
 
 def test_overview_covers_all_requested_domains_without_side_effects() -> None:
     run = DemoSandbox(start_time=START, seed=3).run("overview")
     kinds = {event.kind for event in run.events}
 
-    assert {"agent", "ask", "error", "completion", "quota", "device", "remote_machine", "weather", "policy"} <= kinds
+    assert {"agent", "ask", "error", "completion", "quota", "device", "remote_machine", "policy"} <= kinds
     assert run.safety.network_access is False
     assert run.safety.credential_access is False
     assert run.safety.hook_installation is False

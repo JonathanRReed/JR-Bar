@@ -5,7 +5,7 @@ The owner's law, locked:
   * Blocked agents and critical states blink until they are dealt with,
     and escalate THROUGH an active Focus. "I'm in a meeting" never means
     "let the thing that is blocked on me go dark."
-  * Usage, weather, messages and completions must not. They get a burst
+  * Usage, messages and completions must not. They get a burst
     of exactly three, and nothing at all while a Focus is on.
   * Nothing above 2Hz, ever.
 
@@ -44,7 +44,6 @@ from sidepulse.settings import AgentMonitorSettings
 
 COURTESY_KINDS = (
     signals.SIGNAL_QUOTA,
-    signals.SIGNAL_WEATHER,
     signals.SIGNAL_NOTIFICATION,
     signals.SIGNAL_COMPLETION,
     signals.SIGNAL_CALENDAR,
@@ -79,7 +78,7 @@ def _focus() -> signals.InterruptBudget:
 @pytest.mark.parametrize("kind", COURTESY_KINDS)
 def test_a_focus_holds_every_courtesy_signal(kind: str) -> None:
     """The owner's sentence, as an assertion: "I'm in a meeting -- do
-    not blink at me." Usage, weather, messages and completions all sit
+    not blink at me." Usage, messages and completions all sit
     on this rung."""
     grant = signals.grant_interrupt(kind, budget=_focus())
     assert not grant.allowed
@@ -102,12 +101,11 @@ def test_a_focus_never_holds_a_critical_signal(kind: str) -> None:
     assert grant.hold_seconds is None
 
 
-def test_the_owners_four_named_courtesy_signals_are_declared_courtesy() -> None:
+def test_the_owners_named_courtesy_signals_are_declared_courtesy() -> None:
     """Named one by one, because the list is the law and not something
-    to be inferred: usage, weather, messages and completions must not
+    to be inferred: usage, messages and completions must not
     escalate through a Focus."""
     assert signals.interrupt_class(signals.SIGNAL_QUOTA) == signals.INTERRUPT_COURTESY
-    assert signals.interrupt_class(signals.SIGNAL_WEATHER) == signals.INTERRUPT_COURTESY
     assert (
         signals.interrupt_class(signals.SIGNAL_NOTIFICATION)
         == signals.INTERRUPT_COURTESY
@@ -136,29 +134,6 @@ def test_only_an_explicit_silent_focus_reaches_a_critical_signal_and_only_its_so
     )
     assert silent.allowed, "silent takes the sound, never the light"
     assert not silent.audible
-
-
-def test_quiet_hour_still_lets_weather_through_but_a_focus_does_not() -> None:
-    """Quiet Hour is the owner's own manual snooze and has always let a
-    severe-weather warning through. Focus is not Quiet Hour: the owner
-    put weather in the "must not" list by name. Both facts, one table."""
-    snoozed = signals.grant_interrupt(
-        signals.SIGNAL_WEATHER, budget=signals.InterruptBudget(quiet_hour=True)
-    )
-    assert snoozed.allowed
-
-    in_a_meeting = signals.grant_interrupt(signals.SIGNAL_WEATHER, budget=_focus())
-    assert not in_a_meeting.allowed
-    assert in_a_meeting.reason == signals.INTERRUPT_REFUSED_FOCUS
-
-    # And the exemption is weather's alone -- it does not leak to the
-    # rest of the courtesy rung.
-    for kind in (signals.SIGNAL_COMPLETION, signals.SIGNAL_QUOTA):
-        refused = signals.grant_interrupt(
-            kind, budget=signals.InterruptBudget(quiet_hour=True)
-        )
-        assert not refused.allowed
-        assert refused.reason == signals.INTERRUPT_REFUSED_QUIET_HOUR
 
 
 def test_no_focus_and_no_snooze_lets_the_courtesy_signals_through() -> None:
@@ -534,7 +509,6 @@ def test_a_focus_takes_the_courtesy_claims_off_the_bar(controller) -> None:
         signals.SIGNAL_REMINDERS,
         signals.SIGNAL_CALENDAR,
         signals.SIGNAL_QUOTA,
-        signals.SIGNAL_WEATHER,
     ):
         assert not controller.may_interrupt(kind), kind
 
@@ -615,43 +589,6 @@ def test_a_completion_banner_during_a_focus_is_not_delivered(controller) -> None
     _turn_off_a_focus(controller)
     controller.post_completion_notification(status)
     assert delivered, "and without one, the very same call delivers"
-
-
-def test_a_focus_takes_the_weather_heartbeat_off_the_bar(controller) -> None:
-    """Weather is the one the owner had to name twice: it outranks every
-    routine signal AND it is on the "do not blink at me in a meeting"
-    list. Both, at the wired claim."""
-    from sidepulse import status_bar
-
-    device = _device(status_bar)
-    controller.settings = controller.settings.with_weather_alerts_enabled(True)
-    controller.weather_alert_active = True
-
-    assert (
-        controller.active_led_display_kind_for_device(device, None)
-        == status_bar.LED_DISPLAY_WEATHER
-    )
-
-    _turn_on_a_focus(controller)
-    assert (
-        controller.active_led_display_kind_for_device(device, None)
-        == status_bar.LED_DISPLAY_DND_DARK
-    )
-
-    # Quiet Hour is not Focus: the emergency still lands there.
-    _turn_off_a_focus(controller)
-    now = time.time()
-    controller.dnd_controller.set_override(
-        DndOverride.for_mode(
-            DndMode.MUTE,
-            created_epoch=now,
-            until_epoch=now + 60.0,
-        )
-    )
-    assert (
-        controller.active_led_display_kind_for_device(device, None)
-        == status_bar.LED_DISPLAY_WEATHER
-    )
 
 
 def test_the_escalation_chime_asks_the_gate_rather_than_re_deriving_it(

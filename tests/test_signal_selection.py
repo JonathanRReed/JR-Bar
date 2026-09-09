@@ -12,7 +12,6 @@ from sidepulse.signal_selection import (
 EXPECTED_CLAIMS = (
     ("test", "signal_test", False, DisplayAdmission.ALL),
     ("escalation", "escalation", False, DisplayAdmission.ASKS),
-    ("weather", "weather", False, DisplayAdmission.ALL),
     ("low_battery", "low_battery", False, DisplayAdmission.CRITICAL),
     ("failure", "failure", False, DisplayAdmission.CRITICAL),
     ("quota", "quota_alert", True, DisplayAdmission.ALL),
@@ -79,7 +78,7 @@ def test_every_earlier_active_claim_wins_over_every_later_active_claim(
 
 def test_evaluation_stops_immediately_after_the_first_active_claim() -> None:
     evaluated: list[SignalClaimKey] = []
-    winning_key = SignalClaimKey.WEATHER
+    winning_key = SignalClaimKey.LOW_BATTERY
 
     def evaluate(key: SignalClaimKey) -> bool:
         evaluated.append(key)
@@ -91,12 +90,12 @@ def test_evaluation_stops_immediately_after_the_first_active_claim() -> None:
             signal_policy=None,
             default_display_kind="agent",
         )
-        == "weather"
+        == "low_battery"
     )
     assert evaluated == [
         SignalClaimKey.TEST,
         SignalClaimKey.ESCALATION,
-        SignalClaimKey.WEATHER,
+        SignalClaimKey.LOW_BATTERY,
     ]
 
 
@@ -150,8 +149,8 @@ def test_no_active_claim_returns_the_supplied_default() -> None:
 @pytest.mark.parametrize(
     ("display_admission", "claim_key", "expected"),
     (
-        (DisplayAdmission.ALL, SignalClaimKey.WEATHER, "weather"),
-        (DisplayAdmission.CRITICAL, SignalClaimKey.WEATHER, None),
+        (DisplayAdmission.ALL, SignalClaimKey.REMINDERS, "reminders"),
+        (DisplayAdmission.CRITICAL, SignalClaimKey.REMINDERS, None),
         (DisplayAdmission.CRITICAL, SignalClaimKey.LOW_BATTERY, "low_battery"),
         (DisplayAdmission.CRITICAL, SignalClaimKey.FAILURE, "failure"),
         (DisplayAdmission.CRITICAL, SignalClaimKey.ESCALATION, "escalation"),

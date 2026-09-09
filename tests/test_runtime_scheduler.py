@@ -853,18 +853,18 @@ def test_latest_wins_worker_refuses_expired_and_replaces_result_mailbox() -> Non
         return command.payload
 
     worker = LatestWinsWorker(
-        RuntimeWorkerDomain.WEATHER_FETCH,
+        RuntimeWorkerDomain.OS_POLL,
         executor=execute,
         result_handler=lambda _command, result: delivered.append(result),
         dispatch_main=dispatched.append,
         monotonic=clock,
     )
     assert (
-        worker.submit(_command(RuntimeWorkerDomain.WEATHER_FETCH, "weather", 1, deadline=99.0))
+        worker.submit(_command(RuntimeWorkerDomain.OS_POLL, "poll", 1, deadline=99.0))
         is SubmissionDisposition.REFUSED
     )
     assert (
-        worker.submit(_command(RuntimeWorkerDomain.WEATHER_FETCH, "weather", 1, deadline=101.0, payload="first"))
+        worker.submit(_command(RuntimeWorkerDomain.OS_POLL, "poll", 1, deadline=101.0, payload="first"))
         is SubmissionDisposition.STARTED
     )
     with completed:
@@ -872,7 +872,7 @@ def test_latest_wins_worker_refuses_expired_and_replaces_result_mailbox() -> Non
     assert worker.wait_idle(timeout_seconds=2.0)
     assert worker.snapshot().completed == 1
     assert (
-        worker.submit(_command(RuntimeWorkerDomain.WEATHER_FETCH, "weather", 2, deadline=101.0, payload="second"))
+        worker.submit(_command(RuntimeWorkerDomain.OS_POLL, "poll", 2, deadline=101.0, payload="second"))
         is SubmissionDisposition.QUEUED
     )
     with completed:

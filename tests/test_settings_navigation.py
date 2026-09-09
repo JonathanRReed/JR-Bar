@@ -17,15 +17,6 @@ from sidepulse.settings_navigation import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_weather_settings_disclose_separate_ip_location_consent() -> None:
-    source = (ROOT / "src/sidepulse/settings_window.py").read_text(encoding="utf-8")
-
-    assert '"Use network address for weather location"' in source
-    assert '"weather_ip_geolocation_enabled"' in source
-    assert "ipapi.co" in source
-    assert "Weather alerts stay off until you enter coordinates" in source
-
-
 def test_settings_navigation_has_eight_stable_categories() -> None:
     assert [category.label for category in SETTINGS_CATEGORIES] == [
         "Overview",
@@ -35,7 +26,7 @@ def test_settings_navigation_has_eight_stable_categories() -> None:
         "Lighting",
         "Notifications & Focus",
         # The ambient half got its own front door -- filing calendar,
-        # Reminders and weather under "Advanced" hid them (2026-08-21).
+        # Reminders under "Advanced" hid them (2026-08-21).
         "Today",
         "Advanced",
     ]

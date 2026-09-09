@@ -45,7 +45,6 @@ class CourtesySemantic(str, Enum):
     CALENDAR = "calendar"
     REMINDER = "reminder"
     BATTERY = "battery"
-    WEATHER = "weather"
     GENERIC_NOTIFICATION = "generic_notification"
 
 
@@ -464,19 +463,6 @@ COURTESY_SIGNATURES: Final[tuple[CourtesySignature, ...]] = (
         ),
         _cadence("battery-step", (500, 500)),
         "Battery threshold reached",
-    ),
-    CourtesySignature(
-        "jrbar.courtesy.weather.v1",
-        CourtesySemantic.WEATHER,
-        "Weather",
-        "A configured weather condition became relevant.",
-        _geometry(
-            ((0, 4), (1, 3), (2,), (1, 3), (0, 4)),
-            (1, 2, 3),
-            "A symmetric wave travels inward and returns outward.",
-        ),
-        _cadence("weather-wave", (600, 600)),
-        "Weather condition changed",
     ),
     CourtesySignature(
         "jrbar.courtesy.generic-notification.v1",

@@ -31,7 +31,6 @@ def test_registry_covers_each_semantic_once_with_stable_identifiers() -> None:
         CourtesySemantic.CALENDAR,
         CourtesySemantic.REMINDER,
         CourtesySemantic.BATTERY,
-        CourtesySemantic.WEATHER,
         CourtesySemantic.GENERIC_NOTIFICATION,
     )
     assert tuple(signature.identifier for signature in COURTESY_SIGNATURES) == (
@@ -44,7 +43,6 @@ def test_registry_covers_each_semantic_once_with_stable_identifiers() -> None:
         "jrbar.courtesy.calendar.v1",
         "jrbar.courtesy.reminder.v1",
         "jrbar.courtesy.battery.v1",
-        "jrbar.courtesy.weather.v1",
         "jrbar.courtesy.generic-notification.v1",
     )
 
