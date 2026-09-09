@@ -82,7 +82,7 @@ def _insert_thread(database: Path) -> None:
     connection = sqlite3.connect(database)
     connection.execute(
         "INSERT INTO projection_projects VALUES (?, ?, ?, ?, ?, ?)",
-        ("project-1", "SidePulse", "/repo/sidepulse", now, now, None),
+        ("project-1", "JR-Bar", "/repo/jrbar", now, now, None),
     )
     connection.execute(
         """
@@ -108,7 +108,7 @@ def _insert_thread(database: Path) -> None:
             "full-access",
             "default",
             "fix/release",
-            "/repo/sidepulse/.worktrees/release",
+            "/repo/jrbar/.worktrees/release",
             "turn-1",
             now,
             now,
@@ -160,7 +160,7 @@ def test_t3_read_only_projection_preserves_provider_and_thread_identity(
     assert thread.provider_instance == "codex-main"
     assert thread.provider_thread_id == "provider-thread-42"
     assert thread.branch == "fix/release"
-    assert thread.worktree_path == "/repo/sidepulse/.worktrees/release"
+    assert thread.worktree_path == "/repo/jrbar/.worktrees/release"
     assert thread.model == "gpt-5.6-codex"
     assert thread.reasoning_effort == "high"
     assert thread.deep_link == "t3code://threads/local-env/thread-1"
@@ -174,7 +174,7 @@ def test_t3_read_only_projection_preserves_provider_and_thread_identity(
     assert status.agent_id == "codex:session:provider-thread-42"
     assert status.mode is AgentMode.WAITING_FOR_INPUT
     assert status.event_name == "PermissionRequest"
-    assert status.origin == "T3 Code · SidePulse · fix/release"
+    assert status.origin == "T3 Code · JR-Bar · fix/release"
     assert status.work_key is not None
     assert status.work_key.source_key.source_instance_id == "codex-main"
     assert status.work_key.work_id.value == "thread-1"
@@ -249,8 +249,8 @@ def test_t3_snapshot_interrupts_an_expensive_compatible_query(
         "INSERT INTO projection_projects VALUES (?, ?, ?, ?, ?, ?)",
         (
             "project-1",
-            "SidePulse",
-            "/repo/sidepulse",
+            "JR-Bar",
+            "/repo/jrbar",
             "2026-08-16T12:00:00Z",
             "2026-08-16T12:00:00Z",
             None,

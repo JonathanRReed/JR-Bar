@@ -14,21 +14,21 @@ sw_vers 2>/dev/null || echo "sw_vers unavailable"
 uname -m
 
 section "app + launchd"
-for APP in "$HOME/Applications/SidePulse.app" "/Applications/SidePulse.app"; do
+for APP in "$HOME/Applications/JR-Bar.app" "/Applications/JR-Bar.app"; do
   if [ -d "$APP" ]; then
     case "$APP" in
-      "$HOME"/*) APP_LABEL="user Applications/SidePulse.app" ;;
-      *) APP_LABEL="system Applications/SidePulse.app" ;;
+      "$HOME"/*) APP_LABEL="user Applications/JR-Bar.app" ;;
+      *) APP_LABEL="system Applications/JR-Bar.app" ;;
     esac
-    echo "app: $APP_LABEL (modified $(stat -f %Sm "$APP/Contents/MacOS/SidePulse" 2>/dev/null || echo '?'))"
+    echo "app: $APP_LABEL (modified $(stat -f %Sm "$APP/Contents/MacOS/JR-Bar" 2>/dev/null || echo '?'))"
   fi
 done
-launchctl print "gui/$(id -u)/io.sidepulse.agentstatus" 2>/dev/null \
+launchctl print "gui/$(id -u)/com.jonathanreed.jrbar.app" 2>/dev/null \
   | grep -E "state|pid|last exit" | head -4 \
   || echo "launchd service not loaded"
 
 section "state files (sizes + ages only)"
-STATE="$HOME/.local/state/sidepulse/agent-monitor"
+STATE="$HOME/.local/state/jrbar"
 for NAME in latest.json events.sock status-bar.out.log status-bar.err.log \
     claude.jsonl codex.jsonl grok.jsonl devin.jsonl hermes.jsonl; do
   TARGET="$STATE/$NAME"
@@ -68,7 +68,7 @@ for CONFIG in "$HOME/.claude/settings.json" "$HOME/.codex/hooks.json"; do
 done
 
 section "devices"
-VOLUME_ROOT=${SIDEPULSE_TEST_VOLUME_ROOT:-/Volumes}
+VOLUME_ROOT=${JRBAR_TEST_VOLUME_ROOT:-${SIDEPULSE_TEST_VOLUME_ROOT:-/Volumes}}
 VOLUME_COUNT=0
 for VOLUME in "$VOLUME_ROOT"/SidePulse*; do
   if [ -d "$VOLUME" ]; then
@@ -85,8 +85,8 @@ echo "SidePulse volumes mounted: $VOLUME_COUNT"
 
 section "power"
 pmset -g 2>/dev/null | grep -E "SleepDisabled|sleep " | head -3
-pmset -g assertions 2>/dev/null | grep -iE "sidepulse|caffeinate" | head -4 \
-  || echo "no sidepulse power assertions"
+pmset -g assertions 2>/dev/null | grep -iE "jrbar|jr-bar|sidepulse|caffeinate" | head -4 \
+  || echo "no JR-Bar power assertions"
 
 echo
 echo "done -- share this output; it contains no conversation content or raw device serials."

@@ -27,7 +27,7 @@ def test_final_command_keeps_full_build_and_test_gates_and_source_identity():
     assert "scripts/verify_fast.py" in script
     assert "./scripts/verify.sh --no-bootstrap" in script
     assert "--skip-build" not in script and "--skip-clean-install" not in script
-    assert "SIDEPULSE_VERIFY_MACOS_PACKAGE=0" in script
+    assert "JRBAR_VERIFY_MACOS_PACKAGE=0" in script
     assert "git rev-parse HEAD" in script and "git status --porcelain" in script
     assert "--junitxml=" in script and "exit-code.txt" in script
     assert "final-test:" in (ROOT / "Makefile").read_text()
@@ -81,7 +81,7 @@ def test_fresh_checkout_bootstraps_before_selecting_venv_python(tmp_path):
                   "commit", "-qm", "fixture")):
         subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, timeout=5)
     env = dict(os.environ)
-    for key in ("PYTHON", "VENV_DIR", "SIDEPULSE_DEV_VENV"):
+    for key in ("PYTHON", "VENV_DIR", "JRBAR_DEV_VENV"):
         env.pop(key, None)
     env["PATH"] = str(tools) + os.pathsep + env["PATH"]
     env["PYTEST_ADDOPTS"] = "-k inherited-filter"

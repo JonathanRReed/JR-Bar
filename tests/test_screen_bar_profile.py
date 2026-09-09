@@ -110,8 +110,8 @@ def test_runtime_export_is_explicit_and_writes_one_private_profile(
     from jrbar import virtual_device
 
     output = tmp_path / "profile.json"
-    monkeypatch.setenv("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", str(output))
-    monkeypatch.setenv("SIDEPULSE_SCREEN_BAR_PROFILE_SCENARIO", "static")
+    monkeypatch.setenv("JRBAR_SCREEN_BAR_PROFILE_OUTPUT", str(output))
+    monkeypatch.setenv("JRBAR_SCREEN_BAR_PROFILE_SCENARIO", "static")
     device = virtual_device.VirtualStatusDevice.alloc().init()
     device._profile_stop.set()
     device._profile_wake.set()
@@ -144,8 +144,8 @@ def test_runtime_export_does_nothing_without_explicit_opt_in(
 ) -> None:
     from jrbar import virtual_device
 
-    monkeypatch.delenv("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
-    monkeypatch.delenv("SIDEPULSE_SCREEN_BAR_PROFILE_SCENARIO", raising=False)
+    monkeypatch.delenv("JRBAR_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
+    monkeypatch.delenv("JRBAR_SCREEN_BAR_PROFILE_SCENARIO", raising=False)
     device = virtual_device.VirtualStatusDevice.alloc().init()
 
     assert device._profile_tracker is None
@@ -157,7 +157,7 @@ def test_termination_quiesces_frame_and_sampler_work_before_snapshot(
 ) -> None:
     from jrbar import virtual_device
 
-    monkeypatch.delenv("SIDEPULSE_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
+    monkeypatch.delenv("JRBAR_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
     device = virtual_device.VirtualStatusDevice.alloc().init()
     events: list[str] = []
     device._invalidate_frame_driver = lambda: events.append("driver-stopped")

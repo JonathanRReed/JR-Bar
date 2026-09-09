@@ -16,7 +16,7 @@ import zipfile
 from pathlib import Path, PurePosixPath
 
 DEFAULT_DITTO = Path("/usr/bin/ditto")
-EXPECTED_APP_NAME = "SidePulse.app"
+EXPECTED_APP_NAME = "JR-Bar.app"
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z")
 _ARCHITECTURE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
 
@@ -93,15 +93,15 @@ def _bundle_version(app: Path) -> str:
 
 
 def _validate_output_identity(output: Path, *, version: str) -> str:
-    prefix = f"SidePulse-{version}-"
+    prefix = f"JR-Bar-{version}-"
     if not output.name.startswith(prefix) or not output.name.endswith(".zip"):
         raise SparkleArchiveError(
-            f"archive name must match bundle version: SidePulse-{version}-<architecture>.zip"
+            f"archive name must match bundle version: JR-Bar-{version}-<architecture>.zip"
         )
     architecture = output.name[len(prefix) : -len(".zip")]
     if _ARCHITECTURE.fullmatch(architecture) is None or ".." in architecture:
         raise SparkleArchiveError(
-            f"archive name must be SidePulse-{version}-<architecture>.zip"
+            f"archive name must be JR-Bar-{version}-<architecture>.zip"
         )
     return architecture
 
@@ -114,7 +114,7 @@ def _validate_output_path(*, app: Path, output: Path) -> Path:
     except ValueError:
         pass
     else:
-        raise SparkleArchiveError("archive output must not be inside SidePulse.app")
+        raise SparkleArchiveError("archive output must not be inside JR-Bar.app")
     try:
         metadata = unresolved_output.lstat()
     except FileNotFoundError:
@@ -176,7 +176,7 @@ def validate_archive(*, archive: Path, app: Path | None = None) -> None:
                             f"archive contains an escaping symlink: {normalized}"
                         )
             if not members or EXPECTED_APP_NAME not in members:
-                raise SparkleArchiveError("archive does not contain SidePulse.app as its only root")
+                raise SparkleArchiveError("archive does not contain JR-Bar.app as its only root")
             corrupt = bundle_zip.testzip()
             if corrupt is not None:
                 raise SparkleArchiveError(f"archive member failed CRC validation: {corrupt}")
@@ -210,7 +210,7 @@ def package_archive(
     output: Path,
     ditto: Path = DEFAULT_DITTO,
 ) -> Path:
-    """Create one exact-name ZIP atomically from a validated SidePulse.app."""
+    """Create one exact-name ZIP atomically from a validated JR-Bar.app."""
 
     app_path = Path(app)
     if app_path.name != EXPECTED_APP_NAME:

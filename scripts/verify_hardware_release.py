@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Perform a reversible physical SidePulse hardware release smoke test."""
+"""Perform a reversible physical LED-hardware release smoke test for JR-Bar."""
 
 from __future__ import annotations
 

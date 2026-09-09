@@ -11,6 +11,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .app_bundle import APP_BUNDLE_NAME, APP_EXECUTABLE_NAME
 from .private_io import (
     PrivateWriteTransaction,
     ensure_private_directory,
@@ -20,10 +21,14 @@ from .product_identity import PRODUCT_DISPLAY_NAME
 from .providers import default_state_dir
 from .trusted_tools import trusted_system_tool
 
-LAUNCH_AGENT_LABEL = "io.sidepulse.agentstatus"
+LAUNCH_AGENT_LABEL = "com.jonathanreed.jrbar.app"
 LAUNCH_AGENT_FILENAME = f"{LAUNCH_AGENT_LABEL}.plist"
-LEGACY_LAUNCH_AGENT_LABEL = "com.sidepulse.agentstatus"
+# Labels the status bar shipped under before the JR-Bar rename. Installing
+# the current agent unloads and deletes every one of these.
+LEGACY_LAUNCH_AGENT_LABELS = ("io.sidepulse.agentstatus", "com.sidepulse.agentstatus")
+LEGACY_LAUNCH_AGENT_LABEL = LEGACY_LAUNCH_AGENT_LABELS[0]
 LEGACY_LAUNCH_AGENT_FILENAME = f"{LEGACY_LAUNCH_AGENT_LABEL}.plist"
+LEGACY_LAUNCH_AGENT_FILENAMES = tuple(f"{label}.plist" for label in LEGACY_LAUNCH_AGENT_LABELS)
 
 TERMINAL_BUNDLE_IDENTIFIER = "com.apple.Terminal"
 ITERM_BUNDLE_IDENTIFIER = "com.googlecode.iterm2"
@@ -297,6 +302,11 @@ def legacy_launch_agent_path(home: Path | None = None) -> Path:
     return base / "Library" / "LaunchAgents" / LEGACY_LAUNCH_AGENT_FILENAME
 
 
+def legacy_launch_agent_paths(home: Path | None = None) -> tuple[Path, ...]:
+    base = home or Path.home()
+    return tuple(base / "Library" / "LaunchAgents" / name for name in LEGACY_LAUNCH_AGENT_FILENAMES)
+
+
 def launch_agent_installed(plist_path: Path | None = None) -> bool:
     target = plist_path or launch_agent_path()
     return target.exists()
@@ -314,7 +324,7 @@ def build_launch_agent_plist(
         executable = str(Path(python_executable))
     else:
         raise RuntimeError(
-            "production LaunchAgent installation requires the packaged SidePulse.app; "
+            "production LaunchAgent installation requires the packaged JR-Bar.app; "
             "build and install the macOS package, or pass an explicit development "
             "python_executable"
         )
@@ -328,7 +338,7 @@ def build_launch_agent_plist(
         program_arguments = [
             executable,
             "-m",
-            "sidepulse",
+            "jrbar",
             "status-bar",
             "--foreground",
         ]
@@ -340,7 +350,7 @@ def build_launch_agent_plist(
         # Unconditional: granting a TCC permission quits the app with a
         # CLEAN exit (observed: last exit code 0), so a SuccessfulExit
         # condition would have left it dead -- exactly the "I granted
-        # Full Disk Access and SidePulse never came back" failure. The
+        # Full Disk Access and JR-Bar never came back" failure. The
         # Quit menu item boots the job out instead of just exiting, so
         # quitting still sticks (see quit_ in status_bar.py).
         "KeepAlive": True,
@@ -363,9 +373,13 @@ def install_launch_agent(
     legacy_plist_path: Path | None = None,
 ) -> LaunchAgentResult:
     target = plist_path or launch_agent_path()
-    legacy_target = legacy_plist_path if legacy_plist_path is not None else (
-        legacy_launch_agent_path() if plist_path is None else None
-    )
+    legacy_targets: tuple[Path, ...]
+    if legacy_plist_path is not None:
+        legacy_targets = (legacy_plist_path,)
+    elif plist_path is None:
+        legacy_targets = legacy_launch_agent_paths()
+    else:
+        legacy_targets = ()
     plist = build_launch_agent_plist(python_executable=python_executable)
     data = plistlib.dumps(plist, sort_keys=False)
     if not target.parent.exists():
@@ -427,8 +441,8 @@ def install_launch_agent(
         raise install_error
 
     legacy_removed = False
-    if legacy_target is not None:
-        legacy_removed = remove_legacy_launch_agent(legacy_target)
+    for legacy_target in legacy_targets:
+        legacy_removed = remove_legacy_launch_agent(legacy_target) or legacy_removed
     changed = changed or legacy_removed
 
     return LaunchAgentResult(
@@ -507,16 +521,16 @@ def launch_agent_path_env(_python_executable: str) -> str:
 
 
 def production_bundle_executable(executable: Path | str | None = None) -> Path:
-    """Resolve the current frozen PyInstaller executable inside SidePulse.app."""
+    """Resolve the current frozen PyInstaller executable inside JR-Bar.app."""
     candidate = Path(executable or sys.executable or "")
     if not candidate.is_absolute():
-        raise RuntimeError("packaged SidePulse executable path must be absolute")
-    if candidate.name != "SidePulse" or candidate.parent.name != "MacOS":
-        raise RuntimeError(f"packaged SidePulse executable has an unexpected path: {candidate}")
+        raise RuntimeError("packaged JR-Bar executable path must be absolute")
+    if candidate.name != APP_EXECUTABLE_NAME or candidate.parent.name != "MacOS":
+        raise RuntimeError(f"packaged JR-Bar executable has an unexpected path: {candidate}")
     contents = candidate.parent.parent
     bundle = contents.parent
-    if contents.name != "Contents" or bundle.name != "SidePulse.app":
-        raise RuntimeError(f"packaged SidePulse executable is not inside SidePulse.app: {candidate}")
+    if contents.name != "Contents" or bundle.name != APP_BUNDLE_NAME:
+        raise RuntimeError(f"packaged JR-Bar executable is not inside JR-Bar.app: {candidate}")
 
     for path, expected_type in (
         (bundle, stat.S_ISDIR),
@@ -527,22 +541,22 @@ def production_bundle_executable(executable: Path | str | None = None) -> Path:
         try:
             metadata = path.lstat()
         except OSError as exc:
-            raise RuntimeError(f"packaged SidePulse path is missing: {path}") from exc
+            raise RuntimeError(f"packaged JR-Bar path is missing: {path}") from exc
         if stat.S_ISLNK(metadata.st_mode):
-            raise RuntimeError(f"packaged SidePulse path must not be a symlink: {path}")
+            raise RuntimeError(f"packaged JR-Bar path must not be a symlink: {path}")
         if not expected_type(metadata.st_mode):
-            raise RuntimeError(f"packaged SidePulse path has an unexpected type: {path}")
+            raise RuntimeError(f"packaged JR-Bar path has an unexpected type: {path}")
 
     try:
         resolved_bundle = bundle.resolve(strict=True)
         resolved_candidate = candidate.resolve(strict=True)
     except OSError as exc:
-        raise RuntimeError(f"packaged SidePulse path cannot be resolved: {candidate}") from exc
-    expected_candidate = resolved_bundle / "Contents" / "MacOS" / "SidePulse"
+        raise RuntimeError(f"packaged JR-Bar path cannot be resolved: {candidate}") from exc
+    expected_candidate = resolved_bundle / "Contents" / "MacOS" / APP_EXECUTABLE_NAME
     if resolved_candidate != expected_candidate:
         raise RuntimeError(
-            f"packaged SidePulse executable resolves outside its expected bundle path: {candidate}"
+            f"packaged JR-Bar executable resolves outside its expected bundle path: {candidate}"
         )
     if not candidate.lstat().st_mode & 0o111:
-        raise RuntimeError(f"packaged SidePulse executable is missing or not executable: {candidate}")
+        raise RuntimeError(f"packaged JR-Bar executable is missing or not executable: {candidate}")
     return candidate

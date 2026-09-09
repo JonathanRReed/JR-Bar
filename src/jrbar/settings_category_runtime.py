@@ -124,8 +124,8 @@ def _render_provider_instance_profile_cards(
             controls[(row.provider_id, row.source_instance_id, field.key)] = control
         cards[(row.provider_id, row.source_instance_id)] = outer
         stack.addArrangedSubview_(outer)
-    target._sidepulse_provider_profile_settings_cards = cards
-    target._sidepulse_provider_profile_settings_controls = controls
+    target._jrbar_provider_profile_settings_cards = cards
+    target._jrbar_provider_profile_settings_controls = controls
 
 
 def _sync_provider_instance_profile_settings(
@@ -145,15 +145,15 @@ def _sync_provider_instance_profile_settings(
     privacy_mode = settings.menu_display.privacy_mode
     if (
         not force
-        and model == getattr(target, "_sidepulse_provider_profile_settings_model", None)
+        and model == getattr(target, "_jrbar_provider_profile_settings_model", None)
         and privacy_mode
-        == getattr(target, "_sidepulse_provider_profile_settings_privacy_mode", None)
+        == getattr(target, "_jrbar_provider_profile_settings_privacy_mode", None)
     ):
         return
-    target._sidepulse_provider_profile_settings_model = model
-    target._sidepulse_provider_profile_settings_privacy_mode = privacy_mode
-    cards = getattr(target, "_sidepulse_provider_profile_settings_cards", {})
-    controls = getattr(target, "_sidepulse_provider_profile_settings_controls", {})
+    target._jrbar_provider_profile_settings_model = model
+    target._jrbar_provider_profile_settings_privacy_mode = privacy_mode
+    cards = getattr(target, "_jrbar_provider_profile_settings_cards", {})
+    controls = getattr(target, "_jrbar_provider_profile_settings_controls", {})
     for row in model.rows:
         identity = (row.provider_id, row.source_instance_id)
         card = cards.get(identity)
@@ -213,7 +213,7 @@ def save_provider_instance_profile_setting(
         log(f"provider profile settings: {exc}")
         committed = getattr(
             target,
-            "_sidepulse_provider_usage_settings_snapshot",
+            "_jrbar_provider_usage_settings_snapshot",
             None,
         )
         try:
@@ -229,7 +229,7 @@ def save_provider_instance_profile_setting(
     message = getattr(target, "set_settings_message", None)
     if callable(message):
         message("Provider profile saved.")
-    window = getattr(target, "_sidepulse_provider_usage_window", None)
+    window = getattr(target, "_jrbar_provider_usage_window", None)
     if window is not None:
         window.refresh(target.provider_usage_state)
     return True
@@ -305,7 +305,7 @@ def _native_usage_pane(target):
 
     usage_settings = getattr(
         target,
-        "_sidepulse_provider_usage_settings_snapshot",
+        "_jrbar_provider_usage_settings_snapshot",
         None,
     )
     if type(usage_settings) is not ProviderUsageSettings:
@@ -313,16 +313,16 @@ def _native_usage_pane(target):
         # this immutable default with its cached snapshot asynchronously; opening
         # the window never reads provider, browser, or integration files.
         usage_settings = default_provider_usage_settings()
-        target._sidepulse_provider_usage_settings_snapshot = usage_settings
-    target._sidepulse_provider_presentation_settings = (
+        target._jrbar_provider_usage_settings_snapshot = usage_settings
+    target._jrbar_provider_presentation_settings = (
         project_presentation_settings(usage_settings)
     )
     profile_settings_model = build_provider_instance_profile_settings_model(
         project_instance_policies(usage_settings),
         privacy_mode=usage_settings.menu_display.privacy_mode,
     )
-    target._sidepulse_provider_profile_settings_model = profile_settings_model
-    target._sidepulse_provider_profile_settings_privacy_mode = (
+    target._jrbar_provider_profile_settings_model = profile_settings_model
+    target._jrbar_provider_profile_settings_privacy_mode = (
         usage_settings.menu_display.privacy_mode
     )
     display_outer, display_inner = ui.make_card("In the Usage Menu")
@@ -415,8 +415,8 @@ def _native_usage_pane(target):
     # The pane is cached across reopens. Keeping the box references lets
     # refresh_native_usage_summary apply worker-observed external changes
     # without touching disk on the AppKit path.
-    target._sidepulse_usage_menu_boxes = (tuple(element_boxes), tuple(provider_boxes))
-    target._sidepulse_provider_reset_boxes = tuple(reset_boxes)
+    target._jrbar_usage_menu_boxes = (tuple(element_boxes), tuple(provider_boxes))
+    target._jrbar_provider_reset_boxes = tuple(reset_boxes)
 
     return ui.wrap_in_scroll_pane(stack), {
         "native_usage_summary": summary,
@@ -429,7 +429,7 @@ def refresh_native_usage_summary(target) -> None:
     field = getattr(target, "settings_fields", {}).get("native_usage_source_status")
     if field is None:
         return
-    state = getattr(target, "_sidepulse_provider_usage_state", None)
+    state = getattr(target, "_jrbar_provider_usage_state", None)
     try:
         from .provider_usage_menu import glance_summary
 
@@ -441,7 +441,7 @@ def refresh_native_usage_summary(target) -> None:
 
 def _sync_usage_menu_checkboxes(target) -> None:
     """Apply the current immutable settings snapshot to cached checkboxes."""
-    boxes = getattr(target, "_sidepulse_usage_menu_boxes", None)
+    boxes = getattr(target, "_jrbar_usage_menu_boxes", None)
     if not boxes:
         return
     try:
@@ -450,7 +450,7 @@ def _sync_usage_menu_checkboxes(target) -> None:
 
         settings = getattr(
             target,
-            "_sidepulse_provider_usage_settings_snapshot",
+            "_jrbar_provider_usage_settings_snapshot",
             None,
         )
         if type(settings) is not ProviderUsageSettings:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a deterministic CycloneDX SBOM for a SidePulse release environment."""
+"""Generate a deterministic CycloneDX SBOM for a JR-Bar release environment."""
 
 from __future__ import annotations
 
@@ -104,11 +104,11 @@ def build_sbom(
         artifact_properties.extend(
             (
                 {
-                    "name": f"sidepulse:artifact:{relative_path}:sha256",
+                    "name": f"jrbar:artifact:{relative_path}:sha256",
                     "value": _sha256(artifact),
                 },
                 {
-                    "name": f"sidepulse:artifact:{relative_path}:bytes",
+                    "name": f"jrbar:artifact:{relative_path}:bytes",
                     "value": str(artifact.stat().st_size),
                 },
             )
@@ -117,7 +117,7 @@ def build_sbom(
     identity = "|".join(
         [application_version, *(str(component["bom-ref"]) for component in components)]
     )
-    serial = uuid.uuid5(uuid.NAMESPACE_URL, f"https://sidepulse.io/sbom/{identity}")
+    serial = uuid.uuid5(uuid.NAMESPACE_URL, f"https://github.com/JonathanRReed/JR-Bar/sbom/{identity}")
     return {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
@@ -138,10 +138,10 @@ def build_sbom(
                 "type": "application",
                 "name": "JR-Bar",
                 "version": application_version,
-                "bom-ref": f"pkg:github/JonathanRReed/sidepulse-JR-Fork@{application_version}",
+                "bom-ref": f"pkg:github/JonathanRReed/JR-Bar@{application_version}",
                 "properties": [
-                    {"name": "sidepulse:python", "value": platform.python_version()},
-                    {"name": "sidepulse:platform", "value": platform.platform()},
+                    {"name": "jrbar:python", "value": platform.python_version()},
+                    {"name": "jrbar:platform", "value": platform.platform()},
                     *artifact_properties,
                 ],
             },

@@ -959,7 +959,7 @@ def _build_overview_pane(target: StatusBarController):
     try:
         from importlib.metadata import version as _pkg_version
 
-        app_version = _pkg_version("sidepulse")
+        app_version = _pkg_version("jrbar")
     except Exception:
         app_version = "dev"
     about_inner.addArrangedSubview_(

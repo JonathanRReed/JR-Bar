@@ -52,7 +52,7 @@ def test_reconfiguration_revokes_input_then_waits_for_old_device_owner_before_st
             stopping.set()
             return allow_stop.wait(timeout)
 
-    target = SimpleNamespace(_sidepulse_optional_integration_runtime=OldRuntime())
+    target = SimpleNamespace(_jrbar_optional_integration_runtime=OldRuntime())
     replacement = object()
 
     def start(controller):
@@ -66,7 +66,7 @@ def test_reconfiguration_revokes_input_then_waits_for_old_device_owner_before_st
     allow_stop.set()
     thread.join(1)
     assert calls == ["revoke", "close", "start"]
-    assert target._sidepulse_optional_integration_runtime is replacement
+    assert target._jrbar_optional_integration_runtime is replacement
 
 
 def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop():
@@ -75,13 +75,13 @@ def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop():
     calls = []
     old = SimpleNamespace(revoke_deck_input=lambda: None, close=lambda: None, wait_until_stopped=lambda timeout: False)
     target = SimpleNamespace(
-        _sidepulse_optional_integration_runtime=old,
+        _jrbar_optional_integration_runtime=old,
         performSelectorOnMainThread_withObject_waitUntilDone_=lambda selector, receipt, wait: calls.append(receipt.reason),
     )
     thread = reconfigure_deck_runtime(target, runtime_factory=lambda controller: calls.append("start"))
     thread.join(1)
     assert calls == ["previous_owner_stopping"]
-    assert target._sidepulse_optional_integration_runtime is old
+    assert target._jrbar_optional_integration_runtime is old
 
 
 def test_termination_revokes_a_waiting_restart_before_old_owner_finishes():
@@ -96,7 +96,7 @@ def test_termination_revokes_a_waiting_restart_before_old_owner_finishes():
         waiting.set()
         return stopped.wait(timeout)
 
-    target = SimpleNamespace(_sidepulse_optional_integration_runtime=SimpleNamespace(
+    target = SimpleNamespace(_jrbar_optional_integration_runtime=SimpleNamespace(
         revoke_deck_input=lambda: None, close=lambda: None, wait_until_stopped=wait,
     ))
     thread = reconfigure_deck_runtime(target, runtime_factory=lambda controller: created.append(1))

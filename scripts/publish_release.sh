@@ -41,7 +41,7 @@ if git rev-parse "$tag" >/dev/null 2>&1 || \
     echo "Tag already exists: $tag" >&2
     exit 2
 fi
-if gh release view "$tag" --repo JonathanRReed/sidepulse-JR-Fork >/dev/null 2>&1; then
+if gh release view "$tag" --repo JonathanRReed/JR-Bar >/dev/null 2>&1; then
     echo "Release already exists: $tag" >&2
     exit 2
 fi
@@ -87,7 +87,7 @@ fi
 immutable_artifacts+=(
     dist/release-environment.txt
     dist/performance-evidence.json
-    dist/sidepulse-sbom.cdx.json
+    dist/jrbar-sbom.cdx.json
     "$macos_artifact"
     "$update_archive"
     dist/release-verification.json
@@ -112,7 +112,7 @@ rollback() {
     status=$?
     if [ "$status" -ne 0 ] && [ "$release_created" -eq 1 ]; then
         gh release delete "$tag" \
-            --repo JonathanRReed/sidepulse-JR-Fork \
+            --repo JonathanRReed/JR-Bar \
             --yes \
             --cleanup-tag >/dev/null 2>&1 || true
     fi
@@ -121,22 +121,22 @@ rollback() {
 trap rollback EXIT
 
 gh release create "$tag" \
-    --repo JonathanRReed/sidepulse-JR-Fork \
+    --repo JonathanRReed/JR-Bar \
     --target "$head_sha" \
     --title "JR-Bar $version" \
     --generate-notes \
     --draft
 release_created=1
 gh release upload "$tag" "${immutable_artifacts[@]}" \
-    --repo JonathanRReed/sidepulse-JR-Fork
+    --repo JonathanRReed/JR-Bar
 gh release edit "$tag" \
-    --repo JonathanRReed/sidepulse-JR-Fork \
+    --repo JonathanRReed/JR-Bar \
     --draft=false
 release_created=0
 
 archive_name="$(/usr/bin/basename "$update_archive")"
 published_assets="$(gh release view "$tag" \
-    --repo JonathanRReed/sidepulse-JR-Fork \
+    --repo JonathanRReed/JR-Bar \
     --json assets \
     --jq '.assets[].name')"
 archive_available=0
@@ -152,9 +152,9 @@ if [ "$archive_available" -ne 1 ]; then
 fi
 
 updates_created=0
-if ! gh release view updates --repo JonathanRReed/sidepulse-JR-Fork >/dev/null 2>&1; then
+if ! gh release view updates --repo JonathanRReed/JR-Bar >/dev/null 2>&1; then
     gh release create updates \
-        --repo JonathanRReed/sidepulse-JR-Fork \
+        --repo JonathanRReed/JR-Bar \
         --target "$head_sha" \
         --title "JR-Bar Updates" \
         --notes "Durable signed Sparkle update feed." \
@@ -164,14 +164,14 @@ fi
 # Upload metadata first. The signed appcast is the client-visible pointer and
 # changes only after the immutable versioned archive is confirmed available.
 gh release upload updates "$channel_metadata" \
-    --repo JonathanRReed/sidepulse-JR-Fork \
+    --repo JonathanRReed/JR-Bar \
     --clobber
 gh release upload updates "$appcast" \
-    --repo JonathanRReed/sidepulse-JR-Fork \
+    --repo JonathanRReed/JR-Bar \
     --clobber
 if [ "$updates_created" -eq 1 ]; then
     gh release edit updates \
-        --repo JonathanRReed/sidepulse-JR-Fork \
+        --repo JonathanRReed/JR-Bar \
         --draft=false
 fi
 trap - EXIT

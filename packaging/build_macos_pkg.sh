@@ -7,22 +7,22 @@ BUILD_DIR="${BUILD_ROOT:-$ROOT_DIR/build/macos-pkg}"
 DIST_DIR="${OUTPUT_ROOT:-$ROOT_DIR/dist}"
 RAW_EVIDENCE_DIR="$BUILD_DIR/release-evidence-raw"
 SPARKLE_DISTRIBUTION="$BUILD_DIR/sparkle-distribution"
-APP_NOTARY_ZIP="$BUILD_DIR/SidePulse-app-notary.zip"
+APP_NOTARY_ZIP="$BUILD_DIR/JR-Bar-app-notary.zip"
 REQUESTED_BUILD_PYTHON="${BUILD_PYTHON:-}"
 CONSTRAINTS="$ROOT_DIR/requirements/release-constraints.txt"
 LOCKFILE="$ROOT_DIR/requirements/release-lock.txt"
 PINNED_PIP="26.1.2"
 PINNED_PYINSTALLER="6.21.0"
 VENV_DIR="$BUILD_DIR/venv"
-APP_PATH="$BUILD_DIR/pyinstaller/SidePulse.app"
-COMPONENT_PKG="$BUILD_DIR/SidePulse-component.pkg"
+APP_PATH="$BUILD_DIR/pyinstaller/JR-Bar.app"
+COMPONENT_PKG="$BUILD_DIR/JR-Bar-component.pkg"
 ENVIRONMENT_SNAPSHOT="$DIST_DIR/release-environment.txt"
-APP_ID="io.sidepulse.app"
+APP_ID="com.jonathanreed.jrbar"
 PRODUCT_DISPLAY_NAME="JR-Bar"
 MINIMUM_SUPPORTED_MACOS="11.0"
 APPLE_EVENTS_USAGE_DESCRIPTION="JR-Bar uses Automation only to open a reviewed resume command in Terminal or iTerm2 when you choose Open."
 FOCUS_STATUS_USAGE_DESCRIPTION="JR-Bar uses Focus Status only when you choose Allow Focus Status, so Do Not Disturb can follow whether a macOS Focus is active."
-SPARKLE_FEED_URL="https://github.com/JonathanRReed/sidepulse-JR-Fork/releases/download/updates/appcast.xml"
+SPARKLE_FEED_URL="https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
 SPARKLE_PUBLIC_KEY_FILE="$ROOT_DIR/packaging/sparkle_public_ed_key.txt"
 
 APP_SIGN_IDENTITY="${APP_SIGN_IDENTITY:-}"
@@ -167,7 +167,7 @@ export PYTHONHASHSEED=0
 export PYINSTALLER_CONFIG_DIR="$BUILD_DIR/pyinstaller-cache"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT_DIR" show -s --format=%ct HEAD)}"
 "$BUILD_PYTHON" -m venv "$VENV_DIR"
-# --no-cache-dir is LOAD-BEARING: pip caches the built sidepulse wheel
+# --no-cache-dir is LOAD-BEARING: pip caches the built jrbar wheel
 # BY VERSION, so every rebuild between version bumps could silently ship
 # a stale wheel from an older commit (it did: a deploy passed md5 parity
 # against its own stale build while the source had moved two commits).
@@ -186,18 +186,18 @@ LC_ALL=C "$VENV_DIR/bin/python" -m pip list --format=freeze \
 
 "$VENV_DIR/bin/pyinstaller" \
     --noconfirm --clean --windowed \
-    --name SidePulse \
+    --name JR-Bar \
     --osx-bundle-identifier "$APP_ID" \
     --distpath "$BUILD_DIR/pyinstaller" \
     --workpath "$BUILD_DIR/work" \
     --specpath "$BUILD_DIR" \
     --collect-submodules Cocoa \
-    --collect-data sidepulse.resources \
-    --copy-metadata sidepulse \
+    --collect-data jrbar.resources \
+    --copy-metadata jrbar \
     --hidden-import jrbar.creator_micro_adapter \
     --hidden-import jrbar.creator_micro_hidapi \
     --hidden-import hid \
-    "$ROOT_DIR/packaging/sidepulse_entry.py"
+    "$ROOT_DIR/packaging/jrbar_entry.py"
 
 if [ -n "$SPARKLE_ARCHIVE" ]; then
     "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/prepare_sparkle.py" --output "$SPARKLE_DISTRIBUTION" \

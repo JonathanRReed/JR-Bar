@@ -36,7 +36,7 @@ def _categories(value: str) -> tuple[str, ...]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sidepulse providers sync")
+    parser = argparse.ArgumentParser(prog="jrbar providers sync")
     commands = parser.add_subparsers(dest="command", required=True)
     status = commands.add_parser("status")
     status.add_argument("--json", action="store_true")

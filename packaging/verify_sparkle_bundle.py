@@ -17,7 +17,7 @@ from pathlib import Path
 SPARKLE_VERSION = "2.9.6"
 SPARKLE_BUILD = "2061"
 SPARKLE_FEED_URL = (
-    "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+    "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
 FORBIDDEN_INFO_KEYS = frozenset(

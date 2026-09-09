@@ -133,7 +133,7 @@ def native_usage_menu_item(target):
 
     state = getattr(
         target,
-        "_sidepulse_provider_usage_state",
+        "_jrbar_provider_usage_state",
         ProviderUsageState((), None, None, False),
     )
     try:
@@ -152,7 +152,7 @@ def native_usage_menu_item(target):
         display, hidden, hidden_instances, thresholds, privacy_mode = (
             _fail_closed_menu_projection_settings(state)
         )
-    policies = getattr(target, "_sidepulse_provider_instance_policies", None)
+    policies = getattr(target, "_jrbar_provider_instance_policies", None)
     visual = (
         policies.visual
         if type(policies) is ProviderInstancePolicyProjection
@@ -274,7 +274,7 @@ def native_usage_menu_item(target):
     refresh.setTarget_(target)
     submenu.addItem_(refresh)
     item.setSubmenu_(submenu)
-    target._sidepulse_provider_usage_menu_item = item
+    target._jrbar_provider_usage_menu_item = item
     return item
 
 

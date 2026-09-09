@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate measured SidePulse performance evidence against release budgets."""
+"""Validate measured JR-Bar performance evidence against release budgets."""
 
 from __future__ import annotations
 

@@ -10,10 +10,11 @@ from jrbar.codex_hook_trust import (
 )
 
 # Hashes Codex 0.153.4 itself wrote into a real config.toml for this exact
-# command. The algorithm must reproduce them byte for byte.
+# command (a pre-rename install; the literal is a fixture and must not be
+# modernised). The algorithm must reproduce them byte for byte.
 COMMAND = (
     "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/.venv/bin/python "
-    "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/src/jrbar/hook_entry.py "
+    "/Users/jonathanreed/Downloads/sidepulse-JR-Fork/src/sidepulse/hook_entry.py "
     "--provider codex --log /Users/jonathanreed/.local/state/sidepulse/agent-monitor/codex.jsonl"
 )
 KNOWN = {

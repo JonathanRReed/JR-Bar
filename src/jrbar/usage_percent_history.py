@@ -344,10 +344,10 @@ def _controller_retention_projection(
         if type(explicit) is not ProviderInstanceRetentionProjection:
             raise TypeError("expected ProviderInstanceRetentionProjection")
         return explicit
-    direct = getattr(controller, "_sidepulse_provider_instance_retention", None)
+    direct = getattr(controller, "_jrbar_provider_instance_retention", None)
     if type(direct) is ProviderInstanceRetentionProjection:
         return direct
-    policies = getattr(controller, "_sidepulse_provider_instance_policies", None)
+    policies = getattr(controller, "_jrbar_provider_instance_policies", None)
     projected = getattr(policies, "retention", None)
     return (
         projected
@@ -398,16 +398,16 @@ def record_state_observations(
     signature = _retention_signature(retention) if retention is not None else None
     if not observations and signature is None:
         return None
-    lock = getattr(controller, "_sidepulse_percent_history_lock", None)
+    lock = getattr(controller, "_jrbar_percent_history_lock", None)
     if lock is None:
         lock = threading.Lock()
-        controller._sidepulse_percent_history_lock = lock
+        controller._jrbar_percent_history_lock = lock
     with lock:
         committed = dict(
-            getattr(controller, "_sidepulse_percent_history_last", {})
+            getattr(controller, "_jrbar_percent_history_last", {})
         )
         pending = dict(
-            getattr(controller, "_sidepulse_percent_history_pending", {})
+            getattr(controller, "_jrbar_percent_history_pending", {})
         )
         planned = dict(committed)
         for pending_write in pending.values():
@@ -427,7 +427,7 @@ def record_state_observations(
         }
         committed_signature = getattr(
             controller,
-            "_sidepulse_percent_history_retention_signature",
+            "_jrbar_percent_history_retention_signature",
             None,
         )
         needs_retention = (
@@ -446,20 +446,20 @@ def record_state_observations(
         records = tuple(fresh)
         token = object()
         pending[token] = _PendingPercentWrite(records, signature)
-        controller._sidepulse_percent_history_pending = pending
+        controller._jrbar_percent_history_pending = pending
 
     def _complete(receipt: PersistenceReceipt) -> None:
         with lock:
             current_pending = dict(
-                getattr(controller, "_sidepulse_percent_history_pending", {})
+                getattr(controller, "_jrbar_percent_history_pending", {})
             )
             completed = current_pending.pop(token, None)
             if completed is None:
                 return
-            controller._sidepulse_percent_history_pending = current_pending
+            controller._jrbar_percent_history_pending = current_pending
             if receipt.outcome is PersistenceOutcome.SUCCEEDED:
                 committed_now = dict(
-                    getattr(controller, "_sidepulse_percent_history_last", {})
+                    getattr(controller, "_jrbar_percent_history_last", {})
                 )
                 if retention is not None:
                     retention_now = _retention_by_identity(retention)
@@ -470,7 +470,7 @@ def record_state_observations(
                         and value[1]
                         >= observed_epoch - retention_now[key[:2]] * 86_400.0
                     }
-                    controller._sidepulse_percent_history_retention_signature = (
+                    controller._jrbar_percent_history_retention_signature = (
                         completed.retention_signature
                     )
                 for record in completed.records:
@@ -484,7 +484,7 @@ def record_state_observations(
                         record["remaining_percent"],
                         record["observed_at_epoch"],
                     )
-                controller._sidepulse_percent_history_last = committed_now
+                controller._jrbar_percent_history_last = committed_now
 
     def _persist() -> int:
         path = default_percent_history_path()
@@ -506,10 +506,10 @@ def record_state_observations(
     except Exception:
         with lock:
             current_pending = dict(
-                getattr(controller, "_sidepulse_percent_history_pending", {})
+                getattr(controller, "_jrbar_percent_history_pending", {})
             )
             current_pending.pop(token, None)
-            controller._sidepulse_percent_history_pending = current_pending
+            controller._jrbar_percent_history_pending = current_pending
         return False
     if disposition in {
         PersistenceDisposition.REFUSED_FULL,
@@ -517,10 +517,10 @@ def record_state_observations(
     }:
         with lock:
             current_pending = dict(
-                getattr(controller, "_sidepulse_percent_history_pending", {})
+                getattr(controller, "_jrbar_percent_history_pending", {})
             )
             current_pending.pop(token, None)
-            controller._sidepulse_percent_history_pending = current_pending
+            controller._jrbar_percent_history_pending = current_pending
         return False
     return True
 

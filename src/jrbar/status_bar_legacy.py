@@ -3210,7 +3210,7 @@ class StatusBarController(NSObject):
         led_display_kind = self.active_led_display_kind(battery_snapshot)
         # A Quota Runway strip shows the number without anyone opening a
         # menu, so it counts as attention for the refresh cadence.
-        usage_service = getattr(self, "_sidepulse_provider_usage_service", None)
+        usage_service = getattr(self, "_jrbar_provider_usage_service", None)
         if usage_service is not None:
             try:
                 usage_service.note_ambient_usage_visible(
@@ -3337,7 +3337,7 @@ class StatusBarController(NSObject):
         threading.Thread(
             target=_fetch,
             daemon=True,
-            name="sidepulse-remote-peers",
+            name="jrbar-remote-peers",
         ).start()
 
     @objc.IBAction
@@ -10216,7 +10216,7 @@ class StatusBarController(NSObject):
         threading.Thread(
             target=_restore,
             daemon=True,
-            name="sidepulse-operator-history-restore",
+            name="jrbar-operator-history-restore",
         ).start()
 
     @objc.IBAction
@@ -11834,7 +11834,7 @@ class StatusBarController(NSObject):
         set_field_value(label, message)
         # Mirror into the Usage Center when it's the window in front of
         # the user -- its buttons' feedback used to vanish otherwise.
-        center = getattr(self, "_sidepulse_provider_usage_window", None)
+        center = getattr(self, "_jrbar_provider_usage_window", None)
         if center is not None:
             try:
                 if center.window.isVisible():

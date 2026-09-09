@@ -15,21 +15,26 @@ try:
 except ImportError:  # Direct execution adds scripts/, not the repository root.
     import release_evidence  # type: ignore[no-redef]
 
-from jrbar.lid_sleep import SLEEP_HELPER_SUDOERS_PATH
+from jrbar.lid_sleep import SLEEP_HELPER_SUDOERS_PATHS
 from jrbar.providers import detect_provider_configs
 from jrbar.sd_eject_guard_launch import (
+    LEGACY_SD_EJECT_GUARD_LABEL,
     SD_EJECT_GUARD_LABEL,
-    SD_EJECT_GUARD_LEGACY_BINARY_NAMES,
+    legacy_binary_paths,
+    legacy_plist_paths,
     system_sd_eject_guard_paths,
     user_sd_eject_guard_paths,
 )
 
-DEFAULT_APP = Path("/Applications/SidePulse.app")
-DEFAULT_CLI_LINK = Path("/usr/local/bin/sidepulse")
-DEFAULT_RECEIPT_DIR = Path("/var/db/sidepulse")
-PACKAGE_IDENTIFIER = "io.sidepulse.app"
-STATUS_BAR_LABEL = "io.sidepulse.agentstatus"
-LEGACY_STATUS_BAR_LABEL = "com.sidepulse.agentstatus"
+DEFAULT_APP = Path("/Applications/JR-Bar.app")
+DEFAULT_CLI_LINK = Path("/usr/local/bin/jrbar")
+DEFAULT_RECEIPT_DIR = Path("/var/db/jrbar")
+PACKAGE_IDENTIFIER = "com.jonathanreed.jrbar"
+STATUS_BAR_LABEL = "com.jonathanreed.jrbar.app"
+# Labels the status bar shipped under before the JR-Bar rename.
+LEGACY_STATUS_BAR_LABELS = ("io.sidepulse.agentstatus", "com.sidepulse.agentstatus")
+LEGACY_STATUS_BAR_LABEL = LEGACY_STATUS_BAR_LABELS[0]
+ALL_STATUS_BAR_LABELS = (STATUS_BAR_LABEL, *LEGACY_STATUS_BAR_LABELS)
 
 
 def owned_file_leftovers(
@@ -49,24 +54,25 @@ def owned_file_leftovers(
         )
     )
     user_paths = [
-        home / "Library" / "LaunchAgents" / f"{STATUS_BAR_LABEL}.plist",
-        home / "Library" / "LaunchAgents" / f"{LEGACY_STATUS_BAR_LABEL}.plist",
+        *(home / "Library" / "LaunchAgents" / f"{label}.plist" for label in ALL_STATUS_BAR_LABELS),
     ]
     for user_guard in user_guards:
         user_paths.extend(
             (
                 user_guard.plist_path,
+                *legacy_plist_paths(user_guard),
                 user_guard.binary_path,
-                *(user_guard.binary_path.parent / name for name in SD_EJECT_GUARD_LEGACY_BINARY_NAMES),
+                *legacy_binary_paths(user_guard),
             )
         )
     if system_paths is None:
         system_guard = system_sd_eject_guard_paths()
         selected_system_paths = (
-            SLEEP_HELPER_SUDOERS_PATH,
+            *SLEEP_HELPER_SUDOERS_PATHS,
             system_guard.plist_path,
+            *legacy_plist_paths(system_guard),
             system_guard.binary_path,
-            *(system_guard.binary_path.parent / name for name in SD_EJECT_GUARD_LEGACY_BINARY_NAMES),
+            *legacy_binary_paths(system_guard),
         )
     else:
         selected_system_paths = system_paths
@@ -76,10 +82,11 @@ def owned_file_leftovers(
 
 def _loaded_owned_jobs(uid: int) -> tuple[str, ...]:
     targets = (
-        f"gui/{uid}/{STATUS_BAR_LABEL}",
-        f"gui/{uid}/{LEGACY_STATUS_BAR_LABEL}",
+        *(f"gui/{uid}/{label}" for label in ALL_STATUS_BAR_LABELS),
         f"gui/{uid}/{SD_EJECT_GUARD_LABEL}",
         f"system/{SD_EJECT_GUARD_LABEL}",
+        f"gui/{uid}/{LEGACY_SD_EJECT_GUARD_LABEL}",
+        f"system/{LEGACY_SD_EJECT_GUARD_LABEL}",
     )
     loaded = []
     for target in targets:
@@ -116,7 +123,7 @@ def main() -> int:
             raise ValueError("the supported uninstaller left JR-Bar setup receipts")
         if args.cli_link.is_symlink():
             target = os.readlink(args.cli_link)
-            if target == str(args.app / "Contents" / "MacOS" / "SidePulse"):
+            if target == str(args.app / "Contents" / "MacOS" / "JR-Bar"):
                 raise ValueError("the supported uninstaller left its owned CLI link")
         package_info = subprocess.run(
             ["/usr/sbin/pkgutil", "--pkg-info", PACKAGE_IDENTIFIER],

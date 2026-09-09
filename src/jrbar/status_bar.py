@@ -37,21 +37,21 @@ StatusBarController = JRStatusBarController
 # without these sentinels a reload would wrap a wrapper and recurse.
 _ORIGINAL_DEVICE_ID_FOR_ROOT = getattr(
     _legacy,
-    "_sidepulse_original_device_id_for_root",
+    "_jrbar_original_device_id_for_root",
     _legacy.device_id_for_root,
 )
 _ORIGINAL_PERSISTABLE_DEVICE_IDENTITY = getattr(
     _legacy,
-    "_sidepulse_original_persistable_device_identity",
+    "_jrbar_original_persistable_device_identity",
     _legacy.persistable_device_identity,
 )
 _ORIGINAL_BUILD_MENU = getattr(
-    _legacy, "_sidepulse_original_build_menu", _legacy.build_menu
+    _legacy, "_jrbar_original_build_menu", _legacy.build_menu
 )
 _DEVICE_IDENTITIES = None
 _FACADE_INSTALLED = False
 _LAST_DEVICE_REFRESH_REQUEST = float(
-    getattr(_legacy, "_sidepulse_last_device_refresh_request", 0.0) or 0.0
+    getattr(_legacy, "_jrbar_last_device_refresh_request", 0.0) or 0.0
 )
 
 
@@ -59,7 +59,7 @@ def _device_identity_cache() -> DeviceIdentityCache:
     global _DEVICE_IDENTITIES
     if type(_DEVICE_IDENTITIES) is DeviceIdentityCache:
         return _DEVICE_IDENTITIES
-    retained = getattr(_legacy, "_sidepulse_device_identity_cache", None)
+    retained = getattr(_legacy, "_jrbar_device_identity_cache", None)
     _DEVICE_IDENTITIES = (
         retained if type(retained) is DeviceIdentityCache else DeviceIdentityCache()
     )
@@ -72,7 +72,7 @@ def _request_device_identity_refresh(now: float | None = None) -> None:
     if reference - _LAST_DEVICE_REFRESH_REQUEST < 15.0:
         return
     _LAST_DEVICE_REFRESH_REQUEST = reference
-    _legacy._sidepulse_last_device_refresh_request = reference
+    _legacy._jrbar_last_device_refresh_request = reference
     _device_identity_cache().request_refresh()
 
 
@@ -591,7 +591,7 @@ def build_menu(snapshot, state, target):
 
 _ORIGINAL_CANONICAL_ROOT_SNAPSHOT = getattr(
     _legacy,
-    "_sidepulse_original_canonical_root_snapshot",
+    "_jrbar_original_canonical_root_snapshot",
     _legacy._canonical_agent_root_snapshot,
 )
 
@@ -648,16 +648,16 @@ def install_status_bar_facade():
     ):
         return JRStatusBarController
     _production.install_status_bar_production()
-    _legacy._sidepulse_original_device_id_for_root = _ORIGINAL_DEVICE_ID_FOR_ROOT
-    _legacy._sidepulse_original_persistable_device_identity = (
+    _legacy._jrbar_original_device_id_for_root = _ORIGINAL_DEVICE_ID_FOR_ROOT
+    _legacy._jrbar_original_persistable_device_identity = (
         _ORIGINAL_PERSISTABLE_DEVICE_IDENTITY
     )
-    _legacy._sidepulse_original_build_menu = _ORIGINAL_BUILD_MENU
-    _legacy._sidepulse_original_canonical_root_snapshot = (
+    _legacy._jrbar_original_build_menu = _ORIGINAL_BUILD_MENU
+    _legacy._jrbar_original_canonical_root_snapshot = (
         _ORIGINAL_CANONICAL_ROOT_SNAPSHOT
     )
     cache = _device_identity_cache()
-    _legacy._sidepulse_device_identity_cache = cache
+    _legacy._jrbar_device_identity_cache = cache
     _legacy._canonical_agent_root_snapshot = _compact_canonical_root_snapshot
     _legacy.device_id_for_root = device_id_for_root
     _legacy.persistable_device_identity = persistable_device_identity

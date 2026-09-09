@@ -12,11 +12,18 @@ from typing import Any, Literal
 from .providers import default_state_dir
 from .trusted_tools import trusted_system_tool
 
-SD_EJECT_GUARD_LABEL = "io.sidepulse.sdejectguard"
+SD_EJECT_GUARD_LABEL = "com.jonathanreed.jrbar.sdejectguard"
+# Label and paths the guard shipped under before the JR-Bar rename; uninstall
+# and the install-time cleanup still remove them.
+LEGACY_SD_EJECT_GUARD_LABEL = "io.sidepulse.sdejectguard"
+LEGACY_SD_EJECT_GUARD_FILENAME = f"{LEGACY_SD_EJECT_GUARD_LABEL}.plist"
 SD_EJECT_GUARD_FILENAME = f"{SD_EJECT_GUARD_LABEL}.plist"
 SD_EJECT_GUARD_DISPLAY_NAME = "SidePulse Pro Eject Prevention"
 SD_EJECT_GUARD_BINARY_NAME = SD_EJECT_GUARD_DISPLAY_NAME
 SD_EJECT_GUARD_LEGACY_BINARY_NAMES = ("sd_eject_guard",)
+# Data directories the guard binary lived in before the rename, keyed by the
+# current directory name they were renamed to.
+_LEGACY_DATA_DIR_NAMES = {"jrbar": "sidepulse", "JR-Bar": "SidePulse"}
 SD_EJECT_GUARD_SCOPES = ("auto", "system", "user")
 _VOLUME_UUID = re.compile(r"(?=.{4,64}\Z)[A-Fa-f0-9]+(?:-[A-Fa-f0-9]+)*\Z")
 
@@ -135,7 +142,10 @@ def install_sd_eject_guard(
 
             if start:
                 restart_sd_eject_guard(paths.plist_path, resolved_scope)
-            legacy_removed = cleanup_legacy_binaries(paths)
+            legacy_removed = (
+                *cleanup_legacy_plists(paths, resolved_scope),
+                *cleanup_legacy_binaries(paths),
+            )
 
     return SdEjectGuardResult(
         label=SD_EJECT_GUARD_LABEL,
@@ -195,7 +205,7 @@ def run_sd_eject_guard_interactive(
 ) -> int:
     selected_volume_uuid = validate_volume_uuid(volume_uuid)
     if selected_volume_uuid is None:
-        raise SdEjectGuardInstallError("a selected SidePulse volume UUID is required")
+        raise SdEjectGuardInstallError("a selected SidePulse Pro volume UUID is required")
     paths = ensure_sd_eject_guard_binary(
         scope=scope,
         source_path=source_path,
@@ -287,7 +297,8 @@ def uninstall_sd_eject_guard(
     for resolved_scope in scopes:
         paths = paths_for_scope(resolved_scope, user_paths=user_paths, system_paths=system_paths)
         binary_paths = sd_eject_guard_binary_paths(paths)
-        artifacts = [paths.plist_path, *binary_paths]
+        plist_paths = (paths.plist_path, *legacy_plist_paths(paths))
+        artifacts = [*plist_paths, *binary_paths]
         existing = [path for path in artifacts if path.exists()]
         if not existing:
             results.append(
@@ -321,13 +332,15 @@ def uninstall_sd_eject_guard(
 
         removed: list[Path] = []
         if not dry_run:
-            if paths.plist_path.exists():
-                bootout_sd_eject_guard(paths.plist_path, resolved_scope)
+            for plist_path in plist_paths:
+                if plist_path.exists():
+                    bootout_sd_eject_guard(plist_path, resolved_scope)
             for path in artifacts:
                 if path.exists():
                     path.unlink()
                     removed.append(path)
-            remove_empty_parents(paths.binary_path.parent)
+            for binary_path in binary_paths:
+                remove_empty_parents(binary_path.parent)
         else:
             removed = existing
 
@@ -338,7 +351,7 @@ def uninstall_sd_eject_guard(
                 plist_path=paths.plist_path,
                 binary_paths=binary_paths,
                 removed_paths=tuple(removed),
-                stopped=paths.plist_path in existing,
+                stopped=any(plist_path in existing for plist_path in plist_paths),
                 dry_run=dry_run,
             )
         )
@@ -392,7 +405,7 @@ def sd_eject_guard_installed(
 
 def user_sd_eject_guard_paths(home: Path | None = None) -> SdEjectGuardPaths:
     base = home or Path.home()
-    data_dir = default_user_data_dir(home) / "sidepulse" / "sd-eject-guard"
+    data_dir = default_user_data_dir(home) / "jrbar" / "sd-eject-guard"
     state_dir = default_state_dir(home)
     return SdEjectGuardPaths(
         scope="user",
@@ -407,10 +420,10 @@ def system_sd_eject_guard_paths() -> SdEjectGuardPaths:
     return SdEjectGuardPaths(
         scope="system",
         plist_path=Path("/Library/LaunchDaemons") / SD_EJECT_GUARD_FILENAME,
-        binary_path=Path("/Library/Application Support/SidePulse/sd-eject-guard")
+        binary_path=Path("/Library/Application Support/JR-Bar/sd-eject-guard")
         / SD_EJECT_GUARD_BINARY_NAME,
-        stdout_path=Path("/Library/Logs/SidePulse/sd-eject-guard.out.log"),
-        stderr_path=Path("/Library/Logs/SidePulse/sd-eject-guard.err.log"),
+        stdout_path=Path("/Library/Logs/JR-Bar/sd-eject-guard.out.log"),
+        stderr_path=Path("/Library/Logs/JR-Bar/sd-eject-guard.err.log"),
     )
 
 
@@ -428,7 +441,7 @@ def validate_volume_uuid(value: str | None) -> str | None:
         return None
     selected = value.strip()
     if _VOLUME_UUID.fullmatch(selected) is None:
-        raise SdEjectGuardInstallError("invalid SidePulse volume UUID")
+        raise SdEjectGuardInstallError("invalid SidePulse Pro volume UUID")
     return selected.upper()
 
 
@@ -590,7 +603,38 @@ def legacy_binary_paths(paths: SdEjectGuardPaths) -> tuple[Path, ...]:
         legacy = paths.binary_path.with_name(name)
         if legacy != paths.binary_path:
             legacy_paths.append(legacy)
-    return tuple(legacy_paths)
+    # The pre-rename data directory (…/sidepulse/sd-eject-guard/ or
+    # /Library/Application Support/SidePulse/sd-eject-guard/) is also ours.
+    parent = paths.binary_path.parent
+    legacy_dir_name = _LEGACY_DATA_DIR_NAMES.get(parent.parent.name)
+    if parent.name == "sd-eject-guard" and legacy_dir_name is not None:
+        legacy_dir = parent.parent.parent / legacy_dir_name / "sd-eject-guard"
+        for name in (paths.binary_path.name, *SD_EJECT_GUARD_LEGACY_BINARY_NAMES):
+            legacy_paths.append(legacy_dir / name)
+    return tuple(dict.fromkeys(legacy_paths))
+
+
+def legacy_plist_paths(paths: SdEjectGuardPaths) -> tuple[Path, ...]:
+    """The plist written under the pre-rename label, next to the current one."""
+    legacy = paths.plist_path.with_name(LEGACY_SD_EJECT_GUARD_FILENAME)
+    return (legacy,) if legacy != paths.plist_path else ()
+
+
+def cleanup_legacy_plists(
+    paths: SdEjectGuardPaths,
+    scope: ResolvedSdEjectGuardScope,
+) -> tuple[Path, ...]:
+    """Unload and delete pre-rename guard plists; skipped without permission."""
+    removed: list[Path] = []
+    for legacy in legacy_plist_paths(paths):
+        if not legacy.exists():
+            continue
+        if scope == "system" and not can_install_system_scope():
+            continue
+        bootout_sd_eject_guard(legacy, scope)
+        legacy.unlink()
+        removed.append(legacy)
+    return tuple(removed)
 
 
 def cleanup_legacy_binaries(paths: SdEjectGuardPaths) -> tuple[Path, ...]:

@@ -11,7 +11,7 @@ def test_status_bar_has_no_codexbar_runtime_dependency() -> None:
     source = (SRC / "status_bar.py").read_text(encoding="utf-8")
     assert "codexbar_compat" not in source
     assert "CodexBar" not in source
-    assert "_sidepulse_codexbar" not in source
+    assert "_jrbar_codexbar" not in source
 
 
 def test_only_t3_is_an_optional_external_agent_integration() -> None:

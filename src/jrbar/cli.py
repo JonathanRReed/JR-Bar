@@ -58,7 +58,7 @@ from .settings import (
 from .trusted_tools import trusted_system_tool
 from .watch_run import WatchRunPlanError, execute_watch_run, plan_watch_run
 
-SERVE_ACCESS_TOKEN_ENV = "SIDEPULSE_SERVE_ACCESS_TOKEN"
+SERVE_ACCESS_TOKEN_ENV = "JRBAR_SERVE_ACCESS_TOKEN"
 
 
 class _StoreAndRequestSdEjectGuard(argparse.Action):
@@ -80,7 +80,7 @@ def jrbar_main(argv: list[str] | None = None) -> int:
     if args[:1] == ["agent-monitor"]:
         return main(args[1:], prog="jrbar agent-monitor")
 
-    parser = build_sidepulse_parser()
+    parser = build_jrbar_parser()
     if not args:
         parser.print_help()
         return 0
@@ -89,7 +89,7 @@ def jrbar_main(argv: list[str] | None = None) -> int:
     return parsed.func(parsed)
 
 
-def build_sidepulse_parser() -> argparse.ArgumentParser:
+def build_jrbar_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jrbar",
         description=f"{PRODUCT_DISPLAY_NAME} command line tools.",
@@ -155,7 +155,7 @@ def build_sidepulse_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the SD eject guard (needs clang; only useful with the LED bar).",
     )
-    setup.set_defaults(func=cmd_sidepulse_setup)
+    setup.set_defaults(func=cmd_jrbar_setup)
 
     write = subparsers.add_parser(
         "write",
@@ -173,7 +173,7 @@ def build_sidepulse_parser() -> argparse.ArgumentParser:
         help=f"Target file name when --device is a folder. Default: {DEFAULT_FILE_NAME}.",
     )
     write.add_argument("--dry-run", action="store_true", help="Show the target without writing.")
-    write.set_defaults(func=cmd_sidepulse_write)
+    write.set_defaults(func=cmd_jrbar_write)
 
     add_sidepulse_status_bar_parser(subparsers)
     add_sidepulse_sdejectguard_parser(subparsers)
@@ -209,7 +209,7 @@ def add_sidepulse_status_bar_parser(subparsers: argparse._SubParsersAction) -> N
         action="store_true",
         help="Show sleep-helper changes without writing them.",
     )
-    status_bar.set_defaults(func=cmd_sidepulse_status_bar)
+    status_bar.set_defaults(func=cmd_jrbar_status_bar)
 
 
 def add_sidepulse_sdejectguard_parser(subparsers: argparse._SubParsersAction) -> None:
@@ -233,23 +233,23 @@ def add_sidepulse_sdejectguard_parser(subparsers: argparse._SubParsersAction) ->
         required=True,
         help="Exact SidePulse volume UUID to protect.",
     )
-    start.set_defaults(func=cmd_sidepulse_sdejectguard_start)
+    start.set_defaults(func=cmd_jrbar_sdejectguard_start)
 
     stop = guard_subparsers.add_parser("stop", help="Stop SidePulse Pro Eject Prevention.")
     add_sdejectguard_scope_arg(stop)
     stop.add_argument("--dry-run", action="store_true", help="Show what would stop.")
-    stop.set_defaults(func=cmd_sidepulse_sdejectguard_stop)
+    stop.set_defaults(func=cmd_jrbar_sdejectguard_stop)
 
     uninstall = guard_subparsers.add_parser("uninstall", help="Remove SidePulse Pro Eject Prevention.")
     add_sdejectguard_scope_arg(uninstall)
     uninstall.add_argument("--dry-run", action="store_true", help="Show what would be removed.")
-    uninstall.set_defaults(func=cmd_sidepulse_sdejectguard_uninstall)
+    uninstall.set_defaults(func=cmd_jrbar_sdejectguard_uninstall)
 
     logs = guard_subparsers.add_parser("logs", help="Show SidePulse Pro Eject Prevention logs.")
     add_sdejectguard_scope_arg(logs)
     logs.add_argument("--lines", type=int, default=80, help="Lines to show per log file.")
     logs.add_argument("-f", "--follow", action="store_true", help="Follow existing log files.")
-    logs.set_defaults(func=cmd_sidepulse_sdejectguard_logs)
+    logs.set_defaults(func=cmd_jrbar_sdejectguard_logs)
 
 
 def add_sdejectguard_scope_arg(parser: argparse.ArgumentParser) -> None:
@@ -274,7 +274,7 @@ def add_sidepulse_battery_parser(subparsers: argparse._SubParsersAction) -> None
         "--full-watts",
         help="Full-speed charger wattage baseline, or 'auto'. Defaults to saved settings.",
     )
-    status.set_defaults(func=cmd_sidepulse_battery_status)
+    status.set_defaults(func=cmd_jrbar_battery_status)
 
     leds = battery_subparsers.add_parser("leds", help="Mirror Mac battery state to LEDs.")
     leds.add_argument("--interval", type=float, default=1.0, help="Refresh interval in seconds.")
@@ -294,7 +294,7 @@ def add_sidepulse_battery_parser(subparsers: argparse._SubParsersAction) -> None
         "--full-watts",
         help="Full-speed charger wattage baseline, or 'auto'. Defaults to saved settings.",
     )
-    leds.set_defaults(func=cmd_sidepulse_battery_leds)
+    leds.set_defaults(func=cmd_jrbar_battery_leds)
 
     configure = battery_subparsers.add_parser("configure", help="Save battery LED settings.")
     configure.add_argument("--display", choices=LED_DISPLAY_CHOICES, help="Status-bar LED display source.")
@@ -312,10 +312,10 @@ def add_sidepulse_battery_parser(subparsers: argparse._SubParsersAction) -> None
         type=float,
         help="Seconds to show battery LEDs after plug/unplug.",
     )
-    configure.set_defaults(func=cmd_sidepulse_battery_configure)
+    configure.set_defaults(func=cmd_jrbar_battery_configure)
 
 
-def cmd_sidepulse_write(args: argparse.Namespace) -> int:
+def cmd_jrbar_write(args: argparse.Namespace) -> int:
     try:
         target = write_led_program(
             args.text,
@@ -335,7 +335,7 @@ def cmd_sidepulse_write(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_battery_status(args: argparse.Namespace) -> int:
+def cmd_jrbar_battery_status(args: argparse.Namespace) -> int:
     try:
         snapshot = read_battery_snapshot(full_charge_watts=full_watts_from_args(args))
     except Exception as exc:
@@ -349,7 +349,7 @@ def cmd_sidepulse_battery_status(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_battery_leds(args: argparse.Namespace) -> int:
+def cmd_jrbar_battery_leds(args: argparse.Namespace) -> int:
     leds = BatteryLedController(
         device_path=args.device,
         file_name=args.file_name,
@@ -376,7 +376,7 @@ def cmd_sidepulse_battery_leds(args: argparse.Namespace) -> int:
         return 1
 
 
-def cmd_sidepulse_battery_configure(args: argparse.Namespace) -> int:
+def cmd_jrbar_battery_configure(args: argparse.Namespace) -> int:
     settings = load_settings()
     try:
         if args.display is not None:
@@ -414,13 +414,13 @@ def cmd_sidepulse_battery_configure(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_status_bar(args: argparse.Namespace) -> int:
+def cmd_jrbar_status_bar(args: argparse.Namespace) -> int:
     if args.status_bar_command == "install-sleep-helper":
-        return cmd_sidepulse_sleep_helper_install(args)
+        return cmd_jrbar_sleep_helper_install(args)
     if args.status_bar_command == "uninstall-sleep-helper":
-        return cmd_sidepulse_sleep_helper_uninstall(args)
+        return cmd_jrbar_sleep_helper_uninstall(args)
     if args.status_bar_command == "sleep-helper-status":
-        return cmd_sidepulse_sleep_helper_status(args)
+        return cmd_jrbar_sleep_helper_status(args)
 
     args.uninstall = args.status_bar_command == "stop"
     args.no_start = False
@@ -429,7 +429,7 @@ def cmd_sidepulse_status_bar(args: argparse.Namespace) -> int:
     return cmd_status_bar(args)
 
 
-def cmd_sidepulse_sleep_helper_install(args: argparse.Namespace) -> int:
+def cmd_jrbar_sleep_helper_install(args: argparse.Namespace) -> int:
     try:
         result = install_sleep_helper(dry_run=args.dry_run)
     except (PermissionError, OSError, subprocess.CalledProcessError, ValueError) as exc:
@@ -445,7 +445,7 @@ def cmd_sidepulse_sleep_helper_install(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_sleep_helper_uninstall(args: argparse.Namespace) -> int:
+def cmd_jrbar_sleep_helper_uninstall(args: argparse.Namespace) -> int:
     try:
         result = uninstall_sleep_helper(dry_run=args.dry_run)
     except (PermissionError, OSError) as exc:
@@ -460,7 +460,7 @@ def cmd_sidepulse_sleep_helper_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_sleep_helper_status(_args: argparse.Namespace) -> int:
+def cmd_jrbar_sleep_helper_status(_args: argparse.Namespace) -> int:
     installed = sleep_helper_installed()
     print(f"sleep-helper: {'installed' if installed else 'not installed'}")
     if not installed:
@@ -468,7 +468,7 @@ def cmd_sidepulse_sleep_helper_status(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_sdejectguard_start(args: argparse.Namespace) -> int:
+def cmd_jrbar_sdejectguard_start(args: argparse.Namespace) -> int:
     from .sd_eject_guard_launch import (
         SD_EJECT_GUARD_DISPLAY_NAME,
         SdEjectGuardInstallError,
@@ -499,7 +499,7 @@ def cmd_sidepulse_sdejectguard_start(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_sdejectguard_stop(args: argparse.Namespace) -> int:
+def cmd_jrbar_sdejectguard_stop(args: argparse.Namespace) -> int:
     from .sd_eject_guard_launch import (
         SD_EJECT_GUARD_DISPLAY_NAME,
         SdEjectGuardInstallError,
@@ -524,7 +524,7 @@ def cmd_sidepulse_sdejectguard_stop(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_sdejectguard_uninstall(args: argparse.Namespace) -> int:
+def cmd_jrbar_sdejectguard_uninstall(args: argparse.Namespace) -> int:
     from .sd_eject_guard_launch import (
         SD_EJECT_GUARD_DISPLAY_NAME,
         SdEjectGuardInstallError,
@@ -551,7 +551,7 @@ def cmd_sidepulse_sdejectguard_uninstall(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_sdejectguard_logs(args: argparse.Namespace) -> int:
+def cmd_jrbar_sdejectguard_logs(args: argparse.Namespace) -> int:
     from .sd_eject_guard_launch import log_paths_for_requested_scope, read_log_tail
 
     try:
@@ -590,7 +590,7 @@ def cmd_sidepulse_sdejectguard_logs(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_sidepulse_setup(args: argparse.Namespace) -> int:
+def cmd_jrbar_setup(args: argparse.Namespace) -> int:
     results = install_hook_results(args)
     print_install_results(results, dry_run=args.dry_run)
 
@@ -631,7 +631,7 @@ def cmd_sidepulse_setup(args: argparse.Namespace) -> int:
         print(
             f"{SD_EJECT_GUARD_DISPLAY_NAME}: skipped (it protects the "
             "LED bar's SD card during ejects; install Xcode Command "
-            "Line Tools and re-run `sidepulse setup --sd-eject-guard` "
+            "Line Tools and re-run `jrbar setup --sd-eject-guard` "
             "with your selected guard options to add it).",
             file=sys.stderr,
         )

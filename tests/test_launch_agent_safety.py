@@ -28,7 +28,7 @@ def test_all_launchctl_operations_have_strict_timeouts(monkeypatch) -> None:
         lambda _name: Path("/bin/launchctl"),
     )
 
-    target = Path("/tmp/io.sidepulse.agentstatus.plist")
+    target = Path("/tmp/com.jonathanreed.jrbar.app.plist")
     status_bar_launch.restart_launch_agent(target)
     assert status_bar_launch.launch_agent_running() is True
     status_bar_launch.bootout_launch_agent(target)

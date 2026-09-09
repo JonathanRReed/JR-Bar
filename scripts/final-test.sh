@@ -37,7 +37,7 @@ printf 'commit=%s\nbranch=%s\nallow_dirty=%s\nstatus=%s\n' \
     "$SOURCE_SHA" "$(git branch --show-current)" "$ALLOW_DIRTY" "$SOURCE_STATUS" > "$REPORT_DIR/source.txt"
 sw_vers > "$REPORT_DIR/macos.txt"
 trap 'code=$?; printf "%s\n" "$code" > "$REPORT_DIR/exit-code.txt"; printf "Verification records: %s\n" "$REPORT_DIR"' EXIT
-VENV_DIR="${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}"
+VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}"
 {
     if [ "$BOOTSTRAP" -eq 1 ]; then
         # Bootstrap uses the caller's base Python, not an as-yet absent venv.
@@ -51,7 +51,7 @@ VENV_DIR="${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}"
     PYTEST_ADDOPTS= "$PYTHON" scripts/verify_fast.py
     junit_argument="$("$PYTHON" -c 'import shlex,sys; print(shlex.quote("--junitxml=" + sys.argv[1]))' "$REPORT_DIR/tests.xml")"
     PYTEST_ADDOPTS="$junit_argument" \
-        SIDEPULSE_VERIFY_MACOS_PACKAGE=0 ./scripts/verify.sh --no-bootstrap
+        JRBAR_VERIFY_MACOS_PACKAGE=0 ./scripts/verify.sh --no-bootstrap
     # Attribute success only to unchanged source bytes, not a moving checkout.
     test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
     test "$(git status --porcelain)" = "$SOURCE_STATUS"

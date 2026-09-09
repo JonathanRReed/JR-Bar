@@ -187,7 +187,7 @@ def install_screen_bar_runtime() -> None:
     """Install the reviewed design once without rebinding an Objective-C class."""
     from . import virtual_device as vd
 
-    if getattr(vd, "_sidepulse_rounded_band_installed", False):
+    if getattr(vd, "_jrbar_rounded_band_installed", False):
         return
     vd.LED_BAND_HEIGHT = design.BAND_HEIGHT
     vd.COMPACT_ACCENT_HEIGHT = design.COMPACT_BAND_HEIGHT
@@ -197,7 +197,7 @@ def install_screen_bar_runtime() -> None:
     vd.WINDOW_HEIGHT = _window_height_for_notch_depth(vd.FALLBACK_NOTCH_DEPTH)
     vd.VirtualLedView._draw_compact_accent = _draw_compact_accent
     vd.VirtualLedView._draw_wings_only = _draw_wings_only
-    vd._sidepulse_rounded_band_installed = True
+    vd._jrbar_rounded_band_installed = True
 
 
 __all__ = ["install_screen_bar_runtime"]

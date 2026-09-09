@@ -785,7 +785,7 @@ class ProviderUsageService:
         threading.Thread(
             target=self._deliver_callbacks,
             args=(generation, state),
-            name=f"SidePulseProviderUsageCallback-{generation}",
+            name=f"JRBarProviderUsageCallback-{generation}",
             daemon=True,
         ).start()
 
@@ -828,7 +828,7 @@ class ProviderUsageService:
                 "providers": providers,
                 "force": force,
             },
-            name=f"SidePulseProviderUsage-{generation}",
+            name=f"JRBarProviderUsage-{generation}",
             daemon=True,
         )
         self._worker = worker

@@ -64,7 +64,7 @@ INGEST_PATH = "/v1/agent-event"
 LOOPBACK_HOST = "127.0.0.1"
 TOKEN_FILE_NAME = "cloud-ingest.token"
 TOKEN_BYTES = 32
-CLOUD_INGEST_ENV_VAR = "SIDEPULSE_CLOUD_INGEST"
+CLOUD_INGEST_ENV_VAR = "JRBAR_CLOUD_INGEST"
 ORIGIN_SOURCE = "cloud-ingest"
 BEARER_PREFIX = "bearer "
 
@@ -938,12 +938,12 @@ class CloudIngestServer:
             self._accept_thread = threading.Thread(
                 target=server.serve_forever,
                 kwargs={"poll_interval": _DISPATCH_POLL_SECONDS},
-                name="sidepulse-cloud-ingest-accept",
+                name="jrbar-cloud-ingest-accept",
                 daemon=True,
             )
             self._dispatch_thread = threading.Thread(
                 target=self._dispatch,
-                name="sidepulse-cloud-ingest-dispatch",
+                name="jrbar-cloud-ingest-dispatch",
                 daemon=True,
             )
             self._accept_thread.start()

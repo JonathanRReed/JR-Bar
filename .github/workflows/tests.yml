@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sidepulse-tests-${{ github.ref }}
+  group: jrbar-tests-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -74,7 +74,7 @@ jobs:
           PYTHON: ${{ env.pythonLocation }}/bin/python
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: sidepulse-python-${{ matrix.python-version }}
+          name: jrbar-python-${{ matrix.python-version }}
           path: dist/
           if-no-files-found: error
 

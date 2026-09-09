@@ -13,7 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 VERIFIER_PATH = ROOT / "packaging" / "verify_sparkle_bundle.py"
 FEED_URL = (
-    "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+    "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
 
@@ -34,7 +34,7 @@ def _write_plist(path: Path, value: dict[str, object]) -> None:
 
 
 def _candidate(tmp_path: Path) -> tuple[Path, tuple[Path, ...], tuple[Path, ...]]:
-    app = tmp_path / "SidePulse.app"
+    app = tmp_path / "JR-Bar.app"
     framework = app / "Contents/Frameworks/Sparkle.framework"
     version = framework / "Versions/B"
     binaries = (

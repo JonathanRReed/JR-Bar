@@ -15,9 +15,9 @@ MAX_EXTERNAL_STATUS_SOURCES = 16
 MAX_EXTERNAL_STATUSES_PER_SOURCE = 1_024
 MAX_EXTERNAL_STATUSES_TOTAL = 4_096
 _legacy_status_is_stale = _legacy.status_is_stale
-if not getattr(_legacy, "_sidepulse_collector_status_is_stale_patched", False):
+if not getattr(_legacy, "_jrbar_collector_status_is_stale_patched", False):
 
-    def _sidepulse_status_is_stale(
+    def _jrbar_status_is_stale(
         status: AgentStatus,
         now: datetime,
         *,
@@ -37,8 +37,8 @@ if not getattr(_legacy, "_sidepulse_collector_status_is_stale_patched", False):
             idle_visible_seconds=idle_visible_seconds,
         )
 
-    _legacy.status_is_stale = _sidepulse_status_is_stale
-    _legacy._sidepulse_collector_status_is_stale_patched = True
+    _legacy.status_is_stale = _jrbar_status_is_stale
+    _legacy._jrbar_collector_status_is_stale_patched = True
 
 
 _EXTERNAL_SOURCE_ID = re.compile(r"[a-z][a-z0-9._-]{0,63}\Z")

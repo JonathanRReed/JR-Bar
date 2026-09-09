@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .env import env_value
 from .models import provider_label
 
 
@@ -112,14 +113,14 @@ def _detect_agent_origin_uncached(
 
 
 def explicit_origin_from_env(provider: str, env: Mapping[str, str]) -> AgentOrigin | None:
-    label = clean_label(env.get("SIDEPULSE_AGENT_ORIGIN"))
+    label = clean_label(env_value("JRBAR_AGENT_ORIGIN", env=env))
     if not label:
         return None
-    kind = clean_label(env.get("SIDEPULSE_AGENT_ORIGIN_KIND")) or normalize_kind(label)
+    kind = clean_label(env_value("JRBAR_AGENT_ORIGIN_KIND", env=env)) or normalize_kind(label)
     return AgentOrigin(
         kind=kind,
         label=label,
-        source="env:SIDEPULSE_AGENT_ORIGIN",
+        source="env:JRBAR_AGENT_ORIGIN",
         confidence="explicit",
     )
 

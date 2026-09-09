@@ -18,8 +18,8 @@ except ImportError:  # Direct execution adds scripts/, not the repository root.
     import release_evidence  # type: ignore[no-redef]
 
 
-EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
-PACKAGE_IDENTIFIER = "io.sidepulse.app"
+EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
+PACKAGE_IDENTIFIER = "com.jonathanreed.jrbar"
 
 
 def _team_identifier(app: Path) -> str:
@@ -51,7 +51,7 @@ def capture_baseline(
         raise ValueError("pre-upgrade application is missing") from exc
     if stat.S_ISLNK(app_metadata.st_mode) or not stat.S_ISDIR(app_metadata.st_mode):
         raise ValueError("pre-upgrade application must be a real app directory")
-    executable = app / "Contents" / "MacOS" / "SidePulse"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
     if not executable.is_file():
         raise ValueError("pre-upgrade application executable is missing")
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())

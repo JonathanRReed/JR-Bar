@@ -117,7 +117,7 @@ def apply_mapping_file_result(target, result) -> None:
     alert.addButtonWithTitle_("Import disabled mappings")
     alert.addButtonWithTitle_("Cancel")
     if alert.runModal() == NSAlertFirstButtonReturn:
-        runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+        runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
         if runtime is not None:
             runtime.revoke_deck_input()
         _submit_save(target, candidate, result.previous)

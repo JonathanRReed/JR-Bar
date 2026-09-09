@@ -348,7 +348,7 @@ from jrbar.provider_usage_status_bar import JRProviderUsageStatusBarController
 
 class FakeController:
     def __init__(self, state=None):
-        self._sidepulse_provider_usage_state = state
+        self._jrbar_provider_usage_state = state
         self.refreshes = []
 
     def _request_provider_usage(self, **kwargs):

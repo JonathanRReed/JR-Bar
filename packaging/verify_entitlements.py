@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the source and signed SidePulse entitlement sets are exact."""
+"""Verify the source and signed JR-Bar entitlement sets are exact."""
 
 from __future__ import annotations
 

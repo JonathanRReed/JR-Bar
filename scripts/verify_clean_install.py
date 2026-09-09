@@ -32,15 +32,15 @@ def run(*arguments: object, cwd: Path | None = None) -> subprocess.CompletedProc
 
 
 def wheel_path() -> Path:
-    wheels = sorted(DIST.glob("sidepulse-*.whl"))
+    wheels = sorted(DIST.glob("jrbar-*.whl"))
     if len(wheels) != 1:
-        raise RuntimeError(f"expected one SidePulse wheel in {DIST}, found {len(wheels)}")
+        raise RuntimeError(f"expected one JR-Bar wheel in {DIST}, found {len(wheels)}")
     return wheels[0]
 
 
 def main() -> int:
     wheel = wheel_path()
-    with tempfile.TemporaryDirectory(prefix="sidepulse-clean-install-") as directory:
+    with tempfile.TemporaryDirectory(prefix="jrbar-clean-install-") as directory:
         root = Path(directory)
         environment = root / "venv"
         run(sys.executable, "-m", "venv", environment)
@@ -52,7 +52,7 @@ import importlib.metadata
 import importlib.resources
 import jrbar
 
-assert importlib.metadata.version("sidepulse") == sidepulse.__version__
+assert importlib.metadata.version("jrbar") == jrbar.__version__
 resources = importlib.resources.files("jrbar.resources")
 assert (resources / "sdled.wasm").is_file()
 assert (resources / "sd_eject_guard.c").is_file()

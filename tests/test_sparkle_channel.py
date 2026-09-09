@@ -40,21 +40,21 @@ def _archive(
     architecture: str = "arm64",
     public_key: str = PUBLIC_KEY,
 ) -> Path:
-    app = tmp_path / f"app-{version}-{architecture}" / "SidePulse.app"
-    executable = app / "Contents" / "MacOS" / "SidePulse"
+    app = tmp_path / f"app-{version}-{architecture}" / "JR-Bar.app"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"signed and notarized app")
     executable.chmod(0o755)
     with (app / "Contents" / "Info.plist").open("wb") as stream:
         plistlib.dump(
             {
-                "CFBundleIdentifier": "io.sidepulse.app",
+                "CFBundleIdentifier": "com.jonathanreed.jrbar",
                 "CFBundleName": "JR Bar",
                 "CFBundleShortVersionString": version,
                 "CFBundleVersion": build,
                 "LSMinimumSystemVersion": "11.0",
                 "SUFeedURL": (
-                    "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+                    "https://github.com/JonathanRReed/JR-Bar/"
                     "releases/download/updates/appcast.xml"
                 ),
                 "SUPublicEDKey": public_key,
@@ -64,7 +64,7 @@ def _archive(
         )
     output_dir = tmp_path / "archives"
     output_dir.mkdir(exist_ok=True)
-    output = output_dir / f"SidePulse-{version}-{architecture}.zip"
+    output = output_dir / f"JR-Bar-{version}-{architecture}.zip"
     package_sparkle_archive.package_archive(app=app, output=output)
     return output
 
@@ -88,7 +88,7 @@ def _fake_sparkle(
             stream,
         )
     behavior = {
-        "current_archive": "SidePulse-0.5.0-arm64.zip",
+        "current_archive": "JR-Bar-0.5.0-arm64.zip",
         "item_signature": ITEM_SIGNATURE,
         "feed_signature": FEED_SIGNATURE,
         "signed_feed_marker": True,
@@ -127,9 +127,9 @@ def _fake_sparkle(
             archive = stage / behavior["current_archive"]
             if behavior["require_previous"]:
                 assert (stage / "appcast.xml").is_file()
-                assert (stage / "SidePulse-0.4.0-arm64.zip").is_file()
+                assert (stage / "JR-Bar-0.4.0-arm64.zip").is_file()
             with zipfile.ZipFile(archive) as source:
-                info = plistlib.loads(source.read("SidePulse.app/Contents/Info.plist"))
+                info = plistlib.loads(source.read("JR-Bar.app/Contents/Info.plist"))
             version = str(info["CFBundleShortVersionString"])
             build = str(info["CFBundleVersion"])
             assert args[args.index("--versions") + 1] == build
@@ -168,7 +168,7 @@ def _fake_sparkle(
                 previous = (
                     "<item><sparkle:version>40</sparkle:version>"
                     "<sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>"
-                    f'<enclosure url="https://example.invalid/SidePulse-0.4.0-arm64.zip" length="1" '
+                    f'<enclosure url="https://example.invalid/JR-Bar-0.4.0-arm64.zip" length="1" '
                     f'sparkle:edSignature="{signature}"/></item>'
                 )
             xml = (
@@ -279,8 +279,8 @@ def test_generate_stable_channel_signs_exact_feed_and_writes_candidate_metadata(
     assert item.findtext(f"{{{SPARKLE_NAMESPACE}}}phasedRolloutInterval") == "86400"
     assert item.findtext(f"{{{SPARKLE_NAMESPACE}}}minimumSystemVersion") == "11.0"
     assert enclosure.attrib["url"] == (
-        "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
-        "releases/download/v0.5.0/SidePulse-0.5.0-arm64.zip"
+        "https://github.com/JonathanRReed/JR-Bar/"
+        "releases/download/v0.5.0/JR-Bar-0.5.0-arm64.zip"
     )
     assert enclosure.attrib[f"{{{SPARKLE_NAMESPACE}}}edSignature"] == ITEM_SIGNATURE
 
@@ -294,7 +294,7 @@ def test_generate_stable_channel_signs_exact_feed_and_writes_candidate_metadata(
         "build": "50",
         "architecture": "arm64",
         "feed_url": (
-            "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+            "https://github.com/JonathanRReed/JR-Bar/"
             "releases/download/updates/appcast.xml"
         ),
         "download_url": enclosure.attrib["url"],
@@ -316,7 +316,7 @@ def test_generate_stable_channel_signs_exact_feed_and_writes_candidate_metadata(
     sign_args = json.loads((distribution / "sign-argv.json").read_text(encoding="utf-8"))
     key_args = json.loads((distribution / "key-argv.json").read_text(encoding="utf-8"))
     for args in (generate_args, sign_args, key_args):
-        assert args[args.index("--account") + 1] == "io.sidepulse.app"
+        assert args[args.index("--account") + 1] == "com.jonathanreed.jrbar"
         assert "--ed-key-file" not in args
     sign_calls = json.loads((distribution / "sign-calls.json").read_text(encoding="utf-8"))
     assert ["--verify" in args for args in sign_calls] == [False, True, True, True, True]
@@ -401,7 +401,7 @@ def test_generate_channel_stages_previous_feed_and_retained_archive(tmp_path: Pa
     previous_appcast.write_text(
         '<?xml version="1.0"?>'
         f'<rss xmlns:sparkle="{SPARKLE_NAMESPACE}"><channel><item>'
-        f'<enclosure url="https://github.com/JonathanRReed/sidepulse-JR-Fork/releases/download/v0.4.0/{previous_archive.name}" '
+        f'<enclosure url="https://github.com/JonathanRReed/JR-Bar/releases/download/v0.4.0/{previous_archive.name}" '
         f'length="{previous_length}" sparkle:edSignature="{ITEM_SIGNATURE}"/>'
         "</item></channel></rss>"
         f"<!-- sparkle-signatures: edSignature: {FEED_SIGNATURE} length: 42 -->",
@@ -530,7 +530,7 @@ def test_channel_cli_uses_keychain_without_leaking_captured_tool_output(
     )
     for record_name in ("generate-argv.json", "sign-argv.json", "key-argv.json"):
         args = json.loads((distribution / record_name).read_text(encoding="utf-8"))
-        assert args[args.index("--account") + 1] == "io.sidepulse.app"
+        assert args[args.index("--account") + 1] == "com.jonathanreed.jrbar"
         assert "--ed-key-file" not in args
 
 

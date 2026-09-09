@@ -31,15 +31,15 @@ SPARKLE_VERSION = "2.9.6"
 EXPECTED_SPARKLE_DISTRIBUTION_SHA256 = (
     "a57379fc39978044fe38787bda8ca8613d48bc9da48296514622be83651d17ce"
 )
-DEFAULT_KEYCHAIN_ACCOUNT = "io.sidepulse.app"
+DEFAULT_KEYCHAIN_ACCOUNT = "com.jonathanreed.jrbar"
 EXPECTED_PUBLIC_KEY = "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
-EXPECTED_BUNDLE_IDENTIFIER = "io.sidepulse.app"
+EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
 FEED_URL = (
-    "https://github.com/JonathanRReed/sidepulse-JR-Fork/"
+    "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
 VERSION_RELEASE_PREFIX = (
-    "https://github.com/JonathanRReed/sidepulse-JR-Fork/releases/download"
+    "https://github.com/JonathanRReed/JR-Bar/releases/download"
 )
 SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 METADATA_NAME = "jr-bar-update-channel.json"
@@ -271,10 +271,10 @@ def _archive_identity(archive: Path) -> ArchiveIdentity:
         raise SparkleChannelError(f"Sparkle update archive is unsafe: {exc}") from None
     try:
         with zipfile.ZipFile(resolved_archive) as bundle_zip:
-            raw_plist = bundle_zip.read("SidePulse.app/Contents/Info.plist")
+            raw_plist = bundle_zip.read("JR-Bar.app/Contents/Info.plist")
         document = plistlib.loads(raw_plist)
     except (KeyError, OSError, plistlib.InvalidFileException, zipfile.BadZipFile) as exc:
-        raise SparkleChannelError("Sparkle update archive has no valid SidePulse.app Info.plist") from exc
+        raise SparkleChannelError("Sparkle update archive has no valid JR-Bar.app Info.plist") from exc
     if not isinstance(document, dict) or document.get("CFBundleIdentifier") != EXPECTED_BUNDLE_IDENTIFIER:
         raise SparkleChannelError("Sparkle update archive has the wrong bundle identifier")
     version = document.get("CFBundleShortVersionString")
@@ -283,7 +283,7 @@ def _archive_identity(archive: Path) -> ArchiveIdentity:
         raise SparkleChannelError("Sparkle update archive has an unsafe current version")
     if not isinstance(build, str) or _SAFE_BUILD.fullmatch(build) is None:
         raise SparkleChannelError("Sparkle update archive has an unsafe current build")
-    prefix = f"SidePulse-{version}-"
+    prefix = f"JR-Bar-{version}-"
     if not resolved_archive.name.startswith(prefix) or not resolved_archive.name.endswith(".zip"):
         raise SparkleChannelError("Sparkle update archive name does not match its current version")
     architecture = resolved_archive.name[len(prefix) : -len(".zip")]
@@ -380,12 +380,12 @@ def _validate_prior_appcast(path: Path) -> tuple[Path, dict[str, tuple[str, int]
             or parsed.query
             or parsed.fragment
             or not parsed.path.startswith(
-                "/JonathanRReed/sidepulse-JR-Fork/releases/download/v"
+                "/JonathanRReed/JR-Bar/releases/download/v"
             )
         ):
             raise SparkleChannelError("previous appcast contains an untrusted archive URL")
         name = Path(parsed.path).name
-        if not name.startswith("SidePulse-") or not name.endswith(".zip"):
+        if not name.startswith("JR-Bar-") or not name.endswith(".zip"):
             raise SparkleChannelError("previous appcast contains an invalid archive name")
         if name in archives:
             raise SparkleChannelError("previous appcast repeats an archive name")

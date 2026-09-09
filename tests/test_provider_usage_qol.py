@@ -178,8 +178,8 @@ def test_reconnect_outcome_reporter_tells_the_truth():
 
     def make_controller(snapshot_state, reason=None, action=None):
         controller = SimpleNamespace()
-        controller._sidepulse_reconnect_watch = ("grok", 100.0)
-        controller._sidepulse_provider_usage_window = None
+        controller._jrbar_reconnect_watch = ("grok", 100.0)
+        controller._jrbar_provider_usage_window = None
         controller.set_settings_message = messages.append
         state = SimpleNamespace(
             snapshots=(
@@ -196,7 +196,7 @@ def test_reconnect_outcome_reporter_tells_the_truth():
 
     controller, state = make_controller("ready")
     report_reconnect_outcome(controller, state, log=logs.append)
-    assert controller._sidepulse_reconnect_watch is None
+    assert controller._jrbar_reconnect_watch is None
     assert "reconnected" in messages[-1]
 
     controller, state = make_controller("stale", reason="authentication_required")
@@ -207,7 +207,7 @@ def test_reconnect_outcome_reporter_tells_the_truth():
     controller, state = make_controller("ready")
     state.snapshots[0].observed_at = 50.0
     report_reconnect_outcome(controller, state, log=logs.append)
-    assert controller._sidepulse_reconnect_watch == ("grok", 100.0)
+    assert controller._jrbar_reconnect_watch == ("grok", 100.0)
 
 
 def test_degraded_interlude_does_not_wipe_the_reset_baseline():

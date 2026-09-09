@@ -16,15 +16,17 @@ from __future__ import annotations
 
 import os
 
+from .env import env_value
+
 
 def desktop_takeover_suppressed() -> bool:
     """True when this process must not raise windows or steal focus --
-    the test sandbox (conftest sets SIDEPULSE_TESTING, and pytest sets
+    the test sandbox (conftest sets JRBAR_TESTING, and pytest sets
     PYTEST_CURRENT_TEST) or an explicit headless opt-in."""
     return (
-        os.environ.get("SIDEPULSE_TESTING") == "1"
+        env_value("JRBAR_TESTING") == "1"
         or "PYTEST_CURRENT_TEST" in os.environ
-        or os.environ.get("SIDEPULSE_HEADLESS") == "1"
+        or env_value("JRBAR_HEADLESS") == "1"
     )
 
 

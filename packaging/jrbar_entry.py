@@ -1,4 +1,4 @@
-"""Entry point for the self-contained macOS SidePulse application."""
+"""Entry point for the self-contained macOS JR-Bar application."""
 
 import sys
 
@@ -14,5 +14,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     # Finder launches the app without arguments. The same executable is exposed
-    # as /usr/local/bin/sidepulse by the installer for command-line use.
+    # as /usr/local/bin/jrbar by the installer for command-line use.
     raise SystemExit(main())

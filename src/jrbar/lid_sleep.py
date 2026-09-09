@@ -41,7 +41,10 @@ SUDO_PMSET_DISABLE_SLEEP_COMMAND = (
     "-a",
     "disablesleep",
 )
-SLEEP_HELPER_SUDOERS_PATH = Path("/etc/sudoers.d/sidepulse-disablesleep")
+SLEEP_HELPER_SUDOERS_PATH = Path("/etc/sudoers.d/jrbar-disablesleep")
+# Rule file written before the JR-Bar rename; status and uninstall honour it.
+LEGACY_SLEEP_HELPER_SUDOERS_PATH = Path("/etc/sudoers.d/sidepulse-disablesleep")
+SLEEP_HELPER_SUDOERS_PATHS = (SLEEP_HELPER_SUDOERS_PATH, LEGACY_SLEEP_HELPER_SUDOERS_PATH)
 LID_POLL_SECONDS = 1.0
 
 
@@ -161,11 +164,13 @@ def sleep_helper_target_user() -> str:
         return getpass.getuser()
 
 
-def sleep_helper_installed(path: Path = SLEEP_HELPER_SUDOERS_PATH) -> bool:
-    return path.exists()
+def sleep_helper_installed(path: Path | None = None) -> bool:
+    if path is not None:
+        return path.exists()
+    return any(candidate.exists() for candidate in SLEEP_HELPER_SUDOERS_PATHS)
 
 
-def sleep_helper_install_command(executable: str = "sidepulse") -> str:
+def sleep_helper_install_command(executable: str = "jrbar") -> str:
     resolved = shutil.which(executable) or executable
     return f"sudo {shlex.quote(resolved)} status-bar install-sleep-helper"
 
@@ -229,11 +234,15 @@ def install_sleep_helper(
 
 def uninstall_sleep_helper(
     *,
-    path: Path = SLEEP_HELPER_SUDOERS_PATH,
+    path: Path | None = None,
     dry_run: bool = False,
 ) -> SleepHelperInstallResult:
     target_user = sleep_helper_target_user()
-    changed = path.exists()
+    # Remove the current rule and any pre-rename rule still on disk.
+    targets = (path,) if path is not None else SLEEP_HELPER_SUDOERS_PATHS
+    existing = tuple(candidate for candidate in targets if candidate.exists())
+    path = targets[0]
+    changed = bool(existing)
     if dry_run:
         return SleepHelperInstallResult(
             path=path,
@@ -244,8 +253,8 @@ def uninstall_sleep_helper(
         )
 
     require_root_for_sleep_helper()
-    if changed:
-        path.unlink()
+    for candidate in existing:
+        candidate.unlink()
     return SleepHelperInstallResult(
         path=path,
         user=target_user,

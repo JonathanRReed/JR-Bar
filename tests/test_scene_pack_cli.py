@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from jrbar.cli import build_sidepulse_parser, cmd_effects, jrbar_main
+from jrbar.cli import build_jrbar_parser, cmd_effects, jrbar_main
 from jrbar.effect_cli import dispatch_effect_command
 from jrbar.scene_pack_store import ScenePackStore
 
@@ -105,7 +105,7 @@ def test_sidepulse_parser_reaches_scene_pack_store(tmp_path: Path, capsys) -> No
         "--json",
     ]
 
-    parsed = build_sidepulse_parser().parse_args(arguments)
+    parsed = build_jrbar_parser().parse_args(arguments)
 
     assert parsed.func is cmd_effects
     assert parsed.action == "scene-install"

@@ -1,4 +1,4 @@
-"""Local packaging helpers used by SidePulse verification.
+"""Local packaging helpers used by JR-Bar verification.
 
 Keep this directory importable as ``packaging.*`` for repo-local tests while
 also exposing the third-party ``packaging`` dependency submodules used by build

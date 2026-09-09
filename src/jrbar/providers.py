@@ -227,16 +227,31 @@ KIRO_MANAGED_DESCRIPTION = (
     f"Kiro agent with {PRODUCT_DISPLAY_NAME} lifecycle monitoring enabled."
 )
 
-ANTIGRAVITY_HOOK_NAME = "sidepulse-status"
+ANTIGRAVITY_HOOK_NAME = "jrbar-status"
+LEGACY_ANTIGRAVITY_HOOK_NAME = "sidepulse-status"
 ANTIGRAVITY_ENVELOPE_KEY = "antigravity"
 
-OPENCODE_PLUGIN_MARKER = "sidepulse-opencode-plugin-v1"
+OPENCODE_PLUGIN_MARKER = "jrbar-opencode-plugin-v1"
+LEGACY_OPENCODE_PLUGIN_MARKER = "sidepulse-opencode-plugin-v1"
 _OPENCODE_PLUGIN_MAX_SOURCE_BYTES = 32 * 1024
-OPENCLAW_HANDLER_MARKER = "sidepulse-openclaw-handler-v2"
+OPENCLAW_HANDLER_MARKER = "jrbar-openclaw-handler-v2"
+LEGACY_OPENCLAW_HANDLER_MARKER = "sidepulse-openclaw-handler-v2"
+
+# Module entry points that mark a hook command as ours. The first two are
+# what the installer writes today; the rest were written before the rename
+# and stay recognised so installs replace them instead of duplicating.
+HOOK_CLIENT_MODULES = (
+    "jrbar.hook_client",
+    "jrbar.hook_entry",
+    "sidepulse.hook_client",
+    "sidepulse.hook_entry",
+    "sidepulse_cli.hook_entry",
+    "agent_monitor.hook_entry",
+)
 _OPENCLAW_HANDLER_MAX_SOURCE_BYTES = 32 * 1024
 
 
-def _is_sidepulse_hook_invocation(parts) -> bool:
+def _is_jrbar_hook_invocation(parts) -> bool:
     """Ours, in every legacy and current shape we register.
 
     Legacy installs name hook_entry.py directly; today's invoke the
@@ -248,9 +263,7 @@ def _is_sidepulse_hook_invocation(parts) -> bool:
     parts = list(parts)
     if any(Path(part).name == "hook_entry.py" for part in parts):
         return True
-    if "-m" in parts and any(
-        module in parts for module in ("jrbar.hook_entry", "jrbar.hook_client")
-    ):
+    if "-m" in parts and any(module in parts for module in HOOK_CLIENT_MODULES):
         return True
     return "agent-monitor" in parts and any(
         command in parts for command in ("hook-log", "hook-client")
@@ -294,7 +307,7 @@ def _valid_opencode_hook_arguments(
         and Path(arguments[0]).is_absolute()
         and executable_trusted
         and arguments[1] == "-m"
-        and arguments[2] in ("jrbar.hook_entry", "jrbar.hook_client")
+        and arguments[2] in HOOK_CLIENT_MODULES
         and arguments[3:6] == ["--provider", "opencode", "--log"]
     )
     frozen_shape = (
@@ -319,14 +332,14 @@ def opencode_plugin_source_for_arguments(hook_arguments: list[str] | tuple[str, 
         raise ValueError("invalid OpenCode hook arguments")
     encoded_arguments = json.dumps(arguments, separators=(",", ":"))
     return f'''// {OPENCODE_PLUGIN_MARKER}
-const SIDEPULSE_HOOK_ARGS = Object.freeze({encoded_arguments});
-const SIDEPULSE_MAX_ID_LENGTH = 128;
-const SIDEPULSE_MAX_PAYLOAD_BYTES = 1024;
+const JRBAR_HOOK_ARGS = Object.freeze({encoded_arguments});
+const JRBAR_MAX_ID_LENGTH = 128;
+const JRBAR_MAX_PAYLOAD_BYTES = 1024;
 
 function opaqueIdentifier(value) {{
   return typeof value === "string"
     && value.length > 0
-    && value.length <= SIDEPULSE_MAX_ID_LENGTH
+    && value.length <= JRBAR_MAX_ID_LENGTH
     && /^[A-Za-z0-9._:-]+$/.test(value)
     && !/^(?:sk|token|secret|api[_-]?key)[._:-]/i.test(value)
     ? value : undefined;
@@ -395,14 +408,14 @@ function payloadFor(event) {{
   if (timestamp) payload.timestamp = timestamp;
   if (hookEventName === "Notification") payload.notification_kind = "input_required";
   const encoded = JSON.stringify(payload);
-  return encoded.length <= SIDEPULSE_MAX_PAYLOAD_BYTES ? encoded : undefined;
+  return encoded.length <= JRBAR_MAX_PAYLOAD_BYTES ? encoded : undefined;
 }}
 
 let ingressTail = Promise.resolve();
 
 async function forwardOne(encodedPayload) {{
   try {{
-    const child = Bun.spawn(SIDEPULSE_HOOK_ARGS, {{ stdin: "pipe", stdout: "ignore", stderr: "ignore" }});
+    const child = Bun.spawn(JRBAR_HOOK_ARGS, {{ stdin: "pipe", stdout: "ignore", stderr: "ignore" }});
     child.stdin.write(encodedPayload);
     child.stdin.end();
     await child.exited;
@@ -418,20 +431,23 @@ function forward(encodedPayload) {{
   return admitted;
 }}
 
-const SidePulsePlugin = {{
+const JRBarPlugin = {{
   event: async ({{ event }}) => {{
     const payload = payloadFor(event);
     if (payload) await forward(payload);
   }},
 }};
 
-export default SidePulsePlugin;
+export default JRBarPlugin;
 '''
 
 
 def managed_opencode_plugin_log_path(text: str) -> Path | None:
-    marker = f"// {OPENCODE_PLUGIN_MARKER}\nconst SIDEPULSE_HOOK_ARGS = Object.freeze("
-    if not text.startswith(marker):
+    marker = f"// {OPENCODE_PLUGIN_MARKER}\nconst JRBAR_HOOK_ARGS = Object.freeze("
+    legacy_marker = f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\nconst SIDEPULSE_HOOK_ARGS = Object.freeze("
+    if text.startswith(legacy_marker):
+        marker = legacy_marker
+    elif not text.startswith(marker):
         return None
     end = text.find(");\n", len(marker))
     if end < 0:
@@ -459,7 +475,7 @@ def _valid_openclaw_hook_arguments(arguments: object) -> tuple[str, ...] | None:
         for argument in arguments
     ):
         return None
-    module_shape = arguments[1:3] == ["-m", "jrbar.hook_client"]
+    module_shape = arguments[1] == "-m" and arguments[2] in HOOK_CLIENT_MODULES
     frozen_shape = arguments[1:3] == ["agent-monitor", "hook-client"]
     if not (module_shape or frozen_shape):
         return None
@@ -485,12 +501,12 @@ def openclaw_handler_source_for_arguments(
     if arguments is None:
         raise ValueError("invalid OpenClaw hook arguments")
     encoded_arguments = json.dumps(arguments, separators=(",", ":"))
-    return f'''// Managed by SidePulse -- {OPENCLAW_HANDLER_MARKER}
-const SIDEPULSE_HOOK_ARGS = Object.freeze({encoded_arguments});
+    return f'''// Managed by JR-Bar -- {OPENCLAW_HANDLER_MARKER}
+const JRBAR_HOOK_ARGS = Object.freeze({encoded_arguments});
 import {{ spawn }} from "node:child_process";
 
-const SIDEPULSE_MAX_ID_LENGTH = 128;
-const SIDEPULSE_MAX_PAYLOAD_BYTES = 1024;
+const JRBAR_MAX_ID_LENGTH = 128;
+const JRBAR_MAX_PAYLOAD_BYTES = 1024;
 
 const EVENT_MAP = {{
   "command:new": "SessionStart",
@@ -504,7 +520,7 @@ let ingressTail = Promise.resolve();
 function opaqueIdentifier(value) {{
   return typeof value === "string"
     && value.length > 0
-    && value.length <= SIDEPULSE_MAX_ID_LENGTH
+    && value.length <= JRBAR_MAX_ID_LENGTH
     && /^[A-Za-z0-9._:-]+$/.test(value)
     && !/^(?:sk|token|secret|api[_-]?key)[._:-]/i.test(value)
     ? value : undefined;
@@ -514,8 +530,8 @@ async function forward(payload) {{
   try {{
     await new Promise((resolve) => {{
       const child = spawn(
-        SIDEPULSE_HOOK_ARGS[0],
-        SIDEPULSE_HOOK_ARGS.slice(1),
+        JRBAR_HOOK_ARGS[0],
+        JRBAR_HOOK_ARGS.slice(1),
         {{ stdio: ["pipe", "ignore", "ignore"] }},
       );
       child.once("close", resolve);
@@ -536,7 +552,7 @@ const handler = async (event) => {{
     session_id: sessionId ?? null,
     logged_at: new Date().toISOString(),
   }});
-  if (payload.length > SIDEPULSE_MAX_PAYLOAD_BYTES) return;
+  if (payload.length > JRBAR_MAX_PAYLOAD_BYTES) return;
   const admitted = ingressTail.then(
     () => forward(payload),
     () => forward(payload),
@@ -551,10 +567,16 @@ export default handler;
 
 def managed_openclaw_handler_log_path(text: str) -> Path | None:
     marker = (
-        f"// Managed by SidePulse -- {OPENCLAW_HANDLER_MARKER}\n"
+        f"// Managed by JR-Bar -- {OPENCLAW_HANDLER_MARKER}\n"
+        "const JRBAR_HOOK_ARGS = Object.freeze("
+    )
+    legacy_marker = (
+        f"// Managed by SidePulse -- {LEGACY_OPENCLAW_HANDLER_MARKER}\n"
         "const SIDEPULSE_HOOK_ARGS = Object.freeze("
     )
-    if not text.startswith(marker):
+    if text.startswith(legacy_marker):
+        marker = legacy_marker
+    elif not text.startswith(marker):
         return None
     end = text.find(");\n", len(marker))
     if end < 0:
@@ -825,7 +847,7 @@ def detect_devin_config(home: Path | None = None) -> ProviderConfig:
         "devin",
         default_devin_config_path(home),
         DEVIN_EVENTS,
-        is_sidepulse_devin_command,
+        is_jrbar_devin_command,
     )
 
 
@@ -839,9 +861,9 @@ def detect_grok_config(home: Path | None = None) -> ProviderConfig:
     return detect_json_hook_config("grok", config_path, GROK_EVENTS)
 
 
-def is_sidepulse_hook_command(command: str, provider: str) -> bool:
-    """True when `command` is one of SidePulse's own hook commands for
-    `provider` -- the generic form of is_sidepulse_devin_command, used by
+def is_jrbar_hook_command(command: str, provider: str) -> bool:
+    """True when `command` is one of JR-Bar's own hook commands for
+    `provider` -- the generic form of is_jrbar_devin_command, used by
     installers/uninstallers and detectors that must never count or touch
     another tool's hooks in a shared config file."""
     try:
@@ -855,7 +877,7 @@ def is_sidepulse_hook_command(command: str, provider: str) -> bool:
     )
     if not has_provider:
         return False
-    return _is_sidepulse_hook_invocation(parts)
+    return _is_jrbar_hook_invocation(parts)
 
 
 def default_cursor_config_path(home: Path | None = None) -> Path:
@@ -888,7 +910,7 @@ def detect_cursor_config(home: Path | None = None) -> ProviderConfig:
                 if not isinstance(entry, dict):
                     continue
                 command = entry.get("command")
-                if isinstance(command, str) and is_sidepulse_hook_command(command, "cursor"):
+                if isinstance(command, str) and is_jrbar_hook_command(command, "cursor"):
                     event_paths.extend(extract_log_paths_from_command(command))
             if event_paths:
                 hook_events.append(event_name)
@@ -932,7 +954,7 @@ def detect_hermes_config(home: Path | None = None) -> ProviderConfig:
                 if not isinstance(entry, dict):
                     continue
                 command = entry.get("command")
-                if isinstance(command, str) and is_sidepulse_hook_command(command, "hermes"):
+                if isinstance(command, str) and is_jrbar_hook_command(command, "hermes"):
                     event_paths.extend(extract_log_paths_from_command(command))
             if event_paths:
                 hook_events.append(event_name)
@@ -948,7 +970,8 @@ def detect_hermes_config(home: Path | None = None) -> ProviderConfig:
     )
 
 
-OPENCLAW_HOOK_NAME = "sidepulse-status"
+OPENCLAW_HOOK_NAME = "jrbar-status"
+LEGACY_OPENCLAW_HOOK_NAME = "sidepulse-status"
 
 
 def default_openclaw_config_path(home: Path | None = None) -> Path:
@@ -1031,7 +1054,7 @@ def _antigravity_handler_commands(entries: object) -> list[str]:
             if not isinstance(handler, dict):
                 continue
             command = handler.get("command")
-            if isinstance(command, str) and is_sidepulse_hook_command(command, "antigravity"):
+            if isinstance(command, str) and is_jrbar_hook_command(command, "antigravity"):
                 commands.append(command)
     return commands
 
@@ -1134,7 +1157,7 @@ def detect_kiro_config(home: Path | None = None) -> ProviderConfig:
                 if not isinstance(entry, dict):
                     continue
                 command = entry.get("command")
-                if isinstance(command, str) and is_sidepulse_hook_command(
+                if isinstance(command, str) and is_jrbar_hook_command(
                     command, "kiro"
                 ):
                     event_paths.extend(extract_log_paths_from_command(command))
@@ -1654,7 +1677,7 @@ def _paths_from_hook_entries(
     return paths
 
 
-def is_sidepulse_devin_command(command: str) -> bool:
+def is_jrbar_devin_command(command: str) -> bool:
     try:
         parts = shlex.split(command)
     except ValueError:
@@ -1668,7 +1691,7 @@ def is_sidepulse_devin_command(command: str) -> bool:
     if not has_devin_provider:
         return False
 
-    return _is_sidepulse_hook_invocation(parts)
+    return _is_jrbar_hook_invocation(parts)
 
 
 def extract_log_paths_from_command(command: str) -> list[Path]:
@@ -1715,3 +1738,10 @@ def _first_string(data: dict[str, Any], *keys: str) -> str | None:
         if value:
             return value
     return None
+
+
+# Names kept for one release so external callers written before the rename
+# keep importing. New code uses the jrbar-prefixed names above.
+_is_sidepulse_hook_invocation = _is_jrbar_hook_invocation
+is_sidepulse_hook_command = is_jrbar_hook_command
+is_sidepulse_devin_command = is_jrbar_devin_command

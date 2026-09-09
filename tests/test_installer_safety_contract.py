@@ -35,8 +35,12 @@ def test_supported_uninstaller_removes_only_owned_integrations() -> None:
         "sdejectguard uninstall --scope system",
     ):
         assert command in text
-    assert 'readlink "$CLI_LINK"' in text
+    # Both the current and the pre-rename CLI link are removed only when they
+    # point at our executable.
+    assert 'for link in "$CLI_LINK" "$LEGACY_CLI_LINK"' in text
+    assert 'readlink "$link"' in text
     assert "--purge-state" in text
     assert "--keep-app" in text
-    assert 'PACKAGE_ID="io.sidepulse.app"' in text
-    assert 'pkgutil --forget "$PACKAGE_ID"' in text
+    assert 'PACKAGE_ID="com.jonathanreed.jrbar"' in text
+    assert 'LEGACY_PACKAGE_ID="io.sidepulse.app"' in text
+    assert 'pkgutil --forget "$package_id"' in text

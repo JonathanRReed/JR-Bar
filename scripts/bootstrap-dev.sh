@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VENV_DIR="${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}"
+VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}"
 CONSTRAINTS="$ROOT_DIR/requirements/release-constraints.txt"
 PINNED_PIP="26.1.2"
 
@@ -47,7 +47,7 @@ if [ -x "$VENV_DIR/bin/python" ]; then
     if ! "$VENV_DIR/bin/python" -c \
         'import sys; raise SystemExit(sys.version_info[:2] != (3, 12))' 2>/dev/null; then
         echo "The existing virtual environment at $VENV_DIR does not use Python 3.12." >&2
-        echo "Choose a new SIDEPULSE_DEV_VENV or remove and recreate that environment." >&2
+        echo "Choose a new JRBAR_DEV_VENV or remove and recreate that environment." >&2
         exit 2
     fi
 else

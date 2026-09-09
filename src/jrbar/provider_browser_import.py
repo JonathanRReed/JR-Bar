@@ -187,7 +187,7 @@ def read_chromium_local_storage(
         key_state_live = default_live if key_state_live is None else key_state_live
         key_state_deleted = default_deleted if key_state_deleted is None else key_state_deleted
 
-    with tempfile.TemporaryDirectory(prefix="sidepulse-browser-import-") as directory:
+    with tempfile.TemporaryDirectory(prefix="jrbar-browser-import-") as directory:
         snapshot = Path(directory) / "leveldb"
         _copy_leveldb_snapshot(source, snapshot)
         try:

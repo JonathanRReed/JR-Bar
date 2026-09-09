@@ -149,10 +149,10 @@ def show_provider_usage_feedback(controller, message: str) -> None:
     try:
         from .provider_usage_window import ProviderUsageWindowController
 
-        window = getattr(controller, "_sidepulse_provider_usage_window", None)
+        window = getattr(controller, "_jrbar_provider_usage_window", None)
         if window is None:
             window = ProviderUsageWindowController(action_target=controller)
-            controller._sidepulse_provider_usage_window = window
+            controller._jrbar_provider_usage_window = window
         # Order is load-bearing: show() renders whatever message is
         # already set; a message set after show() is dropped.
         window.show_message(text)
@@ -189,7 +189,7 @@ def alert_connection_loss(
         # next week deserves its own cue.
         seen = tuple(
             key
-            for key in getattr(controller, "_sidepulse_seen_connection_losses", ())
+            for key in getattr(controller, "_jrbar_seen_connection_losses", ())
             if key.split(":", 1)[0] not in healthy_now
         )
         events = connection_loss_transitions(
@@ -198,9 +198,9 @@ def alert_connection_loss(
             seen_keys=frozenset(seen),
         )
         if not events:
-            controller._sidepulse_seen_connection_losses = seen
+            controller._jrbar_seen_connection_losses = seen
             return
-        controller._sidepulse_seen_connection_losses = (
+        controller._jrbar_seen_connection_losses = (
             *seen,
             *(key for key, _p, _s in events),
         )[-256:]
@@ -243,7 +243,7 @@ def alert_new_critical_pace(
     from .usage_pace import critical_pace_transitions
 
     try:
-        seen = tuple(getattr(controller, "_sidepulse_seen_pace_alerts", ()))
+        seen = tuple(getattr(controller, "_jrbar_seen_pace_alerts", ()))
         alerts = critical_pace_transitions(
             previous_state.snapshots,
             state.snapshots,
@@ -252,7 +252,7 @@ def alert_new_critical_pace(
         )
         if not alerts:
             return
-        controller._sidepulse_seen_pace_alerts = (
+        controller._jrbar_seen_pace_alerts = (
             *seen,
             *(key for key, _p, _l in alerts),
         )[-256:]
@@ -351,7 +351,7 @@ def report_reconnect_outcome(controller, state, *, log) -> None:
     refreshing now" while the server kept rejecting the token and the
     card never changed. This closes the loop."""
     try:
-        watch = getattr(controller, "_sidepulse_reconnect_watch", None)
+        watch = getattr(controller, "_jrbar_reconnect_watch", None)
         if not watch:
             return
         if len(watch) == 2:
@@ -375,7 +375,7 @@ def report_reconnect_outcome(controller, state, *, log) -> None:
             getattr(snapshot, "observed_at", 0.0) or 0.0
         ) < float(clicked_at):
             return  # the forced refresh has not landed yet; keep waiting
-        controller._sidepulse_reconnect_watch = None
+        controller._jrbar_reconnect_watch = None
         from .provider_usage_platform import provider_descriptor
 
         label = provider_descriptor(provider_id).label
@@ -399,7 +399,7 @@ def report_reconnect_outcome(controller, state, *, log) -> None:
             "reconnect outcome: "
             f"{provider_id}/{source_instance_id} -> {value}"
         )
-        window = getattr(controller, "_sidepulse_provider_usage_window", None)
+        window = getattr(controller, "_jrbar_provider_usage_window", None)
         if window is not None:
             try:
                 if window.window.isVisible():

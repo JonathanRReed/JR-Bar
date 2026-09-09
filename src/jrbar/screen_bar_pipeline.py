@@ -405,7 +405,7 @@ class ScreenBarSampler:
         self._worker_ident: int | None = None
         self._worker = threading.Thread(
             target=self._run,
-            name="sidepulse-screen-bar-sampler",
+            name="jrbar-screen-bar-sampler",
             daemon=True,
         )
         self._worker.start()

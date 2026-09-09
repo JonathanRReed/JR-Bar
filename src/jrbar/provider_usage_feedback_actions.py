@@ -13,7 +13,7 @@ def alert_new_critical_pace(controller, previous_state, state, *, legacy) -> Non
         log=legacy.log_status_bar,
         signal_kind=getattr(legacy.signals_module, "SIGNAL_QUOTA", None),
     )
-    runtime = getattr(controller, "_sidepulse_optional_integration_runtime", None)
+    runtime = getattr(controller, "_jrbar_optional_integration_runtime", None)
     if runtime is not None:
         runtime.publish_creator_output(
             legacy.AgentMode.IDLE_READY,
@@ -37,7 +37,7 @@ def celebrate_quota_resets(controller, events, *, legacy) -> None:
         signal_kind=getattr(legacy.signals_module, "SIGNAL_QUOTA", None),
     )
     if events:
-        runtime = getattr(controller, "_sidepulse_optional_integration_runtime", None)
+        runtime = getattr(controller, "_jrbar_optional_integration_runtime", None)
         if runtime is not None:
             runtime.publish_creator_output(
                 legacy.AgentMode.IDLE_READY,

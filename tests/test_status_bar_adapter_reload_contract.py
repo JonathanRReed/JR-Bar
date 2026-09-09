@@ -9,10 +9,10 @@ SOURCE = ROOT / "src" / "jrbar" / "status_bar.py"
 def test_status_bar_adapters_preserve_originals_on_the_runtime_module() -> None:
     source = SOURCE.read_text(encoding="utf-8")
     for marker in (
-        "_sidepulse_original_build_menu",
-        "_sidepulse_original_device_id_for_root",
-        "_sidepulse_original_persistable_device_identity",
-        "_sidepulse_device_identity_cache",
+        "_jrbar_original_build_menu",
+        "_jrbar_original_device_id_for_root",
+        "_jrbar_original_persistable_device_identity",
+        "_jrbar_device_identity_cache",
     ):
         assert marker in source
 
@@ -21,17 +21,17 @@ def test_status_bar_reload_does_not_replace_originals_with_its_own_wrappers() ->
     source = SOURCE.read_text(encoding="utf-8")
     normalized = " ".join(source.split())
     assert (
-        'getattr( _legacy, "_sidepulse_original_build_menu", _legacy.build_menu )'
+        'getattr( _legacy, "_jrbar_original_build_menu", _legacy.build_menu )'
         in normalized
     )
     assert (
-        'getattr( _legacy, "_sidepulse_original_device_id_for_root", _legacy.device_id_for_root, )'
+        'getattr( _legacy, "_jrbar_original_device_id_for_root", _legacy.device_id_for_root, )'
         in normalized
     )
     assert (
-        'getattr( _legacy, "_sidepulse_original_persistable_device_identity", _legacy.persistable_device_identity, )'
+        'getattr( _legacy, "_jrbar_original_persistable_device_identity", _legacy.persistable_device_identity, )'
         in normalized
     )
-    assert "_legacy._sidepulse_original_build_menu = _ORIGINAL_BUILD_MENU" in source
-    assert "_legacy._sidepulse_device_identity_cache = cache" in source
+    assert "_legacy._jrbar_original_build_menu = _ORIGINAL_BUILD_MENU" in source
+    assert "_legacy._jrbar_device_identity_cache = cache" in source
     assert "def install_status_bar_facade" in source

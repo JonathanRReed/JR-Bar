@@ -367,7 +367,7 @@ class MacOSNotificationClient:
             if self._delivery_thread is None:
                 worker = threading.Thread(
                     target=self._run_delivery_worker,
-                    name="sidepulse-notification-delivery",
+                    name="jrbar-notification-delivery",
                     daemon=True,
                 )
                 self._delivery_thread = worker

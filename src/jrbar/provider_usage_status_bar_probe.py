@@ -65,7 +65,7 @@ def probe_build_menu(snapshot, state, target):
     inject_software_update_submenu(
         menu,
         target,
-        getattr(target, "_sidepulse_sparkle_updater", None),
+        getattr(target, "_jrbar_sparkle_updater", None),
     )
     remove_redundant_separators(menu)
     return menu

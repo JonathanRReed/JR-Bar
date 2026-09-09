@@ -144,7 +144,7 @@ def test_render_model_replaces_generated_opaque_profile_label_with_safe_identity
 def test_provider_menu_checkbox_keeps_opaque_identity_only_in_action_payload() -> None:
     raw_source = "profile:8f14e45fceea167a5a36dedd4bea2543"
     target = _SettingsTarget.alloc().init()
-    target._sidepulse_provider_usage_settings_snapshot = (
+    target._jrbar_provider_usage_settings_snapshot = (
         default_provider_usage_settings().with_profile(
             ProviderInstanceProfile(
                 ProviderInstanceKey("claude", raw_source),
@@ -157,7 +157,7 @@ def test_provider_menu_checkbox_keeps_opaque_identity_only_in_action_payload() -
 
     box = next(
         item
-        for item in target._sidepulse_usage_menu_boxes[1]
+        for item in target._jrbar_usage_menu_boxes[1]
         if item.representedObject().get("source_instance_id") == raw_source
     )
     assert str(box.title()).startswith("Claude #")
@@ -279,7 +279,7 @@ def test_render_model_refuses_more_rows_than_the_settings_surface_can_bound() ->
 
 def _rendered_settings_target():
     target = _SettingsTarget.alloc().init()
-    target._sidepulse_provider_usage_settings_snapshot = (
+    target._jrbar_provider_usage_settings_snapshot = (
         default_provider_usage_settings().with_profile(
             ProviderInstanceProfile(
                 ProviderInstanceKey("claude", "work"),
@@ -297,7 +297,7 @@ def _rendered_settings_target():
 
 def test_native_usage_pane_renders_five_accessible_controls_for_one_exact_instance() -> None:
     target = _rendered_settings_target()
-    controls = target._sidepulse_provider_profile_settings_controls
+    controls = target._jrbar_provider_profile_settings_controls
 
     expected = {
         "label": "Claude Work",
@@ -332,10 +332,10 @@ def test_native_usage_pane_renders_five_accessible_controls_for_one_exact_instan
 
 def test_native_usage_pane_bounds_profile_cards_and_every_choice_payload() -> None:
     target = _rendered_settings_target()
-    settings = target._sidepulse_provider_usage_settings_snapshot
-    cards = target._sidepulse_provider_profile_settings_cards
-    controls = target._sidepulse_provider_profile_settings_controls
-    menu_element_boxes = target._sidepulse_usage_menu_boxes[0]
+    settings = target._jrbar_provider_usage_settings_snapshot
+    cards = target._jrbar_provider_profile_settings_cards
+    controls = target._jrbar_provider_profile_settings_controls
+    menu_element_boxes = target._jrbar_usage_menu_boxes[0]
 
     assert "privacy_mode" in {
         str(box.identifier() or "") for box in menu_element_boxes
@@ -369,7 +369,7 @@ def test_native_usage_pane_bounds_profile_cards_and_every_choice_payload() -> No
 
 def test_native_usage_pane_privacy_redacts_and_disables_name_controls() -> None:
     target = _SettingsTarget.alloc().init()
-    target._sidepulse_provider_usage_settings_snapshot = (
+    target._jrbar_provider_usage_settings_snapshot = (
         default_provider_usage_settings()
         .with_profile(
             ProviderInstanceProfile(
@@ -382,12 +382,12 @@ def test_native_usage_pane_privacy_redacts_and_disables_name_controls() -> None:
 
     _native_usage_pane(target)
 
-    model = target._sidepulse_provider_profile_settings_model
+    model = target._jrbar_provider_profile_settings_model
     row = provider_instance_profile_settings_row(model, "claude", "work")
-    name = target._sidepulse_provider_profile_settings_controls[("claude", "work", "label")]
+    name = target._jrbar_provider_profile_settings_controls[("claude", "work", "label")]
     provider_box = next(
         box
-        for box in target._sidepulse_usage_menu_boxes[1]
+        for box in target._jrbar_usage_menu_boxes[1]
         if box.representedObject()["source_instance_id"] == "work"
     )
     assert row.heading == "Claude Account 2"
@@ -399,21 +399,21 @@ def test_native_usage_pane_privacy_redacts_and_disables_name_controls() -> None:
 
 def test_cached_usage_pane_redacts_then_restores_alias_when_privacy_toggles() -> None:
     target = _rendered_settings_target()
-    private = target._sidepulse_provider_usage_settings_snapshot.with_menu_flag(
+    private = target._jrbar_provider_usage_settings_snapshot.with_menu_flag(
         "privacy_mode", True
     )
-    target._sidepulse_provider_usage_settings_snapshot = private
+    target._jrbar_provider_usage_settings_snapshot = private
 
     settings_runtime.refresh_native_usage_summary(target)
 
-    name = target._sidepulse_provider_profile_settings_controls[("claude", "work", "label")]
-    card = target._sidepulse_provider_profile_settings_cards[("claude", "work")]
+    name = target._jrbar_provider_profile_settings_controls[("claude", "work", "label")]
+    card = target._jrbar_provider_profile_settings_cards[("claude", "work")]
     assert name.stringValue() == "Claude Account 2"
     assert name.isEnabled() is False
     assert card.arrangedSubviews()[0].stringValue() == "Claude Account 2"
     assert "Claude Work" not in str(card.accessibilityLabel())
 
-    target._sidepulse_provider_usage_settings_snapshot = private.with_menu_flag(
+    target._jrbar_provider_usage_settings_snapshot = private.with_menu_flag(
         "privacy_mode", False
     )
     settings_runtime.refresh_native_usage_summary(target)
@@ -426,7 +426,7 @@ def test_cached_usage_pane_redacts_then_restores_alias_when_privacy_toggles() ->
 def test_privacy_toggle_redacts_the_active_native_name_editor() -> None:
     NSApplication.sharedApplication()
     target = _rendered_settings_target()
-    name = target._sidepulse_provider_profile_settings_controls[("claude", "work", "label")]
+    name = target._jrbar_provider_profile_settings_controls[("claude", "work", "label")]
     root = name
     while root.superview() is not None:
         root = root.superview()
@@ -443,10 +443,10 @@ def test_privacy_toggle_redacts_the_active_native_name_editor() -> None:
     assert editor is not None
     editor.setString_("Unsaved private alias")
 
-    private = target._sidepulse_provider_usage_settings_snapshot.with_menu_flag(
+    private = target._jrbar_provider_usage_settings_snapshot.with_menu_flag(
         "privacy_mode", True
     )
-    target._sidepulse_provider_usage_settings_snapshot = private
+    target._jrbar_provider_usage_settings_snapshot = private
     settings_runtime.refresh_native_usage_summary(target)
 
     assert name.isEnabled() is False
@@ -456,7 +456,7 @@ def test_privacy_toggle_redacts_the_active_native_name_editor() -> None:
 
 def test_privacy_toggle_reconciles_when_aliases_equal_private_placeholders() -> None:
     target = _SettingsTarget.alloc().init()
-    target._sidepulse_provider_usage_settings_snapshot = (
+    target._jrbar_provider_usage_settings_snapshot = (
         default_provider_usage_settings()
         .with_profile(
             ProviderInstanceProfile(
@@ -472,13 +472,13 @@ def test_privacy_toggle_reconciles_when_aliases_equal_private_placeholders() -> 
         )
     )
     _native_usage_pane(target)
-    name = target._sidepulse_provider_profile_settings_controls[("claude", "work", "label")]
+    name = target._jrbar_provider_profile_settings_controls[("claude", "work", "label")]
     name.setStringValue_("Unsaved private alias")
 
-    private = target._sidepulse_provider_usage_settings_snapshot.with_menu_flag(
+    private = target._jrbar_provider_usage_settings_snapshot.with_menu_flag(
         "privacy_mode", True
     )
-    target._sidepulse_provider_usage_settings_snapshot = private
+    target._jrbar_provider_usage_settings_snapshot = private
     settings_runtime.refresh_native_usage_summary(target)
 
     assert name.isEnabled() is False
@@ -487,7 +487,7 @@ def test_privacy_toggle_reconciles_when_aliases_equal_private_placeholders() -> 
 
 def test_ordinary_usage_refresh_preserves_unsaved_profile_text_drafts() -> None:
     target = _rendered_settings_target()
-    controls = target._sidepulse_provider_profile_settings_controls
+    controls = target._jrbar_provider_profile_settings_controls
     name = controls[("claude", "work", "label")]
     accent = controls[("claude", "work", "color_override")]
     name.setStringValue_("Unsaved name")
@@ -501,24 +501,24 @@ def test_ordinary_usage_refresh_preserves_unsaved_profile_text_drafts() -> None:
 
 def test_settings_snapshot_apply_immediately_refreshes_cached_privacy_labels() -> None:
     target = _rendered_settings_target()
-    private = target._sidepulse_provider_usage_settings_snapshot.with_menu_flag(
+    private = target._jrbar_provider_usage_settings_snapshot.with_menu_flag(
         "privacy_mode", True
     )
 
     apply_provider_usage_settings_snapshot(target, private, notify_service=False)
 
-    name = target._sidepulse_provider_profile_settings_controls[("claude", "work", "label")]
+    name = target._jrbar_provider_profile_settings_controls[("claude", "work", "label")]
     assert name.stringValue() == "Claude Account 2"
     assert name.isEnabled() is False
 
 
 def test_profile_save_refreshes_cached_model_card_and_committed_control_payloads() -> None:
     target = _rendered_settings_target()
-    sender = target._sidepulse_provider_profile_settings_controls[
+    sender = target._jrbar_provider_profile_settings_controls[
         ("claude", "work", "label")
     ]
     sender.setStringValue_("Client Claude")
-    committed = target._sidepulse_provider_usage_settings_snapshot.with_profile(
+    committed = target._jrbar_provider_usage_settings_snapshot.with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
             "Client Claude",
@@ -538,15 +538,15 @@ def test_profile_save_refreshes_cached_model_card_and_committed_control_payloads
 
     assert saved is True
     row = provider_instance_profile_settings_row(
-        target._sidepulse_provider_profile_settings_model,
+        target._jrbar_provider_profile_settings_model,
         "claude",
         "work",
     )
     assert row.heading == "Client Claude"
-    card = target._sidepulse_provider_profile_settings_cards[("claude", "work")]
+    card = target._jrbar_provider_profile_settings_cards[("claude", "work")]
     assert card.arrangedSubviews()[0].stringValue() == "Client Claude"
     assert card.accessibilityLabel() == "Client Claude provider profile, Claude"
-    controls = target._sidepulse_provider_profile_settings_controls
+    controls = target._jrbar_provider_profile_settings_controls
     expected = {
         "label": "Client Claude",
         "color_override": "#DDEEFF",
@@ -573,7 +573,7 @@ def test_profile_save_refreshes_cached_model_card_and_committed_control_payloads
 
 def test_profile_text_save_failure_restores_current_committed_snapshot() -> None:
     target = _rendered_settings_target()
-    committed = target._sidepulse_provider_usage_settings_snapshot.with_profile(
+    committed = target._jrbar_provider_usage_settings_snapshot.with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
             "Committed Claude",
@@ -583,8 +583,8 @@ def test_profile_text_save_failure_restores_current_committed_snapshot() -> None
             open_session_action="app",
         )
     )
-    target._sidepulse_provider_usage_settings_snapshot = committed
-    sender = target._sidepulse_provider_profile_settings_controls[
+    target._jrbar_provider_usage_settings_snapshot = committed
+    sender = target._jrbar_provider_profile_settings_controls[
         ("claude", "work", "label")
     ]
     sender.setStringValue_("Unsaved Draft")
@@ -599,14 +599,14 @@ def test_profile_text_save_failure_restores_current_committed_snapshot() -> None
     assert saved is False
     assert sender.stringValue() == "Committed Claude"
     assert sender.representedObject()["value"] == "Committed Claude"
-    card = target._sidepulse_provider_profile_settings_cards[("claude", "work")]
+    card = target._jrbar_provider_profile_settings_cards[("claude", "work")]
     assert card.arrangedSubviews()[0].stringValue() == "Committed Claude"
     assert card.accessibilityLabel() == "Committed Claude provider profile, Claude"
 
 
 def test_profile_popup_save_failure_restores_current_committed_selection() -> None:
     target = _rendered_settings_target()
-    committed = target._sidepulse_provider_usage_settings_snapshot.with_profile(
+    committed = target._jrbar_provider_usage_settings_snapshot.with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
             "Claude Work",
@@ -616,8 +616,8 @@ def test_profile_popup_save_failure_restores_current_committed_selection() -> No
             open_session_action="app",
         )
     )
-    target._sidepulse_provider_usage_settings_snapshot = committed
-    sender = target._sidepulse_provider_profile_settings_controls[
+    target._jrbar_provider_usage_settings_snapshot = committed
+    sender = target._jrbar_provider_profile_settings_controls[
         ("claude", "work", "retention_days")
     ]
     sender.selectItemAtIndex_(3)

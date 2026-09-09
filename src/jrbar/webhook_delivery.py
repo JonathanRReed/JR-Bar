@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import SplitResult, urlsplit
 
+from . import __version__
+
 MAX_WEBHOOK_PAYLOAD_BYTES = 8 * 1024
 MAX_WEBHOOK_RESPONSE_BYTES = 4 * 1024
 MAX_WEBHOOK_HEADER_BYTES = 16 * 1024
@@ -209,7 +211,7 @@ def _request_bytes(endpoint: WebhookEndpoint, payload: bytes) -> bytes:
     header = (
         f"POST {endpoint.request_target} HTTP/1.1\r\n"
         f"Host: {_host_header(endpoint)}\r\n"
-        "User-Agent: SidePulse/1\r\n"
+        f"User-Agent: JR-Bar/{__version__}\r\n"
         "Content-Type: application/json\r\n"
         f"Content-Length: {len(payload)}\r\n"
         "Accept: application/json\r\n"

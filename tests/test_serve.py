@@ -350,9 +350,9 @@ def test_status_endpoint_has_no_anonymous_default_even_without_a_token() -> None
 def test_cli_status_requires_token_unless_anonymous_compatibility_is_explicit(
     monkeypatch, capsys
 ) -> None:
-    from jrbar.cli import SERVE_ACCESS_TOKEN_ENV, build_sidepulse_parser, cmd_serve
+    from jrbar.cli import SERVE_ACCESS_TOKEN_ENV, build_jrbar_parser, cmd_serve
 
-    parser = build_sidepulse_parser()
+    parser = build_jrbar_parser()
     calls = []
     monkeypatch.setattr("jrbar.serve.serve", lambda **kwargs: calls.append(kwargs))
     monkeypatch.delenv(SERVE_ACCESS_TOKEN_ENV, raising=False)

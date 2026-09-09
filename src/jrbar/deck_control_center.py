@@ -80,7 +80,7 @@ def revoke_deck_context(target) -> None:
     if runner is not None:
         target._deck_automation_runner = None
         runner.close()
-    runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+    runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
     dispatch = getattr(runtime, "_deck_dispatch", None)
     if dispatch is not None:
         dispatch.reset_connection()
@@ -95,7 +95,7 @@ def change_deck_bank(target, delta: int) -> None:
 
 
 def publish_deck_frame(target) -> None:
-    runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+    runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
     snapshot = getattr(target, "last_snapshot", None)
     if runtime is not None and snapshot is not None:
         runtime.publish_creator_output(target.display_aggregate_mode(snapshot))
@@ -119,7 +119,7 @@ def open_control_center(target, *, input_check: bool = False) -> None:
             target._deck_automation_runner = None
             runner.close()
         target._deck_input_check_active = True
-        runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+        runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
         dispatch = getattr(runtime, "_deck_dispatch", None)
         if dispatch is not None:
             dispatch.reset_connection()

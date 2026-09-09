@@ -20,7 +20,7 @@ from .alcove_observation import (
     latest_alcove_status,
     project_alcove_confidence,
 )
-from .app_bundle import running_inside_bundle
+from .app_bundle import APP_EXECUTABLE_NAME, running_inside_bundle
 from .device_writer import discover_devices
 from .private_export import (
     PUBLIC_EXPORT_ERROR_MESSAGE,
@@ -39,7 +39,7 @@ from .runtime_scheduler import MAX_RUNTIME_PENDING_KEYS, RuntimeFeature
 from .status_bar_launch import launch_agent_path
 from .trusted_tools import trusted_system_tool
 
-DOCTOR_DOCUMENT: Final = "sidepulse-doctor"
+DOCTOR_DOCUMENT: Final = "jrbar-doctor"
 # 2: adds alcove_follow_state; 3: adds event_intake_freshness; 4: expands
 # Alcove following to its seven semantic confidence states. The
 # document gains rows, so anything holding an older export is reading a
@@ -371,7 +371,7 @@ def _signature_state_probe() -> DiagnosticFinding:
             1,
         )
     executable = Path(sys.executable or "")
-    if executable.name != "SidePulse" or len(executable.parents) < 3:
+    if executable.name != APP_EXECUTABLE_NAME or len(executable.parents) < 3:
         return _finding(
             DiagnosticCheck.SIGNATURE_STATE,
             DiagnosticCode.UNVERIFIED,

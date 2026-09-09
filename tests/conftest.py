@@ -22,7 +22,7 @@ if _ROOT not in sys.path:
 
 # Module-level on purpose: fixtures run after test modules are imported, which
 # is too late for modules that cache HOME/XDG-derived defaults.
-_TEST_SANDBOX = Path(tempfile.mkdtemp(prefix="sidepulse-pytest-"))
+_TEST_SANDBOX = Path(tempfile.mkdtemp(prefix="jrbar-pytest-"))
 _TEST_HOME = _TEST_SANDBOX / "home"
 _TEST_CONFIG = _TEST_SANDBOX / "config"
 _TEST_STATE = _TEST_SANDBOX / "state"
@@ -35,8 +35,8 @@ os.environ["HOME"] = str(_TEST_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(_TEST_CONFIG)
 os.environ["XDG_STATE_HOME"] = str(_TEST_STATE)
 os.environ["XDG_CACHE_HOME"] = str(_TEST_CACHE)
-os.environ["SIDEPULSE_TESTING"] = "1"
-os.environ["SIDEPULSE_TEST_VOLUME_ROOT"] = str(_TEST_VOLUMES)
+os.environ["JRBAR_TESTING"] = "1"
+os.environ["JRBAR_TEST_VOLUME_ROOT"] = str(_TEST_VOLUMES)
 
 # The suite must NEVER take the desktop away from a person using this
 # machine. AppKit tests build real windows, and product code they
@@ -44,7 +44,7 @@ os.environ["SIDEPULSE_TEST_VOLUME_ROOT"] = str(_TEST_VOLUMES)
 # for a four-minute run that meant focus being yanked from the owner's
 # hands over and over ("makes this computer unusable", reported live
 # 2026-08-26). Two defenses, both belt-and-suspenders with the
-# SIDEPULSE_TESTING guard inside window_presentation.py:
+# JRBAR_TESTING guard inside window_presentation.py:
 #   1. PROHIBITED activation policy: macOS itself refuses to ever make
 #      this process the active app, whatever the code under test asks.
 #   2. Set at conftest import time -- before any test module can touch

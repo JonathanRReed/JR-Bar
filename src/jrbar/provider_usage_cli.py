@@ -72,7 +72,7 @@ def _option(value: str) -> tuple[str, str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="sidepulse providers")
+    parser = argparse.ArgumentParser(prog="jrbar providers")
     commands = parser.add_subparsers(dest="command", required=True)
 
     status = commands.add_parser("status", help="Show native provider state")

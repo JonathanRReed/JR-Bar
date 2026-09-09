@@ -122,7 +122,7 @@ def _run_mode(mode: str, samples: int, root: Path) -> dict[str, Any]:
     root.mkdir(parents=True, mode=0o700)
     root.chmod(0o700)
     environment = _child_environment(root)
-    state_dir = Path(environment["XDG_STATE_HOME"]) / "sidepulse" / "agent-monitor"
+    state_dir = Path(environment["XDG_STATE_HOME"]) / "jrbar"
     state_dir.mkdir(parents=True, mode=0o700)
     state_dir.chmod(0o700)
     log_path = state_dir / f"benchmark-{mode}.jsonl"

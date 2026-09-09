@@ -31,7 +31,7 @@ def install_deck_status_bar(base):
             sender.setEnabled_(False)
             self._creator_micro_output_enabled = enabled
             if not enabled:
-                runtime = getattr(self, "_sidepulse_optional_integration_runtime", None)
+                runtime = getattr(self, "_jrbar_optional_integration_runtime", None)
                 if runtime is not None:
                     runtime.revoke_deck_input()
             set_creator_micro_output_enabled_async(self, enabled)

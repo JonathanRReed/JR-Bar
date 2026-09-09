@@ -78,5 +78,5 @@ def test_release_ref_is_approved_before_checkout_or_repository_scripts() -> None
     assert "github.ref_protected" in release
     assert "github.sha == inputs.release_commit" in release
     assert "ref: ${{ inputs.release_commit }}" in release
-    assert "SIDEPULSE_RUN_UNINSTALL: \"1\"" in release
+    assert "JRBAR_RUN_UNINSTALL: \"1\"" in release
     assert "SPARKLE_KEY_ACCOUNT:" in release

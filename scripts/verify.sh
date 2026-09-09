@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VENV_DIR="${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}"
+VENV_DIR="${JRBAR_DEV_VENV:-${SIDEPULSE_DEV_VENV:-${VENV_DIR:-$ROOT_DIR/.venv}}}"
 PYTHON="${PYTHON:-$VENV_DIR/bin/python}"
 BOOTSTRAP=1
 FIX=0
@@ -128,7 +128,7 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
         | /usr/bin/sort > dist/release-environment.txt
     version="$("$PYTHON" scripts/validate_release_version.py)"
     sbom_args=(
-        --output dist/sidepulse-sbom.cdx.json
+        --output dist/jrbar-sbom.cdx.json
         --application-version "$version"
         --artifact dist/release-environment.txt
     )
@@ -157,7 +157,7 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 
 if [ "$(uname -s)" = "Darwin" ] && \
-   [ "${SIDEPULSE_VERIFY_MACOS_PACKAGE:-0}" = "1" ]; then
+   [ "${JRBAR_VERIFY_MACOS_PACKAGE:-${SIDEPULSE_VERIFY_MACOS_PACKAGE:-0}}" = "1" ]; then
     BUILD_PYTHON="$PYTHON" "$ROOT_DIR/packaging/build_macos_pkg.sh"
 fi
 

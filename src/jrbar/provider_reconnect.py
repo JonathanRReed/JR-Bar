@@ -702,7 +702,7 @@ def codex_app_server_probe(
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "clientInfo": {"name": "sidepulse", "version": "1.0"}
+                    "clientInfo": {"name": "jrbar", "version": "1.0"}
                 },
             }
         )

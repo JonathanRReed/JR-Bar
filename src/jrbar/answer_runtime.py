@@ -153,7 +153,7 @@ class AnswerRuntime:
         self._registry = registry
         self._executor: _ExecutorLike = executor or ThreadPoolExecutor(
             max_workers=1,
-            thread_name_prefix="sidepulse-answer",
+            thread_name_prefix="jrbar-answer",
         )
         if not (
             callable(getattr(self._executor, "submit", None))

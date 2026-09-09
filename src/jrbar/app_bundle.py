@@ -1,4 +1,4 @@
-"""SidePulse.app identity helpers.
+"""JR-Bar.app identity helpers.
 
 The production bundle is the self-contained PyInstaller app built by
 packaging/build_macos_pkg.sh. This module keeps only the two facts other
@@ -18,9 +18,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-APP_BUNDLE_NAME = "SidePulse.app"
-APP_BUNDLE_IDENTIFIER = "io.sidepulse.app"
-APP_EXECUTABLE_NAME = "SidePulse"
+APP_BUNDLE_NAME = "JR-Bar.app"
+APP_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
+APP_EXECUTABLE_NAME = "JR-Bar"
+# Identifiers the app shipped under before the JR-Bar rename. Uninstallers
+# and the first-run migration still recognise them; nothing new is written
+# under these names.
+LEGACY_APP_BUNDLE_NAME = "SidePulse.app"
+LEGACY_APP_BUNDLE_IDENTIFIER = "io.sidepulse.app"
+LEGACY_APP_EXECUTABLE_NAME = "SidePulse"
 
 
 def default_app_bundle_path(home: Path | None = None) -> Path:

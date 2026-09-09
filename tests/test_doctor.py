@@ -103,7 +103,7 @@ def test_encoding_is_exact_deterministic_and_contains_only_codes_and_counts() ->
         "last_failure_class",
         "version",
     }
-    assert document["document"] == "sidepulse-doctor"
+    assert document["document"] == "jrbar-doctor"
     assert document["version"] == DOCTOR_VERSION
     assert document["last_failure_class"] == "none"
     assert document["findings"][0] == {
@@ -251,7 +251,7 @@ def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths(
 
     captured = capsys.readouterr()
     assert exit_code == 0
-    assert json.loads(captured.out.splitlines()[0])["document"] == "sidepulse-doctor"
+    assert json.loads(captured.out.splitlines()[0])["document"] == "jrbar-doctor"
     assert "diagnostic export: saved" in captured.out
     assert str(target) not in captured.out
     assert captured.err == ""

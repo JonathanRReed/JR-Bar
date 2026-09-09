@@ -21,19 +21,19 @@ OBSERVED_AT = "2026-08-29T12:00:00Z"
 
 
 def _fixture(tmp_path: Path) -> dict[str, object]:
-    pkg = tmp_path / "dist" / "SidePulse-0.5.0-arm64.pkg"
+    pkg = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.pkg"
     pkg.parent.mkdir(parents=True)
     pkg.write_bytes(b"signed-and-stapled-pkg")
-    app = tmp_path / "build" / "SidePulse.app"
-    executable = app / "Contents" / "MacOS" / "SidePulse"
+    app = tmp_path / "build" / "JR-Bar.app"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"signed-app")
     executable.chmod(0o755)
-    sbom = tmp_path / "dist" / "sidepulse-sbom.cdx.json"
+    sbom = tmp_path / "dist" / "jrbar-sbom.cdx.json"
     sbom.write_text('{"bomFormat":"CycloneDX"}\n', encoding="utf-8")
     performance = tmp_path / "dist" / "performance.json"
     performance.write_text('{"warm_launch_ms":450}\n', encoding="utf-8")
-    update_archive = tmp_path / "dist" / "SidePulse-0.5.0-arm64.zip"
+    update_archive = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.zip"
     update_archive.write_bytes(b"signed-notarized-update-archive")
     candidate = release_evidence.create_candidate(
         root=tmp_path,
@@ -43,7 +43,7 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
         pkg=pkg,
         app=app,
         update_archive=update_archive,
-        bundle_identifier="io.sidepulse.app",
+        bundle_identifier="com.jonathanreed.jrbar",
         team_identifier="ABCDE12345",
     )
     appcast = tmp_path / "dist" / "appcast.xml"
@@ -59,12 +59,12 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
                 "version": "0.5.0",
                 "build": "5",
                 "architecture": "arm64",
-                "feed_url": "https://github.com/JonathanRReed/sidepulse-JR-Fork/releases/download/updates/appcast.xml",
-                "download_url": "https://github.com/JonathanRReed/sidepulse-JR-Fork/releases/download/v0.5.0/SidePulse-0.5.0-arm64.zip",
+                "feed_url": "https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml",
+                "download_url": "https://github.com/JonathanRReed/JR-Bar/releases/download/v0.5.0/JR-Bar-0.5.0-arm64.zip",
                 "phased_rollout_interval_seconds": 86400,
                 "public_key_fingerprint_sha256": "7" * 64,
                 "archive": {
-                    "name": "SidePulse-0.5.0-arm64.zip",
+                    "name": "JR-Bar-0.5.0-arm64.zip",
                     "bytes": update_archive.stat().st_size,
                     "sha256": release_evidence.sha256_file(update_archive),
                     "ed_signature": "signed-archive",
@@ -254,8 +254,8 @@ def test_manifest_contains_candidate_bound_receipts_without_asserted_booleans(
 
     assert document["document"] == "jr-bar-release-evidence"
     assert document["schema_version"] == release_evidence.SCHEMA_VERSION
-    assert document["candidate"]["pkg"]["path"] == ("dist/SidePulse-0.5.0-arm64.pkg")
-    assert document["candidate"]["update_archive"]["path"] == ("dist/SidePulse-0.5.0-arm64.zip")
+    assert document["candidate"]["pkg"]["path"] == ("dist/JR-Bar-0.5.0-arm64.pkg")
+    assert document["candidate"]["update_archive"]["path"] == ("dist/JR-Bar-0.5.0-arm64.zip")
     assert {item["kind"] for item in document["receipts"]} == release_evidence.SOFTWARE_RECEIPT_KINDS
     assert "true" not in json.dumps(document).casefold()
 
@@ -489,7 +489,7 @@ def test_candidate_rejects_an_artifact_outside_release_root(tmp_path: Path) -> N
             pkg=outside,
             app=fixture["app"],
             update_archive=fixture["update_archive"],
-            bundle_identifier="io.sidepulse.app",
+            bundle_identifier="com.jonathanreed.jrbar",
             team_identifier="ABCDE12345",
         )
 
@@ -508,7 +508,7 @@ def test_candidate_rejects_symlinked_pkg_and_app_inputs(tmp_path: Path) -> None:
             pkg=pkg_link,
             app=fixture["app"],
             update_archive=fixture["update_archive"],
-            bundle_identifier="io.sidepulse.app",
+            bundle_identifier="com.jonathanreed.jrbar",
             team_identifier="ABCDE12345",
         )
 
@@ -523,7 +523,7 @@ def test_candidate_rejects_symlinked_pkg_and_app_inputs(tmp_path: Path) -> None:
             pkg=fixture["pkg"],
             app=app_link,
             update_archive=fixture["update_archive"],
-            bundle_identifier="io.sidepulse.app",
+            bundle_identifier="com.jonathanreed.jrbar",
             team_identifier="ABCDE12345",
         )
 
@@ -640,7 +640,7 @@ def test_receipt_runner_allows_keychain_account_and_notary_profile_names() -> No
         (
             "generate_appcast",
             "--account",
-            "io.sidepulse.jr-bar.sparkle",
+            "com.jonathanreed.jrbar.sparkle",
             "--keychain-profile",
             "jr-bar-notary",
         )
@@ -730,7 +730,7 @@ def test_notarization_details_bind_submission_log_and_submitted_pkg() -> None:
         "status": "Accepted",
         "statusSummary": "Ready for distribution",
         "statusCode": 0,
-        "archiveFilename": "SidePulse-0.5.0-arm64.pkg",
+        "archiveFilename": "JR-Bar-0.5.0-arm64.pkg",
         "sha256": submitted_sha,
         "issues": [],
     }
@@ -739,7 +739,7 @@ def test_notarization_details_bind_submission_log_and_submitted_pkg() -> None:
         response=response,
         log=log,
         submitted_sha256=submitted_sha,
-        pkg_name="SidePulse-0.5.0-arm64.pkg",
+        pkg_name="JR-Bar-0.5.0-arm64.pkg",
         log_sha256="c" * 64,
     )
 
@@ -767,7 +767,7 @@ def test_notarization_details_reject_cross_candidate_log_fields(
     log = {
         "jobId": submission_id,
         "status": "Accepted",
-        "archiveFilename": "SidePulse-0.5.0-arm64.pkg",
+        "archiveFilename": "JR-Bar-0.5.0-arm64.pkg",
         "sha256": submitted_sha,
         "issues": [],
     }
@@ -778,7 +778,7 @@ def test_notarization_details_reject_cross_candidate_log_fields(
             response={"id": submission_id, "status": "Accepted"},
             log=log,
             submitted_sha256=submitted_sha,
-            pkg_name="SidePulse-0.5.0-arm64.pkg",
+            pkg_name="JR-Bar-0.5.0-arm64.pkg",
             log_sha256="c" * 64,
         )
 
@@ -787,7 +787,7 @@ def test_uninstall_verifier_detects_an_owned_launch_agent_left_behind(
     tmp_path: Path,
 ) -> None:
     home = tmp_path / "home"
-    launch_agent = home / "Library" / "LaunchAgents" / "io.sidepulse.agentstatus.plist"
+    launch_agent = home / "Library" / "LaunchAgents" / "com.jonathanreed.jrbar.app.plist"
     launch_agent.parent.mkdir(parents=True)
     launch_agent.write_text("owned", encoding="utf-8")
 
@@ -803,7 +803,7 @@ def test_uninstall_verifier_detects_an_xdg_user_guard_left_behind(
 ) -> None:
     home = tmp_path / "home"
     data_home = tmp_path / "xdg-data"
-    guard = data_home / "sidepulse" / "sd-eject-guard" / "SidePulse Pro Eject Prevention"
+    guard = data_home / "jrbar" / "sd-eject-guard" / "SidePulse Pro Eject Prevention"
     guard.parent.mkdir(parents=True)
     guard.write_bytes(b"owned")
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
@@ -814,6 +814,26 @@ def test_uninstall_verifier_detects_an_xdg_user_guard_left_behind(
     )
 
 
+def test_uninstall_verifier_detects_a_pre_rename_user_guard_left_behind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    data_home = tmp_path / "xdg-data"
+    legacy_guard = data_home / "sidepulse" / "sd-eject-guard" / "SidePulse Pro Eject Prevention"
+    legacy_guard.parent.mkdir(parents=True)
+    legacy_guard.write_bytes(b"owned")
+    legacy_plist = home / "Library" / "LaunchAgents" / "io.sidepulse.sdejectguard.plist"
+    legacy_plist.parent.mkdir(parents=True)
+    legacy_plist.write_text("owned", encoding="utf-8")
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+
+    leftovers = verify_uninstalled_candidate.owned_file_leftovers(home, system_paths=())
+
+    assert legacy_guard in leftovers
+    assert legacy_plist in leftovers
+
+
 def test_upgrade_baseline_rejects_settings_without_an_installed_app(
     tmp_path: Path,
 ) -> None:
@@ -822,7 +842,7 @@ def test_upgrade_baseline_rejects_settings_without_an_installed_app(
 
     with pytest.raises(ValueError, match="application is missing"):
         capture_installed_release_baseline.capture_baseline(
-            app=tmp_path / "SidePulse.app",
+            app=tmp_path / "JR-Bar.app",
             settings=settings,
         )
 
@@ -830,12 +850,12 @@ def test_upgrade_baseline_rejects_settings_without_an_installed_app(
 def test_upgrade_baseline_rejects_an_install_without_a_package_receipt(
     tmp_path: Path,
 ) -> None:
-    app = tmp_path / "SidePulse.app"
-    executable = app / "Contents" / "MacOS" / "SidePulse"
+    app = tmp_path / "JR-Bar.app"
+    executable = app / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"old-app")
     info = {
-        "CFBundleIdentifier": "io.sidepulse.app",
+        "CFBundleIdentifier": "com.jonathanreed.jrbar",
         "CFBundleShortVersionString": "0.4.0",
     }
     (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps(info))

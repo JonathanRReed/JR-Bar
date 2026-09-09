@@ -111,7 +111,7 @@ def _start_operation(
     adapter_factory = adapter_factory or _default_adapter_factory
     setup_factory = setup_factory or CreatorMicroSetup
     restart_owed = (
-        getattr(target, "_sidepulse_optional_integration_runtime", None) is None
+        getattr(target, "_jrbar_optional_integration_runtime", None) is None
         and getattr(target, "_deck_runtime_generation", None) is not None
     )
     generation = object()
@@ -139,15 +139,15 @@ def _start_operation(
                 if error is not None:
                     result = SetupResult(generation, operation, error, runtime_was_stopped=stopped_runtime)
                     return
-                current_runtime = getattr(target, "_sidepulse_optional_integration_runtime", None)
+                current_runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
                 if current_runtime is not None:
                     current_runtime.revoke_deck_input()
                     current_runtime.close()
                     if not current_runtime.wait_until_stopped(17.0):
                         result = SetupResult(generation, operation, "previous_owner_stopping")
                         return
-                    if getattr(target, "_sidepulse_optional_integration_runtime", None) is current_runtime:
-                        target._sidepulse_optional_integration_runtime = None
+                    if getattr(target, "_jrbar_optional_integration_runtime", None) is current_runtime:
+                        target._jrbar_optional_integration_runtime = None
                 # Setup also owns the gap before a queued normal runtime has
                 # started. Cancelling its preview must resume that runtime.
                 stopped_runtime = True

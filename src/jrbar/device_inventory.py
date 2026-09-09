@@ -154,7 +154,7 @@ def refine_facts_with_hardware_status(
     )
 
 
-def _sidepulse_candidate(path: Path) -> bool:
+def _jrbar_candidate(path: Path) -> bool:
     normalized = "".join(character for character in path.name.lower() if character.isalnum())
     return normalized.startswith("sidepulse")
 
@@ -170,7 +170,7 @@ def inventory_mounts(
             (
                 path
                 for path in root.iterdir()
-                if path.is_dir() and not path.is_symlink() and _sidepulse_candidate(path)
+                if path.is_dir() and not path.is_symlink() and _jrbar_candidate(path)
             ),
             key=lambda path: path.name.casefold(),
         )[:MAX_MOUNT_CANDIDATES]
@@ -226,7 +226,7 @@ class DeviceIdentityCache:
             self._pending = False
             self._thread = threading.Thread(
                 target=self._run,
-                name="sidepulse-device-inventory",
+                name="jrbar-device-inventory",
                 daemon=True,
             )
             self._thread.start()

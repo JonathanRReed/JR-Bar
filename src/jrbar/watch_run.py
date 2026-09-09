@@ -227,7 +227,7 @@ class LocalWatchRunFileSystem:
     """Private temporary-file seam used by the real executor."""
 
     def create_temporary_settings(self, payload: str) -> str:
-        fd, path = tempfile.mkstemp(prefix=".sidepulse-watch-", suffix=".json")
+        fd, path = tempfile.mkstemp(prefix=".jrbar-watch-", suffix=".json")
         try:
             os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as stream:
