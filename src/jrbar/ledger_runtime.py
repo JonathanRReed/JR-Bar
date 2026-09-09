@@ -87,7 +87,7 @@ class RemoteLedgerPublisher:
         threading.Thread(
             target=self._run,
             args=(request, callback),
-            name="SidePulseRemoteLedgerPublish",
+            name="JRBarRemoteLedgerPublish",
             daemon=True,
         ).start()
 

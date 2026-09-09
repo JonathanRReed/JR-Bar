@@ -3683,7 +3683,7 @@ BRAND_SEED_COLORS: tuple[tuple[str, str], ...] = (
 )
 
 # The app's own signal colours, named. These are not brands and not palette
-# hues -- they are what SidePulse ships for each state -- but they are the
+# hues -- they are what JR-Bar ships for each state -- but they are the
 # colours a State Colors row is actually wearing out of the box, so they need
 # words too. Without them every State Colors row rendered with no selected
 # chip at all on a fresh install and the row's only truth was its hex text.
@@ -3717,7 +3717,7 @@ PROVIDER_PALETTES: dict[str, dict[str, dict[str, str]]] = {
 SWATCH_GROUP_BRAND = "brand"
 SWATCH_GROUP_PALETTE = "palette"
 SWATCH_GROUP_CUSTOM = "custom"
-# What SidePulse itself ships for this row -- a state's signal colour. Not a
+# What JR-Bar itself ships for this row -- a state's signal colour. Not a
 # brand (nobody outside this app owns it) and not a palette hue, but it is
 # the colour the row wears out of the box, so it needs its own named group
 # or the row starts life with nothing selected.

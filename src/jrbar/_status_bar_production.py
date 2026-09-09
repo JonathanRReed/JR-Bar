@@ -1,10 +1,10 @@
-"""Stable production layer for SidePulse's historical AppKit controller.
+"""Stable production layer for JR-Bar's historical AppKit controller.
 
 The original controller remains the compatibility runtime while production
 boundaries are extracted into small, testable modules. The facade preserves
-the public ``sidepulse.status_bar`` contract, including test monkeypatches and
+the public ``jrbar.status_bar`` contract, including test monkeypatches and
 source introspection. Runtime mutation is owned by
-``sidepulse.application_composition`` and never happens merely by importing
+``jrbar.application_composition`` and never happens merely by importing
 this module.
 """
 

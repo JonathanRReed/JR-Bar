@@ -1,4 +1,4 @@
-"""Mandatory temporal-safety compiler for every SidePulse light surface."""
+"""Mandatory temporal-safety compiler for every JR-Bar light surface."""
 
 from __future__ import annotations
 

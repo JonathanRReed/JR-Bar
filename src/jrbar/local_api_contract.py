@@ -1,10 +1,10 @@
-"""Safe, versioned contract for local SidePulse integrations.
+"""Safe, versioned contract for local JR-Bar integrations.
 
 This module deliberately describes messages, rather than opening a socket or
 executing an action. Consumers may use the contract over an explicitly
 configured local transport. Every request is bounded and supports HMAC
 authentication with a short validity window. Transport adapters decide whether
-authentication is mandatory, and SidePulse's serve adapter always requires it.
+authentication is mandatory, and JR-Bar's serve adapter always requires it.
 """
 
 from __future__ import annotations

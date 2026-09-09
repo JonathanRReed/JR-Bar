@@ -1,4 +1,4 @@
-"""Whether SidePulse can hear its agents at all -- and when it last did.
+"""Whether JR-Bar can hear its agents at all -- and when it last did.
 
 "Idle" is the most dangerous word this app prints. A healthy Mac with
 nothing to do, a Mac nobody ever connected, and a Mac whose hooks all die
@@ -301,7 +301,7 @@ def probe_providers(
 def accepted_epochs_by_provider(
     state: CanonicalOperatorState | None,
 ) -> dict[str, float]:
-    """Newest canonical watermark per provider -- what SidePulse understood."""
+    """Newest canonical watermark per provider -- what JR-Bar understood."""
     if type(state) is not CanonicalOperatorState:
         return {}
     newest: dict[str, float] = {}
@@ -335,7 +335,7 @@ def _provider_code(
         and (accepted is None or written - accepted > lag_seconds)
     )
     if wire_ahead:
-        # The hook ran and said something SidePulse never turned into
+        # The hook ran and said something JR-Bar never turned into
         # state. This is the only silence that is broken on its face.
         # Present tense is only earned while the write is recent; an
         # unlanded write from last week is silence, not activity.
@@ -462,7 +462,7 @@ def idle_disclosure(report: IntakeReport | None) -> str | None:
 
     Only whole-surface failures reach the menu bar. One stuck provider
     beside one live provider is a dropdown row naming the provider, never
-    a title claiming SidePulse hears nothing -- it hears the other one.
+    a title claiming JR-Bar hears nothing -- it hears the other one.
     """
     if type(report) is not IntakeReport:
         return None
@@ -512,7 +512,7 @@ def _provider_names(providers: tuple[ProviderIntake, ...]) -> str:
 
 
 def last_heard_summary(report: IntakeReport | None) -> str | None:
-    """Parent row text: the freshest thing SidePulse has heard from anyone."""
+    """Parent row text: the freshest thing JR-Bar has heard from anyone."""
     if type(report) is not IntakeReport or not report.known:
         return None
     return f"Last heard from · {format_age_ago(report.newest_heard_age_seconds())}"

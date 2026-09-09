@@ -324,10 +324,10 @@ def cmd_jrbar_write(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
         )
     except DeviceWriteError as exc:
-        print(f"sidepulse write: {exc}", file=sys.stderr)
+        print(f"jrbar write: {exc}", file=sys.stderr)
         return 2
     except OSError as exc:
-        print(f"sidepulse write: {exc}", file=sys.stderr)
+        print(f"jrbar write: {exc}", file=sys.stderr)
         return 1
 
     action = "would write" if args.dry_run else "wrote"
@@ -339,7 +339,7 @@ def cmd_jrbar_battery_status(args: argparse.Namespace) -> int:
     try:
         snapshot = read_battery_snapshot(full_charge_watts=full_watts_from_args(args))
     except Exception as exc:
-        print(f"sidepulse battery status: {exc}", file=sys.stderr)
+        print(f"jrbar battery status: {exc}", file=sys.stderr)
         return 1
 
     if args.json:
@@ -372,7 +372,7 @@ def cmd_jrbar_battery_leds(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return 0
     except Exception as exc:
-        print(f"sidepulse battery leds: {exc}", file=sys.stderr)
+        print(f"jrbar battery leds: {exc}", file=sys.stderr)
         return 1
 
 
@@ -393,7 +393,7 @@ def cmd_jrbar_battery_configure(args: argparse.Namespace) -> int:
             )
         target = save_settings(settings)
     except Exception as exc:
-        print(f"sidepulse battery configure: {exc}", file=sys.stderr)
+        print(f"jrbar battery configure: {exc}", file=sys.stderr)
         return 1
 
     full_watts = (
@@ -999,7 +999,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     raw_status_token = os.environ.get(SERVE_ACCESS_TOKEN_ENV)
     if not allow_anonymous_status and not raw_status_token:
         print(
-            f"sidepulse serve: {SERVE_ACCESS_TOKEN_ENV} is required unless "
+            f"jrbar serve: {SERVE_ACCESS_TOKEN_ENV} is required unless "
             "--allow-anonymous-status is set",
             file=sys.stderr,
         )
@@ -1013,7 +1013,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             allow_anonymous_status=allow_anonymous_status,
         )
     except ValueError:
-        print("sidepulse serve: invalid serve configuration", file=sys.stderr)
+        print("jrbar serve: invalid serve configuration", file=sys.stderr)
         return 2
     return 0
 
@@ -1029,7 +1029,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         result = collect_diagnostics()
     except Exception:
         print(
-            f"sidepulse doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}",
+            f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}",
             file=sys.stderr,
         )
         return 1
@@ -1042,7 +1042,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
     except Exception:
         print(
-            f"sidepulse doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}",
+            f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}",
             file=sys.stderr,
         )
         return 1
@@ -1052,7 +1052,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         try:
             write_diagnostic_export(args.export, result)
         except DoctorExportError as error:
-            print(f"sidepulse doctor: {error.public_message}", file=sys.stderr)
+            print(f"jrbar doctor: {error.public_message}", file=sys.stderr)
             return 1
         print("diagnostic export: saved")
     return 0

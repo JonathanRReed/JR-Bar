@@ -3,7 +3,7 @@
 The router consumes content-free facts that runtime owners have already
 collected. It performs no rendering, notification delivery, settings access,
 timing, device access, or other I/O. Effect definitions and Reduce Motion
-fallbacks remain owned by :mod:`sidepulse.effect_registry`.
+fallbacks remain owned by :mod:`jrbar.effect_registry`.
 """
 
 from __future__ import annotations

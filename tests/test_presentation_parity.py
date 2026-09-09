@@ -506,8 +506,8 @@ def _request() -> HardwareWriteRequest:
         device=StatusBarDevice(
             device_id="sidepulse-test",
             name="SidePulse Test",
-            root=Path("/Volumes/SidePulseTest"),
-            target=Path("/Volumes/SidePulseTest/LEDS.LED"),
+            root=Path("/Volumes/JRBarTest"),
+            target=Path("/Volumes/JRBarTest/LEDS.LED"),
             connected=True,
             display="agent",
         ),

@@ -1,6 +1,6 @@
 """Pure, exact-key local acknowledgement state.
 
-Local acknowledgement is SidePulse-owned triage. It never mutates provider or
+Local acknowledgement is JR-Bar-owned triage. It never mutates provider or
 canonical operator truth.
 """
 

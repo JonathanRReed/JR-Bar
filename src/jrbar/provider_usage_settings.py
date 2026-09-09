@@ -1,4 +1,4 @@
-"""Versioned settings for SidePulse's native provider accounting."""
+"""Versioned settings for JR-Bar's native provider accounting."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
-"""``sidepulse serve``: the indicator as a machine-readable endpoint.
+"""``jrbar serve``: the indicator as a machine-readable endpoint.
 
 CodexBar's ``serve`` spawned its whole integration ecosystem -- Stream
 Deck, Waybar, KDE widgets -- because a local JSON endpoint is the one
-surface every other tool can consume. This is SidePulse's: a loopback
+surface every other tool can consume. This is JR-Bar's: a loopback
 HTTP server over the app's own persisted state files, read fresh per
 request so it never needs the app's process (or even the app running --
 it serves the last persisted truth with its timestamps, and honesty
@@ -347,7 +347,7 @@ def serve(
         status_access_token=status_access_token,
         allow_anonymous_status=allow_anonymous_status,
     )
-    print(f"sidepulse serve: http://127.0.0.1:{int(port)}/status.json")
+    print(f"jrbar serve: http://127.0.0.1:{int(port)}/status.json")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

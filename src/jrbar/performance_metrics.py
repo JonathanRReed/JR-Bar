@@ -1,4 +1,4 @@
-"""Bounded, content-free runtime timing telemetry for SidePulse."""
+"""Bounded, content-free runtime timing telemetry for JR-Bar."""
 
 from __future__ import annotations
 

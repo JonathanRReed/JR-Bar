@@ -1985,7 +1985,7 @@ class StatusBarController(NSObject):
         self._glance_decision_key: tuple[str, str] | None = None
         self._glance_changed_at_epoch: float | None = None
         self._glance_changed_at_monotonic: float | None = None
-        # First-run honesty: can SidePulse hear anything at all? Probed on
+        # First-run honesty: can JR-Bar hear anything at all? Probed on
         # a timer rather than per refresh -- it costs one detector read and
         # one log tail per provider.
         self.current_intake_report: IntakeReport | None = None
@@ -3186,7 +3186,7 @@ class StatusBarController(NSObject):
             operator_events=snapshot.operator_events,
         )
         # Before set_status, so the menu bar never says "Idle" on a tick
-        # where SidePulse already knows it cannot hear anything.
+        # where JR-Bar already knows it cannot hear anything.
         self.refresh_intake_report()
         presentation_time = self._presentation_monotonic()
         capacity = self.presentation_capacity_glance()
@@ -6610,7 +6610,7 @@ class StatusBarController(NSObject):
 
     @objc.IBAction
     def toggleCapacityHistory_(self, sender):
-        """Consent for the only file SidePulse keeps about your usage.
+        """Consent for the only file JR-Bar keeps about your usage.
 
         Turning it off deletes what is already on disk before the switch
         redraws -- `capacity_history_store` does the deletion the first
@@ -8335,7 +8335,7 @@ class StatusBarController(NSObject):
                 pass
 
         threading.Thread(
-            target=_ritual, name="SidePulseStripReset", daemon=True
+            target=_ritual, name="JRBarStripReset", daemon=True
         ).start()
 
     @objc.IBAction
@@ -9109,7 +9109,7 @@ class StatusBarController(NSObject):
         )
 
     def refresh_intake_report(self, *, force: bool = False) -> IntakeReport | None:
-        """Re-judge what SidePulse can hear, at most every 30 seconds.
+        """Re-judge what JR-Bar can hear, at most every 30 seconds.
 
         The installation half is a filesystem probe and is cached; the
         delivery half comes free from canonical state and is recomputed
@@ -9306,7 +9306,7 @@ class StatusBarController(NSObject):
             return
         # Idle is the only state with no evidence of its own, so it is the
         # only one that can be a lie. shown replaces it -- and only it --
-        # when SidePulse knows it is unconnected or hearing nothing.
+        # when JR-Bar knows it is unconnected or hearing nothing.
         shown = self.displayed_status_state()
         # The badge: with several sessions waiting at once, the count is
         # the difference between "check sometime" and "two are stuck".
@@ -12579,7 +12579,7 @@ class StatusBarController(NSObject):
 
     def discover_device_candidates(self):
         """discover_devices() with a short TTL. Keyed by the function
-        object itself so tests that patch sidepulse.status_bar.
+        object itself so tests that patch jrbar.status_bar.
         discover_devices never see a stale cache from a previous patch."""
         discover = discover_devices
         cached = getattr(self, "_device_discovery_cache", None)
@@ -17932,7 +17932,7 @@ def build_why_panel_window(target: StatusBarController) -> NSWindow:
 # hand -- the recurring source of every layout bug this window has had.
 
 # Seven panes, each earning its slot: Agents = hooks + transcript
-# fallback + session openers (all "how SidePulse talks to your agents"),
+# fallback + session openers (all "how JR-Bar talks to your agents"),
 # Power = closed-lid awake + battery (both power management). The old
 # nine-pane split left several panes holding two controls in an
 # otherwise empty window.
@@ -18556,7 +18556,7 @@ def persistable_device_identity(device_id: str, path: str) -> bool:
     LEGACY BODY: here device IDs are mount paths; the status_bar facade
     wraps both this and device_id_for_root with stable hardware-serial
     keys. Pytest and /tmp volumes used to be written into the live
-    settings file and then shown forever as disconnected SidePulse Dots.
+    settings file and then shown forever as disconnected JR-Bar Dots.
     """
     if device_id == VIRTUAL_DEVICE_ID or path == VIRTUAL_DEVICE_ID:
         return True
@@ -18598,7 +18598,7 @@ def device_display_name(name: str) -> str:
         return "SidePulse Dot"
     if "sidepulsepro" in normalized:
         return "SidePulse Pro"
-    return name or "SidePulse Device"
+    return name or "JR-Bar Device"
 
 
 def disabled_menu_item(title: str) -> NSMenuItem:
@@ -18725,7 +18725,7 @@ def build_session_menu_item(
 
 
 def session_heard_suffix(status: AgentStatus, now: datetime) -> str:
-    """" · 4m ago" after every session title -- when SidePulse last
+    """" · 4m ago" after every session title -- when JR-Bar last
     HEARD from it. The number existed only in Diagnostics before
     (audited gap): a row that says nothing about its own recency makes
     the owner guess whether "working" is live truth or a memory. Fresh
@@ -19281,7 +19281,7 @@ from .settings_window import (  # noqa: E402, F401 -- re-export: tests and
     select_focus_dim_choice,
 )
 
-# Direct execution (python -m sidepulse.status_bar) must run AFTER the
+# Direct execution (python -m jrbar.status_bar) must run AFTER the
 # extraction seam above -- main() blocks for the app's whole life, so
 # anything below the guard would never execute (the seam sat below it
 # briefly, and every Settings path NameError'd under -m).

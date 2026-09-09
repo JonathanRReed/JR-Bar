@@ -145,7 +145,7 @@ OPENCLAW_EVENTS = (
     "SessionEnd",
 )
 
-# The OpenCode global plugin bridge emits only canonical SidePulse event names.
+# The OpenCode global plugin bridge emits only canonical JR-Bar event names.
 # Native OpenCode events remain inside the installed bridge.
 OPENCODE_EVENTS = (
     "SessionStart",
@@ -170,7 +170,7 @@ OPENCODE_EVENTS = (
 #
 #   PreToolUse   -- its stdout contract makes `decision` REQUIRED, one of
 #                   allow/deny/ask/force_ask, with no documented "no opinion"
-#                   value. Every value SidePulse could emit would override the
+#                   value. Every value JR-Bar could emit would override the
 #                   user's own permission policy ("allow" auto-approves every
 #                   tool call). A status bar must never decide what an agent is
 #                   allowed to do, so this event stays uninstalled.
@@ -204,7 +204,7 @@ ANTIGRAVITY_CANONICAL_EVENTS = {
     "Stop": "Stop",
 }
 
-# Kiro CLI scopes hooks to agent configuration files; SidePulse owns one
+# Kiro CLI scopes hooks to agent configuration files; JR-Bar owns one
 # dedicated agent file (~/.kiro/agents/sidepulse.json) and never edits an
 # unmanaged one. Kiro's native event names are camelCase (agentSpawn,
 # userPromptSubmit, preToolUse, postToolUse, stop) and normalize through
@@ -900,7 +900,7 @@ def default_cursor_config_path(home: Path | None = None) -> Path:
 def detect_cursor_config(home: Path | None = None) -> ProviderConfig:
     """Cursor's hooks.json holds FLAT entries ({"command": ...} directly,
     not Claude's nested {"hooks": [...]} shape) and is a shared user-level
-    file other tools also write to -- only SidePulse's own commands count
+    file other tools also write to -- only JR-Bar's own commands count
     toward installed-ness here."""
     config_path = default_cursor_config_path(home)
     if not config_path.exists():
@@ -1065,7 +1065,7 @@ def default_antigravity_config_path(home: Path | None = None) -> Path:
 
 
 def _antigravity_handler_commands(entries: object) -> list[str]:
-    """Pull SidePulse's own commands out of either hooks.json handler shape."""
+    """Pull JR-Bar's own commands out of either hooks.json handler shape."""
     commands: list[str] = []
     if not isinstance(entries, list):
         return commands
@@ -1090,7 +1090,7 @@ def detect_antigravity_config(home: Path | None = None) -> ProviderConfig:
     Every other provider's config nests events under a "hooks" object; here
     the top level is a map of named hooks, each of which then holds its own
     event keys. It is a shared user-level file -- other tools' named hooks
-    and unknown keys must survive untouched -- so only SidePulse's own named
+    and unknown keys must survive untouched -- so only JR-Bar's own named
     entry, and only its own commands inside it, count toward installed-ness.
     """
     config_path = default_antigravity_config_path(home)
@@ -1443,7 +1443,7 @@ _PROVIDER_SOURCE_REGISTRATIONS = (
         ),
     ),
     # live_agent_events only. NO actionable_requests: the one Antigravity
-    # event that carries a user-facing decision is PreToolUse, which SidePulse
+    # event that carries a user-facing decision is PreToolUse, which JR-Bar
     # refuses to install (see ANTIGRAVITY_EVENTS), so nothing in this feed can
     # ever name a live request. Declaring the capability anyway would let the
     # request lane look supported and permanently empty.

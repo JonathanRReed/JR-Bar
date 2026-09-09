@@ -51,7 +51,7 @@ def test_scan_runs_off_caller_and_sorts_records() -> None:
 
     assert completed.wait(1.0)
     assert tuple(record.value for record in batches[0].records) == (1, 2, 3)
-    assert all(name == "SidePulseTranscriptFallback" for name in monitor.thread_names)
+    assert all(name == "JRBarTranscriptFallback" for name in monitor.thread_names)
 
 
 def test_unchanged_signature_skips_record_iteration() -> None:
@@ -68,7 +68,7 @@ def test_unchanged_signature_skips_record_iteration() -> None:
 
     assert completed.wait(1.0)
     assert batches[0].records == ()
-    assert monitor.thread_names == ["SidePulseTranscriptFallback"]
+    assert monitor.thread_names == ["JRBarTranscriptFallback"]
 
 
 def test_inflight_requests_collapse_to_the_latest_monitor() -> None:

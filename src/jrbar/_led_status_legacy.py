@@ -162,7 +162,7 @@ STRIP_MIN_LIT_DRIVE = 1
 # ...but a floor is only honest if it can hold its HUE. At drive 1-2 the
 # physical dies dominate the math: green emits several times more light
 # per code than red or blue, so "barely-visible white" #010101 renders as
-# a clearly GREEN glow ("why is the SidePulse green when it should be
+# a clearly GREEN glow ("why is the JR-Bar green when it should be
 # off", 2026-08-20, photographed). A whole LED whose brightest computed
 # drive lands below this threshold cannot say its own color -- it goes
 # honestly dark instead of lying in green. Colors with at least one
@@ -173,7 +173,7 @@ STRIP_HUE_HOLDING_DRIVE = 3
 # teal's collapses into whatever the rounding leaves (measured live:
 # nominal #085240 -- clearly green-dominant -- landed at drives
 # (1, 6, 11) and read blue beside the Screen Bar's faithful render;
-# "why is the color on the sidepulse different from the screenbar",
+# "why is the color on the jrbar different from the screenbar",
 # 2026-08-21). A color whose NOMINAL intent carries real chroma is
 # lifted, in the light domain so the calibrated ratio holds exactly,
 # until its peak drive reaches this level. Whisper intents (nominal

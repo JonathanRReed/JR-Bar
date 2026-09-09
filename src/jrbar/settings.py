@@ -2,7 +2,7 @@
 
 The original model remains in :mod:`sidepulse._settings_legacy` while the
 persistence boundary is hardened here. All callers continue importing
-``sidepulse.settings``; the facade patches the durable encoders/decoders once
+``jrbar.settings``; the facade patches the durable encoders/decoders once
 and preserves the public API.
 """
 

@@ -1,4 +1,4 @@
-"""Command-line control surface for SidePulse's native provider platform."""
+"""Command-line control surface for JR-Bar's native provider platform."""
 
 from __future__ import annotations
 
@@ -182,7 +182,7 @@ def _print_state(state: ProviderUsageState, *, output: TextIO, as_json: bool) ->
         output.write("\n")
         return
     if not state.snapshots:
-        output.write("Provider usage has not been collected yet. Run `sidepulse providers refresh`.\n")
+        output.write("Provider usage has not been collected yet. Run `jrbar providers refresh`.\n")
         return
     for snapshot in state.snapshots:
         output.write(provider_status_line(snapshot) + "\n")

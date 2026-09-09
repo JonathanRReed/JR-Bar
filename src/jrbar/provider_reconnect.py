@@ -156,7 +156,7 @@ def credential_fingerprint(home: Path, provider_id: str) -> tuple | None:
 
 
 # ---------------------------------------------------------------------------
-# Grok: the CLI owns the sign-in; SidePulse's job is to read it honestly.
+# Grok: the CLI owns the sign-in; JR-Bar's job is to read it honestly.
 
 
 def grok_auth_status(home: Path, now: float) -> tuple[str, str | None]:
@@ -747,7 +747,7 @@ def codex_app_server_probe(
 
             threading.Thread(
                 target=_read_stdout,
-                name="SidePulseCodexProbeRead",
+                name="JRBarCodexProbeRead",
                 daemon=True,
             ).start()
             deadline = time.monotonic() + max(0.1, float(timeout_seconds))

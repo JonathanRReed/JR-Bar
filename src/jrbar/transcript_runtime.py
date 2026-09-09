@@ -115,7 +115,7 @@ class TranscriptFallbackService:
         threading.Thread(
             target=self._run,
             args=(request,),
-            name="SidePulseTranscriptFallback",
+            name="JRBarTranscriptFallback",
             daemon=True,
         ).start()
 

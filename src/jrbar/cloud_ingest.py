@@ -811,7 +811,7 @@ _SERVER_STOP_TIMEOUT_SECONDS = 2.0
 class _IngestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     timeout = _HANDLER_TIMEOUT_SECONDS
-    server_version = "SidePulseCloudIngest"
+    server_version = "JRBarCloudIngest"
     sys_version = ""
 
     def log_message(self, *_args, **_kwargs) -> None:

@@ -1,4 +1,4 @@
-"""Typed, bounded, content-free diagnostics for local SidePulse health."""
+"""Typed, bounded, content-free diagnostics for local JR-Bar health."""
 
 from __future__ import annotations
 
