@@ -1,0 +1,2002 @@
+[
+ {
+  "program": "",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "\n",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "# c",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#c",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "// c",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": ";c",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": " ; c",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "OFF",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "Off",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "REPEAT",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nRepeat",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "BRIGHTNESS 10\n#ffffff",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#FFFFFF",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#fff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff 500",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 1.5S",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff .5s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 0.3333s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 65535ms",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 65536ms",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 65.535s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 66s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff LINEAR",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1s linear 1s 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 22
+ },
+ {
+  "program": "#ffffff 1s 1s 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "#ffffff linear 1s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1s 1s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0:#ffffff",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0: #ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-index",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "8:#ffffff",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "99:#ffffff",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0:off",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-index",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "off 1s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "off #ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 5
+ },
+ {
+  "program": "#ffffff off",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff\t500ms",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "  #ffffff  500ms  ",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 500ms;",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff;#000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff; ; #000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\r\n#000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\r#000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "repeat",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "brightness 100\nrepeat\n#ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 3,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nrepeat\nrepeat",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 3,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nrepeat 0",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 9
+ },
+ {
+  "program": "#ffffff\nrepeat 1",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\nrepeat 65535",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\nrepeat 65536",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 13
+ },
+ {
+  "program": "#ffffff\nrepeat x",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 8
+ },
+ {
+  "program": "brightness",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-brightness",
+  "line": 1,
+  "column": 11
+ },
+ {
+  "program": "brightness 256",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-brightness",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "brightness -1",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-brightness",
+  "line": 1,
+  "column": 12
+ },
+ {
+  "program": "brightness 255",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "brightness 0255",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 5
+ },
+ {
+  "program": "roll 1s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s linear 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 16
+ },
+ {
+  "program": "roll 1s; #ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 8
+ },
+ {
+  "program": "#ffffff; roll 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 10
+ },
+ {
+  "program": "roll-left 1s ease",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll-right 1s cosine",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s pulse",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s none",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 0ms",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "ROLL 1s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n\n\n#000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff x",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 500ms x",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "0:#ffffff 1:#000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0:#ffffff #000000",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 11
+ },
+ {
+  "program": "#ffffff 0:#000000",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff\u00a0500ms",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "0:#ffffff 500ms 1:#000000",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 17
+ },
+ {
+  "program": "#gggggg",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff 1000MS",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "repeat 2\n#ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 1
+ },
+ {
+  "program": "brightness 100",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "# only comment",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff linear ease",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 16
+ },
+ {
+  "program": "#ffffff 1s 1s ease",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "#ffffff 1s ease ease",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 17
+ },
+ {
+  "program": "#ffffff ease 1s 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 17
+ },
+ {
+  "program": "roll linear 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 6
+ },
+ {
+  "program": "roll 1s linear extra",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 16
+ },
+ {
+  "program": "#ffffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff,",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "0:#ffffff,",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-index",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "99999999999999:#ffffff",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1.0s",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 5.s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 65535.999s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "brightness 00",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "repeat 1",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nrepeat 01",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\nrepeat 000",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 11
+ },
+ {
+  "program": "#\tc",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#\t",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "# ",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "//",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff # c",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff // c",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff ; // c",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 11
+ },
+ {
+  "program": "#ffffff;# c",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "5:#ffffff 1s\nrepeat",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s\nrepeat",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n\n",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "#ffffff #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "too-long",
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\n# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "too-long",
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "brightness 1a",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 13
+ },
+ {
+  "program": "brightness 10 20",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "#ffffff\nrepeat 2 3",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 2,
+  "column": 10
+ },
+ {
+  "program": "rollx 1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "-1:#ffffff",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "01:#ffffff",
+  "led_count": 8,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1e3ms",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff +1s",
+  "led_count": 8,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "\n",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "# c",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#c",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "// c",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": ";c",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": " ; c",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "OFF",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "Off",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "REPEAT",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nRepeat",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "BRIGHTNESS 10\n#ffffff",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#FFFFFF",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#fff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff 500",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 1.5S",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff .5s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 0.3333s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 65535ms",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 65536ms",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 65.535s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 66s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff LINEAR",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1s linear 1s 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 22
+ },
+ {
+  "program": "#ffffff 1s 1s 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "#ffffff linear 1s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1s 1s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0:#ffffff",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0: #ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-index",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "8:#ffffff",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "99:#ffffff",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0:off",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-index",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "off 1s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "off #ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 5
+ },
+ {
+  "program": "#ffffff off",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff\t500ms",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "  #ffffff  500ms  ",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 500ms;",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff;#000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff; ; #000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\r\n#000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\r#000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "repeat",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "brightness 100\nrepeat\n#ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 3,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nrepeat\nrepeat",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 3,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nrepeat 0",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 9
+ },
+ {
+  "program": "#ffffff\nrepeat 1",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\nrepeat 65535",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\nrepeat 65536",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 13
+ },
+ {
+  "program": "#ffffff\nrepeat x",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 8
+ },
+ {
+  "program": "brightness",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-brightness",
+  "line": 1,
+  "column": 11
+ },
+ {
+  "program": "brightness 256",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-brightness",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "brightness -1",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-brightness",
+  "line": 1,
+  "column": 12
+ },
+ {
+  "program": "brightness 255",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "brightness 0255",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 5
+ },
+ {
+  "program": "roll 1s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s linear 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 16
+ },
+ {
+  "program": "roll 1s; #ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 8
+ },
+ {
+  "program": "#ffffff; roll 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 10
+ },
+ {
+  "program": "roll-left 1s ease",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll-right 1s cosine",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s pulse",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 1s none",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "roll 0ms",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "ROLL 1s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n\n\n#000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff x",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 500ms x",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "0:#ffffff 1:#000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "0:#ffffff #000000",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 11
+ },
+ {
+  "program": "#ffffff 0:#000000",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff\u00a0500ms",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "0:#ffffff 500ms 1:#000000",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 17
+ },
+ {
+  "program": "#gggggg",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff 1000MS",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "repeat 2\n#ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 1
+ },
+ {
+  "program": "brightness 100",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "# only comment",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff linear ease",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 16
+ },
+ {
+  "program": "#ffffff 1s 1s ease",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "#ffffff 1s ease ease",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 17
+ },
+ {
+  "program": "#ffffff ease 1s 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 17
+ },
+ {
+  "program": "roll linear 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 6
+ },
+ {
+  "program": "roll 1s linear extra",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 16
+ },
+ {
+  "program": "#ffffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff,",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "0:#ffffff,",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-index",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "99999999999999:#ffffff",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1.0s",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 5.s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff 65535.999s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "brightness 00",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "repeat 1",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\nrepeat 01",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\nrepeat 000",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 11
+ },
+ {
+  "program": "#\tc",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#\t",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "# ",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "//",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff # c",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff // c",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff ; // c",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 11
+ },
+ {
+  "program": "#ffffff;# c",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-color",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "5:#ffffff 1s\nrepeat",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-repeat",
+  "line": 2,
+  "column": 1
+ },
+ {
+  "program": "roll 1s\nrepeat",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n\n",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff\n#ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c\n# c",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff\n\r#ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "too-many-lines",
+  "line": 21,
+  "column": 1
+ },
+ {
+  "program": "#ffffff #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "too-long",
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000 #000000",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "#ffffff\n# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "too-long",
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff\n# xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "brightness 1a",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 13
+ },
+ {
+  "program": "brightness 10 20",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 1,
+  "column": 15
+ },
+ {
+  "program": "#ffffff\nrepeat 2 3",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "trailing-input",
+  "line": 2,
+  "column": 10
+ },
+ {
+  "program": "rollx 1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "-1:#ffffff",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "syntax",
+  "line": 1,
+  "column": 1
+ },
+ {
+  "program": "01:#ffffff",
+  "led_count": 2,
+  "ok": true,
+  "error_name": null,
+  "line": 0,
+  "column": 0
+ },
+ {
+  "program": "#ffffff 1e3ms",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ },
+ {
+  "program": "#ffffff +1s",
+  "led_count": 2,
+  "ok": false,
+  "error_name": "bad-time",
+  "line": 1,
+  "column": 9
+ }
+]
