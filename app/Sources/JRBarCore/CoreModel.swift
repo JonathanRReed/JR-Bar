@@ -94,9 +94,63 @@ public final class CoreModel {
         ])
     }
 
+    /// Acknowledges completions; the reply's `batch` is kept so `undoClear`
+    /// can put them back within `EventPolicy.undoWindow`.
     public func clearCompleted(sessions: [String]? = nil) {
         let scope: JSONValue = sessions.map { .array($0.map(JSONValue.string)) } ?? .string("all")
-        post("clear_completed", args: ["sessions": scope])
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.send("clear_completed", args: ["sessions": scope])
+                if reply.ok, let batch = reply.result?["batch"]?.stringValue {
+                    self.lastClear = (batch, Date())
+                }
+            } catch {
+                self.lastDecodeFailure = "clear_completed: \(error)"
+            }
+        }
+    }
+
+    /// The last `clear_completed` batch and when it happened.
+    public private(set) var lastClear: (batch: String, at: Date)?
+
+    /// True while the last clear is still inside the undo window.
+    public var canUndoClear: Bool {
+        guard let lastClear else { return false }
+        return Date().timeIntervalSince(lastClear.at) < EventPolicy.undoWindow
+    }
+
+    /// Sends `undo_clear` for the last batch; returns the reply, or nil
+    /// when there is nothing to undo.
+    @discardableResult
+    public func undoClear() async throws -> CoreReply? {
+        guard let lastClear, canUndoClear else { return nil }
+        let reply = try await send("undo_clear", args: ["batch": .string(lastClear.batch)])
+        if reply.ok { self.lastClear = nil }
+        return reply
+    }
+
+    /// `list_history`: rows newest first.
+    public func listHistory(since: Double? = nil, limit: Int = 500) async throws -> [CoreHistoryRow] {
+        var args: [String: JSONValue] = ["limit": .number(Double(limit))]
+        if let since { args["since"] = .number(since) }
+        let reply = try await send("list_history", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "list_history failed") }
+        let rows = reply.result?["rows"]?.arrayValue ?? reply.result?.arrayValue ?? []
+        let decoder = JSONDecoder()
+        return try rows.compactMap { value -> CoreHistoryRow? in
+            let data = try JSONEncoder().encode(value)
+            return try decoder.decode(CoreHistoryRow.self, from: data)
+        }.sorted { $0.at > $1.at }
+    }
+
+    /// A line from the app itself (the supervisor, a delivery failure) in
+    /// the same tail as the daemon's `log` messages.
+    public func appendLocalLog(level: String = "info", _ message: String) {
+        let entry = CoreLog(level: level, message: message, at: Date().timeIntervalSince1970)
+        lastLog = entry
+        logTail.append(entry)
+        if logTail.count > Self.logTailLimit { logTail.removeFirst(logTail.count - Self.logTailLimit) }
     }
 
     public func setBrightness(device: String = "all", value: Double) {

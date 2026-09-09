@@ -367,6 +367,27 @@ public struct CoreFocus: Codable, Hashable, Sendable {
 public struct CoreEscalation: Codable, Hashable, Sendable {
     public var stage: String?
     public var since: Double?
+
+    public init(stage: String? = nil, since: Double? = nil) {
+        self.stage = stage
+        self.since = since
+    }
+
+    /// `"none"` 0, `"ramp"`/`"light"` 1, `"menu_bar"` 2, `"final"`/`"chime"`/
+    /// `"takeover"` 3; digits as themselves. Unknown words are 0.
+    public static func stageNumber(_ text: String?) -> Int {
+        guard let text = text?.trimmingCharacters(in: .whitespaces).lowercased(), !text.isEmpty else { return 0 }
+        if let number = Int(text) { return max(0, min(3, number)) }
+        switch text {
+        case "none", "off", "fresh": return 0
+        case "ramp", "light", "1": return 1
+        case "menu_bar", "menubar", "menu-bar", "flash": return 2
+        case "final", "chime", "takeover", "loud": return 3
+        default: return 0
+        }
+    }
+
+    public var stageNumber: Int { Self.stageNumber(stage) }
 }
 
 public struct CoreState: Codable, Hashable, Sendable {
@@ -499,8 +520,15 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     public var at: Double?
     public var sound: String?
     public var notify: Bool?
+    /// Additive fields: the provider behind the event, a one-line detail
+    /// (the ask summary, the quota window), and the escalation stage
+    /// (`escalation_stage` events; 0...3, or a stage name).
+    public var provider: String?
+    public var detail: String?
+    public var stage: Int?
 
-    public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil, notify: Bool? = nil) {
+    public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
+                notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -508,7 +536,12 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.at = at
         self.sound = sound
         self.notify = notify
+        self.provider = provider
+        self.detail = detail
+        self.stage = stage
     }
+
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -519,6 +552,15 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         at = try c.decodeIfPresent(Double.self, forKey: .at)
         sound = try c.decodeIfPresent(String.self, forKey: .sound)
         notify = try c.decodeIfPresent(Bool.self, forKey: .notify)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        detail = try c.decodeIfPresent(String.self, forKey: .detail)
+        if let number = try? c.decodeIfPresent(Int.self, forKey: .stage) {
+            stage = number
+        } else if let text = try? c.decodeIfPresent(String.self, forKey: .stage) {
+            stage = CoreEscalation.stageNumber(text)
+        } else {
+            stage = nil
+        }
     }
 }
 

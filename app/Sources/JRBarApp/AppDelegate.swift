@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import JRBarUI
 import Observation
 
 @MainActor
@@ -14,14 +15,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: PanelController?
     private var settingsStore: SettingsStore?
     private var settingsWindow: SettingsWindowController?
+    private var historyStore: HistoryStore?
+    private var historyWindow: HistoryWindowController?
+    private var events: EventCoordinator?
+    private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
+    private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
     private static let showScreenBarKey = "showScreenBar"
 
+    private var terminationSignal: DispatchSourceSignal?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [Self.showScreenBarKey: true])
+
+        // `pkill JR-Bar` (or a logout) must still stop the supervised core:
+        // turn SIGTERM into an orderly quit so applicationWillTerminate runs.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        terminationSignal = source
 
         let statusItem = StatusItemController()
         let screenBar = ScreenBarController()
@@ -62,6 +78,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
         statusItem.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
+        // History window (⌘Y).
+        let historyStore = HistoryStore(core: core)
+        let historyWindow = HistoryWindowController(store: historyStore)
+        self.historyStore = historyStore
+        self.historyWindow = historyWindow
+        store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+        statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+
+        // Events → the Mac: sounds, banners, the HUD, the amber pulse, the chime.
+        let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
+        self.events = events
+        events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
+
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source in
             guard let self else { return }
@@ -77,9 +106,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Daemon protocol: beats the files whenever it is live.
-        core.onEvent = { [weak self] event in self?.handle(event: event) }
+        core.onEvent = { [weak events] event in events?.handle(event) }
         observeCore()
         watchSocketDirectory(core.socketPath)
+
+        // Core supervision: with JRBAR_CORE_EXEC set, the daemon is our
+        // child and we keep it alive; otherwise we connect to whatever
+        // listens on the socket.
+        if let command = ProcessInfo.processInfo.environment["JRBAR_CORE_EXEC"], !command.isEmpty {
+            startSupervisor(command: command, core: core, store: store)
+        }
 
         let shown = defaults.bool(forKey: Self.showScreenBarKey)
         statusItem.isScreenBarShown = shown
@@ -95,9 +131,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // (general, agents, usage, devices, lighting, notifications, remote,
         // advanced, or effects).
         let environment = ProcessInfo.processInfo.environment
-        if environment["JRBAR_OPEN_PANEL"] != nil {
+        if let openPanel = environment["JRBAR_OPEN_PANEL"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak panel] in
                 MainActor.assumeIsolated { panel?.open() }
+            }
+            // `JRBAR_OPEN_PANEL=why` also hovers the "Why this light" row.
+            if openPanel == "why" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak panel] in
+                    MainActor.assumeIsolated { panel?.showWhyPopover() }
+                }
+            }
+        }
+        // `JRBAR_RENDER_ICONS=/dir` writes the status item styles as PNGs
+        // (8×) for design review, then carries on.
+        if let directory = environment["JRBAR_RENDER_ICONS"], !directory.isEmpty {
+            StatusItemController.renderStyles(to: directory)
+        }
+        if environment["JRBAR_OPEN_HISTORY"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak historyWindow] in
+                MainActor.assumeIsolated { historyWindow?.show() }
             }
         }
         if let pageName = environment["JRBAR_OPEN_SETTINGS"] {
@@ -115,7 +167,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel?.close()
         interaction?.stop()
         screenBar?.hide()
+        events?.reset()
+        // The child gets SIGTERM and three seconds before SIGKILL.
+        supervisor?.stop(gracePeriod: 3.0)
         core?.stop()
+    }
+
+    // MARK: Core supervision
+
+    private func startSupervisor(command: String, core: CoreModel, store: PanelStore) {
+        guard let supervisor = CoreSupervisor(commandLine: command) else { return }
+        self.supervisor = supervisor
+        supervisor.onOutput = { [weak core] stream, line in
+            Task { @MainActor [weak core] in
+                core?.appendLocalLog(level: stream == "stderr" ? "core" : (stream == "supervisor" ? "supervisor" : "core"), line)
+            }
+            NSLog("JR-Bar core[%@]: %@", stream, line)
+        }
+        supervisor.onStateChange = { [weak self, weak core, weak store] state in
+            Task { @MainActor [weak self, weak core, weak store] in
+                store?.supervisorState = state
+                if case .running = state { core?.retryNow() }
+                self?.coreDidChange()
+            }
+        }
+        store.onRestartCore = { [weak supervisor] in supervisor?.restart() }
+        store.supervisorState = .idle
+        core.appendLocalLog(level: "supervisor", "supervising `\(command)`")
+        supervisor.start()
     }
 
     /// An accessory app has no menu bar of its own, but the Settings window's
@@ -125,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","))
+        appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
@@ -153,6 +233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow?.show()
     }
 
+    @objc private func openHistory(_ sender: Any?) {
+        historyWindow?.show()
+    }
+
     // MARK: Screen Bar visibility
 
     private func setScreenBar(shown: Bool) {
@@ -176,6 +260,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = core.state?.aggregate
             _ = core.lights
             _ = core.hello
+            _ = core.settings?.generation
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.coreDidChange()
@@ -198,13 +283,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .idle:
             statusItem.setCore(description: "idle")
         }
+        if let supervisor, let store, store.supervisorState != nil {
+            switch supervisor.state {
+            case .crashed(let failures): statusItem.setCore(description: "crashed \(failures)× · restart from the panel")
+            case .backingOff(let failures, let delay): statusItem.setCore(description: "exited (\(failures)×), restarting in \(String(format: "%.1f", delay)) s")
+            default: break
+            }
+        }
+        let live = core.isLive
+        if wasLive, !live { events?.reset() }
+        wasLive = live
         refreshAggregate()
+        refreshIconStyle()
         refreshLights()
     }
 
     private func refreshAggregate() {
         guard let store, let statusItem else { return }
         statusItem.update(state: store.aggregate, detail: store.headerCounts)
+    }
+
+    /// `menu_bar_icon_style` plus what the ring and the label show: the
+    /// primary provider's 5 h window and the aggregate counts.
+    private func refreshIconStyle() {
+        guard let core, let statusItem else { return }
+        let document = core.settings.map { SettingsDocument($0.document) }
+        statusItem.iconStyle = StatusIconStyle(setting: document?.string("menu_bar_icon_style"))
+        let preferred = document?.strings("usage_graph_providers") ?? []
+        let usage = core.isLive ? core.usage : []
+        let primary = preferred.lazy.compactMap { id in usage.first { $0.id == id } }.first ?? usage.first
+        let window = primary?.windows.first { $0.name.lowercased() == "5h" } ?? primary?.windows.first
+        statusItem.ringFraction = window.map { $0.usedPct / 100 }
+        if core.isLive, let aggregate = core.state?.aggregate {
+            let failed = core.sessions.filter { SessionActivity.reduce($0) == .failed }.count
+            statusItem.labelText = StatusIconRenderer.label(active: aggregate.active, needsYou: aggregate.needsYou, ready: aggregate.ready, failed: failed)
+        } else {
+            statusItem.labelText = nil
+        }
+        // The state is the source of truth for the stage-2 pulse (an app
+        // launched mid-escalation never saw the event).
+        if core.isLive, let state = core.state {
+            let ceiling = EventPolicy.escalationCeiling(document?.string("escalation_tier"))
+            let stage = min(state.escalation?.stageNumber ?? 0, ceiling)
+            let asksOpen = !state.asks.isEmpty || state.mainSessions.contains { $0.ask != nil }
+            statusItem.setEscalationPulse(stage >= 2 && asksOpen)
+        } else {
+            statusItem.setEscalationPulse(false)
+        }
     }
 
     private func refreshLights() {
@@ -232,15 +357,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             lastLightsSource = description
             statusItem?.setFeed(description: description)
         }
-    }
-
-    // MARK: Events
-
-    private func handle(event: CoreEvent) {
-        if let sound = event.sound, event.notify == true, let nsSound = NSSound(named: NSSound.Name(sound.capitalized)) {
-            nsSound.play()
-        }
-        NSLog("JR-Bar: core event %@ %@ %@", event.kind, event.label ?? "", event.session ?? "")
     }
 
     // MARK: Socket directory watch

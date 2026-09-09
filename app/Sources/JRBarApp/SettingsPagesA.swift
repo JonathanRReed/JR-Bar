@@ -12,7 +12,7 @@ struct GeneralPage: View {
                 SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Registers JR-Bar with the system so it starts with your Mac.")
             }
             SettingPicker(store, "Menu bar icon", path: "menu_bar_icon_style", options: [
-                ("glyph", "Glyph only"), ("ring", "Glyph with usage ring"), ("label", "Glyph with label"),
+                ("glyph", "Glyph only"), ("glyph_ring", "Glyph with usage ring"), ("glyph_label", "Glyph with label"),
             ], default: "glyph")
             SettingToggle(store, "Show tips", subtitle: "Occasional hints in the panel about what the light means.", path: "tips_enabled", default: true)
         }

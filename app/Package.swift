@@ -29,6 +29,7 @@ let package = Package(
     products: [
         .library(name: "JRBarLEDS", targets: ["JRBarLEDS"]),
         .library(name: "JRBarCore", targets: ["JRBarCore"]),
+        .library(name: "JRBarUI", targets: ["JRBarUI"]),
         .executable(name: "JRBarApp", targets: ["JRBarApp"]),
     ],
     targets: [
@@ -37,13 +38,22 @@ let package = Package(
         // The core daemon protocol: NDJSON over a Unix socket, Codable
         // models, an observable model. Foundation only.
         .target(name: "JRBarCore"),
+        // AppKit pieces small enough to test without the app: the status
+        // item's icon renderer.
+        .target(
+            name: "JRBarUI",
+            dependencies: ["JRBarCore"],
+            linkerSettings: [.linkedFramework("AppKit")]
+        ),
         .executableTarget(
             name: "JRBarApp",
-            dependencies: ["JRBarLEDS", "JRBarCore"],
+            dependencies: ["JRBarLEDS", "JRBarCore", "JRBarUI"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI"),
                 .linkedFramework("QuartzCore"),
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("UserNotifications"),
             ]
         ),
         .testTarget(
@@ -57,6 +67,12 @@ let package = Package(
             name: "JRBarCoreTests",
             dependencies: ["JRBarCore"],
             resources: [.copy("Fixtures")],
+            swiftSettings: testSwiftSettings,
+            linkerSettings: testLinkerSettings
+        ),
+        .testTarget(
+            name: "JRBarUITests",
+            dependencies: ["JRBarUI"],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),

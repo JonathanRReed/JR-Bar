@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import QuartzCore
 import SwiftUI
 
@@ -20,6 +21,8 @@ final class PanelController {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var anchorProvider: (@MainActor () -> NSRect?)?
+    private var whyPopover: WhyDetailPanel?
+    private var whyHide: DispatchWorkItem?
     var onOpenStateChange: (@MainActor (Bool) -> Void)?
     private(set) var isOpen = false { didSet { if isOpen != oldValue { onOpenStateChange?(isOpen) } } }
 
@@ -61,6 +64,43 @@ final class PanelController {
 
         store.onClose = { [weak self] in self?.close() }
         store.onContentSizeChange = { [weak self] size in self?.fit(to: size) }
+        store.onWhyHover = { [weak self] hovering, frame in self?.whyHover(hovering, frame: frame) }
+    }
+
+    // MARK: "Why this light" popover
+
+    /// A child window (never key, so the panel keeps the keyboard) hanging
+    /// under the row with the programs and the brightness settings.
+    private func whyHover(_ hovering: Bool, frame: CGRect) {
+        whyHide?.cancel()
+        whyHide = nil
+        guard hovering, isOpen, let explanation = store.lightExplanation else {
+            let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideWhyPopover() } }
+            whyHide = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+            return
+        }
+        let popover = whyPopover ?? WhyDetailPanel()
+        whyPopover = popover
+        // SwiftUI's global space is the hosting view's (flipped) space.
+        let inWindow = hosting.convert(frame, to: nil)
+        let onScreen = panel.convertToScreen(inWindow)
+        popover.present(explanation, anchoredTo: onScreen, panelFrame: panel.frame, reduced: store.reduceMotion)
+        if popover.parent == nil { panel.addChildWindow(popover, ordered: .above) }
+    }
+
+    /// Screenshot aid (`JRBAR_OPEN_PANEL=why`): shows the popover as if the row were hovered.
+    func showWhyPopover() {
+        whyHover(true, frame: store.whyRowFrame)
+    }
+
+    private func hideWhyPopover() {
+        guard let whyPopover, whyPopover.isVisible else { return }
+        whyPopover.dismiss { [weak self] in
+            guard let self, let popover = self.whyPopover, !popover.isVisible || popover.alphaValue < 0.01 else { return }
+            self.panel.removeChildWindow(popover)
+            popover.orderOut(nil)
+        }
     }
 
     /// Where the status item is, in screen coordinates, for anchoring.
@@ -102,6 +142,10 @@ final class PanelController {
         guard isOpen else { return }
         isOpen = false
         removeMonitors()
+        if let whyPopover, whyPopover.parent != nil {
+            panel.removeChildWindow(whyPopover)
+            whyPopover.orderOut(nil)
+        }
         store.panelDidClose()
         let reduced = store.reduceMotion
         NSAnimationContext.runAnimationGroup({ context in
@@ -185,6 +229,10 @@ final class PanelController {
                 store.quit()
                 return nil
             }
+            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "y" {
+                store.openHistory()
+                return nil
+            }
             switch event.keyCode {
             case 53: close(); return nil                            // Esc
             case 125: store.moveSelection(by: 1); return nil       // Down
@@ -232,5 +280,136 @@ final class FloatingPanel: NSPanel {
 
     override func cancelOperation(_ sender: Any?) {
         onResignKey?()
+    }
+}
+
+/// The hover popover for "Why this light": glass, click-through, a child
+/// of the panel so it never takes the keyboard away.
+@MainActor
+final class WhyDetailPanel: NSPanel {
+    private let hosting: NSHostingView<WhyDetailView>
+    private let backdrop: NSView
+    private let model = WhyDetailModel()
+    static let width: CGFloat = 300
+
+    init() {
+        hosting = NSHostingView(rootView: WhyDetailView(model: model))
+        hosting.sizingOptions = [.intrinsicContentSize]
+        let plain = ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil
+        if !plain {
+            let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 120))
+            glass.cornerRadius = 10
+            glass.style = .regular
+            glass.contentView = hosting
+            backdrop = glass
+        } else {
+            let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 120))
+            effect.material = .popover
+            effect.blendingMode = .behindWindow
+            effect.state = .active
+            effect.wantsLayer = true
+            effect.layer?.cornerRadius = 10
+            effect.layer?.masksToBounds = true
+            hosting.translatesAutoresizingMaskIntoConstraints = false
+            effect.addSubview(hosting)
+            NSLayoutConstraint.activate([
+                hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+                hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+                hosting.topAnchor.constraint(equalTo: effect.topAnchor),
+                hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            ])
+            backdrop = effect
+        }
+        super.init(contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 120), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        contentView = backdrop
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = true
+        ignoresMouseEvents = true
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        isExcludedFromWindowsMenu = true
+        animationBehavior = .none
+        isMovable = false
+        collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary, .ignoresCycle]
+        level = .popUpMenu
+        alphaValue = 0
+    }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+
+    func present(_ explanation: LightExplanation, anchoredTo row: NSRect, panelFrame: NSRect, reduced: Bool) {
+        model.explanation = explanation
+        hosting.rootView = WhyDetailView(model: model)
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        let height = max(40, size.height)
+        let width = Self.width
+        let screen = NSScreen.screens.first { $0.frame.intersects(row) }?.visibleFrame ?? panelFrame
+        var x = row.minX + 8
+        x = min(screen.maxX - width - 6, max(screen.minX + 6, x))
+        // Below the row when there is room, else above it.
+        var y = row.minY - 6 - height
+        if y < screen.minY + 6 { y = row.maxY + 6 }
+        let origin = NSPoint(x: x.rounded(), y: y.rounded())
+        let wasVisible = isVisible && alphaValue > 0.01
+        setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
+        orderFront(nil)
+        if !wasVisible, !reduced { setFrameOrigin(NSPoint(x: origin.x, y: origin.y + 4)) }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = reduced ? 0.08 : 0.16
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+            animator().alphaValue = 1
+            if !wasVisible, !reduced { animator().setFrameOrigin(origin) }
+        }
+    }
+
+    func dismiss(completion: @escaping @MainActor () -> Void) {
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.1
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animator().alphaValue = 0
+        }, completionHandler: {
+            Task { @MainActor in completion() }
+        })
+    }
+}
+
+@MainActor
+@Observable
+final class WhyDetailModel {
+    var explanation: LightExplanation?
+}
+
+struct WhyDetailView: View {
+    @Bindable var model: WhyDetailModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let explanation = model.explanation {
+                HStack(spacing: 6) {
+                    Image(systemName: "light.max").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    Text(explanation.motion).font(.system(size: 12, weight: .semibold))
+                    Text("· \(explanation.why.replacingOccurrences(of: "_", with: " "))")
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+                Text(explanation.reason).font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if !explanation.details.isEmpty {
+                    Rectangle().fill(.primary.opacity(0.08)).frame(height: 1).padding(.vertical, 2)
+                    Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 3) {
+                        ForEach(explanation.details) { detail in
+                            GridRow {
+                                Text(detail.label).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).gridColumnAlignment(.trailing)
+                                Text(detail.value).font(.system(size: 11)).foregroundStyle(.primary.opacity(0.85)).lineLimit(2)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: WhyDetailPanel.width, alignment: .leading)
     }
 }
