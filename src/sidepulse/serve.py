@@ -16,13 +16,10 @@ schema is rebuilt from an allowlist and never forwards persisted rows.
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import json
 import math
-import threading
 import time
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,13 +31,6 @@ from .local_api_contract import (
     decode_request,
     redacted_response,
     validate_authenticated_request,
-)
-from .phone_glance import (
-    PhoneGlance,
-    PhoneGlanceEnvelope,
-    PhoneGlancePolicy,
-    build_phone_glance,
-    encode_phone_glance,
 )
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_facts import NextActor, SourceFreshness, SourceHealth, WorkLifecycle
@@ -60,9 +50,6 @@ _SOURCE_HEALTH = frozenset(item.value for item in SourceHealth)
 _SOURCE_FRESHNESS = frozenset(item.value for item in SourceFreshness)
 _PROVIDER_STATES = frozenset(item.value for item in ProviderSourceState)
 _PROVIDER_IDS = frozenset(item.provider_id for item in provider_descriptors())
-_DEFAULT_GLANCE_SOURCE_ID = "sidepulse"
-_MAX_GLANCE_SEQUENCE = 1_000_000
-_MAX_GLANCE_SECRET_BYTES = 4_096
 _MAX_ACCESS_TOKEN_BYTES = 4_096
 
 
@@ -262,169 +249,34 @@ def build_authenticated_local_api_response(
     )
 
 
-def _phone_glance_state(document: Mapping[str, object]) -> tuple[str, str]:
-    agents = document.get("agents")
-    if not isinstance(agents, Mapping):
-        return "unknown", "unavailable"
-    lifecycle = agents.get("lifecycle_counts")
-    next_actor = agents.get("next_actor_counts")
-    health = agents.get("source_health_counts")
-    if not all(isinstance(value, Mapping) for value in (lifecycle, next_actor, health)):
-        return "unknown", "unavailable"
-
-    active = lifecycle.get("active", 0)
-    waiting = lifecycle.get("waiting", 0)
-    needs_user = next_actor.get("user", 0)
-    degraded = sum(
-        count
-        for name, count in health.items()
-        if name != "healthy" and type(count) is int and count > 0
-    )
-    if type(active) is not int or type(waiting) is not int or type(needs_user) is not int:
-        return "unknown", "unavailable"
-    status = "working" if active > 0 else "waiting" if waiting > 0 else "idle"
-    if needs_user > 0:
-        outcome = "attention"
-    elif degraded > 0:
-        outcome = "degraded"
-    elif active > 0:
-        outcome = "in_progress"
-    else:
-        outcome = "steady"
-    return status, outcome
-
-
-def _phone_glance_capacity(document: Mapping[str, object]) -> dict[str, object] | None:
-    usage = document.get("usage")
-    if not isinstance(usage, Mapping):
-        return None
-    providers = usage.get("providers")
-    if not isinstance(providers, list):
-        return None
-    remaining: list[float] = []
-    resets: list[float] = []
-    for provider in providers[:_MAX_SNAPSHOTS]:
-        if not isinstance(provider, Mapping):
-            continue
-        quota = provider.get("quota")
-        if not isinstance(quota, Mapping):
-            continue
-        remaining_value = _timestamp(quota.get("remaining_percent"))
-        reset_value = _timestamp(quota.get("next_reset_at"))
-        if remaining_value is not None and remaining_value <= 100.0:
-            remaining.append(remaining_value)
-        if reset_value is not None:
-            resets.append(reset_value)
-    capacity: dict[str, object] = {}
-    if remaining:
-        capacity["remaining_percent"] = min(remaining)
-    if resets:
-        capacity["reset_at"] = min(resets)
-    return capacity or None
-
-
-def build_phone_glance_projection(
-    policy: PhoneGlancePolicy,
-    *,
-    signer: Callable[[bytes], str],
-    sequence: int,
-    home: Path | None = None,
-    observed_at: float | None = None,
-) -> PhoneGlanceEnvelope:
-    """Build a signed, content-minimized glance from the public projection."""
-    document = build_serve_document(home)
-    status, outcome = _phone_glance_state(document)
-    glance = PhoneGlance(
-        source_id=policy.source_id,
-        sequence=sequence,
-        observed_at=time.time() if observed_at is None else observed_at,
-        status=status,
-        outcome=outcome,
-        capacity=_phone_glance_capacity(document),
-    )
-    return build_phone_glance(glance, policy, signer=signer)
-
-
 @dataclass(frozen=True, slots=True, repr=False)
 class ServeConfiguration:
     """Explicit, in-memory configuration for the loopback server.
 
-    The glance route is enabled only when ``glance_secret`` is supplied. The
-    secret is retained only in this process and is deliberately omitted from
-    the configuration representation.
+    The access token is retained only in this process and is deliberately
+    omitted from the configuration representation.
     """
 
     home: Path | None = None
     status_access_token: bytes | None = field(default=None, repr=False)
     allow_anonymous_status: bool = False
-    glance_secret: bytes | None = field(default=None, repr=False)
-    glance_access_token: bytes | None = field(default=None, repr=False)
-    glance_source_id: str = _DEFAULT_GLANCE_SOURCE_ID
-    glance_sequence_limit: int = _MAX_GLANCE_SEQUENCE
-    glance_sequence_start: int = 0
 
     def __post_init__(self) -> None:
         if self.home is not None and not isinstance(self.home, Path):
             raise ValueError("invalid serve home")
         if type(self.allow_anonymous_status) is not bool:
             raise ValueError("invalid anonymous status setting")
-        for token in (self.status_access_token, self.glance_access_token):
-            if token is not None and (
-                type(token) is not bytes
-                or not 24 <= len(token) <= _MAX_ACCESS_TOKEN_BYTES
-            ):
-                raise ValueError("invalid access token")
-        if self.glance_secret is not None and (
-            type(self.glance_secret) is not bytes
-            or not self.glance_secret
-            or len(self.glance_secret) > _MAX_GLANCE_SECRET_BYTES
+        token = self.status_access_token
+        if token is not None and (
+            type(token) is not bytes
+            or not 24 <= len(token) <= _MAX_ACCESS_TOKEN_BYTES
         ):
-            raise ValueError("invalid glance secret")
-        if (
-            self.glance_secret is not None
-            and self.glance_access_token is not None
-            and hmac.compare_digest(self.glance_secret, self.glance_access_token)
-        ):
-            raise ValueError("glance access token and signing secret must be distinct")
-        # PhoneGlancePolicy owns the bounded source identity contract.
-        PhoneGlancePolicy(self.glance_source_id)
-        if (
-            type(self.glance_sequence_limit) is not int
-            or not 1 <= self.glance_sequence_limit <= _MAX_GLANCE_SEQUENCE
-        ):
-            raise ValueError("invalid glance sequence limit")
-        if (
-            type(self.glance_sequence_start) is not int
-            or not 0 <= self.glance_sequence_start < self.glance_sequence_limit
-        ):
-            raise ValueError("invalid glance sequence start")
-
-    @property
-    def glance_enabled(self) -> bool:
-        return self.glance_secret is not None
-
-
-class _GlanceSequence:
-    def __init__(self, *, start: int, limit: int) -> None:
-        self._value = start
-        self._limit = limit
-        self._lock = threading.Lock()
-
-    def next(self) -> int | None:
-        with self._lock:
-            if self._value >= self._limit:
-                return None
-            self._value += 1
-            return self._value
+            raise ValueError("invalid access token")
 
 
 class _ServeServer(ThreadingHTTPServer):
     def __init__(self, address, handler, configuration: ServeConfiguration) -> None:
         self.serve_configuration = configuration
-        self.glance_sequence = _GlanceSequence(
-            start=configuration.glance_sequence_start,
-            limit=configuration.glance_sequence_limit,
-        )
         super().__init__(address, handler)
 
 
@@ -433,9 +285,6 @@ class _ServeHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         route = self.path.split("?", 1)[0]
-        if route == "/glance.json":
-            self._serve_glance()
-            return
         if route not in ("/", "/status.json"):
             self.send_error(404)
             return
@@ -462,51 +311,6 @@ class _ServeHandler(BaseHTTPRequestHandler):
         if not isinstance(configuration, ServeConfiguration):
             return ServeConfiguration()
         return configuration
-
-    def _serve_glance(self) -> None:
-        configuration = self._configuration()
-        if not configuration.glance_enabled:
-            self._send_glance_error(404)
-            return
-        if not self._authenticated(configuration.glance_access_token):
-            self._send_authentication_required()
-            return
-        sequence = getattr(self.server, "glance_sequence", None)
-        if not isinstance(sequence, _GlanceSequence):
-            self._send_glance_error(404)
-            return
-        next_sequence = sequence.next()
-        if next_sequence is None:
-            self._send_glance_error(503)
-            return
-        secret = configuration.glance_secret
-        if secret is None:
-            self._send_glance_error(404)
-            return
-        policy = PhoneGlancePolicy(configuration.glance_source_id)
-
-        def signer(payload: bytes) -> str:
-            return hmac.new(secret, payload, hashlib.sha256).hexdigest()
-
-        envelope = build_phone_glance_projection(
-            policy,
-            signer=signer,
-            sequence=next_sequence,
-            home=configuration.home,
-        )
-        payload = encode_phone_glance(envelope, max_bytes=policy.max_bytes)
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def _send_glance_error(self, status: int) -> None:
-        self.send_response(status)
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Content-Length", "0")
-        self.end_headers()
 
     def _authenticated(self, expected: bytes | None) -> bool:
         if expected is None:
@@ -536,22 +340,14 @@ def serve(
     port: int = SERVE_DEFAULT_PORT,
     status_access_token: bytes | None = None,
     allow_anonymous_status: bool = False,
-    glance_secret: bytes | None = None,
-    glance_access_token: bytes | None = None,
-    glance_source_id: str = _DEFAULT_GLANCE_SOURCE_ID,
 ) -> None:
     """Blocking loopback server; Ctrl-C stops it."""
     server = create_serve_server(
         port=port,
         status_access_token=status_access_token,
         allow_anonymous_status=allow_anonymous_status,
-        glance_secret=glance_secret,
-        glance_access_token=glance_access_token,
-        glance_source_id=glance_source_id,
     )
     print(f"sidepulse serve: http://127.0.0.1:{int(port)}/status.json")
-    if glance_secret is not None:
-        print(f"sidepulse serve: http://127.0.0.1:{int(port)}/glance.json")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -566,22 +362,12 @@ def create_serve_server(
     home: Path | None = None,
     status_access_token: bytes | None = None,
     allow_anonymous_status: bool = False,
-    glance_secret: bytes | None = None,
-    glance_access_token: bytes | None = None,
-    glance_source_id: str = _DEFAULT_GLANCE_SOURCE_ID,
-    glance_sequence_limit: int = _MAX_GLANCE_SEQUENCE,
-    glance_sequence_start: int = 0,
 ) -> ThreadingHTTPServer:
     """Create the loopback server with explicit, testable configuration."""
     configuration = ServeConfiguration(
         home=home,
         status_access_token=status_access_token,
         allow_anonymous_status=allow_anonymous_status,
-        glance_secret=glance_secret,
-        glance_access_token=glance_access_token,
-        glance_source_id=glance_source_id,
-        glance_sequence_limit=glance_sequence_limit,
-        glance_sequence_start=glance_sequence_start,
     )
     return _ServeServer(("127.0.0.1", int(port)), _ServeHandler, configuration)
 
@@ -591,7 +377,6 @@ __all__ = [
     "SERVE_SCHEMA_VERSION",
     "ServeConfiguration",
     "build_authenticated_local_api_response",
-    "build_phone_glance_projection",
     "build_serve_document",
     "create_serve_server",
     "serve",

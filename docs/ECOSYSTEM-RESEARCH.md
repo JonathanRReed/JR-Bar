@@ -215,8 +215,9 @@ gated the same way every shipped wave has been.
   device from a headless Mac; pairs with PR #22); seanhellwig (Ghostty
   terminal support); CoolColby23 `agent/kiro-session-opening` (resume
   Kiro sessions from the menu — one commit past the PR #16 we ported).
-- Upstream ships an iOS companion (`ios/SidePulse`, FastAPI server) —
-  the phone-glance wave should build on it, not start fresh.
+- Upstream ships an iOS companion (`ios/SidePulse`, FastAPI server).
+  JR-Bar carried a port of it until the 0.8 rebuild deleted the phone
+  glance; it is reference material only now.
 - Kiro caveat from PR #16 discussion: Kiro CLI 2.18.1 omits
   `session_id`, so concurrent Kiro sessions may collapse into one row —
   add a conformance test when Kiro is actually installed.

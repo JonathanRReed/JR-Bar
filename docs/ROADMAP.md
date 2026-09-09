@@ -36,11 +36,9 @@ Scene packs with import, preview, export, duplicate, and rename paths (48), the
 native Effect Studio and Preview Lab with scoped assignments and guarded
 single-writer hardware previews (50), the shared ambient compiler and existing
 Screen Bar and hardware worker sinks (49–66), the native and CLI data-only
-gallery (71), and the manual research cadence (72). Item 46 is source-complete
-for an explicit glance-only private listener and a foreground iOS verifier/client
-with a manual test and active-scene refresh. Real private-LAN, iPhone/iPad,
-permission, and rendered-device proof remain external, as do community pack
-publication and installed-app behavior.
+gallery (71), and the manual research cadence (72). Item 46 (the private
+phone-glance listener and its iOS client) was deleted in the 0.8 rebuild.
+Community pack publication and installed-app behavior remain external.
 The [master roadmap design](superpowers/specs/2026-08-28-jr-bar-master-roadmap-and-ambient-effects-design.md)
 remains the recommendation authority, while the [feature matrix](FEATURE-MATRIX.md)
 and [completion contract](superpowers/plans/2026-08-28-jr-bar-completion-contract.md)
@@ -120,7 +118,7 @@ is still missing.
 | Monotonic transcript-discovery deadline | adapted | Candidate for a bounded discovery contract, to be evaluated after source closeout and external evidence. [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md) |
 | Per-source freshness across every publication surface | adapted | Candidate for one freshness authority projected consistently to menu, browser, Screen Bar, and hardware, pending local contract and evidence. [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md) |
 | Presentation-only privacy mode | adapted | Candidate to hide presentation names and paths while retaining safe state, with canonical truth unchanged; requires explicit privacy and accessibility evidence. [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md) |
-| Phone companion and broader fleet/mobile surfaces | waiting on evidence | Revisit only after local security, authenticated bounded transport, and read-only behavior are proven. [Master roadmap](superpowers/specs/2026-08-28-jr-bar-master-roadmap-and-ambient-effects-design.md#p3-high-value-product-improvements) |
+| Phone companion and broader fleet/mobile surfaces | removed in 0.8 | The iOS app and the Mac glance listener were deleted. Revisit only after local security, authenticated bounded transport, and read-only behavior are proven. [Master roadmap](superpowers/specs/2026-08-28-jr-bar-master-roadmap-and-ambient-effects-design.md#p3-high-value-product-improvements) |
 
 ## Operating rules
 

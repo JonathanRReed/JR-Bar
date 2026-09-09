@@ -4,6 +4,8 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Remove the iOS companion app and its Mac half: the `sidepulse glance`
+  private listener, `serve --phone-glance`, and the `/glance.json` route.
 - Consolidate historical feature/fix branch ancestry without overwriting newer
   implementations; preserve the unmerged historical plan under `docs/archive/`.
 - Fix overlapping session-board saves, drain persistence on shutdown and persist

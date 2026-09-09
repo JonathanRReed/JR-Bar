@@ -58,8 +58,6 @@ from .settings import (
 from .trusted_tools import trusted_system_tool
 from .watch_run import WatchRunPlanError, execute_watch_run, plan_watch_run
 
-PHONE_GLANCE_SECRET_ENV = "SIDEPULSE_PHONE_GLANCE_SECRET"
-PHONE_GLANCE_ACCESS_TOKEN_ENV = "SIDEPULSE_PHONE_GLANCE_ACCESS_TOKEN"
 SERVE_ACCESS_TOKEN_ENV = "SIDEPULSE_SERVE_ACCESS_TOKEN"
 
 
@@ -109,7 +107,6 @@ def build_sidepulse_parser() -> argparse.ArgumentParser:
     )
     add_serve_arguments(serve_parser)
     serve_parser.set_defaults(func=cmd_serve)
-    add_glance_arguments(subparsers)
     subparsers.add_parser(
         "agent-monitor",
         help="Install hooks and show live AI agent statuses.",
@@ -685,7 +682,6 @@ def build_parser(prog: str = "agent-monitor") -> argparse.ArgumentParser:
     )
     add_serve_arguments(monitor_serve)
     monitor_serve.set_defaults(func=cmd_serve)
-    add_glance_arguments(subparsers)
 
     status = subparsers.add_parser("status", help="Show current aggregate status once.")
     add_status_args(status)
@@ -865,70 +861,6 @@ def add_serve_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Allow unauthenticated loopback status reads for legacy clients.",
     )
-    parser.add_argument(
-        "--phone-glance",
-        action="store_true",
-        help=(
-            "Enable signed /glance.json using the secret in "
-            f"{PHONE_GLANCE_SECRET_ENV}."
-        ),
-    )
-    parser.add_argument(
-        "--phone-glance-source-id",
-        default="sidepulse",
-        help="Bounded opaque source identity for signed phone glances.",
-    )
-
-
-def add_glance_arguments(subparsers: argparse._SubParsersAction) -> None:
-    glance = subparsers.add_parser(
-        "glance",
-        aliases=("phone-glance",),
-        help="Serve only a signed phone glance on an explicit private IP.",
-    )
-    glance.add_argument(
-        "--bind-address",
-        "--bind",
-        dest="bind_address",
-        required=True,
-        help="Private or link-local IP literal to bind, never a hostname or wildcard.",
-    )
-    glance.add_argument(
-        "--port",
-        type=_glance_port,
-        default=8738,
-        help="Private glance port (default 8738).",
-    )
-    glance.add_argument(
-        "--source-id",
-        "--phone-glance-source-id",
-        dest="glance_source_id",
-        default="sidepulse",
-        help="Bounded opaque source identity for the signed glance.",
-    )
-    glance.add_argument(
-        "--tls-cert",
-        type=Path,
-        required=True,
-        help="PEM certificate chain trusted by the client, with this private IP in its SAN.",
-    )
-    glance.add_argument(
-        "--tls-key",
-        type=Path,
-        required=True,
-        help="Protected PEM private key for the TLS certificate, without a passphrase.",
-    )
-    glance.set_defaults(func=cmd_glance)
-
-
-def _glance_port(value: str) -> int:
-    try:
-        port = int(value)
-    except (TypeError, ValueError) as exc:
-        raise argparse.ArgumentTypeError("glance port must be an integer") from exc
-    if not 1 <= port <= 65_535:
-        raise argparse.ArgumentTypeError("glance port must be between 1 and 65535")
-    return port
 
 
 def add_effects_parser(subparsers) -> None:
@@ -1064,27 +996,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    glance_secret = None
-    glance_access_token = None
-    if bool(getattr(args, "phone_glance", False)):
-        raw_secret = os.environ.get(PHONE_GLANCE_SECRET_ENV)
-        if not raw_secret:
-            print(
-                f"sidepulse serve: {PHONE_GLANCE_SECRET_ENV} is required "
-                "with --phone-glance",
-                file=sys.stderr,
-            )
-            return 2
-        glance_secret = raw_secret.encode("utf-8")
-        raw_glance_access_token = os.environ.get(PHONE_GLANCE_ACCESS_TOKEN_ENV)
-        if not raw_glance_access_token:
-            print(
-                f"sidepulse serve: {PHONE_GLANCE_ACCESS_TOKEN_ENV} is required "
-                "with --phone-glance",
-                file=sys.stderr,
-            )
-            return 2
-        glance_access_token = raw_glance_access_token.encode("utf-8")
     try:
         serve(
             port=int(getattr(args, "port", 8737)),
@@ -1092,48 +1003,9 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 raw_status_token.encode("utf-8") if raw_status_token else None
             ),
             allow_anonymous_status=allow_anonymous_status,
-            glance_secret=glance_secret,
-            glance_access_token=glance_access_token,
-            glance_source_id=str(
-                getattr(args, "phone_glance_source_id", "sidepulse")
-            ),
         )
     except ValueError:
-        print("sidepulse serve: invalid phone glance configuration", file=sys.stderr)
-        return 2
-    return 0
-
-
-def cmd_glance(args: argparse.Namespace) -> int:
-    from .glance_server import glance_serve, validate_bind_address
-
-    raw_secret = os.environ.get(PHONE_GLANCE_SECRET_ENV)
-    if not raw_secret:
-        print(
-            f"sidepulse glance: {PHONE_GLANCE_SECRET_ENV} is required",
-            file=sys.stderr,
-        )
-        return 2
-    raw_access_token = os.environ.get(PHONE_GLANCE_ACCESS_TOKEN_ENV)
-    if not raw_access_token:
-        print(
-            f"sidepulse glance: {PHONE_GLANCE_ACCESS_TOKEN_ENV} is required",
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        bind_address = validate_bind_address(str(args.bind_address))
-        glance_serve(
-            bind_address=bind_address,
-            port=int(args.port),
-            glance_secret=raw_secret.encode("utf-8"),
-            access_token=raw_access_token.encode("utf-8"),
-            glance_source_id=str(args.glance_source_id),
-            tls_cert=getattr(args, "tls_cert", None),
-            tls_key=getattr(args, "tls_key", None),
-        )
-    except (OSError, ValueError):
-        print("sidepulse glance: invalid private listener configuration", file=sys.stderr)
+        print("sidepulse serve: invalid serve configuration", file=sys.stderr)
         return 2
     return 0
 
