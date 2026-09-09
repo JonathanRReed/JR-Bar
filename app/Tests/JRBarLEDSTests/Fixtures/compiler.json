@@ -1,0 +1,375 @@
+[
+ {
+  "program": "0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat"
+ },
+ {
+  "program": "#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat"
+ },
+ {
+  "program": "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat"
+ },
+ {
+  "program": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat"
+ },
+ {
+  "program": "off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "off 160ms cosine\n#FF3A00 1600ms pulse\nrepeat"
+ },
+ {
+  "program": "off",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off"
+ },
+ {
+  "program": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms; 2:#00FF66 70ms none 90ms; 3:#00FF66 70ms none 135ms; 4:#00FF66 70ms none 180ms; 5:#00FF66 70ms none 225ms; 6:#00FF66 70ms none 270ms; 7:#00FF66 70ms none 315ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms; 2:#00FF66 70ms none 90ms; 3:#00FF66 70ms none 135ms; 4:#00FF66 70ms none 180ms; 5:#00FF66 70ms none 225ms; 6:#00FF66 70ms none 270ms; 7:#00FF66 70ms none 315ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
+ },
+ {
+  "program": "#FF3A00",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#FF3A00"
+ },
+ {
+  "program": "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat"
+ },
+ {
+  "program": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 480ms\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 480ms\nrepeat"
+ },
+ {
+  "program": "off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "off 160ms cosine\n#FF3A00 1600ms pulse\nrepeat"
+ },
+ {
+  "program": "off",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off"
+ },
+ {
+  "program": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
+ },
+ {
+  "program": "#FF3A00",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "#FF3A00"
+ },
+ {
+  "program": "off 160ms cosine\n#6E7278 1900ms cosine\noff 2550ms cosine",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 160ms cosine\n#6E7278 1900ms cosine\noff 2550ms cosine"
+ },
+ {
+  "program": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": false,
+  "reasons": [],
+  "output": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat"
+ },
+ {
+  "program": "brightness 140\n#FF3A00 1.6s none\noff 1.6s none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "brightness 140\n#FF3A00 1600ms none\noff 1600ms none\nrepeat"
+ },
+ {
+  "program": "#000000\n#FFFFFF 700ms linear\n#000000 700ms ease\n#FF8800 700ms ease-in\n#000000 700ms ease-out\n#00AAFF 700ms ease-in-out\n#000000 700ms cosine\n#FF00FF 900ms pulse\n#101010 400ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#000000 250ms\n#FFFFFF 700ms linear\n#000000 700ms ease\n#FF8800 700ms ease-in\n#000000 700ms ease-out\n#00AAFF 700ms ease-in-out\n#000000 700ms cosine\n#FF00FF 900ms pulse\n#101010 400ms none\nrepeat"
+ },
+ {
+  "program": "#ff0000\n#0000ff 1000ms 500ms\n#00ff00 pulse 1s\n#ffffff linear 250ms\n#000000 0.4s",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "#FF0000\n#0000FF 1s 500ms\n#00FF00 pulse 1s\n#FFFFFF linear 250ms\n#000000 400ms"
+ },
+ {
+  "program": "brightness 128\n# comment line\n// another\n; and another\n#ff0000 #00ff00 #0000ff #ffffff #000000 #808080 #ff00ff #00ffff #123456 #654321 500ms linear\n#00ff00 #0000ff 800ms cosine\nbrightness 200\noff 300ms ease-out\nrepeat 2\n#404040",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "brightness 128\n// comment line\n// another\n// and another\n#FF0000 #00FF00 #0000FF #FFFFFF #000000 #808080 #FF00FF #00FFFF #123456 #654321 500ms linear\n#00FF00 #0000FF 800ms cosine\nbrightness 200\noff 300ms ease-out\nrepeat 2\n#404040 250ms"
+ },
+ {
+  "program": "#202020\n0:#ff0000 150ms ease 0ms; 1:#ff8000 150ms ease 50ms; 2:#ffff00 150ms ease 100ms; 3:#00ff00 150ms ease 150ms\n4:#00ccff 150ms ease 0ms; 5:#004cff 150ms ease 50ms; 6:#8800ff 150ms ease 100ms; 7:#ff00cc 150ms ease 150ms\n3:#ffffff 80ms none\n0:#000000 400ms pulse; 0:#00ffff 900ms linear; 9:#ffffff 5s\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#202020 250ms\n0:#FF0000 150ms ease 0ms; 1:#FF8000 150ms ease 50ms; 2:#FFFF00 150ms ease 100ms; 3:#00FF00 150ms ease 150ms\n4:#00CCFF 150ms ease 0ms; 5:#004CFF 150ms ease 50ms; 6:#8800FF 150ms ease 100ms; 7:#FF00CC 150ms ease 150ms\n3:#FFFFFF 80ms none\n0:#000000 400ms pulse; 0:#00FFFF 900ms linear; 9:#FFFFFF 5s\nrepeat"
+ },
+ {
+  "program": "#ff0044 #ff8800 #ffff00 #00ff66 #00ccff #004cff #8800ff #ff00cc\nroll 2s linear\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FF0044 #FF8800 #FFFF00 #00FF66 #00CCFF #004CFF #8800FF #FF00CC 250ms\nroll-right 2s linear\nrepeat"
+ },
+ {
+  "program": "#ff0000 #00ff00 #0000ff #ffffff #000000 #808080 #ff00ff #00ffff\nroll-left 1.3s ease\nroll-right 900ms cosine\nroll 700ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FF0000 #00FF00 #0000FF #FFFFFF #000000 #808080 #FF00FF #00FFFF 500ms\nroll-left 1300ms ease\nroll-right 900ms cosine\nroll-right 700ms none\nrepeat"
+ },
+ {
+  "program": "off\n#ff0000 200ms none\n#00ff00 200ms none\nrepeat 3\n#0000ff 500ms cosine\n#ffffff 1s pulse\noff 250ms",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped",
+   "loop_cadence_clamped"
+  ],
+  "output": "off 500ms\n#FF0000 400ms none\n#00FF00 400ms none\nrepeat 3\n#0000FF 500ms cosine\n#FFFFFF 1s pulse\noff 250ms"
+ },
+ {
+  "program": "#ff0000\n#00ff00\n#0000ff 0ms linear\n#ffffff 0ms linear 100ms\n#101010 1ms linear\n#ff00ff 5ms\nroll 0ms\n#00ffff 300ms linear\n#404040 none 100ms",
+  "led_count": 8,
+  "accepted": false,
+  "transformed": true,
+  "reasons": [
+   "invalid_program"
+  ],
+  "output": "off"
+ },
+ {
+  "program": "#ff0000\n0:#00ff00 100ms; 5:#0000ff 1000ms\n#ffffff 400ms linear\n0:#ff00ff 1400ms pulse 0ms; 1:#ff00ff 1400ms pulse 480ms\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FF0000 500ms\n0:#00FF00 100ms; 5:#0000FF 1s\n#FFFFFF 400ms linear\n0:#FF00FF 1400ms pulse 0ms; 1:#FF00FF 1400ms pulse 480ms\nrepeat"
+ },
+ {
+  "program": "#ff0000 #00ff00 #0000ff\nroll 800ms linear\nroll-left 800ms ease-in\nrepeat",
+  "led_count": 2,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FF0000 #00FF00 #0000FF 500ms\nroll-right 800ms linear\nroll-left 800ms ease-in\nrepeat"
+ },
+ {
+  "program": "brightness 37\n#123456\n#fedcba 1000ms cosine\n#000000 1s ease-in-out\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "brightness 37\n#123456 250ms\n#FEDCBA 1s cosine\n#000000 1s ease-in-out\nrepeat"
+ },
+ {
+  "program": "OFF 100MS COSINE\r\n#FfAa00 1S PULSE\r\n0:#00FF00 250ms Ease-In 100ms; 1:#0000FF 0.5s EASE-OUT\r\nRepeat\r\n",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "off 100ms cosine\n#FFAA00 1s pulse\n0:#00FF00 250ms ease-in 100ms; 1:#0000FF 500ms ease-out\nrepeat"
+ },
+ {
+  "program": "#ff0000 50ms none\n#000000 50ms none\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FF0000 500ms none\n#000000 500ms none\nrepeat"
+ },
+ {
+  "program": "#ffffff 80ms none\n#000000\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped",
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 160ms none\n#000000 500ms\nrepeat"
+ },
+ {
+  "program": "#ff0000\n#000000\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped",
+   "loop_cadence_clamped"
+  ],
+  "output": "#FF0000 1s\n#000000 500ms\nrepeat"
+ },
+ {
+  "program": "0:#ffffff 90ms none\n2:#ff00ee 90ms none\n5:#00ccff 90ms none\noff 120ms ease-out\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "0:#FFFFFF 180ms none\n2:#FF00EE 180ms none\n5:#00CCFF 180ms none\noff 240ms ease-out\nrepeat"
+ },
+ {
+  "program": "#ff0000 #00ff00\nroll 100ms\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped",
+   "roll_cadence_clamped",
+   "loop_cadence_clamped"
+  ],
+  "output": "#FF0000 #00FF00 1s\nroll-right 500ms\nrepeat"
+ },
+ {
+  "program": "#e00000 100ms pulse\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#E00000 1s pulse\nrepeat"
+ },
+ {
+  "program": "#ffffff pulse\n#000000 ease\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FFFFFF 500ms pulse\n#000000 330ms ease\nrepeat"
+ },
+ {
+  "program": "#ffffff 200ms linear 100ms\n#000000 100ms\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "loop_cadence_clamped"
+  ],
+  "output": "#FFFFFF 400ms linear 200ms\n#000000 200ms\nrepeat"
+ },
+ {
+  "program": "#ffffff 1s\nrepeat 3\noff",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "phase_cadence_clamped"
+  ],
+  "output": "#FFFFFF 1s\nrepeat 3\noff 250ms"
+ },
+ {
+  "program": "#ffffff 1s\noff",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "#FFFFFF 1s\noff"
+ },
+ {
+  "program": "roll 100ms",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [
+   "roll_cadence_clamped"
+  ],
+  "output": "roll-right 250ms"
+ },
+ {
+  "program": "#ffffff 40s\n#000000 40s\nrepeat",
+  "led_count": 8,
+  "accepted": true,
+  "transformed": true,
+  "reasons": [],
+  "output": "#FFFFFF 40s\n#000000 40s\nrepeat"
+ }
+]
