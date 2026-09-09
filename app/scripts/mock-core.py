@@ -5,17 +5,24 @@ Speaks protocol 1 (docs/CORE-PROTOCOL.md) over a Unix socket: on connect it
 sends hello, a full state, lights and settings, then plays a scripted
 timeline so every panel section has something to show:
 
-  1. a Claude session starts working              (working relay on the lights)
-  2. a Codex permission ask opens                  (amber ask pulse, ask_opened)
-  3. the ask resolves (or you Approve/Deny it)     (ask_resolved)
-  4. Codex completes                               (completed, done light)
-  5. the SidePulse Pro disconnects                 (device_disconnected)
-  6. ...and reconnects                             (device_connected)
-  7. Claude completes, then everything goes idle   (idle breath)
+  0. a Claude session starts working              (working relay on the lights)
+  1. a Codex permission ask opens                  (amber ask pulse, ask_opened)
+  2. the ask escalates to stage 2                  (escalation_stage 2: menu-bar pulse)
+  3. ...and to stage 3                             (escalation_stage 3: chime)
+  4. the ask resolves (or you Approve/Deny it)     (ask_resolved)
+  5. Codex completes                               (completed, done light)
+  6. the SidePulse Pro disconnects                 (device_disconnected)
+  7. ...and reconnects                             (device_connected)
+  8. Gemini fails                                  (failed)
+  9. Claude completes, then everything goes idle   (idle breath)
 
-and loops. Usage numbers tick up every step. Commands are logged to stderr
-and answered with an ok reply; answer_ask, set_brightness, clear_completed,
-quiet and snooze also change the world so the UI round-trips.
+and loops. Usage numbers tick up every step (and cross the quota
+thresholds, `quota_crossed`; the idle step resets them, `quota_reset`).
+Every step is recorded in the history (`list_history`); rows seeded at
+startup are marked `unseen` so the History window's away banner shows.
+Commands are logged to stderr and answered with an ok reply; answer_ask,
+set_brightness, clear_completed / undo_clear, quiet and snooze also change
+the world so the UI round-trips.
 
 Standard library only.
 
@@ -347,6 +354,42 @@ class World:
                       "devin": "missing", "opencode": "stale", "openclaw": "missing", "antigravity": "missing",
                       "cursor": "ok", "hermes": "missing", "kiro": "missing"}
         self.previews: dict[str, float] = {}
+        self.history: list[dict] = []
+        self.clear_batches: dict[str, dict] = {}
+        self.batch_counter = 0
+        self.quota_crossed: dict[str, set] = {}
+        self.ask_opened_at: dict[str, float] = {}
+        self._seed_history(now)
+
+    def _seed_history(self, now: float) -> None:
+        """Yesterday and earlier today, seen; the newest three happened while
+        the Mac was asleep, so the History window opens on an away banner."""
+        day = 86400.0
+        rows = [
+            (now - day - 7200, "started", "claude", CLAUDE_ID, "jr-bar-b7", "Claude Desktop · ~/Downloads/JR-Bar", None, False),
+            (now - day - 5370, "completed", "claude", CLAUDE_ID, "jr-bar-b7", "Ported the LEDS sampler", 1830.0, False),
+            (now - day - 4000, "started", "gemini", GEMINI_ID, "docs-sweep", "Ghostty · ~/Projects/notes", None, False),
+            (now - day - 3600, "asked", "gemini", GEMINI_ID, "docs-sweep", "Overwrite README.md?", None, False),
+            (now - day - 3540, "answered", "gemini", GEMINI_ID, "docs-sweep", "Approved from the panel", 60.0, False),
+            (now - day - 2200, "failed", "codex", CODEX_ID, "sidepulse-core", "pytest: 3 failed", 420.0, False),
+            (now - day - 1800, "ended", "gemini", GEMINI_ID, "docs-sweep", "Session closed", None, False),
+            (now - 7200, "started", "codex", CODEX_ID, "sidepulse-core", "Terminal · ~/Downloads/JR-Bar/src", None, False),
+            (now - 2700, "completed", "codex", CODEX_ID, "sidepulse-core", "Wrote the hook installer", 4500.0, True),
+            (now - 1500, "asked", "claude", CLAUDE_ID, "jr-bar-b7", "Run: swift test", None, True),
+            (now - 900, "completed", "gemini", GEMINI_ID, "docs-sweep", "Swept 14 documents", 610.0, True),
+        ]
+        for at, kind, provider, sid, label, detail, duration, unseen in rows:
+            self.history.append({"at": at, "kind": kind, "provider": provider, "session": sid, "label": label,
+                                 "detail": detail, "duration": duration, "unseen": unseen})
+
+    def record(self, kind: str, provider: str | None, session: str | None, label: str | None,
+               detail: str | None = None, duration: float | None = None) -> None:
+        with self.lock:
+            unseen = not any(c.alive for c in self.clients)
+            self.history.append({"at": time.time(), "kind": kind, "provider": provider, "session": session,
+                                 "label": label, "detail": detail, "duration": duration, "unseen": unseen})
+            if len(self.history) > 2000:
+                del self.history[: len(self.history) - 2000]
 
     # -- construction helpers ------------------------------------------------
 
@@ -510,16 +553,39 @@ class World:
             ask = {"session": sid, "kind": kind, "opened_at": time.time(), "summary": summary}
             self.asks = [a for a in self.asks if a["session"] != sid] + [ask]
             self.sessions[sid]["ask"] = {"kind": kind, "opened_at": ask["opened_at"], "summary": summary}
+            self.ask_opened_at[sid] = ask["opened_at"]
             self.set_mode(sid, "waiting", "active", "user")
+            self.escalation = {"stage": "none", "since": None}
+        s = self.sessions[sid]
+        self.record("asked", s["provider"], sid, s["label"], summary)
 
-    def resolve_ask(self, sid: str, decision: str) -> bool:
+    def resolve_ask(self, sid: str, decision: str, source: str = "timeout") -> bool:
         with self.lock:
             had = any(a["session"] == sid for a in self.asks)
             self.asks = [a for a in self.asks if a["session"] != sid]
             if sid in self.sessions:
                 self.sessions[sid]["ask"] = None
                 self.set_mode(sid, "tool_running" if decision == "approve" else "thinking", "active", "provider")
-            return had
+            if not self.asks:
+                self.escalation = {"stage": "none", "since": None}
+            opened = self.ask_opened_at.pop(sid, None)
+        if had and sid in self.sessions:
+            s = self.sessions[sid]
+            self.record("answered", s["provider"], sid, s["label"], f"{decision.capitalize()} ({source})",
+                        (time.time() - opened) if opened else None)
+        return had
+
+    def escalate(self, stage: int) -> None:
+        """Move the open ask to `stage` (0 none, 1 ramp, 2 menu_bar, 3 final)."""
+        names = {0: "none", 1: "ramp", 2: "menu_bar", 3: "final"}
+        with self.lock:
+            if not self.asks:
+                return
+            self.escalation = {"stage": names[stage], "since": self.asks[0]["opened_at"]}
+            sid = self.asks[0]["session"]
+            label = self.sessions.get(sid, {}).get("label")
+        self.push_state()
+        self.push_event("escalation_stage", sid, label, stage=stage, sound=None)
 
     def light_for_world(self) -> str:
         with self.lock:
@@ -533,10 +599,13 @@ class World:
         return [
             ("claude_working", 1.5),
             ("codex_ask", 2.5),
+            ("codex_ask_stage2", 1.5),
+            ("codex_ask_stage3", 1.5),
             ("codex_ask_resolved", 1.0),
             ("codex_completed", 1.5),
             ("pro_disconnected", 1.0),
             ("pro_reconnected", 1.0),
+            ("gemini_failed", 1.0),
             ("claude_completed", 1.5),
             ("idle", 2.0),
         ]
@@ -547,6 +616,9 @@ class World:
             log("timeline: claude starts working")
             self.set_mode(CLAUDE_ID, "tool_running")
             self.set_mode(CLAUDE_WORKER_ID, "tool_running")
+            self.set_mode(CODEX_ID, "thinking")
+            self.record("started", "claude", CLAUDE_ID, "jr-bar-b7", "Claude Desktop · ~/Downloads/JR-Bar")
+            self.record("started", "codex", CODEX_ID, "sidepulse-core", "Terminal · ~/Downloads/JR-Bar/src")
             self.push_state()
             self.push_lights("working")
         elif name == "codex_ask":
@@ -554,20 +626,30 @@ class World:
             self.open_ask(CODEX_ID, "Run: rm -rf build")
             self.push_state()
             self.push_lights("ask")
-            self.push_event("ask_opened", CODEX_ID, "sidepulse-core", sound="tink")
+            self.push_event("ask_opened", CODEX_ID, "sidepulse-core", sound="funk", detail="Run: rm -rf build", provider="codex")
+        elif name == "codex_ask_stage2":
+            if self.asks:
+                log("timeline: codex ask escalates to stage 2 (menu bar)")
+                self.escalate(2)
+        elif name == "codex_ask_stage3":
+            if self.asks:
+                log("timeline: codex ask escalates to stage 3 (chime)")
+                self.escalate(3)
         elif name == "codex_ask_resolved":
             # Resolves on its own unless someone answered it already.
-            if self.resolve_ask(CODEX_ID, "approve"):
+            if self.resolve_ask(CODEX_ID, "approve", "timeout"):
                 log("timeline: codex ask times out as approved")
-                self.push_event("ask_resolved", CODEX_ID, "sidepulse-core")
+                self.push_event("ask_resolved", CODEX_ID, "sidepulse-core", provider="codex")
             self.push_state()
             self.push_lights(self.light_for_world())
         elif name == "codex_completed":
             log("timeline: codex completes")
             self.set_mode(CODEX_ID, "idle", "completed", "user")
+            self.record("completed", "codex", CODEX_ID, "sidepulse-core", "Rebuilt build/ and ran the suite",
+                        time.time() - self.sessions[CODEX_ID]["since"] + 1500)
             self.push_state()
             self.push_lights("done")
-            self.push_event("completed", CODEX_ID, "sidepulse-core", sound="glass")
+            self.push_event("completed", CODEX_ID, "sidepulse-core", sound="glass", provider="codex")
         elif name == "pro_disconnected":
             log("timeline: pro disconnects")
             with self.lock:
@@ -584,27 +666,51 @@ class World:
             self.push_state()
             self.push_lights(self.light_for_world())
             self.push_event("device_connected", None, "SidePulse")
+        elif name == "gemini_failed":
+            log("timeline: gemini fails")
+            self.set_mode(GEMINI_ID, "failed", "failed", "user")
+            self.record("failed", "gemini", GEMINI_ID, "docs-sweep", "Exit 1: rate limited", 95.0)
+            self.push_state()
+            self.push_event("failed", GEMINI_ID, "docs-sweep", sound="basso", provider="gemini", detail="Exit 1: rate limited")
         elif name == "claude_completed":
             log("timeline: claude completes")
             self.set_mode(CLAUDE_ID, "idle", "completed", "user")
             self.set_mode(CLAUDE_WORKER_ID, "idle", "completed", "user")
+            self.record("completed", "claude", CLAUDE_ID, "jr-bar-b7", "Events, history and the Why row",
+                        time.time() - self.sessions[CLAUDE_ID]["since"] + 3600)
             self.push_state()
             self.push_lights("done")
-            self.push_event("completed", CLAUDE_ID, "jr-bar-b7", sound="glass")
+            self.push_event("completed", CLAUDE_ID, "jr-bar-b7", sound="glass", provider="claude")
         elif name == "idle":
             log("timeline: idle")
             with self.lock:
                 for sid in (CLAUDE_ID, CODEX_ID, CLAUDE_WORKER_ID):
                     if self.sessions[sid]["lifecycle"] == "completed":
                         self.set_mode(sid, "idle", "active", "provider")
+                if self.sessions[GEMINI_ID]["lifecycle"] == "failed":
+                    self.set_mode(GEMINI_ID, "idle", "active", "user")
+                reset = [pid for pid, crossed in self.quota_crossed.items() if crossed]
+                for pid in reset:
+                    self.usage[pid]["h5"] = 12.0
+                    self.quota_crossed[pid] = set()
+            self.record("ended", "gemini", GEMINI_ID, "docs-sweep", "Session closed")
             self.push_state()
             self.push_lights("idle")
+            for pid in reset:
+                self.push_event("quota_reset", None, pid.capitalize(), provider=pid, detail="5h window reset")
 
     def run_timeline(self, stop: threading.Event, start_at: int = 0) -> None:
+        supervised = os.environ.get("JRBAR_SUPERVISED") == "1"
+
         def pause(mult: float = 1.0) -> bool:
             deadline = time.time() + self.step_seconds * mult
             while time.time() < deadline:
                 if stop.is_set():
+                    return False
+                if supervised and os.getppid() == 1:
+                    # The app that spawned us is gone: do not outlive it.
+                    log("supervisor vanished; exiting")
+                    stop.set()
                     return False
                 self.tick_usage(0.35 / max(self.step_seconds, 0.1))
                 stop.wait(0.5)
@@ -627,13 +733,23 @@ class World:
 
     def tick_usage(self, amount: float) -> None:
         changed = False
+        crossed: list[tuple[str, float]] = []
         with self.lock:
-            for u in self.usage.values():
+            thresholds = [float(t) for t in (self.document.get("quota_alert_thresholds") or [90.0, 95.0])]
+            for pid, u in self.usage.items():
+                before = u["h5"]
                 u["h5"] = min(99.0, u["h5"] + amount)
                 u["d7"] = min(99.0, u["d7"] + amount * 0.3)
                 changed = True
+                for threshold in thresholds:
+                    if before < threshold <= u["h5"] and threshold not in self.quota_crossed.setdefault(pid, set()):
+                        self.quota_crossed[pid].add(threshold)
+                        crossed.append((pid, threshold))
         if changed:
             self.push_state()
+        for pid, threshold in crossed:
+            self.push_event("quota_crossed", None, f"5h window at {int(threshold)}%", provider=pid,
+                            detail=f"crossed {int(threshold)}%", sound="pop")
 
     # -- commands -------------------------------------------------------------
 
@@ -645,7 +761,7 @@ class World:
         if name == "answer_ask":
             sid = args.get("session")
             decision = args.get("decision", "approve")
-            had = self.resolve_ask(sid, decision)
+            had = self.resolve_ask(sid, decision, "app")
             if had:
                 self.push_event("ask_resolved", sid, self.sessions.get(sid, {}).get("label"))
             self.push_state()
@@ -673,18 +789,50 @@ class World:
             self.broadcast(self.lights())
             result = {"value": self.brightness}
         elif name == "clear_completed":
+            scope = args.get("sessions", "all")
             with self.lock:
                 cleared = []
+                snapshot = {}
                 for s in self.sessions.values():
-                    if s["lifecycle"] == "completed":
+                    if s["lifecycle"] == "completed" and (scope == "all" or s["id"] in (scope or [])):
+                        snapshot[s["id"]] = {k: s[k] for k in ("lifecycle", "mode", "next_actor", "since")}
                         s["lifecycle"] = "active"
                         s["mode"] = "idle"
                         s["next_actor"] = "provider"
                         s["since"] = time.time()
                         cleared.append(s["id"])
+                self.batch_counter += 1
+                batch = f"b-{self.batch_counter}"
+                self.clear_batches[batch] = {"at": time.time(), "sessions": snapshot}
             self.push_state()
             self.push_lights(self.light_for_world())
-            result = {"batch": "b-1", "cleared": cleared}
+            self.push_log("info", f"cleared {len(cleared)} completed ({batch})")
+            result = {"batch": batch, "cleared": cleared}
+        elif name == "undo_clear":
+            batch = str(args.get("batch", ""))
+            with self.lock:
+                entry = self.clear_batches.pop(batch, None)
+                if entry is None or time.time() - entry["at"] > 300:
+                    return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                            "error": {"code": "expired" if entry else "not_found",
+                                      "message": "that batch can no longer be undone" if entry else "no such batch"}}
+                restored = []
+                for sid, snap in entry["sessions"].items():
+                    if sid in self.sessions:
+                        self.sessions[sid].update(snap)
+                        self.sessions[sid]["updated_at"] = time.time()
+                        restored.append(sid)
+            self.push_state()
+            self.push_lights(self.light_for_world())
+            self.push_log("info", f"undid clear {batch}: {len(restored)} restored")
+            result = {"batch": batch, "restored": restored}
+        elif name == "list_history":
+            limit = int(args.get("limit") or 500)
+            since = args.get("since")
+            with self.lock:
+                rows = [dict(r) for r in self.history if since is None or r["at"] >= float(since)]
+            rows.sort(key=lambda r: r["at"], reverse=True)
+            result = {"rows": rows[:limit], "total": len(rows)}
         elif name == "quiet":
             with self.lock:
                 seconds = float(args.get("seconds", 1800))
@@ -871,8 +1019,9 @@ def main() -> int:
     parser.add_argument("--once", action="store_true", help="send hello/state/lights/settings to the first client, then exit")
     parser.add_argument("--no-loop", action="store_true", help="play the timeline once instead of looping")
     parser.add_argument("--start-at", type=int, default=0, metavar="N",
-                        help="begin the timeline at step N (0 claude working, 1 codex ask, 2 ask resolved, "
-                             "3 codex completed, 4 pro disconnected, 5 pro reconnected, 6 claude completed, 7 idle)")
+                        help="begin the timeline at step N (0 claude working, 1 codex ask, 2 ask stage 2, "
+                             "3 ask stage 3, 4 ask resolved, 5 codex completed, 6 pro disconnected, "
+                             "7 pro reconnected, 8 gemini failed, 9 claude completed, 10 idle)")
     parser.add_argument("--mode", default="0600", help="socket file mode (octal)")
     args = parser.parse_args()
 
@@ -897,6 +1046,7 @@ def main() -> int:
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(path))
     os.chmod(path, int(args.mode, 8))
+    own_inode = os.stat(path).st_ino
     server.listen(8)
     server.settimeout(0.25)
     log(f"listening on {path}{' (once)' if args.once else ''}; step {args.step}s")
@@ -926,7 +1076,10 @@ def main() -> int:
         stop.set()
         server.close()
         try:
-            path.unlink()
+            # Only remove the socket if it is still ours (a newer daemon may
+            # have replaced a stale file while we were being stopped).
+            if os.stat(path).st_ino == own_inode:
+                path.unlink()
         except OSError:
             pass
         log("stopped")

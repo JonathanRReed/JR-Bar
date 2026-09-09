@@ -10,6 +10,8 @@ struct ScreenBarFocus: Equatable {
     var word: String
     /// The session a click opens; nil when nothing should be raised.
     var clickSession: String?
+    /// "Why this light", as a second line.
+    var explanation: String? = nil
 }
 
 /// Hover and click for a click-through band. The panel keeps
@@ -250,7 +252,7 @@ struct ScreenBarTooltipView: View {
     @Bindable var model: ScreenBarTooltipModel
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .center, spacing: 6) {
             if let style = model.focus.style {
                 ProviderTile(style: style, size: 16)
             } else {
@@ -258,14 +260,24 @@ struct ScreenBarTooltipView: View {
                     .renderingMode(.template)
                     .foregroundStyle(.secondary)
             }
-            Text(model.focus.label)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
-            Text("·").foregroundStyle(.tertiary)
-            Text(model.focus.word)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(model.focus.label)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(model.focus.word)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                if let explanation = model.focus.explanation {
+                    Text(explanation)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
         }
         .padding(.leading, 7)
         .padding(.trailing, 10)

@@ -15,10 +15,12 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | --- | --- |
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
 | `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, presentation-safety compiler. No AppKit. |
-| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`. Foundation only. |
-| `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings window, file-feed fallback. |
+| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the history model, and the child-process supervisor. Foundation only. |
+| `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer. |
+| `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings and History windows, notifications, sounds, HUD, file-feed fallback. |
 | `Tests/JRBarLEDSTests/` | Swift Testing suites plus the firmware fixtures they check against. |
-| `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, and mock-daemon integration tests. |
+| `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, the explanation table, the event policy, history filtering, supervisor restart/backoff, and mock-daemon integration tests. |
+| `Tests/JRBarUITests/` | The icon renderer: every style draws, styles differ, warning colours, caching. |
 | `scripts/gen_leds_fixtures.py` | Regenerates the fixtures from the Python/firmware reference. |
 | `scripts/mock-core.py` | A stdlib-only mock `jrbar-core` that plays a scripted timeline over the socket. |
 | `scripts/build-app.sh` | `swift build -c release`, assembles and signs `build/JR-Bar.app`. |
@@ -32,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 37 tests / 7 suites; the parity test fans out over 29 programs
+swift test                  # 64 tests / 12 suites; the parity test fans out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # restart the built app
 ```
@@ -64,11 +66,25 @@ python3 scripts/mock-core.py --step 1   # faster; --start-at 1 begins at the Cod
 JRBAR_OPEN_PANEL=1 ./scripts/run-dev.sh # opens the panel 1.2 s after launch
 ```
 
+Or let the app launch and supervise the mock as its child (what the bundled
+`Contents/Helpers/jrbar-core` will get):
+
+```sh
+JRBAR_CORE_EXEC="python3 $PWD/scripts/mock-core.py --step 2.5" ./build/JR-Bar.app/Contents/MacOS/JR-Bar
+```
+
 Developer switches (environment variables read at launch):
 
 * `JRBAR_CORE_SOCKET=/path/core.sock` overrides the daemon socket path
   (default `$XDG_STATE_HOME/jrbar/core.sock`, i.e. `~/.local/state/jrbar/core.sock`).
-* `JRBAR_OPEN_PANEL=1` opens the panel shortly after launch (screenshots).
+* `JRBAR_CORE_EXEC="cmd args"` makes the app spawn the daemon as a child
+  process and keep it alive (see Core supervision below). Unset, it only
+  connects to whatever listens on the socket.
+* `JRBAR_OPEN_PANEL=1` opens the panel shortly after launch (screenshots);
+  `JRBAR_OPEN_PANEL=why` also hovers the "Why this light" row so its popover
+  shows. `JRBAR_OPEN_HISTORY=1` opens the History window.
+* `JRBAR_RENDER_ICONS=/dir` writes the menu-bar icon styles as 8× PNGs
+  (glyph, working tint, ring at 42 / 85 / 97 %, label) for design review.
 * `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on `general`, `agents`,
   `usage`, `devices`, `lighting`, `notifications`, `remote`, `advanced` or
   `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
@@ -175,13 +191,56 @@ compiler ports reproduce exactly.
   `resetSettings`, `installHooks` / `uninstallHooks`, `previewProgram`,
   `applyCalibration`, `doctor`, and a bounded `logTail` of `log` messages.
 
+* `EventPolicy`: the pure table from a `CoreEvent` plus the state and
+  settings document to an `EventDelivery` (sound name and repeat count,
+  notification title/body/category, HUD toast, status pulse, chime
+  start/stop). `completed` → Glass plus a banner when
+  `completion_notification_enabled`; `ask_opened` → Funk × `alert_burst`
+  plus an Approve/Deny banner, skipped for sub-agents unless
+  `subagent_asks_alert`; `failed`, `quota_crossed`, `quota_reset` →
+  banners; `escalation_stage` (capped by `escalation_tier`: light 1,
+  menu_bar 2, chime/takeover 3) → stage 2 pulses the icon, stage 3 starts a
+  30 s chime; `ask_resolved` withdraws the ask banner and stops both when
+  no ask is left; device and peer events → a toast. `focus.mode` `dim` /
+  `dark` / `pause` silence sounds (banners stay), `pause` also blocks the
+  chime; `notify: false` from the daemon is final.
+* `LightExplainer`: `lights.surfaces.*.why` → a `LightExplanation` (motion
+  word, reason, the session it is about, detail lines). Known whys have
+  hand-written lines ("Amber pulse: Codex sidepulse-core is waiting on you
+  (permission, 45 s)", "Green sweep: docs-sweep finished 12 s ago", "Dim
+  ember: Quiet hours until 07:00"); unknown ones get a motion word derived
+  from the surface's `motion` and `static_fallback` colour ("Purple sweep")
+  and "Core says …". Details: each surface (LEDs, motion, colour,
+  brightness, anchor age), linked, global brightness, idle dim, quiet hours,
+  focus.
+* `CoreHistoryRow` / `HistoryFilter` / `HistoryGrouping` / `AwaySummary`:
+  `list_history` rows, the provider/kind/text filter, day grouping (Today,
+  Yesterday, weekday + date), and the "While you were away: 2 finished, 1
+  needed you" banner built from the unseen run at the newest end.
+  `CoreModel.listHistory`, `clearCompleted` (keeps the reply's `batch`),
+  `undoClear` (`undo_clear` inside the 300 s window), `appendLocalLog`.
+* `CoreSupervisor`: runs the daemon as a child `Process` with stdout/stderr
+  captured line by line, restarts it on the protocol's backoff (0.5 s, 1 s,
+  2 s, 4 s, then 5 s), gives up after 10 exits in 2 minutes (`.crashed`)
+  until `restart()`, and `stop()` sends SIGTERM then SIGKILL after the
+  grace period. The child gets `JRBAR_SUPERVISED=1` and
+  `JRBAR_SUPERVISOR_PID` so it can exit if the app dies without unwinding.
+
 `scripts/mock-core.py` is the daemon stand-in: hello/state/lights/settings
 on connect, then a looping timeline (Claude starts working, a Codex
-permission ask opens and resolves, Codex completes, the Pro disconnects and
-reconnects, Claude completes, idle) with usage ticking up, working relay and
+permission ask opens, escalates to stage 2 then 3, and resolves, Codex
+completes, the Pro disconnects and reconnects, Gemini fails, Claude
+completes, idle) with usage ticking up across the `quota_alert_thresholds`
+(`quota_crossed`, and `quota_reset` at the idle step), working relay and
 amber ask pulse programs on the lights surfaces with fresh anchors, a `log`
 line per step, and `ok` replies to every command (answer_ask,
-set_brightness, clear_completed and quiet also change the world). Its
+set_brightness, clear_completed / undo_clear and quiet also change the
+world). Every step is recorded for `list_history` (rows `{at, kind,
+provider, session, label, detail, duration, unseen}`; kinds started /
+completed / asked / answered / failed / ended); rows recorded with no client
+connected, and a seeded batch from yesterday and earlier today, are
+`unseen: true`. `clear_completed` replies with a `batch` that `undo_clear`
+restores for 300 s. When supervised it exits once its parent is gone. Its
 settings document is seeded from the real Python defaults
 (`default_settings_document()`); `set_setting` writes by dot path and
 echoes a new `settings` (an index past the end of an array is refused with
@@ -199,7 +258,30 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
   `~/.local/state/sidepulse/agent-monitor/latest.json` (either the `agents`
   summary counts or the raw `works` list). Left click toggles the panel;
   right click or Option-click shows a utility menu (state, core status,
-  lights source, Open Panel, "Show Screen Bar" toggle (persisted), Quit).
+  lights source, Open Panel, History…, "Show Screen Bar" toggle (persisted),
+  Settings…, Quit). `menu_bar_icon_style` picks the look
+  (`StatusIconRenderer` in `JRBarUI`, 18×18 pt, cached per spec, redrawn
+  only when the spec changes): `glyph`; `glyph_ring`, the glyph inside a
+  thin ring showing the primary provider's 5 h window (the first of
+  `usage_graph_providers` that reports usage), amber from 80 %, red from
+  95 % (a non-template image then, so the ring keeps its colour); and
+  `glyph_label`, the glyph beside "1 ask · 2 working" as the button's
+  title. Stage-2 escalation pulses the icon amber (a layer opacity
+  animation; Reduce Motion holds amber) until the ask resolves; the state's
+  `escalation.stage` is the source of truth so a launch mid-escalation
+  catches up.
+* Events → the Mac (`EventCoordinator`, decisions from `EventPolicy`):
+  sounds through `AVAudioPlayer` on the system AIFFs (Glass, Funk, Basso,
+  Pop, Hero for the chime), so a muted alert channel does not silence
+  them; notifications through `UNUserNotificationCenter`
+  (`NotificationBridge`), permission requested the first time a banner is
+  due and never at launch, an `ask` category with Approve / Deny actions
+  that send `answer_ask`, a click on any banner sends `open_session`, the
+  ask banner withdrawn on `ask_resolved`; device and peer events show a
+  2 s glass pill under the notch (`NotchHUD`). Every delivery is written to
+  the log tail ("event ask_opened · sidepulse-core → Funk×3, banner").
+  Unbundled (`swift run`) there is no bundle identifier, so banners become
+  log lines.
 * The panel (`PanelController`, `PanelStore`, `PanelView`): a borderless
   non-activating `NSPanel` at `.popUpMenu` level, 360 pt wide, anchored under
   the status item and clamped to the screen, hosting SwiftUI inside an
@@ -217,10 +299,32 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
   `official`, reset countdowns, pace hint), Devices (Pro / Dot / Screen Bar
   chips; the Screen Bar chip toggles the band; a brightness slider sends
   `set_brightness` for `all`, throttled while dragging), and a footer
-  (Clear completed → `clear_completed all`, Quiet… → `quiet` for 30 min /
-  1 h / 4 h / 12 h, Settings… (stub), Quit). Empty states: "No agents right
-  now" when live and quiet; "Core is starting" / "Core not connected" with
-  the file-feed summary when not.
+  (Clear done → `clear_completed all`, Quiet… → `quiet` for 30 min /
+  1 h / 4 h / 12 h, History (⌘Y), a gear for Settings…, Quit). Empty
+  states: "No agents right now" when live and quiet; "Core is starting" /
+  "Core not connected" with the file-feed summary when not. With a
+  supervised core that gave up, the header shows "Core crashed 10× in
+  2 min" with a Restart button and a red dot.
+* "Why this light": the last row of the Sessions section is the
+  `LightExplanation` headline ("Amber pulse: Codex sidepulse-core is
+  waiting on you (permission, 45 s)"). Hovering it for 0.35 s opens a
+  detail popover (a glass child window that never becomes key, so the
+  panel keeps the keyboard) with the hardware / Screen Bar / Dot programs
+  and the settings that shape brightness; it follows the row when rows
+  above come and go. Clicking it opens the session the light is about. The
+  Screen Bar tooltip carries the same headline as its second line.
+* History (`HistoryWindowController`, `HistoryStore`, `HistoryView`): a
+  titled 680×520 window (⌘Y from the panel, the footer's History item, the
+  status menu, or the app menu) listing `list_history` rows grouped by day
+  with pinned day headers, a filter bar (search field, scrolling provider
+  chips with tiles and kind chips), an away banner on top when the newest
+  rows are `unseen` ("While you were away: 2 finished, 1 needed you", with
+  Open latest), rows with a clock column, provider tile, label, kind badge,
+  detail, a monospaced duration column and hairline separators; clicking a
+  row sends `open_session`. Toolbar: Clear completed (`clear_completed`),
+  Undo (`undo_clear` for the last batch, shown with the time left in the
+  5-minute window), Refresh. Rows refresh on every event and every 30 s
+  while the window is open.
 * Motion (`PanelMotion`): three springs only. `unfold` (the window fades in
   and rises 6 pt), `contents` (rows insert, remove and reorder), `crossfade`
   (a word or number changes in place). The working mark breathes, the ask
@@ -305,20 +409,36 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
   Settings… and the status menu's Settings… (⌘,) open it; a minimal main
   menu gives the text fields ⌘C/⌘V/⌘A.
 
+* Core supervision (`CoreSupervisor` in `JRBarCore`): with
+  `JRBAR_CORE_EXEC` set the app spawns that command as a child, captures
+  its stdout/stderr into the log tail (Advanced → log), retries the socket
+  as soon as the child is running, restarts it with backoff when it exits,
+  and after 10 exits in 2 minutes shows "Core crashed" in the panel header
+  with a Restart button (the status menu's Core line says the same). Quit
+  (including `pkill JR-Bar`: SIGTERM is turned into an orderly
+  `NSApp.terminate`) sends the child SIGTERM and SIGKILL after 3 s. Unset,
+  today's behaviour: connect to whatever is listening.
+
 ## Stubbed or deliberately deferred
 
-* The app does not launch the daemon as a child process yet (there is no
-  daemon to launch); it connects to whatever listens on the socket and
-  keeps the file feeds as the fallback until then.
+* There is no bundled `Contents/Helpers/jrbar-core` yet: `JRBAR_CORE_EXEC`
+  is the only way to supervise a core (the mock stands in). The file feeds
+  remain the fallback while nothing is connected.
+* Notifications need the user to allow them the first time one is due
+  (the system prompt). `quota_crossed` / `quota_reset` banners are on
+  unless `quota_alerts_enabled` is false. Nothing is done for
+  `peer_arrived` / `peer_departed` beyond the toast. Escalation stage 3 is
+  a repeating chime (Hero, every 30 s); the `takeover` tier gets the same
+  chime, no full-screen takeover.
 * Settings: Software Update is a stub button plus an app-local channel
   choice (no updater). The Effects page is an empty state; Effect Studio
-  (`apply_effect`) is a later slice. `menu_bar_icon_style` is written but
-  the status item still draws the glyph only. Launch at login registers
-  with `SMAppService`, which only works from a bundled, signed app.
-  `reset_settings` is an app-proposed command the mock answers; the real
-  daemon has to adopt it (or the app falls back to nothing: the button
-  reports the refusal). `subscribe` and `list_history` are not surfaced.
-* Events play a sound and are logged; no banners, confetti or notifications.
+  (`apply_effect`) is a later slice. Launch at login registers with
+  `SMAppService`, which only works from a bundled, signed app.
+  `reset_settings` and `undo_clear`'s `batch` shape are app-proposed
+  details the mock answers; the real daemon has to adopt them. `subscribe`
+  is not surfaced.
+* History rows are whatever `list_history` returns; the app does not
+  persist its own copy, so nothing is shown while the core is away.
 * The aggregate fallback is a simple reduction of `latest.json` (needs input >
   failed > working > done-within-90 s > idle); the Python attention model with
   its signals, quotas and presentation hints is not ported. Live, the

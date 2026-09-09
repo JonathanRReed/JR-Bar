@@ -188,14 +188,24 @@ struct PanelHeader: View {
                 .contentTransition(.opacity)
                 .id("word-\(store.headerWord)")
                 .transition(.opacity)
-            Text(store.headerCounts)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .contentTransition(.numericText())
+            if store.coreCrashed {
+                Text(store.coreCrashDetail)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.red)
+                    .lineLimit(1)
+                Button("Restart") { store.restartCore() }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .help("Launch the core again")
+            } else {
+                Text(store.headerCounts)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .contentTransition(.numericText())
+            }
             Spacer(minLength: 8)
-            ConnectionDot(state: store.connectionDot, reduced: store.reduceMotion)
+            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion)
                 .help(store.connectionDescription)
         }
         .padding(.horizontal, 14)
@@ -203,6 +213,7 @@ struct PanelHeader: View {
         .padding(.bottom, 10)
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: store.headerWord)
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: store.headerCounts)
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: store.coreCrashed)
     }
 }
 
@@ -216,6 +227,7 @@ struct ConnectionDot: View {
         case .live: return .green
         case .connecting: return .orange
         case .fileFeeds: return Color.secondary.opacity(0.5)
+        case .crashed: return .red
         }
     }
 
@@ -226,7 +238,7 @@ struct ConnectionDot: View {
             .opacity(state == .connecting && !reduced ? (phase ? 1 : 0.3) : 1)
             .onAppear { pulse() }
             .onChange(of: state) { pulse() }
-            .accessibilityLabel(state == .live ? "Core connected" : (state == .connecting ? "Connecting to core" : "Using file feeds"))
+            .accessibilityLabel(state == .live ? "Core connected" : (state == .connecting ? "Connecting to core" : (state == .crashed ? "Core crashed" : "Using file feeds")))
     }
 
     private func pulse() {
@@ -264,8 +276,85 @@ struct SessionsSection: View {
                 .frame(maxHeight: PanelView.sessionsMaxHeight)
                 .fixedSize(horizontal: false, vertical: true)
             }
+            if let explanation = store.lightExplanation {
+                WhyLightRow(explanation: explanation, store: store)
+                    .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
+            }
         }
         .padding(.bottom, 4)
+        .animation(PanelMotion.contents(reduced: store.reduceMotion), value: store.lightExplanation == nil)
+    }
+}
+
+/// "Why this light": one line under the sessions explaining what the strip
+/// and the Screen Bar are doing; hover for the programs and the settings.
+struct WhyLightRow: View {
+    let explanation: LightExplanation
+    @Bindable var store: PanelStore
+    @ViewState private var hovering = false
+    @ViewState private var frame: CGRect = .zero
+    @ViewState private var pending: DispatchWorkItem?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
+            Image(systemName: "light.max")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(hovering ? .secondary : .tertiary)
+                .frame(width: 12)
+            HStack(spacing: 0) {
+                Text("\(explanation.motion): ")
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .fixedSize()
+                Text(explanation.reason)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .font(.system(size: 11.5))
+            .id(explanation.headline)
+            .transition(.opacity)
+            Spacer(minLength: 4)
+            if explanation.session != nil {
+                Image(systemName: "arrow.up.forward")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .opacity(hovering ? 1 : 0)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(hovering ? 0.05 : 0)))
+        .padding(.horizontal, 6)
+        .padding(.top, 3)
+        .contentShape(Rectangle())
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newFrame in
+            frame = newFrame
+            store.whyRowFrame = newFrame
+            // Rows above may have come or gone: keep the popover under the row.
+            if hovering, pending == nil { store.whyHover(true, frame: newFrame) }
+        }
+        .onChange(of: explanation.headline) {
+            if hovering, pending == nil { store.whyHover(true, frame: frame) }
+        }
+        .onHover { inside in
+            hovering = inside
+            pending?.cancel()
+            if inside {
+                let work = DispatchWorkItem { MainActor.assumeIsolated { pending = nil; if hovering { store.whyHover(true, frame: frame) } } }
+                pending = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+            } else {
+                pending = nil
+                store.whyHover(false, frame: frame)
+            }
+        }
+        .onDisappear { pending?.cancel(); store.whyHover(false, frame: frame) }
+        .onTapGesture { store.openExplainedSession() }
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: explanation.headline)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Why this light: \(explanation.headline)")
+        .help("Why this light · hover for the programs and brightness settings")
     }
 }
 
@@ -644,7 +733,8 @@ struct PanelFooter: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            FooterButton(title: "Clear completed", dimmed: store.completedCount == 0) { store.clearCompleted() }
+            FooterButton(title: "Clear done", dimmed: store.completedCount == 0) { store.clearCompleted() }
+                .help("Acknowledge finished sessions (undo within 5 minutes from History)")
             Menu {
                 Button("30 minutes") { store.quiet(minutes: 30) }
                 Button("1 hour") { store.quiet(minutes: 60) }
@@ -658,7 +748,14 @@ struct PanelFooter: View {
             .menuIndicator(.hidden)
             .fixedSize()
             Spacer()
-            FooterButton(title: "Settings…", dimmed: false) { store.openSettings() }
+            FooterButton(title: "History", dimmed: !store.isLive, shortcut: "⌘Y") { store.openHistory() }
+                .help("Activity history")
+            Button { store.openSettings() } label: {
+                Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(FooterButtonStyle(dimmed: false))
+            .help("Settings… (⌘,)")
+            .accessibilityLabel("Settings")
             FooterButton(title: "Quit", dimmed: false, shortcut: "⌘Q") { store.quit() }
         }
         .padding(.horizontal, 8)
@@ -680,6 +777,8 @@ struct FooterButton: View {
                     Text(shortcut).font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
             }
+            .lineLimit(1)
+            .fixedSize()
         }
         .buttonStyle(FooterButtonStyle(dimmed: dimmed))
     }

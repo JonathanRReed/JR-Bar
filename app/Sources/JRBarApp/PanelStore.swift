@@ -82,6 +82,7 @@ final class PanelStore {
         case live
         case connecting
         case fileFeeds
+        case crashed
     }
 
     let core: CoreModel
@@ -108,7 +109,18 @@ final class PanelStore {
     var onQuit: (@MainActor () -> Void)?
     var onClose: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor () -> Void)?
+    var onOpenHistory: (@MainActor () -> Void)?
+    var onRestartCore: (@MainActor () -> Void)?
     var onContentSizeChange: (@MainActor (CGSize) -> Void)?
+    /// The "Why this light" row is hovered (with its frame in the hosting
+    /// view's coordinates) or not; the controller shows the detail popover.
+    var onWhyHover: (@MainActor (Bool, CGRect) -> Void)?
+
+    /// The child daemon's state when the app supervises it; nil when it
+    /// only connects to whatever is listening.
+    var supervisorState: CoreSupervisor.State?
+    /// The "Why this light" row's frame in the hosting view (for the popover).
+    var whyRowFrame: CGRect = .zero
 
     @ObservationIgnored private var clock: Timer?
     @ObservationIgnored private var brightnessFlush: DispatchWorkItem?
@@ -151,6 +163,17 @@ final class PanelStore {
 
     var isLive: Bool { core.isLive }
 
+    /// The supervised core gave up restarting; the header offers Restart.
+    var coreCrashed: Bool {
+        if case .crashed = supervisorState { return true }
+        return false
+    }
+
+    var coreCrashDetail: String {
+        if case .crashed(let failures) = supervisorState { return "Core crashed \(failures)× in 2 min" }
+        return "Core crashed"
+    }
+
     var connectionDot: ConnectionDot {
         if core.isLive { return .live }
         if case .connecting = core.connection { return .connecting }
@@ -166,6 +189,10 @@ final class PanelStore {
     }
 
     var connectionDescription: String {
+        if case .backingOff(let failures, let delay) = supervisorState {
+            return "Core exited (\(failures)×); restarting in \(String(format: "%.1f", delay)) s"
+        }
+        if coreCrashed { return "\(coreCrashDetail). Restart it from the header." }
         switch core.connection {
         case .connected where core.state != nil:
             let version = core.hello?.coreVersion ?? "?"
@@ -237,15 +264,34 @@ final class PanelStore {
         let clickable = rows.first { $0.ask != nil } ?? rows.first { $0.activity == .working }
         if let pick {
             let word = pick.ask != nil ? "Needs you" : pick.activity.word
-            return ScreenBarFocus(style: pick.style, label: pick.label, word: word, clickSession: clickable?.id)
+            return ScreenBarFocus(style: pick.style, label: pick.label, word: word, clickSession: clickable?.id, explanation: lightExplanation?.headline)
         }
         let word = core.isLive ? aggregate.label : (fallbackState == .idle ? "Idle" : fallbackState.label)
-        return ScreenBarFocus(style: nil, label: "JR-Bar", word: word, clickSession: nil)
+        return ScreenBarFocus(style: nil, label: "JR-Bar", word: word, clickSession: nil, explanation: lightExplanation?.headline)
     }
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
     var completedCount: Int { rows.filter { $0.activity == .done }.count }
+
+    // MARK: Derived: why this light
+
+    /// "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)".
+    var lightExplanation: LightExplanation? {
+        guard core.isLive else { return nil }
+        let settings = core.settings.map { SettingsDocument($0.document) }
+        return LightExplainer.explain(lights: core.lights, state: core.state, settings: settings, now: now)
+    }
+
+    func whyHover(_ hovering: Bool, frame: CGRect) {
+        onWhyHover?(hovering, frame)
+    }
+
+    func openExplainedSession() {
+        guard let session = lightExplanation?.session else { return }
+        core.openSession(session)
+        onClose?()
+    }
 
     // MARK: Derived: usage and devices
 
@@ -320,6 +366,16 @@ final class PanelStore {
     func openSettings() {
         onClose?()
         onOpenSettings?()
+    }
+
+    func openHistory() {
+        onClose?()
+        onOpenHistory?()
+    }
+
+    func restartCore() {
+        onRestartCore?()
+        show(toast: "Restarting the core…")
     }
 
     func quit() { onQuit?() }
