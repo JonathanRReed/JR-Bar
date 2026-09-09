@@ -65,6 +65,7 @@ from sidepulse.device_writer import (
     write_led_program,
 )
 from sidepulse.hook import format_hook_payload, routed_hook_payload
+from sidepulse.providers import CODEX_EVENTS
 from sidepulse.install import (
     hook_command,
     install_claude_hooks,
@@ -2775,18 +2776,7 @@ for (const event of [
             config = base / "config.toml"
             log = base / "codex.jsonl"
             current_command = f"fixture hook_entry.py --provider codex --log {log}"
-            events = (
-                "SessionStart",
-                "UserPromptSubmit",
-                "PreToolUse",
-                "PostToolUse",
-                "PermissionRequest",
-                "PreCompact",
-                "PostCompact",
-                "SubagentStart",
-                "SubagentStop",
-                "Stop",
-            )
+            events = CODEX_EVENTS
             lines = [
                 "[features]",
                 "hooks = true",
@@ -2802,8 +2792,9 @@ for (const event of [
                         f"[[hooks.{event}.hooks]]",
                         'type = "command"',
                         f"command = '''{current_command}'''",
-                        "",
                     ]
+                    + (["timeout = 3"] if event in {"SessionEnd", "Interrupt"} else [])
+                    + [""]
                 )
             lines.extend(
                 [
@@ -2820,7 +2811,10 @@ for (const event of [
             config.write_text("\n".join(lines))
             original = config.read_bytes()
 
-            with patch("sidepulse.install.hook_command", return_value=current_command):
+            with (
+                patch("sidepulse.install.hook_command", return_value=current_command),
+                patch("sidepulse.install.local_codex_hook_hashes", return_value={}),
+            ):
                 result = install_codex_hooks(log_path=log, config_path=config)
 
             self.assertFalse(result.changed)
@@ -2834,18 +2828,7 @@ for (const event of [
             config = base / "config.toml"
             log = base / "codex.jsonl"
             current_command = f"fixture hook_entry.py --provider codex --log {log}"
-            events = (
-                "SessionStart",
-                "UserPromptSubmit",
-                "PreToolUse",
-                "PostToolUse",
-                "PermissionRequest",
-                "PreCompact",
-                "PostCompact",
-                "SubagentStart",
-                "SubagentStop",
-                "Stop",
-            )
+            events = CODEX_EVENTS
             lines = [
                 "[features]",
                 "hooks = true",
@@ -2861,8 +2844,9 @@ for (const event of [
                         f"[[hooks.{event}.hooks]]",
                         'type = "command"',
                         f"command = '''{current_command}'''",
-                        "",
                     ]
+                    + (["timeout = 3"] if event in {"SessionEnd", "Interrupt"} else [])
+                    + [""]
                 )
             lines.extend(
                 [
@@ -2914,7 +2898,7 @@ for (const event of [
             key = f"{config}:pre_tool_use:0:0"
             config.write_text("[features]\nhooks = true\n")
 
-            with patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True):
+            with patch("sidepulse.install.should_refresh_codex_hook_trust", return_value=True), patch("sidepulse.install.local_codex_hook_hashes", return_value={}):
                 with patch(
                     "sidepulse.install.resolve_codex_hook_hashes",
                     return_value={key: "sha256:new-current-hash"},

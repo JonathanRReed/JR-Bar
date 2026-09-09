@@ -394,6 +394,7 @@ def test_no_codex_binary_is_not_the_same_as_nothing_to_trust() -> None:
     with patch("sidepulse.install.codex_cli_path", return_value=None):
         missing = resolve_codex_hook_trust(Path("/tmp/config.toml"))
     with (
+        patch("sidepulse.install.local_codex_hook_hashes", return_value={}),
         patch("sidepulse.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
         patch("sidepulse.install.resolve_codex_hook_hashes", return_value={}),
     ):
