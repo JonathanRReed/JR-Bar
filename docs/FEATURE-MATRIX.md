@@ -111,7 +111,7 @@ gate has passed for that exact commit.
 | Cross-Mac usage sync: HMAC-SHA256-signed JSON over SSH (not encrypted; transport privacy comes from SSH), bounded replay window, totals render in the Usage Center | Shipped (0.4.0) | Off |
 | Memory-only steady-state Usage Center, menu, and settings-summary projection; settings, Keychain, and cached sync documents refresh on the provider worker | Shipped (Unreleased) | Automatic |
 | Loopback cloud-agent ingest | Shipped | Off |
-| `sidepulse serve` - schema-v2 redacted agent aggregates and provider quota summaries on loopback (Stream Deck, Waybar, scripts) | Shipped | Manual |
+| `sidepulse serve` - schema-v2 redacted agent aggregates and provider quota summaries on loopback (Stream Deck, scripts) | Shipped | Manual |
 | Calendar and Reminders glows | Shipped | Off |
 | Severe weather | Shipped | Off |
 | T3 Code local-state compatibility (query-only SQLite projection, no mutation, no credentials) | Shipped, opt-in | Off |

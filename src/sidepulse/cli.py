@@ -103,7 +103,7 @@ def build_sidepulse_parser() -> argparse.ArgumentParser:
     doctor.set_defaults(func=cmd_doctor)
     serve_parser = subparsers.add_parser(
         "serve",
-        help="Serve redacted agent + quota state on loopback (Stream Deck, Waybar, scripts).",
+        help="Serve redacted agent + quota state on loopback (Stream Deck, scripts).",
     )
     add_serve_arguments(serve_parser)
     serve_parser.set_defaults(func=cmd_serve)
@@ -678,7 +678,7 @@ def build_parser(prog: str = "agent-monitor") -> argparse.ArgumentParser:
 
     monitor_serve = subparsers.add_parser(
         "serve",
-        help="Serve redacted agent + quota state on loopback (Stream Deck, Waybar, scripts).",
+        help="Serve redacted agent + quota state on loopback (Stream Deck, scripts).",
     )
     add_serve_arguments(monitor_serve)
     monitor_serve.set_defaults(func=cmd_serve)

@@ -1,11 +1,9 @@
-import importlib.metadata
 import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-import tomllib
 
 from scripts import (
     generate_release_manifest,
@@ -13,7 +11,6 @@ from scripts import (
     scan_secrets,
     validate_release_version,
 )
-from sidepulse.waybar_client import main
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -244,44 +241,3 @@ def test_release_gate_generates_and_publisher_requires_evidence_artifacts() -> N
     assert "--format updater-path" in publish
     assert "--format appcast-path" in publish
     assert "--format channel-metadata-path" in publish
-
-
-def test_wheel_metadata_exposes_and_loads_the_sidepulse_waybar_entry_point(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(ROOT)
-    metadata_dir = tmp_path / "metadata"
-    metadata_dir.mkdir()
-
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    scripts = project["project"]["scripts"]
-    assert scripts["sidepulse-waybar"] == "sidepulse.waybar_client:main"
-
-    dist_info = metadata_dir / f'{project["project"]["name"]}-{project["project"]["version"]}.dist-info'
-    dist_info.mkdir()
-    (dist_info / "METADATA").write_text(
-        f'Metadata-Version: 2.1\nName: {project["project"]["name"]}\nVersion: {project["project"]["version"]}\n',
-        encoding="utf-8",
-    )
-    (dist_info / "entry_points.txt").write_text(
-        "[console_scripts]\nsidepulse-waybar = sidepulse.waybar_client:main\n",
-        encoding="utf-8",
-    )
-
-    distribution = next(
-        dist
-        for dist in importlib.metadata.distributions(path=[str(metadata_dir)])
-        if dist.metadata["Name"] == "sidepulse"
-    )
-    entry_point = next(
-        entry_point
-        for entry_point in distribution.entry_points
-        if entry_point.group == "console_scripts"
-        and entry_point.name == "sidepulse-waybar"
-    )
-
-    loaded = entry_point.load()
-    assert entry_point.value == "sidepulse.waybar_client:main"
-    assert loaded is main
-    assert callable(loaded)
