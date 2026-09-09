@@ -4,6 +4,8 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Remove the operator history/diagnostics JSON export (`operator_export`, the
+  Local Export card and its two buttons). Operator history itself stays.
 - Remove the timebox/timer: the Timer menu, presets, Focus-handshake
   Shortcuts, the "Working timer fill" device display and its
   `timer_fill_program`, the timebox webhook event and chime, and the

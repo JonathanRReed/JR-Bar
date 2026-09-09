@@ -49,7 +49,6 @@ try:
         NSOnState,
         NSPopover,
         NSPopoverBehaviorTransient,
-        NSSavePanel,
         NSScreen,
         NSScrollView,
         NSSlider,
@@ -504,14 +503,6 @@ from .signal_selection import (
     select_active_led_display_kind,
 )
 from .operator_accessibility import status_item_accessibility, status_item_title
-from .operator_export import (
-    MAX_DEBUG_EXPORT_BYTES,
-    MAX_HISTORY_EXPORT_BYTES,
-    DebugExportV1,
-    HistoryExportV1,
-    encode_debug_export,
-    encode_history_export,
-)
 from .operator_history import (
     HistoryEventKind,
     OperatorHistoryProjection,
@@ -561,7 +552,6 @@ from .presentation_scheduler import (
     PresentationSchedulerState,
     plan_presentation_schedule,
 )
-from .private_export import write_private_export
 from .private_io import atomic_private_write
 from .provider_capacity import negotiate_provider_capacity_policies
 from .provider_contracts import NegotiatedProviderContract, ProviderIdentifier
@@ -11927,91 +11917,6 @@ class StatusBarController(NSObject):
 
         NSAnimationContext.runAnimationGroup_completionHandler_(_animate, None)
 
-    @objc.IBAction
-    def exportOperatorHistory_(self, _sender) -> None:
-        path = choose_operator_export_path("history")
-        if path is None:
-            return
-        try:
-            payload = encode_history_export(
-                HistoryExportV1(
-                    time.time(),
-                    self.settings.operator_history_retention_days,
-                    self.operator_history_store.state.rows,
-                )
-            )
-            write_private_export(
-                path,
-                payload,
-                max_bytes=MAX_HISTORY_EXPORT_BYTES,
-            )
-        except Exception:
-            self._set_operator_history_status("Export could not be saved.")
-            return
-        self._set_operator_history_status("History export saved as a local file.")
-
-    def _operator_debug_export(self) -> DebugExportV1:
-        try:
-            from importlib.metadata import version as package_version
-
-            app_version = package_version("sidepulse")
-        except Exception:
-            app_version = "dev"
-        health_counts: dict[str, int] = {}
-        state = self.current_operator_state
-        if type(state) is CanonicalOperatorState:
-            freshness_to_health = {
-                SourceFreshness.FRESH: "healthy",
-                SourceFreshness.RESTORED: "healthy",
-                SourceFreshness.PARTIAL: "partial",
-                SourceFreshness.TIMING_UNCERTAIN: "partial",
-                SourceFreshness.STALE: "partial",
-                SourceFreshness.UNAVAILABLE: "unavailable",
-            }
-            by_source = {
-                work.key.source_key: work.source_freshness for work in state.works
-            }
-            for freshness in by_source.values():
-                label = freshness_to_health[freshness]
-                health_counts[label] = health_counts.get(label, 0) + 1
-        device_counts = (
-            (("write_failed", len(self.device_errors)),)
-            if self.device_errors
-            else ()
-        )
-        history_health = (
-            "disabled"
-            if self.settings.operator_history_retention_days == 0
-            else self.operator_history_restore_health.value
-        )
-        return DebugExportV1(
-            time.time(),
-            app_version,
-            "unknown" if running_inside_bundle() else "source_checkout",
-            tuple(sorted(health_counts.items())),
-            device_counts,
-            history_health,
-        )
-
-    @objc.IBAction
-    def exportOperatorDiagnostics_(self, _sender) -> None:
-        path = choose_operator_export_path("diagnostics")
-        if path is None:
-            return
-        try:
-            payload = encode_debug_export(self._operator_debug_export())
-            write_private_export(
-                path,
-                payload,
-                max_bytes=MAX_DEBUG_EXPORT_BYTES,
-            )
-        except Exception:
-            self._set_operator_history_status("Export could not be saved.")
-            return
-        self._set_operator_history_status(
-            "Diagnostics export saved as a local file."
-        )
-
     def update_hooks(self, provider: str, *, install: bool) -> None:
         """Installer runs on a worker thread: the Codex trust refresh
         spawns `codex app-server` and can wait ~8s per round-trip --
@@ -18100,26 +18005,6 @@ def build_why_panel_window(target: StatusBarController) -> NSWindow:
     )
 
 
-
-
-def choose_operator_export_path(kind: str) -> Path | None:
-    if kind not in {"history", "diagnostics"}:
-        return None
-    panel = NSSavePanel.savePanel()
-    if kind == "history":
-        panel.setTitle_(f"Export {PRODUCT_DISPLAY_NAME} History")
-        panel.setNameFieldStringValue_("sidepulse-history.json")
-    else:
-        panel.setTitle_(f"Export {PRODUCT_DISPLAY_NAME} Diagnostics")
-        panel.setNameFieldStringValue_("sidepulse-diagnostics.json")
-    if hasattr(panel, "setAllowedFileTypes_"):
-        panel.setAllowedFileTypes_(["json"])
-    if panel.runModal() != 1:
-        return None
-    url = panel.URL()
-    if url is None:
-        return None
-    return Path(str(url.path()))
 
 
 # --- Settings window: sidebar + detail pane ---------------------------
