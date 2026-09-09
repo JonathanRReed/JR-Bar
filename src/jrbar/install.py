@@ -66,6 +66,7 @@ from .providers import (
     is_legacy_log_path,
     legacy_kiro_agent_config_path,
     legacy_openclaw_hook_dir,
+    legacy_opencode_plugin_is_ours,
     legacy_opencode_plugin_path,
     managed_opencode_plugin_log_path,
     openclaw_handler_source_for_arguments,
@@ -1328,7 +1329,7 @@ def _remove_managed_opencode_plugin(plugin: Path, *, dry_run: bool) -> bool:
     if read_result is None:
         return False
     current, expected_identity = read_result
-    if managed_opencode_plugin_log_path(current) is None:
+    if managed_opencode_plugin_log_path(current) is None and not legacy_opencode_plugin_is_ours(current):
         return False
     if dry_run:
         return True

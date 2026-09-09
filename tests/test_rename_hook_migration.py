@@ -307,3 +307,25 @@ def test_a_pre_rename_openclaw_handler_is_recognised_as_ours(tmp_path: Path) -> 
     detected = providers.detect_openclaw_config(tmp_path)
     assert detected.hooks_enabled
     assert detected.log_paths == (old_log,)
+
+
+def test_an_older_generation_pre_rename_plugin_is_still_removed(tmp_path: Path) -> None:
+    """Removal must not depend on the body matching the last pre-rename template."""
+    plugins = tmp_path / ".config" / "opencode" / "plugins"
+    plugins.mkdir(parents=True)
+    old_log = tmp_path / OLD_STATE / "opencode.jsonl"
+    arguments = [sys.executable, "-m", "sidepulse.hook_entry", "--provider", "opencode", "--log", str(old_log)]
+    legacy_source = providers.legacy_opencode_plugin_source_for_arguments(arguments)
+    older_body = legacy_source.replace("async function forwardOne", "function forward") + "// older generation\n"
+    assert providers.managed_opencode_plugin_log_path(older_body) is None
+    assert providers.legacy_opencode_plugin_is_ours(older_body)
+    (plugins / "sidepulse.js").write_text(older_body)
+
+    foreign = older_body.replace(sys.executable, "/usr/bin/env", 1)
+    assert not providers.legacy_opencode_plugin_is_ours(foreign)
+
+    install.install_opencode_plugin(
+        tmp_path / "state" / "opencode.jsonl", plugin_path=plugins / "jrbar.js", python_executable=sys.executable
+    )
+
+    assert not (plugins / "sidepulse.js").exists()

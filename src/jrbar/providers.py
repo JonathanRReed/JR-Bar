@@ -1819,6 +1819,28 @@ is_sidepulse_hook_command = is_jrbar_hook_command
 is_sidepulse_devin_command = is_jrbar_devin_command
 
 
+def legacy_opencode_plugin_is_ours(text: str) -> bool:
+    """Ownership test for a plugin under the pre-rename file name.
+
+    Older installs may carry an earlier generation of the plugin body, so an
+    exact source comparison is too strict for *removal*. The pre-rename
+    marker line followed by our exact argument vector (a trusted executable
+    resolving to this interpreter, our module, ``--provider opencode``) is
+    evidence enough that JR-Bar wrote the file; nothing else writes that.
+    """
+    marker = f"// {LEGACY_OPENCODE_PLUGIN_MARKER}\nconst SIDEPULSE_HOOK_ARGS = Object.freeze("
+    if not text.startswith(marker):
+        return False
+    end = text.find(");\n", len(marker))
+    if end < 0:
+        return False
+    try:
+        arguments = json.loads(text[len(marker):end])
+    except json.JSONDecodeError:
+        return False
+    return _valid_opencode_hook_arguments(arguments) is not None
+
+
 def legacy_opencode_plugin_source_for_arguments(arguments) -> str:
     """The OpenCode plugin exactly as the pre-rename installer wrote it.
 

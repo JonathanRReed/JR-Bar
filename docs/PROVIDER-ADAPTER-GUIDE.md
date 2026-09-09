@@ -1,6 +1,6 @@
 # Provider adapter authoring guide
 
-This guide describes how to add or extend a first-party provider source in JR-Bar. It is intentionally aligned with the current Python contracts, rather than with a hypothetical plugin API. A provider adapter is a bounded translation layer from a provider's native observation surface into content-free SidePulse facts. It is not a plugin loader, credential owner, network client, or mutation API.
+This guide describes how to add or extend a first-party provider source in JR-Bar. It is intentionally aligned with the current Python contracts, rather than with a hypothetical plugin API. A provider adapter is a bounded translation layer from a provider's native observation surface into content-free JR-Bar facts. It is not a plugin loader, credential owner, network client, or mutation API.
 
 ## The contract boundary
 
@@ -89,7 +89,7 @@ External integrations have a different boundary. `src/jrbar/integration_compatib
 ## Safe extension workflow
 
 1. Inventory the native provider contract and choose the smallest source and capability. Record whether evidence is direct observation, discovery, or fallback.
-2. Add a `ProviderSpec` with the provider's real config path and native event names. In the generic detector, an unreadable existing config degrades to `exists=True, hooks_enabled=False`. OpenCode is an intentional exception: its detector accepts only a readable, regular, non-symlink SidePulse-managed plugin within the private read limit; a missing or unreadable plugin is reported as not installed (`exists=False, hooks_enabled=False`) so an unverified plugin is never treated as active.
+2. Add a `ProviderSpec` with the provider's real config path and native event names. In the generic detector, an unreadable existing config degrades to `exists=True, hooks_enabled=False`. OpenCode is an intentional exception: its detector accepts only a readable, regular, non-symlink JR-Bar-managed plugin within the private read limit; a missing or unreadable plugin is reported as not installed (`exists=False, hooks_enabled=False`) so an unverified plugin is never treated as active.
 3. Add a reviewed `ProviderSourceRegistration` using typed identifiers and only capabilities whose semantics are real. Add the provider to `_FIRST_PARTY_ADAPTERS` and any product mapping only when the product behavior is supported.
 4. Add event aliases and `_PROVIDER_EVENT_RULES`. Normalize to facts through the two adapter functions. Keep the adapter pure after ingress.
 5. Add synthetic, owned fixtures and negative cases for identity mismatch, unknown event, missing IDs, unsupported capability, malformed time, and credential-like data.

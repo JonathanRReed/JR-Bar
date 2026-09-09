@@ -290,7 +290,7 @@ def test_exact_versioned_json_document_round_trips_without_content_fields() -> N
     "mutate",
     (
         lambda document: document.update(extra=True),
-        lambda document: document.update(version=2),
+        lambda document: document.update(version=GLANCE_LIGHT_DOCUMENT_VERSION + 1),
         lambda document: document.update(schema="other"),
         lambda document: document["notifications"][0].update(extra=True),
         lambda document: document["notifications"][0].update(kind="prompt"),
@@ -338,3 +338,23 @@ def test_invalid_planner_inputs_fail_closed_to_a_dark_plan() -> None:
         assert plan.selected_notification_id is None
         assert plan.notification_count == 0
         assert all(not surface.active for surface in plan.surface_plans)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        # Documents written before the JR-Bar rename carry the old schema
+        # string and version 1; both still restore.
+        lambda document: document.update(schema="sidepulse.glance-light"),
+        lambda document: document.update(version=1),
+        lambda document: document.update(schema="sidepulse.glance-light", version=1),
+    ),
+)
+def test_restore_accepts_pre_rename_documents(mutate) -> None:
+    state = GlanceLightState((_notification("gl:valid", GlanceKind.INFORMATIONAL),))
+    encoded = serialize_glance_light_document(state)
+    assert encoded is not None
+    document = json.loads(encoded)
+    mutate(document)
+
+    assert restore_glance_light_document(json.dumps(document)) == state
