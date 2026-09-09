@@ -875,8 +875,8 @@ def quota_runway_program(
 ) -> str:
     """Remaining quota headroom as a static left-anchored fill -- the
     honest shape for a slow-moving number (no trickle, no motion). Same
-    indexed-fill body as timer_fill_program including the invariant that
-    unlit segments are #000000, never `off` (firmware parse law)."""
+    indexed-fill body keeps the invariant that unlit segments are
+    #000000, never `off` (firmware parse law)."""
     fraction_left = max(0.0, min(1.0, float(fraction_left)))
     filled = fraction_left * max(1, led_count)
     stripped = color.lstrip("#")
@@ -892,59 +892,6 @@ def quota_runway_program(
         )
         segments.append(f"{index}:{lit} 60000ms linear")
     return "\n".join(["; ".join(segments), "repeat"])
-
-
-def timer_fill_program(
-    fraction: float,
-    *,
-    led_count: int = 8,
-    brightness: float = 255,
-    color: str = "#00E5FF",
-) -> str:
-    """LED fill from the left as elapsed working time crosses the
-    user's expected window -- deliberately a TIMER, never a claim about
-    task progress (hooks deliver no truthful progress fraction). The
-    partially-elapsed LED scales its own brightness for a smooth edge;
-    static program, rewritten by the ordinary sync cadence."""
-    fraction = max(0.0, min(1.0, float(fraction)))
-    filled = fraction * max(1, led_count)
-    stripped = color.lstrip("#")
-    red, green, blue = (int(stripped[i : i + 2], 16) for i in (0, 2, 4))
-    segments = []
-    frontier = min(led_count - 1, int(filled)) if filled > 0 else 0
-    for index in range(led_count):
-        amount = max(0.0, min(1.0, filled - index))
-        if amount <= 0.0:
-            # "#000000", never "off": the firmware's indexed-segment
-            # parser rejects `N:off` (bad-index) and a failed parse
-            # renders the solid-red error state.
-            segments.append(f"{index}:#000000")
-        else:
-            scaled = "#" + "".join(
-                f"{round(channel * amount):02X}" for channel in (red, green, blue)
-            )
-            segments.append(f"{index}:{scaled}")
-    body = "; ".join(segments)
-    if 0.0 < fraction < 1.0:
-        # The plink: the frontier LED breathes -- a grain landing --
-        # and faint grains trickle across the unfilled section toward
-        # it, so a slow timer reads as alive, not frozen.
-        lines = [body, f"{frontier}:{color} 1200ms pulse"]
-        unfilled = [index for index in range(led_count) if index > frontier]
-        if unfilled:
-            dim = "#" + "".join(
-                f"{round(channel * 0.28):02X}" for channel in (red, green, blue)
-            )
-            span = max(1, len(unfilled))
-            trickle = "; ".join(
-                f"{index}:{dim} 260ms pulse "
-                f"{min(65535, round((len(unfilled) - 1 - position) * 2400 / span))}ms"
-                for position, index in enumerate(unfilled)
-            )
-            lines.append(trickle)
-        lines.append("repeat")
-        body = "\n".join(lines)
-    return apply_brightness(body, brightness)
 
 
 def style_to_program(

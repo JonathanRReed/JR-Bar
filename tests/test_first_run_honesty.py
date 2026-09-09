@@ -525,8 +525,6 @@ class IntakeMenuTests(unittest.TestCase):
                 settings=AgentMonitorSettings(),
                 closed_lid_awake=SimpleNamespace(last_error=None),
                 status_bar_devices=lambda remember=True: [],
-                timer_fill_fraction=lambda: 0.0,
-                timebox_active=lambda: False,
                 current_intake_report=current,
             )
             return status_bar.menu_content_signature(

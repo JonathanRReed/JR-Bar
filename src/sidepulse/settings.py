@@ -244,7 +244,6 @@ _OWNED_COLLECTION_PATHS = frozenset(
         "focus_signal_policy",
         "focus_dim_rules",
         "session_open_preferences",
-        "timebox_shortcuts",
         "global_action_shortcuts",
     }
 )

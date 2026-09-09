@@ -33,7 +33,6 @@ class RuntimeFeature(str, Enum):
     DISPLAY_ENVIRONMENT = "display_environment"
     CALENDAR_OBSERVATION = "calendar_observation"
     REMINDERS_OBSERVATION = "reminders_observation"
-    TIMEBOX_DEADLINE = "timebox_deadline"
     ESCALATION_DEADLINE = "escalation_deadline"
     CAPACITY_DEADLINE = "capacity_deadline"
     EVENT_COALESCE_DEADLINE = "event_coalesce_deadline"

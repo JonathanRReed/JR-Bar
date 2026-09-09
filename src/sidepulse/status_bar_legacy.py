@@ -436,7 +436,6 @@ from .led_status import (
     quota_runway_program,
     scale_hex_brightness,
     style_to_program,
-    timer_fill_program,
     write_mode_to_leds,
 )
 from .led_wasm import LedWasmUnavailableError, SdLedWasmController
@@ -647,7 +646,6 @@ from .settings import (
     LED_DISPLAY_CHOICES,
     LED_DISPLAY_QUOTA_RUNWAY,
     LED_DISPLAY_STUDIO,
-    LED_DISPLAY_TIMER,
     LID_ANIMATION_CLOSED,
     LID_ANIMATION_CLOSED_ACTIVE,
     LID_ANIMATION_OPEN,
@@ -1376,7 +1374,6 @@ PRESENTATION_TIMER_BINDINGS: tuple = (
     (RuntimeFeature.SETUP_DEMO, "_setup_demo_fired"),
     (RuntimeFeature.SETTINGS_MESSAGE_DEADLINE, "_settings_message_deadline_fired"),
     (RuntimeFeature.TEST_SIGNAL_DEADLINE, "_finite_ui_deadline_fired"),
-    (RuntimeFeature.TIMEBOX_DEADLINE, "_timebox_deadline_fired"),
     (RuntimeFeature.ESCALATION_DEADLINE, "_escalation_deadline_fired"),
 )
 
@@ -1449,9 +1446,6 @@ SIGNAL_DISPLAY_KINDS = frozenset({LED_DISPLAY_FAILURE})
 # when the toggle is on. Red full, green -13%, blue -30% -- warm enough
 # to notice, subtle enough that status colors stay unambiguous.
 NIGHT_WARMTH_GAINS = (1.0, 0.87, 0.70)
-# Story #10: the timebox presets offered in the dropdown -- also the
-# rows of the Focus-handshake card, so the two stay in lockstep.
-TIMEBOX_PRESET_MINUTES = (15, 25, 45, 60)
 # ioreg is a subprocess fork on the main thread and refresh_ runs on
 # every hook event; power-state changes may lag by up to this TTL.
 BATTERY_SNAPSHOT_CACHE_SECONDS = 5.0
@@ -2099,10 +2093,6 @@ class StatusBarController(NSObject):
         self.studio_save_name_field = None
         self.test_signal_key = None
         self.test_signal_until = 0.0
-        self.timebox_ends_at = None
-        self.timebox_overtime_since = None
-        self.timebox_total_seconds = 0.0
-        self.timer_minutes_field = None
         self.tip_anchor_views = {}
         self.transcript_fallback_signature = None
         self.working_since = None
@@ -2141,7 +2131,6 @@ class StatusBarController(NSObject):
         self._reminders_observation_fire_at = None
         self._scheduled_reminders_cue_deadline = None
         self._scheduled_settings_message_deadline = None
-        self._scheduled_timebox_deadline = None
         self._scheduled_escalation_deadline = None
         self._runtime_preview_fire_at: dict[RuntimeFeature, float] = {}
         self._settings_message_deadline_at = 0.0
@@ -2166,7 +2155,6 @@ class StatusBarController(NSObject):
         self._setup_no_hooks_warned = False
         self._signal_card_rendered = None
         self._studio_validation_cache = None
-        self._timebox_off_shortcut = None
         self._trailing_refresh_timer = None
         self._capacity_source_generations = {}
         self._usage_provider_states = {
@@ -5568,23 +5556,6 @@ class StatusBarController(NSObject):
         self.refresh_(None)
 
     @objc.IBAction
-    def applyTimeboxShortcuts_(self, _sender):
-        settings = self.settings
-        for preset_minutes in TIMEBOX_PRESET_MINUTES:
-            on_field = self.settings_fields.get(f"timebox_on_field:{preset_minutes}")
-            off_field = self.settings_fields.get(f"timebox_off_field:{preset_minutes}")
-            if on_field is None or off_field is None:
-                continue
-            settings = settings.with_timebox_shortcut(
-                str(preset_minutes),
-                str(on_field.stringValue()),
-                str(off_field.stringValue()),
-            )
-        self.settings = settings
-        save_settings(self.settings)
-        self.set_settings_message("Timebox Focus handshake saved.")
-
-    @objc.IBAction
     def setFocusSignalPolicy_(self, sender):
         identifier = str(sender.identifier() or "")
         if not identifier:
@@ -6578,21 +6549,6 @@ class StatusBarController(NSObject):
         self._reconcile_current_presentation_inputs()
         self.set_settings_message(
             f"Testing the {key.replace('_', ' ')} signal on every surface…"
-        )
-
-    @objc.IBAction
-    def applyTimerMinutes_(self, sender):
-        try:
-            minutes = float(str(sender.stringValue()).strip())
-        except ValueError:
-            sender.setStringValue_(f"{self.settings.timer_expected_minutes:g}")
-            return
-        self.settings = self.settings.with_timer_expected_minutes(minutes)
-        save_settings(self.settings)
-        sender.setStringValue_(f"{self.settings.timer_expected_minutes:g}")
-        self.refresh_(None)
-        self.set_settings_message(
-            f"Timer fill completes after {self.settings.timer_expected_minutes:g} minutes."
         )
 
     @objc.IBAction
@@ -8680,119 +8636,6 @@ class StatusBarController(NSObject):
             self._clear_agents_commit_plan = None
         self.refresh_(None)
 
-    def timebox_overtime(self) -> bool:
-        return getattr(self, "timebox_overtime_since", None) is not None
-
-    def timebox_overtime_minutes(self) -> int:
-        since = getattr(self, "timebox_overtime_since", None)
-        if since is None:
-            return 0
-        return int((time.monotonic() - since) // 60)
-
-    def timer_display_program(self, brightness: float, led_count: int) -> str:
-        """The Timer display's three faces: the working-color fill, an
-        AMBER final minute, and the post-zero overtime ember deepening
-        toward red the longer you run over -- blowing through your own
-        deadline is visible, not a silent nothing."""
-        if self.timebox_overtime():
-            depth = min(1.0, (time.monotonic() - self.timebox_overtime_since) / 600.0)
-            green = round(159 * (1.0 - depth * 0.82))
-            blue = round(10 * (1.0 - depth))
-            ember = f"#FF{green:02X}{blue:02X}"
-            dim = scale_hex_brightness(ember, 0.25)
-            return apply_brightness(
-                f"{ember} 1400ms pulse\n{dim} 1800ms cosine\nrepeat", brightness
-            )
-        remaining = (
-            max(0.0, self.timebox_ends_at - time.monotonic())
-            if getattr(self, "timebox_ends_at", None) is not None
-            else None
-        )
-        color = self.settings.colors.mode_colors.get("working", "#00E5FF")
-        if remaining is not None and remaining < 60.0:
-            color = "#FFB340"
-        return timer_fill_program(
-            self.timer_fill_fraction(),
-            led_count=led_count,
-            brightness=brightness,
-            color=color,
-        )
-
-    def timebox_active(self) -> bool:
-        ends_at = getattr(self, "timebox_ends_at", None)
-        return ends_at is not None and time.monotonic() < ends_at
-
-    def timer_fill_fraction(self) -> float:
-        # An active timebox owns the fill: it DRAINS toward zero (a
-        # countdown reads as remaining time, not elapsed).
-        if self.timebox_active():
-            total = max(1.0, getattr(self, "timebox_total_seconds", 0.0))
-            remaining = max(0.0, self.timebox_ends_at - time.monotonic())
-            return min(1.0, remaining / total)
-        if getattr(self, "working_since", None) is None:
-            return 0.0
-        expected_seconds = self.settings.timer_expected_minutes * 60.0
-        if expected_seconds <= 0.0:
-            return 1.0
-        return min(1.0, (time.monotonic() - self.working_since) / expected_seconds)
-
-    def run_shortcut_named(self, name: str) -> None:
-        """`shortcuts run <name>` on a daemon thread (story #10) -- the
-        CLI can block on the one-time per-shortcut permission toast, so
-        it must never ride the main thread. Failures log quietly and
-        never retry."""
-
-        def _run() -> None:
-            try:
-                result = subprocess.run(
-                    [str(trusted_system_tool("shortcuts")), "run", name],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if result.returncode != 0:
-                    log_status_bar(f"shortcut '{name}' exited {result.returncode}")
-            except Exception as exc:
-                log_status_bar(f"shortcut '{name}' failed: {exc}")
-
-        threading.Thread(target=_run, daemon=True).start()
-
-    def fire_timebox_off_shortcut(self) -> None:
-        """Pop-and-fire: the end-of-timebox Shortcut runs exactly once
-        whether the drain hit zero or the user pressed Stop first."""
-        name = getattr(self, "_timebox_off_shortcut", None)
-        self._timebox_off_shortcut = None
-        if name:
-            self.run_shortcut_named(name)
-
-    @objc.IBAction
-    def startTimebox_(self, sender):
-        minutes = float(sender.representedObject() or 25)
-        self.timebox_total_seconds = minutes * 60.0
-        self.timebox_ends_at = time.monotonic() + self.timebox_total_seconds
-        # Story #10 (Focus handshake): a mapped preset flips its Focus
-        # on now and off when the drain ends -- one click, whole ritual.
-        on_name, off_name = self.settings.timebox_shortcut_pair(str(int(minutes)))
-        self._timebox_off_shortcut = off_name or None
-        if on_name:
-            self.run_shortcut_named(on_name)
-        self.reconcile_lid_observation()
-        self.refresh_(None)
-        message = f"Timebox: {minutes:g} minutes on the bar."
-        if on_name:
-            message += f" Running \u201c{on_name}\u201d."
-        self.set_settings_message(message)
-
-    @objc.IBAction
-    def stopTimebox_(self, _sender):
-        self.timebox_overtime_since = None
-        self.timebox_ends_at = None
-        self.timebox_total_seconds = 0.0
-        self.fire_timebox_off_shortcut()
-        self.reconcile_lid_observation()
-        self.refresh_(None)
-        self.set_settings_message("Timebox stopped.")
-
     def current_escalation_stage(self) -> int:
         elapsed = (
             time.monotonic() - self.ask_blocked_since
@@ -8948,7 +8791,6 @@ class StatusBarController(NSObject):
             return None
         return {
             "sidepulse.completion": signals_module.SIGNAL_COMPLETION,
-            "sidepulse.timebox_finished": signals_module.INTERRUPT_TIMEBOX,
             "sidepulse.escalation": signals_module.INTERRUPT_ESCALATION,
         }.get(payload_dict.get("event"))
 
@@ -11880,9 +11722,6 @@ class StatusBarController(NSObject):
                 if str(item.representedObject() or "") == self.settings.screen_bar_bracket_style:
                     bracket_popup.selectItem_(item)
                     break
-        timer_field = getattr(self, "timer_minutes_field", None)
-        if timer_field is not None:
-            set_field_value(timer_field, f"{self.settings.timer_expected_minutes:g}")
         tier_popup = self.settings_fields.get("escalation_tier_popup")
         if tier_popup is not None:
             for index in range(tier_popup.numberOfItems()):
@@ -12340,7 +12179,6 @@ class StatusBarController(NSObject):
         label = {
             LED_DISPLAY_AGENT: "Agent Status",
             LED_DISPLAY_BATTERY: "Battery Level",
-            LED_DISPLAY_TIMER: "Working Timer",
             LED_DISPLAY_STUDIO: "Studio Program",
             LED_DISPLAY_QUOTA_RUNWAY: "Quota Runway",
         }.get(display, display)
@@ -13163,8 +13001,6 @@ class StatusBarController(NSObject):
                 and battery_snapshot is not None
                 and battery_snapshot.is_plugged
                 and not battery_snapshot.is_charged
-                and not self.timebox_active()
-                and not self.timebox_overtime()
                 and (
                     self.current_attention_projection is None
                     or self.current_attention_projection.lifecycle_mode
@@ -13215,11 +13051,6 @@ class StatusBarController(NSObject):
             SignalClaimKey.TEST: lambda: (
                 getattr(self, "test_signal_key", None) is not None
                 and now < getattr(self, "test_signal_until", 0.0)
-            ),
-            SignalClaimKey.TIMER: lambda: (
-                device.display == LED_DISPLAY_TIMER
-                or self.timebox_active()
-                or self.timebox_overtime()
             ),
         }
 
@@ -13559,7 +13390,6 @@ class StatusBarController(NSObject):
         if display not in (
             LED_DISPLAY_AGENT,
             LED_DISPLAY_BATTERY,
-            LED_DISPLAY_TIMER,
             LED_DISPLAY_STUDIO,
             LED_DISPLAY_QUOTA_RUNWAY,
         ):
@@ -13696,8 +13526,6 @@ class StatusBarController(NSObject):
                     brightness=brightness,
                 )
             )
-        elif display == LED_DISPLAY_TIMER:
-            _set_virtual(self.timer_display_program(brightness, 8))
         elif display == LED_DISPLAY_STUDIO and (
             studio_program := self.studio_display_program(brightness)
         ):
@@ -14675,7 +14503,6 @@ class StatusBarController(NSObject):
             factory, led_state, label_factory = entry
             controller = self.agent_controller_for_device(device)
             ambient_kinds = (
-                LED_DISPLAY_TIMER,
                 LED_DISPLAY_STUDIO,
                 LED_DISPLAY_QUOTA_RUNWAY,
             )
@@ -15039,23 +14866,6 @@ class StatusBarController(NSObject):
         }:
             self.release_preview_engines()
 
-    def _timebox_deadline(
-        self,
-        inputs: PresentationSchedulerInputs,
-    ) -> float | None:
-        deadline = self.timebox_ends_at
-        if (
-            not self._runtime_started
-            or inputs.display_asleep
-            or inputs.app_terminating
-            or not isinstance(deadline, (int, float))
-            or isinstance(deadline, bool)
-            or not math.isfinite(float(deadline))
-            or float(deadline) <= 0.0
-        ):
-            return None
-        return float(deadline)
-
     def _escalation_deadline(
         self,
         inputs: PresentationSchedulerInputs,
@@ -15344,16 +15154,6 @@ class StatusBarController(NSObject):
         if self._presentation_reconcile_active:
             self._presentation_reconcile_pending = inputs
             return
-        current_timebox_end = self.timebox_ends_at
-        current_time = self._presentation_monotonic()
-        if (
-            self._runtime_started
-            and not inputs.display_asleep
-            and not inputs.app_terminating
-            and current_timebox_end is not None
-            and current_time >= current_timebox_end
-        ):
-            self._complete_timebox(current_time)
         lid_active = self._lid_observation_should_run(inputs)
         device_inventory_active = self._device_inventory_should_run(inputs)
         hardware_write_active = self._hardware_write_should_run(inputs)
@@ -15372,7 +15172,6 @@ class StatusBarController(NSObject):
             RuntimeFeature.SETUP_DEMO,
             inputs,
         )
-        timebox_deadline = self._timebox_deadline(inputs)
         escalation_deadline = self._escalation_deadline(inputs)
         settings_message_deadline = self._settings_message_deadline(inputs)
         finite_ui_deadline = self._finite_ui_deadline(inputs)
@@ -15397,7 +15196,6 @@ class StatusBarController(NSObject):
             )
             and setup_demo_active
             == (RuntimeFeature.SETUP_DEMO in self._runtime_preview_fire_at)
-            and timebox_deadline == self._scheduled_timebox_deadline
             and escalation_deadline == self._scheduled_escalation_deadline
             and finite_ui_deadline
             == self._scheduled_reminders_cue_deadline
@@ -15440,7 +15238,6 @@ class StatusBarController(NSObject):
                     RuntimeFeature.SETUP_DEMO,
                     current,
                 )
-                current_timebox_deadline = self._timebox_deadline(current)
                 current_escalation_deadline = self._escalation_deadline(current)
                 current_settings_message_deadline = (
                     self._settings_message_deadline(current)
@@ -15471,8 +15268,6 @@ class StatusBarController(NSObject):
                     )
                     or current_setup_demo_active
                     != (RuntimeFeature.SETUP_DEMO in self._runtime_preview_fire_at)
-                    or current_timebox_deadline
-                    != self._scheduled_timebox_deadline
                     or current_escalation_deadline
                     != self._scheduled_escalation_deadline
                     or current_finite_ui_deadline
@@ -15620,17 +15415,6 @@ class StatusBarController(NSObject):
                                 common_modes=False,
                             ),
                         )
-                    if current_timebox_deadline is not None:
-                        intents = (
-                            *intents,
-                            RuntimeTimerIntent(
-                                feature=RuntimeFeature.TIMEBOX_DEADLINE,
-                                fire_at=current_timebox_deadline,
-                                interval=None,
-                                tolerance=0.0,
-                                common_modes=True,
-                            ),
-                        )
                     if current_escalation_deadline is not None:
                         intents = (
                             *intents,
@@ -15670,7 +15454,6 @@ class StatusBarController(NSObject):
                     )
                     self._presentation_scheduler_state = plan.next_state
                     self._presentation_scheduler_inputs = current
-                    self._scheduled_timebox_deadline = current_timebox_deadline
                     self._scheduled_escalation_deadline = (
                         current_escalation_deadline
                     )
@@ -15873,40 +15656,6 @@ class StatusBarController(NSObject):
         if changed:
             self.refresh_(None)
 
-    def _timebox_deadline_fired(self) -> None:
-        deadline = self.timebox_ends_at
-        now = self._presentation_monotonic()
-        if deadline is None:
-            return
-        if now < deadline:
-            self._scheduled_timebox_deadline = None
-            self.reconcile_lid_observation()
-            return
-        self._complete_timebox(now)
-        self._scheduled_timebox_deadline = None
-        self.reconcile_lid_observation()
-
-    def _complete_timebox(self, now: float) -> None:
-        self.timebox_ends_at = None
-        self.timebox_total_seconds = 0.0
-        self.timebox_overtime_since = now
-        self.fire_timebox_off_shortcut()
-        if self.webhook_event_enabled("timebox"):
-            self.post_webhook({"event": "sidepulse.timebox_finished"})
-        # Through the budget like every other sound: a timebox finishing
-        # during a Focus or quiet hour should not ding at a meeting.
-        if self.interrupt_grant(signals_module.INTERRUPT_TIMEBOX).audible:
-            try:
-                from AppKit import NSSound
-
-                sound = NSSound.soundNamed_("Glass")
-                if sound is not None:
-                    sound.play()
-            except Exception:
-                pass
-        self.set_settings_message("Timebox finished.")
-        self.refresh_(None)
-
     def _escalation_deadline_fired(self) -> None:
         self._scheduled_escalation_deadline = None
         self.apply_escalation(allow_refresh=True)
@@ -15946,14 +15695,7 @@ class StatusBarController(NSObject):
                 self.refresh_(None)
 
     def peek_program(self, brightness: float, led_count: int = 8) -> str:
-        """Show an active timebox, otherwise withhold legacy capacity."""
-        if self.timebox_active():
-            return timer_fill_program(
-                self.timer_fill_fraction(),
-                led_count=led_count,
-                brightness=brightness,
-                color=self.settings.colors.mode_colors.get("working", "#00E5FF"),
-            )
+        """Withhold legacy capacity: nothing peeks onto the strip today."""
         return "off"
 
     def screen_bar_quota_ember_level(self) -> float:
@@ -16133,15 +15875,6 @@ class StatusBarController(NSObject):
                 lambda device, snapshot: (
                     f"{device.name} Low battery "
                     f"{snapshot.percent if snapshot else '?'}%"
-                ),
-            ),
-            LED_DISPLAY_TIMER: (
-                lambda brightness, led_count: self.timer_display_program(
-                    brightness, led_count
-                ),
-                LedDisplayState.WORKING,
-                lambda device, _snapshot: (
-                    f"{device.name} Timer {round(self.timer_fill_fraction() * 100)}%"
                 ),
             ),
             LED_DISPLAY_STUDIO: (
@@ -17049,7 +16782,6 @@ def menu_content_signature(snapshot, state, target) -> tuple:
         state.label,
         mailbox_content_signature(mailbox),
         devices,
-        round(target.timer_fill_fraction(), 2) if target.timebox_active() else None,
         target.settings.closed_lid_awake_policy,
         target.closed_lid_awake.last_error,
         target_quiet_active(target),
@@ -18051,27 +17783,6 @@ def build_menu(snapshot, state: StatusBarState, target: StatusBarController) -> 
         profiles_menu.addItem_(save_item)
     profiles_item.setSubmenu_(profiles_menu)
     menu.addItem_(profiles_item)
-    # Timebox: the bar as an ambient countdown.
-    timebox_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Timer", None, "")
-    timebox_menu = NSMenu.alloc().init()
-    timebox_menu.setAutoenablesItems_(False)
-    for minutes in TIMEBOX_PRESET_MINUTES:
-        start_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"Start {minutes} Minutes", "startTimebox:", ""
-        )
-        start_item.setTarget_(target)
-        start_item.setRepresentedObject_(minutes)
-        timebox_menu.addItem_(start_item)
-    if getattr(target, "timebox_ends_at", None) is not None and target.timebox_active():
-        timebox_menu.addItem_(NSMenuItem.separatorItem())
-        remaining_minutes = max(0, round((target.timebox_ends_at - time.monotonic()) / 60.0))
-        stop_item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
-            f"Stop (~{remaining_minutes} min left)", "stopTimebox:", ""
-        )
-        stop_item.setTarget_(target)
-        timebox_menu.addItem_(stop_item)
-    timebox_item.setSubmenu_(timebox_menu)
-    menu.addItem_(timebox_item)
     _mark("profiles")
     devices = target.status_bar_devices()
     if devices:

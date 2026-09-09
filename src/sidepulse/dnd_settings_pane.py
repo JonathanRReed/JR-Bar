@@ -637,52 +637,6 @@ def _make_night_card(target, fields: dict[str, object], buttons: dict[str, objec
     return outer
 
 
-def _make_timebox_card(target, fields: dict[str, object]):
-    from .status_bar_legacy import TIMEBOX_PRESET_MINUTES
-
-    outer, inner = native_ui.make_card("Timebox Focus Handshake")
-    inner.addArrangedSubview_(
-        native_ui.make_wrapping_label(
-            "Each Timer preset can run a Shortcut when it starts and another when "
-            "it ends or you press Stop. Name a Shortcut that turns a Focus on and "
-            "its partner that turns it off. macOS asks permission once per Shortcut.",
-            secondary=True,
-            size=12.0,
-            max_width=560.0,
-        )
-    )
-    for preset_index, preset_minutes in enumerate(TIMEBOX_PRESET_MINUTES):
-        pair = target.settings.timebox_shortcut_pair(str(preset_minutes))
-        on_field = native_ui.make_field(
-            pair[0],
-            target=target,
-            action="applyTimeboxShortcuts:",
-        )
-        on_field.setPlaceholderString_("Shortcut at start")
-        native_ui.constrain_width(on_field, 150.0)
-        off_field = native_ui.make_field(
-            pair[1],
-            target=target,
-            action="applyTimeboxShortcuts:",
-        )
-        off_field.setPlaceholderString_("Shortcut at end")
-        native_ui.constrain_width(off_field, 150.0)
-        cluster = native_ui.make_stack(
-            orientation="horizontal",
-            spacing=native_ui.SPACE_XS,
-        )
-        cluster.addArrangedSubview_(on_field)
-        cluster.addArrangedSubview_(off_field)
-        inner.addArrangedSubview_(
-            native_ui.make_row(f"{preset_minutes} minutes", cluster)
-        )
-        if preset_index < len(TIMEBOX_PRESET_MINUTES) - 1:
-            native_ui.add_separator(inner)
-        fields[f"timebox_on_field:{preset_minutes}"] = on_field
-        fields[f"timebox_off_field:{preset_minutes}"] = off_field
-    return outer
-
-
 def _configured_focus_modes() -> tuple[tuple[str, str], ...]:
     try:
         focus_modes = tuple(focus_sync.configured_focus_modes() or ())
@@ -896,11 +850,6 @@ def _install_key_view_loop(
     ]
     controls.extend(
         control
-        for key, control in fields.items()
-        if key.startswith(("timebox_on_field:", "timebox_off_field:"))
-    )
-    controls.extend(
-        control
         for key in ("focus_fda_path_label",)
         if (control := fields.get(key)) is not None
     )
@@ -957,7 +906,6 @@ def build_dnd_settings_pane(target):
 
     stack.addArrangedSubview_(_make_dnd_card(target, fields, buttons))
     stack.addArrangedSubview_(_make_night_card(target, fields, buttons))
-    stack.addArrangedSubview_(_make_timebox_card(target, fields))
     per_focus_outer, per_focus_container, focus_modes = _make_per_focus_card(
         target,
         fields,

@@ -25,7 +25,6 @@ class SignalClaimKey(str, Enum):
     ALL_CLEAR = "all_clear"
     CALENDAR = "calendar"
     BATTERY_SELECTED_OR_PREVIEW = "battery_selected_or_preview"
-    TIMER = "timer"
     STUDIO = "studio"
     QUOTA_RUNWAY = "quota_runway"
     CHARGING_IDLE = "charging_idle"
@@ -67,7 +66,6 @@ SIGNAL_CLAIM_PRECEDENCE: tuple[SignalClaimSpec, ...] = (
     SignalClaimSpec(SignalClaimKey.ALL_CLEAR, "all_clear", True),
     SignalClaimSpec(SignalClaimKey.CALENDAR, "calendar", True),
     SignalClaimSpec(SignalClaimKey.BATTERY_SELECTED_OR_PREVIEW, "battery"),
-    SignalClaimSpec(SignalClaimKey.TIMER, "timer"),
     SignalClaimSpec(SignalClaimKey.STUDIO, "studio"),
     SignalClaimSpec(SignalClaimKey.QUOTA_RUNWAY, "quota_runway"),
     SignalClaimSpec(SignalClaimKey.CHARGING_IDLE, "battery"),

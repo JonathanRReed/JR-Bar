@@ -656,7 +656,7 @@ presentation, signing, notarization, or hardware behavior.
 The P2.25 signal-selection extraction moved the exact 18-claim per-device LED
 precedence table and asks-only muting policy into `signal_selection.py`. The
 retained controller still reads live clock, settings, battery, Focus, lifecycle,
-timer, and quota facts, and it still reports a failing claim once per
+and quota facts, and it still reports a failing claim once per
 display kind. Pure tests pin every pairwise precedence relationship, lazy
 short-circuiting, non-evaluation of muted claims, fallback, and exception
 propagation. Controller and architecture tests pin fact-map completeness,

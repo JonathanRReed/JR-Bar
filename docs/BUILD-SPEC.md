@@ -372,7 +372,7 @@ Ranked by rows reclaimed. Current `build_menu` (status_bar.py:13360-13596) emits
 
 1. **The `Profiles` submenu** (7 rows: 3 Apply + separator + 3 Save) — calibration/brightness slots are a configuration concern, not a glance concern. Move to Settings → Devices. **Reclaims 1 top-level row and all its cognitive weight.**
 
-2. **The `Timer` / timebox submenu** — "the bar as an ambient countdown" is a cute feature and a wrong one for this menu. It has nothing to do with agents or capacity. Move to Settings, or cut it. **–1 row.**
+2. **The `Timer` / timebox submenu** — "the bar as an ambient countdown" is a cute feature and a wrong one for this menu. It has nothing to do with agents or capacity. Move to Settings, or cut it. **–1 row.** (Cut in 0.8.)
 
 3. **The daily `Tip` system entirely** — the `Tip:` item, its 3-item submenu (Show Me / Dismiss This Tip / Turn Off Tips), the separator above it, `daily_tip()`, and the dismissed-tips settings state. Tips are onboarding leaking into steady-state UI. Replace with the contextual-onboarding model (see the onboarding field). **–2 rows plus a settings key.**
 

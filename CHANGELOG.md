@@ -4,6 +4,10 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Remove the timebox/timer: the Timer menu, presets, Focus-handshake
+  Shortcuts, the "Working timer fill" device display and its
+  `timer_fill_program`, the timebox webhook event and chime, and the
+  `timer_expected_minutes` / `timebox_shortcuts` settings (ignored on load).
 - Remove severe-weather alerts: the NWS/ipapi fetchers, the weather signal,
   style card, Today row, webhook event, demo scenario, and settings. Old
   `weather_*` settings keys are ignored on load. `QUIET_HOUR_EXEMPT_KINDS`

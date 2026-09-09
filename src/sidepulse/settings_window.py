@@ -133,7 +133,6 @@ from .settings import (
     LED_DISPLAY_BATTERY,
     LED_DISPLAY_QUOTA_RUNWAY,
     LED_DISPLAY_STUDIO,
-    LED_DISPLAY_TIMER,
     LID_ANIMATION_CLOSED,
     LID_ANIMATION_CLOSED_ACTIVE,
     LID_ANIMATION_OPEN,
@@ -1104,30 +1103,6 @@ def _build_devices_pane(target: StatusBarController):
         empty_cta.addArrangedSubview_(native_ui.make_hspacer())
         inner.addArrangedSubview_(empty_cta)
         stack.addArrangedSubview_(outer)
-    if devices:
-        # One global timer length for the Working-timer display.
-        timer_outer, timer_inner = native_ui.make_card("Working Timer")
-        timer_field = native_ui.make_field(
-            f"{target.settings.timer_expected_minutes:g}",
-            target=target,
-            action="applyTimerMinutes:",
-        )
-        native_ui.constrain_width(timer_field, 52.0)
-        timer_controls = native_ui.make_stack(orientation="horizontal", spacing=native_ui.SPACE_XS)
-        timer_controls.addArrangedSubview_(timer_field)
-        timer_controls.addArrangedSubview_(native_ui.make_label("minutes expected", secondary=True))
-        timer_inner.addArrangedSubview_(
-            native_ui.make_row(
-                "Fill completes after",
-                timer_controls,
-                help_text=(
-                    "Devices set to Working timer fill light up as the "
-                    "oldest working agent's elapsed time crosses this."
-                ),
-            )
-        )
-        stack.addArrangedSubview_(timer_outer)
-        target.timer_minutes_field = timer_field
     for device in devices:
         outer, inner = native_ui.make_card(device.name)
 
@@ -1227,15 +1202,14 @@ def _build_devices_pane(target: StatusBarController):
         )
         native_ui.add_separator(inner)
 
-        # Per-device display choice: agent status, battery fill, the
-        # honest working-timer fill, a Studio look, or quota runway
+        # Per-device display choice: agent status, battery fill, a
+        # Studio look, or quota runway
         # (fed by the JR usage plane since 2026-08-26).
         display_popup = native_ui.make_popup_button(target, "setDeviceDisplay:")
         display_popup.setIdentifier_(device.device_id)
         for label, display_key in (
             ("Agent status", LED_DISPLAY_AGENT),
             ("Battery fill", LED_DISPLAY_BATTERY),
-            ("Working timer fill", LED_DISPLAY_TIMER),
             ("Studio program", LED_DISPLAY_STUDIO),
             ("Quota runway", LED_DISPLAY_QUOTA_RUNWAY),
         ):
@@ -1249,10 +1223,8 @@ def _build_devices_pane(target: StatusBarController):
                 "Display",
                 display_popup,
                 help_text=(
-                    "Working timer fill lights the strip as elapsed working "
-                    "time crosses your expected length — a timer, not a "
-                    "claim about task progress. Studio program plays the "
-                    "animation you wrote in the Studio tab, all the time."
+                    "Studio program plays the animation you wrote in the "
+                    "Studio tab, all the time."
                 ),
             )
         )
@@ -2194,7 +2166,6 @@ def _build_led_behavior_pane(target: StatusBarController):
     webhook_event_boxes: dict[str, object] = {}
     for label, event_key in (
         ("Completions", "completion"),
-        ("Timebox", "timebox"),
     ):
         box = native_ui.make_checkbox(label, target, "toggleWebhookEvent:")
         box.setIdentifier_(event_key)
@@ -2208,7 +2179,7 @@ def _build_led_behavior_pane(target: StatusBarController):
             bridge_row,
             help_text=(
                 "Each ticked moment POSTs one JSON event to the same "
-                "URL: completions or timebox finish."
+                "URL: completions."
             ),
         )
     )

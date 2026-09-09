@@ -292,7 +292,6 @@ INTERRUPT_COURTESY = "courtesy"
 INTERRUPT_ASK = "ask"
 INTERRUPT_FAILURE = "failure"
 INTERRUPT_ESCALATION = "escalation"
-INTERRUPT_TIMEBOX = "timebox"
 
 # RATIFIED 2026-08-19: a critical arrival announces itself with exactly
 # this many finite taps, then holds a STEADY unmissable anchor until
@@ -315,9 +314,6 @@ INTERRUPT_CLASS_BY_KIND: dict[str, str] = {
     SIGNAL_COMPLETION: INTERRUPT_COURTESY,
     SIGNAL_CALENDAR: INTERRUPT_COURTESY,
     SIGNAL_REMINDERS: INTERRUPT_COURTESY,
-    # The timebox chime used to be the one raw NSSound outside this
-    # table -- the only sound the budget could not hush during a Focus.
-    INTERRUPT_TIMEBOX: INTERRUPT_COURTESY,
 }
 
 # Quiet Hour is the owner's own manual snooze and predates this budget.
@@ -552,10 +548,8 @@ def grant_interrupt(
         return refuse(INTERRUPT_REFUSED_QUIET_HOUR)
     # A GRANTED courtesy may be audible: Focus and Quiet Hour were just
     # checked and refused outright above, so by the time a grant exists
-    # there is nothing left for silence to protect. The hard-coded
-    # False that used to sit here meant the timebox chime -- a sound
-    # the user explicitly enabled -- could never play under any
-    # conditions (audit, 2026-08-26).
+    # there is nothing left for silence to protect (a hard-coded False
+    # here once muted every courtesy sound; audit, 2026-08-26).
     banner, audible, webhook, outbound_reason = outbound_effects()
     return InterruptGrant(
         kind=kind,
