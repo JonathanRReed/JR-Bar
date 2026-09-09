@@ -300,7 +300,7 @@ def test_raw_percentage_cannot_populate_screen_bar_capacity_gauge(controller) ->
 
 
 def test_raw_percentage_cannot_populate_peek_hardware_program(controller) -> None:
-    """Peek can show a real timebox, but no legacy capacity horizon."""
+    """Peek never shows a legacy capacity horizon."""
     target, _status_bar = controller
     target.quota_last_percents = {"Claude weekly": 20.0, "Codex weekly": 95.0}
 

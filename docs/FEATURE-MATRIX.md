@@ -69,7 +69,6 @@ gate has passed for that exact commit.
 | Charging trickle while idle (wattage-paced, yields to any agent claim and pinned displays) | Shipped (0.4.0) | On |
 | Night warmth and optional night dim (7 PM–7 AM), composed with the ambient stack | Shipped | Off |
 | Lid animations (preset Lid Closed / Lid Open programs, brightness-composed) | Shipped | Presets |
-| Timer/timebox display with draining fill and chime | Shipped | Off |
 | Studio: hand-written LED programs, saved library, `INIT.LED` power-up burn | Shipped | Off |
 | Signal engine for asks, failures, completions, low battery, reminders, calendar | Shipped, per-feature opt-ins | Mixed |
 | Ask escalation: menu-bar emphasis, optional sound, notification, HTTPS webhook | Shipped | Conservative |

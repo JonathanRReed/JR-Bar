@@ -703,12 +703,10 @@ def test_status_bar_shortcut_quit_and_openers_use_trusted_system_paths() -> None
         patch.object(status_bar.threading, "Thread", side_effect=immediate_thread),
         patch.object(status_bar.os, "getppid", return_value=1),
     ):
-        status_bar.StatusBarController.run_shortcut_named(controller, "Focus")
         status_bar.StatusBarController.quit_.callable(controller, None)
         status_bar.open_terminal_command("echo safe")
 
     assert [command[0] for command in commands] == [
-        "/usr/bin/shortcuts",
         "/bin/launchctl",
         "/usr/bin/osascript",
     ]

@@ -153,7 +153,7 @@ SidePulse Pro and Dot mount as disk drives; their output renders by writing a
 small LED program to `LEDS.LED` (the DSL is in
 [`LEDS_FORMAT.md`](LEDS_FORMAT.md), and writes are atomic — an eject
 mid-write can't leave the firmware a torn program). Per-device:
-display choice (agent / battery / timer / studio / quota runway),
+display choice (agent / battery / studio / quota runway),
 brightness with auto-brightness, white-point calibration with
 day/night/travel profiles, resting glow, provider pinning, and signal
 muting. The Studio pane lets you write programs by hand, keep a shelf
@@ -162,9 +162,6 @@ wearing your colors.
 
 ## Odds and ends worth knowing
 
-- **Timer**: dropdown presets drain the bar as a countdown, can run a
-  Shortcut at start and end (Focus on with the drain, off when it
-  finishes), and turn a deepening ember when you run over.
 - **Night warmth**: eases green and blue down from 7 PM to 7 AM,
   composed over each device's calibration.
 - **Color by project**: sessions in the same repo share a hue family,

@@ -43,13 +43,11 @@ from .session_actions import SESSION_OPEN_CHOICES
 
 LED_DISPLAY_AGENT = "agent"
 LED_DISPLAY_BATTERY = "battery"
-LED_DISPLAY_TIMER = "timer"
 LED_DISPLAY_STUDIO = "studio"
 LED_DISPLAY_QUOTA_RUNWAY = "quota_runway"
 LED_DISPLAY_CHOICES = (
     LED_DISPLAY_AGENT,
     LED_DISPLAY_BATTERY,
-    LED_DISPLAY_TIMER,
     LED_DISPLAY_STUDIO,
     LED_DISPLAY_QUOTA_RUNWAY,
 )
@@ -65,10 +63,7 @@ CLAUDE_PLAN_LIMITS_CONSENT_VERSION = 1
 CALIBRATION_PROFILE_SLOTS = ("Day", "Night", "Travel")
 BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
 
-WEBHOOK_EVENT_KEYS = (
-    "completion",
-    "timebox",
-)
+WEBHOOK_EVENT_KEYS = ("completion",)
 CLOSED_LID_AWAKE_NEVER = "never"
 CLOSED_LID_AWAKE_AGENTS = "agents"
 CLOSED_LID_AWAKE_ALWAYS = "always"
@@ -287,10 +282,6 @@ class AgentMonitorSettings:
     # Named calibration/brightness profiles (Day/Night/Travel slots),
     # switchable from the dropdown -- slot -> {device_id: snapshot}.
     calibration_profiles: dict[str, dict] = field(default_factory=dict)
-    # "Working timer" LED display: fill = elapsed working time against
-    # this many expected minutes. Honest: it's a TIMER, not task
-    # progress -- hooks deliver no truthful progress fraction.
-    timer_expected_minutes: float = 10.0
     # The Studio: the user's own hand-written LED program (see the
     # Studio card in the Animations pane). Persisted verbatim.
     studio_program: str = ""
@@ -448,9 +439,6 @@ class AgentMonitorSettings:
     # Webhook bridge: which non-capacity moment events (beyond stage-3
     # escalation, which always fires when the URL is set) also POST.
     webhook_events: tuple[str, ...] = ()
-    # Story #10: timebox preset -> (start Shortcut, end Shortcut). Keys
-    # are the preset minutes as strings ("25"); either name may be "".
-    timebox_shortcuts: dict[str, tuple[str, str]] = field(default_factory=dict)
     # Global action identifier -> strict ShortcutChord persistence fields.
     # Empty is intentional: a new installation does not claim a system chord.
     global_action_shortcuts: dict[str, dict] = field(default_factory=dict)
@@ -897,26 +885,6 @@ class AgentMonitorSettings:
             events = (*events, key)
         return replace(self, webhook_events=events)
 
-    def timebox_shortcut_pair(self, preset_key: str) -> tuple[str, str]:
-        pair = self.timebox_shortcuts.get(preset_key)
-        if not pair:
-            return ("", "")
-        return (str(pair[0]), str(pair[1]))
-
-    def with_timebox_shortcut(
-        self, preset_key: str, on_name: str, off_name: str
-    ) -> AgentMonitorSettings:
-        """Both names empty removes the mapping -- unmapped presets
-        behave exactly as before the handshake existed."""
-        mapping = dict(self.timebox_shortcuts)
-        on_clean = str(on_name).strip()
-        off_clean = str(off_name).strip()
-        if not on_clean and not off_clean:
-            mapping.pop(str(preset_key), None)
-        else:
-            mapping[str(preset_key)] = (on_clean, off_clean)
-        return replace(self, timebox_shortcuts=mapping)
-
     def with_global_brightness_scale(self, value: float) -> AgentMonitorSettings:
         """The master dial. Clamped 0.05..1.0 -- dim is never "off in
         disguise"; turning surfaces off is a different, explicit act."""
@@ -1334,9 +1302,6 @@ class AgentMonitorSettings:
             rules[focus_identifier] = slot
         return replace(self, focus_profile_rules=rules)
 
-    def with_timer_expected_minutes(self, minutes: float) -> AgentMonitorSettings:
-        return replace(self, timer_expected_minutes=max(1.0, min(480.0, float(minutes))))
-
     def with_calendar_lead_minutes(self, minutes: float) -> AgentMonitorSettings:
         return replace(self, calendar_lead_minutes=max(1.0, min(60.0, float(minutes))))
 
@@ -1490,7 +1455,6 @@ class AgentMonitorSettings:
             "calendar_lead_minutes": self.calendar_lead_minutes,
             "reminder_alerts_enabled": self.reminder_alerts_enabled,
             "calibration_profiles": dict(sorted(self.calibration_profiles.items())),
-            "timer_expected_minutes": self.timer_expected_minutes,
             "focus_profile_rules": dict(sorted(self.focus_profile_rules.items())),
             "studio_program": self.studio_program,
             "signal_styles": dict(
@@ -1563,9 +1527,6 @@ class AgentMonitorSettings:
             "webhook_events": [
                 key for key in self.webhook_events if key in WEBHOOK_EVENT_KEYS
             ],
-            "timebox_shortcuts": {
-                key: list(pair) for key, pair in self.timebox_shortcuts.items()
-            },
             "global_action_shortcuts": {
                 str(key): dict(value)
                 for key, value in sorted(self.global_action_shortcuts.items())
@@ -1794,9 +1755,6 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             if isinstance(data.get("calibration_profiles"), dict)
             else {}
         ),
-        timer_expected_minutes=max(
-            1.0, min(480.0, _float_setting(data.get("timer_expected_minutes"), 10.0))
-        ),
         studio_program=(
             data.get("studio_program") if isinstance(data.get("studio_program"), str) else ""
         ),
@@ -1948,15 +1906,6 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         )
         if isinstance(data.get("webhook_events"), list)
         else (),
-        timebox_shortcuts=(
-            {
-                str(key): (str(pair[0]), str(pair[1]))
-                for key, pair in data.get("timebox_shortcuts").items()
-                if isinstance(pair, (list, tuple)) and len(pair) == 2
-            }
-            if isinstance(data.get("timebox_shortcuts"), dict)
-            else {}
-        ),
         global_action_shortcuts=(
             {
                 str(key): dict(value)

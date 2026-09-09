@@ -890,16 +890,13 @@ def test_charging_trickle_claims_the_idle_strip_and_yields_to_agents(
     )
 
 
-def test_charging_trickle_never_steals_a_pinned_display_or_a_timebox(
+def test_charging_trickle_never_steals_a_pinned_display(
     controller,
 ) -> None:
     """Hostile-review regression: the first draft of the trickle claim
-    sat ABOVE Timer/Studio/Runway and ignored the per-device display
-    pin, so every pinned device silently became a battery meter while
-    the Mac charged. The trickle claims ONLY default-display devices
-    and yields to a running timebox."""
-    from unittest.mock import patch
-
+    sat ABOVE Studio/Runway and ignored the per-device display pin, so
+    every pinned device silently became a battery meter while the Mac
+    charged. The trickle claims ONLY default-display devices."""
     from sidepulse import status_bar
     from sidepulse.battery import BatterySnapshot
 
@@ -907,25 +904,12 @@ def test_charging_trickle_never_steals_a_pinned_display_or_a_timebox(
     controller.current_attention_projection = None
     assert controller.settings.battery_charging_idle_enabled
 
-    for pinned in (
-        status_bar.LED_DISPLAY_STUDIO,
-        status_bar.LED_DISPLAY_TIMER,
-    ):
+    for pinned in (status_bar.LED_DISPLAY_STUDIO,):
         device = _device(status_bar, display=pinned)
         assert (
             controller.active_led_display_kind_for_device(device, charging)
             == pinned
         ), pinned
-
-    # A running timebox owns the strip even on a default-display device.
-    default_device = _device(status_bar)
-    with patch.object(type(controller), "timebox_active", lambda _self: True):
-        assert (
-            controller.active_led_display_kind_for_device(
-                default_device, charging
-            )
-            == status_bar.LED_DISPLAY_TIMER
-        )
 
 
 def test_reset_celebration_claims_the_strip_and_respects_focus(controller) -> None:

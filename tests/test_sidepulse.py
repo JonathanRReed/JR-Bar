@@ -11799,32 +11799,6 @@ class AskInboxAndActionsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             AgentMonitorSettings().with_focus_profile_rule("x", "Disco")
 
-    def test_timebox_owns_the_timer_fill_and_drains(self) -> None:
-        device = self.status_bar.StatusBarDevice(
-            device_id="SidePulsePro",
-            name="SidePulse Pro",
-            root=Path("/Volumes/SidePulsePro"),
-            target=Path("/Volumes/SidePulsePro/LEDS.LED"),
-            connected=True,
-            display=self.status_bar.LED_DISPLAY_AGENT,
-        )
-        self.controller.timebox_total_seconds = 100.0
-        self.controller.timebox_ends_at = time.monotonic() + 50.0
-        self.assertTrue(self.controller.timebox_active())
-        # Half elapsed -> roughly half remaining (draining fill).
-        self.assertAlmostEqual(self.controller.timer_fill_fraction(), 0.5, delta=0.02)
-        # An active timebox claims the timer display on ANY device.
-        self.assertEqual(
-            self.controller.active_led_display_kind_for_device(device, None),
-            self.status_bar.LED_DISPLAY_TIMER,
-        )
-        self.controller.timebox_ends_at = None
-        self.assertFalse(self.controller.timebox_active())
-        self.assertEqual(
-            self.controller.active_led_display_kind_for_device(device, None),
-            self.status_bar.LED_DISPLAY_AGENT,
-        )
-
 
 class CompletionBatchControllerTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -12006,42 +11980,6 @@ class DeferredRoadmapTests(unittest.TestCase):
             save_settings(configured, path)
             reloaded = load_settings(path)
         self.assertIn("Night", reloaded.calibration_profiles)
-
-    def test_timer_fill_program_shape_and_limits(self) -> None:
-        from sidepulse.device_writer import MAX_LED_BYTES, MAX_LED_LINES
-        from sidepulse.led_status import timer_fill_program
-
-        # "#000000", never ":off" -- the firmware's indexed parser
-        # rejects `N:off` and a parse failure renders solid error-red.
-        empty = timer_fill_program(0.0, led_count=8)
-        self.assertEqual(empty.count(":#000000"), 8)
-        self.assertNotIn(":off", empty)
-        half = timer_fill_program(0.5, led_count=8)
-        self.assertEqual(half.count(":#000000"), 4)
-        full = timer_fill_program(1.0, led_count=8, color="#00E5FF")
-        self.assertEqual(full.count(":#000000"), 0)
-        self.assertIn("#00E5FF", full)
-        self.assertNotIn("repeat", full)
-        for led_count in (2, 8):
-            program = timer_fill_program(0.7, led_count=led_count, brightness=128)
-            self.assertLessEqual(len(program.encode()), MAX_LED_BYTES)
-            self.assertLessEqual(len(program.splitlines()), MAX_LED_LINES)
-
-    def test_timer_display_choice_round_trips(self) -> None:
-        from sidepulse.settings import LED_DISPLAY_TIMER, DeviceDisplaySetting
-
-        device = DeviceDisplaySetting(device_id="pro", name="Pro", path="/Volumes/Pro")
-        configured = (
-            AgentMonitorSettings(devices=(device,))
-            .with_device_display("pro", LED_DISPLAY_TIMER)
-            .with_timer_expected_minutes(25.0)
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "settings.json"
-            save_settings(configured, path)
-            reloaded = load_settings(path)
-        self.assertEqual(reloaded.devices[0].led_display, LED_DISPLAY_TIMER)
-        self.assertEqual(reloaded.timer_expected_minutes, 25.0)
 
 
 class SubagentAndPhantomAskTests(unittest.TestCase):
@@ -15625,25 +15563,9 @@ class StudioLibraryTests(unittest.TestCase):
 class OvertimePatinaWebhookTests(unittest.TestCase):
     def setUp(self) -> None:
         isolate_controller(self)
-        # These tests exercise timer/webhook state only. Actions such as
-        # stopTimebox_ call refresh_, so keep physical device I/O disabled.
+        # These tests exercise webhook state only; keep physical device
+        # I/O disabled.
         self.controller.leds_enabled = False
-
-    def test_overtime_ember_engages_and_stop_clears(self) -> None:
-        self.controller.timebox_overtime_since = time.monotonic() - 120.0
-        self.assertTrue(self.controller.timebox_overtime())
-        self.assertEqual(self.controller.timebox_overtime_minutes(), 2)
-        program = self.controller.timer_display_program(255, 8)
-        self.assertIn("pulse", program)
-        self.assertIn("repeat", program)
-        self.controller.stopTimebox_(None)
-        self.assertFalse(self.controller.timebox_overtime())
-
-    def test_final_minute_turns_amber(self) -> None:
-        self.controller.timebox_ends_at = time.monotonic() + 30.0
-        self.controller.timebox_total_seconds = 300.0
-        program = self.controller.timer_display_program(255, 8)
-        self.assertIn("FFB340", program.upper().replace("#", "#"))
 
     def test_patina_slows_only_without_escalation(self) -> None:
         # Production freezes render colors on the main thread before each
@@ -15873,7 +15795,7 @@ class DeviceSignalPolicyTests(unittest.TestCase):
         self.assertEqual(sum("display claim 'battery'" in text for text in messages), 1)
         self.assertEqual(
             self.controller.display_claim_errors_logged,
-            {"battery", "timer", "studio", "quota_runway"},
+            {"battery", "studio", "quota_runway"},
         )
 
     def test_failed_earlier_claim_logs_and_allows_a_later_claim_to_win(self) -> None:
@@ -17250,62 +17172,6 @@ class AlcoveFollowTests(unittest.TestCase):
             path = Path(tmp) / "settings.json"
             save_settings(configured, path)
             self.assertFalse(load_settings(path).screen_bar_follow_alcove)
-
-
-class TimeboxHandshakeTests(unittest.TestCase):
-    """Story #10: presets run a Shortcut at start and another exactly
-    once at end -- whether the drain hit zero or Stop came first."""
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-        self.fired: list[str] = []
-        self.controller.run_shortcut_named = self.fired.append
-
-    class _Sender:
-        def __init__(self, minutes) -> None:
-            self._minutes = minutes
-
-        def representedObject(self):
-            return self._minutes
-
-    def test_mapping_round_trips_and_removes(self) -> None:
-        settings = AgentMonitorSettings().with_timebox_shortcut("25", "Work On", "Work Off")
-        self.assertEqual(settings.timebox_shortcut_pair("25"), ("Work On", "Work Off"))
-        self.assertEqual(settings.timebox_shortcut_pair("45"), ("", ""))
-        self.assertEqual(settings.with_timebox_shortcut("25", " ", "").timebox_shortcuts, {})
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "settings.json"
-            save_settings(settings, path)
-            self.assertEqual(load_settings(path).timebox_shortcut_pair("25"), ("Work On", "Work Off"))
-
-    def test_mapped_preset_fires_on_then_off_exactly_once(self) -> None:
-        self.controller.settings = self.controller.settings.with_timebox_shortcut("25", "Focus On", "Focus Off")
-        with patch.object(self.controller, "refresh_") as refresh:
-            self.controller.startTimebox_(self._Sender(25))
-            self.assertEqual(self.fired, ["Focus On"])
-            self.controller.stopTimebox_(None)
-            self.assertEqual(self.fired, ["Focus On", "Focus Off"])
-            # Stop again (or the zero-crossing racing Stop): pop-once holds.
-            self.controller.stopTimebox_(None)
-        self.assertEqual(self.fired, ["Focus On", "Focus Off"])
-        self.assertEqual(refresh.call_args_list, [call(None), call(None), call(None)])
-
-    def test_off_only_mapping_still_fires_at_end(self) -> None:
-        self.controller.settings = self.controller.settings.with_timebox_shortcut("45", "", "Wind Down")
-        with patch.object(self.controller, "refresh_") as refresh:
-            self.controller.startTimebox_(self._Sender(45))
-        refresh.assert_called_once_with(None)
-        self.assertEqual(self.fired, [])
-        self.controller.fire_timebox_off_shortcut()
-        self.controller.fire_timebox_off_shortcut()
-        self.assertEqual(self.fired, ["Wind Down"])
-
-    def test_unmapped_preset_behaves_exactly_as_today(self) -> None:
-        with patch.object(self.controller, "refresh_") as refresh:
-            self.controller.startTimebox_(self._Sender(15))
-            self.controller.stopTimebox_(None)
-        self.assertEqual(self.fired, [])
-        self.assertEqual(refresh.call_args_list, [call(None), call(None)])
 
 
 class ProjectHueFamilyTests(unittest.TestCase):
@@ -19965,10 +19831,8 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             self.controller.settings,
             focus_sync_enabled=True,
         )
-        self.controller.timebox_ends_at = 1.0
         self.controller.ask_blocked_since = 1.0
         self.controller.apply_escalation = MagicMock()
-        self.controller.fire_timebox_off_shortcut = MagicMock()
 
         self.controller._display_environment_timer_fired()
 
@@ -19979,10 +19843,8 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(command.generation, 9)
         self.assertIsInstance(command.payload, self.status_bar.DisplayEnvironmentRequest)
         self.assertTrue(command.payload.read_focus)
-        self.assertEqual(self.controller.timebox_ends_at, 1.0)
         self.assertEqual(self.controller.ask_blocked_since, 1.0)
         self.controller.apply_escalation.assert_not_called()
-        self.controller.fire_timebox_off_shortcut.assert_not_called()
 
     def test_display_environment_reads_brightness_and_focus_on_os_poll_worker(self) -> None:
         command = self.status_bar.RuntimeWorkCommand(
@@ -20103,52 +19965,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
         )
         self.controller.refresh_.assert_called_once_with(None)
 
-    def test_timebox_uses_exact_one_shot_deadline_instead_of_display_poll(self) -> None:
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        self.controller.timebox_ends_at = self.clock[0] + 25.0
-        self.controller.timebox_total_seconds = 25.0
-
-        self.controller.reconcile_presentation_timers(self._inputs(screen_bar_enabled=False, visible=False))
-
-        timer = next(
-            timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TIMEBOX_DEADLINE
-        )
-        self.assertEqual(timer.delay, 25.0)
-        self.assertIsNone(timer.interval)
-        self.assertEqual(timer.tolerances, [0.0])
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.DISPLAY_ENVIRONMENT,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-
-    def test_timebox_start_and_stop_reconcile_deadline_immediately(self) -> None:
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        inputs = self._inputs(screen_bar_enabled=False, visible=False)
-        self.controller.virtual_status_device = SimpleNamespace(presentation_scheduler_inputs=lambda: inputs)
-        self.controller.refresh_ = MagicMock()
-        sender = SimpleNamespace(representedObject=lambda: 1)
-
-        with patch.object(
-            self.status_bar.time,
-            "monotonic",
-            side_effect=lambda: self.clock[0],
-        ):
-            self.controller.startTimebox_(sender)
-            timer = next(
-                timer for timer in self.factory.live if timer.feature is self.status_bar.RuntimeFeature.TIMEBOX_DEADLINE
-            )
-            self.assertEqual(timer.delay, 60.0)
-
-            self.controller.stopTimebox_(None)
-
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.TIMEBOX_DEADLINE,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
-        self.assertEqual(timer.invalidations, 1)
-
     def test_escalation_rearms_one_exact_deadline_for_each_remaining_stage(self) -> None:
         self.controller._runtime_started = True
         self.controller.leds_enabled = False
@@ -20242,8 +20058,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
             self.controller.settings,
             focus_sync_enabled=True,
         )
-        self.controller.timebox_ends_at = self.clock[0] + 60.0
-        self.controller.timebox_total_seconds = 60.0
         self.controller.ask_blocked_since = self.clock[0]
         self.controller.ask_blocked_by_agent = {"codex": self.clock[0]}
         active = self._inputs(screen_bar_enabled=False, visible=False)
@@ -20260,11 +20074,10 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
                 if timer.feature
                 in {
                     self.status_bar.RuntimeFeature.DISPLAY_ENVIRONMENT,
-                    self.status_bar.RuntimeFeature.TIMEBOX_DEADLINE,
                     self.status_bar.RuntimeFeature.ESCALATION_DEADLINE,
                 }
             }
-            self.assertEqual(len(task_timers), 3, task_timers)
+            self.assertEqual(len(task_timers), 2, task_timers)
 
             submitted = self.controller._os_poll_worker.snapshot().submitted
             self.controller.reconcile_presentation_timers(self._inputs(display_asleep=True))
@@ -20284,31 +20097,6 @@ class PresentationRuntimeIntegrationTests(unittest.TestCase):
 
             self.controller.reconcile_presentation_timers(self._inputs(app_terminating=True))
             self.assertFalse(set(task_timers) & set(self.controller._runtime_timer_registry.snapshot().active_features))
-
-    def test_timebox_elapsed_during_sleep_reduces_once_without_invalid_timer(self) -> None:
-        self.controller._runtime_started = True
-        self.controller.leds_enabled = False
-        self.controller.timebox_ends_at = self.clock[0] + 10.0
-        self.controller.timebox_total_seconds = 10.0
-        self.controller.fire_timebox_off_shortcut = MagicMock()
-        self.controller.webhook_event_enabled = MagicMock(return_value=False)
-        self.controller.set_settings_message = MagicMock()
-        self.controller.refresh_ = MagicMock()
-        active = self._inputs(screen_bar_enabled=False, visible=False)
-
-        self.controller.reconcile_presentation_timers(active)
-        self.controller.reconcile_presentation_timers(self._inputs(display_asleep=True))
-        self.clock[0] += 20.0
-
-        self.controller.reconcile_presentation_timers(active)
-
-        self.assertIsNone(self.controller.timebox_ends_at)
-        self.assertEqual(self.controller.timebox_overtime_since, self.clock[0])
-        self.controller.fire_timebox_off_shortcut.assert_called_once_with()
-        self.assertNotIn(
-            self.status_bar.RuntimeFeature.TIMEBOX_DEADLINE,
-            self.controller._runtime_timer_registry.snapshot().active_features,
-        )
 
     def test_shared_registry_stays_stable_and_invalidates_every_feature(self) -> None:
         active = self._inputs(

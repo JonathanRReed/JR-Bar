@@ -975,7 +975,6 @@ else:
                 or getattr(self, "completion_sweep", None)
                 or self.settings.led_display
                 in {
-                    getattr(_legacy, "LED_DISPLAY_TIMER", "timer"),
                     getattr(_legacy, "LED_DISPLAY_BATTERY", "battery"),
                 }
             )

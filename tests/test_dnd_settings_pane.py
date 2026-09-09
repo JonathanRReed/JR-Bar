@@ -105,10 +105,6 @@ class _DndSettingsTarget(NSObject):
         self._record("night_dim", sender)
 
     @objc.IBAction
-    def applyTimeboxShortcuts_(self, sender):
-        self._record("timebox", sender)
-
-    @objc.IBAction
     def setFocusDimRule_(self, sender):
         self._record("focus_dim", sender)
 
@@ -188,7 +184,6 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
     assert {
         "Right Now",
         "Night Warmth",
-        "Timebox Focus Handshake",
         "Per-Focus Rules",
     } <= set(text)
     assert "Focus Dimming" not in text
@@ -204,8 +199,6 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
         "dnd_focus_mode",
         "dnd_focus_authorization_status",
         "night_dim_popup",
-        "timebox_on_field:15",
-        "timebox_off_field:15",
     } <= set(fields)
     assert {
         "dnd_schedule_enabled",
@@ -220,8 +213,6 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
         "dnd_end_override",
         "night_warmth_enabled",
     } <= set(buttons)
-    assert _has_width_constraint(fields["timebox_on_field:15"], 150.0)
-    assert _has_width_constraint(fields["timebox_off_field:15"], 150.0)
 
 
 def test_dnd_card_uses_native_controls_plain_labels_and_exact_accessibility(
@@ -321,19 +312,14 @@ def test_key_view_loop_is_stable_and_disabled_state_is_explicit(monkeypatch) -> 
     assert buttons["dnd_focus_authorization"] in order
     assert buttons["night_warmth_enabled"] in order
     assert fields["night_dim_popup"] in order
-    assert fields["timebox_on_field:15"] in order
-    assert fields["timebox_off_field:15"] in order
     assert fields["focus_fda_path_label"] in order
     assert buttons["focus_fda_open"] in order
     assert buttons["focus_fda_reveal"] in order
     assert order.index(buttons["night_warmth_enabled"]) > order.index(
         buttons["dnd_end_override"]
     )
-    assert order.index(fields["timebox_on_field:15"]) > order.index(
-        fields["night_dim_popup"]
-    )
     assert order.index(buttons["focus_fda_open"]) > order.index(
-        fields["timebox_off_field:60"]
+        fields["night_dim_popup"]
     )
     assert tuple(
         buttons[f"dnd_temporary_mode:{mode.value}"] for mode in DndMode

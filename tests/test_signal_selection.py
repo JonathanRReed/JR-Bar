@@ -23,7 +23,6 @@ EXPECTED_CLAIMS = (
     ("all_clear", "all_clear", True, DisplayAdmission.ALL),
     ("calendar", "calendar", True, DisplayAdmission.ALL),
     ("battery_selected_or_preview", "battery", False, DisplayAdmission.ALL),
-    ("timer", "timer", False, DisplayAdmission.ALL),
     ("studio", "studio", False, DisplayAdmission.ALL),
     ("quota_runway", "quota_runway", False, DisplayAdmission.ALL),
     ("charging_idle", "battery", False, DisplayAdmission.ALL),
