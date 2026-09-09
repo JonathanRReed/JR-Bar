@@ -31,9 +31,9 @@ operator export, architecture-policing meta-tests, dead code.
 | Phase | Deliverable | Status |
 | --- | --- | --- |
 | A | Stale-session truth: process registry + 5 s liveness sweep, Codex SessionEnd/Interrupt hooks, local Codex trust hashes; hooks reinstalled from this checkout; dev checkout runs as the LaunchAgent | done 2026-09-09 (kill-to-ended measured at 2 s; Codex turn testing deferred to 2026-09-14 when the usage limit resets) |
-| B | Deletions + rename of the Python core, migration, signed PKG installed | pending |
-| C | Daemon boundary: socket protocol, compiled hook shim, `jrbar-core` | pending |
-| D | Swift app: status item, glass panel, Screen Bar; replaces Python UI for those | pending |
+| B | Deletions (iOS, Agent Deck, Waybar, weather, timebox, export, night warmth: -14k lines) and the full SidePulse→JR-Bar rename with live migration of config/state/hooks/LaunchAgents on the Mac | done 2026-09-09 (signed PKG moves to Phase F once the app bundle nests the daemon) |
+| C | Daemon boundary: `python -m jrbar core` headless, core_server + core_projection, compiled `jrbar-hook` shim, Swift app becomes the UI on this Mac | in progress |
+| D | Swift app: LEDS engine (firmware-parity), Screen Bar, protocol client, glass panel, Settings window, tooltip/click, notifications, history, icon styles, core supervision | mostly done 2026-09-09 (against the mock daemon; live switch happens with C) |
 | E | Swift Settings, Control Center, Usage, Effects, Calibration, Activity History | pending |
 | F | Hardware verification (Pro, Dot, linked mode, Creator Micro 2), Pi + Gemini providers, Sparkle + notarization | pending |
 
