@@ -1,7 +1,8 @@
 import AppKit
 
 /// The menu-bar item: a template glyph of the bar under a notch, tinted by
-/// the aggregate agent state, and a small menu.
+/// the aggregate agent state. Left click opens the panel; right click (or
+/// Option-click) shows a small utility menu.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
@@ -9,8 +10,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let headerItem = NSMenuItem()
     private let detailItem = NSMenuItem()
     private let feedItem = NSMenuItem()
+    private let coreItem = NSMenuItem()
     private let showBarItem: NSMenuItem
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
+    var onTogglePanel: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
 
     override init() {
@@ -18,28 +21,50 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
 
-        statusItem.button?.image = Self.glyph()
-        statusItem.button?.imagePosition = .imageOnly
-        statusItem.button?.toolTip = "JR-Bar"
+        if let button = statusItem.button {
+            button.image = Self.glyph()
+            button.imagePosition = .imageOnly
+            button.toolTip = "JR-Bar"
+            button.target = self
+            button.action = #selector(clicked(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
 
         headerItem.isEnabled = false
         detailItem.isEnabled = false
         feedItem.isEnabled = false
+        coreItem.isEnabled = false
         showBarItem.target = self
         showBarItem.state = .on
 
+        let open = NSMenuItem(title: "Open Panel", action: #selector(openPanel(_:)), keyEquivalent: "")
+        open.target = self
+
         menu.addItem(headerItem)
         menu.addItem(detailItem)
+        menu.addItem(coreItem)
         menu.addItem(feedItem)
         menu.addItem(.separator())
+        menu.addItem(open)
         menu.addItem(showBarItem)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
         menu.autoenablesItems = false
-        statusItem.menu = menu
+        menu.delegate = self
         update(state: .idle, detail: "Starting")
         setFeed(description: "resolving")
+        setCore(description: "connecting")
+    }
+
+    /// The button's frame in screen coordinates, for anchoring the panel.
+    var anchorRect: NSRect? {
+        guard let button = statusItem.button, let window = button.window else { return nil }
+        return window.convertToScreen(button.convert(button.bounds, to: nil))
+    }
+
+    func setPanelOpen(_ open: Bool) {
+        statusItem.button?.highlight(open)
     }
 
     func update(state: AgentAggregateState, detail: String) {
@@ -56,10 +81,33 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func setFeed(description: String) {
-        feedItem.attributedTitle = NSAttributedString(string: "Feed: \(description)", attributes: [
+        feedItem.attributedTitle = NSAttributedString(string: "Lights: \(description)", attributes: [
             .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.tertiaryLabelColor,
         ])
+    }
+
+    func setCore(description: String) {
+        coreItem.attributedTitle = NSAttributedString(string: "Core: \(description)", attributes: [
+            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ])
+    }
+
+    @objc private func clicked(_ sender: Any?) {
+        let event = NSApp.currentEvent
+        let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
+        if secondary {
+            statusItem.menu = menu
+            statusItem.button?.performClick(nil)
+            statusItem.menu = nil
+        } else {
+            onTogglePanel?()
+        }
+    }
+
+    @objc private func openPanel(_ sender: Any?) {
+        onTogglePanel?()
     }
 
     @objc private func toggleScreenBar(_ sender: NSMenuItem) {

@@ -28,22 +28,34 @@ let package = Package(
     platforms: [.macOS(.v26)],
     products: [
         .library(name: "JRBarLEDS", targets: ["JRBarLEDS"]),
+        .library(name: "JRBarCore", targets: ["JRBarCore"]),
         .executable(name: "JRBarApp", targets: ["JRBarApp"]),
     ],
     targets: [
         // Pure Swift LEDS DSL model, parser and sampler. No AppKit.
         .target(name: "JRBarLEDS"),
+        // The core daemon protocol: NDJSON over a Unix socket, Codable
+        // models, an observable model. Foundation only.
+        .target(name: "JRBarCore"),
         .executableTarget(
             name: "JRBarApp",
-            dependencies: ["JRBarLEDS"],
+            dependencies: ["JRBarLEDS", "JRBarCore"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
+                .linkedFramework("SwiftUI"),
                 .linkedFramework("QuartzCore"),
             ]
         ),
         .testTarget(
             name: "JRBarLEDSTests",
             dependencies: ["JRBarLEDS"],
+            resources: [.copy("Fixtures")],
+            swiftSettings: testSwiftSettings,
+            linkerSettings: testLinkerSettings
+        ),
+        .testTarget(
+            name: "JRBarCoreTests",
+            dependencies: ["JRBarCore"],
             resources: [.copy("Fixtures")],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings

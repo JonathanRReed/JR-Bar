@@ -22,6 +22,7 @@ final class ScreenBarController {
     private var displayAsleep = false
     private(set) var isShown = false
     private(set) var programText: String = ""
+    private var lastRawText = ""
     private(set) var lastRejection: String?
 
     init() {
@@ -75,7 +76,17 @@ final class ScreenBarController {
 
     /// Parses `text` and puts it on the bar. Refused programs (the firmware
     /// would strobe red) keep the previous program and are reported, never shown.
-    func apply(programText text: String) {
+    ///
+    /// `anchorEpoch` is the daemon's `lights.surfaces.screen_bar.anchor`: the
+    /// Unix time at which the strip started this program. Passing it
+    /// phase-locks the band to the hardware, so a pulse on the desk and the
+    /// pulse under the notch swell together. Without it the program starts
+    /// now, as a file feed would.
+    func apply(programText text: String, anchorEpoch: Double? = nil) {
+        if text == lastRawText, let anchorEpoch, abs(Self.mediaTime(forEpoch: anchorEpoch) - anchor) < 0.02 {
+            return  // Same program, same phase: nothing to restart.
+        }
+        lastRawText = text
         let compiled = LEDSPresentationCompiler.compile(text, ledCount: ScreenBarGeometry.ledCount, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
         guard compiled.accepted else {
             let reason: String
@@ -105,10 +116,24 @@ final class ScreenBarController {
         programText = compiled.program
         sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
         anchor = now
+        if let anchorEpoch {
+            let locked = Self.mediaTime(forEpoch: anchorEpoch)
+            // Trust anchors from the recent past; a future or absurd anchor
+            // (clock skew, a daemon restart) falls back to "now".
+            if locked <= now + 0.05, now - locked < 6 * 3600 { anchor = locked }
+        }
         lastCodes = []
         renderCurrentFrame()
         updateClock()
     }
+
+    /// Converts a Unix timestamp into the display link's `CACurrentMediaTime` clock.
+    nonisolated static func mediaTime(forEpoch epoch: Double) -> CFTimeInterval {
+        CACurrentMediaTime() - (Date().timeIntervalSince1970 - epoch)
+    }
+
+    /// Seconds since the current program's t=0 (for the menu's "why" line).
+    var programAge: TimeInterval { CACurrentMediaTime() - anchor }
 
     private func milliseconds(_ time: CFTimeInterval) -> Int {
         Int(((time - anchor) * 1000.0).rounded(.down))
