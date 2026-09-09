@@ -146,13 +146,13 @@ def test_candidate_socket_paths_try_xdg_then_standard_without_duplicates(
     monkeypatch.setenv("XDG_STATE_HOME", str(xdg))
 
     assert candidate_hook_ingress_socket_paths() == (
-        xdg / "sidepulse" / "agent-monitor" / HOOK_INGRESS_SOCKET_NAME,
-        home / ".local" / "state" / "sidepulse" / "agent-monitor" / HOOK_INGRESS_SOCKET_NAME,
+        xdg / "jrbar" / HOOK_INGRESS_SOCKET_NAME,
+        home / ".local" / "state" / "jrbar" / HOOK_INGRESS_SOCKET_NAME,
     )
 
     monkeypatch.setenv("XDG_STATE_HOME", str(home / ".local" / "state"))
     assert candidate_hook_ingress_socket_paths() == (
-        home / ".local" / "state" / "sidepulse" / "agent-monitor" / HOOK_INGRESS_SOCKET_NAME,
+        home / ".local" / "state" / "jrbar" / HOOK_INGRESS_SOCKET_NAME,
     )
 
 

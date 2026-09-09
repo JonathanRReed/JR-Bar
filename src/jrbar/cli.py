@@ -591,6 +591,14 @@ def cmd_jrbar_sdejectguard_logs(args: argparse.Namespace) -> int:
 
 
 def cmd_jrbar_setup(args: argparse.Namespace) -> int:
+    # First: bring settings, ledgers and history forward from a SidePulse
+    # install so the hook installers below already see the current paths.
+    from .migration import migrate_from_sidepulse
+
+    migration = migrate_from_sidepulse(dry_run=args.dry_run)
+    for line in migration.summary_lines():
+        print(line)
+
     results = install_hook_results(args)
     print_install_results(results, dry_run=args.dry_run)
 

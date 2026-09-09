@@ -250,7 +250,7 @@ def main(
     if args.command == "refresh":
         usage_loader = usage_state_loader or (
             lambda: load_provider_usage_state(
-                root / ".local" / "state" / "sidepulse" / "provider-usage.json"
+                root / ".local" / "state" / "jrbar" / "provider-usage.json"
             )
         )
         runtime = ProviderSyncRuntime(
@@ -264,7 +264,7 @@ def main(
             local_directory=root
             / ".local"
             / "state"
-            / "sidepulse"
+            / "jrbar"
             / "provider-sync",
         )
         service = service_factory(runtime=runtime)

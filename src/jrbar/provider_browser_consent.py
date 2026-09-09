@@ -177,7 +177,7 @@ class LoadedBrowserConsents:
 
 def default_browser_consent_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home)
-    return base / ".config" / "sidepulse" / "browser-consent.json"
+    return base / ".config" / "jrbar" / "browser-consent.json"
 
 
 def _consent_from_document(value: object) -> BrowserConsent | None:

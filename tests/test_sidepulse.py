@@ -383,7 +383,7 @@ class AgentMonitorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             plugin_path = default_opencode_plugin_path(home)
-            target_log = home / ".local" / "state" / "sidepulse" / "opencode.jsonl"
+            target_log = home / ".local" / "state" / "jrbar" / "opencode.jsonl"
 
             self.assertFalse(detect_opencode_plugin(home).exists)
 
@@ -742,7 +742,7 @@ for (const event of [
             home = Path(tmp)
             config = home / ".config" / "devin" / "config.json"
             unrelated_log = Path("/private/tmp/agent-deck-debug.jsonl")
-            sidepulse_log = home / ".local" / "state" / "sidepulse" / "agent-monitor" / "devin.jsonl"
+            sidepulse_log = home / ".local" / "state" / "jrbar" / "devin.jsonl"
             config.parent.mkdir(parents=True)
             config.write_text(
                 json.dumps(
@@ -4494,17 +4494,17 @@ for (const event of [
 
         self.assertEqual(
             default_state_dir(home),
-            home / ".local" / "state" / "sidepulse" / "agent-monitor",
+            home / ".local" / "state" / "jrbar",
         )
         self.assertEqual(
             default_log_path("codex", home),
-            home / ".local" / "state" / "sidepulse" / "agent-monitor" / "codex.jsonl",
+            home / ".local" / "state" / "jrbar" / "codex.jsonl",
         )
 
         with patch.dict(os.environ, {"XDG_STATE_HOME": "/tmp/xdg-state"}):
             self.assertEqual(
                 default_state_dir(),
-                Path("/tmp/xdg-state") / "sidepulse" / "agent-monitor",
+                Path("/tmp/xdg-state") / "jrbar",
             )
 
     def test_install_defaults_to_standard_state_log_path(self) -> None:
@@ -4514,11 +4514,11 @@ for (const event of [
         with patch.object(
             cli_module,
             "default_log_path",
-            return_value=Path("/tmp/state/sidepulse/agent-monitor/codex.jsonl"),
+            return_value=Path("/tmp/state/jrbar/codex.jsonl"),
         ):
             self.assertEqual(
                 cli_module.install_log_path("codex", args),
-                Path("/tmp/state/sidepulse/agent-monitor/codex.jsonl"),
+                Path("/tmp/state/jrbar/codex.jsonl"),
             )
 
     def test_settings_use_xdg_config_dir_and_round_trip(self) -> None:
@@ -4526,7 +4526,7 @@ for (const event of [
             # default_settings_path resolves symlinks (/var -> /private/var
             # on macOS); anchor the expectation on the resolved root.
             config_home = Path(tmp).resolve() / "xdg-config"
-            settings_path = config_home / "sidepulse" / "agent-monitor" / "settings.json"
+            settings_path = config_home / "jrbar" / "settings.json"
 
             with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(config_home)}):
                 # default_settings_path is pinned per-test by conftest for

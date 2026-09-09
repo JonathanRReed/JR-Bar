@@ -65,13 +65,13 @@ def _mode(path: Path) -> int:
 
 def test_default_store_uses_private_application_support_path(tmp_path: Path) -> None:
     assert default_operator_history_path(tmp_path) == (
-        tmp_path / "Library" / "Application Support" / "SidePulse" / "operator-history.json"
+        tmp_path / "Library" / "Application Support" / "JR-Bar" / "operator-history.json"
     )
 
 
 def test_zero_retention_is_disabled_and_creates_no_filesystem_state(tmp_path: Path) -> None:
     """The default disabled store must stay idle even when runtime facts arrive."""
-    target = tmp_path / "Application Support" / "SidePulse" / "operator-history.json"
+    target = tmp_path / "Application Support" / "JR-Bar" / "operator-history.json"
     store = OperatorHistoryStore(target, retention_days=0)
 
     assert not store.add_rows((_day(),))

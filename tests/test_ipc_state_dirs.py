@@ -53,14 +53,14 @@ def test_candidate_state_dirs_try_xdg_then_standard_home_without_duplicates(
     home, xdg_state = _split_state_environment(short_root, monkeypatch)
 
     assert providers.candidate_state_dirs() == (
-        xdg_state / "sidepulse" / "agent-monitor",
-        home / ".local" / "state" / "sidepulse" / "agent-monitor",
+        xdg_state / "jrbar",
+        home / ".local" / "state" / "jrbar",
     )
 
     standard_state_home = home / ".local" / "state"
     monkeypatch.setenv("XDG_STATE_HOME", str(standard_state_home))
     assert providers.candidate_state_dirs() == (
-        standard_state_home / "sidepulse" / "agent-monitor",
+        standard_state_home / "jrbar",
     )
 
 
@@ -71,7 +71,7 @@ def test_candidate_state_dirs_with_explicit_home_ignore_process_xdg(
     home, _xdg_state = _split_state_environment(short_root, monkeypatch)
 
     assert providers.candidate_state_dirs(home) == (
-        home / ".local" / "state" / "sidepulse" / "agent-monitor",
+        home / ".local" / "state" / "jrbar",
     )
 
 

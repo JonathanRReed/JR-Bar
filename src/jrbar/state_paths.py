@@ -6,14 +6,28 @@ import os
 from pathlib import Path
 
 
-def default_state_dir(home: Path | None = None) -> Path:
+def _state_home(home: Path | None) -> Path:
     if home is None:
         xdg_state_home = os.environ.get("XDG_STATE_HOME")
         if xdg_state_home:
-            return Path(xdg_state_home).expanduser() / "sidepulse" / "agent-monitor"
-
+            return Path(xdg_state_home).expanduser()
     base = home or Path.home()
-    return base / ".local" / "state" / "sidepulse" / "agent-monitor"
+    return base / ".local" / "state"
+
+
+def default_state_dir(home: Path | None = None) -> Path:
+    """``$XDG_STATE_HOME/jrbar`` (default ``~/.local/state/jrbar``), flat."""
+    return _state_home(home) / "jrbar"
+
+
+def legacy_state_dirs(home: Path | None = None) -> tuple[Path, ...]:
+    """State directories used before the JR-Bar rename, most specific first.
+
+    Nothing is written here any more; ``jrbar.migration`` copies their
+    contents into :func:`default_state_dir` once.
+    """
+    root = _state_home(home) / "sidepulse"
+    return (root / "agent-monitor", root)
 
 
 def candidate_state_dirs(home: Path | None = None) -> tuple[Path, ...]:
@@ -27,4 +41,4 @@ def candidate_state_dirs(home: Path | None = None) -> tuple[Path, ...]:
     return tuple(dict.fromkeys(candidates))
 
 
-__all__ = ["candidate_state_dirs", "default_state_dir"]
+__all__ = ["candidate_state_dirs", "default_state_dir", "legacy_state_dirs"]

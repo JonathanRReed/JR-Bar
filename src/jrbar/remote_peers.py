@@ -128,7 +128,7 @@ LEGACY_REMOTE_LEDGER_DOCUMENT: Final = "sidepulse-remote-ledger"
 REMOTE_LEDGER_VERSION: Final = 1
 REMOTE_LEDGER_FILE_NAME: Final = "remote-ledger.json"
 DEFAULT_REMOTE_LEDGER_PATH: Final = (
-    "~/.local/state/sidepulse/agent-monitor/remote-ledger.json"
+    "~/.local/state/jrbar/remote-ledger.json"
 )
 
 _DOCUMENT_FIELDS: Final = frozenset(

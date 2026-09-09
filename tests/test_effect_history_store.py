@@ -99,8 +99,7 @@ def test_default_path_uses_existing_private_state_directory(tmp_path: Path) -> N
         tmp_path
         / ".local"
         / "state"
-        / "sidepulse"
-        / "agent-monitor"
+        / "jrbar"
         / EFFECT_HISTORY_STORE_NAME
     )
 

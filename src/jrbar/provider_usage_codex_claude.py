@@ -81,7 +81,7 @@ def _default_provider_local_scan(
         if provider_id == "codex"
         else Path(home) / ".claude" / "projects"
     )
-    cache = Path(home) / ".local" / "state" / "sidepulse" / "provider-usage-cache.json"
+    cache = Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json"
     try:
         result, totals = usage_stats._scan_provider_usage_with_totals(
             source,
@@ -184,7 +184,7 @@ def _cached_provider_local_scan(
             default_state_dir(home) / "usage-scan-cache.json",
             source.source_key,
         ),
-        Path(home) / ".local" / "state" / "sidepulse" / "provider-usage-cache.json",
+        Path(home) / ".local" / "state" / "jrbar" / "provider-usage-cache.json",
     )
     for cache_path in cache_candidates:
         if not isinstance(cache_path, Path):
