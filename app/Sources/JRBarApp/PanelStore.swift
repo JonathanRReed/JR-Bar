@@ -224,6 +224,25 @@ final class PanelStore {
         }
     }
 
+    /// What the Screen Bar's tooltip names: a live ask first, then a failure,
+    /// then whoever is working, then an unseen completion; with nothing live
+    /// the aggregate word. The click target is stricter: an ask's session or
+    /// the working one, else nothing.
+    var screenBarFocus: ScreenBarFocus {
+        let rows = rows
+        let pick = rows.first { $0.ask != nil }
+            ?? rows.first { $0.activity == .failed }
+            ?? rows.first { $0.activity == .working }
+            ?? rows.first { $0.activity == .done }
+        let clickable = rows.first { $0.ask != nil } ?? rows.first { $0.activity == .working }
+        if let pick {
+            let word = pick.ask != nil ? "Needs you" : pick.activity.word
+            return ScreenBarFocus(style: pick.style, label: pick.label, word: word, clickSession: clickable?.id)
+        }
+        let word = core.isLive ? aggregate.label : (fallbackState == .idle ? "Idle" : fallbackState.label)
+        return ScreenBarFocus(style: nil, label: "JR-Bar", word: word, clickSession: nil)
+    }
+
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
     var completedCount: Int { rows.filter { $0.activity == .done }.count }
@@ -299,8 +318,8 @@ final class PanelStore {
     }
 
     func openSettings() {
+        onClose?()
         onOpenSettings?()
-        show(toast: "Settings arrive with the daemon's settings document")
     }
 
     func quit() { onQuit?() }

@@ -14,6 +14,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let showBarItem: NSMenuItem
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
     var onTogglePanel: (@MainActor () -> Void)?
+    var onOpenSettings: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
 
     override init() {
@@ -47,6 +48,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(open)
         menu.addItem(showBarItem)
+        let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
+        settings.target = self
+        menu.addItem(settings)
         menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quit)
@@ -108,6 +112,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openPanel(_ sender: Any?) {
         onTogglePanel?()
+    }
+
+    @objc private func openSettings(_ sender: Any?) {
+        onOpenSettings?()
     }
 
     @objc private func toggleScreenBar(_ sender: NSMenuItem) {

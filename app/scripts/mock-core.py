@@ -63,6 +63,223 @@ GEMINI_ID = "gemini:session:8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a"
 PRO_ID = "sidepulse:pro:B293A1"
 DOT_ID = "sidepulse:dot:7F02C4"
 
+# The settings document, seeded from `AgentMonitorSettings().to_dict()` in
+# src/jrbar/_settings_legacy.py (captured 2026-09-09) plus the handful of
+# keys the native Settings window needs that the Python dataclass has no
+# field for yet (menu_bar_icon_style, devices_linked, cloud_ingest_token_path,
+# quota_alert_thresholds, devices[].resting_glow). `set_setting` writes into
+# a deep copy of this by dot path; `reset_settings` restores from it.
+def default_settings_document() -> dict:
+    def device(device_id: str, name: str, path: str) -> dict:
+        return {
+            "id": device_id, "name": name, "path": path, "led_display": "agent", "brightness": 255,
+            "auto_brightness_enabled": False, "red_gain": 1.0, "green_gain": 1.0, "blue_gain": 1.0,
+            "resting_glow": 0.0, "blend_mode": None, "provider_pin": None, "signal_policy": None,
+        }
+
+    return {
+        "settings_schema_version": 1,
+        "active_scene": "calm",
+        "agent_keep_awake_enabled": True,
+        "alert_burst": 3,
+        "battery_monitoring": {
+            "charging_idle_enabled": True, "full_charge_watts": None, "low_battery_alert_enabled": True,
+            "low_battery_threshold_percent": 5.0, "power_change_preview_seconds": 7.0, "show_on_power_change": True,
+        },
+        "calendar_alerts_enabled": False,
+        "calendar_lead_minutes": 5.0,
+        "calibration_profiles": {},
+        "capacity_history_enabled": False,
+        "capacity_history_retention_days": 7,
+        "claude_plan_limits_consent_version": 0,
+        "claude_plan_limits_enabled": False,
+        "closed_lid_awake_policy": "never",
+        "closed_lid_grace_minutes": 5.0,
+        "cloud_ingest_enabled": False,
+        "cloud_ingest_token_path": f"{HOME}/.local/state/jrbar/cloud-ingest.token",
+        "codex_percent_enabled": True,
+        "colors": {
+            "agent_colors": {
+                "antigravity": "#ABE17E", "claude": "#D97757", "codex": "#2B8FFF", "cursor": "#FFCC00",
+                "devin": "#5C84B0", "gemini": "#34C759", "grok": "#636366", "hermes": "#FF9500",
+                "kiro": "#A00848", "openclaw": "#B23400", "opencode": "#AF52DE", "pi": "#007AFF",
+            },
+            "blend_mode": "round_robin",
+            "color_by_project": False,
+            "cycle_speed_seconds": 2.2,
+            "done_celebration_enabled": True,
+            "fade_ceiling": {"ask": 0.5, "idle": 0.5, "working": 0.5},
+            "fade_floor": {"ask": 0.01, "idle": 0.01, "working": 0.01},
+            "mode_animation": {"ask": "pulse", "idle": "pulse", "working": "roll"},
+            "mode_colors": {"ask": "#FF3A00", "done": "#00FF66", "idle": "#020204", "working": "#00E5FF"},
+            "provider_animation": {},
+            "round_robin_urgency_alert": True,
+            "session_colors": {},
+            "speed_overrides": {},
+        },
+        "completion_notification_enabled": False,
+        "completion_sweep_enabled": True,
+        "devices": [
+            device(PRO_ID, "SidePulse", "/Volumes/SidePulse"),
+            device(DOT_ID, "PulseDot", "/Volumes/PulseDot"),
+        ],
+        "devices_linked": True,
+        "dismissed_tips": [],
+        "dnd_dim_fraction": 0.15,
+        "dnd_focus_mode": "pause",
+        "dnd_override_created_epoch": None,
+        "dnd_override_mode": None,
+        "dnd_override_until_epoch": None,
+        "dnd_schedule_enabled": False,
+        "dnd_schedule_end_minutes": 420,
+        "dnd_schedule_mode": "dark",
+        "dnd_schedule_start_minutes": 1320,
+        "escalation_final_seconds": 300.0,
+        "escalation_menu_bar_seconds": 120.0,
+        "escalation_ramp_seconds": 30.0,
+        "escalation_tier": "menu_bar",
+        "escalation_webhook_url": "",
+        "focus_dim_rules": {},
+        "focus_profile_rules": {},
+        "focus_signal_policy": {},
+        "focus_sync_enabled": False,
+        "global_action_shortcuts": {},
+        "global_brightness_scale": 1.0,
+        "idle_auto_off_after_minutes": 60.0,
+        "idle_auto_off_enabled": False,
+        "idle_dim_after_minutes": 10.0,
+        "idle_dim_enabled": True,
+        "idle_dim_fraction": 0.3,
+        "keep_awake_on_battery": True,
+        "keep_display_awake": False,
+        "led_display": "agent",
+        "lid_closed_active_animation": {
+            "duration_seconds": 1.5,
+            "program": "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine",
+        },
+        "lid_closed_animation": {
+            "duration_seconds": 0.9,
+            "program": "off 90ms cosine\n0:#FF7A00 180ms ease; 7:#FF7A00 180ms ease; 1:#FF7A00 180ms ease 80ms; "
+                       "6:#FF7A00 180ms ease 80ms\n2:#FF4A00 180ms ease; 5:#FF4A00 180ms ease; "
+                       "3:#FF3000 180ms ease 80ms; 4:#FF3000 180ms ease 80ms\noff 360ms ease-out",
+        },
+        "lid_open_active_animation": {
+            "duration_seconds": 1.2,
+            "program": "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse",
+        },
+        "lid_open_animation": {
+            "duration_seconds": 1.0,
+            "program": "off 90ms cosine\n3:#00E5FF 180ms ease; 4:#00E5FF 180ms ease; 2:#00E5FF 180ms ease 80ms; "
+                       "5:#00E5FF 180ms ease 80ms\n1:#00FFB0 180ms ease; 6:#00FFB0 180ms ease; "
+                       "0:#00FF66 180ms ease 80ms; 7:#00FF66 180ms ease 80ms\n#00FF66 220ms ease\noff 320ms ease-out",
+        },
+        "link_screen_bar_to_hardware": True,
+        "menu_bar_icon_style": "glyph",
+        "menu_bar_label_enabled": False,
+        "notification_policy_version": 1,
+        "operator_history_retention_days": 0,
+        "quota_alert_thresholds": [90.0, 95.0],
+        "quota_alerts_enabled": False,
+        "reminder_alerts_enabled": False,
+        "remote_peers": {
+            "enabled": False, "include_messages": False, "max_peers": 8, "muted_machines": [],
+            "per_peer_timeout_seconds": 4.0, "publish_enabled": False, "refresh_deadline_seconds": 8.0,
+            "remote_interrupts_muted": True,
+            "remote_ledger_path": "~/.local/state/sidepulse/agent-monitor/remote-ledger.json",
+            "unmuted_machines": [],
+        },
+        "screen_bar_bracket_style": "auto",
+        "screen_bar_follow_alcove": True,
+        "screen_bar_gap_width": None,
+        "screen_bar_gauges_enabled": False,
+        "screen_bar_min_glow": 0.25,
+        "screen_bar_show_in_full_screen": False,
+        "screen_bar_wing_length": None,
+        "session_open_preferences": {},
+        "setup_screen_completed": False,
+        "signal_styles": {},
+        "sleep_dim_enabled": True,
+        "sleep_dim_fraction": 0.2,
+        "studio_library": [],
+        "studio_program": "",
+        "subagent_asks_alert": False,
+        "tips_enabled": True,
+        "transcript_monitoring": {"claude": False, "codex": False},
+        "usage_display_mode": "tokens",
+        "usage_event_hook_path": "",
+        "usage_graph_days": 7,
+        "usage_graph_providers": ["claude", "codex"],
+        "virtual_status_device_enabled": True,
+        "virtual_status_device_wraps_menu_bar": False,
+        "webhook_events": [],
+        # Forward-compatibility bait: the Settings window must ignore this.
+        "x_mock_future_setting": {"nested": [1, 2, 3]},
+    }
+
+
+HOOK_PROVIDERS = ("claude", "codex", "gemini", "pi", "grok", "devin", "opencode", "openclaw", "antigravity",
+                  "cursor", "hermes", "kiro")
+
+
+def split_path(path: str) -> list:
+    """`colors.agent_colors.claude` -> keys; a numeric segment indexes a list."""
+    parts = []
+    for piece in str(path).split("."):
+        if not piece:
+            continue
+        parts.append(int(piece) if piece.isdigit() else piece)
+    return parts
+
+
+def resolve_parent(root, parts: list, create: bool):
+    node = root
+    for part in parts[:-1]:
+        if isinstance(part, int):
+            if not isinstance(node, list) or not 0 <= part < len(node):
+                return None
+            node = node[part]
+        else:
+            if not isinstance(node, dict):
+                return None
+            if part not in node:
+                if not create:
+                    return None
+                node[part] = {}
+            node = node[part]
+    return node
+
+
+def get_path(root, path: str):
+    parts = split_path(path)
+    if not parts:
+        return None, False
+    parent = resolve_parent(root, parts, create=False)
+    leaf = parts[-1]
+    if isinstance(leaf, int):
+        if isinstance(parent, list) and 0 <= leaf < len(parent):
+            return parent[leaf], True
+        return None, False
+    if isinstance(parent, dict) and leaf in parent:
+        return parent[leaf], True
+    return None, False
+
+
+def set_path(root, path: str, value) -> bool:
+    parts = split_path(path)
+    if not parts:
+        return False
+    parent = resolve_parent(root, parts, create=True)
+    leaf = parts[-1]
+    if isinstance(leaf, int):
+        if not isinstance(parent, list) or not 0 <= leaf < len(parent):
+            return False
+        parent[leaf] = value
+        return True
+    if not isinstance(parent, dict):
+        return False
+    parent[leaf] = value
+    return True
+
 
 def log(message: str) -> None:
     sys.stderr.write(f"mock-core: {message}\n")
@@ -125,6 +342,11 @@ class World:
         self.anchor = now
         self.brightness = 0.79
         self.snoozed_until = 0.0
+        self.document = json.loads(json.dumps(default_settings_document()))
+        self.hooks = {"claude": "ok", "codex": "ok", "gemini": "ok", "pi": "missing", "grok": "missing",
+                      "devin": "missing", "opencode": "stale", "openclaw": "missing", "antigravity": "missing",
+                      "cursor": "ok", "hermes": "missing", "kiro": "missing"}
+        self.previews: dict[str, float] = {}
 
     # -- construction helpers ------------------------------------------------
 
@@ -190,8 +412,7 @@ class World:
             "power": {"keep_awake": True, "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True}},
             "focus": self.focus,
             "escalation": self.escalation,
-            "health": {"hooks": {"claude": "ok", "codex": "ok", "gemini": "ok", "pi": "missing"},
-                       "sources": {"codex": {"fresh": True}}},
+            "health": {"hooks": dict(self.hooks), "sources": {"codex": {"fresh": True}}},
             "settings_generation": self.settings_generation,
             # Forward-compatibility bait: the app must ignore this.
             "x_mock_extra": {"note": "unknown keys are fine"},
@@ -223,14 +444,11 @@ class World:
     def settings(self) -> dict:
         return {
             "t": "settings", "v": PROTOCOL_VERSION, "generation": self.settings_generation, "schema": 3,
-            "document": {
-                "screen_bar": {"enabled": True, "wrap_menu_bar": True, "min_glow": 0.25},
-                "devices": {PRO_ID: {"brightness": self.brightness}, DOT_ID: {"brightness": 0.6}},
-                "sounds": {"completed": "glass", "ask": "tink"},
-                "quiet": {"mode": self.focus["mode"]},
-                "providers": {"claude": {"color": "#D97757"}, "codex": {"color": "#2B8FFF"}},
-            },
+            "document": json.loads(json.dumps(self.document)),
         }
+
+    def log_message(self, level: str, message: str) -> dict:
+        return {"t": "log", "v": PROTOCOL_VERSION, "level": level, "message": message, "at": time.time()}
 
     def event(self, kind: str, session: str | None = None, label: str | None = None, **extra) -> dict:
         self.event_counter += 1
@@ -272,6 +490,9 @@ class World:
         with self.lock:
             document = self.event(kind, session, label, **extra)
         self.broadcast(document)
+
+    def push_log(self, level: str, message: str) -> None:
+        self.broadcast(self.log_message(level, message))
 
     # -- mutations used by the timeline and commands ---------------------------
 
@@ -321,6 +542,7 @@ class World:
         ]
 
     def play_step(self, name: str) -> None:
+        self.push_log("info", f"timeline step {name}")
         if name == "claude_working":
             log("timeline: claude starts working")
             self.set_mode(CLAUDE_ID, "tool_running")
@@ -475,12 +697,93 @@ class World:
                 self.snoozed_until = time.time() + float(args.get("seconds", 600))
             result = {"until": self.snoozed_until}
         elif name == "set_setting":
+            path = str(args.get("path", ""))
+            with self.lock:
+                ok = set_path(self.document, path, args.get("value"))
+            if not ok:
+                return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                        "error": {"code": "invalid_path", "message": f"cannot write {path!r}"}}
             self.push_settings()
-            result = {"generation": self.settings_generation}
+            self.push_log("info", f"setting {path} changed")
+            result = {"generation": self.settings_generation, "path": path}
+        elif name == "reset_settings":
+            defaults = default_settings_document()
+            reset = []
+            with self.lock:
+                for path in args.get("paths") or []:
+                    value, found = get_path(defaults, str(path))
+                    if found and set_path(self.document, str(path), json.loads(json.dumps(value))):
+                        reset.append(str(path))
+            self.push_settings()
+            result = {"generation": self.settings_generation, "reset": reset}
+        elif name in ("install_hooks", "uninstall_hooks"):
+            providers = [p for p in (args.get("providers") or []) if p in HOOK_PROVIDERS]
+            with self.lock:
+                for p in providers:
+                    self.hooks[p] = "ok" if name == "install_hooks" else "missing"
+            self.push_state()
+            self.push_log("info", f"{name} {','.join(providers)}")
+            result = {"providers": providers}
+        elif name == "apply_calibration":
+            device = args.get("device")
+            profile = args.get("profile") or {}
+            applied = False
+            with self.lock:
+                for entry in self.document.get("devices", []):
+                    if entry.get("id") == device:
+                        for key in ("red_gain", "green_gain", "blue_gain", "resting_glow"):
+                            if key in profile:
+                                entry[key] = float(profile[key])
+                        applied = True
+            if not applied:
+                return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                        "error": {"code": "not_found", "message": "no such device"}}
+            self.push_settings()
+            result = {"device": device, "profile": profile}
+        elif name == "preview_program":
+            surface = str(args.get("surface", "hardware"))
+            seconds = float(args.get("seconds", 3))
+            with self.lock:
+                self.previews[surface] = time.time() + seconds
+            result = {"surface": surface, "until": self.previews[surface]}
+        elif name == "set_device_display":
+            with self.lock:
+                for entry in self.document.get("devices", []):
+                    if entry.get("id") == args.get("device"):
+                        entry["led_display"] = str(args.get("mode", "agent"))
+            self.push_settings()
+            result = {"device": args.get("device")}
+        elif name == "set_closed_lid_policy":
+            with self.lock:
+                self.document["closed_lid_awake_policy"] = str(args.get("policy", "never"))
+            self.push_settings()
+            result = {"policy": self.document["closed_lid_awake_policy"]}
+        elif name == "refresh_usage":
+            self.tick_usage(0.0)
+            result = {"refreshed_at": time.time()}
         elif name == "quit":
             result = {"bye": True}
         elif name == "doctor":
-            result = {"ok": True, "socket": "mock"}
+            with self.lock:
+                result = {
+                    "ok": True,
+                    "core_version": "0.8.0-mock",
+                    "socket": "mock",
+                    "uptime_seconds": round(time.time() - self.start, 1),
+                    "clients": len(self.clients),
+                    "hooks": dict(self.hooks),
+                    "devices": {d["id"]: ("connected" if d.get("connected", d.get("enabled")) else "absent")
+                                for d in self.devices.values()},
+                    "settings_generation": self.settings_generation,
+                    "state_generation": self.generation,
+                    "checks": [
+                        {"name": "socket permissions", "ok": True, "detail": "0600, peer uid matches"},
+                        {"name": "hook shim", "ok": True, "detail": "jrbar-hook 0.8.0 on PATH"},
+                        {"name": "sleep helper", "ok": True, "detail": "installed"},
+                        {"name": "closed-lid policy", "ok": True, "detail": self.document["closed_lid_awake_policy"]},
+                        {"name": "pending hook lines", "ok": True, "detail": "0 files"},
+                    ],
+                }
         return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": True, "result": result}
 
 

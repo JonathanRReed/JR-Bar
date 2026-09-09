@@ -6,11 +6,14 @@ import Observation
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController?
     private var screenBar: ScreenBarController?
+    private var interaction: ScreenBarInteraction?
     private var feed: LEDFeed?
     private var monitor: AgentStateMonitor?
     private var core: CoreModel?
     private var store: PanelStore?
     private var panel: PanelController?
+    private var settingsStore: SettingsStore?
+    private var settingsWindow: SettingsWindowController?
     private var socketWatcher: FileWatcher?
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
@@ -27,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let core = CoreModel()
         let store = PanelStore(core: core)
         let panel = PanelController(store: store)
+        let settingsStore = SettingsStore(core: core)
+        let settingsWindow = SettingsWindowController(store: settingsStore)
+        self.settingsStore = settingsStore
+        self.settingsWindow = settingsWindow
+        installMainMenu()
         self.statusItem = statusItem
         self.screenBar = screenBar
         self.feed = feed
@@ -42,7 +50,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onQuit = { NSApp.terminate(nil) }
-        store.onOpenSettings = { }  // Stub: Settings renders from the daemon's settings document later.
+
+        // Screen Bar hover and click: hit-tested against the band, never focus-stealing.
+        let interaction = ScreenBarInteraction(
+            bandRect: { [weak screenBar] in screenBar?.bandScreenRect },
+            focus: { [weak store] in store?.screenBarFocus },
+            onOpen: { [weak core] session in core?.openSession(session) }
+        )
+        self.interaction = interaction
+        screenBar.onGeometryChange = { [weak interaction] in interaction?.geometryChanged() }
+        store.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
+        statusItem.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source in
@@ -66,24 +84,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let shown = defaults.bool(forKey: Self.showScreenBarKey)
         statusItem.isScreenBarShown = shown
         store.screenBarShown = shown
-        if shown { screenBar.show() }
+        if shown { screenBar.show(); interaction.start() }
         feed.start()
         monitor.start()
         core.start()
 
-        // Developer switch: `JRBAR_OPEN_PANEL=1` opens the panel shortly after
-        // launch (screenshots, design passes) without a click.
-        if ProcessInfo.processInfo.environment["JRBAR_OPEN_PANEL"] != nil {
+        // Developer switches: `JRBAR_OPEN_PANEL=1` opens the panel shortly
+        // after launch (screenshots, design passes) without a click;
+        // `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on that page
+        // (general, agents, usage, devices, lighting, notifications, remote,
+        // advanced, or effects).
+        let environment = ProcessInfo.processInfo.environment
+        if environment["JRBAR_OPEN_PANEL"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak panel] in
                 MainActor.assumeIsolated { panel?.open() }
+            }
+        }
+        if let pageName = environment["JRBAR_OPEN_SETTINGS"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak settingsWindow, weak settingsStore] in
+                MainActor.assumeIsolated {
+                    let page = SettingsStore.Page(rawValue: pageName)
+                    settingsWindow?.show(page: page ?? .general)
+                    if pageName == "effects" { settingsStore?.page = .lighting; settingsStore?.route = [.effects] }
+                }
             }
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         panel?.close()
+        interaction?.stop()
         screenBar?.hide()
         core?.stop()
+    }
+
+    /// An accessory app has no menu bar of its own, but the Settings window's
+    /// text fields still need the Edit menu's responder chain for ⌘C/⌘V/⌘A.
+    private func installMainMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","))
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        edit.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        edit.addItem(.separator())
+        edit.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = edit
+        main.addItem(editItem)
+        let windowItem = NSMenuItem()
+        let window = NSMenu(title: "Window")
+        window.addItem(NSMenuItem(title: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        window.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowItem.submenu = window
+        main.addItem(windowItem)
+        NSApp.mainMenu = main
+    }
+
+    @objc private func openSettings(_ sender: Any?) {
+        settingsWindow?.show()
     }
 
     // MARK: Screen Bar visibility
@@ -92,7 +159,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(shown, forKey: Self.showScreenBarKey)
         statusItem?.isScreenBarShown = shown
         store?.screenBarShown = shown
-        if shown { screenBar?.show() } else { screenBar?.hide() }
+        if shown { screenBar?.show(); interaction?.start() } else { interaction?.stop(); screenBar?.hide() }
     }
 
     // MARK: Core observation

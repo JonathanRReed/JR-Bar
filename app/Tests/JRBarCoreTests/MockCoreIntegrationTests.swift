@@ -91,7 +91,8 @@ struct MockCoreIntegrationTests {
         #expect(bar.anchor != nil)
         #expect(model.lights?.linked == true)
         #expect(model.settings?.schema == 3)
-        #expect(model.settings?.document["screen_bar"]?["enabled"]?.boolValue == true)
+        #expect(model.settings?.document["virtual_status_device_enabled"]?.boolValue == true)
+        #expect(model.settings?.document["colors"]?["blend_mode"]?.stringValue == "round_robin")
         #expect(events.isEmpty)
         #expect(model.lastDecodeFailure == nil)
 
