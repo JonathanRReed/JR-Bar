@@ -344,7 +344,7 @@ def test_secret_never_appears_in_repr_or_responses():
 def test_default_token_path_lives_in_the_private_state_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     path = default_token_path()
-    assert path.parent == tmp_path / "sidepulse" / "agent-monitor"
+    assert path.parent == tmp_path / "jrbar"
     assert path.name == cloud_ingest.TOKEN_FILE_NAME
 
 

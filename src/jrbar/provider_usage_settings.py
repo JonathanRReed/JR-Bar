@@ -477,7 +477,7 @@ def default_provider_usage_settings() -> ProviderUsageSettings:
 
 def default_provider_usage_settings_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home)
-    return base / ".config" / "sidepulse" / "provider-usage.json"
+    return base / ".config" / "jrbar" / "provider-usage.json"
 
 
 _PROFILE_SETTING_FIELDS = (

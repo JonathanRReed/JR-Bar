@@ -154,7 +154,7 @@ def _clean_optional_text(value: object) -> str | None:
 def default_integration_settings_path() -> Path:
     configured = os.environ.get("XDG_CONFIG_HOME", "").strip()
     root = Path(configured).expanduser() if configured else Path.home() / ".config"
-    return root / "sidepulse" / "integrations.json"
+    return root / "jrbar" / "integrations.json"
 
 
 def _digest(document: dict[str, object]) -> str:

@@ -898,8 +898,30 @@ def install_provider_usage_status_bar():
     return JRProviderUsageStatusBarController, build_menu
 
 
+def _migrate_from_sidepulse_before_start() -> None:
+    """Bring a SidePulse install's files forward before anything reads them.
+
+    Never blocks startup: a failure is logged content-free and the app
+    starts with whatever is present; the next start retries.
+    """
+    try:
+        from .migration import migrate_from_sidepulse
+
+        report = migrate_from_sidepulse()
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        import logging
+
+        logging.getLogger("jrbar.migration").warning(
+            "migration: skipped at startup (%s)", type(exc).__name__
+        )
+        return
+    for line in report.summary_lines():
+        print(line, flush=True)
+
+
 def main() -> int:
     """Delegate to the one retained foreground main and composition boundary."""
+    _migrate_from_sidepulse_before_start()
     return _host.main()
 
 

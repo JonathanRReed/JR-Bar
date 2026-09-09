@@ -28,7 +28,7 @@ _memo_generation = 0
 
 def default_provider_sync_directory(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home)
-    return base / ".local" / "state" / "sidepulse" / "provider-sync"
+    return base / ".local" / "state" / "jrbar" / "provider-sync"
 
 
 def sharing_projection_signature(

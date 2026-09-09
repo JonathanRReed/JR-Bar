@@ -1523,14 +1523,24 @@ class AgentMonitorSettings:
         }
 
 
-def default_config_dir(home: Path | None = None) -> Path:
+def _config_home(home: Path | None) -> Path:
     if home is None:
         xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
         if xdg_config_home:
-            return Path(xdg_config_home).expanduser() / "sidepulse" / "agent-monitor"
-
+            return Path(xdg_config_home).expanduser()
     base = home or Path.home()
-    return base / ".config" / "sidepulse" / "agent-monitor"
+    return base / ".config"
+
+
+def default_config_dir(home: Path | None = None) -> Path:
+    """``$XDG_CONFIG_HOME/jrbar`` (default ``~/.config/jrbar``), flat."""
+    return _config_home(home) / "jrbar"
+
+
+def legacy_config_dirs(home: Path | None = None) -> tuple[Path, ...]:
+    """Config directories used before the JR-Bar rename, most specific first."""
+    root = _config_home(home) / "sidepulse"
+    return (root / "agent-monitor", root)
 
 
 def default_settings_path(home: Path | None = None) -> Path:

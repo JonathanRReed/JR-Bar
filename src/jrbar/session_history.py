@@ -3,7 +3,7 @@
 "Why does the graph only have Claude and Codex?" -- because tokens and
 cost genuinely exist only in those two CLIs' local transcripts. But
 SESSIONS exist for every provider SidePulse watches: the hook ledgers
-under agent-monitor/ record a `session_start` event with a timestamp
+in the state directory record a `session_start` event with a timestamp
 and a work id for grok, devin, and any other hook-emitting provider.
 This module turns those ledgers into the same day-bucketed counts the
 transcript scanner produces, so the sessions metric can chart the whole

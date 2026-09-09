@@ -386,8 +386,8 @@ def _build_payload(
         from .session_history import ledger_session_days
 
         try:
-            # default_state_dir() already ENDS in agent-monitor; the
-            # doubled path looked in .../agent-monitor/agent-monitor and
+            # default_state_dir() IS the ledger directory; a doubled
+            # path once looked one level too deep and
             # silently emptied the Sessions graph for every hook-ledger
             # provider (2026-08-27 readiness audit).
             extra_sessions = ledger_session_days(

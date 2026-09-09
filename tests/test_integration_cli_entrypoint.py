@@ -76,7 +76,7 @@ def test_cli_entrypoint_keeps_the_foreground_status_bar_import_inside_the_branch
 
 
 def test_packaged_application_uses_public_router_and_native_usage_host() -> None:
-    source = (ROOT / "packaging" / "sidepulse_entry.py").read_text(encoding="utf-8")
+    source = (ROOT / "packaging" / "jrbar_entry.py").read_text(encoding="utf-8")
 
     assert "from jrbar.cli_entry import jrbar_main" in source
     assert "from jrbar.cli import jrbar_main" not in source
@@ -87,7 +87,7 @@ def test_packaged_application_uses_public_router_and_native_usage_host() -> None
 
 
 def test_packaged_application_defers_status_bar_import_out_of_module_scope() -> None:
-    tree = _source_tree(ROOT / "packaging" / "sidepulse_entry.py")
+    tree = _source_tree(ROOT / "packaging" / "jrbar_entry.py")
 
     top_level_imports = [
         node

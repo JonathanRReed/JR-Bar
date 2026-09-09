@@ -86,7 +86,7 @@ def _mode(path: Path) -> int:
 def test_default_store_uses_sidepulse_application_support(tmp_path: Path) -> None:
     """Capacity metadata belongs in the private application-support area."""
     assert default_capacity_history_path(tmp_path) == (
-        tmp_path / "Library" / "Application Support" / "SidePulse" / "capacity-history.json"
+        tmp_path / "Library" / "Application Support" / "JR-Bar" / "capacity-history.json"
     )
 
 
@@ -408,7 +408,7 @@ def test_deleting_never_created_history_does_not_create_idle_filesystem_state(
     tmp_path: Path,
 ) -> None:
     """Consent deletion against an empty install must perform no idle write."""
-    target = tmp_path / "Application Support" / "SidePulse" / "capacity-history.json"
+    target = tmp_path / "Application Support" / "JR-Bar" / "capacity-history.json"
     store = CapacityHistoryStore(target, retention_days=7)
 
     assert not store.delete_capacity_history()

@@ -57,8 +57,7 @@ def test_default_store_uses_the_private_jr_bar_state_directory(
         tmp_path
         / ".local"
         / "state"
-        / "sidepulse"
-        / "agent-monitor"
+        / "jrbar"
         / EFFECT_PACK_STORE_DIRECTORY
     )
 

@@ -120,8 +120,7 @@ def test_default_path_uses_existing_state_directory(tmp_path: Path) -> None:
         tmp_path
         / ".local"
         / "state"
-        / "sidepulse"
-        / "agent-monitor"
+        / "jrbar"
         / CLEAR_AGENTS_STORE_NAME
     )
 

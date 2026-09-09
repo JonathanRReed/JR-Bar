@@ -19,7 +19,7 @@ _EVENT_ID = re.compile(r"[a-z][a-z0-9-]{0,31}:[a-z0-9][a-z0-9._:-]{0,127}:[0-9a-
 
 def default_reset_event_store_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home)
-    return base / ".local" / "state" / "sidepulse" / "provider-reset-events.json"
+    return base / ".local" / "state" / "jrbar" / "provider-reset-events.json"
 
 
 def load_seen_reset_events(path: Path | None = None) -> tuple[str, ...]:

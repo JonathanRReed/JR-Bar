@@ -19,7 +19,7 @@ MAX_STORE_BYTES = 2 * 1024 * 1024
 
 def default_provider_usage_state_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home)
-    return base / ".local" / "state" / "sidepulse" / "provider-usage.json"
+    return base / ".local" / "state" / "jrbar" / "provider-usage.json"
 
 
 def _lane_document(lane: UsageLane) -> dict[str, object]:

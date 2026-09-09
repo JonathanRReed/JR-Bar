@@ -820,7 +820,7 @@ def test_uninstall_verifier_detects_a_pre_rename_user_guard_left_behind(
 ) -> None:
     home = tmp_path / "home"
     data_home = tmp_path / "xdg-data"
-    legacy_guard = data_home / "sidepulse" / "sd-eject-guard" / "SidePulse Pro Eject Prevention"
+    legacy_guard = data_home / "jrbar" / "sd-eject-guard" / "SidePulse Pro Eject Prevention"
     legacy_guard.parent.mkdir(parents=True)
     legacy_guard.write_bytes(b"owned")
     legacy_plist = home / "Library" / "LaunchAgents" / "io.sidepulse.sdejectguard.plist"

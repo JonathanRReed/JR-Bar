@@ -104,7 +104,7 @@ class _UnsupportedHistoryStore(ValueError):
 
 def default_capacity_history_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home).expanduser()
-    return base / "Library" / "Application Support" / "SidePulse" / "capacity-history.json"
+    return base / "Library" / "Application Support" / "JR-Bar" / "capacity-history.json"
 
 
 def load_capacity_history(path: Path) -> CapacityHistoryRestore:

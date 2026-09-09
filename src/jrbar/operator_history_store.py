@@ -108,7 +108,7 @@ def _validate_retention(value: object) -> int:
 
 def default_operator_history_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home).expanduser()
-    return base / "Library" / "Application Support" / "SidePulse" / "operator-history.json"
+    return base / "Library" / "Application Support" / "JR-Bar" / "operator-history.json"
 
 
 def _strict_object(pairs: list[tuple[object, object]]) -> dict[object, object]:

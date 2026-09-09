@@ -156,7 +156,7 @@ def default_provider_sync_settings() -> ProviderSyncSettings:
 
 def default_provider_sync_settings_path(home: Path | None = None) -> Path:
     base = Path.home() if home is None else Path(home)
-    return base / ".config" / "sidepulse" / "provider-sync.json"
+    return base / ".config" / "jrbar" / "provider-sync.json"
 
 
 def _document_digest(document: dict[str, object]) -> str:
