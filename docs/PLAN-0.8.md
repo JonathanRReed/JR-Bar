@@ -1,0 +1,43 @@
+# JR-Bar 0.8 plan (living)
+
+Agreed with Jonathan on 2026-09-09. This file is the working plan for the 0.8
+rebuild. Update it as phases land; it is the only plan that matters.
+
+## Direction
+
+- Native Swift/SwiftUI app owns all UI. macOS 26 minimum.
+- The Python core becomes a headless daemon bundled inside the app, speaking
+  JSON over a Unix socket. Adapters can move to Swift one at a time later.
+- Full rename SidePulse -> JR-Bar with automatic migration.
+- Sessions are true: compiled hook shim, process liveness, Claude session
+  status files, Codex rollout tailing.
+- Screen Bar is one unsegmented bar identical to the hardware program.
+- Pro + Dot linked mode: when both are mounted their animations run as one unit.
+
+## Keep and improve
+
+remote peers, cloud ingest, Effect Studio (merged), calibration, forecasting
+(CodexBar style), operator history, closed-lid keep-awake with auto-sleep,
+activity history, escalation, calendar/reminder glows, focus dimming, quota
+alerts, auto-dim by time/ambient light/screen brightness.
+
+## Delete
+
+iOS app and its Mac half, Agent Deck, Waybar client, weather, timebox/timer,
+operator export, architecture-policing meta-tests, dead code.
+
+## Phases
+
+| Phase | Deliverable | Status |
+| --- | --- | --- |
+| A | Stale-session truth in the Python core: liveness, Claude session files, Codex tailing; hooks reinstalled from this checkout | in progress |
+| B | Deletions + rename of the Python core, migration, signed PKG installed | pending |
+| C | Daemon boundary: socket protocol, compiled hook shim, `jrbar-core` | pending |
+| D | Swift app: status item, glass panel, Screen Bar; replaces Python UI for those | pending |
+| E | Swift Settings, Control Center, Usage, Effects, Calibration, Activity History | pending |
+| F | Hardware verification (Pro, Dot, linked mode, Creator Micro 2), Pi + Gemini providers, Sparkle + notarization | pending |
+
+## Open items needing Jonathan
+
+- `xcrun notarytool store-credentials jrbar-notary --apple-id ... --team-id AJ9VWBRNZN`
+- Plug in the Dot when Phase F asks.
