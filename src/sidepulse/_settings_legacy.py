@@ -67,7 +67,6 @@ BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
 
 WEBHOOK_EVENT_KEYS = (
     "completion",
-    "weather",
     "timebox",
 )
 CLOSED_LID_AWAKE_NEVER = "never"
@@ -189,8 +188,8 @@ class DeviceDisplaySetting:
     # sessions and rests dark when none are live.
     provider_pin: str | None = None
     # Per-device courtesy-signal muting: "asks_only" keeps this device
-    # to agent status + asks/escalation (and weather/low-battery, which
-    # are never muted); None = every signal. The per-Focus policy's
+    # to agent status + asks/escalation (and low-battery, which is
+    # never muted); None = every signal. The per-Focus policy's
     # per-DEVICE sibling.
     signal_policy: str | None = None
 
@@ -285,12 +284,6 @@ class AgentMonitorSettings:
     # Amber glow when a Reminder comes due. Off by default: enabling it
     # presents the system Reminders prompt (see reminders_watch.py).
     reminder_alerts_enabled: bool = False
-    # Severe/Extreme weather warnings (NWS). Manual coordinates work alone.
-    # Network-address geolocation is a separate, default-off consent.
-    weather_alerts_enabled: bool = False
-    weather_ip_geolocation_enabled: bool = False
-    weather_latitude: float | None = None
-    weather_longitude: float | None = None
     # Named calibration/brightness profiles (Day/Night/Travel slots),
     # switchable from the dropdown -- slot -> {device_id: snapshot}.
     calibration_profiles: dict[str, dict] = field(default_factory=dict)
@@ -1312,14 +1305,6 @@ class AgentMonitorSettings:
     def with_reminder_alerts_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, reminder_alerts_enabled=bool(enabled))
 
-    def with_weather_alerts_enabled(self, enabled: bool) -> AgentMonitorSettings:
-        return replace(self, weather_alerts_enabled=bool(enabled))
-
-    def with_weather_ip_geolocation_enabled(
-        self, enabled: bool
-    ) -> AgentMonitorSettings:
-        return replace(self, weather_ip_geolocation_enabled=bool(enabled))
-
     def with_capacity_history_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, capacity_history_enabled=bool(enabled))
 
@@ -1351,16 +1336,6 @@ class AgentMonitorSettings:
 
     def with_timer_expected_minutes(self, minutes: float) -> AgentMonitorSettings:
         return replace(self, timer_expected_minutes=max(1.0, min(480.0, float(minutes))))
-
-    def with_weather_location(
-        self, latitude: float | None, longitude: float | None
-    ) -> AgentMonitorSettings:
-        """Both None = automatic IP geolocation."""
-        if latitude is not None:
-            latitude = max(-90.0, min(90.0, float(latitude)))
-        if longitude is not None:
-            longitude = max(-180.0, min(180.0, float(longitude)))
-        return replace(self, weather_latitude=latitude, weather_longitude=longitude)
 
     def with_calendar_lead_minutes(self, minutes: float) -> AgentMonitorSettings:
         return replace(self, calendar_lead_minutes=max(1.0, min(60.0, float(minutes))))
@@ -1514,10 +1489,6 @@ class AgentMonitorSettings:
             "calendar_alerts_enabled": self.calendar_alerts_enabled,
             "calendar_lead_minutes": self.calendar_lead_minutes,
             "reminder_alerts_enabled": self.reminder_alerts_enabled,
-            "weather_alerts_enabled": self.weather_alerts_enabled,
-            "weather_ip_geolocation_enabled": self.weather_ip_geolocation_enabled,
-            "weather_latitude": self.weather_latitude,
-            "weather_longitude": self.weather_longitude,
             "calibration_profiles": dict(sorted(self.calibration_profiles.items())),
             "timer_expected_minutes": self.timer_expected_minutes,
             "focus_profile_rules": dict(sorted(self.focus_profile_rules.items())),
@@ -1814,12 +1785,6 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             1.0, min(60.0, _float_setting(data.get("calendar_lead_minutes"), 5.0))
         ),
         reminder_alerts_enabled=_bool_setting(data.get("reminder_alerts_enabled"), False),
-        weather_alerts_enabled=_bool_setting(data.get("weather_alerts_enabled"), False),
-        weather_ip_geolocation_enabled=_bool_setting(
-            data.get("weather_ip_geolocation_enabled"), False
-        ),
-        weather_latitude=_optional_dimension(data.get("weather_latitude"), -90.0, 90.0),
-        weather_longitude=_optional_dimension(data.get("weather_longitude"), -180.0, 180.0),
         calibration_profiles=(
             {
                 str(slot): dict(entry)

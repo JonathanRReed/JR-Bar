@@ -67,7 +67,6 @@ STATE_COLORS = {
     "calendar": "#A45CFF",
     "notification": "#34C759",
     "reminders": "#FFB340",
-    "weather": "#FF2D55",
     "quota": "#FFB020",
 }
 

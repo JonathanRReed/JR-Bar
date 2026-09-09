@@ -39,7 +39,7 @@ This document records the boundaries, state owners, and invariants that are expe
 
 ## Product
 
-JR-Bar is a macOS menu-bar application and command-line tool that turns AI-agent activity into ambient light. It targets physical SidePulse LED devices mounted as USB volumes and an on-screen Screen Bar around the MacBook notch. Agent state shares the signal pipeline with notifications, calendar events, reminders, severe weather, battery state, timers, quota information, and user-authored LED programs.
+JR-Bar is a macOS menu-bar application and command-line tool that turns AI-agent activity into ambient light. It targets physical SidePulse LED devices mounted as USB volumes and an on-screen Screen Bar around the MacBook notch. Agent state shares the signal pipeline with notifications, calendar events, reminders, battery state, timers, quota information, and user-authored LED programs.
 
 ## Controller boundary
 
@@ -382,7 +382,7 @@ provider hook or fallback scan
 
 Actionable attention is global and deliberately bypasses provider pins. Stable lifecycle rows follow a device pin. Main agents remain visible as individual rows. When a provider has only background workers, exactly one urgent worker represents that provider's background crowd. The canonical worker set must never be copied into `visible_rows`; `AttentionProjection.__post_init__` demotes workers and would otherwise duplicate them.
 
-The persistent-signal precedence remains first-claim-wins. Test and escalation signals outrank weather, battery, notifications, completion, reminders, calendar, timer, Studio, and ordinary agent state. New signals must enter through the shared presentation and scheduling layers instead of bypassing them from a UI callback.
+The persistent-signal precedence remains first-claim-wins. Test and escalation signals outrank battery, notifications, completion, reminders, calendar, timer, Studio, and ordinary agent state. New signals must enter through the shared presentation and scheduling layers instead of bypassing them from a UI callback.
 
 Alcove following uses one typed, AppKit-free confidence projection shared by
 Settings, Doctor, and the Screen Bar. The source contract distinguishes fresh,

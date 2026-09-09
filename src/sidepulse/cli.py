@@ -1138,7 +1138,6 @@ def cmd_demo(args: argparse.Namespace) -> int:
             "quota_count": len(final.quotas),
             "device_count": len(final.devices),
             "remote_machine_count": len(final.machines),
-            "weather": final.weather.condition if final.weather is not None else None,
             "dnd": final.dnd,
             "low_power": final.low_power,
             "light": {

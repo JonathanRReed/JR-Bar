@@ -48,7 +48,7 @@ ONE_SHOT_PATTERNS = (PATTERN_BLINK, PATTERN_DOUBLE_BLINK)
 # would flash three times and leave the bar dark for the rest of a
 # multi-hour condition -- settings.signal_style falls such choices
 # back to breathe, and the style cards don't offer them.
-CONTINUOUS_SIGNALS = ("low_battery", "calendar", "weather")
+CONTINUOUS_SIGNALS = ("low_battery", "calendar")
 
 MIN_SPEED_SECONDS = 0.1
 MAX_SPEED_SECONDS = 10.0
@@ -62,7 +62,6 @@ SIGNAL_LOW_BATTERY = "low_battery"
 SIGNAL_NOTIFICATION = "notification"
 SIGNAL_REMINDERS = "reminders"
 SIGNAL_CALENDAR = "calendar"
-SIGNAL_WEATHER = "weather"
 SIGNAL_QUOTA = "quota"
 SIGNAL_COMPLETION = "completion"
 
@@ -134,9 +133,6 @@ DEFAULT_SIGNAL_STYLES: dict[str, SignalStyle] = {
     SIGNAL_NOTIFICATION: SignalStyle("#34C759", PATTERN_BLINK, 0.3, 1.0),
     SIGNAL_REMINDERS: SignalStyle("#FFB340", PATTERN_BREATHE, 1.5, 1.0),
     SIGNAL_CALENDAR: SignalStyle("#A45CFF", PATTERN_BREATHE, 2.6, 1.0),
-    # Emergency weather: an urgent heartbeat in warning pink-red --
-    # unmistakable, and unlike any agent state's rhythm or hue.
-    SIGNAL_WEATHER: SignalStyle("#FF2D55", PATTERN_HEARTBEAT, 1.4, 1.0),
     # Completion sweep: ANY agent finishing claims the bar briefly, in
     # that agent's identity color when several are running -- without
     # this, a completion was invisible whenever another agent's
@@ -277,7 +273,7 @@ def quota_crossings(
 #     with, and escalates THROUGH an active Focus. "I'm in a meeting"
 #     never means "let the thing that is blocked on me go dark".
 #
-#   COURTESY -- usage, weather, messages, completions, calendar,
+#   COURTESY -- usage, messages, completions, calendar,
 #     reminders. A burst of exactly `burst` repetitions, then back to
 #     normal -- and nothing at all while a Focus is on. That is the
 #     owner's sentence: "I'm in a meeting -- do not blink at me."
@@ -315,7 +311,6 @@ INTERRUPT_CLASS_BY_KIND: dict[str, str] = {
     INTERRUPT_ESCALATION: INTERRUPT_CRITICAL,
     SIGNAL_LOW_BATTERY: INTERRUPT_CRITICAL,
     SIGNAL_QUOTA: INTERRUPT_COURTESY,
-    SIGNAL_WEATHER: INTERRUPT_COURTESY,
     SIGNAL_NOTIFICATION: INTERRUPT_COURTESY,
     SIGNAL_COMPLETION: INTERRUPT_COURTESY,
     SIGNAL_CALENDAR: INTERRUPT_COURTESY,
@@ -326,11 +321,11 @@ INTERRUPT_CLASS_BY_KIND: dict[str, str] = {
 }
 
 # Quiet Hour is the owner's own manual snooze and predates this budget.
-# It has always let a severe-weather warning through. Focus does NOT --
-# the owner named weather in the "must not escalate through Focus"
-# list. Both facts live in this table so the difference is a
-# declaration rather than an accident at one call site.
-QUIET_HOUR_EXEMPT_KINDS: frozenset[str] = frozenset({SIGNAL_WEATHER})
+# Kinds listed here pass through it (severe weather used to, until that
+# feature was removed in 0.8). Focus is a separate, stricter gate. The
+# exemption stays a declaration in this table rather than an accident at
+# one call site; it is empty today.
+QUIET_HOUR_EXEMPT_KINDS: frozenset[str] = frozenset()
 
 # Per-Focus signal policies, strictest last. "silent" is the only one
 # that reaches a CRITICAL interrupt, and even then only its sound.

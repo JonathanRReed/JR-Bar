@@ -17,7 +17,6 @@ DAILY_TIPS: tuple[tuple[str, str | None, str | None], ...] = (
     ("Whites looking off? Calibrate each device under Devices", "devices", None),
     ("Day, Night, and Travel calibration profiles live under Profiles", None, None),
     ("Ignored asks can escalate: light, menu bar, chime, takeover", "led_behavior", None),
-    ("Severe-weather warnings can flash your lights", "extras", None),
     ("Calendar events and Reminders can glow before they're due", "extras", None),
     ("Every signal card in Signals has a Test button -- try one", "led_behavior", None),
     ("Agents on your other Macs can show up in this menu", "agents", None),

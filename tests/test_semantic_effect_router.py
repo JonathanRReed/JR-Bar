@@ -227,7 +227,7 @@ def test_courtesy_hold_suppresses_courtesy_but_leaves_idle_presence(
     reason: SuppressionReason,
 ) -> None:
     completion = _candidate("completion", SemanticEventKind.COMPLETION)
-    environment = _candidate("weather", SemanticEventKind.ENVIRONMENT)
+    environment = _candidate("battery", SemanticEventKind.ENVIRONMENT)
     idle = _candidate("idle", SemanticEventKind.IDLE)
 
     selection = route_semantic_effects(
@@ -238,7 +238,7 @@ def test_courtesy_hold_suppresses_courtesy_but_leaves_idle_presence(
     assert selection.winner == idle
     assert _suppressed(selection) == {
         "completion": reason,
-        "weather": reason,
+        "battery": reason,
     }
 
 

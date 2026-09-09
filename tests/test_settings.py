@@ -49,21 +49,6 @@ def test_capacity_history_is_opt_in() -> None:
     assert settings.capacity_history_retention_days == 7
 
 
-def test_weather_ip_geolocation_is_a_separate_default_off_persisted_consent(
-    tmp_path: Path,
-) -> None:
-    target = tmp_path / "settings.json"
-    default = AgentMonitorSettings().with_weather_alerts_enabled(True)
-
-    assert default.weather_ip_geolocation_enabled is False
-    configured = default.with_weather_ip_geolocation_enabled(True)
-    save_settings(configured, target)
-
-    assert load_settings(target).weather_ip_geolocation_enabled is True
-    payload = json.loads(target.read_text(encoding="utf-8"))
-    assert payload["weather_ip_geolocation_enabled"] is True
-
-
 def test_sleep_dim_and_idle_auto_off_are_separate_persisted_choices(
     tmp_path: Path,
 ) -> None:

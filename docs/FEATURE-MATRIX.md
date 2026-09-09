@@ -71,7 +71,7 @@ gate has passed for that exact commit.
 | Lid animations (preset Lid Closed / Lid Open programs, brightness-composed) | Shipped | Presets |
 | Timer/timebox display with draining fill and chime | Shipped | Off |
 | Studio: hand-written LED programs, saved library, `INIT.LED` power-up burn | Shipped | Off |
-| Signal engine for asks, failures, completions, low battery, reminders, calendar, weather | Shipped, per-feature opt-ins | Mixed |
+| Signal engine for asks, failures, completions, low battery, reminders, calendar | Shipped, per-feature opt-ins | Mixed |
 | Ask escalation: menu-bar emphasis, optional sound, notification, HTTPS webhook | Shipped | Conservative |
 
 ## Power
@@ -113,7 +113,6 @@ gate has passed for that exact commit.
 | Loopback cloud-agent ingest | Shipped | Off |
 | `sidepulse serve` - schema-v2 redacted agent aggregates and provider quota summaries on loopback (Stream Deck, scripts) | Shipped | Manual |
 | Calendar and Reminders glows | Shipped | Off |
-| Severe weather | Shipped | Off |
 | T3 Code local-state compatibility (query-only SQLite projection, no mutation, no credentials) | Shipped, opt-in | Off |
 
 ## Packaging and diagnostics

@@ -9,7 +9,6 @@ writes to a device.
 
 from __future__ import annotations
 
-import random
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -32,7 +31,6 @@ class DemoScenario(str, Enum):
     COMPLETION = "completion"
     QUOTA = "quota"
     FLEET = "fleet"
-    WEATHER = "weather"
     DND = "dnd"
     LOW_POWER = "low_power"
     NOTIFICATION_LIGHT = "notification_light"
@@ -59,7 +57,6 @@ SCENARIO_SPECS: tuple[DemoScenarioSpec, ...] = (
     DemoScenarioSpec("completion", "Completion", "One agent finishes an unseen task."),
     DemoScenarioSpec("quota", "Quota", "A provider approaches its synthetic quota."),
     DemoScenarioSpec("fleet", "Remote fleet", "Local and remote machines share a read-only view."),
-    DemoScenarioSpec("weather", "Weather", "A severe-weather courtesy signal is available."),
     DemoScenarioSpec("dnd", "Do Not Disturb", "A courtesy completion is suppressed by DND."),
     DemoScenarioSpec("low_power", "Low power", "Working output is reduced to a calm low-energy state."),
     DemoScenarioSpec(
@@ -85,7 +82,6 @@ class DemoLightMode(str, Enum):
     ERROR = "error"
     COMPLETION = "completion"
     QUOTA = "quota"
-    WEATHER = "weather"
     SUPPRESSED = "suppressed"
 
 
@@ -225,13 +221,6 @@ class DemoRemoteMachine:
 
 
 @dataclass(frozen=True, slots=True)
-class DemoWeather:
-    condition: str
-    severity: str
-    temperature_c: float
-
-
-@dataclass(frozen=True, slots=True)
 class DemoLight:
     mode: DemoLightMode
     pattern: str
@@ -265,7 +254,6 @@ class DemoSnapshot:
     quotas: tuple[DemoQuota, ...] = ()
     devices: tuple[DemoDevice, ...] = ()
     machines: tuple[DemoRemoteMachine, ...] = ()
-    weather: DemoWeather | None = None
     dnd: bool = False
     low_power: bool = False
     light: DemoLight = DemoLight(DemoLightMode.OFF, "off", "#000000", 0, False)
@@ -427,9 +415,6 @@ class DemoSandbox:
     build = run
 
     def _events(self, scenario: DemoScenario) -> tuple[DemoEvent, ...]:
-        rng = random.Random(self.seed)
-        weather_temperature = round(rng.uniform(-12.0, 38.0), 1)
-        weather_code = f"WX-{rng.randrange(1000, 10000)}"
         rows: list[tuple[int, str, dict[str, object]]] = []
 
         def add(offset: int, kind: str, payload: dict[str, object]) -> None:
@@ -485,16 +470,6 @@ class DemoSandbox:
             agent(6, "claude-demo", DemoAgentState.COMPLETED)
             agent(8, "remote-codex-demo", DemoAgentState.WORKING, remote=True)
             add(9, "quota", {"provider": "codex", "used": 82, "limit": 100, "reset_after_seconds": 3600})
-            add(
-                10,
-                "weather",
-                {
-                    "condition": "severe_weather",
-                    "severity": "warning",
-                    "temperature_c": weather_temperature,
-                    "alert_code": weather_code,
-                },
-            )
             add(12, "policy", {"dnd": True, "low_power": False})
             add(14, "policy", {"dnd": False, "low_power": True})
             add(16, "policy", {"dnd": False, "low_power": False})
@@ -517,18 +492,6 @@ class DemoSandbox:
             local_setup(remote=True)
             agent(1, "codex-demo", DemoAgentState.WORKING)
             agent(2, "remote-codex-demo", DemoAgentState.WORKING, remote=True)
-        elif scenario is DemoScenario.WEATHER:
-            local_setup()
-            add(
-                1,
-                "weather",
-                {
-                    "condition": "severe_weather",
-                    "severity": "warning",
-                    "temperature_c": weather_temperature,
-                    "alert_code": weather_code,
-                },
-            )
         elif scenario is DemoScenario.DND:
             local_setup()
             agent(1, "codex-demo", DemoAgentState.WORKING)
@@ -559,7 +522,6 @@ class DemoSandbox:
         quotas: dict[str, DemoQuota] = {}
         devices: dict[str, DemoDevice] = {}
         machines: dict[str, DemoRemoteMachine] = {}
-        weather: DemoWeather | None = None
         dnd = False
         low_power = False
         snapshots: list[DemoSnapshot] = []
@@ -599,12 +561,6 @@ class DemoSandbox:
             elif event.kind == "remote_machine":
                 machine_id = str(payload["machine_id"])
                 machines[machine_id] = DemoRemoteMachine(machine_id, str(payload["label"]), bool(payload["online"]))
-            elif event.kind == "weather":
-                weather = DemoWeather(
-                    str(payload["condition"]),
-                    str(payload["severity"]),
-                    float(payload["temperature_c"]),
-                )
             elif event.kind == "policy":
                 dnd = bool(payload["dnd"])
                 low_power = bool(payload["low_power"])
@@ -615,10 +571,9 @@ class DemoSandbox:
                     quotas=tuple(sorted(quotas.values(), key=lambda row: row.provider)),
                     devices=tuple(sorted(devices.values(), key=lambda row: row.device_id)),
                     machines=tuple(sorted(machines.values(), key=lambda row: row.machine_id)),
-                    weather=weather,
                     dnd=dnd,
                     low_power=low_power,
-                    light=_light_for(agents, quotas, weather, dnd, low_power),
+                    light=_light_for(agents, quotas, dnd, low_power),
                 )
             )
         return tuple(snapshots)
@@ -627,7 +582,6 @@ class DemoSandbox:
 def _light_for(
     agents: Mapping[str, DemoAgent],
     quotas: Mapping[str, DemoQuota],
-    weather: DemoWeather | None,
     dnd: bool,
     low_power: bool,
 ) -> DemoLight:
@@ -640,8 +594,6 @@ def _light_for(
         light = DemoLight(DemoLightMode.COMPLETION, "pulse", "#42D77D", 80, False)
     elif DemoAgentState.WORKING in states:
         light = DemoLight(DemoLightMode.WORKING, "breathe", "#4FA3FF", 55, True)
-    elif weather is not None and weather.severity in {"warning", "severe"}:
-        light = DemoLight(DemoLightMode.WEATHER, "pulse", "#5AC8FA", 45, False)
     elif any(quota.remaining_ratio <= 0.2 for quota in quotas.values()):
         light = DemoLight(DemoLightMode.QUOTA, "steady", "#FFB000", 35, True)
     else:
@@ -649,7 +601,6 @@ def _light_for(
 
     if dnd and light.mode in {
         DemoLightMode.COMPLETION,
-        DemoLightMode.WEATHER,
         DemoLightMode.QUOTA,
         DemoLightMode.WORKING,
     }:
@@ -695,7 +646,6 @@ __all__ = [
     "DemoScenario",
     "DemoScenarioSpec",
     "DemoSnapshot",
-    "DemoWeather",
     "available_scenarios",
     "build_demo_run",
 ]

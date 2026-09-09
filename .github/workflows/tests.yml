@@ -43,7 +43,6 @@ jobs:
           tests/test_dependency_and_entitlements.py
           tests/test_persistence_integration_contract.py
           tests/test_pro_identity_and_brightness.py
-          tests/test_weather_network_bounds.py
           tests/test_workflow_contract.py
 
   portable:

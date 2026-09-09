@@ -1,35 +1,15 @@
-"""The Today section: readable calendar/reminders/weather, honest gaps."""
+"""The Today section: readable calendar/reminders, honest gaps."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 
-from sidepulse import weather_watch
 from sidepulse.today_menu import (
-    TodayFeed,
     TodaySnapshot,
     _relative_start,
     project_today_rows,
     today_menu_title,
 )
-
-
-def test_weather_guidance_does_not_request_location_without_consent(monkeypatch) -> None:
-    monkeypatch.setattr(
-        weather_watch,
-        "ip_location",
-        lambda: (_ for _ in ()).throw(AssertionError("unexpected IP lookup")),
-    )
-    settings = SimpleNamespace(
-        weather_latitude=None,
-        weather_longitude=None,
-        weather_ip_geolocation_enabled=False,
-    )
-
-    assert TodayFeed()._weather_lines(settings) == (
-        "Set a weather location in Settings",
-    )
 
 
 def test_relative_start_phrasing() -> None:
@@ -40,34 +20,22 @@ def test_relative_start_phrasing() -> None:
     assert ":" in later  # clock time past the hour horizon
 
 
-def test_title_leads_with_weather_alerts_then_calendar() -> None:
+def test_title_leads_with_the_next_calendar_event() -> None:
     quiet = TodaySnapshot(calendar_line="No events in the next 12 hours")
     assert today_menu_title(quiet) == "Today"
 
     busy = TodaySnapshot(calendar_line="Standup · in 12m")
     assert today_menu_title(busy) == "Today · Standup · in 12m"
 
-    storm = TodaySnapshot(
-        calendar_line="Standup · in 12m",
-        weather_lines=("⚠ Severe Thunderstorm Warning",),
-    )
-    assert today_menu_title(storm) == "Today · ⚠ 1 weather alert"
 
-
-def test_rows_read_in_order_and_flag_alerts() -> None:
+def test_rows_read_in_order() -> None:
     snapshot = TodaySnapshot(
         calendar_line="Standup · in 12m",
         reminder_lines=("Pay rent", "Call back"),
-        weather_lines=("No active weather alerts",),
     )
     rows = project_today_rows(snapshot)
     assert rows[0] == ("Next event · Standup · in 12m", False, "calendar")
     assert rows[1][0].startswith("Reminders · Pay rent")
     assert rows[1][2] == "reminders"
-    assert rows[-1] == ("No active weather alerts", False, "weather")
+    assert rows[-1][2] == "reminders"
     assert not any(alert for _text, alert, _kind in rows)
-
-    alerting = project_today_rows(
-        TodaySnapshot(weather_lines=("⚠ Flood Watch",))
-    )
-    assert alerting == (("⚠ Flood Watch", True, "weather"),)

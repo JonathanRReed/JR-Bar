@@ -235,7 +235,7 @@ def _semantic_family(effect: EffectDefinition) -> SemanticFamily:
         (SemanticFamily.COMPLETION, ("completion", "completed", "done")),
         (SemanticFamily.NOTIFICATION, ("notification", "new event")),
         (SemanticFamily.QUOTA, ("quota", "capacity", "reset")),
-        (SemanticFamily.ENVIRONMENT, ("environment", "weather", "battery", "power")),
+        (SemanticFamily.ENVIRONMENT, ("environment", "battery", "power")),
         (SemanticFamily.IDLE, ("idle", "steady", "no effect")),
         (SemanticFamily.TRANSITION, ("transition", "handoff", "rainbow")),
     )

@@ -10,7 +10,7 @@ from .runtime_scheduler import RuntimeWorkPriority
 
 _EXPLICIT_DISPLAYS = frozenset({"signal_test"})
 _URGENT_DISPLAYS = frozenset(
-    {"failure", "escalation", "weather", "low_battery"}
+    {"failure", "escalation", "low_battery"}
 )
 _IMPORTANT_DISPLAYS = frozenset(
     {

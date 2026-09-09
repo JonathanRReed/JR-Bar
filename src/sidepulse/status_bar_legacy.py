@@ -103,7 +103,6 @@ from . import (
     usage_card,
     usage_percent_history,
     usage_stats,
-    weather_watch,
 )
 
 # `NSStringDrawingUsesLineFragmentOrigin`. PyObjC exposes the enum under
@@ -1130,83 +1129,6 @@ class RemindersObservationResult:
             raise ValueError("unavailable reminders cannot contain identifiers")
 
 
-@dataclass(frozen=True, slots=True)
-class WeatherObservationRequest:
-    latitude: float | None
-    longitude: float | None
-    allow_ip_location: bool = False
-
-    def __post_init__(self) -> None:
-        if type(self.allow_ip_location) is not bool:
-            raise ValueError("invalid weather IP location consent")
-        latitude = self.latitude
-        longitude = self.longitude
-        if (latitude is None) != (longitude is None):
-            raise ValueError("weather coordinates must be paired")
-        if latitude is None:
-            return
-        if (
-            not isinstance(latitude, (int, float))
-            or isinstance(latitude, bool)
-            or not math.isfinite(float(latitude))
-            or not -90.0 <= float(latitude) <= 90.0
-            or not isinstance(longitude, (int, float))
-            or isinstance(longitude, bool)
-            or not math.isfinite(float(longitude))
-            or not -180.0 <= float(longitude) <= 180.0
-        ):
-            raise ValueError("invalid weather coordinates")
-        object.__setattr__(self, "latitude", float(latitude))
-        object.__setattr__(self, "longitude", float(longitude))
-
-
-WEATHER_CLASSIFICATIONS = frozenset(
-    {
-        "Tornado warning",
-        "Hurricane warning",
-        "Flash flood warning",
-        "Severe thunderstorm warning",
-        "Extreme weather alert",
-        "Severe weather alert",
-    }
-)
-
-
-@dataclass(frozen=True, slots=True)
-class WeatherObservationResult:
-    available: bool
-    active: bool
-    classification: str | None
-
-    def __post_init__(self) -> None:
-        if type(self.available) is not bool or type(self.active) is not bool:
-            raise ValueError("invalid weather observation state")
-        if not self.available and (self.active or self.classification is not None):
-            raise ValueError("unavailable weather cannot contain alert truth")
-        if self.active != (self.classification is not None):
-            raise ValueError("weather alert truth requires a classification")
-        if (
-            self.classification is not None
-            and self.classification not in WEATHER_CLASSIFICATIONS
-        ):
-            raise ValueError("invalid weather classification")
-
-
-def _weather_classification(severity: object, event: object) -> str:
-    normalized = str(event).casefold()
-    if "tornado" in normalized:
-        return "Tornado warning"
-    if "hurricane" in normalized:
-        return "Hurricane warning"
-    if "flash flood" in normalized:
-        return "Flash flood warning"
-    if "severe thunderstorm" in normalized:
-        return "Severe thunderstorm warning"
-    if str(severity).casefold() == "extreme":
-        return "Extreme weather alert"
-    return "Severe weather alert"
-
-
 MAX_RUNTIME_PHYSICAL_DEVICES = 16
 
 
@@ -1449,7 +1371,6 @@ PRESENTATION_TIMER_BINDINGS: tuple = (
     (RuntimeFeature.DISPLAY_ENVIRONMENT, "_display_environment_timer_fired"),
     (RuntimeFeature.CALENDAR_OBSERVATION, "_calendar_observation_timer_fired"),
     (RuntimeFeature.REMINDERS_OBSERVATION, "_reminders_observation_timer_fired"),
-    (RuntimeFeature.WEATHER_OBSERVATION, "_weather_observation_timer_fired"),
     (RuntimeFeature.SETTINGS_SIGNAL_PREVIEW, "_settings_signal_preview_fired"),
     (RuntimeFeature.SETTINGS_COLOR_PREVIEW, "_settings_color_preview_fired"),
     (RuntimeFeature.SETUP_DEMO, "_setup_demo_fired"),
@@ -1484,7 +1405,6 @@ LED_DISPLAY_COMPLETION = "completion"
 LED_DISPLAY_REMINDERS = "reminders"
 REMINDERS_WATCH_SECONDS = 60.0
 REMINDERS_WATCH_RETRY_SECONDS = 300.0
-LED_DISPLAY_WEATHER = "weather"
 LED_DISPLAY_QUOTA = "quota_alert"
 LED_DISPLAY_ALL_CLEAR = "all_clear"
 # A rate-limit RESET: the confetti moment (celebrations.py). Finite,
@@ -1493,10 +1413,6 @@ LED_DISPLAY_ALL_CLEAR = "all_clear"
 LED_DISPLAY_RESET_CELEBRATION = "reset_celebration"
 LED_DISPLAY_CONNECTION = "connection_notice"
 LED_DISPLAY_PEEK = "peek"
-WEATHER_WATCH_SECONDS = 600.0
-WEATHER_WATCH_RETRY_SECONDS = 1800.0
-WEATHER_FETCH_TIMEOUT_SECONDS = 30.0
-WEATHER_WORKER_KEY = "weather-observation"
 CALENDAR_WATCH_SECONDS = 30.0
 CALENDAR_WATCH_RETRY_SECONDS = 300.0
 
@@ -2117,11 +2033,6 @@ class StatusBarController(NSObject):
         self._reminders_permission_generation = 1
         self._reminders_permission_request_token: int | None = None
         self._reminders_permission_failed = False
-        # Weather emergency: alert active right now (state, not moment).
-        self.weather_alert_active = False
-        self.weather_alert_event: str | None = None
-        self.weather_watch_retry_at = 0.0
-        self._weather_observation_generation = 1
         self.current_state = STATE_IDLE
         # None until set_status() actually confirms Idle -- avoids assuming
         # "idle since launch" if the real initial state turns out to be
@@ -2228,8 +2139,6 @@ class StatusBarController(NSObject):
         self._calendar_observation_fire_at = None
         self._reminders_observation_active = False
         self._reminders_observation_fire_at = None
-        self._weather_observation_active = False
-        self._weather_observation_fire_at = None
         self._scheduled_reminders_cue_deadline = None
         self._scheduled_settings_message_deadline = None
         self._scheduled_timebox_deadline = None
@@ -2830,9 +2739,6 @@ class StatusBarController(NSObject):
             None,
             True,
         )
-        # NSTimer's first fire is one interval out; warn NOW.
-        if self.settings.weather_alerts_enabled:
-            self._weather_observation_timer_fired()
         # Remote peers: own minute timer; the fetch checks the setting.
         self.start_remote_peer_timer()
         if self.settings.remote_peers.enabled:
@@ -6818,97 +6724,6 @@ class StatusBarController(NSObject):
         self.set_settings_message(f"Capacity history kept for {raw} days.")
 
     @objc.IBAction
-    def toggleWeatherAlerts_(self, sender):
-        enabled = bool(sender.state())
-        self.settings = self.settings.with_weather_alerts_enabled(enabled)
-        save_settings(self.settings)
-        self.weather_watch_retry_at = 0.0
-        if enabled:
-            has_manual_location = (
-                self.settings.weather_latitude is not None
-                and self.settings.weather_longitude is not None
-            )
-            if has_manual_location or self.settings.weather_ip_geolocation_enabled:
-                self.set_settings_message("Weather warnings on. Checking your area.")
-            else:
-                self.set_settings_message(
-                    "Weather warnings need coordinates or separate network-location consent."
-                )
-        else:
-            self.set_settings_message("Weather warnings off.")
-        self.reconcile_lid_observation()
-        if enabled:
-            self._weather_observation_timer_fired()
-
-    @objc.IBAction
-    def applyWeatherLocation_(self, _sender):
-        ip_switch = self.settings_buttons.get("weather_ip_geolocation_enabled")
-        if _sender is ip_switch and ip_switch is not None:
-            enabled = bool(ip_switch.state())
-            self.settings = self.settings.with_weather_ip_geolocation_enabled(enabled)
-            save_settings(self.settings)
-            self.weather_watch_retry_at = 0.0
-            self._advance_weather_observation_generation()
-            if enabled:
-                self.set_settings_message(
-                    "Network location on. Weather checks may send your IP address to ipapi.co."
-                )
-                if self.settings.weather_alerts_enabled:
-                    self._weather_observation_timer_fired()
-            else:
-                weather_watch.invalidate_ip_location()
-                self.set_settings_message(
-                    "Network location off. Enter latitude and longitude for weather alerts."
-                )
-            return
-        lat_field = self.settings_fields.get("weather_latitude_field")
-        lon_field = self.settings_fields.get("weather_longitude_field")
-        if lat_field is None or lon_field is None:
-            return
-
-        def parsed(field):
-            text = str(field.stringValue()).strip()
-            if not text:
-                return None, True
-            try:
-                return float(text), True
-            except ValueError:
-                return None, False
-
-        latitude, lat_ok = parsed(lat_field)
-        longitude, lon_ok = parsed(lon_field)
-        if not (lat_ok and lon_ok):
-            self.set_settings_message(
-                "Weather location must be decimal degrees, like 41.88 and -87.63."
-            )
-            return
-        if (latitude is None) != (longitude is None):
-            self.set_settings_message(
-                "Enter both latitude and longitude, or leave both blank."
-            )
-            return
-        self.settings = self.settings.with_weather_location(latitude, longitude)
-        save_settings(self.settings)
-        # Re-check alerts for the new location right away.
-        self.weather_watch_retry_at = 0.0
-        self._advance_weather_observation_generation()
-        self._weather_observation_timer_fired()
-        if latitude is None:
-            if self.settings.weather_ip_geolocation_enabled:
-                self.set_settings_message(
-                    "Weather location uses your network address with separate consent."
-                )
-            else:
-                self.set_settings_message(
-                    "Weather alerts need coordinates or network-location consent."
-                )
-        else:
-            self.set_settings_message(
-                f"Weather location set to {latitude:g}, {longitude:g}."
-            )
-        self.refresh_(None)
-
-    @objc.IBAction
     def reminderAccessResolved_(self, granted):
         payload = granted if isinstance(granted, dict) else {}
         token = payload.get("token")
@@ -7835,7 +7650,6 @@ class StatusBarController(NSObject):
         self._set_display_environment_active(False)
         self._set_calendar_observation_active(False)
         self._set_reminders_observation_active(False)
-        self._set_weather_observation_active(False)
         self._runtime_preview_fire_at.clear()
         self._reminders_permission_generation += 1
         self._reminders_permission_request_token = None
@@ -8432,23 +8246,6 @@ class StatusBarController(NSObject):
         """A tracked blocked-on-you request is waiting right now."""
         projection = getattr(self, "current_attention_projection", None)
         return bool(projection and projection.actionable_attention)
-
-    def hard_ask_renders_on_device(self, device: StatusBarDevice) -> bool:
-        """Would THIS device actually show the live ask? Weather may
-        only yield to an ask the user can see on that surface --
-        yielding on a device pinned to the other provider (or parked
-        on an ambient Studio/Timer/Runway display) blanked the
-        emergency while showing nothing blocked-on-you in its place."""
-        if device.display != LED_DISPLAY_AGENT:
-            return False
-        projection = getattr(self, "current_attention_projection", None)
-        if projection is None:
-            return False
-        pin = self.settings.device_provider_pin(device.device_id)
-        return any(
-            not pin or row.provider == pin
-            for row in projection.actionable_attention
-        )
 
     def quiet_active(self) -> bool:
         """Compatibility read for the durable one-hour Mute override."""
@@ -9151,7 +8948,6 @@ class StatusBarController(NSObject):
             return None
         return {
             "sidepulse.completion": signals_module.SIGNAL_COMPLETION,
-            "sidepulse.weather": signals_module.SIGNAL_WEATHER,
             "sidepulse.timebox_finished": signals_module.INTERRUPT_TIMEBOX,
             "sidepulse.escalation": signals_module.INTERRUPT_ESCALATION,
         }.get(payload_dict.get("event"))
@@ -12051,14 +11847,6 @@ class StatusBarController(NSObject):
             self.settings.reminder_alerts_enabled,
         )
         set_checkbox_state(
-            self.settings_buttons.get("weather_alerts_enabled"),
-            self.settings.weather_alerts_enabled,
-        )
-        set_checkbox_state(
-            self.settings_buttons.get("weather_ip_geolocation_enabled"),
-            self.settings.weather_ip_geolocation_enabled,
-        )
-        set_checkbox_state(
             self.settings_buttons.get("quota_alerts_enabled"),
             self.settings.quota_alerts_enabled,
         )
@@ -12115,18 +11903,6 @@ class StatusBarController(NSObject):
         focus_now = self.settings_fields.get("focus_now_label")
         if focus_now is not None:
             focus_now.setStringValue_(self.active_focus_summary())
-        set_field_value(
-            self.settings_fields.get("weather_latitude_field"),
-            ""
-            if self.settings.weather_latitude is None
-            else f"{self.settings.weather_latitude:g}",
-        )
-        set_field_value(
-            self.settings_fields.get("weather_longitude_field"),
-            ""
-            if self.settings.weather_longitude is None
-            else f"{self.settings.weather_longitude:g}",
-        )
         for identifier, fraction in self.settings.focus_dim_rules.items():
             popup = self.settings_fields.get(f"focus_rule_popup:{identifier}")
             if popup is not None:
@@ -13445,12 +13221,6 @@ class StatusBarController(NSObject):
                 or self.timebox_active()
                 or self.timebox_overtime()
             ),
-            SignalClaimKey.WEATHER: lambda: (
-                self.settings.weather_alerts_enabled
-                and self.may_interrupt(signals_module.SIGNAL_WEATHER)
-                and self.weather_alert_active
-                and not self.hard_ask_renders_on_device(device)
-            ),
         }
 
         def evaluate_claim(claim_key: SignalClaimKey) -> bool:
@@ -13887,12 +13657,6 @@ class StatusBarController(NSObject):
                     color=getattr(self, "completion_sweep_color", None),
                 )
             )
-        elif display == LED_DISPLAY_WEATHER:
-            _set_virtual(
-                style_to_program(
-                    self.budgeted_signal_style(signals_module.SIGNAL_WEATHER), brightness
-                )
-            )
         elif display == LED_DISPLAY_PEEK:
             _set_virtual(self.peek_program(brightness))
         elif display == LED_DISPLAY_ALL_CLEAR:
@@ -14317,15 +14081,6 @@ class StatusBarController(NSObject):
             hardware_worker,
         )
         self._hardware_write_worker = hardware_worker
-        weather_worker = LatestWinsWorker(
-            RuntimeWorkerDomain.WEATHER_FETCH,
-            executor=self._execute_weather_command,
-            result_handler=self._apply_weather_result,
-            dispatch_main=dispatcher,
-            monotonic=clock,
-        )
-        self._weather_worker = weather_worker
-        self._weather_worker_registered = False
         return registry, worker
 
     def _dispatch_runtime_worker_result(self, drain) -> None:
@@ -14600,92 +14355,6 @@ class StatusBarController(NSObject):
             )
             return RemindersObservationResult(True, identifiers)
         raise ValueError("invalid OS poll command")
-
-    def _execute_weather_command(
-        self,
-        command: RuntimeWorkCommand,
-    ) -> WeatherObservationResult:
-        if (
-            command.domain is not RuntimeWorkerDomain.WEATHER_FETCH
-            or command.key != WEATHER_WORKER_KEY
-            or type(command.payload) is not WeatherObservationRequest
-        ):
-            raise ValueError("invalid weather command")
-        request = command.payload
-        try:
-            if request.latitude is None:
-                if not request.allow_ip_location:
-                    return WeatherObservationResult(False, False, None)
-                latitude, longitude = weather_watch.ip_location()
-                location = WeatherObservationRequest(latitude, longitude)
-            else:
-                location = request
-            alerts = weather_watch.active_alerts(
-                location.latitude,
-                location.longitude,
-            )
-            first = next(iter(alerts), None)
-            if first is None:
-                return WeatherObservationResult(True, False, None)
-            _private_identifier, severity, event = first
-            return WeatherObservationResult(
-                True,
-                True,
-                _weather_classification(severity, event),
-            )
-        except Exception:
-            return WeatherObservationResult(False, False, None)
-
-    def _apply_weather_result(
-        self,
-        command: RuntimeWorkCommand,
-        result: object,
-    ) -> None:
-        inputs = self._presentation_scheduler_inputs
-        if (
-            command.domain is RuntimeWorkerDomain.WEATHER_FETCH
-            and command.key == WEATHER_WORKER_KEY
-            and type(command.payload) is WeatherObservationRequest
-            and type(result) is WeatherObservationResult
-            and command.generation == self._weather_observation_generation
-            and command.deadline > self._runtime_worker_monotonic()
-            and self._weather_observation_active
-            and self._runtime_started
-            and self.settings.weather_alerts_enabled
-            and inputs is not None
-            and not inputs.display_asleep
-            and not inputs.app_terminating
-        ):
-            self._apply_weather_observation_result(result)
-
-    def _apply_weather_observation_result(
-        self,
-        result: WeatherObservationResult,
-    ) -> None:
-        was_active = self.weather_alert_active
-        if not result.available:
-            self.weather_watch_retry_at = (
-                self._runtime_worker_monotonic() + WEATHER_WATCH_RETRY_SECONDS
-            )
-            self._weather_observation_fire_at = self.weather_watch_retry_at
-            self.weather_alert_active = False
-            self.weather_alert_event = None
-            self._reconcile_current_presentation_inputs()
-            if was_active:
-                self.refresh_(None)
-            return
-        self.weather_watch_retry_at = 0.0
-        self.weather_alert_active = result.active
-        self.weather_alert_event = result.classification
-        if self.weather_alert_active != was_active:
-            if self.weather_alert_active and self.webhook_event_enabled("weather"):
-                self.post_webhook(
-                    {
-                        "event": "sidepulse.weather",
-                        "headline": self.weather_alert_event or "",
-                    }
-                )
-            self.refresh_(None)
 
     def _apply_os_poll_result(
         self,
@@ -15317,17 +14986,6 @@ class StatusBarController(NSObject):
             and not inputs.app_terminating
         )
 
-    def _weather_observation_should_run(
-        self,
-        inputs: PresentationSchedulerInputs,
-    ) -> bool:
-        return bool(
-            self._runtime_started
-            and self.settings.weather_alerts_enabled
-            and not inputs.display_asleep
-            and not inputs.app_terminating
-        )
-
     def _preview_should_run(
         self,
         feature: RuntimeFeature,
@@ -15651,41 +15309,6 @@ class StatusBarController(NSObject):
         self._os_poll_generation += 1
         self._os_poll_worker.cancel_generation(previous_generation)
 
-    def _set_weather_observation_active(
-        self,
-        active: bool,
-        *,
-        now: float | None = None,
-    ) -> None:
-        desired = bool(active)
-        if desired == self._weather_observation_active:
-            return
-        was_alert_active = self.weather_alert_active
-        if desired and not self._weather_worker_registered:
-            self._runtime_worker_registry.register(
-                RuntimeWorkerDomain.WEATHER_FETCH,
-                self._weather_worker,
-            )
-            self._weather_worker_registered = True
-        self._weather_observation_active = desired
-        self._weather_observation_fire_at = (
-            (self._presentation_monotonic() if now is None else float(now))
-            + WEATHER_WATCH_SECONDS
-            if desired
-            else None
-        )
-        self._advance_weather_observation_generation()
-        if not desired:
-            self.weather_alert_active = False
-            self.weather_alert_event = None
-            if was_alert_active:
-                self.refresh_(None)
-
-    def _advance_weather_observation_generation(self) -> None:
-        previous_generation = self._weather_observation_generation
-        self._weather_observation_generation += 1
-        self._weather_worker.cancel_generation(previous_generation)
-
     def _set_hardware_write_active(self, active: bool) -> None:
         desired = bool(active)
         if desired == self._hardware_write_active:
@@ -15737,7 +15360,6 @@ class StatusBarController(NSObject):
         display_environment_active = self._display_environment_should_run(inputs)
         calendar_observation_active = self._calendar_observation_should_run(inputs)
         reminders_observation_active = self._reminders_observation_should_run(inputs)
-        weather_observation_active = self._weather_observation_should_run(inputs)
         signal_preview_active = self._preview_should_run(
             RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
             inputs,
@@ -15763,7 +15385,6 @@ class StatusBarController(NSObject):
             and calendar_observation_active == self._calendar_observation_active
             and reminders_observation_active
             == self._reminders_observation_active
-            and weather_observation_active == self._weather_observation_active
             and signal_preview_active
             == (
                 RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
@@ -15807,9 +15428,6 @@ class StatusBarController(NSObject):
                 current_reminders_observation_active = (
                     self._reminders_observation_should_run(current)
                 )
-                current_weather_observation_active = (
-                    self._weather_observation_should_run(current)
-                )
                 current_signal_preview_active = self._preview_should_run(
                     RuntimeFeature.SETTINGS_SIGNAL_PREVIEW,
                     current,
@@ -15841,8 +15459,6 @@ class StatusBarController(NSObject):
                     != self._calendar_observation_active
                     or current_reminders_observation_active
                     != self._reminders_observation_active
-                    or current_weather_observation_active
-                    != self._weather_observation_active
                     or current_signal_preview_active
                     != (
                         RuntimeFeature.SETTINGS_SIGNAL_PREVIEW
@@ -15890,10 +15506,6 @@ class StatusBarController(NSObject):
                     )
                     self._set_reminders_observation_active(
                         current_reminders_observation_active,
-                        now=now,
-                    )
-                    self._set_weather_observation_active(
-                        current_weather_observation_active,
                         now=now,
                     )
                     self._set_preview_active(
@@ -15977,18 +15589,6 @@ class StatusBarController(NSObject):
                                 fire_at=self._reminders_observation_fire_at,
                                 interval=REMINDERS_WATCH_SECONDS,
                                 tolerance=REMINDERS_WATCH_SECONDS * 0.1,
-                                common_modes=False,
-                            ),
-                        )
-                    if current_weather_observation_active:
-                        assert self._weather_observation_fire_at is not None
-                        intents = (
-                            *intents,
-                            RuntimeTimerIntent(
-                                feature=RuntimeFeature.WEATHER_OBSERVATION,
-                                fire_at=self._weather_observation_fire_at,
-                                interval=WEATHER_WATCH_SECONDS,
-                                tolerance=WEATHER_WATCH_SECONDS * 0.1,
                                 common_modes=False,
                             ),
                         )
@@ -16245,34 +15845,6 @@ class StatusBarController(NSObject):
             )
         )
 
-    def _weather_observation_timer_fired(self) -> None:
-        inputs = self._presentation_scheduler_inputs
-        if (
-            not self._weather_observation_active
-            or not self._runtime_started
-            or not self.settings.weather_alerts_enabled
-            or inputs is None
-            or inputs.display_asleep
-            or inputs.app_terminating
-        ):
-            return
-        now = self._runtime_worker_monotonic()
-        if now < self.weather_watch_retry_at:
-            return
-        self._weather_worker.submit(
-            RuntimeWorkCommand(
-                domain=RuntimeWorkerDomain.WEATHER_FETCH,
-                key=WEATHER_WORKER_KEY,
-                generation=self._weather_observation_generation,
-                deadline=now + WEATHER_FETCH_TIMEOUT_SECONDS,
-                payload=WeatherObservationRequest(
-                    self.settings.weather_latitude,
-                    self.settings.weather_longitude,
-                    self.settings.weather_ip_geolocation_enabled,
-                ),
-            )
-        )
-
     def _settings_message_deadline_fired(self) -> None:
         deadline = self._settings_message_deadline_at
         now = self._presentation_monotonic()
@@ -16507,13 +16079,6 @@ class StatusBarController(NSObject):
                 )(brightness, led_count),
                 LedDisplayState.DONE,
                 lambda device, _snapshot: f"{device.name} Completion sweep",
-            ),
-            LED_DISPLAY_WEATHER: (
-                styled(signals_module.SIGNAL_WEATHER),
-                LedDisplayState.ASK,
-                lambda device, _snapshot: (
-                    f"{device.name} Weather {self.weather_alert_event or 'alert'}"
-                ),
             ),
             LED_DISPLAY_RESET_CELEBRATION: (
                 lambda brightness, led_count: reset_celebration_program(

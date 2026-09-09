@@ -33,7 +33,6 @@ class RuntimeFeature(str, Enum):
     DISPLAY_ENVIRONMENT = "display_environment"
     CALENDAR_OBSERVATION = "calendar_observation"
     REMINDERS_OBSERVATION = "reminders_observation"
-    WEATHER_OBSERVATION = "weather_observation"
     TIMEBOX_DEADLINE = "timebox_deadline"
     ESCALATION_DEADLINE = "escalation_deadline"
     CAPACITY_DEADLINE = "capacity_deadline"
@@ -53,7 +52,6 @@ class RuntimeFeature(str, Enum):
 class RuntimeWorkerDomain(str, Enum):
     OS_POLL = "os_poll"
     HARDWARE_WRITE = "hardware_write"
-    WEATHER_FETCH = "weather_fetch"
     SCREEN_BAR_SAMPLER = "screen_bar_sampler"
     ALCOVE_OBSERVER = "alcove_observer"
 

@@ -14,7 +14,6 @@ class SignalClaimKey(str, Enum):
 
     TEST = "test"
     ESCALATION = "escalation"
-    WEATHER = "weather"
     LOW_BATTERY = "low_battery"
     FAILURE = "failure"
     QUOTA = "quota"
@@ -49,7 +48,6 @@ SIGNAL_CLAIM_PRECEDENCE: tuple[SignalClaimSpec, ...] = (
         "escalation",
         claim_admission=DisplayAdmission.ASKS,
     ),
-    SignalClaimSpec(SignalClaimKey.WEATHER, "weather"),
     SignalClaimSpec(
         SignalClaimKey.LOW_BATTERY,
         "low_battery",

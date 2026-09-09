@@ -999,19 +999,14 @@ class SettingsAreaWiringTests(unittest.TestCase):
             )
         )
 
-    def test_extras_carries_the_weather_and_calendar_controls(self) -> None:
+    def test_extras_carries_the_calendar_controls(self) -> None:
         self.controller.ensure_settings_pane("extras")
         for key in (
             "calendar_alerts_enabled",
             "reminder_alerts_enabled",
-            "weather_alerts_enabled",
         ):
             self.assertIn(key, self.controller.settings_buttons, key)
-        for key in (
-            "calendar_lead_field",
-            "weather_latitude_field",
-            "weather_longitude_field",
-        ):
+        for key in ("calendar_lead_field",):
             self.assertIn(key, self.controller.settings_fields, key)
 
     def test_refreshing_the_window_re_reads_the_new_controls(self) -> None:
