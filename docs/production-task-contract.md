@@ -7,7 +7,7 @@ Updated: 2026-09-05
 - Terminal objective: turn the SidePulse fork into a cohesive JR-Bar release, merge it to `main`, push it, and publish the verified macOS release.
 - Current completion claim: the macOS source is verified, developer-signed, installed, and committed on `codex/jr-bar-production` for fast-forward to `main` and push. No notarized release, GitHub Release, or update feed is claimed.
 - Scope update from Jonathan: SidePulse Pro/Dot and Creator Micro are optional hardware. JR-Bar must start and work without either device. Software-only verification must not require a SidePulse smoke write; explicitly selected hardware profiles still need truthful, device-specific verification.
-- Scope update from Jonathan on September 5: defer iOS development and verification. Preserve earlier iOS work, but exclude it from the current macOS completion gates.
+- Scope update from Jonathan on September 5: defer iOS development and verification. The 0.8 rebuild later deleted the iOS app and the Mac phone-glance listener outright.
 - Signing update from Jonathan on September 5: use the existing Developer ID Application identity for the current local build. Installer signing and notarization are deferred. This does not make the build a notarized or publicly verified release.
 - Active work: fast-forward `main` to the committed source and push. Creator Micro live input and lighting still need a sole-controller trial; the earlier keymap apply, restore, and readback receipt does not prove those behaviors.
 
@@ -31,7 +31,7 @@ Updated: 2026-09-05
 ## Deferred, external, and out of scope
 
 - Deferred: Linux headless and Waybar product support after the macOS release; Windows after the POSIX and AppKit boundaries are removed.
-- Deferred by Jonathan: iOS, including its URL-write finding and trusted-device HTTPS checks. Installer signing and notarization are also deferred for the current developer-signed local build.
+- Removed in the 0.8 rebuild: iOS and the phone-glance listener, including their URL-write finding and trusted-device HTTPS checks. Installer signing and notarization are deferred for the current developer-signed local build.
 - External: Alcove has no documented geometry API, so precision following remains explicitly experimental until a vendor contract exists.
 - Out of scope: JR-Bar does not orchestrate T3Code or mutate T3Code databases.
 
@@ -199,7 +199,7 @@ Earlier scan receipts follow. Each applies only to its recorded snapshot.
 ## External release blockers
 
 - Native access is restored. Privacy-toggle verification awaits approval to temporarily enable privacy mode and restore its original off state. No account name or provider permission will be changed.
-- The iOS companion still needs a real iPhone or iPad HTTPS check using a trusted private CA and matching IP certificate. The full unsigned Xcode build passes. Device inventory showed a simulator only, not a connected physical iPhone. No device trust settings have been changed.
+- The iOS companion and its HTTPS check are no longer open items: both were deleted in the 0.8 rebuild. No device trust settings were ever changed.
 - No Developer ID Installer identity is available, so the PKG is unsigned.
 - The expected notarization profile, `sidepulse-notary`, was absent at the last credential check. An available profile must be identified or configured securely before notarization and stapling.
 - The Sparkle key is present under the expected `io.sidepulse.app` Keychain account and returns the pinned public key. Its final signed archive and appcast receipts still depend on a notarized candidate.
