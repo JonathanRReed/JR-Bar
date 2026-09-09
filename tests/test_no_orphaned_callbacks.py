@@ -97,6 +97,8 @@ def test_every_timer_binding_names_a_real_callback() -> None:
     silent getattr surprise at launch."""
     text = (SRC / "status_bar_legacy.py").read_text()
     names = re.findall(r'\(RuntimeFeature\.\w+, "(\w+)"\)', text)
-    assert len(names) >= 17
+    # Floor only guards against the regex silently matching nothing; the
+    # table lost its weather and timebox rows in the 0.8 rebuild.
+    assert len(names) >= 15
     for name in names:
         assert re.search(rf"^    def {re.escape(name)}\(self", text, re.M), name

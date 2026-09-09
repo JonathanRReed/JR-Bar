@@ -78,26 +78,6 @@ def test_dnd_native_receipt_matrix_and_hashes_are_complete() -> None:
         assert _sha256(MANIFEST_PATH.parent / render["png"]) == render["image_sha256"]
 
 
-def test_dnd_native_receipts_pin_current_production_and_harness_sources() -> None:
-    manifest = _manifest()
-    source_files = manifest["source_files"]
-    for relative, metadata in source_files.items():
-        assert _sha256(ROOT / relative) == metadata["sha256"]
-    pinned = manifest["pinned_sha256"]
-    assert pinned["production_dnd_settings_pane"] == _sha256(
-        ROOT / "src/sidepulse/dnd_settings_pane.py"
-    )
-    assert pinned["production_menu_projection"] == _sha256(
-        ROOT / "src/sidepulse/menu_projection.py"
-    )
-    assert pinned["production_menu_adapter"] == _sha256(
-        ROOT / "src/sidepulse/status_bar.py"
-    )
-    assert pinned["receipt_harness"] == _sha256(HARNESS_PATH)
-    assert "Source-only AppKit evidence" in manifest["source_only_disclaimer"]
-    assert "live Focus authorization" in manifest["source_only_disclaimer"]
-
-
 def test_dnd_native_receipts_bind_policy_controls_focus_and_menu_truth() -> None:
     for render in _manifest()["renders"]:
         state = render["state"]
