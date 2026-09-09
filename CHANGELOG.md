@@ -4,6 +4,10 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Remove night warmth and the 7 PM–7 AM night dim (the Night Warmth card,
+  `NIGHT_WARMTH_GAINS`, and the `night_warmth_enabled` / `night_dim_fraction`
+  settings, ignored on load). `brightness_policy` keeps its `night_factor`
+  input, fed 1.0 until a time/ambient-light auto-dim replaces it.
 - Remove the operator history/diagnostics JSON export (`operator_export`, the
   Local Export card and its two buttons). Operator history itself stays.
 - Remove the timebox/timer: the Timer menu, presets, Focus-handshake

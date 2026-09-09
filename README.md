@@ -162,8 +162,6 @@ wearing your colors.
 
 ## Odds and ends worth knowing
 
-- **Night warmth**: eases green and blue down from 7 PM to 7 AM,
-  composed over each device's calibration.
 - **Color by project**: sessions in the same repo share a hue family,
   providers told apart by lightness.
 - **Quiet hour, per-Focus signal policies** (all / asks only /

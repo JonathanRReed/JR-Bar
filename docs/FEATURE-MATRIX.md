@@ -67,7 +67,6 @@ gate has passed for that exact commit.
 | Color palettes, blend modes, provider identity, per-device brightness and calibration | Shipped | Reviewed defaults |
 | 18-motion vocabulary (`PROVIDER_ANIMATION_CHOICES`), including the 2026-08-26 sourced KITT, Gradient, Marquee, and Duotone; previews route through the real solo renderer | Shipped (0.4.0) | Automatic |
 | Charging trickle while idle (wattage-paced, yields to any agent claim and pinned displays) | Shipped (0.4.0) | On |
-| Night warmth and optional night dim (7 PM–7 AM), composed with the ambient stack | Shipped | Off |
 | Lid animations (preset Lid Closed / Lid Open programs, brightness-composed) | Shipped | Presets |
 | Studio: hand-written LED programs, saved library, `INIT.LED` power-up burn | Shipped | Off |
 | Signal engine for asks, failures, completions, low battery, reminders, calendar | Shipped, per-feature opt-ins | Mixed |

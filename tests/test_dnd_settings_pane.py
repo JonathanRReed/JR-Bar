@@ -97,14 +97,6 @@ class _DndSettingsTarget(NSObject):
         self._record("end_override", sender)
 
     @objc.IBAction
-    def toggleNightWarmth_(self, sender):
-        self._record("night_warmth", sender)
-
-    @objc.IBAction
-    def setNightDimFraction_(self, sender):
-        self._record("night_dim", sender)
-
-    @objc.IBAction
     def setFocusDimRule_(self, sender):
         self._record("focus_dim", sender)
 
@@ -183,7 +175,6 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
     assert text.count("Do Not Disturb") == 1
     assert {
         "Right Now",
-        "Night Warmth",
         "Per-Focus Rules",
     } <= set(text)
     assert "Focus Dimming" not in text
@@ -198,7 +189,6 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
         "dnd_dim_fraction",
         "dnd_focus_mode",
         "dnd_focus_authorization_status",
-        "night_dim_popup",
     } <= set(fields)
     assert {
         "dnd_schedule_enabled",
@@ -211,7 +201,6 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
         "dnd_temporary_mode:dark",
         "dnd_resume",
         "dnd_end_override",
-        "night_warmth_enabled",
     } <= set(buttons)
 
 
@@ -310,16 +299,11 @@ def test_key_view_loop_is_stable_and_disabled_state_is_explicit(monkeypatch) -> 
     assert order[0] is fields["dnd_status_label"]
     assert order[1] is buttons["dnd_schedule_enabled"]
     assert buttons["dnd_focus_authorization"] in order
-    assert buttons["night_warmth_enabled"] in order
-    assert fields["night_dim_popup"] in order
     assert fields["focus_fda_path_label"] in order
     assert buttons["focus_fda_open"] in order
     assert buttons["focus_fda_reveal"] in order
-    assert order.index(buttons["night_warmth_enabled"]) > order.index(
-        buttons["dnd_end_override"]
-    )
     assert order.index(buttons["focus_fda_open"]) > order.index(
-        fields["night_dim_popup"]
+        buttons["dnd_end_override"]
     )
     assert tuple(
         buttons[f"dnd_temporary_mode:{mode.value}"] for mode in DndMode

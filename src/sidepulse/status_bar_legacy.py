@@ -1432,10 +1432,6 @@ EVENT_REFRESH_FLOOR_SECONDS = 0.25
 # brightness should be 100%"). An explicit per-Focus "Turn off" (scale
 # exactly 0) still silences them.
 SIGNAL_DISPLAY_KINDS = frozenset({LED_DISPLAY_FAILURE})
-# Story #8 (night warmth): per-channel multipliers applied 19:00-07:00
-# when the toggle is on. Red full, green -13%, blue -30% -- warm enough
-# to notice, subtle enough that status colors stay unambiguous.
-NIGHT_WARMTH_GAINS = (1.0, 0.87, 0.70)
 # ioreg is a subprocess fork on the main thread and refresh_ runs on
 # every hook event; power-state changes may lag by up to this TTL.
 BATTERY_SNAPSHOT_CACHE_SECONDS = 5.0
@@ -5511,13 +5507,6 @@ class StatusBarController(NSObject):
         self._refresh_dnd_settings_controls()
 
     @objc.IBAction
-    def toggleNightWarmth_(self, sender):
-        self.settings = self.settings.with_night_warmth_enabled(checkbox_is_on(sender))
-        save_settings(self.settings)
-        self.refresh_settings_window()
-        self.refresh_(None)
-
-    @objc.IBAction
     def setFocusDimRule_(self, sender):
         identifier = str(sender.identifier() or "")
         if not identifier:
@@ -5529,20 +5518,6 @@ class StatusBarController(NSObject):
         save_settings(self.settings)
         label = item.title() if item is not None else "Shared dim"
         self.set_settings_message(f"Focus rule saved: {label}.")
-        self.refresh_(None)
-
-    @objc.IBAction
-    def setNightDimFraction_(self, sender):
-        item = sender.selectedItem()
-        raw = str(item.representedObject() or "1.0") if item is not None else "1.0"
-        try:
-            fraction = float(raw)
-        except ValueError:
-            return
-        self.settings = self.settings.with_night_dim_fraction(fraction)
-        save_settings(self.settings)
-        label = item.title() if item is not None else "Don't dim at night"
-        self.set_settings_message(f"Night brightness saved: {label}.")
         self.refresh_(None)
 
     @objc.IBAction
@@ -11613,10 +11588,6 @@ class StatusBarController(NSObject):
             self.settings.focus_sync_enabled,
         )
         set_checkbox_state(
-            self.settings_buttons.get("night_warmth_enabled"),
-            self.settings.night_warmth_enabled,
-        )
-        set_checkbox_state(
             self.settings_buttons.get("completion_notification"),
             self.settings.completion_notification_enabled,
         )
@@ -11643,21 +11614,6 @@ class StatusBarController(NSObject):
             self.settings_buttons.get("battery_charging_idle"),
             self.settings.battery_charging_idle_enabled,
         )
-        night_dim_popup = self.settings_fields.get("night_dim_popup")
-        if night_dim_popup is not None:
-            # Compare as FLOATS: f"{1.0:g}" is "1" but the item carries
-            # "1.0", so the string compare never re-selected the
-            # default row (hostile review, 2026-08-26).
-            wanted = float(self.settings.night_dim_fraction)
-            for index in range(night_dim_popup.numberOfItems()):
-                item = night_dim_popup.itemAtIndex_(index)
-                try:
-                    value = float(str(item.representedObject() or ""))
-                except ValueError:
-                    continue
-                if abs(value - wanted) < 1e-9:
-                    night_dim_popup.selectItem_(item)
-                    break
         set_checkbox_state(
             self.settings_buttons.get("low_battery_alert"),
             self.settings.low_battery_alert_enabled,
@@ -12568,7 +12524,7 @@ class StatusBarController(NSObject):
                 now_monotonic=time.monotonic(),
             ),
             focus_factor=1.0,
-            night_factor=self.night_dim_scale_factor(),
+            night_factor=1.0,
             global_factor=float(self.settings.global_brightness_scale),
             escalation_boost=boost,
             is_screen_bar=device.device_id == VIRTUAL_DEVICE_ID,
@@ -12608,43 +12564,6 @@ class StatusBarController(NSObject):
             self._focus_observation_available = True
         self._focus_ids_cache = (now, active)
         return active
-
-    def night_warmth_active(self, hour: int | None = None) -> bool:
-        """Story #8: between 19:00 and 07:00 local, warm every device --
-        red untouched, green and blue eased down, the amber shift
-        screens learned from Night Shift. Pure wall-clock schedule."""
-        if not self.settings.night_warmth_enabled:
-            return False
-        if hour is None:
-            hour = datetime.now().hour
-        return hour >= 19 or hour < 7
-
-    def apply_night_warmth(
-        self, gains: tuple[float, float, float], hour: int | None = None
-    ) -> tuple[float, float, float]:
-        """Compose (never replace) the user's calibration gains with the
-        warmth curve, so a calibrated device stays calibrated -- just
-        warmer. Safe against persistence: with_remembered_device only
-        stores id/name/path, never gains, so warmth cannot leak into
-        the settings file."""
-        if not self.night_warmth_active(hour=hour):
-            return gains
-        warm = NIGHT_WARMTH_GAINS
-        return tuple(
-            float(gain) * warm[index] for index, gain in enumerate(gains[:3])
-        )
-
-    def night_dim_scale_factor(self, hour: int | None = None) -> float:
-        """Night warmth's brightness sibling: between 19:00 and 07:00
-        every surface dims by night_dim_fraction. 1.0 (the shipped
-        default) is a no-op; the escalation-ramp floor downstream still
-        guarantees an ignored ask stays visible through it."""
-        fraction = float(self.settings.night_dim_fraction)
-        if fraction >= 1.0:
-            return 1.0
-        if hour is None:
-            hour = datetime.now().hour
-        return fraction if (hour >= 19 or hour < 7) else 1.0
 
     def focus_sync_scale_factor(self) -> float:
         """Compatibility scale from the legacy named-Focus cache."""
@@ -12718,9 +12637,7 @@ class StatusBarController(NSObject):
                 display=self.settings.display_for_device(device_id),
                 brightness=self.settings.brightness_for_device(device_id),
                 auto_brightness_enabled=self.settings.auto_brightness_enabled_for_device(device_id),
-                channel_gains=self.apply_night_warmth(
-                    self.settings.channel_gains_for_device(device_id)
-                ),
+                channel_gains=self.settings.channel_gains_for_device(device_id),
                 resting_glow=self.settings.resting_glow_for_device(device_id),
                 signal_policy=self.settings.device_signal_policy(device_id),
                 reason=candidate.reason,
@@ -12741,9 +12658,7 @@ class StatusBarController(NSObject):
                         display=device.led_display,
                         brightness=device.brightness,
                         auto_brightness_enabled=device.auto_brightness_enabled,
-                        channel_gains=self.apply_night_warmth(
-                            self.screen_bar_channel_gains(device)
-                        ),
+                        channel_gains=self.screen_bar_channel_gains(device),
                         resting_glow=device.resting_glow,
                         signal_policy=device.signal_policy,
                         reason="on-screen device",
@@ -12763,7 +12678,7 @@ class StatusBarController(NSObject):
                 display=device.led_display,
                 brightness=device.brightness,
                 auto_brightness_enabled=device.auto_brightness_enabled,
-                channel_gains=self.apply_night_warmth(device.channel_gains()),
+                channel_gains=device.channel_gains(),
                 resting_glow=device.resting_glow,
                 signal_policy=device.signal_policy,
                 reason="previously connected",
@@ -13611,7 +13526,7 @@ class StatusBarController(NSObject):
         do not block anything; they just have to be sayable.
 
         Cached for two seconds: this runs on the as-you-type path, and
-        enumerating devices (settings lookups, night-warmth gains, the
+        enumerating devices (settings lookups, channel gains, the
         works) on EVERY keystroke was a measurable slice of the Studio's
         typing lag. Device counts change on plug/unplug, not mid-word.
         """

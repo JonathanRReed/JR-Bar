@@ -17253,38 +17253,6 @@ class ProviderPinTests(unittest.TestCase):
         )
 
 
-class NightWarmthTests(unittest.TestCase):
-    """Story #8: 19:00-07:00 warmth composes with calibration gains."""
-
-    def setUp(self) -> None:
-        isolate_controller(self)
-
-    def test_off_by_default_and_daytime_identity(self) -> None:
-        gains = (1.0, 1.0, 1.0)
-        self.assertEqual(self.controller.apply_night_warmth(gains, hour=22), gains)
-        self.controller.settings = self.controller.settings.with_night_warmth_enabled(True)
-        self.assertEqual(self.controller.apply_night_warmth(gains, hour=12), gains)
-
-    def test_evening_composes_with_calibration(self) -> None:
-        self.controller.settings = self.controller.settings.with_night_warmth_enabled(True)
-        warmed = self.controller.apply_night_warmth((0.8, 1.0, 0.5), hour=22)
-        self.assertAlmostEqual(warmed[0], 0.8)
-        self.assertAlmostEqual(warmed[1], 0.87)
-        self.assertAlmostEqual(warmed[2], 0.35)
-        # The overnight side of the window counts too.
-        self.assertNotEqual(
-            self.controller.apply_night_warmth((1.0, 1.0, 1.0), hour=3),
-            (1.0, 1.0, 1.0),
-        )
-
-    def test_window_edges(self) -> None:
-        self.controller.settings = self.controller.settings.with_night_warmth_enabled(True)
-        self.assertTrue(self.controller.night_warmth_active(hour=19))
-        self.assertTrue(self.controller.night_warmth_active(hour=6))
-        self.assertFalse(self.controller.night_warmth_active(hour=7))
-        self.assertFalse(self.controller.night_warmth_active(hour=18))
-
-
 class FocusSignalPolicyTests(unittest.TestCase):
     """Story #12: per-Focus signal policies hold courtesy glows."""
 
