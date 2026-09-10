@@ -10,6 +10,7 @@ invocation, state reduction, or text classification.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from dataclasses import dataclass
@@ -579,7 +580,9 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "Stop": _STOP,
     },
     # The pi extension translates pi's own events to these canonical names;
-    # PermissionRequest only arrives from a pi that emits ui_prompt events.
+    # pi has no human tool-permission event (its `tool_call` gate asks an
+    # extension, not a person), so a PermissionRequest here would be a
+    # future pi's, not 0.73.1's.
     "pi": {
         "SessionStart": _SESSION_START,
         "UserPromptSubmit": _USER_PROMPT,
@@ -647,6 +650,14 @@ def _record_matches_provider_table(record: NormalizedProviderRecord) -> bool:
     ).values()
 
 _EVENT_ID_FIELDS: Final = ("event_id", "eventId", "hook_event_id", "hookEventId")
+#: Diagnostics that describe one record's limits, not the source's health.
+_RECORD_LEVEL_DIAGNOSTICS: Final = frozenset(
+    {
+        "missing_request_identity",
+        "request_capability_unavailable",
+        "insufficient_request_authority",
+    }
+)
 _REQUEST_ID_FIELDS: Final = (
     "request_id",
     "requestId",
@@ -827,6 +838,50 @@ def _request_identifier(value: object) -> RequestIdentifier | None:
         return RequestIdentifier(value)
     except ProviderFactValidationError:
         return None
+
+
+# Fields a hook payload carries for the question itself but not for the
+# tool call: Codex puts its escalation justification in tool_input as
+# ``description``, so PermissionRequest and PostToolUse would disagree.
+_REQUEST_SIGNATURE_IGNORED_INPUT: Final = frozenset({"description", "justification"})
+
+
+def _derived_request_identifier(record: HookEvent) -> RequestIdentifier | None:
+    """A request identity for hook payloads that name the tool call but no id.
+
+    Codex and Claude Code PermissionRequest hooks carry ``session_id``,
+    ``turn_id`` (Codex), ``tool_name`` and ``tool_input`` and nothing
+    that names the request; PostToolUse for the same call carries the same
+    fields. The identity is the turn and the exact call, so the request a
+    PermissionRequest opens is the one the matching PostToolUse resolves,
+    and a different command in the same turn is a different question.
+    A payload without a tool name and input still gets no identity.
+    """
+    raw = record.raw if type(record.raw) is dict else {}
+    tool_name = raw.get("tool_name")
+    if type(tool_name) is not str or not tool_name:
+        tool_name = record.tool_name
+    tool_input = raw.get("tool_input")
+    if type(tool_name) is not str or not tool_name or type(tool_input) is not dict:
+        return None
+    scope = raw.get("turn_id")
+    if type(scope) is not str or not scope:
+        scope = record.turn_id
+    if type(scope) is not str or not scope:
+        scope = record.session_id if type(record.session_id) is str else ""
+    signature = {
+        key: value
+        for key, value in tool_input.items()
+        if type(key) is str and key not in _REQUEST_SIGNATURE_IGNORED_INPUT
+    }
+    try:
+        encoded = json.dumps(
+            [scope, tool_name, signature], sort_keys=True, separators=(",", ":"), default=str
+        )
+    except (TypeError, ValueError):
+        return None
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
+    return _request_identifier(f"derived:{digest}")
 
 
 def _event_token(value: object) -> EventToken | None:
@@ -1107,6 +1162,8 @@ def minimize_hook_event(
         if candidate_parent != work_id:
             parent_id = candidate_parent
     request_id = _request_identifier(_first_raw_value(record.raw, _REQUEST_ID_FIELDS))
+    if request_id is None and rule.request_state is not None:
+        request_id = _derived_request_identifier(record)
     sequence = _sequence(record.raw)
     token = _event_token(_first_raw_value(record.raw, _EVENT_ID_FIELDS))
     if token is None:
@@ -1323,11 +1380,22 @@ def provider_facts_for_record(
         diagnostics = [_diagnostic("insufficient_observation_authority")]
 
     partial = bool(diagnostics)
+    # A diagnostic about one record (no request identity, no request
+    # capability, no request authority) is not a loss of the source: the
+    # facts it does carry are as fresh as any. PARTIAL freshness is what
+    # the reducer reads as source loss, and it opened a timing quarantine
+    # on every Codex PermissionRequest, holding the source's next facts
+    # (the session's own SessionEnd included) until two clean batches.
+    record_limited = all(
+        item.identifier.value in _RECORD_LEVEL_DIAGNOSTICS for item in diagnostics
+    )
     return ProviderFactBatch(
         source_key=record.source_key,
         observation_authority=observation_authority,
         source_health=SourceHealth.PARTIAL if partial else SourceHealth.HEALTHY,
-        source_freshness=SourceFreshness.PARTIAL if partial else SourceFreshness.FRESH,
+        source_freshness=(
+            SourceFreshness.FRESH if not partial or record_limited else SourceFreshness.PARTIAL
+        ),
         observed_at_epoch=observed_at_epoch,
         watermark=watermark,
         work_facts=work_facts,
