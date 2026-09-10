@@ -16,8 +16,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jrbar.core_projection import (
+    WHY_VALUES,
     DeviceFacts,
     EscalationFacts,
+    LightFacts,
     PowerFacts,
     SessionExtras,
     SurfaceFacts,
@@ -28,9 +30,14 @@ from jrbar.core_projection import (
     history_rows,
     hook_health,
     lifecycle_for_mode,
+    light_why,
     origin_document,
+    session_label,
+    short_session_id,
     strip_session_short_id,
     terminal_from_command,
+    usage_window_name,
+    why_detail,
     why_for_glance,
 )
 from jrbar.models import AgentMode, AgentStatus
@@ -348,7 +355,7 @@ def test_small_helpers() -> None:
     assert lifecycle_for_mode(AgentMode.IDLE_READY, stale=True) == "stale"
     assert aggregate_mode(None, asks=0, failed=0, working=0, ready=2) == "done"
     assert aggregate_mode(AgentMode.WORKING, asks=0, failed=0, working=0, ready=0) == "working"
-    assert why_for_glance(SimpleNamespace(semantic=SimpleNamespace(value="attention"), override_reason=SimpleNamespace(value="none"))) == ("needs_you", None)
+    assert why_for_glance(SimpleNamespace(semantic=SimpleNamespace(value="attention"), override_reason=SimpleNamespace(value="none"))) == ("waiting", None)
     assert why_for_glance(None) == (None, None)
     assert terminal_from_command("/Applications/Ghostty.app/Contents/MacOS/ghostty") == ("Ghostty", "com.mitchellh.ghostty")
     assert terminal_from_command("/usr/bin/zsh") is None
@@ -363,3 +370,134 @@ def test_swift_fixture_matches_the_projection() -> None:
         SWIFT_FIXTURE.write_text(encoded, encoding="utf-8")
     assert SWIFT_FIXTURE.exists(), "run with JRBAR_UPDATE_FIXTURES=1 to write the Swift fixture"
     assert json.loads(SWIFT_FIXTURE.read_text(encoding="utf-8")) == json.loads(encoded)
+
+
+def _glance(semantic: str, override: str = "none"):
+    return SimpleNamespace(
+        semantic=SimpleNamespace(value=semantic),
+        override_reason=SimpleNamespace(value=override),
+        relay_epoch=NOW - 30.0,
+    )
+
+
+def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id() -> None:
+    sid = "fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
+    common = dict(provider="claude", session_id=sid, agent_id=f"claude:session:{sid}")
+    # The collector's content-free fallback carries nothing a person can read.
+    assert session_label(display_name=f"Claude {sid}", cwd=None, extras=None, **common) == "Claude fca1eb06"
+    assert session_label(display_name=f"Claude {sid}", cwd="/Users/j/Downloads/JR-Bar", extras=None, **common) == "JR-Bar"
+    assert (
+        session_label(display_name=f"Claude {sid}", cwd=None, extras=SessionExtras(cwd="/tmp/notes/"), **common)
+        == "notes"
+    )
+    # Claude's own session name wins over everything.
+    assert (
+        session_label(display_name=f"Claude {sid}", cwd="/x/y", extras=SessionExtras(name="jr-bar-67"), **common)
+        == "jr-bar-67"
+    )
+    # A derived display name keeps its meaning, with the short id stripped.
+    assert session_label(display_name=f"JR-Bar: fix labels ({sid[:8]})", cwd=None, extras=None, **common) == "JR-Bar: fix labels"
+    # Workers hang off their parent's label.
+    assert (
+        session_label(
+            display_name="Claude agent a327411d618c21da0",
+            cwd=None,
+            extras=None,
+            provider="claude",
+            session_id=sid,
+            agent_id="claude:agent:a327411d618c21da0",
+            is_worker=True,
+            parent_label="jr-bar-67",
+        )
+        == "jr-bar-67 worker a327411d"
+    )
+    assert short_session_id(sid) == "fca1eb06"
+    assert short_session_id(None, "claude:agent:a327411d618c21da0") == "a327411d"
+    assert short_session_id(None, None) is None
+    document = build_state_document(**fixture_inputs())
+    by_id = {row["id"]: row for row in document["sessions"]}
+    assert by_id[CLAUDE_ID]["short_id"] == CLAUDE_SID[:8]
+    assert by_id[CLAUDE_ID]["cwd"] == "/Users/j/Downloads/JR-Bar"
+    assert by_id[CLAUDE_WORKER_ID]["label"] == f"jr-bar-b7 worker {CLAUDE_SID[:8]}"
+    assert by_id[CLAUDE_WORKER_ID]["short_id"] == CLAUDE_SID[:8]
+
+
+def test_usage_window_names_are_the_panels_short_forms() -> None:
+    assert usage_window_name("five-hour", "5-hour") == "5h"
+    assert usage_window_name("five_hour", "5h") == "5h"
+    assert usage_window_name("weekly", "Weekly") == "7d"
+    assert usage_window_name("seven_day", "7d") == "7d"
+    assert usage_window_name("weekly", "Fable only", "fable") == "7d Fable"
+    assert usage_window_name("daily", "Daily") == "Daily"
+    assert usage_window_name("monthly", "Monthly") == "Monthly"
+    assert usage_window_name("credits", "Credits") == "Credits"
+    assert usage_window_name("billing-month", "Organization billing month") == "Organization billing month"
+    document = build_state_document(**fixture_inputs())
+    assert [w["name"] for w in document["usage"]["providers"][0]["windows"]] == ["5h", "7d"]
+    # A model lane with its own id borrows the horizon of the account
+    # window it resets with.
+    lanes = (
+        SimpleNamespace(lane_id="weekly", label="Weekly", remaining_percent=71.0, reset_at=NOW + 86400.0, scope="all", model=None),
+        SimpleNamespace(lane_id="fable-only", label="Fable only", remaining_percent=45.0, reset_at=NOW + 86400.0, scope="all", model="fable"),
+    )
+    usage = SimpleNamespace(
+        refreshed_at=NOW, next_refresh_at=None, refreshing=False,
+        snapshots=(SimpleNamespace(provider_id="claude", source_instance_id="default", account_label=None, lanes=lanes, state=SimpleNamespace(value="ready"), reason_code=None, action_label=None, observed_at=NOW, input_tokens=0, cached_input_tokens=0, output_tokens=0, estimated_cost_usd=None, credits_remaining=None),),
+    )
+    from jrbar.core_projection import usage_document
+
+    names = [(w["name"], w["id"], w["resets_at"]) for w in usage_document(usage)["providers"][0]["windows"]]
+    assert names == [("7d", "weekly", NOW + 86400.0), ("7d Fable", "fable-only", NOW + 86400.0)]
+
+
+def test_light_why_is_the_documented_vocabulary() -> None:
+    assert light_why(None) == "unknown"
+    assert light_why(_glance("attention")) == "waiting"
+    assert light_why(_glance("fresh_completion")) == "completed"
+    assert light_why(_glance("active")) == "working"
+    assert light_why(_glance("rest")) == "idle"
+    assert light_why(_glance("unresolved_failure")) == "failed"
+    assert light_why(_glance("capacity")) == "capacity"
+    assert light_why(_glance("active"), LightFacts(preview=True)) == "preview"
+    assert light_why(_glance("active"), LightFacts(display_kind="battery")) == "battery"
+    assert light_why(_glance("active"), LightFacts(display_kind="low_battery")) == "battery"
+    assert light_why(_glance("active"), LightFacts(display_kind="calendar")) == "calendar"
+    assert light_why(_glance("active"), LightFacts(display_kind="reminders")) == "reminder"
+    assert light_why(_glance("active"), LightFacts(display_kind="escalation")) == "escalation"
+    assert light_why(_glance("active"), LightFacts(display_kind="studio")) == "studio"
+    assert light_why(_glance("active"), LightFacts(display_kind="agent")) == "working"
+    assert light_why(_glance("active"), LightFacts(dnd_display_admission="none")) == "quiet"
+    assert light_why(_glance("active"), LightFacts(dnd_brightness_factor=0.0)) == "quiet"
+    assert light_why(_glance("rest"), LightFacts(dimming=("idle_dim",))) == "idle_dim"
+    assert light_why(_glance("rest"), LightFacts(dimming=("sleep",))) == "sleep_dim"
+    assert light_why(_glance("rest"), LightFacts(dimming=("quiet",))) == "quiet"
+    # A dimmed working light is still "working"; the dimming lives in why_detail.
+    assert light_why(_glance("active"), LightFacts(dimming=("idle_dim",))) == "working"
+    for value in ("idle", "working", "waiting", "completed", "failed", "capacity", "quiet", "sleep_dim", "idle_dim",
+                  "battery", "calendar", "reminder", "escalation", "preview", "studio", "unknown"):
+        assert value in WHY_VALUES
+
+
+def test_why_detail_names_the_session_behind_the_light() -> None:
+    document = build_state_document(**fixture_inputs())
+    facts = LightFacts(dimming=("idle_dim", "quiet"), brightness_factor=0.045)
+    waiting = why_detail("waiting", sessions=document["sessions"], asks=document["asks"], now=NOW, facts=facts)
+    assert waiting["session"] == CODEX_ID and waiting["provider"] == "codex" and waiting["label"] == "sidepulse-core"
+    assert waiting["seconds_in_state"] == round(NOW - 1788982800.0, 1)
+    assert waiting["dimming"] == ["idle_dim", "quiet"] and waiting["brightness_factor"] == 0.045
+    working = why_detail("working", sessions=document["sessions"], asks=document["asks"], now=NOW)
+    assert working["session"] == CLAUDE_ID and working["seconds_in_state"] == 1.4
+    completed = why_detail(
+        "completed", sessions=document["sessions"], asks=(), unseen_completion_ids=(GEMINI_ID,), now=NOW
+    )
+    assert completed["session"] == GEMINI_ID and completed["seconds_in_state"] == 41.0
+    idle = why_detail("idle", sessions=document["sessions"], asks=(), now=NOW, glance=_glance("rest"))
+    assert idle["session"] is None and idle["seconds_in_state"] == 30.0
+    assert set(idle) == {"session", "label", "provider", "seconds_in_state", "brightness_factor", "dimming"}
+    lights = build_lights_document(
+        {"hardware": SurfaceFacts(program="off", led_count=8, why="waiting", why_detail=waiting)},
+        linked=True,
+        devices_linked=False,
+    )
+    assert lights["surfaces"]["hardware"]["why_detail"]["session"] == CODEX_ID
+    assert lights["devices_linked"] is False

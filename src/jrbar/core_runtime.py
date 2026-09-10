@@ -41,6 +41,7 @@ from .core_projection import (
     TERMINAL_BUNDLE_IDS,
     DeviceFacts,
     EscalationFacts,
+    LightFacts,
     PowerFacts,
     SessionExtras,
     SurfaceFacts,
@@ -48,8 +49,10 @@ from .core_projection import (
     build_settings_document,
     build_state_document,
     history_rows,
+    light_why,
     origin_document,
     terminal_from_command,
+    why_detail,
     why_for_glance,
 )
 from .core_server import CommandError, CoreServer, default_core_socket_path
@@ -1578,14 +1581,20 @@ def build_headless_controller_class() -> type:
             from .process_registry import load_record, pid_exists
 
             pid = None
+            record = None
+            cwd = None
+            name = None
             session_id = getattr(status, "session_id", None)
             if session_id:
                 try:
                     record = load_record(status.provider, session_id)
                 except Exception:
                     record = None
-                if record is not None and record.ended_at_epoch is None and pid_exists(record.pid):
-                    pid = record.pid
+                if record is not None:
+                    cwd = record.cwd or None
+                    if record.ended_at_epoch is None and pid_exists(record.pid):
+                        pid = record.pid
+                name, cwd = self._core_session_title(status.provider, session_id, pid or (record.pid if record else None), cwd)
             origin_label = getattr(status, "origin", None)
             origin = origin_document(origin_label if isinstance(origin_label, str) else None)
             terminal = None
@@ -1596,7 +1605,29 @@ def build_headless_controller_class() -> type:
                     terminal["tty"] = tty
                 if not terminal:
                     terminal = None
-            return SessionExtras(pid=pid, origin=origin, terminal=terminal)
+            return SessionExtras(pid=pid, origin=origin, terminal=terminal, cwd=cwd, name=name)
+
+        def _core_session_title(self, provider: str, session_id: str, pid: int | None, cwd: str | None):
+            """(name, cwd) from the provider's own session record: Claude's
+            ``~/.claude/sessions/<pid>.json`` name, Codex's session index
+            title; ``cwd`` is filled from the same file when the registry
+            had none."""
+            name = None
+            try:
+                if provider == "claude":
+                    from .process_registry import claude_session_details
+
+                    details = claude_session_details(session_id, pid)
+                    if details:
+                        name = details.get("name")
+                        cwd = cwd or details.get("cwd")
+                elif provider == "codex":
+                    from ._collector_legacy import codex_session_title
+
+                    name = codex_session_title(session_id)
+            except Exception:
+                name = None
+            return name, cwd
 
         def _core_tty_for_pid(self, pid: int) -> str | None:
             if pid in self._core_tty_by_pid:
@@ -1739,15 +1770,66 @@ def build_headless_controller_class() -> type:
                 extras_by_id=extras,
             )
 
+        def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:
+            """The dimming and DND facts behind one surface's ``why``."""
+            dimming: list[str] = []
+            factor: float | None = None
+            try:
+                plan = self.ambient_brightness_plan_for_device(device) if device is not None else None
+            except Exception:
+                plan = None
+            if plan is not None:
+                product = 1.0
+                for step in getattr(plan, "trace", ()) or ():
+                    word = {"idle_dim": "idle_dim", "sleep_dim": "sleep", "dnd_dim": "quiet", "night_dim": "night"}.get(
+                        getattr(step, "name", "")
+                    )
+                    step_factor = getattr(step, "factor", None)
+                    if word is None or step_factor is None:
+                        continue
+                    if float(step_factor) < 1.0:
+                        dimming.append(word)
+                        product *= float(step_factor)
+                factor = round(product, 3)
+            try:
+                dnd = self.current_dnd_projection()
+            except Exception:
+                dnd = None
+            admission = getattr(getattr(dnd, "display_admission", None), "value", None)
+            return LightFacts(
+                display_kind=display_kind,
+                preview=preview,
+                dnd_display_admission=admission,
+                dnd_brightness_factor=getattr(dnd, "brightness_factor", None),
+                dimming=tuple(dimming),
+                brightness_factor=factor,
+            )
+
+        def _core_why_detail(self, why: str, facts: LightFacts, glance) -> dict[str, Any]:
+            with self._core_lock:
+                state = self._core_documents.get("state") or {}
+            return why_detail(
+                why,
+                sessions=state.get("sessions") or [],
+                asks=state.get("asks") or [],
+                unseen_completion_ids=tuple(state.get("unseen_completions") or ()),
+                now=time.time(),
+                facts=facts,
+                glance=glance,
+            )
+
         def _core_build_lights(self) -> dict[str, Any]:
             from ._led_status_legacy import led_count_for_target
             from .presentation_policy import MotionClass
 
-            why, override = why_for_glance(getattr(self, "_current_resolved_glance", None))
+            glance = getattr(self, "_current_resolved_glance", None)
+            _why, override = why_for_glance(glance)
             linked = bool(getattr(self.settings, "link_screen_bar_to_hardware", False))
+            devices_linked = bool(getattr(self.settings, "devices_linked", True))
             surfaces: dict[str, SurfaceFacts] = {}
             hardware_anchor: float | None = None
             first_strip = True
+            display_kinds = getattr(self, "last_led_display_kind_by_device", {}) or {}
             for device in self.status_bar_devices(remember=False):
                 if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
                     continue
@@ -1758,10 +1840,13 @@ def build_headless_controller_class() -> type:
                 leds = led_count_for_target(device.target)
                 anchor = self._core_hardware_anchor.get(device.device_id)
                 preview = self._core_previews.get("hardware" if leds != 2 else "dot") or self._core_previews.get(device.device_id)
-                if preview is not None and device.device_id in preview.device_ids:
-                    program, anchor, surface_why = preview.program, preview.started_epoch, "preview"
-                else:
-                    surface_why = why
+                previewing = preview is not None and device.device_id in preview.device_ids
+                if previewing:
+                    program, anchor = preview.program, preview.started_epoch
+                facts = self._core_light_facts(
+                    device, preview=previewing, display_kind=display_kinds.get(device.device_id)
+                )
+                surface_why = light_why(glance, facts)
                 name = "dot" if leds == 2 else ("hardware" if first_strip else f"hardware:{device.device_id}")
                 if leds != 2 and first_strip:
                     first_strip = False
@@ -1775,7 +1860,22 @@ def build_headless_controller_class() -> type:
                     brightness=(self._core_brightness_percent(device) or 0) / 100.0,
                     why=surface_why,
                     override=override,
+                    why_detail=self._core_why_detail(surface_why, facts, glance),
                 )
+            if devices_linked and "dot" in surfaces and "hardware" in surfaces:
+                # Linked Pro + Dot: the Dot carries the strip's anchor so the
+                # app reads both as one unit (core_runtime linked writes).
+                dot = surfaces["dot"]
+                if surfaces["dot"].why != "preview":
+                    surfaces["dot"] = SurfaceFacts(
+                        program=dot.program,
+                        led_count=dot.led_count,
+                        anchor=hardware_anchor if hardware_anchor is not None else dot.anchor,
+                        brightness=dot.brightness,
+                        why=dot.why,
+                        override=dot.override,
+                        why_detail=dot.why_detail,
+                    )
             virtual = self.virtual_status_device
             call = getattr(virtual, "_live_program_call", None)
             virtual_device = next(
@@ -1788,6 +1888,10 @@ def build_headless_controller_class() -> type:
                 else (self.settings.brightness_for_device(legacy.VIRTUAL_DEVICE_ID) / 255.0)
             )
             preview = self._core_previews.get("screen_bar")
+            bar_facts = self._core_light_facts(
+                virtual_device, preview=preview is not None, display_kind=display_kinds.get(legacy.VIRTUAL_DEVICE_ID)
+            )
+            bar_why = light_why(glance, bar_facts)
             if preview is not None:
                 surfaces["screen_bar"] = SurfaceFacts(
                     program=preview.program,
@@ -1797,6 +1901,7 @@ def build_headless_controller_class() -> type:
                     static_fallback="off",
                     brightness=bar_brightness,
                     why="preview",
+                    why_detail=self._core_why_detail("preview", bar_facts, glance),
                 )
             elif call is not None:
                 program, kwargs = call
@@ -1810,8 +1915,9 @@ def build_headless_controller_class() -> type:
                     motion=motion.value if isinstance(motion, MotionClass) else None,
                     static_fallback=kwargs.get("static_fallback_program"),
                     brightness=bar_brightness,
-                    why=why,
+                    why=bar_why,
                     override=override,
+                    why_detail=self._core_why_detail(bar_why, bar_facts, glance),
                 )
             elif "hardware" in surfaces:
                 hardware = surfaces["hardware"]
@@ -1822,8 +1928,13 @@ def build_headless_controller_class() -> type:
                     brightness=bar_brightness,
                     why=hardware.why,
                     override=override,
+                    why_detail=hardware.why_detail,
                 )
-            return build_lights_document(surfaces, linked=linked)
+            return build_lights_document(
+                surfaces,
+                linked=linked,
+                devices_linked=devices_linked and "dot" in surfaces and "hardware" in surfaces,
+            )
 
         def _core_doctor_document(self) -> dict[str, Any]:
             from .doctor import collect_diagnostics

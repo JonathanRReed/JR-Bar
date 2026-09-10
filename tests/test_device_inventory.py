@@ -137,3 +137,35 @@ def test_refresh_requests_are_latest_wins(tmp_path: Path) -> None:
     assert cache.wait(2.0) is True
     assert calls == 2
     cache.close()
+
+
+def test_a_pulsedot_volume_is_a_dot_with_two_leds(tmp_path: Path) -> None:
+    """First-batch Dots mount as ``PulseDot``: no ``SidePulse`` prefix, and
+    an old STATUS.TXT may not carry a serial. Every classifier must still
+    call it a 2-LED Dot, keyed by the volume UUID when no serial exists."""
+    from jrbar._device_writer_legacy import is_device_name
+    from jrbar._led_status_legacy import led_count_for_target
+    from jrbar.device_identity import device_kind
+    from jrbar.status_bar_legacy import device_display_name
+
+    (tmp_path / "PulseDot").mkdir()
+    (tmp_path / "PulseDot" / "STATUS.TXT").write_text("reads 1\nticks 2\n")
+
+    def runner(arguments, **kwargs):
+        path = Path(arguments[-1])
+        return completed(
+            {
+                "MountPoint": str(path),
+                "VolumeName": "PulseDot",
+                "VolumeUUID": "DOT-UUID",
+                "DeviceIdentifier": "disk5s1",
+            }
+        )
+
+    identities = inventory_mounts(tmp_path, runner=runner)
+    assert [identity.kind for identity in identities] == [DeviceKind.DOT]
+    assert identities[0].key.startswith("sidepulse:dot:")
+    assert device_kind("PulseDot", str(tmp_path / "PulseDot")) is DeviceKind.DOT
+    assert led_count_for_target(Path("/Volumes/PulseDot/LEDS.LED")) == 2
+    assert is_device_name("PulseDot")
+    assert device_display_name("PulseDot") == "SidePulse Dot"

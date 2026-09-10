@@ -70,14 +70,88 @@ _WORKING_MODES: Final = frozenset(
     {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
 )
 _ESCALATION_STAGE_NAMES: Final = {0: "none", 1: "ramp", 2: "menu_bar", 3: "final"}
+# ``lights.surfaces.*.why``: the documented vocabulary (docs/CORE-PROTOCOL.md).
+WHY_VALUES: Final = (
+    "idle",
+    "working",
+    "waiting",
+    "completed",
+    "failed",
+    "capacity",
+    "quiet",
+    "sleep_dim",
+    "idle_dim",
+    "battery",
+    "calendar",
+    "reminder",
+    "escalation",
+    "preview",
+    "studio",
+    "unknown",
+)
 _GLANCE_WHY: Final = {
-    "attention": "needs_you",
-    "fresh_completion": "completed_unseen",
+    "attention": "waiting",
+    "fresh_completion": "completed",
     "active": "working",
     "rest": "idle",
     "fresh_failure": "failed",
     "unresolved_failure": "failed",
     "capacity": "capacity",
+}
+# Device display kinds (status_bar_legacy.LED_DISPLAY_*) that name the
+# light's reason outright; ``agent`` and anything unlisted defer to the glance.
+_DISPLAY_KIND_WHY: Final = {
+    "battery": "battery",
+    "low_battery": "battery",
+    "calendar": "calendar",
+    "reminders": "reminder",
+    "escalation": "escalation",
+    "studio": "studio",
+    "dnd_dark": "quiet",
+    "quota_alert": "capacity",
+    "quota_runway": "capacity",
+    "failure": "failed",
+    "completion": "completed",
+    "all_clear": "completed",
+    "reset_celebration": "capacity",
+    "signal_test": "preview",
+    "peek": "preview",
+}
+# brightness_policy trace step names -> ``why_detail.dimming`` words.
+_DIMMING_STEPS: Final = {
+    "idle_dim": "idle_dim",
+    "sleep_dim": "sleep",
+    "dnd_dim": "quiet",
+    "night_dim": "night",
+}
+# ``usage.providers[].windows[].name``: the short form the panel shows,
+# keyed by the lane id the provider usage lanes carry.
+USAGE_WINDOW_NAMES: Final = {
+    "five-hour": "5h",
+    "five_hour": "5h",
+    "5h": "5h",
+    "weekly": "7d",
+    "seven-day": "7d",
+    "seven_day": "7d",
+    "7d": "7d",
+    "daily": "Daily",
+    "monthly": "Monthly",
+    "credits": "Credits",
+}
+# Provider display names for the label fallback ("Claude fca1eb06").
+PROVIDER_LABELS: Final = {
+    "codex": "Codex",
+    "claude": "Claude",
+    "devin": "Devin",
+    "grok": "Grok",
+    "cursor": "Cursor",
+    "hermes": "Hermes",
+    "openclaw": "OpenClaw",
+    "opencode": "OpenCode",
+    "antigravity": "Antigravity",
+    "kiro": "Kiro",
+    "pi": "Pi",
+    "gemini": "Gemini",
 }
 _LEDGER_KINDS: Final = {
     "completed": "completed",
@@ -119,6 +193,7 @@ class SurfaceFacts:
     brightness: float | None = None
     why: str | None = None
     override: str | None = None
+    why_detail: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +203,26 @@ class SessionExtras:
     pid: int | None = None
     origin: dict[str, Any] | None = None
     terminal: dict[str, Any] | None = None
+    # What the process registry recorded from the hook payload.
+    cwd: str | None = None
+    # The provider's own session title: Claude's ``name`` from
+    # ``~/.claude/sessions/<pid>.json``, Codex's ``thread_name`` from
+    # ``~/.codex/session_index.jsonl``.
+    name: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LightFacts:
+    """What the runtime knows about the light beyond the glance: the
+    device display kind, the DND projection, the brightness dimming that
+    applied, and the session that explains the state."""
+
+    display_kind: str | None = None
+    preview: bool = False
+    dnd_display_admission: str | None = None
+    dnd_brightness_factor: float | None = None
+    dimming: tuple[str, ...] = ()
+    brightness_factor: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +271,86 @@ def strip_session_short_id(display_name: str, session_id: str | None) -> str:
         if 6 <= len(token) <= 12 and all(char.isalnum() or char == "-" for char in token):
             return prefix.strip()
     return text
+
+
+def short_session_id(session_id: str | None, agent_id: str | None = None) -> str | None:
+    """The first 8 characters of the session id (or of a worker's agent id)."""
+    for candidate in (session_id, agent_id):
+        if isinstance(candidate, str) and candidate:
+            token = candidate.rsplit(":", 1)[-1] if candidate.count(":") >= 2 else candidate
+            token = token.strip()
+            if token:
+                return token[:8]
+    return None
+
+
+def _looks_like_safe_label(text: str, provider: str) -> bool:
+    """True for the collector's content-free fallback ("Claude <work id>",
+    "Claude agent <id>"): a provider word, optionally "agent", then one
+    id-shaped token. Those carry nothing a person can read."""
+    parts = text.split()
+    if len(parts) not in (2, 3):
+        return False
+    head = parts[0].lower()
+    if head != provider.lower() and head != PROVIDER_LABELS.get(provider, "").lower():
+        return False
+    if len(parts) == 3 and parts[1].lower() not in ("agent", "worker", "session"):
+        return False
+    token = parts[-1]
+    return len(token) >= 8 and all(char.isalnum() or char == "-" for char in token)
+
+
+def session_label(
+    *,
+    provider: str,
+    session_id: str | None,
+    agent_id: str,
+    display_name: str | None,
+    cwd: str | None,
+    extras: SessionExtras | None,
+    is_worker: bool = False,
+    parent_label: str | None = None,
+) -> str:
+    """A human label: the provider's own session title, else the display
+    name the collector derived (project/prompt), else the working
+    directory's last path component, else provider plus short id."""
+    short = short_session_id(agent_id if is_worker else session_id, agent_id) or "?"
+    provider_label = PROVIDER_LABELS.get(provider, provider.title() if provider else "Agent")
+    if is_worker:
+        base = parent_label or provider_label
+        return f"{base} worker {short}"
+    if extras is not None and isinstance(extras.name, str) and extras.name.strip():
+        return extras.name.strip()
+    stripped = strip_session_short_id(display_name or "", session_id)
+    if stripped and not _looks_like_safe_label(stripped, provider):
+        return stripped
+    for candidate in ((extras.cwd if extras is not None else None), cwd):
+        if isinstance(candidate, str) and candidate.strip():
+            tail = candidate.rstrip("/").rsplit("/", 1)[-1]
+            if tail:
+                return tail
+    return f"{provider_label} {short}"
+
+
+def usage_window_name(lane_id: str | None, label: str | None, model: str | None = None) -> str:
+    """``5h`` / ``7d`` / ``Daily`` / ``Weekly`` / ``Monthly`` / ``Credits``;
+    a model-scoped lane keeps the model word ("7d Fable")."""
+    key = str(lane_id or "").strip().lower()
+    name = USAGE_WINDOW_NAMES.get(key)
+    if name is None:
+        text = str(label or "").strip()
+        lowered = text.lower().replace("_", "-")
+        if lowered in ("5-hour", "five-hour", "5 hour", "5h"):
+            name = "5h"
+        elif lowered in ("weekly", "7-day", "seven-day", "7 day", "7d"):
+            name = "7d"
+        else:
+            name = text or (lane_id or "?")
+    if model and name in ("5h", "7d", "Daily", "Monthly"):
+        word = str(model).strip()
+        if word and word.lower() not in name.lower():
+            name = f"{name} {word[:1].upper()}{word[1:]}"
+    return name
 
 
 def origin_kind(label: str | None) -> str | None:
@@ -261,6 +436,87 @@ def why_for_glance(glance: object) -> tuple[str | None, str | None]:
     return why, override
 
 
+def light_why(glance: object, facts: LightFacts | None = None) -> str:
+    """The documented ``why`` for a surface (``WHY_VALUES``).
+
+    Precedence: a preview, then a device display kind that names the
+    reason (battery, calendar, reminder, escalation, studio, quota), then
+    a DND state that shows nothing (``quiet``), then the glance semantic;
+    an idle light that is dimmed says why it is dim (``idle_dim`` /
+    ``sleep_dim``).
+    """
+    facts = facts or LightFacts()
+    if facts.preview:
+        return "preview"
+    kind = (facts.display_kind or "").strip().lower()
+    if kind and kind != "agent":
+        mapped = _DISPLAY_KIND_WHY.get(kind)
+        if mapped is not None:
+            return mapped
+    if facts.dnd_display_admission == "none" or (
+        facts.dnd_brightness_factor is not None and float(facts.dnd_brightness_factor) <= 0.0
+    ):
+        return "quiet"
+    why, _override = why_for_glance(glance)
+    if why is None:
+        return "unknown"
+    if why == "idle":
+        if "idle_dim" in facts.dimming:
+            return "idle_dim"
+        if "sleep" in facts.dimming:
+            return "sleep_dim"
+        if "quiet" in facts.dimming:
+            return "quiet"
+    return why
+
+
+def why_detail(
+    why: str,
+    *,
+    sessions: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    asks: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    unseen_completion_ids: frozenset[str] | set[str] | tuple[str, ...] = (),
+    now: float,
+    facts: LightFacts | None = None,
+    glance: object = None,
+) -> dict[str, Any]:
+    """``why_detail`` for a surface: the session the light is about (when
+    there is one), how long it has been in that state, and the dimming
+    that shaped its brightness."""
+    facts = facts or LightFacts()
+    session: dict[str, Any] | None = None
+    mains = [row for row in sessions if row.get("kind") == "main"]
+    if why in ("waiting", "escalation") and asks:
+        oldest = min(asks, key=lambda ask: ask.get("opened_at") or float("inf"))
+        session = next((row for row in mains if row.get("id") == oldest.get("session")), None)
+    elif why == "working":
+        working = [row for row in mains if row.get("mode") in {mode.value for mode in _WORKING_MODES} and not row.get("stale")]
+        session = max(working, key=lambda row: row.get("since") or 0.0, default=None)
+    elif why == "completed":
+        unseen = set(unseen_completion_ids)
+        done = [row for row in mains if row.get("lifecycle") == "completed" and (not unseen or row.get("id") in unseen)]
+        session = max(done, key=lambda row: row.get("updated_at") or 0.0, default=None)
+    elif why == "failed":
+        failed = [row for row in mains if row.get("lifecycle") == "failed"]
+        session = max(failed, key=lambda row: row.get("updated_at") or 0.0, default=None)
+    since = None
+    if session is not None:
+        since = session.get("since")
+        if why in ("waiting", "escalation") and session.get("ask"):
+            since = session["ask"].get("opened_at") or since
+    if since is None and glance is not None:
+        since = epoch(getattr(glance, "relay_epoch", None))
+    seconds = max(0.0, round(float(now) - float(since), 1)) if since is not None else None
+    return {
+        "session": session.get("id") if session is not None else None,
+        "label": session.get("label") if session is not None else None,
+        "provider": session.get("provider") if session is not None else None,
+        "seconds_in_state": seconds,
+        "brightness_factor": facts.brightness_factor,
+        "dimming": list(facts.dimming),
+    }
+
+
 def escalation_stage_name(stage: int) -> str:
     return _ESCALATION_STAGE_NAMES.get(int(stage), "none")
 
@@ -341,6 +597,7 @@ def session_document(
     ask_ids: frozenset[str],
     extras: SessionExtras | None,
     workers: int,
+    parent_label: str | None = None,
 ) -> dict[str, Any]:
     mode = getattr(status, "mode", AgentMode.UNKNOWN)
     if not isinstance(mode, AgentMode):
@@ -361,16 +618,28 @@ def session_document(
     origin = (extras.origin if extras is not None and extras.origin else None) or origin_document(
         origin_label if isinstance(origin_label, str) else None
     )
+    provider = str(getattr(status, "provider", "unknown"))
+    session_id = getattr(status, "session_id", None)
+    cwd = getattr(status, "cwd", None) or (extras.cwd if extras is not None else None)
     return {
         "id": agent_id,
-        "provider": str(getattr(status, "provider", "unknown")),
+        "provider": provider,
         "kind": "worker" if is_subagent else "main",
         "parent": getattr(status, "parent_agent_id", None) if is_subagent else None,
-        "label": strip_session_short_id(
-            getattr(status, "display_name", agent_id), getattr(status, "session_id", None)
-        )
-        or agent_id,
-        "cwd": getattr(status, "cwd", None),
+        "label": session_label(
+            provider=provider,
+            session_id=session_id,
+            agent_id=agent_id,
+            display_name=getattr(status, "display_name", None),
+            cwd=cwd,
+            extras=extras,
+            is_worker=is_subagent,
+            parent_label=parent_label,
+        ),
+        "short_id": short_session_id(
+            agent_id if is_subagent else session_id, agent_id
+        ),
+        "cwd": cwd,
         "mode": mode.value,
         "lifecycle": lifecycle_for_mode(mode, stale=stale),
         "next_actor": next_actor,
@@ -394,11 +663,29 @@ def usage_document(usage_state: object) -> dict[str, Any] | None:
     providers = []
     for snapshot in getattr(usage_state, "snapshots", ()) or ():
         windows = []
-        for lane in getattr(snapshot, "lanes", ()) or ():
+        lanes = list(getattr(snapshot, "lanes", ()) or ())
+        # A model-scoped lane with its own id ("fable-only") shares its
+        # reset with the account-wide window of the same horizon; that
+        # sibling names the horizon ("7d Fable").
+        horizon_by_reset: dict[float, str] = {}
+        for lane in lanes:
+            if getattr(lane, "model", None):
+                continue
+            base = usage_window_name(getattr(lane, "lane_id", None), getattr(lane, "label", None))
+            reset = epoch(getattr(lane, "reset_at", None))
+            if base in ("5h", "7d", "Daily", "Monthly") and reset is not None:
+                horizon_by_reset.setdefault(round(reset), base)
+        for lane in lanes:
             remaining = getattr(lane, "remaining_percent", None)
+            lane_id = getattr(lane, "lane_id", None)
+            model = getattr(lane, "model", None)
+            reset = epoch(getattr(lane, "reset_at", None))
+            sibling = horizon_by_reset.get(round(reset)) if reset is not None else None
+            if model and sibling is not None and str(lane_id or "").lower() not in USAGE_WINDOW_NAMES:
+                lane_id = sibling
             windows.append(
                 {
-                    "name": getattr(lane, "label", None) or getattr(lane, "lane_id", "?"),
+                    "name": usage_window_name(lane_id, getattr(lane, "label", None), model),
                     "id": getattr(lane, "lane_id", None),
                     "used_pct": (
                         round(100.0 - float(remaining), 1) if remaining is not None else None
@@ -518,16 +805,24 @@ def build_state_document(
                 parent = getattr(status, "parent_agent_id", None)
                 if parent:
                     workers_by_parent[parent] = workers_by_parent.get(parent, 0) + 1
-    sessions = [
-        session_document(
+    sessions: list[dict[str, Any]] = []
+    labels_by_id: dict[str, str] = {}
+    ordered = sorted(statuses, key=lambda status: bool(getattr(status, "is_subagent", False)))
+    documents_by_id: dict[str, dict[str, Any]] = {}
+    for status in ordered:
+        agent_id = str(getattr(status, "agent_id", ""))
+        parent = getattr(status, "parent_agent_id", None) if getattr(status, "is_subagent", False) else None
+        document = session_document(
             status,
             operator_state=operator_state,
             ask_ids=ask_ids,
-            extras=extras_by_id.get(str(getattr(status, "agent_id", ""))),
-            workers=workers_by_parent.get(str(getattr(status, "agent_id", "")), 0),
+            extras=extras_by_id.get(agent_id),
+            workers=workers_by_parent.get(agent_id, 0),
+            parent_label=labels_by_id.get(str(parent)) if parent else None,
         )
-        for status in statuses
-    ]
+        labels_by_id[agent_id] = document["label"]
+        documents_by_id[agent_id] = document
+    sessions = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
     asks = [
         ask_document(status, operator_state, with_session=True)
         for status in ask_statuses
@@ -608,11 +903,16 @@ def build_lights_document(
     surfaces: dict[str, SurfaceFacts],
     *,
     linked: bool,
+    devices_linked: bool | None = None,
 ) -> dict[str, Any]:
+    """``linked`` is the Screen Bar following the strip; ``devices_linked``
+    (when given) says a Pro and a Dot are being written as one unit."""
     document: dict[str, Any] = {"t": "lights", "v": PROTOCOL_VERSION, "surfaces": {}, "linked": bool(linked)}
+    if devices_linked is not None:
+        document["devices_linked"] = bool(devices_linked)
     for name, facts in surfaces.items():
         entry: dict[str, Any] = {"program": facts.program}
-        for key in ("led_count", "anchor", "motion", "static_fallback", "brightness", "why", "override"):
+        for key in ("led_count", "anchor", "motion", "static_fallback", "brightness", "why", "override", "why_detail"):
             value = getattr(facts, key)
             if value is not None:
                 entry[key] = value
@@ -663,11 +963,15 @@ def history_rows(ledger: object, *, since: float | None = None, limit: int = 500
 __all__ = [
     "ORIGIN_BUNDLE_IDS",
     "PROTOCOL_VERSION",
+    "PROVIDER_LABELS",
     "SETTINGS_SCHEMA",
     "TERMINAL_APPS",
     "TERMINAL_BUNDLE_IDS",
+    "USAGE_WINDOW_NAMES",
+    "WHY_VALUES",
     "DeviceFacts",
     "EscalationFacts",
+    "LightFacts",
     "PowerFacts",
     "SessionExtras",
     "SurfaceFacts",
@@ -682,11 +986,16 @@ __all__ = [
     "history_rows",
     "hook_health",
     "lifecycle_for_mode",
+    "light_why",
     "origin_document",
     "origin_kind",
     "session_document",
+    "session_label",
+    "short_session_id",
     "strip_session_short_id",
     "terminal_from_command",
     "usage_document",
+    "usage_window_name",
+    "why_detail",
     "why_for_glance",
 ]

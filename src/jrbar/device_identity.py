@@ -111,7 +111,7 @@ def device_kind(product_name: str, mount_path: str = "") -> DeviceKind:
         return DeviceKind.SCREEN_BAR
     if "sidepulsepro" in combined:
         return DeviceKind.PRO
-    if "sidepulsedot" in combined:
+    if "sidepulsedot" in combined or "pulsedot" in combined:
         return DeviceKind.DOT
     if combined.endswith("sidepulse") or combined == "sidepulse":
         return DeviceKind.DOT

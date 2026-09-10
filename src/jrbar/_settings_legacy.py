@@ -373,6 +373,9 @@ class AgentMonitorSettings:
     # On by default -- a user who owns the hardware wants them to agree,
     # and a user who does not never notices the setting exists.
     link_screen_bar_to_hardware: bool = True
+    # Pro + Dot as one unit: when both are mounted their programs are
+    # written back to back from the same presentation and anchor.
+    devices_linked: bool = True
     screen_bar_gauges_enabled: bool = False
     # Follow Alcove's visible capsule width (alpha-measured) so an
     # expanded live activity never outgrows the bracket. On by default;
@@ -999,6 +1002,9 @@ class AgentMonitorSettings:
     def with_link_screen_bar_to_hardware(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, link_screen_bar_to_hardware=bool(enabled))
 
+    def with_devices_linked(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, devices_linked=bool(enabled))
+
     def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_gauges_enabled=bool(enabled))
 
@@ -1471,6 +1477,7 @@ class AgentMonitorSettings:
             "menu_bar_label_enabled": self.menu_bar_label_enabled,
             "screen_bar_min_glow": self.screen_bar_min_glow,
             "link_screen_bar_to_hardware": self.link_screen_bar_to_hardware,
+            "devices_linked": self.devices_linked,
             "screen_bar_gauges_enabled": self.screen_bar_gauges_enabled,
             "screen_bar_follow_alcove": self.screen_bar_follow_alcove,
             "screen_bar_show_in_full_screen": self.screen_bar_show_in_full_screen,
@@ -1815,6 +1822,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         link_screen_bar_to_hardware=_bool_setting(
             data.get("link_screen_bar_to_hardware"), True
         ),
+        devices_linked=_bool_setting(data.get("devices_linked"), True),
         screen_bar_gauges_enabled=_bool_setting(data.get("screen_bar_gauges_enabled"), False),
         screen_bar_follow_alcove=_bool_setting(data.get("screen_bar_follow_alcove"), True),
         screen_bar_show_in_full_screen=_bool_setting(

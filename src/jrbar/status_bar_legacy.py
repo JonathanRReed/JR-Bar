@@ -1375,6 +1375,7 @@ STATUS_BAR_KEEPALIVE_VOLUME_NAMES = (
     "SidePulse",
     "SidePulsePro",
     "SidePulseDot",
+    "PulseDot",
 )
 # Runtime-only display kind (never a persisted per-device choice): the
 # low-battery reminder takes over every display while active.
@@ -12493,6 +12494,11 @@ class StatusBarController(NSObject):
 
     def effective_brightness_for_device(self, device: StatusBarDevice) -> int:
         """Compose current ambient brightness inputs for one device."""
+        return self.ambient_brightness_plan_for_device(device).brightness
+
+    def ambient_brightness_plan_for_device(self, device: StatusBarDevice):
+        """The full brightness policy result (with its trace) for one
+        device; effective_brightness_for_device is its ``.brightness``."""
         if not device.auto_brightness_enabled:
             base = device.brightness
         else:
@@ -12531,7 +12537,7 @@ class StatusBarController(NSObject):
             is_screen_bar=device.device_id == VIRTUAL_DEVICE_ID,
             screen_bar_min_glow=float(self.settings.screen_bar_min_glow),
             dnd_factor=self.current_dnd_projection().brightness_factor,
-        ).brightness
+        )
 
     def idle_dim_scale_factor(self) -> float:
         """1.0 normally; idle_dim_fraction once idle_dim_after_minutes of
@@ -18595,7 +18601,7 @@ def device_mount_key(root: Path) -> str:
 
 def device_display_name(name: str) -> str:
     normalized = normalized_device_name(name)
-    if "sidepulsedot" in normalized:
+    if "sidepulsedot" in normalized or "pulsedot" in normalized:
         return "SidePulse Dot"
     if "sidepulsepro" in normalized:
         return "SidePulse Pro"
