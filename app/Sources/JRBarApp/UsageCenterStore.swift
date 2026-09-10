@@ -343,7 +343,12 @@ final class UsageCenterStore {
         let account = provider.account ?? history?.account
         var parts: [String] = []
         if let plan = account?.plan, !plan.isEmpty { parts.append(plan) }
-        if let label = account?.label, !label.isEmpty { parts.append(label) }
+        // Account labels are whatever the provider hands over: an email, an
+        // org slug, or a bare account UUID. A UUID is shortened the way
+        // every other id in the app is, rather than eating the line.
+        if let label = account?.label, !label.isEmpty {
+            parts.append(SessionLabel.looksLikeUUID(label) ? String(label.prefix(8)) : SessionLabel.shorteningUUIDs(label))
+        }
         // A source that is not ready carries the daemon's fix-it hint
         // ("Reconnect Claude · authentication required"); that says more
         // than repeating the badge's word.

@@ -501,6 +501,19 @@ public struct CoreState: Codable, Hashable, Sendable {
     public var mainSessions: [CoreSession] { sessions.filter { $0.kind == "main" || $0.parent == nil } }
 
     public func session(withID id: String) -> CoreSession? { sessions.first { $0.id == id } }
+
+    /// Asks whose session the daemon no longer lists — cleared, or
+    /// acknowledged out from under a request that is still open. The
+    /// aggregate counts them and the light is about them, so the panel
+    /// gives them a row of their own rather than dropping them.
+    public var orphanAsks: [CoreAsk] {
+        guard !asks.isEmpty else { return [] }
+        let known = Set(sessions.map(\.id))
+        return asks.filter { ask in
+            guard let session = ask.session, !session.isEmpty else { return true }
+            return !known.contains(session)
+        }
+    }
 }
 
 // MARK: - lights

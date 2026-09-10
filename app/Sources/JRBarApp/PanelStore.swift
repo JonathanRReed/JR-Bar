@@ -31,6 +31,25 @@ struct SessionRow: Identifiable, Equatable {
         stale = session.stale
     }
 
+    /// An ask the daemon reports for a session that is not in
+    /// `state.sessions` — cleared, or acknowledged out from under a still
+    /// open request. The header counts it and the light pulses amber for
+    /// it, so it must never be the one thing the panel does not show; the
+    /// id is all there is, and Approve / Deny still answer it.
+    init(orphanAsk ask: CoreAsk) {
+        let session = ask.session ?? ""
+        let provider = String(session.split(separator: ":").first ?? "")
+        id = session.isEmpty ? ask.id : session
+        style = ProviderStyle.style(for: provider)
+        label = SessionLabel.display(label: nil, shortId: nil, id: session, provider: provider)
+        cwdTail = nil
+        activity = .waiting
+        since = ask.openedAt.map { Date(timeIntervalSince1970: $0) }
+        workers = 0
+        self.ask = ask
+        stale = false
+    }
+
     /// `/Users/j/Downloads/JR-Bar/src` → `JR-Bar/src`; `~` collapses the home directory.
     static func tail(of path: String) -> String {
         let home = NSHomeDirectory()
@@ -247,7 +266,11 @@ final class PanelStore {
     var rows: [SessionRow] {
         guard core.isLive else { return [] }
         let pinned = Dictionary(core.asks.compactMap { ask in ask.session.map { ($0, ask) } }, uniquingKeysWith: { first, _ in first })
-        let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id]) }
+        // An ask whose session the daemon no longer lists still needs an
+        // answer: it is counted in the header and it is what the light is
+        // about, so it gets a row of its own rather than disappearing.
+        let orphans = (core.state?.orphanAsks ?? []).map(SessionRow.init(orphanAsk:))
+        let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id]) } + orphans
         func rank(_ row: SessionRow) -> Int {
             if row.ask != nil { return 0 }
             switch row.activity {

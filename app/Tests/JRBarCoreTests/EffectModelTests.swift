@@ -221,4 +221,29 @@ struct EffectModelTests {
         #expect(both.effectID == "a")
         #expect(both.targetID == "night")
     }
+
+    @Test("the family line says what the meaning does not")
+    func familyLine() throws {
+        let catalog = try Self.catalog()
+        // A provider animation's `meaning` is "provider animation: chase" —
+        // the family and the id again. The line shows the family and the
+        // role instead, and never repeats itself.
+        let chase = try #require(catalog.effect("chase"))
+        #expect(chase.meaning == "provider animation: chase")
+        #expect(chase.familyLine == "Provider animation · directional flow")
+        let auto = try #require(catalog.effect("auto"))
+        #expect(auto.familyLine == "Provider animation · adaptive")
+        // A general effect's meaning is the only thing that says anything,
+        // and its role ("general") is not worth a word.
+        let alert = try #require(catalog.effect("alert"))
+        #expect(alert.familyLine == "General · attention required")
+        let none = try #require(catalog.effect("none"))
+        #expect(none.familyLine == "General · steady color")
+        // Nothing at all still reads as a family, not an empty line.
+        let bare = EffectDefinition(id: "x", label: "X", meaning: "")
+        #expect(bare.familyLine == "General")
+        // A meaning that only restates the family is dropped too.
+        let restating = EffectDefinition(id: "x", label: "X", meaning: "Provider animation", catalog: "provider_animation")
+        #expect(restating.familyLine == "Provider animation")
+    }
 }

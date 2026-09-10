@@ -84,7 +84,11 @@ struct UsageHistoryTests {
         #expect(UsageFormat.cost(14.6989) == "$14.70")
         #expect(UsageFormat.cost(0.004) == "<$0.01")
         #expect(UsageFormat.cost(0) == "$0.00")
-        #expect(UsageFormat.cost(1234.6) == "$1235")
+        // Past a thousand the cents go and the digits are grouped, so
+        // "$253,305" is a number rather than a smear.
+        #expect(UsageFormat.cost(1234.6) == "$1,235")
+        #expect(UsageFormat.cost(253_305) == "$253,305")
+        #expect(UsageFormat.grouped(999) == "999")
         #expect(UsageFormat.cost(2, currency: "EUR") == "€2.00")
     }
 
