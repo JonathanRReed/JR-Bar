@@ -72,10 +72,21 @@ final class SettingsStore {
     var lastError: String?
     var resetTarget: Page?
     var pendingWrites = 0
-    /// Software-update channel: an app concern (there is no updater yet), kept in user defaults.
-    var updateChannel: String = UserDefaults.standard.string(forKey: "updateChannel") ?? "stable" {
-        didSet { UserDefaults.standard.set(updateChannel, forKey: "updateChannel") }
+    /// Software-update channel: an app concern, kept in user defaults for
+    /// Sparkle's delegate (`SparkleUpdater.allowedChannels(from:)`).
+    var updateChannel: String = UserDefaults.standard.string(forKey: SparkleUpdater.channelDefaultsKey) ?? "stable" {
+        didSet {
+            UserDefaults.standard.set(updateChannel, forKey: SparkleUpdater.channelDefaultsKey)
+            if updateChannel != oldValue { SparkleUpdater.shared?.channelDidChange() }
+        }
     }
+    /// Settings › General › Software Update, mirrored from `SparkleUpdater.shared`
+    /// (`refreshUpdater()`): whether this build embeds Sparkle, why not when
+    /// it does not, and the automatic-checks flag Sparkle persists itself.
+    var updaterAvailable = false
+    var updaterHint: String? = "Sparkle.framework is not in this build"
+    var automaticUpdateChecks = false
+    var lastUpdateCheck: Date?
     var launchAtLogin: Bool = false
     var launchAtLoginError: String?
 
@@ -350,6 +361,34 @@ final class SettingsStore {
 
     func refreshLaunchAtLogin() {
         launchAtLogin = SMAppService.mainApp.status == .enabled
+    }
+
+    // MARK: Software update
+
+    /// Re-reads the updater's state; the delegate calls it once the updater
+    /// exists and whenever Sparkle's automatic-checks flag changes.
+    func refreshUpdater() {
+        let updater = SparkleUpdater.shared
+        updaterAvailable = updater?.isAvailable ?? false
+        updaterHint = updaterAvailable ? nil : (updater?.availability.description ?? "Sparkle.framework is not in this build")
+        automaticUpdateChecks = updater?.automaticallyChecksForUpdates ?? false
+        lastUpdateCheck = updater?.lastUpdateCheckDate
+    }
+
+    /// The "Automatically check for updates" toggle: Sparkle owns the value.
+    func setAutomaticUpdateChecks(_ on: Bool) {
+        guard let updater = SparkleUpdater.shared, updater.isAvailable else {
+            refreshUpdater()
+            return
+        }
+        updater.automaticallyChecksForUpdates = on
+        refreshUpdater()
+    }
+
+    /// "Check for Updates…" from the General page: the same action the app
+    /// menu and the panel use, through the responder chain to `AppDelegate`.
+    func checkForUpdates() {
+        NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil)
     }
 
     func setLaunchAtLogin(_ on: Bool) {

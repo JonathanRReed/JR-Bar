@@ -871,6 +871,8 @@ struct PanelFooter: View {
                 Button { store.openEffects() } label: { Text("Effect Studio…") }
                 Button { store.openControlCenter() } label: { Text("Control Center…") }
                     .keyboardShortcut("k", modifiers: .command)
+                Divider()
+                Button { store.checkForUpdates() } label: { Text("Check for Updates…") }
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
             }
@@ -878,7 +880,7 @@ struct PanelFooter: View {
             .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Usage Center (⌘U), Effect Studio, Control Center (⌘K)")
+            .help("More: Usage Center (⌘U), Effect Studio, Control Center (⌘K), Check for Updates")
             .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))

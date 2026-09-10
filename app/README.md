@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 143 tests / 26 suites; the parity test fans out over 29 programs
+swift test                  # 149 tests / 27 suites; the parity test fans out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -134,6 +134,9 @@ Developer switches (environment variables read at launch):
 * `JRBAR_PLAIN_MATERIAL=1` uses an `NSVisualEffectView` instead of `NSGlassEffectView`.
 * `JRBAR_APPEARANCE=light|dark` pins every window to one appearance
   (screenshots of both looks without touching the system setting).
+* `JRBAR_SCREEN_BAR=on|off` flips the Screen Bar at launch the way the
+  status item's toggle does (screenshots without the band; the value is
+  remembered in `app-state.json`, so a relaunch proves persistence).
 * Every panel open prints two lines to stdout, `panel frame t=0 (target):
   x= y= w= h= top=` and the same `t=1s` later, so a run can prove the
   frame never moved after opening (`top` is the distance from the top of
@@ -776,11 +779,26 @@ three layers):
   launch writes `SUEnableAutomaticChecks=false` to user defaults so
   Sparkle never shows its own prompt), and the channel picker's
   `updateChannel` default read by `allowedChannels(for:)` (`beta` adds the
-  beta-tagged items). Still to bind on the General page: its "Check for
-  Updates…" button should `NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil)`
-  instead of reporting a stub error, an automatic-checks toggle should
-  bind `SparkleUpdater.shared?.automaticallyChecksForUpdates`, and the
-  panel overflow has no "Check for Updates…" row yet.
+  beta-tagged items). Settings › General binds all three: its "Check for
+  Updates…" button sends `AppDelegate.checkForUpdates(_:)` through the
+  responder chain, "Automatically check for updates" mirrors
+  `SparkleUpdater.shared?.automaticallyChecksForUpdates` through
+  `SettingsStore.refreshUpdater()` (both disabled, with the reason as the
+  subtitle and tooltip, when the framework is not in the build), and the
+  channel picker calls `channelDidChange()`. The panel's overflow menu has
+  the same "Check for Updates…" row; when the updater is unavailable the
+  panel shows the reason as a toast.
+* App state: the hooks-installed stamp, the login-item marker and the
+  Screen Bar flag live in `~/.local/state/jrbar/app-state.json`
+  (`AppState` / `AppStateFile` in JRBarCore, tolerant read, atomic write,
+  seeded once from the old user-defaults keys when the file is absent),
+  not in `UserDefaults`: on the owner's Mac cfprefsd stopped persisting
+  any domain (`defaults write` fails from the shell too), so the defaults
+  forgot them on every relaunch. User defaults keep only Sparkle's own
+  keys, `updateChannel`, and the window conveniences (Usage Center range,
+  Effect Studio selection and hardware-preview consent). The launch logs
+  `JR-Bar app state (…): hooksInstalledFor=… showScreenBar=…` so a
+  relaunch can be checked from the console.
   Launch at login registers with `SMAppService`,
   which only works from a bundled, signed app. `reset_settings` and
   `undo_clear`'s `batch` shape are app-proposed details the mock answers;
