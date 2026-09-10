@@ -1,82 +1,79 @@
 # Contributing to JR-Bar
 
-JR-Bar controls visible light, edits other tools’ hook configuration, reads private local state, can request macOS permissions, and ships a privileged installer path. Contributions are reviewed as desktop-systems changes, not as isolated Python utilities.
+JR-Bar is a personal project that happens to be public. Issues and pull
+requests are welcome; there is no process beyond the checks below and a
+clear description of what changed and why. Keep in mind what the software
+touches: it edits other tools' hook configuration, reads private local
+state, drives visible light, asks for macOS permissions, and ships as a
+signed installer. Changes are reviewed with that in mind.
 
-## Development baseline
+## Setup
 
-JR-Bar supports Python 3.10 through 3.13. macOS behavior requires PyObjC and must be tested on macOS. Use the reviewed dependency constraints:
+An Apple silicon Mac on macOS 26 or newer, the Command Line Tools (Swift
+6.2+, clang) and Python 3.12.
 
-```bash
-./scripts/bootstrap-dev.sh
-./scripts/verify.sh --portable
+```sh
+./scripts/bootstrap-dev.sh          # .venv with the pinned tools
+make fast                           # lint, imports, contract and focused tests
+.venv/bin/python -m pytest tests    # the full Python suite, about five minutes
+cd app && swift build && swift test # the Swift package
+make package                        # the bundle, PKG and Sparkle archive (signs with what the keychain has)
 ```
 
-Before requesting review on macOS:
+The same three checks run in CI on every push
+([.github/workflows/tests.yml](.github/workflows/tests.yml)). Packaging,
+hardware, permissions and notarization only happen on a real Mac.
 
-```bash
-./scripts/verify.sh
-```
+Running the app from a checkout, against a checkout's daemon or the mock
+daemon, is in [app/README.md](app/README.md). Install the result on your
+own Mac with `make clean-install`; `docs/PLAN-0.8.md` has the definition of
+done the owner uses (the Mac runs the commit you just made).
 
-Do not bypass `requirements/release-constraints.txt`, add floating dependency ranges, or use mutable GitHub Action tags. Dependency updates belong in a dedicated pull request with the full macOS gate.
+## Where things live
 
-## Branch and pull-request policy
+- `app/` is the Swift app. It owns every pixel and asks the daemon for
+  every fact. Anything it decides on its own is listed at the end of
+  [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- `src/jrbar/` is the daemon. New behaviour lands as a protocol document
+  or command in [docs/CORE-PROTOCOL.md](docs/CORE-PROTOCOL.md) first; the
+  app never reads the daemon's files behind its back. Additive fields are
+  free; `v` bumps only for incompatible changes.
+- `hook/` is the shim. It must never block a provider for more than 250 ms
+  or lose a payload it could queue.
+- `packaging/` builds and signs the bundle. Every external tool sits behind
+  an overridable seam so `tests/test_app_bundle_security.py` can run the
+  whole script with doubles.
 
-- Never push feature or fix commits directly to `main`.
-- Use one focused branch and one pull request per independently reviewable change.
-- Keep pull requests small enough to explain the state transition, failure behavior, rollback path, and test evidence.
-- Do not merge while a required local or GitHub status is failing.
-- Security-sensitive changes require review of the complete source-to-effect path, not only the modified function.
-- Release publication is performed only by `scripts/publish_release.sh` after the authoritative Mac gate.
+## Rules that have earned their place
 
-## Architecture rules
+1. Provider and system adapters emit typed facts; policy modules do no I/O;
+   the daemon's main thread does no blocking work during a refresh.
+2. Bursty sources use bounded latest-wins or explicitly ordered queues.
+3. Every LEDS program, first-party or user-authored, passes the
+   presentation compiler and the firmware parser before a strip or the
+   Screen Bar sees it.
+4. New settings fields need encoder, decoder, migration and schema-coverage
+   tests, and a `SettingsKey` in the app if the app is to show them.
+5. Tests use synthetic data. No real prompts, transcripts, tokens, account
+   identifiers, private project names or personal paths in tests or
+   fixtures. `make fast` scans tracked files for secrets.
+6. Dependencies are pinned (`requirements/release-constraints.txt`,
+   hash-locked for the frozen daemon) and GitHub Actions are pinned to
+   commits. Dependency bumps are their own change.
+7. Logs and UI copy carry product-owned reason codes, never server bodies,
+   credentials, hostnames or user content.
 
-1. Provider and system adapters emit typed facts. They do not update AppKit or hardware directly.
-2. Pure policy modules perform no I/O and import no AppKit, Foundation, or Objective-C bridge modules.
-3. AppKit objects remain main-thread-owned. Workers consume immutable request values and return immutable result values.
-4. Blocking filesystem, subprocess, network, device, and persistence work never occurs during menu tracking, draw callbacks, settings interaction, or the AppKit refresh path.
-5. Bursty sources use bounded latest-wins or explicitly ordered queues. Unbounded queues and caches are prohibited.
-6. New refresh work declares the `CoreDomain` it changes and is admitted through the typed refresh boundary.
-7. New integrations declare capabilities and preserve source, surface, provider, machine, project, thread, branch, and worktree identity where available.
-8. First-party and user-authored light output passes the universal presentation compiler and exact firmware parser.
-9. New settings fields require encoder, decoder, migration, schema-coverage, corrupt-file, and installed-upgrade tests.
-10. Historical monoliths may shrink but may not grow. Extract behavior into named modules with narrow ownership.
+## The SidePulse name
 
-## Test requirements
+0.8 renamed everything. The `sidepulse` command, the `sidepulse.*` import
+shim and the `SIDEPULSE_*` environment fallbacks exist for this one release
+so installs re-point themselves, and are deleted in the next. Do not add
+to them, and do not add new dual names.
 
-A change must test the seam where it becomes reachable. Unit tests alone are insufficient for:
+## Pull requests
 
-- provider event to canonical state;
-- canonical state to menu, Screen Bar, hardware, notification, or history;
-- settings migration and persistence;
-- worker submission, coalescing, stale-result rejection, and shutdown;
-- hook install/uninstall preservation;
-- signing, entitlements, package install, upgrade, and uninstall;
-- exact final LED bytes and safety cadence;
-- credential, webhook, loopback, or remote-peer boundaries.
-
-Use synthetic data. Tests and fixtures must not contain real prompts, transcripts, access tokens, refresh tokens, account identifiers, private project titles, or personal paths.
-
-## Code quality
-
-- Ruff and bytecode compilation must pass.
-- Public policy values use dataclasses, enums, and bounded validation instead of unstructured dictionaries when practical.
-- Exceptions crossing subsystem boundaries use product-owned reason codes. Do not place server bodies, stderr, credentials, hostnames, or private user content in logs or UI copy.
-- Broad exception handling belongs only at a documented process or framework boundary and must fail to a bounded state.
-- Avoid runtime namespace injection, monkeypatch-only wiring, mutable module globals, and duplicate implementations of the same job.
-- Keep comments focused on invariants, failure modes, or non-obvious platform behavior.
-
-## macOS release verification
-
-A production candidate requires a clean `main` checkout equal to `origin/main`, reviewed signing identities, notarization credentials, physical SidePulse hardware, an existing settings fixture for upgrade testing, and Instruments evidence. Run:
-
-```bash
-export APP_SIGN_IDENTITY='Developer ID Application: …'
-export INSTALLER_SIGN_IDENTITY='Developer ID Installer: …'
-export NOTARY_PROFILE='sidepulse-notary'
-export JRBAR_PERFORMANCE_EVIDENCE="$PWD/performance-evidence.json"
-export JRBAR_HARDWARE_CONFIRM=1
-export JRBAR_RUN_INSTALLED_UPGRADE=1
-./scripts/verify_macos_release.sh
-```
-
-Passing portable tests or building an unsigned package does not establish production readiness.
+Describe the change, what it does when the thing it talks to is missing or
+wrong (a provider is signed out, a strip is ejected, the daemon is down),
+and how you checked it. Screenshots for anything visible. Keep one change
+per pull request. Security and privacy reports go to the address in
+[SECURITY.md](SECURITY.md), not to an issue.

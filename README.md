@@ -1,834 +1,254 @@
 # JR-Bar
 
-JR-Bar is a standalone macOS menu-bar app for AI-agent activity. It shows
-session status and usage in the menu bar and on an on-screen light bar.
-No physical hardware is required. SidePulse Pro, SidePulse Dot, and Creator
-Micro 2 are optional hardware components.
+Your coding agents, as light. JR-Bar is a native macOS menu-bar app that
+watches Claude Code, Codex, Gemini CLI and friends and turns what they are
+doing into a glow: breathing in the session's colour while an agent works,
+a green sweep when it finishes, amber that escalates when one is stuck
+waiting on you. The light lives on a SidePulse strip in the SD slot, on a
+Dot in a USB-C port, and on the Screen Bar, one unsegmented band tucked under
+the MacBook notch. No hardware is required.
 
-When Claude Code or Codex is working, the lights breathe in that
-session's color. When a task finishes, they sweep green. When an agent
-is blocked waiting on *you*, they turn amber and escalate — light,
-menu-bar flash, chime, and optionally a webhook that can reach your
-phone — until you answer. You stop tabbing over to check on agents;
-you glance at the light.
+<p align="center">
+  <img src="media/panel.png" alt="The JR-Bar panel: an ask pinned at the top with Approve and Deny, working and waiting sessions under it, usage bars per provider, device chips and a brightness slider" width="420">
+</p>
 
-## Credits
-
-JR-Bar began as a fork of
-[inteliwear/sidepulse](https://github.com/inteliwear/sidepulse) that
-grows the original device companion into a universal status indicator
-for the Mac. It is fully divergent — hardware stays first-class, new
-signal surfaces, deep customization behind good defaults — with no
-intention of merging back upstream; upstream work is reviewed and
-ported behavior by behavior instead.
+It is built to feel like the tools it sits beside: a glass panel off the
+status item, keyboard first, a Settings window that looks like System
+Settings, no web views. The app is Swift and SwiftUI; a Python daemon
+bundled inside it owns the facts.
 
 ## What it does
 
-- **Watches agent sessions** through provider hooks — Claude Code,
-  Codex, Devin, Grok, Cursor, Hermes, OpenClaw, OpenCode, Antigravity,
-  and Kiro. It knows the
-  difference between a main session and its sub-agent workers, between
-  "finished and you've seen it" and "finished while you were away",
-  and between a real blocked-on-you request (permission prompt, error)
-  and a turn that merely ended with a question — only the real ones
-  escalate.
-- **Renders status everywhere you look**: the physical LEDs, the
-  Screen Bar around the notch, and the menu-bar icon with a dropdown
-  of live sessions (click one to jump to its terminal — or click the
-  Screen Bar itself while an ask is live).
-- **Layers Mac signals on top**: calendar and reminder glows,
-  battery, and quota alerts share one precedence ladder. A blocked agent always outranks
-  the rest; per-Focus and per-device policies decide what else gets
-  through (a Dot can be pinned to one provider, or to asks only).
-- **Tracks usage and cost**: today's tokens with approximate cost and
-  cache savings per provider, weekly limit percentages (including
-  Anthropic's own usage endpoint, opt-in), and daily/hourly graphs
-  from a week up to a year.
-- **Leaves the desk when needed**: a webhook bridge POSTs JSON moments
-  — agent blocked for minutes, task completed, quota crossed — to
-  ntfy, Home Assistant, or anything with a URL.
+- **Knows which sessions are real.** Every provider hook runs a 3 ms
+  compiled shim. The daemon pairs each event with the agent's process,
+  sweeps the process table every 5 s, reads Claude's per-process session
+  files and tails Codex, pi and Gemini transcripts, so a session that died
+  is marked ended within seconds instead of glowing all afternoon. Main
+  sessions and their sub-agent workers are told apart; a finished task you
+  have not looked at yet is different from one you have.
+- **Escalates only for real asks.** A permission prompt, an input request
+  or an error turns the light amber, then pulses the menu-bar icon, then
+  chimes every 30 s until you answer. A turn that merely ended with a
+  question does not. Asks are pinned at the top of the panel with Approve
+  and Deny (⌘↩ / ⌘D) and arrive as banners with the same two actions.
+- **The Screen Bar.** A 6 pt band under the notch playing the same LEDS
+  program as the strip, phase-locked to it, blended from eight samples into
+  one gradient (never a row of segments). Hover shows the top session and a
+  plain-language line about the light; click jumps to that session's
+  terminal. It follows Alcove's capsule width and stays up over full-screen
+  apps.
+
+<p align="center">
+  <img src="media/screen-bar.png" alt="The Screen Bar under the notch after a completion, with the hover pill naming the session" width="700">
+</p>
+
+- **Pro and Dot as one.** When both are mounted they are written in one
+  command from one presentation, and the Dot replays the strip's program at
+  a fraction of its brightness, so the two read as a single instrument.
+  Per device: display mode (agent status, battery, studio, quota runway),
+  brightness with auto-brightness, provider pin, asks-only, and colour
+  calibration with per-channel gains and resting glow previewed live.
+- **Usage with a forecast.** The panel shows each provider's 5 h and 7 d
+  windows with reset countdowns and a pace verdict; the Usage Center adds
+  rings per window, a least-squares forecast of when the window runs out
+  ("At this pace the 5h window runs out at 22:00"), and daily or hourly
+  token and cost graphs from your local transcripts with the cache savings
+  spelled out. Claude's official usage endpoint is opt-in.
+- **Effect Studio.** A library of motions (Breathe, Heartbeat, Chase,
+  Gradient, Knight Rider, Comet, Twinkle, …) and data-only JSON packs,
+  assignable by device, project, provider, scene or state, with parameters
+  as native controls, a live strip preview, a 5 s preview on the real
+  hardware, and import/export. Every program is clamped by the presentation
+  compiler (2 Hz, 1 Hz for saturated red) before it reaches a strip or the
+  screen.
+- **Lighting that knows the room.** Auto-dim by schedule, by display
+  brightness, or by the ambient light sensor; idle and sleep dimming; quiet
+  hours; macOS Focus following with a dim rule per Focus; Mute, Dim, Pause,
+  Asks-only and Dark modes for a while from the panel's Quiet… menu.
+- **Keeps the Mac awake for agents, and only for them.** While agents work
+  the daemon holds a sleep assertion and lets go when they finish. With the
+  closed-lid policy on `agents`, a small `pmset` helper (one sudoers rule)
+  keeps a clamshell Mac running through a long task and lets it sleep when
+  the task ends or the quota is gone.
+- **Away from the desk.** Calendar and Reminders glows; a webhook that POSTs
+  JSON moments (blocked for minutes, finished, quota crossed) to ntfy, Home
+  Assistant or anything with a URL; a read-only view of another Mac's
+  sessions over Tailscale and SFTP; HMAC-signed usage sync between Macs; a
+  loopback ingest listener so cloud-hosted agents can report in.
+- **Creator Micro 2 Control Center.** Thirteen session keys with pins and
+  banks, the dial and joystick, a compact rail on any screen edge, keymap
+  apply and restore with a private backup of the pad's original. It works
+  without the pad; the pad has so far been verified only powered off.
+- **History, doctor, updates.** An activity window grouped by day with an
+  "while you were away" banner; a Doctor checklist and `jrbar hooks doctor`;
+  Sparkle updates from this repository's releases, manual until you turn
+  automatic checks on, with a beta channel.
+
+<p align="center">
+  <img src="media/usage-center.png" alt="Usage Center: Claude's 5h, 7d and 30d rings, a comfortable forecast, tokens by day with cost and cache savings; Gemini near its limit with a run-out time" width="640">
+</p>
+
+## Hardware (optional)
+
+| | |
+| :---: | :---: |
+| <img src="media/sidepulse-pro.jpg" alt="SidePulse Pro glowing pink in a MacBook Pro SD card slot" width="360"> | <img src="media/sidepulse-dot.jpg" alt="SidePulse Dot glowing green in a MacBook USB-C port" width="360"> |
+| **SidePulse Pro**: eight LEDs on an SD card, for MacBook Pro. | **SidePulse Dot**: two LEDs on USB-C. |
+
+Both mount as tiny volumes; JR-Bar writes a small program to `LEDS.LED`
+atomically (the DSL is [`LEDS_FORMAT.md`](LEDS_FORMAT.md)), so an eject
+mid-write cannot leave the firmware a torn program. A first-batch Dot
+mounts as `PulseDot` and is recognised as such. The
+[Creator Micro 2](docs/CONTROL-CENTER.md) speaks a vendor HID protocol
+over USB or Bluetooth and is driven by the same daemon. Without any of
+them, the Screen Bar is the light.
+
+## Providers
+
+| | Providers |
+| --- | --- |
+| Supported (hooks, session truth, usage where the provider exposes it) | Claude Code, Codex (CLI and desktop), Gemini CLI, Pi, Grok, Devin, OpenCode, OpenClaw, Antigravity |
+| Best effort (hook shapes known, not exercised on the author's Mac) | Cursor, Hermes Agent, Kiro |
+| Neighbours, not providers | T3 Code (read-only session projection, [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)); Alcove (the Screen Bar matches its capsule) |
+
+Hooks are registered by the app on its first launch for every provider
+with a config on the Mac, and can be installed, reinstalled or removed
+per provider in Settings › Agents. Codex's trust hash is recomputed
+locally for the exact command written. How each provider is read, and
+what its usage lanes mean, is in [docs/NATIVE-PROVIDERS.md](docs/NATIVE-PROVIDERS.md);
+adding one is [docs/PROVIDER-ADAPTER-GUIDE.md](docs/PROVIDER-ADAPTER-GUIDE.md).
 
 ## Install
 
-The signed and notarized PKG built by `packaging/build_macos_pkg.sh` is the
-authoritative installer and manual recovery artifact. It installs `JR-Bar.app`. See
-`docs/PRODUCTION-RELEASE.md` for the required Developer ID identities,
-notarization profile, and candidate gate.
+Requirements: an Apple silicon Mac on macOS 26 or newer. JR-Bar is one
+signed app bundle carrying the daemon and the hook shim; nothing else is
+installed on the system.
 
-Production bundles embed pinned Sparkle 2.9.6 and show a `Software Update`
-submenu with manual checks plus stable and beta channel selection. Automatic
-checks remain consent-driven. The supplemental updater ZIP and signed appcast
-are required release assets bound to the same verified app as the PKG. No
-public JR-Bar release or feed has been published by the current source work.
-The current arm64 application bundle requires macOS 11.0 or newer.
-
-## Migrating from SidePulse
-
-JR-Bar 0.8 is the first release under its own name; earlier releases shipped
-as SidePulse (`sidepulse`, `SidePulse.app`, `io.sidepulse.*`). Nothing has
-to be done by hand:
-
-- **Files move forward automatically.** On first launch, and again from
-  `jrbar setup`, the app copies `~/.config/sidepulse/agent-monitor/` and the
-  files beside it into `~/.config/jrbar/`, `~/.local/state/sidepulse/` into
-  `~/.local/state/jrbar/` (sockets and `*.pid` files are skipped), and
-  `~/.local/share/sidepulse/` and `~/Library/Application Support/SidePulse/`
-  into their JR-Bar counterparts. Everything is copied, never moved: the old
-  trees stay untouched, nothing already under a JR-Bar path is overwritten,
-  and `~/.local/state/jrbar/migrated-from-sidepulse.json` records what was
-  copied and when so it only happens once.
-- **The LaunchAgent is swapped.** Installing the status bar writes
-  `com.jonathanreed.jrbar.app.plist` and unloads and deletes both
-  `io.sidepulse.agentstatus.plist` and `com.sidepulse.agentstatus.plist`.
-  The SD eject guard moves from `io.sidepulse.sdejectguard` to
-  `com.jonathanreed.jrbar.sdejectguard` the same way.
-- **Provider hooks are rewritten in place.** `jrbar setup` recognises every
-  hook shape SidePulse ever registered (`python -m sidepulse.hook_client`,
-  `agent_monitor.hook_entry`, the old log paths under `sidepulse/agent-monitor`,
-  the `sidepulse-status` OpenClaw and Antigravity hooks, the
-  `sidepulse.js` OpenCode plugin, the `sidepulse.json` Kiro agent and Grok
-  file) and replaces it with the JR-Bar command and log path instead of
-  adding a second entry. Codex trust hashes are refreshed for the new
-  commands. Until you run setup, the old registrations keep working through
-  a small `sidepulse` import shim that forwards to `jrbar`.
-- **Keychain secrets follow lazily.** Provider secrets live under
-  `com.jonathanreed.jrbar.provider.<id>`; the first read that misses falls
-  back to the `io.sidepulse.provider.<id>` item and copies it forward.
-- **Environment variables** are `JRBAR_*`; the old `SIDEPULSE_*` names are
-  still read for one release. The `sidepulse` console script stays as an
-  alias of `jrbar` for one release too.
-
-Two things do need a one-time action, because macOS keys them to the new
-bundle identifier: **permissions** (Full Disk Access, Automation,
-Notifications, Focus Status, Calendar and Accessibility, whichever you had
-granted) must be granted again when JR-Bar asks, and the first Keychain
-read may prompt once for the copied provider secrets. Once JR-Bar is
-running and the hooks point at `-m jrbar.hook_client`, the old
-`~/.config/sidepulse`, `~/.local/state/sidepulse` and
-`~/.local/share/sidepulse` directories can be deleted.
-
-## Quick start
+From a [GitHub release](https://github.com/JonathanRReed/JR-Bar/releases),
+once one is published: download `JR-Bar-<version>.pkg` and run it. Until
+then, build it yourself (Command Line Tools with Swift 6.2+, Python 3.12):
 
 ```sh
-./scripts/install-user.sh
-jrbar setup
+git clone https://github.com/JonathanRReed/JR-Bar.git && cd JR-Bar
+make package          # dist/JR-Bar-0.8.0.pkg, signed with whatever identity the keychain has
+make clean-install    # installs it into ~/Applications (no password) and opens it
 ```
 
-The install script builds an isolated Python environment under
-`~/.local/share/jrbar` and links the `jrbar` command into
-`~/.local/bin` — it works on a stock Mac, where the system `python3`
-is too old for a bare `pip install -e .` and Homebrew Python refuses
-system-wide installs (PEP 668).
-
-For source work, bootstrap once and use the fast ordinary-change gate:
+`sudo installer -pkg dist/JR-Bar-0.8.0.pkg -target /` puts it in
+`/Applications` instead. On first launch the app starts its daemon, points
+every provider's hook at the bundled shim, and registers itself as a login
+item. Click the icon for the panel; right-click for the menu. The command
+line lives inside the bundle:
 
 ```sh
-./scripts/bootstrap-dev.sh
-make fast
+alias jrbar='~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core'
+jrbar hooks doctor    # what each provider's config runs today, and the sockets
+jrbar doctor          # daemon commit, memory, checks
 ```
 
-`make fast` runs lint, real imports, lightweight contracts, tracked-file secret
-scanning, literal fixture validation, a bounded selected set of contract,
-fixture, and semantic tests, compilation,
-dependency and version policy, and diff hygiene. It does not replace the full
-macOS, packaging, installed-app, hardware, signing, notarization, or Instruments
-gates.
+To remove it: quit the app, delete `JR-Bar.app`, and run
+`jrbar agent-monitor uninstall all` first if you want the hooks gone.
+`scripts/uninstall-macos.sh` does the same for a `/Applications` install.
 
-For final testing from a clean `main` checkout, run `make final-test`. It bootstraps
-the pinned Python 3.12 environment, runs the full Mac source/package gates, and
-saves local logs and a JUnit report under `.jrbar-verification/`. See
-[Final testing](docs/FINAL-TESTING.md) for requirements and separate device/release checks.
+### Permissions
 
-`jrbar setup` installs provider hooks and the status-bar LaunchAgent so
-the menu-bar app starts now and at login. It does not install a hardware
-helper by default. Add `--sd-eject-guard` if you want SidePulse Pro Eject
-Prevention. Existing explicit scope or volume-UUID options also opt in;
-`--no-sd-eject-guard` always skips it. The production `JR-Bar.app` comes
-from the signed PKG built by `packaging/build_macos_pkg.sh`.
-The menu-bar app's own Setup window covers the same ground with
-buttons. Everything works with zero granted permissions; individual
-features ask for what they need when you turn them on:
+Everything works with nothing granted; features ask when you turn them on.
 
 | Permission | Unlocks | Asked when |
 | --- | --- | --- |
-| Full Disk Access | Focus-mode reactions (dim/off/profile per Focus) | You enable Focus features |
-| Calendar / Reminders | Event and reminder glows | You enable those signals |
-| Screen Recording | The Screen Bar matching Alcove's live capsule width | Automatic if granted; quietly skipped otherwise |
+| Notifications | Ask and completion banners, with Approve / Deny on asks | The first time a banner is due, never at launch |
+| Accessibility | Answering an ask by keystroke into the session's terminal (a Creator Micro 2 key, or Approve / Deny when the terminal is frontmost) | The first time you answer that way |
+| Calendar, Reminders | Event and reminder glows | When you enable those signals |
+| Screen Recording | The Screen Bar following Alcove's live capsule width | Automatic if granted; skipped quietly otherwise |
+| Full Disk Access | macOS Focus following (reads the Focus database) | When you turn Focus following on |
+| An administrator password, once | The closed-lid sleep helper (`/etc/sudoers.d/jrbar-disablesleep`) | When you set the closed-lid policy |
 
-## Control Center
+Grants are keyed to the signed `JR-Bar.app`; a development build signed
+differently is a different app to macOS and asks again.
 
-Open **Control Center…** from the menu for stable session slots, explicit banks,
-per-session state, input checking and an optional compact rail on any display
-edge. It works without physical hardware. Optional Creator Micro 2 controls use
-approved device identity, a bounded action queue, and the existing provider
-navigation resolver. Named macOS Shortcuts and app-specific shortcuts are
-explicit user mappings, not commands supplied by a device or agent.
+## Screenshots
 
-The September 6 source work adds bounded binary keymap transfer with a private
-first-original backup and interrupted-write recovery, selected profile/layer
-previews, supported auxiliary mappings, data-only mapping import/export, and
-nonblocking/reconnecting HID ownership. This is **not yet a physical-device or
-release certification**. Portable regressions have been run; final Mac, device,
-live-provider and signed-release checks remain. Read the
-[Control Center guide and required Mac checks](docs/CONTROL-CENTER.md) before
-changing a device keymap. Restore the original keymap before uninstalling.
+<p align="center">
+  <img src="media/settings-devices.png" alt="Settings › Devices &amp; Screen Bar: the SidePulse strip with display mode, brightness, auto-brightness, provider pin, asks-only and colour calibration; the PulseDot below it" width="720">
+</p>
+<p align="center">
+  <img src="media/effect-studio.png" alt="Effect Studio: the effect library, the Beacon pack effect with its 8-LED preview, safety chips, cadence and colour parameters, and the assignment list by scope" width="720">
+</p>
+<p align="center">
+  <img src="media/control-center.png" alt="Control Center for the Creator Micro 2: the pad drawn with thirteen keys, dial and joystick, banks, and the session list beside it" width="720">
+</p>
 
-## The Screen Bar
+## How it is built
 
-A light bar that wraps the MacBook notch and mirrors the LEDs —
-useful when the hardware is out of sight or you have none. It measures
-the real notch from screen pixels, coexists with
-[Alcove](https://henrikruscon.com/alcove) by drawing a bracket around
-it (matching Alcove's visible capsule width automatically), can run
-pitch-black with only the moving signal visible, and answers clicks
-and hovers: click during an ask to jump to the session, dwell for a
-quota peek. Optional wing-tip gauges keep a quota ember and an
-unseen-done dot in your peripheral vision.
+`JR-Bar.app` (Swift, `app/`) owns every pixel; `jrbar-core` (Python,
+`src/jrbar`, frozen into `Contents/Helpers/jrbar-core.app`) owns every fact
+and runs headless as the app's supervised child; `jrbar-hook`
+(C, `hook/`) is the command every provider config runs. App and daemon
+talk newline-delimited JSON over `~/.local/state/jrbar/core.sock`: the
+daemon pushes `state`, `lights`, `settings` and `event` documents, the app
+sends commands (`open_session`, `answer_ask`, `set_setting`,
+`preview_program`, `deck_press`, …) and replaces its model wholesale on
+every frame. The contract is [docs/CORE-PROTOCOL.md](docs/CORE-PROTOCOL.md);
+the process map, data paths and module map are
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); the bundle and signing are
+[packaging/README.md](packaging/README.md).
 
-## Hardware
+## Development
 
-Creator Micro 2 uses a separate vendor-HID protocol, not the SidePulse disk-file
-protocol. Its supported setup and recovery flow is in the Control Center guide.
+```sh
+./scripts/bootstrap-dev.sh              # Python 3.12 venv at .venv, pinned tools
+make fast                               # lint, imports, contract and focused tests
+.venv/bin/python -m pytest tests        # the full Python suite (about five minutes)
+cd app && swift build && swift test     # the Swift package and its suites
+make package                            # the signed bundle, PKG and Sparkle archive
+```
 
-SidePulse Pro and Dot mount as disk drives; their output renders by writing a
-small LED program to `LEDS.LED` (the DSL is in
-[`LEDS_FORMAT.md`](LEDS_FORMAT.md), and writes are atomic — an eject
-mid-write can't leave the firmware a torn program). Per-device:
-display choice (agent / battery / studio / quota runway),
-brightness with auto-brightness, white-point calibration with
-day/night/travel profiles, resting glow, provider pinning, and signal
-muting. The Studio pane lets you write programs by hand, keep a shelf
-of saved looks, and burn one into `INIT.LED` so the hardware boots
-wearing your colors.
+`app/README.md` covers running the Swift app against a checkout's daemon
+(`JRBAR_CORE_EXEC=scripts/run-core.sh`) or the mock daemon
+(`app/scripts/mock-core.py`, on its own socket; never on the real one).
+Releasing is [docs/PRODUCTION-RELEASE.md](docs/PRODUCTION-RELEASE.md); the
+feature status is [docs/FEATURE-MATRIX.md](docs/FEATURE-MATRIX.md); what is
+next is [docs/ROADMAP.md](docs/ROADMAP.md). CI runs the same three checks on
+a hosted macOS 26 runner. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Odds and ends worth knowing
+## Migrating from SidePulse
 
-- **Color by project**: sessions in the same repo share a hue family,
-  providers told apart by lightness.
-- **Quiet hour, per-Focus signal policies** (all / asks only /
-  silent), and a **quota sunrise** sweep the moment a limit window
-  resets.
-- Engineering: LED writes are atomic; the Screen Bar is change-gated (60fps active,
-  30fps resting breathe) with 60Hz-capped WASM sampling. Source-level verification
-  is bounded and evidence-labeled; it does not by itself establish main-thread,
-  subprocess, SQLite, installed-app, or hardware behavior. Corrupt settings are preserved for recovery,
-  never silently reset. Architecture notes live in
-  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), the living work ledger in
-  [`docs/ROADMAP.md`](docs/ROADMAP.md), and the historical build ledger in
-  [`docs/archive/FORK-ROADMAP.md`](docs/archive/FORK-ROADMAP.md).
+0.8 is the first release under the JR-Bar name; earlier ones shipped as
+SidePulse (`sidepulse`, `SidePulse.app`, `io.sidepulse.*`). Nothing has
+to be done by hand:
 
-## Project guides and policies
+- On first launch the daemon copies `~/.config/sidepulse`,
+  `~/.local/state/sidepulse`, `~/.local/share/sidepulse` and
+  `~/Library/Application Support/SidePulse` into their JR-Bar counterparts
+  (copied, never moved; nothing already under a JR-Bar path is overwritten;
+  `~/.local/state/jrbar/migrated-from-sidepulse.json` records it so it
+  happens once).
+- Every hook shape SidePulse ever registered (`python -m
+  sidepulse.hook_client`, `agent_monitor.hook_entry`, the `sidepulse-status`
+  OpenClaw and Antigravity hooks, the `sidepulse.js` OpenCode plugin, the
+  Kiro and Grok files) is replaced in place by the bundled shim, and Codex's
+  trust hash is refreshed. The old `io.sidepulse.agentstatus` and
+  `com.sidepulse.agentstatus` LaunchAgents are unloaded and removed; the
+  app is a login item now, not a LaunchAgent.
+- Keychain secrets are copied forward on first read
+  (`io.sidepulse.provider.<id>` → `com.jonathanreed.jrbar.provider.<id>`).
+- `SIDEPULSE_*` environment variables, the `sidepulse` command and
+  `sidepulse.*` imports keep working for this one release and go away in
+  the next.
 
-- [Living roadmap and adaptation ledger](docs/ROADMAP.md)
-- [Dated upstream and fork research](docs/UPSTREAM-REFRESH-2026-08-30.md)
-- [Provider adapter authoring guide](docs/PROVIDER-ADAPTER-GUIDE.md)
-- [Effect and data-only pack authoring guide](docs/EFFECT-AUTHORING-GUIDE.md)
-- [Compatibility policy](docs/COMPATIBILITY.md)
-- [Contributing](CONTRIBUTING.md), [support](SUPPORT.md),
-  [security](SECURITY.md), and [code of conduct](CODE_OF_CONDUCT.md)
+macOS keys permissions to the bundle identifier, so the grants above are
+asked for again. Once the app is running and `jrbar hooks doctor` says
+every provider runs the shim, the old `~/.config/sidepulse`,
+`~/.local/state/sidepulse` and `~/.local/share/sidepulse` directories can
+be deleted.
 
 ## Credits
 
-Many monitoring semantics and usage-tracking techniques were adopted,
-with citations in the code, from studying
-[T3 Code](https://github.com/pingdotgg/t3code) and
-[CodexBar](https://github.com/steipete/CodexBar).
-
-Everything below is the upstream project's reference documentation:
-the CLI, the LED format, and the battery tools, all of which this fork
-keeps working.
-
----
-
-This reference descends from the upstream `sidepulse` companion project for
-[SidePulse](https://sidepulse.io) hardware; the commands below are JR-Bar's
-(`jrbar`, with `sidepulse` kept as an alias for one release).
-
-They can display the status of an AI agent, battery level, or other system
-signals.
-
-| <img src="https://raw.githubusercontent.com/inteliwear/sidepulse/main/media/sidepulse-pro.jpg" alt="SidePulse Pro glowing pink in a MacBook Pro SD card slot" width="400"> | <img src="https://raw.githubusercontent.com/inteliwear/sidepulse/main/media/sidepulse-dot.jpg" alt="SidePulse Dot glowing green in a MacBook USB-C port" width="400"> |
-|:---:|:---:|
-| **SidePulse Pro** — eight-LED SD card device for MacBook Pro. | **SidePulse Dot** — tiny two-LED USB-C device. |
-
-Agent status, at a glance:
-
-https://github.com/user-attachments/assets/9de119ac-7b55-467f-8517-6c5f1570c1af
-
-The device mounts as a disk drive. You can control the LEDs by writing to `LEDS.LED`.
-
-The LED control DSL is described in [`LEDS_FORMAT.md`](LEDS_FORMAT.md).
-
-### TLDR
-```sh
-./scripts/install-user.sh
-jrbar setup
-```
-
-Write an LED program directly to a mounted SidePulse Pro or SidePulse Dot device:
-
-```sh
-jrbar write "off\n#ff3a00 1.6s pulse\nrepeat"
-```
-
-The CLI auto-detects mounted devices under `/Volumes` by looking for a
-SidePulse Pro/SidePulse Dot-style volume name or an existing `LEDS.LED`. If more than
-one device is possible, pass the mounted folder or file explicitly:
-
-```sh
-jrbar write "off\n#ff3a00 1.6s pulse\nrepeat" --device /Volumes/SidePulsePro
-jrbar write "off" --device /Volumes/SidePulsePro/LEDS.LED
-```
-
-The writer decodes simple escapes such as `\n`, then enforces the controller's
-512-byte and 20-line limits before writing the LED control file.
-
-## Battery LEDs
-
-Show the current Mac battery state:
-
-```sh
-jrbar battery status
-jrbar battery status --json
-```
-
-Mirror battery level to a mounted SidePulse Pro/SidePulse Dot:
-
-```sh
-jrbar battery leds
-jrbar battery leds --once --dry-run
-jrbar battery leds --device /Volumes/SidePulsePro --full-watts 140
-```
-
-SidePulse Pro uses all eight LEDs as a battery bar. At 50%, LEDs 0-3 are filled;
-when charging, LED 4 is the pulsing frontier LED. Live updates ease the whole
-strip into its new base state, then trigger one frontier pulse. The app owns
-the animation cadence by rewriting that one-shot pulse; the device does not run
-a repeated charging loop. Pulse length and rewrite frequency are based on
-charger wattage divided by the laptop's full-speed wattage baseline, so slow
-chargers produce occasional short blinks and full-speed chargers produce a
-steady pulse.
-
-Save the status-bar LED display preference:
-
-```sh
-jrbar battery configure --display battery
-jrbar battery configure --display agent
-jrbar battery configure --full-watts auto
-jrbar battery configure --show-on-power-change yes --power-change-preview-seconds 7
-```
-
-## jrbar
-
-`jrbar` includes a companion menu-bar app for macOS that controls
-SidePulse Pro and SidePulse Dot.
-
-### Main Functionality
-
-#### AI Agent Monitoring
-
-JR-Bar can monitor AI agents such as Claude, Devin, Codex, and Grok through hooks, then
-translate the current agent state into a small, glanceable LED status.
-
-Agent status modes:
-
-| Mode | Meaning | LED pattern |
-| --- | --- | --- |
-| Idle / Ready | The agent is available and not currently running a task. | Very dim idle pulse. |
-| Working | The agent is thinking, generating, or otherwise actively processing. | Cyan rolling animation. |
-| Tool Running | A shell command, API call, or external tool is in progress. | Cyan rolling animation. |
-| Waiting for Input | The agent needs a user decision, approval, or additional context. | Slow amber pulse. |
-| Long Task Progress | A longer job has measurable progress. | Cyan rolling animation. |
-| Blocked / Error | The agent cannot continue, a tool failed, or a recoverable error needs attention. | Slow amber pulse. |
-| Completed | The agent finished successfully. | Solid green. |
-
-When multiple states are active, JR-Bar should show the most actionable
-mode first: Blocked / Error, Waiting for Input, Tool Running, Long Task
-Progress, Working, then Idle / Ready.
-
-For multiple agents, JR-Bar aggregates their statuses into one global
-display state. Each agent reports its own mode, and JR-Bar renders the
-highest-priority active mode across all non-stale agents. This keeps the device
-useful at a glance: if any agent is blocked or waiting, the LEDs show that
-actionable state instead of trying to show every agent separately.
-
-Aggregation priority:
-
-| Priority | Mode | Aggregated behavior |
-| --- | --- | --- |
-| 1 | Blocked / Error | Show immediately if any agent is blocked or has errored. |
-| 2 | Waiting for Input | Show if any agent needs user input and no agent is blocked. |
-| 3 | Tool Running | Show if any agent is running a tool and no higher-priority state is active. |
-| 4 | Long Task Progress | Show the most recent or furthest-progressing long task. |
-| 5 | Working | Show while one or more agents are actively processing. |
-| 6 | Completed | Show briefly when the latest active agent completes successfully. |
-| 7 | Idle / Ready | Show only when all known agents are idle or no fresh agent status exists. |
-
-Agent statuses should include a timestamp. JR-Bar should ignore stale
-statuses after a short timeout so disconnected or finished agents do not hold
-the display indefinitely.
-
-#### Agent Monitor Library
-
-The `jrbar` Python package collects and normalizes local AI agent hook
-events. The macOS status-bar app receives hook events through a lightweight
-local Unix socket, keeps the latest agent states in memory, and writes only a
-small `latest.json` restart snapshot plus provider JSONL debug logs. The app
-does not rescan historical logs or transcripts on every refresh.
-
-The package can also mirror the aggregate state to a mounted SidePulse Pro or
-SidePulse Dot by writing the current LED program to `LEDS.LED`.
-
-The monitor supports every registered provider — Codex, Claude, Devin,
-Grok, Cursor, Hermes, OpenClaw, OpenCode, Antigravity, and Kiro
-(`jrbar agent-monitor doctor` reports each provider's detected
-config and log paths). The founding four:
-
-| Provider | Config | Detected log |
-| --- | --- | --- |
-| Codex | `~/.codex/config.toml` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/codex.jsonl` |
-| Claude | `~/.claude/settings.json` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/claude.jsonl` |
-| Devin | `~/.config/devin/config.json` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/devin.jsonl` |
-| Grok | `~/.grok/hooks/jrbar.json` | `${XDG_STATE_HOME:-~/.local/state}/jrbar/grok.jsonl` |
-
-Each provider adapter only adds JR-Bar's own hook commands. Existing hook
-entries, including other tools' hook entries, stay in place. Before a changed existing
-configuration is written, JR-Bar creates a timestamped backup beside it.
-Use `jrbar agent-monitor uninstall <provider>` to remove only JR-Bar
-hooks, or restore that backup if you need to roll back the complete file.
-
-To add a future provider, add a `ProviderSpec` for its identity, supported
-event set, and configuration detector; add its adapter functions to both
-`INSTALLERS` and `UNINSTALLERS`; and add preservation, detection, and CLI
-coverage. The detector reports the config and log paths to `doctor`; the
-adapter must preserve unrelated configuration while adding and removing only
-JR-Bar hooks.
-
-For CLI snapshots, debugging, or recovery after missed hook events, the
-file-based monitor can optionally read recent local transcripts as a fallback:
-
-- Codex: `~/.codex/sessions/**/*.jsonl`
-- Claude: `~/.claude/projects/**/*.jsonl`
-
-Transcript monitoring is off by default and can be enabled in Settings. It can
-catch active threads even when hook events are stale or missed. Claude
-transcript files can be touched after their embedded event timestamps stop
-moving, so a recent transcript mtime is treated as a Working heartbeat only
-when the latest embedded event was already active. File mtimes never resurrect
-a terminal `Stop` / `Completed` session. Internal Codex helper/suggestion
-transcripts are ignored so app background work does not look like one of your
-agents.
-
-By default the monitor stores runtime logs under
-`~/.local/state/jrbar/`, following the XDG state directory
-convention. Set `XDG_STATE_HOME` to place them somewhere else.
-
-Install locally for the `jrbar` CLI:
-
-```sh
-python3 -m pip install -e .
-```
-
-This also installs the Cocoa dependencies for the macOS status-bar app.
-
-Set up this Mac explicitly after package install:
-
-```sh
-jrbar setup
-```
-
-`jrbar setup` installs or refreshes hooks for every registered provider, installs
-SidePulse Pro Eject Prevention, writes the status-bar LaunchAgent, starts both helpers
-immediately, and enables them at login. This is intentionally an explicit
-command instead of a `pip install` side effect. To set up only one provider,
-name it: `jrbar setup codex`, `jrbar setup claude`,
-`jrbar setup cursor`, and so on. Every hook command is probe-run before
-any provider config is written; a command that cannot run is refused with a
-clear error. Existing hook entries are preserved for every setup
-command.
-To skip the status-bar app but still install hooks and SidePulse Pro Eject Prevention, use
-`jrbar setup --no-status-bar`.
-
-SidePulse Pro Eject Prevention keeps the built-in SD reader attached after
-macOS hibernate or lock-screen mount refusals. By default setup installs it
-system-wide when already running with system permissions, otherwise as a
-per-user LaunchAgent:
-
-```sh
-jrbar setup --sd-eject-guard-scope auto
-jrbar setup --sd-eject-guard-scope user
-jrbar setup --sd-eject-guard-scope system --no-status-bar
-```
-
-The system scope requires the command to already have system install
-permissions.
-
-Manage SidePulse Pro Eject Prevention directly:
-
-```sh
-jrbar sdejectguard start
-jrbar sdejectguard stop
-jrbar sdejectguard uninstall
-jrbar sdejectguard logs
-jrbar sdejectguard start -it
-```
-
-`start -it` runs the guard in the current terminal for interactive debugging.
-
-On Homebrew Python, use the user-site install form:
-
-```sh
-python3 -m pip install --user --break-system-packages -e .
-ln -sf "$(python3 -m site --user-base)/bin/jrbar" ~/.local/bin/jrbar
-```
-
-### macOS installer
-
-A signed and notarized PKG release, the authoritative installer and recovery artifact,
-can be built with
-[`packaging/build_macos_pkg.sh`](packaging/build_macos_pkg.sh). See
-[`packaging/README.md`](packaging/README.md) for the required Developer ID
-certificates and notarization profile.
-
-The owner-Mac gate also binds the exact PKG, updater ZIP, signed appcast, and
-app hashes to signing, notarization, Gatekeeper, package contents, performance, hardware, upgrade,
-supported uninstall, clean reinstall, and SBOM receipts. See
-[`docs/PRODUCTION-RELEASE.md`](docs/PRODUCTION-RELEASE.md). Running the uninstall
-check requires a dedicated release account and separate explicit authorization.
-
-Check the current hook configuration:
-
-```sh
-jrbar agent-monitor doctor
-```
-
-Install or refresh the monitor hooks:
-
-```sh
-jrbar agent-monitor install
-jrbar agent-monitor install codex
-jrbar agent-monitor install claude
-jrbar agent-monitor install devin
-jrbar agent-monitor install grok
-```
-
-Any registered provider name works the same way (`cursor`, `hermes`,
-`openclaw`, `opencode`, `antigravity`, `kiro`).
-
-Each hook invokes a small, standard-library-only Python entry point. While the
-app is running, it admits the event to one private bounded FIFO and returns
-before normalization, minimization, dedupe, and the monitor-log write finish.
-If the listener is unavailable, the same canonical processing runs
-synchronously so closing JR-Bar does not disable provider logs. Queue refusals
-and bounded shutdown failures create content-free local receipts instead of
-reordering newer events ahead of accepted work. Inside the app, accepted work
-also applies its monitor refresh before the queue reports it drained, so the
-shutdown snapshot includes the accepted tail.
-
-Show current aggregated status:
-
-```sh
-jrbar agent-monitor status
-```
-
-Watch a live dashboard of recently active agents:
-
-```sh
-jrbar agent-monitor live
-```
-
-The dashboard refreshes every second and shows agents updated in the last hour
-by default. Use `--recent-seconds` to change that window, or `--all` to
-include stale/older sessions:
-
-```sh
-jrbar agent-monitor live --recent-seconds 120
-jrbar agent-monitor live --all
-```
-
-By default, `Tool Running` events are not time-limited, so genuinely long tools
-remain visible. If a provider drops completion hooks and you want protection
-against stale tool starts, set `--tool-running-timeout`.
-
-`PostToolUse` means the tool returned, not that the whole turn is finished. The
-monitor keeps it as Working for a short settling window while the assistant
-writes the response, then treats it as Done if no newer hook event arrives. This
-prevents a missed final `Stop` event from leaving the status bar stuck on
-Working.
-
-`Completed` remains visible for 20 minutes so the status bar and LEDs can show
-Done long enough to be noticed. After that it drops out instead of counting as
-an active session for the full stale window, and the LEDs return to the very
-dim Idle pattern. Idle/session-start records also do not count as active
-sessions.
-
-Status detection is strongest when the agent tells the monitor its intended
-handoff state explicitly. A final assistant message can include a hidden marker
-line:
-
-```text
-<!-- sidepulse:ask -->
-<!-- sidepulse:done -->
-<!-- sidepulse:working -->
-<!-- sidepulse:blocked -->
-<!-- sidepulse:idle -->
-```
-
-Explicit markers win over text heuristics. If no marker is present, the monitor
-falls back to provider events and then to conservative question detection in the
-final assistant message. Casual closing questions such as "Anything else?" are
-treated as Done unless the agent emits `<!-- sidepulse:ask -->`; concrete
-follow-ups such as "Want me to push?" still count as Ask. Questions inside
-markdown code spans or fenced code examples are ignored.
-
-Codex `PermissionRequest` events are treated as Ask and remain sticky until the
-matching tool command finishes. This prevents unrelated same-session activity
-from hiding an approval prompt that is still waiting on the user.
-
-For Claude, Devin, Codex, or Grok projects that should report this reliably, add
-guidance like this to the relevant agent instructions:
-
-```text
-When your final response needs user input, approval, or a decision, include
-`<!-- sidepulse:ask -->` as a final hidden marker line. When the work is complete
-and no user response is needed, include `<!-- sidepulse:done -->`.
-```
-
-Mirror the aggregate agent status to the LEDs in a foreground process:
-
-```sh
-jrbar agent-monitor leds
-```
-
-The LED mirror writes only when the aggregate display state changes. Use
-`--once` to write the current state and exit, or `--dry-run` to inspect the LED
-program:
-
-```sh
-jrbar agent-monitor leds --once --dry-run
-jrbar agent-monitor leds --device /Volumes/SidePulseDot
-```
-
-SidePulse Dot programs are generated for two LEDs. SidePulse Pro programs are generated
-for eight LEDs. The monitor detects this from the mounted device name and falls
-back to the eight-LED SidePulse Pro layout if the name is unknown.
-
-Remove monitor hooks:
-
-```sh
-jrbar agent-monitor uninstall
-jrbar agent-monitor uninstall codex
-jrbar agent-monitor uninstall claude
-jrbar agent-monitor uninstall devin
-jrbar agent-monitor uninstall grok
-```
-
-Install and start the macOS status-bar app:
-
-```sh
-jrbar status-bar
-jrbar status-bar start
-```
-
-This writes `~/Library/LaunchAgents/io.jrbar.agentstatus.plist`, starts the
-menu-bar app immediately, enables it at login, and mirrors the same aggregate
-state to the LEDs. For debugging, run it in the foreground:
-
-```sh
-jrbar status-bar start --foreground
-```
-
-On first launch, the status-bar app shows a JR-Bar Setup window. It can:
-
-- enable Run at Login;
-- install or uninstall SidePulse Pro Eject Prevention, which keeps SidePulse Pro/SidePulse Dot available after sleep;
-- open the one-time closed-lid sleep prevention installer in Terminal.
-
-The Setup window can be reopened from the dropdown with `Setup...`.
-
-The status-bar item shows one of four collapsed states:
-
-| Label | Meaning |
-| --- | --- |
-| Idle | No recent active agent work. |
-| Working | One or more agents are thinking, running tools, or progressing. |
-| Done | The most recent active agent completed successfully. |
-| Ask | An agent needs input, permission, or attention. |
-
-Click the status-bar item to expand the recent session list. Click a session
-row to open that agent using the remembered choice for that provider. Use the
-session's Open Options row to choose and remember another opener, such as the
-provider app, Terminal resume, or Claude Code in VS Code.
-
-The dropdown also includes a checked `Connect to Device` item. A checkmark means
-the status-bar app is actively connected to a mounted SidePulse Pro/SidePulse Dot target.
-If both devices are mounted, the status-bar app prefers SidePulse Pro, then
-SidePulse Dot. Click the item to disconnect and turn the LEDs off; click it again to
-reconnect.
-
-The dropdown and Settings window can switch the LEDs between agent status and
-battery status. When agent status is selected, `Show Battery on Plug/Unplug`
-can briefly show the battery animation for seven seconds after the power source
-changes.
-
-The Devices section also offers **Add Screen Bar**, an optional virtual
-eight-LED device. It appears as a notch-shaped status-bar overlay that covers
-the camera island/notch footprint and adds a straight 5 px LED band along the
-bottom edge, or the corresponding top-center position on a display without a
-notch. Each virtual LED blends across a three-LED footprint: centered on the
-target LED, fading one LED width left and right. It shares the physical
-device's status animations, display-mode selection, and per-device brightness
-control. In classic mode everything the bar paints stays inside the measured notch
-silhouette -- opaque housing, glow feathered to black before the corner
-fillets -- and while an agent asks, a hover-reveal announcer pill names the
-session (click jumps to it). The Screen Bar evaluates the same `LEDS.LED` programs with the
-firmware/websim `sdled.wasm` engine, then AppKit only draws the returned RGB
-frames.
-
-Open `Settings...` from the dropdown to manage agent integrations. The settings
-window can install or uninstall provider hooks. The transcript
-checkboxes control the file-based CLI/debug fallback; the status-bar app gets
-live updates from the local hook event socket. Settings are stored at
-`${XDG_CONFIG_HOME:-~/.config}/jrbar/settings.json`.
-Safe diagnostic export lives in the History pane; the old hook decision
-log and its CSV/HTML exporters were deleted 2026-08-26.
-
-The local explanation panel also reports nine content-free health aggregates
-for the current run: Screen Bar render duty cycle, dropped batches, delivered
-FPS, runtime queue depth, physical write latency, source freshness, registered
-and live workers, shutdown latency, and refresh duration. Missing evidence is
-shown as `Unavailable`. These values stay in memory and are never sent to a
-cloud service or added to the safe diagnostic export.
-
-Its fixed **Current light context** section explains the selected semantic and
-P1-P7 priority, oldest visible source age, bounded suppressions in the current
-finite-cue plan, Scene availability, global surface role, Focus/DND
-observation-policy-decision, Reduce Motion substitution, and the timing source
-for the active output. Screen Bar callback timing and physical hardware-write
-latency are labeled separately; controller refresh duration is never presented
-as either one. The panel refreshes from cached, content-free state without
-probing a provider or device, and preserves the reader's selection and scroll
-position while it is open.
-
-The Power pane keeps four decisions separate:
-
-- **Keep Mac awake while agents work** prevents automatic system sleep during
-  active work and the configured release delay.
-- **Keep displays awake during holds** adds a display assertion to either
-  ordinary or closed-lid holds. It is off by default, so agents can keep
-  working while displays sleep and the screen locks normally.
-- **Continue agent holds on battery** permits an ordinary agent hold while
-  unplugged. The low-battery threshold can still release that hold.
-- **Closed-lid policy** controls the separately opted-in, stronger path below.
-  Enabling ordinary agent keep-awake never enables the privileged helper.
-
-The `Keep Awake With Lid Closed` menu section controls the stronger sleep
-prevention policy:
-
-| Choice | Behavior |
-| --- | --- |
-| Never | Do not use the closed-lid sleep override. |
-| When Agents Work | Keep the Mac awake while agents are Working / Tool Running / Progressing, plus one five-minute grace window armed when work stops (rest-to-rest mode changes never re-arm it). |
-| Always | Keep the closed-lid sleep override active while the status-bar app is running. |
-
-The status-bar app still keeps the SidePulse Pro/SidePulse Dot volume active by touching
-a `keepalive` file on each connected device at least once per minute. The
-closed-lid policy uses the JR-Bar sleep helper when it is installed. The PKG
-installer sets this up automatically; source/dev installs can run the one-time
-setup command:
-
-```sh
-sudo "$(command -v jrbar)" status-bar install-sleep-helper
-```
-
-The helper is a narrow sudoers rule for exactly
-`/usr/bin/pmset -a disablesleep 0|1`, so the status-bar app can toggle it
-silently with non-interactive `sudo`. JR-Bar uses this automatically for
-`Keep Awake With Lid Closed` and only restores the setting if JR-Bar changed
-it. Remove the helper with:
-
-```sh
-sudo "$(command -v jrbar)" status-bar uninstall-sleep-helper
-```
-
-Open `Settings...` to edit and preview the Lid Closed and Lid Open LED
-animations. Animation programs use the same `LEDS.LED` syntax as
-`jrbar write`; device brightness is applied automatically before writing.
-
-The app is also installed as a user LaunchAgent at
-`~/Library/LaunchAgents/io.jrbar.agentstatus.plist`.
-
-Stop and remove the LaunchAgent:
-
-```sh
-jrbar status-bar stop
-```
-
-Use it from another Python app:
-
-```python
-from jrbar import AgentMonitor, LiveAgentMonitor
-
-snapshot = AgentMonitor.from_default_sources().snapshot()
-print(snapshot.aggregate.mode.value)
-for status in snapshot.statuses:
-    print(status.provider, status.mode.value, status.cwd)
-
-live = LiveAgentMonitor()
-```
-
-Publish a hook-shaped event to the status-bar app from another local process:
-
-```python
-from jrbar import send_hook_event
-
-send_hook_event(
-    "codex",
-    {
-        "logged_at": "2026-07-13T12:00:00Z",
-        "event": {
-            "hook_event_name": "Stop",
-            "session_id": "example",
-            "last_assistant_message": "Done.",
-        },
-    },
-)
-```
-
-#### Audio Monitor Example
-
-`examples/audio_monitor.py` turns microphone volume into a smooth LED level
-bar. The LEDs stay dim at rest, run green through yellow to red, and brighten as
-the audio level fills the bar.
-
-Install the optional live-audio dependencies:
-
-```sh
-python3 -m pip install sounddevice numpy
-```
-
-Preview the meter in the terminal without touching a device:
-
-```sh
-python3 examples/audio_monitor.py --dry-run --terminal
-```
-
-Write to a mounted SidePulse Pro or SidePulse Dot:
-
-```sh
-python3 examples/audio_monitor.py --device /Volumes/SidePulsePro --terminal
-python3 examples/audio_monitor.py --device /Volumes/SidePulseDot --terminal
-```
-
-List audio inputs or tune sensitivity:
-
-```sh
-python3 examples/audio_monitor.py --list-inputs
-python3 examples/audio_monitor.py --device /Volumes/SidePulsePro --gain-db 8 --release 0.45
-```
-
-#### Battery Monitor
-
-...
-
-#### 
+JR-Bar began as a fork of [inteliwear/sidepulse](https://github.com/inteliwear/sidepulse),
+the companion app for the [SidePulse](https://sidepulse.io) hardware, and
+is fully divergent: hardware stays first-class, the UI is new, upstream
+work is ported behaviour by behaviour rather than merged. Many monitoring
+semantics and usage-tracking techniques were adopted, with citations in the
+code, from studying [T3 Code](https://github.com/pingdotgg/t3code) and
+[CodexBar](https://github.com/steipete/CodexBar). The LEDS format and the
+hardware are upstream's. Licensed under the MIT license, like upstream.

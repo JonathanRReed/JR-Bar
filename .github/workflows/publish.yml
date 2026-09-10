@@ -1,8 +1,10 @@
 name: Build Python release artifacts (manual)
 
-# The JR fork is released locally from a signed Mac through
-# scripts/publish_release.sh. This workflow is a manual Python-only fallback
-# and deliberately does not publish the upstream-owned `sidepulse` name to PyPI.
+# JR-Bar releases are the signed app built on the owner's Mac by
+# `make package` (docs/PRODUCTION-RELEASE.md). This workflow only builds the
+# Python wheel and sdist of the daemon for an existing tag, as a manual
+# fallback, and deliberately does not publish the upstream-owned `sidepulse`
+# name to PyPI.
 on:
   workflow_dispatch:
     inputs:

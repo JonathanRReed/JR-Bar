@@ -1,58 +1,67 @@
-# JR-Bar compatibility policy
+# JR-Bar compatibility
 
-This document defines what JR-Bar calls compatible. Compatibility is a claim
-about an identified release and an identified boundary, not a promise that an
-undocumented provider, operating-system build, or third-party application will
-continue to work.
+What JR-Bar 0.8 runs on, talks to, and how sure it is. A row says
+"verified" when the exact thing has been exercised on the owner's Mac from
+the shipped build; "reviewed" when source, fixtures and tests cover it
+but the real service, device or tier has not been exercised; "best
+effort" when the code recognises the input and nothing more is claimed.
 
-## Evidence levels
+## Platform
 
-- **Production-supported:** the newest signed and notarized GitHub Release has
-  passed the authoritative macOS gate, including the relevant package,
-  signing, notarization, installation, upgrade, and hardware evidence.
-- **Reviewed:** source and contract or fixture checks cover the boundary, but
-  the exact release still lacks the required installed or physical evidence.
-- **Best effort:** the code may recognize the input, but no compatibility
-  window or release claim is made.
-- **Unsupported:** the project deliberately does not claim the boundary.
-
-Portable tests and a successful build are not production compatibility proof.
-Developer ID signing without notarization is not notarized compatibility.
-Likewise, a provider name in a menu or parser is not proof that its current
-service, credentials, plan, or endpoint is compatible.
-
-## Current boundaries
-
-| Boundary | Current evidence-based claim |
+| Boundary | Claim |
 | --- | --- |
-| Python | The package declares Python 3.10, 3.11, 3.12, and 3.13. macOS behavior additionally requires the declared PyObjC dependencies. Release support follows the exact signed artifact and gate evidence. |
-| Operating system | JR-Bar is a macOS product. This source set does not publish a minimum macOS version, so no narrower OS claim is made here. A release's verification evidence controls what was actually qualified. |
-| CPU architecture | Release artifacts are architecture-specific (`arm64` or `x86_64`). An architecture is supported only when the release publishes that exact artifact and its corresponding verification evidence. |
-| SidePulse hardware | SidePulse Pro and SidePulse Dot are the first-party hardware targets. The release gate's hardware matrix controls which device claims are production-supported. Screen Bar output is a separate macOS surface and does not prove physical-device compatibility. |
-| Providers | Claude, ChatGPT/Codex, Cursor, Devin, Grok, Antigravity, and optional OpenAI API accounting have provider-specific sources and setup. Availability, permissions, credentials, and service responses can reduce a source to partial, stale, denied, or unsupported without making a false zero. |
-| T3 Code | The current reviewed window is version `0.0.33` through maximum tested version `0.0.33`, using `sqlite-readonly-v1`. The packaged manifest records the reviewed source commit, protocol fingerprint, fixture version, and review date. |
-| Alcove | JR-Bar has an observation boundary for Alcove coexistence, but this source set does not establish a released Alcove version range. Treat it as reviewed or best effort according to the exact release evidence, not as a version guarantee. |
+| macOS | 26 or newer (`LSMinimumSystemVersion 26.0`). Developed and verified on a MacBook Pro with a notch; the Screen Bar needs one, everything else does not. |
+| CPU | Apple silicon. `make package` builds for the Mac it runs on; no Intel package is published. |
+| Distribution | The PKG is Developer ID signed. Until the `jrbar-notary` profile exists it is not notarized, so Gatekeeper on another Mac refuses it; build locally. |
+| Python | The frozen daemon carries its own 3.12. A source checkout needs 3.12 for the pinned tooling; the package metadata still declares 3.10+ for the pure-Python parts. |
+| Xcode | Not required. The Command Line Tools (Swift 6.2+) build the app and the shim. |
 
-## Integration policy
+## Hardware
 
-An integration remains compatible only while its required schema, protocol
-fingerprint, permissions, connection mode, and safety contract remain within
-the packaged compatibility manifest. Additive T3 Code columns may be accepted;
-missing required columns fail closed as unsupported. A failed or busy refresh
-retains the last known snapshot and marks it stale rather than fabricating
-state. JR-Bar's T3 adapter does not write the database, invoke T3 commands,
-read T3 credentials, or provide mutation actions.
+| Device | Claim |
+| --- | --- |
+| SidePulse Pro (8 LEDs, SD slot) | Verified: agent output, linked mode, calibration, quit-to-off. |
+| SidePulse Dot (2 LEDs, USB-C), including a first-batch `PulseDot` volume | Verified in linked mode at `linked_dot_scale`; its own heartbeat display reviewed. |
+| Creator Micro 2 (vendor HID over USB or Bluetooth) | Reviewed. Verified with the pad powered off only: discovery, approval prompt, keymap planning, the board without hardware. |
+| Screen Bar | Verified on the owner's notched display, with and without Alcove running. |
 
-When an upstream change falls outside the reviewed window, JR-Bar may continue
-to display an explicit unsupported or stale state. That is not a compatibility
-claim. A new claim requires updated fixtures or protocol evidence and the
-relevant release gate; do not infer compatibility from a matching version
-string alone.
+## Providers
 
-## Reporting compatibility problems
+| Provider | Hooks | Session truth | Usage | Claim |
+| --- | --- | --- | --- | --- |
+| Claude Code | `~/.claude/settings.json` | hook + `~/.claude/sessions/<pid>.json` + process liveness | official endpoint (opt-in), transcripts | Verified |
+| Codex CLI and desktop | `~/.codex/config.toml` (trust hash computed locally) | hook + SessionEnd/interrupt + rollout tail + liveness | native | Reviewed; real turns pending the owner's quota reset (2026-09-14) |
+| Gemini CLI | `~/.gemini/settings.json` (`hooks`) | hook + `~/.gemini/tmp/*/chats` tail | derived tier | Verified on the derived tier; higher tiers reviewed |
+| Pi | `~/.pi/agent/extensions/jrbar.ts` | extension events + `~/.pi/agent/sessions` tail | none | Verified (pi 0.73.1 emits no ask events, so pi has no ask lane) |
+| Grok, Devin, OpenCode, OpenClaw, Antigravity | provider config or plugin | hook + liveness | native where the provider exposes it | Verified |
+| Cursor, Hermes Agent, Kiro | provider config | hook + liveness | Cursor native | Best effort: not installed on the owner's Mac |
+| OpenAI API org usage | credentials in Keychain | n/a | native | Reviewed, opt-in |
 
-Report reproducible, non-sensitive compatibility problems through the
-[GitHub issue tracker](https://github.com/JonathanRReed/JR-Bar/issues)
-with the exact JR-Bar artifact, host and architecture, macOS version, provider
-or integration version, hardware, and sanitized evidence. Security and privacy
-reports remain private under [SECURITY.md](../SECURITY.md).
+A hook shape changing upstream degrades that provider to `stale` or
+`missing` in `state.health.hooks` and in `jrbar hooks doctor`; JR-Bar never
+makes a false zero. Detail per provider is in
+[NATIVE-PROVIDERS.md](NATIVE-PROVIDERS.md).
+
+## Neighbours
+
+| Integration | Claim |
+| --- | --- |
+| T3 Code | Read-only SQLite projection, `sqlite-readonly-v1`, reviewed window 0.0.33 through 0.0.33 as recorded in the packaged `integration_compatibility.json`. Additive columns are accepted; a missing required column fails closed as unsupported. Never writes, never runs T3 commands, never reads T3 credentials. |
+| Alcove | The Screen Bar reads Alcove's capsule width through the window list (Screen Recording permission) and follows it; verified with Alcove 1.7.9. Without permission or without Alcove the bar keeps its measured notch geometry. |
+| Tailscale | Optional. Used only to discover peers; the transport is `sftp` over SSH, never a remote command. |
+| CodexBar | An engineering reference for the forecast and refresh discipline; nothing is exchanged at runtime. |
+
+## SidePulse installs
+
+0.8 migrates a SidePulse 0.7 install automatically (files, hooks,
+LaunchAgents, Keychain items). The `sidepulse` command, the `sidepulse.*`
+import shim and the `SIDEPULSE_*` environment fallbacks are supported for
+this release only.
+
+## Reporting
+
+Reproducible, non-sensitive compatibility problems go to the
+[issue tracker](https://github.com/JonathanRReed/JR-Bar/issues) with the
+JR-Bar version, macOS version, provider or integration version, hardware,
+and sanitised `jrbar doctor` / `jrbar hooks doctor` output. Security and
+privacy reports stay private under [SECURITY.md](../SECURITY.md).

@@ -1,427 +1,198 @@
-# JR-Bar Architecture
+# JR-Bar architecture (0.8)
 
-Screen Bar profiling reuses the bounded `PresentationMetrics` registry in
-`screen_bar_pipeline.py`. An explicit environment-gated export writes one
-content-free runtime profile on normal termination. Instruments measurements
-remain a separate receipt bound to a raw trace digest; they are not collected
-or inferred by the normal application runtime.
+Three processes, one direction of truth. Read this before touching the
+daemon boundary, the hook path or packaging. The wire contract itself is
+[CORE-PROTOCOL.md](CORE-PROTOCOL.md); the Swift side in detail is
+[app/README.md](../app/README.md); the bundle layout and signing are
+[packaging/README.md](../packaging/README.md).
 
-The Screen Bar has one serial sampler and one JavaScriptCore batch path. Its
-prefetch cache is scoped to the active generation, parsed program text, and
-negotiated cadence. Any command replacement or timestamp mismatch invalidates
-the remaining frames. Finite cues clamp the existing 24-frame ceiling to the
-number of samples deliverable on or before their visual deadline. Runtime
-metrics distinguish cache hits, shortened requests, invalidations, and engine
-fallbacks; none of those counters is a hardware energy measurement.
-
-`local_health.py` projects nine fixed, content-free current-run aggregates from
-the existing `PresentationMetrics`, `PerformanceRegistry`, and
-`RuntimeWorkerRegistry` owners plus numeric source ages. It keeps one bounded
-interval baseline and peak queue count in memory. It does not retain provider,
-agent, device, path, URL, credential, session, transcript, or event values, and
-it has no persistence or network path. Refresh samples are taken only after the
-refresh timing is recorded. The display callback acquires no new lock and does
-no formatting or I/O for this projection.
-
-The current-light explanation is split across four small boundaries.
-`why_light_context.py` owns the immutable, bounded vocabulary and fixed-shape
-copy. `why_light_projection.py` validates already-cached primitive facts.
-`why_light_runtime.py` maps current controller state without I/O, retaining
-only counts for the bounded current finite-cue plan. `why_panel.py` assembles
-and updates selectable AppKit text while preserving a clamped selection and
-scroll position. Scene stays explicitly unavailable until the scene system is
-implemented. Surface scope is global, Focus observation failure remains
-distinct from inactive Focus, and output timing carries an explicit source so
-Screen Bar callback timing cannot be confused with physical write latency or
-controller refresh duration.
-
-This document records the boundaries, state owners, and invariants that are expensive to rediscover. Read it before changing the status-bar runtime, the display pipeline, or packaging.
-
-## Product
-
-JR-Bar is a macOS menu-bar application and command-line tool that turns AI-agent activity into ambient light. It targets physical SidePulse LED devices mounted as USB volumes and an on-screen Screen Bar around the MacBook notch. Agent state shares the signal pipeline with notifications, calendar events, reminders, battery state, timers, quota information, and user-authored LED programs.
-
-## Controller boundary
-
-The historical AppKit controller grew beyond 18,000 lines. It is retained in `status_bar_legacy.py` because a large mechanical rewrite would put working macOS behavior, permissions, timers, and device control at unnecessary risk.
-
-`status_bar.py` is now the public compatibility facade. It preserves the existing import and monkeypatch contract, delegates the application entrypoint to the retained runtime, and replaces selected controller methods with implementations extracted into small modules. New deterministic behavior must not be added to `status_bar_legacy.py`. Extract it, test it without AppKit, then wire it through the facade.
-
-The production controller is actually a THREE-deep chain, not two:
-`status_bar_legacy.StatusBarController` → `_status_bar_production.JRStatusBarController`
-(rebinds the legacy name) → `provider_usage_status_bar.JRProviderUsageStatusBarController`,
-which the real entrypoint (`cli_entry` → `provider_usage_status_bar.main`) launches.
-As of P2.24, that chain is assembled only by
-`application_composition.compose_status_bar_application()`, which installs the
-production controller, compatibility facade, settings navigation, Screen Bar
-runtime, and provider-usage layer in one fixed order immediately before the
-retained runtime creates its AppKit delegate. Ordinary imports of
-`status_bar.py`, `_status_bar_production.py`, and
-`provider_usage_status_bar.py` are now required to stay side-effect free with
-respect to controller rebinding, menu rebinding, settings wiring, Screen Bar
-bootstrapping, and device-refresh startup.
-
-The first P2.25 extraction moved notification-action binding pruning,
-content-free notification planning, completion-notification eligibility, and
-token-to-work-key resolution into `notification_arbitration.py`. Notification
-Center delivery, delegate callbacks, and session opening remain controller-owned
-at the AppKit boundary.
-
-The signal-selection slice moved the fixed 18-claim per-device precedence
-table and asks-only muting metadata into `signal_selection.py`. The retained
-controller now supplies live facts lazily and keeps only the once-per-display
-diagnostic side effect. The selector owns ordering, short-circuiting, courtesy
-muting, and the agent-display fallback without importing AppKit. The two
-battery claims remain distinct identities even though both resolve to the same
-display kind, so pinned or preview battery output cannot be confused with the
-ambient charging-idle claim.
-
-The effect-selection slice moved blend-mode, feel-preset, preview-scenario,
-and provider-animation catalogs plus represented-object validation into
-`effect_selection.py`. The shared Settings controls, Agents pane, and Color
-Studio render those immutable catalogs and use one reverse-selection helper.
-The retained controller and Studio action object consume pure selection plans,
-then keep ownership of AppKit target/action dispatch, settings persistence,
-refresh, status copy, Screen Bar previews, and physical-device previews. The
-explicit Custom preset remains a valid no-op rather than a package of settings
-to reapply.
-
-The device-targeting slice removed an unreachable single-device chooser rather
-than extracting dead policy. The live runtime already publishes a bounded
-inventory, projects every connected candidate through `status_bar_devices()`,
-creates agent and battery controllers per device id, and submits a distinct
-opaque worker key per physical target. The retained controller no longer owns
-scalar physical-device controllers, a preferred Pro-before-Dot priority table,
-or a singular selected target. `current_led_targets()` is only a mounted-target
-view over the live per-device controller maps for health and keepalive use.
-
-The brightness slice moved ambient and signal brightness decisions into
-`brightness_policy.py`. The pure module now owns the exact ambient factor
-order, escalation visibility floor, Screen Bar minimum-glow floor, signal-path
-minimum visibility floor, and the explicit Focus turn-off override for signals.
-The retained controller still owns manual-versus-auto base selection,
-display-brightness reads, idle timing, Focus observation, night-hour checks,
-refresh triggering, and hardware writes.
-
-The completion visibility slice moved clearable-row selection, unseen-completion
-selection, visit acknowledgement planning, and clear-finished state planning
-into `completion_visibility.py`. Current rows win stale duplicates for one
-deterministic completion per agent id. The retained controller still owns menu
-timestamps, activity-ledger writes, settings and service notifications,
-controller assignment, signature invalidation, and refresh side effects.
-
-The announcer slice now has two explicit boundaries. `announcer_content.py`
-remains the stateless compatibility formatter for the old single-pill wording.
-`announcer_stack.py` owns the bounded multi-alert state, stable first-seen
-ordering, priority-only selection, exact generation fencing, and Screen-Bar-only
-seen receipts. `announcer_stack_view.py` owns the passive collapsed pill, the
-explicitly keyable expanded native panel, and typed Previous, Next, Open, Mark
-Seen, and Close intents. `status_bar_legacy.py` keeps the controller-owned
-stack state, exact status routing, and the one external side effect, opening the
-selected session through the existing route. `virtual_device.py` keeps one
-suppression predicate, one presenter instance, geometry, and lifecycle cleanup.
-Mark Seen is presentation-local only. It never mutates local triage,
-completion, mailbox, notification, or physical LED acknowledgement state.
-
-P3.36 extends that same narrow product-owned ask surface with answer-in-place.
-`answer_in_place.py` owns the pure local-answer capability and attempt model,
-`answer_runtime.py` owns the bounded controller worker and stale-callback
-fences, and the expanded Screen Bar and Agent Browser reuse the existing typed
-operator-action path for inline reply, send, retry, cancel, timeout, and Jump
-fallback. The answering surface remains explicit and capability-gated; it does
-not grant implicit provider mutation authority or alter the independent LED,
-triage, mailbox, notification, or release contracts.
-
-P3.37 adds one named configurable global action without observing ordinary
-typing. `global_actions.py` owns the immutable AppKit-free chord model,
-validation, serialization, conflict projection, and strict persisted parsing.
-`global_hotkeys.py` owns the lazy Carbon registration boundary, callback and
-resource lifetime, transactional prepare/commit/rollback, and retryable cleanup.
-`global_action_controller.py` owns durable rebind coordination and routes both
-the visible menu command and shortcut through the same Reveal Current Ask path.
-`global_action_settings_pane.py` owns the bounded first-responder recorder in
-Overview Settings. The action toggles the current presentable announcer or opens
-Agent Browser as a nonmutating fallback. It does not install an event monitor,
-claim a default shortcut, or alter triage, mailbox, notifications, answers,
-completion state, or LEDs.
-
-P3.38 adds one immutable presentation policy for manual overrides, one daily
-local-time schedule, public macOS Focus status, and optional named-Focus detail.
-`dnd_policy.py` owns the five exact modes and composes each active source by
-taking the strictest display, brightness, outbound, banner, audible, and
-webhook value independently. Mute leaves every current visual claim visible but
-refuses banners, sounds, and notification webhooks. Dim preserves visual and
-outbound admission while scaling brightness. Pause admits critical visuals and
-interruptions. Asks Only admits only current actionable asks and their
-escalations. Fully Dark admits no presentation or outbound interruption and
-keeps brightness at authoritative zero, below every minimum-glow and escalation
-floor. None of these modes edits canonical agent, request, completion, history,
-ingestion, persistence, or remote-sync truth.
-
-`local_time_boundary.py` owns the shared local-wall-time resolver. The daily
-schedule supports same-day and overnight intervals without adding a fixed 24
-hours. A spring-forward gap advances to the first valid local second. A
-fall-back fold selects the earliest valid epoch at or after the lower bound.
-`dnd_controller.py` owns one transition timer, transactional Settings changes,
-public Focus observation, generation fences, and lifecycle invalidation. A
-temporary Resume suppresses only the local schedule, never an active macOS
-Focus contribution. The controller recomputes on launch, app and session
-activation, sleep and wake, screen sleep and wake, clock changes, time-zone
-changes, and the bounded environment refresh.
-
-`focus_status.py` lazily wraps the public `INFocusStatusCenter` API. Public
-authorization plus coarse active or inactive state is authoritative. The
-existing Full Disk Access-protected focusd reader may contribute stricter named
-dim or signal detail only while authorized public Focus is active. Private
-detail cannot activate DND, report public Focus inactive, or make missing Full
-Disk Access look like a failure of the public integration. Permission requests
-exist only behind the explicit Settings action.
-
-The retained controller consumes one projection at every presentation and
-effect boundary. Signal selection, ordinary agent display, physical LEDs,
-Screen Bar, announcer, gauges, and brightness share its display and brightness
-axes. Interruption arbitration produces separate banner, audible, and webhook
-grants, so one effect is never nested under another effect's decision. Entering
-Pause, Asks Only, or Fully Dark consumes finite cues, including cues armed by a
-later asynchronous worker observation while the restrictive mode is already
-active. Ending DND may reveal current standing truth, such as an unresolved ask
-or failure, but it never replays an expired sweep, blink, preview, sound,
-banner, webhook, or Screen Bar status cue.
-
-`dnd_settings_pane.py` owns the retained native card inside Notifications &
-Focus. It exposes the schedule, five modes, Dim fraction, public Focus status,
-one-hour actions, temporary Resume, exact next change, accessibility metadata,
-and one key-view loop. `menu_projection.py` and the `status_bar.py` compact
-adapter expose the same typed mode, active sources, exact return time, Resume,
-and End Override actions without restoring the deleted standalone Quiet row.
-Why This Light and local health reuse their fixed-shape, content-free rows for
-bounded DND mode, source, and return-time facts.
-
-One coupling channel remains intentionally narrow rather than ambient:
-`settings_window.py` now declares its dependencies through explicit imports plus
-small cycle-safe helpers in `settings_window_controls.py`, while several modules
-still take function-level imports to dodge the one real cycle
-(`colors ↔ led_status ↔ _led_status_legacy`).
-
-## Domain map
-
-| Domain | Module(s) | State or responsibility |
-| --- | --- | --- |
-| Public runtime boundary | `status_bar.py` | Stable import surface, direct-module entrypoint, compatibility forwarding, narrow runtime patches |
-| Historical AppKit runtime | `status_bar_legacy.py` | Window and menu lifecycle, timers, watchers, worker coordination, precedence integration, application assembly |
-| Per-device projection | `device_projection.py`, `attention.py` | Canonical main/worker split, provider pin filtering, provider-local worker representative, lifecycle priority |
-| Event ingestion | `hook_client.py`, `hook_ingress_protocol.py`, `hook_ingress.py`, `ipc.py`, `hook.py`, `collector.py` | Bounded ordered hook admission, canonical minimized writes, refresh hints, transcript fallback scanning, status collection, warm-start state |
-| Compatibility entrypoints | `agent_monitor/`, `sidepulse_cli/` | Delegation for old installed hook module names; fail-open when arguments are missing |
-| Latest-state clock codec | `latest_state_timing.py` | Per-source clock timing in the v2 snapshot, healing for pre-field documents |
-| Usage pace | `usage_pace.py` | Burn-rate verdicts (surplus / on pace / fast / runs-out-before-reset) for rate-limit lanes |
-| Canonical operator semantics | `operator_state.py`, `provider_facts.py`, `attention.py`, `mailbox.py` | Work identity, requests, transitions, parent/worker relationships, actionable attention |
-| Signals and presentation | `signals.py`, `signal_coordinator.py`, `presentation_policy.py`, `presentation_scheduler.py` | Semantic precedence, finite cues, continuous state, interruption policy, schedule decisions |
-| Rendering | `led_status.py`, `colors.py`, `animation.py`, `render_policy.py`, `brightness_policy.py` | LED programs, colors, transfer functions, motion, frame cadence, ambient and signal brightness policy, calibration |
-| Screen Bar | `announcer_content.py`, `announcer_stack.py`, `announcer_stack_view.py`, `virtual_device.py`, `screen_bar_pipeline.py`, `screen_bar_runtime.py`, `screen_bar_design.py`, `alcove_observation.py` | Compatibility pill wording, multi-alert announcer state and projection, passive and expanded native presenter, notch geometry (measured silhouette), Alcove observation, frame scheduling, draw safety, on-screen rendering |
-| Global actions | `global_actions.py`, `global_hotkeys.py`, `global_action_controller.py`, `global_action_settings_pane.py` | Immutable shortcut contracts, bounded Carbon registration, durable lifecycle transactions, one visible action route, and native Overview recorder |
-| Do Not Disturb | `dnd_policy.py`, `local_time_boundary.py`, `focus_status.py`, `dnd_controller.py` | Five-mode dimensional policy, daily local-time schedule and DST boundaries, public coarse Focus authority, optional stricter named detail, one transition timer, Settings transactions, and lifecycle fences |
-| Device I/O | `device_writer.py` → `presentation_compiler.py` → `firmware_validation.py` → `_device_writer_legacy.py`, `sd_eject_guard_launch.py` | Discovery, flash-safety compilation, firmware-grammar validation, size validation, atomic program writes, eject protection |
-| Native provider usage | `provider_usage_*` modules (platform, runtime, sync service, status bar host, credential store, event store) | Claude/Codex quota accounting, Usage Center, cross-Mac SFTP usage sync, pairing, keychain-consented credentials |
-| Agent Browser & history | `agent_browser.py`, `agent_browser_window.py`, `mailbox.py`, `operator_history*`, `activity_ledger*` | Session browser shelves and retention, mailbox ordering, operator history, "since you left" ledger |
-| Remote & integrations | `remote_peers.py`, `cloud_ingest.py`, `webhook_delivery.py`, `t3_compat.py` | Peer Macs over SFTP, loopback cloud-event ingest, outbound webhooks, T3 Code local-state reads |
-| Runtime scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py` | Timer/worker registries, latest-wins workers, core-state observation, refresh admission, typed adaptive cadence plans, bounded menu-open admission receipts |
-| Local health | `local_health.py`, `performance_metrics.py`, `screen_bar_pipeline.py` | Nine fixed current-run aggregates over existing in-memory timing, presentation, worker, and numeric freshness snapshots; no content, persistence, or export |
-| Current-light explanation | `why_light_context.py`, `why_light_projection.py`, `why_light_runtime.py`, `why_panel.py` | Typed cached semantic and policy facts, bounded current-cue suppressions, explicit unavailable states, source-labeled output timing, and position-preserving selectable text; no probing, content identifiers, persistence, or telemetry |
-| Power policy | `power_policy.py`, `keep_awake.py`, `lid_sleep.py`, `power_settings_pane.py` | Independent ordinary agent hold, display assertion, battery choice, closed-lid policy, and native settings projection |
-| Firmware grammar | `led_wasm.py`, packaged `sdled.wasm` | Authoritative LED parser and animation stepping |
-| Usage and capacity | `usage_stats.py`, `provider_capacity.py`, `capacity_*` modules | Local usage aggregation, provider evidence, authority gates, history, reset handling (the quota-forecast plane was deleted 2026-08-26) |
-| Persistence | `persistence_writer.py`, `capacity_history_runtime.py`, `settings.py` → `_settings_legacy.py`, `*_store.py`, `private_io.py` | One bounded serial write owner, capacity-history lifecycle fencing, settings, ledgers, histories, atomic private-file writes, recovery from corrupt data |
-| Settings UI | `settings_window.py`, `settings_category_runtime.py`, `settings_navigation.py`, `global_action_settings_pane.py`, `dnd_settings_pane.py` | Explicitly imported pane builders, seven-category IA, navigation, retained-control refresh, global-action recorder, and the native DND and Focus card |
-| Packaging and launch | `app_bundle.py`, `status_bar_launch.py`, `packaging/` | Bundle identity helpers (the production bundle is built by `packaging/build_macos_pkg.sh`; the development-wrapper builder was deleted 2026-08-26), launch agent, signing, verification, installer and notarization |
-
-Provider usage has an explicit worker-to-AppKit boundary. `ProviderUsageService`
-loads settings, credentials, provider data, and locally cached cross-Mac evidence
-on its serial worker. The callback publishes one immutable `ProviderUsageApply`
-payload containing state, a presentation projection, and the durable usage
-settings after refreshing the value-keyed sync memo. The presentation
-projection cannot expose collection or sync choices. The separate durable
-settings value keeps exact provider-instance identity available to Settings
-checkboxes without reopening the document on the AppKit thread. Usage Center
-rendering, menu projection, and settings-summary repaint consume only that
-payload and memo. Initial restore and explicit settings saves remain bounded
-I/O boundaries, but steady-state UI refresh does not reopen the settings
-document or Keychain.
-
-Adaptive provider refresh has a separate AppKit-free acceptance boundary in
-`adaptive_refresh.py`. It explains the existing constrained, menu-recency,
-idle, ambient-visibility, degraded-source, and reset-watch cadence with one
-immutable plan and bounded reason. `ProviderUsageService` publishes the plan
-only with an accepted revision-fenced refresh and exposes the latest accepted
-value without I/O. The real AppKit menu-open path uses one admission helper to
-record the provider-service visit and invoke the existing refresh planner;
-provider collection remains worker-owned. Source tests pin freshness, backoff,
-cadence precedence, and the caller-thread I/O boundary. They do not replace the
-release gate's current 300-second Instruments evidence for installed idle CPU,
-menu-open latency, or live menu-tracking I/O.
-
-Provider usage identity is the composite `(provider_id, source_instance_id)`.
-Legacy provider-only settings, consent, store, and sync rows migrate to the
-explicit `default` instance. New settings, runtime snapshots, cached state,
-sync projections, menu rows, Usage Center cards, browser consent, credentials,
-reconnect, and refresh actions preserve that identity. Provider-only lookups
-refuse ambiguity when two instances exist. The AppKit controller keeps only
-selectors; exact action parsing and routing live in
-`provider_usage_controller_actions.py`, which keeps the facade below its size
-ratchet.
-
-`ProviderInstanceProfile` is the bounded data contract for future per-instance
-label, color, retention, remote-sharing, open-session, consent-reference, and
-credential-reference persistence. In this checkpoint, labels flow through
-usage snapshots and consent plus credentials are live. Color, retention,
-remote-sharing, and open-session choices are validated and serializable, but do
-not yet drive the retained color, history, remote-peer, or session-action
-runtimes. That limitation is tracked explicitly rather than inferred complete.
-
-Provider fixture provenance is a verification boundary, not runtime work. The
-dated ownership manifest covers every first-party provider, binds each
-synthetic fixture to a version and SHA-256 digest, rejects sensitive content,
-and requires an explicit cross-provider allowlist. The validator is exercised
-by the fast fixture lane and packaged-resource checks; the app does not import
-or execute it during normal use.
-
-History and reset-state persistence share one `SerialPersistenceWriter`. Ordered
-usage-percent and operator-history appends remain FIFO; full-state reset and
-capacity snapshots may replace only an equivalent pending command. Completion
-receipts contain a command key and stable outcome, not stored content. Usage
-percent watermarks advance only for successful append receipts. Capacity
-history uses a store-generation fence so withdrawing consent cannot be undone
-by an older queued flush. Normal producers observe a 64-command bound, while
-one process-lifetime drain-tail slot is reserved for the final dirty capacity
-snapshot immediately before `close()` stops acceptance and drains the queue.
-The leaf stores still own private permissions, validation, fsync, retention,
-corruption handling, and atomic replacement.
-
-Power policy has two runtime owners. `KeepAwakeController` owns the ordinary
-agent-driven system assertion and its release delay. `ClosedLidAwakeController`
-owns the stronger closed-lid assertion, watchdog, renewal, and optional narrow
-`pmset` helper. `power_policy.py` canonicalizes the `caffeinate` flags for both:
-display sleep is allowed by default, and `d` is present only when the explicit
-display setting is on. Changing that setting replaces only the affected
-`caffeinate` child. It does not rewrite agent activity, battery yield,
-closed-lid helper ownership, or watchdog state.
-
-Physical LED work uses one bounded serial `LatestWinsWorker`. Ordinary frames
-share one opaque `latest` slot per device, while persistent attention,
-failures, finite cues, and explicit previews use separate priority-bearing
-semantic slots. Priority can evict lower-priority pending or result work at the
-32-slot bound, but it never bypasses deadlines, generation cancellation, or
-close. Display kind is captured on the main thread so delayed work cannot
-silently render a different claim. Physical calibration uses the same worker
-and suppresses ordinary writes for that device. Detached lid flourishes first
-advance the generation, cancel pending work, and wait a bounded interval for
-the writer to become idle; timeout restores live state without starting a
-second writer. All paths still terminate at the existing device safety
-compiler and firmware validator.
-
-Hook calls use a separate ordered admission boundary. New registrations invoke
-the standard-library-only `hook_client.py`, which reads stdin once and sends a
-versioned envelope to the same-user `0600` Unix socket at
-`hook-ingress.sock`. Raw provider bytes can exist in the short-lived client,
-socket buffers, and the app's bounded 32-event memory queue. They are never
-written as ingress receipts. One app-owned FIFO worker sends accepted events
-through the same routing, normalization, minimization, cross-process dedupe,
-private JSONL write, and compaction used by the synchronous entry point. Because
-this worker already runs inside the monitor-owning app, it applies the refresh
-callback in-process and synchronously. Standalone fallback hooks still use the
-private refresh-hint socket after their canonical write.
-
-Admission returns one exact outcome. Accepted work is not retried by the
-client. Full, closed, and invalid refusals are recorded without event content
-at `hook-ingress-rejections.jsonl`; retrying them synchronously would let a
-newer event pass older accepted work. If no ingress socket is available, the
-client loads the canonical processor and writes synchronously so JR-Bar being
-closed does not disable provider logs. Normal app termination closes admission,
-drains accepted hook work through monitor reconciliation, persists latest state,
-and only then stops the refresh-hint server. A drain timeout records every
-accepted sequence that could not finish.
-If a trusted socket accepted the connection but its acknowledgement is lost,
-the client reports submission as ambiguous and does not run fallback. The
-server may already own that event, so retrying would duplicate or reorder it.
-This favors ordered at-most-once submission over hiding an uncertain update.
-
-## Provider instance profiles
-
-Provider usage settings own five non-secret choices for each exact
-`(provider_id, source_instance_id)` pair: label, color override, native
-percentage-history retention, outbound remote-sharing choice, and session-open
-action. Browser consent and credential references remain in their dedicated
-stores and are absent from consumer projections.
-
-`provider_feature_settings.py` projects separate immutable visual, retention,
-sharing, and session-action views. UI paths consume the cached projections and
-do not reopen settings during repaint. An explicit Settings action may load and
-save once, then atomically refreshes the durable snapshot, consumer
-projections, cached card values, accessibility labels, and menu signature.
-Default-instance session opening continues through the legacy provider/origin
-router. A non-default override applies only after an exact work-source match.
-
-Native percentage history uses the same exact identity for dedupe, retention,
-pruning, and graph series. Outbound sharing fails closed. `never` excludes an
-instance, while `status_only` emits bounded quota and source-status evidence
-without tokens, costs, account labels, model counts, or machine usage. Cached
-cross-Mac evidence is memory-only on UI paths, is fenced by the non-secret
-sharing signature, and expires after a short monotonic lease.
-
-## Display pipeline
+## The three processes
 
 ```text
-provider hook or fallback scan
-  -> collector / canonical operator state
-  -> AttentionProjection
-  -> provider/device projection
-  -> signal and presentation resolver
-  -> LED or Screen Bar program
-  -> brightness and surface transfer
-  -> atomic LED write and/or change-gated Screen Bar frame
+ claude / codex / gemini / pi / …          (each provider's hook config)
+        │ spawns per hook event
+        ▼
+ jrbar-hook  (C, ~3 ms)  ──frame──▶  ~/.local/state/jrbar/hook-ingress.sock
+                         (no daemon: append to <provider>.pending.jsonl)
+                                            │
+                                            ▼
+ jrbar-core core  (Python, headless)  ◀──NDJSON──▶  JR-Bar.app  (Swift)
+   owns every fact                    core.sock       owns every pixel
+   hooks, sessions, usage, devices,                   status item, panel, Screen Bar,
+   escalation, power, peers, ingest                   Settings, Usage Center, Effect
+                                                      Studio, Control Center, History,
+   writes LEDS.LED to the Pro and Dot                 notifications, sounds, Sparkle
 ```
 
-Actionable attention is global and deliberately bypasses provider pins. Stable lifecycle rows follow a device pin. Main agents remain visible as individual rows. When a provider has only background workers, exactly one urgent worker represents that provider's background crowd. The canonical worker set must never be copied into `visible_rows`; `AttentionProjection.__post_init__` demotes workers and would otherwise duplicate them.
+- **JR-Bar.app** (`app/`, SwiftPM, macOS 26+) is an `LSUIElement` accessory
+  app. It spawns `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core`
+  as a supervised child (`CoreSupervisor`: restart with backoff, "Core
+  crashed" after 10 exits in 2 minutes, SIGTERM then SIGKILL on quit),
+  connects to `core.sock`, replaces its model wholesale on every `state`
+  frame, and sends `command` frames for everything the user does. It never
+  computes a fact it could ask the daemon for; the few things it owns
+  locally are listed at the end of this file.
+- **jrbar-core** (`src/jrbar`, frozen by PyInstaller into the nested
+  helper bundle) is the pre-0.8 controller run without a UI:
+  `python -m jrbar core` in a checkout. It listens on `core.sock` (mode
+  0600, peer UID checked, 4 clients, 1 MiB frames), refreshes on a 15 s
+  timer plus every hook event, and pushes `state` / `lights` / `settings`
+  documents coalesced to 20 / 30 / 10 per second. It exits on its own when
+  its supervisor is gone (`JRBAR_SUPERVISED=1`), and on any exit writes
+  `off` to every mounted strip so a quit never leaves a loop running.
+- **jrbar-hook** (`hook/jrbar-hook.c`) is what every provider config
+  actually runs. It reads stdin, sends one frame to the ingress socket,
+  waits at most 200 ms for a disposition and exits 0. With no daemon
+  listening it appends the payload to `<provider>.pending.jsonl` and the
+  daemon drains that file at start and every 30 s. Whole run capped at
+  250 ms; measured 6 ms wall per spawn, of which the shim's own work is
+  about 3 ms (the old Python hook client took 88 ms).
 
-The persistent-signal precedence remains first-claim-wins. Test and escalation signals outrank battery, notifications, completion, reminders, calendar, Studio, and ordinary agent state. New signals must enter through the shared presentation and scheduling layers instead of bypassing them from a UI callback.
+Session truth is the daemon's, built from four sources that agree or
+disagree in the open: hook events (with the hook's `ppid` and process
+start time), the process registry and a 5 s liveness sweep (a dead pid
+ends its session within seconds), Claude's `~/.claude/sessions/<pid>.json`
+status files, and transcript tails for providers whose hooks say too
+little (Codex rollouts, pi and Gemini session logs). A session the daemon
+cannot confirm is `stale`, shown as such, never silently dropped.
 
-Alcove following uses one typed, AppKit-free confidence projection shared by
-Settings, Doctor, and the Screen Bar. The source contract distinguishes fresh,
-stale, permission denied, disconnected, unsupported, not following, and
-recovering; held geometry expires on the existing bounded timer. Recovery gets
-one on-screen ease-out settle, replaced by an immediate frame when Reduce
-Motion is enabled. Native source renders and accessibility metadata are
-receipts for this contract only, not installed-app, permission, live-Alcove,
-physical-display, signing, notarization, or release proof.
-`alcove_settings_pane.py` owns the native Alcove row construction,
-accessibility metadata, refresh application, and legacy compatibility mapping;
-`settings_window.py` retains only the injectable projection adapter, action
-boundary, and public compatibility functions.
+## Data on disk
 
-## Invariants
+| Path | Owner | What |
+| --- | --- | --- |
+| `~/.config/jrbar/agent-monitor.json` | daemon | settings (`AgentMonitorSettings`; every key the app edits goes through `set_setting`) |
+| `~/.config/jrbar/integrations.json` | daemon | T3 Code and other optional integrations |
+| `~/.config/jrbar/deck-controls.json` | daemon | Creator Micro 2 bindings and board settings |
+| `~/.config/jrbar/effect-assignments.json` (+ sidecar) | daemon | Effect Studio assignments, active scene |
+| `~/.config/jrbar/effect-packs/` | daemon | installed data-only effect packs |
+| `~/.local/state/jrbar/core.sock` | daemon | the app ↔ daemon socket |
+| `~/.local/state/jrbar/hook-ingress.sock` | daemon | the shim ↔ daemon socket |
+| `~/.local/state/jrbar/<provider>.pending.jsonl` | shim | hook payloads queued while no daemon listened |
+| `~/.local/state/jrbar/latest.json` | daemon | the last projected state (the app's offline fallback for the icon) |
+| `~/.local/state/jrbar/screen-bar.led` | daemon | the Screen Bar program as a file (fallback feed when the socket is down) |
+| `~/.local/state/jrbar/usage-samples.json` | daemon | `(at, used_pct)` samples per provider window for the forecast |
+| `~/.local/state/jrbar/app-state.json` | app | hooks-installed stamp, login-item marker, Screen Bar flag |
+| `~/.local/state/jrbar/*.log`, `hook-records/` | daemon | logs and hook records |
+| `~/.local/state/jrbar/cloud-ingest.token` | daemon | bearer token for the loopback ingest listener |
+| `~/.local/share/jrbar/` | daemon | operator history, capacity history, activity ledger (each behind its own retention consent) |
+| `~/Library/Application Support/JR-Bar/` | daemon | provider credential caches; secrets themselves live in the Keychain under `com.jonathanreed.jrbar.provider.<id>` |
+| `~/.claude/settings.json`, `~/.codex/config.toml`, `~/.gemini/settings.json`, `~/.pi/agent/extensions/jrbar.ts`, … | providers | hook registrations JR-Bar writes and recognises (`install.py`) |
 
-- Never emit `N:off` in an indexed LED DSL segment. Use `#000000`. The firmware parser treats the former as an error.
-- `validate_led_text` validates size, not grammar. User-authored programs must pass through `SdLedWasmController.parse()`.
-- `NSColorWell` is not used in this PyObjC host. Use swatches and the classic `NSColorPanel` route.
-- Screen Bar geometry is derived from measured screen pixels. Alcove windows are observations, not authoritative notch geometry.
-- Screen Bar prefetch is command-scoped. Never reuse a batch across a generation, parsed program, cadence, or timing discontinuity.
-- Settings and private state writes are atomic, uniquely named, permission-restricted, and recoverable. Two writers must never share one scratch path.
-- Accepted history and reset-state writes are serialized and drained on normal termination. Queue refusal and bounded shutdown timeout are explicit outcomes, not silent success.
-- TCC grants belong to the sealed application identity. Ad-hoc or differently signed builds are different applications and lose permission continuity.
-- Background watchers fail quietly, back off, and always release their in-flight state.
-- Hook entrypoints fail open. Socket unavailability uses synchronous canonical processing; explicit bounded-queue refusal is recorded and never retried ahead of accepted work. A stale compatibility command may lose one update, but it must never block the user's agent session.
-- Physical-device writes are isolated from tests. Controller tests must replace settings, latest-state paths, and device discovery before construction.
-- Device coalescing keys are bounded and content-free. Paths, provider payloads, session labels, and effect source text never enter worker keys or metrics.
-- A requested value, an assumed value, and the value delivered by AppKit or hardware must be reconciled. Frame rate, window geometry, signing identity, and provider evidence all follow this rule.
+`XDG_CONFIG_HOME` / `XDG_STATE_HOME` move the first two trees;
+`JRBAR_STATE_DIR` moves the sockets for tests. Pre-rename SidePulse trees
+are copied forward once by `migration.py` on first launch and recorded in
+`~/.local/state/jrbar/migrated-from-sidepulse.json`.
 
-## Verification and release
+## What runs when
 
-The authoritative gate is `./scripts/verify.sh` on macOS. It installs the fork in an isolated development environment, runs Ruff, validates versions, executes the complete test suite, builds distributions, checks metadata, and installs the wheel into a fresh virtual environment. `./scripts/verify.sh --portable` runs the platform-neutral rescue gate elsewhere.
+| Moment | What happens |
+| --- | --- |
+| Login | `SMAppService` launches `JR-Bar.app` (registered on first launch; Settings › General turns it off). |
+| App launch | The app reads `app-state.json`, spawns the daemon, shows the status item, restores the Screen Bar if it was on. On the first launch of a build it runs `jrbar-core agent-monitor install all` so every provider with a config on the Mac runs the bundled shim, then registers the login item. |
+| Daemon start | Loads settings, migrates from SidePulse if needed, drains pending hook files, starts the hook ingress listener, the process registry, the usage refresh worker, device discovery (volumes named `SidePulse` / `PulseDot`, the Creator Micro 2 over HID every 10 s), the keep-awake and DND controllers, remote peers, cloud ingest, then the core socket. |
+| A hook fires | provider → shim → ingress → collector → canonical operator state → projection → `state` and `lights` frames within one refresh. |
+| Every 15 s | A controller refresh: liveness sweep, transcript tails, usage staleness, device writes if the program changed. |
+| Usage | Provider usage refresh on its own worker (Claude OAuth usage endpoint when consented, Codex, Gemini, Devin, Grok, Antigravity, OpenCode, Cursor, OpenAI API where configured); one sample per window into `usage-samples.json` when the percentage moves or five minutes pass. |
+| Light change | The presentation compiler clamps every program (2 Hz, 1 Hz for saturated red), the safety compiler and firmware parser validate it, the hardware worker writes `LEDS.LED` atomically to the Pro and Dot in one command when linked, and the Screen Bar receives the same program with its anchor so the band is phase-locked to the strip. |
+| App quit | The app sends SIGTERM to the daemon; the daemon releases power holds, saves samples and history, and writes `off` to every strip. |
 
-GitHub Actions are manual-only while hosted minutes are unavailable. A release is created locally from the owner's Mac through `scripts/publish_release.sh`. The script requires a clean `main`, matching source/package/changelog versions, complete verification, Developer ID Application and Installer signing, notarization, candidate-bound receipts, checksums, and a GitHub Release. `scripts/verify_macos_release.sh` re-hashes one exact PKG, app tree, supplemental Sparkle ZIP, signed appcast, and channel document; validates the app and PKG notarization logs against their submitted digests; binds package and archive contents to the app; and records upgrade, supported uninstall, and clean-reinstall evidence before manifest assembly. The compatibility-named PKG remains the authoritative installer and recovery path. Pinned Sparkle 2.9.6 provides the consent-driven update path through a durable signed feed with stable and beta channels. This fork does not automatically publish the upstream-owned `jrbar` project name to PyPI.
+## The Python daemon by responsibility
 
-## Deliberate debt
+`src/jrbar` is large (340 modules) because the 0.8 daemon is the old
+application minus its windows. The map below is by job; a module not
+listed is a helper of the row it sits next to alphabetically.
 
-- `status_bar_legacy.py` remains large. Extract one pure decision boundary at a time, with regression tests and a facade wiring change in the same commit.
-- Existing file-specific Ruff exceptions document inherited ordering debt. Do not add new exceptions for extracted modules.
-- The complete AppKit, TCC, signed-package, and physical-hardware gates require macOS. A portable pass is necessary but not sufficient for release.
-- Upstream changes are reviewed behavior by behavior. Do not merge the upstream controller wholesale into the divergent fork.
+| Responsibility | Modules |
+| --- | --- |
+| Entry points and CLI | `__main__.py`, `cli.py`, `cli_entry.py`, `core_runtime.py` (the `core` subcommand), `doctor.py`, `hook_doctor.py`, `install.py`, `setup_window.py` (legacy), `integration_cli.py`, `effect_cli.py`, `provider_usage_cli*.py` |
+| Core socket | `core_server.py` (transport, framing, clients), `core_projection.py` (`state` / `lights` / `settings` documents), `core_effects.py`, `core_deck.py`, `core_usage_history.py`, `core_usage_samples.py` |
+| Hook path | `hook_ingress_protocol.py`, `hook_ingress.py`, `hook_pending.py`, `hook_dedupe.py`, `hook_client.py` (the Python fallback command), `hook_entry.py`, `hook.py`, `ipc.py` |
+| Providers and session truth | `providers.py` (`PROVIDER_SPECS`: codex, claude, devin, grok, cursor, hermes, openclaw, opencode, antigravity, kiro, pi, gemini), `provider_adapters.py`, `provider_contracts.py`, `provider_instances.py`, `collector.py`, `process_registry.py`, `liveness_sweep.py`, `transcript_runtime.py`, `transcript_sessions.py`, `codex_hook_trust.py`, `antigravity_process_identity.py`, `origin.py`, `installed_agents.py` |
+| Canonical operator state | `operator_state.py`, `provider_facts.py`, `attention.py`, `mailbox.py`, `ask_episodes.py`, `completions.py`, `completion_visibility.py`, `local_triage.py`, `freshness.py`, `intake_health.py` |
+| Actions the app sends | `session_actions.py` (open in terminal / app), `answer_controller.py`, `answer_runtime.py`, `answer_in_place.py`, `clear_agents*.py`, `snooze_scope.py`, `navigation_policy.py` |
+| Signals and presentation | `signals.py`, `signal_coordinator.py`, `signal_selection.py`, `presentation_policy.py`, `presentation_scheduler.py`, `presentation_compiler.py`, `render_policy.py`, `brightness_policy.py`, `auto_dim.py`, `display_brightness.py`, `interruption_policy.py`, `notification_arbitration.py`, `courtesy_signatures.py` |
+| Effects | `effect_registry.py`, `effect_packs.py`, `effect_pack_store.py`, `effect_assignment_store.py`, `effect_selection.py`, `effect_studio.py`, `semantic_effect_router.py`, `ambient_effect_*.py`, `scenes.py`, `scene_packs.py`, `animation.py`, `colors.py`, `celebrations.py`, `firefly_completion.py`, `rainstick_idle.py`, `turn_length_ember.py`, `finite_effect_policy.py` |
+| LED output | `led_status.py`, `led_wasm.py` (+ the packaged `sdled.wasm` firmware parser), `device_writer.py`, `hardware_write_policy.py`, `hardware_write_contract.py`, `firmware_validation.py`, `device_identity.py`, `device_inventory.py`, `device_projection.py`, `dot_binary_heartbeat.py`, `calibration_flow.py`, `draw_guard.py` |
+| Screen Bar (geometry the app ports) | `virtual_device.py`, `screen_bar_design.py`, `screen_bar_pipeline.py`, `screen_bar_runtime.py`, `notch_silhouette.py`, `alcove_observation.py`, `alcove_window_probe.py` |
+| Usage and quota | `provider_usage_*.py` (platform, runtime, store, sync, parsers, collectors, center, menu), `provider_capacity.py`, `capacity_*.py`, `claude_quota.py`, `usage_stats.py`, `usage_file_index.py`, `usage_pace.py`, `usage_percent_history.py`, `quota_runway.py`, `quota_power_hold.py`, `provider_reset_*.py`, `provider_credential_store.py`, `credentials.py`, `provider_browser_*.py` |
+| Power | `keep_awake.py` (`caffeinate -ims`), `power_policy.py`, `lid_sleep.py` (the `pmset` helper behind `/etc/sudoers.d/jrbar-disablesleep`), `lid_presets.py`, `battery.py`, `battery_runtime.py` |
+| Quiet and Focus | `dnd_policy.py`, `dnd_controller.py`, `focus_status.py`, `focus_sync.py`, `local_time_boundary.py`, `temporal_safety.py` |
+| Mac signals | `calendar_watch.py`, `reminders_watch.py`, `macos_notifications.py` (legacy path), `webhook_delivery.py` |
+| History | `activity_ledger*.py`, `operator_history*.py`, `session_history.py`, `capacity_history*.py`, `effect_history*.py` |
+| Remote | `remote_peers.py` (Tailscale + SFTP viewer), `remote_observation.py`, `provider_usage_sync_*.py` (HMAC-signed usage sync over SSH), `cloud_ingest.py` (loopback bearer-token listener), `serve.py` (`GET /status.json` on loopback) |
+| Creator Micro 2 | `creator_micro_*.py` (HID, discovery, keymap, setup, lighting), `deck_*.py` (board, controls, dispatch, actions, session board) |
+| Settings and persistence | `settings.py` → `_settings_legacy.py`, `settings_installation.py`, `state_paths.py`, `migration.py`, `persistence_writer.py`, `private_io.py`, `*_store.py` |
+| Scheduling | `runtime_scheduler.py`, `core_state.py`, `refresh_admission.py`, `adaptive_refresh.py`, `refresh_policy.py`, `performance_metrics.py`, `local_health.py`, `memory_probe.py` |
+| Legacy AppKit UI (kept for `open_legacy_window`, retired one window at a time) | `status_bar_legacy.py`, `_status_bar_production.py`, `settings_window*.py`, `*_pane.py`, `agent_browser*.py`, `effect_studio_window.py`, `deck_control_center_window.py`, `why_panel.py`, `usage_view.py`, `main_menu.py`, `native_ui.py`, `window_presentation.py` |
+
+`sidepulse` (in `src/sidepulse`) is a one-release import shim that aliases
+`sidepulse.*` to `jrbar.*` so hook commands registered before the rename
+keep working until the first launch rewrites them.
+
+## The Swift package
+
+| Target | Depends on | What |
+| --- | --- | --- |
+| `JRBarLEDS` | nothing | The LEDS DSL: parser, program model and sampler with fixture parity against the firmware's own frames (`Tests/JRBarLEDSTests/Fixtures`). Pure Swift. |
+| `JRBarCore` | Foundation | The protocol: `CoreCodec` (NDJSON), `CoreMessages` / `CoreModel` (Codable documents), `CoreClient` (socket, reconnect with backoff), `CoreSupervisor`, `SettingsDocument` (typed keys per page), `PanelLayout` (fixed row heights, no measuring), `SessionLabel`, `UsageWindowLabel`, `UsageForecast` / `UsageHistory`, `LightExplanation` ("why this light"), `EventPolicy` (which event makes which sound or banner), `AutoDim`, `DeckModel`, `EffectModel`, `HistoryModel`, `AppState`. |
+| `JRBarUI` | JRBarCore, AppKit | The status-item icon renderer (glyph, glyph + usage ring, glyph + label). |
+| `JRBarApp` | all three | The executable: `AppDelegate`, `StatusItemController`, the panel (`PanelController` / `PanelStore` / `PanelView` / `PanelMotion`), the Screen Bar (`ScreenBarController` / `ScreenBarView` / `ScreenBarGeometry` / `ScreenBarBlend` / `ScreenBarInteraction` / `ScreenBarPanel`), `LEDFeed` (kqueue-driven file fallback), Settings (`SettingsWindowController` / `SettingsStore` / `SettingsView` / `SettingsPagesA` / `SettingsPagesB`), Usage Center, Effect Studio, Control Center and the Rail, History, `EventCoordinator` / `NotificationBridge` / `SoundPlayer` / `NotchHUD`, `SparkleUpdater`. |
+
+Tests: `swift test` runs the LEDS parity suite, the protocol and model
+tests (with `Fixtures/python-state.json`, a `state` frame produced by the
+Python projection: `JRBAR_UPDATE_FIXTURES=1 pytest tests/test_core_projection.py`
+regenerates it), and the mock round trips against `app/scripts/mock-core.py`.
+The mock speaks protocol 1 on a socket of its choosing; never point it at
+the real `core.sock` on a Mac that is running the app.
+
+## What the app decides on its own
+
+Everything not in this list comes from a daemon document.
+
+- Panel geometry (`PanelLayout`), motion, keyboard handling, hover and
+  selection.
+- The Screen Bar's band geometry from the notch's auxiliary areas, and the
+  raised-cosine blend between the eight samples (ported from
+  `screen_bar_design.py`).
+- Which sound or banner an `event` earns (`EventPolicy`), notification
+  permission, the ask banner's Approve / Deny actions (they send
+  `answer_ask`).
+- The status-item look, the usage ring's colour thresholds (amber at 80 %,
+  red at 95 %), and the fallback icon state from `latest.json` while the
+  daemon is away.
+- A local usage pace from its own `state` samples until the daemon's
+  forecast has enough spread to speak.
+- Login item, Screen Bar on/off, the hooks-installed stamp
+  (`app-state.json`), the Sparkle channel and window conveniences
+  (`UserDefaults`).
+- The Lighting page's small previews of each blend mode (a reading, not the
+  compiler's output; the strip is the truth).
+
+## Invariants worth keeping
+
+- One process owns the ingress socket. The daemon refuses to start (exit 2)
+  beside another JR-Bar, the old Python status bar included.
+- Every program shown or written passes the presentation compiler and the
+  firmware parser. Never emit `N:off` in an indexed LEDS segment; use
+  `#000000`.
+- `LEDS.LED` writes are atomic and coalesced; asks, failures and finite cues
+  keep their own bounded queue slots so a burst cannot starve them.
+- The Screen Bar is one band. There is never a per-LED segment.
+- Settings writes are validated by the real loader, saved atomically, and
+  a corrupt file is preserved for recovery rather than reset.
+- TCC grants belong to the signed `JR-Bar.app` identity. An ad-hoc or
+  differently signed build is a different app to macOS.
+- The hook shim fails open: it never blocks a provider for more than
+  250 ms and never loses a payload it could queue.
+- The app ignores unknown keys; the daemon ignores unknown command
+  arguments. `v` is bumped only for incompatible changes.
+
+## Build and verification
+
+`make fast` (Ruff, import smoke, contract and focused pytest, secret scan,
+dependency and version policy), `pytest tests` (the full Python suite,
+about five minutes), `cd app && swift test` (the Swift suites),
+`make package` (the signed bundle, PKG, Sparkle ZIP and feed;
+[PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md)). CI runs the first three on
+a hosted macOS 26 runner ([.github/workflows/tests.yml](../.github/workflows/tests.yml));
+packaging, hardware, TCC and notarization only happen on the owner's Mac.

@@ -1,97 +1,94 @@
-# T3 Code integration
+# Integrations
 
-JR-Bar consumes read-only status from T3 Code and displays provider/account usage and history computed by JR-Bar providers. The integration is disabled by default and configured outside the primary `agent-monitor` settings document.
-
-## Commands
-
-Show configuration and the packaged compatibility window:
-
-```bash
-jrbar integrations status
-jrbar integrations status --json
-```
-
-Enable or disable the integration:
-
-```bash
-jrbar integrations enable t3code
-jrbar integrations disable t3code
-```
-
-Run a bounded compatibility probe:
-
-```bash
-jrbar integrations probe t3code
-jrbar integrations probe t3code --json
-```
-
-Restart the JR-Bar status-bar app after changing integration settings:
-
-```bash
-jrbar status-bar stop
-jrbar status-bar start
-```
-
-The separate `jrbar-integrations` console script exposes the same subcommands. The signed macOS application routes `jrbar integrations ...` through the same implementation.
+Neighbours JR-Bar reads from without ever writing to them. Providers (the
+agents whose hooks JR-Bar installs) are a different thing:
+[NATIVE-PROVIDERS.md](NATIVE-PROVIDERS.md). Compatibility windows for
+everything here are in [COMPATIBILITY.md](COMPATIBILITY.md).
 
 ## T3 Code
 
-### Supported data
+JR-Bar projects T3 Code's local threads into its own session list, read
+only, off by default, configured outside the main settings document. The
+commands run through the bundled binary:
 
-The current adapter reads T3 Code’s local SQLite projection and preserves:
-
-- project and thread IDs
-- project and thread titles
-- underlying provider and provider-instance identity
-- provider thread ID when available
-- model and reasoning-effort selection
-- runtime and interaction mode
-- branch and worktree path
-- active/latest turn identity
-- session status and failure presence
-- pending approval, user-input, and actionable-plan indicators
-- the official `t3code://threads/<environment>/<thread>` deep link when an environment ID is configured
-
-JR-Bar maps the projected lifecycle into its canonical agent states. A T3 approval, input request, or actionable plan becomes `Waiting for Input`; running and starting sessions become `Working`; session errors become `Blocked / Error`; ready, idle, or stopped turns become completed or idle states according to the available turn facts.
-
-### Configuration
-
-T3 Code normally stores its state under `~/.t3`. Override the base directory only when T3 uses another location:
-
-```bash
-jrbar integrations configure t3code --base-dir ~/.t3
-jrbar integrations configure t3code --environment-id local
+```sh
+alias jrbar='~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core'
+jrbar integrations status            # configuration and the packaged compatibility window
+jrbar integrations status --json
+jrbar integrations enable t3code
+jrbar integrations disable t3code
+jrbar integrations probe t3code      # a bounded compatibility probe
+jrbar integrations probe t3code --json
 ```
 
-Clear overrides:
+The daemon reads `integrations.json` on its next refresh; if a change does
+not show up, quit and relaunch JR-Bar (the app restarts its daemon). A
+source checkout has the same commands as `.venv/bin/jrbar integrations …`
+and `jrbar-integrations …`.
 
-```bash
-jrbar integrations configure t3code --clear-base-dir
-jrbar integrations configure t3code --clear-environment-id
-```
+### What is read
 
-### Ownership and safety
+From `userdata/state.sqlite` under `~/.t3` (override with
+`jrbar integrations configure t3code --base-dir <dir>`; clear with
+`--clear-base-dir`): project and thread ids and titles, the underlying
+provider and instance, the provider thread id when present, model and
+reasoning effort, runtime and interaction mode, branch and worktree path,
+the active or latest turn, session status and failure presence, pending
+approval / user-input / actionable-plan flags, and the
+`t3code://threads/<environment>/<thread>` deep link when an environment id
+is configured (`--environment-id local`, `--clear-environment-id`).
 
-JR-Bar opens `userdata/state.sqlite` with SQLite URI `mode=ro`, enables `PRAGMA query_only`, applies a short busy timeout, verifies required tables and columns, and caps the result at 512 active, non-archived threads. It never writes the database, invokes T3 commands, reads T3 authentication material, changes a thread, or dispatches provider actions.
+A T3 approval, input request or actionable plan becomes a waiting session;
+running and starting sessions are working; a session error is failed;
+ready, idle and stopped turns are completed or idle according to the turn
+facts. T3 sessions keep their own identity beside native ones and are never
+merged with a provider's hook-fed session for the same thread.
 
-Additive columns are accepted. Missing required columns fail closed as an unsupported schema. A failed or busy refresh retains the prior snapshot and marks its projected rows stale instead of replacing known-good state with fabricated values.
+### Safety
 
-The current upstream projection does not expose pull-request metadata. JR-Bar therefore does not claim T3 pull-request compatibility or provide T3 mutation actions.
+The database is opened with SQLite URI `mode=ro`, `PRAGMA query_only`, a
+short busy timeout, a check of the required tables and columns, and a cap
+of 512 active, non-archived threads. JR-Bar never writes the database,
+never runs T3 commands, never reads T3 credentials, never changes a thread
+and never dispatches a provider action through T3. Additive columns are
+accepted; a missing required column fails closed as unsupported. A failed
+or busy refresh keeps the previous snapshot and marks its rows stale. T3
+exposes no pull-request metadata in its projection, so JR-Bar claims none.
 
-## Settings and compatibility
+### Files
 
-Integration settings are stored at:
-
-```text
-${XDG_CONFIG_HOME:-~/.config}/jrbar/integrations.json
-```
-
-The document is versioned, preserves unknown fields, rejects concurrent replacement, and becomes read-only when written by a newer JR-Bar version. A malformed existing document is preserved and refused rather than silently replaced.
-
-The packaged compatibility manifest is `jrbar.resources/integration_compatibility.json`. It records the exact reviewed upstream commit, protocol fingerprint, minimum version, maximum tested version, fixture version, and connection mode. The CLI exposes this information through `jrbar integrations status --json`.
-
-Current reviewed compatibility:
+Settings: `${XDG_CONFIG_HOME:-~/.config}/jrbar/integrations.json`, a
+versioned document that preserves unknown fields, refuses concurrent
+replacement, becomes read-only when written by a newer JR-Bar, and is
+preserved rather than replaced when malformed. The packaged compatibility
+manifest is `jrbar/resources/integration_compatibility.json` (reviewed
+upstream commit, protocol fingerprint, minimum and maximum tested
+versions, fixture version, connection mode); `jrbar integrations status
+--json` prints it.
 
 | Integration | Minimum | Maximum tested | Mode |
 | --- | ---: | ---: | --- |
 | T3 Code | 0.0.33 | 0.0.33 | `sqlite-readonly-v1` |
+
+## Alcove
+
+When [Alcove](https://henrikruscon.com/alcove) is running, the Screen Bar
+matches the width of its capsule so an expanded live activity never
+outgrows the band (Settings › General › Follow Alcove, on by default). The
+daemon reads the capsule from the window list, which needs Screen
+Recording permission; without it, or without Alcove, the band keeps the
+measured notch geometry. Nothing is sent to Alcove.
+
+## Tailscale and SSH
+
+Remote peers (Settings › Remote) list other Macs running JR-Bar. Tailscale
+is used only to discover them; the ledger itself is fetched with `sftp`
+over SSH and nothing else is ever run on the peer. Usage sync between Macs
+is HMAC-SHA256-signed JSON over the same SSH. Both are off by default and
+read-only; see `remote_peers.py` for the five rules the transport keeps.
+
+## Scripts and Stream Deck
+
+`jrbar serve` answers `GET /status.json` on loopback with redacted agent
+aggregates and provider quota summaries, for scripts and things like a
+Stream Deck. `jrbar --help` lists the rest of the command line.
