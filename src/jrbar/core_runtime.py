@@ -1537,11 +1537,43 @@ def build_headless_controller_class() -> type:
                 self._core_quit_flush()
 
         def _core_quit_flush(self) -> None:
-            """The daemon's last words: the usage sample buffer to disk."""
+            """The daemon's last words: the usage sample buffer to disk,
+            then every mounted strip off."""
             try:
                 self._core_usage_samples.save()
             except Exception as exc:
                 legacy.log_status_bar(f"core: usage samples save at quit failed: {exc.__class__.__name__}")
+            self._core_lights_off()
+
+        def _core_lights_off(self) -> list[str]:
+            """Write ``off`` to every connected hardware strip, Pro and Dot
+            alike, straight to the volume.
+
+            The controllers' paths are the wrong tool here: they dedupe on
+            the last program identity (a linked Dot whose last write was
+            the Pro's program would skip an identical ``off``), replace
+            ``off`` with the resting glow, and ride a worker the legacy
+            teardown has already closed. One direct write per device, no
+            glow, no dedupe, so a quit never leaves a strip looping.
+            """
+            from .device_writer import write_led_program
+
+            written: list[str] = []
+            try:
+                devices = self.status_bar_devices(remember=False)
+            except Exception as exc:
+                legacy.log_status_bar(f"core: quit: device scan failed: {exc.__class__.__name__}")
+                return written
+            for device in devices:
+                if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
+                    continue
+                try:
+                    write_led_program("off", device_path=device.target, preserve_existing_inode=True)
+                    written.append(device.device_id)
+                except Exception as exc:
+                    legacy.log_status_bar(f"core: quit: {device.name} off failed: {exc.__class__.__name__}: {exc}")
+            legacy.log_status_bar(f"core: quit: strips off: {', '.join(written) or 'none mounted'}")
+            return written
 
         @objc.IBAction
         def quit_(self, _sender):
