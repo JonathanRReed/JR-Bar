@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var statusItem: StatusItemController?
     private var screenBar: ScreenBarController?
     private var interaction: ScreenBarInteraction?
+    private var alcove: AlcoveFollower?
     private var feed: LEDFeed?
     private var monitor: AgentStateMonitor?
     private var core: CoreModel?
@@ -127,6 +128,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         self.interaction = interaction
         screenBar.onGeometryChange = { [weak interaction] in interaction?.geometryChanged() }
+        // Alcove: the band follows the capsule while the setting is on and Alcove is up.
+        let alcove = AlcoveFollower()
+        alcove.onChange = { [weak self, weak screenBar] capsule in
+            screenBar?.capsule = capsule
+            self?.lastLightsSource = nil
+            self?.refreshLights()
+        }
+        self.alcove = alcove
         store.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
         statusItem.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
@@ -206,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem.isScreenBarShown = shown
         store.screenBarShown = shown
         if shown { screenBar.show(); interaction.start() }
+        refreshAlcoveFollowing()
         feed.start()
         monitor.start()
         core.start()
@@ -505,6 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem?.isScreenBarShown = shown
         store?.screenBarShown = shown
         if shown { screenBar?.show(); interaction?.start() } else { interaction?.stop(); screenBar?.hide() }
+        refreshAlcoveFollowing()
     }
 
     // MARK: Core observation
@@ -557,6 +568,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshAggregate()
         refreshIconStyle()
         refreshLights()
+        refreshAlcoveFollowing()
+    }
+
+    /// `screen_bar_follow_alcove` (default on) while the bar is shown.
+    private func refreshAlcoveFollowing() {
+        guard let alcove else { return }
+        let document = core?.settings.map { SettingsDocument($0.document) }
+        let wanted = document?.bool(SettingsPath("screen_bar_follow_alcove")) ?? true
+        alcove.enabled = wanted && appState.showScreenBar
     }
 
     private func refreshAggregate() {
@@ -598,7 +618,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if core.isLive, let surface = core.lights?.screenBar, !surface.program.isEmpty {
             screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor)
             let why = surface.why.map { " · \($0.replacingOccurrences(of: "_", with: " "))" } ?? ""
-            let description = "core" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "")
+            let description = "core" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
             if description != lastLightsSource {
                 lastLightsSource = description
                 statusItem?.setFeed(description: description)
@@ -608,12 +628,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
+    /// " · keyframes (40 + 40 frames) · Alcove 213 pt": how the band moves
+    /// and whether it is following a capsule, for the status menu's lights line.
+    private func lightsSuffix(_ screenBar: ScreenBarController) -> String {
+        var suffix = " · " + screenBar.motionDescription
+        if let capsule = screenBar.capsule { suffix += " · Alcove \(Int(capsule.width.rounded())) pt" }
+        return suffix
+    }
+
     /// Puts the last file-feed program back on the bar (startup, or the
     /// daemon went away).
     private func applyFileProgram() {
         guard let screenBar, let last = lastFileProgram else { return }
         screenBar.apply(programText: last.text)
-        let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "")
+        let description = last.source.description + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
         if description != lastLightsSource {
             lastLightsSource = description
             statusItem?.setFeed(description: description)

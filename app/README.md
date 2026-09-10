@@ -14,8 +14,8 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | Path | What it is |
 | --- | --- |
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
-| `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, presentation-safety compiler. No AppKit. |
-| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math and label rules, the history model, the Creator Micro 2 deck model and rail geometry, and the child-process supervisor. Foundation only. |
+| `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler. No AppKit. |
+| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math and label rules, the history model, the Creator Micro 2 deck model and rail geometry, the Alcove capsule geometry, and the child-process supervisor. Foundation only. |
 | `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer. |
 | `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Usage Center, Effect Studio and Control Center windows, the deck rail, notifications, sounds, HUD, file-feed fallback. |
 | `Tests/JRBarLEDSTests/` | Swift Testing suites plus the firmware fixtures they check against. |
@@ -25,7 +25,7 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | `scripts/mock-core.py` | A stdlib-only mock `jrbar-core` that plays a scripted timeline over a socket (`$TMPDIR/jrbar-mock.sock`; it refuses the installed daemon's). |
 | `scripts/build-app.sh` | `swift build -c release`, assembles and signs `build/JR-Bar.app` (`JRBAR_BUNDLE` picks another path). |
 | `scripts/run-dev.sh` | Starts the mock on its socket and `build/JR-Bar-dev.app` against it; never touches the installed app. `--stop` ends both by pid. |
-| `scripts/make-icon.swift` | Draws the placeholder icon PNG used for `AppIcon.icns`. |
+| `scripts/make-icon.swift` | Draws the app icon at every `.iconset` size (and the menu bar glyph for review); `build-app.sh` turns it into `AppIcon.icns`. |
 
 ## Build, run, test
 
@@ -143,7 +143,8 @@ Developer switches (environment variables read at launch):
   the primary display, for `screencapture -R`).
 * `JRBAR_PROGRAM_FILE=/path/file.led` feeds the Screen Bar from any file
   (watched like the device file) without writing to the strip.
-* `JRBAR_NO_HALO=1` disables the blurred halo layer.
+* `JRBAR_NO_HALO=1` disables the halo layer; `JRBAR_LOG_MOTION=1` logs
+  whether each program plays as keyframes or on the frame clock.
 
 ## The LEDS engine (`JRBarLEDS`)
 
@@ -179,6 +180,8 @@ let sampler = LEDSSampler(program: program, ledCount: 8, initialCodes: previous)
 sampler.colors(at: seconds)          // [RGB] floats 0...1 (codes / 255), .linear / RGB.fromLinear helpers
 sampler.codes(atMilliseconds: ms)    // exact [RGB8] after brightness
 program.cycleDuration, program.isStatic, program.motionEndsAt
+LEDSKeyframePlan.render(sampler: sampler)   // lead + loop keyframe tracks for Core Animation, nil when too long
+plan.codes(atMilliseconds: ms)              // what the animation shows (linear between keyframes)
 LEDSPresentationCompiler.compile(text)   // port of presentation_compiler.py (2 Hz / 1 Hz red clamps)
 ```
 
@@ -188,6 +191,21 @@ context ("identity transfer", see `_led_status_legacy.py`). The app does the
 same, in the sRGB colour space rather than the Python's DeviceRGB, so the hex
 codes mean what a colour picker says they mean. `RGB.linear` and
 `RGB.fromLinear` are the exact IEC 61966-2-1 curves for anyone who needs light.
+
+### Keyframes
+
+`LEDSKeyframePlan` renders a program once into what Core Animation needs:
+a `lead` track (the first pass, from the colours the strip was showing) and
+a `loop` track (one steady cycle, repeated forever from `loopStartMs`), or
+just the final colours when the program comes to rest. Each track samples
+the sampler at every millisecond and keeps the fewest keyframes whose
+straight lines stay within 3 codes of it (Douglas-Peucker), so eases get a
+handful of segments, holds and linear ramps two points, and a jump (`none`,
+a `0ms` line, the loop seam) a frame on each side. Over 900 keyframes the
+tolerance doubles; past that, or past a 120 s cycle, `render` returns nil
+and the caller keeps its frame clock. `KeyframeTests` check every parity
+fixture: the plan equals the sampler within one code at its keyframes and
+within the tolerance at the firmware's own sample times.
 
 ### Parity
 
@@ -505,8 +523,9 @@ three layers):
   throttled to one command per 120 ms while dragging and flushed on
   release), and a footer (Clear done → `clear_completed all`, Quiet… →
   `quiet` for 30 min / 1 h / 4 h / 12 h, History (⌘Y), an overflow menu
-  (Usage Center ⌘U, Effect Studio, Control Center ⌘K), a gear for
-  Settings…, Quit). Empty states: "No agents right now" when live and
+  (Control Center ⌘K, Effects…, History ⌘Y, Usage Center ⌘U, then Check
+  for Updates… and Settings… ⌘,), a gear for Settings…, Quit; every footer
+  control's tooltip names its shortcut). Empty states: "No agents right now" when live and
   quiet; "Core is starting" / "Core not connected" with the file-feed
   summary when not. With a supervised core that gave up, the header shows
   "Core crashed 10× in 2 min" with a Restart button and a red dot.
@@ -548,8 +567,12 @@ three layers):
 * Motion (`PanelMotion`): three springs only. `unfold` (the window fades in
   and rises 6 pt), `contents` (rows insert, remove and reorder), `crossfade`
   (a word or number changes in place). The working mark breathes, the ask
-  mark pulses amber. With Reduce Motion on, everything collapses to short
-  opacity fades and the marks hold still; the setting is read live.
+  mark pulses amber, only while the panel is open: a repeating SwiftUI
+  animation keeps its hosting view re-rendering at 60 Hz even in an
+  ordered-out window (13 % CPU with one working session and the panel
+  closed, measured 2026-09-10), so the marks hold still when it closes.
+  With Reduce Motion on, everything collapses to short opacity fades and
+  the marks hold still; the setting is read live.
 * `ProviderStyle`: id → display name, accent (the Python app's
   `default_agent_color` values, captured from `sidepulse/colors.py`), and a
   glyph (SF Symbol, or a text glyph for π and K) for claude, codex, gemini,
@@ -565,10 +588,21 @@ three layers):
   inter-LED blend (2 pt columns, 1/1024 quantised, coalesced runs), plus a
   GPU-blurred copy underneath as the halo and the design's faint outline.
   There is never a per-LED segment.
-* Frame clock: a `CADisplayLink` from the view, capped at 60 Hz; the sampler
-  runs only on ticks, identical frames are not committed, and the link pauses
-  when the program is static or finished, when the bar is hidden, or when the
-  display sleeps.
+* Motion: the program goes to Core Animation once, as `CAKeyframeAnimation`s
+  on the gradient's `colors` (stop locations fixed, one per 4 pt column;
+  `ScreenBarBlend.columnSamples`) built from `LEDSKeyframePlan`: the lead
+  pass from the daemon's anchor mapped onto `CACurrentMediaTime`, then the
+  loop with `repeatCount = .infinity` from `anchor + loopStart`, the halo
+  layer carrying a copy. The render server does every frame and the process
+  idles (measured 2026-09-10 against the real daemon on the working chase:
+  18 % CPU before, 0.3 % after; the old build also burned 23 % on a static
+  program). The halo is a masked copy of the band rather than a Core Image
+  blur, since a CI filter pulls the whole layer tree back into the process.
+  A program `render` refuses (a cycle over 120 s, or too busy for 900
+  keyframes) falls back to the frame clock: a `CADisplayLink` from the view,
+  capped at 60 Hz, running the sampler on ticks, paused when the program is
+  still, the bar hidden, or the display asleep. `JRBAR_LOG_MOTION=1` logs
+  the path each program takes; the status menu's lights line shows it too.
 * Lights: when the core is live, `lights.surfaces.screen_bar.program` goes on
   the bar and its `anchor` (Unix seconds) is mapped onto the display link's
   clock so the band is phase-locked to the strip; a repeated program with
@@ -659,7 +693,9 @@ three layers):
   prices ($3.00 in / $15.00 out per M tokens, $0.30 cache), as of …
   Subscription plans are not billed per token."). A `quota_reset` event
   washes that card in its accent with a "Window reset" pill for ~1.5 s
-  (a fade under Reduce Motion) and reloads its history. Empty states:
+  (a fade under Reduce Motion) and reloads its history. Pace words are the
+  daemon's (`ahead`, `on`, `under`, `exhausted`), rendered by the same
+  `PanelStore.paceHint` as the panel ("on pace", "under pace", "used up"). Empty states:
   "Core not connected", "No usage yet", "Sign in via the CLI" for a
   provider whose `state` says it is signed out (windows stay hidden in the
   panel), a breathing skeleton while a history loads, an error row with
@@ -840,8 +876,24 @@ three layers):
   failed > working > done-within-90 s > idle); the Python attention model with
   its signals, quotas and presentation hints is not ported. Live, the
   status item follows `state.aggregate.mode` and the counts.
-* Alcove coexistence, notch silhouette measurement, announcer pill, standing
-  gauges, wings-only bracket, reduce-motion handling: not ported.
+* Alcove (`AlcoveFollower`, `AlcoveGeometry` in `JRBarCore`):
+  `screen_bar_follow_alcove` (default on) makes the band hug Alcove's live
+  capsule instead of the notch. While Alcove (`com.henrikruscon.Alcove`) is
+  running the window list is read at 2 Hz, bounds only, no capture and no
+  Screen Recording: an Alcove window hanging from the top of the screen
+  that is capsule-sized is the capsule (`AlcoveGeometry.select`, the
+  Python's `select_alcove_window_values` plus a top-edge rule so Alcove's
+  settings window is never taken for one), and the band takes its width
+  exactly (growing past the notch for an expanded live activity, down to
+  140 pt when it collapses), its centre, and hangs from its bottom edge
+  (`AlcoveGeometry.windowFrame`). Alcove 1.7.9 draws the capsule inside one
+  fixed 624×320 transparent window, so those bounds are a "container";
+  then, only if the app already has accessibility access (never requested),
+  the capsule is estimated from the controls Alcove lays out in it
+  (`capsule(fromContentFrames:)`, the union padded by 14 pt sideways and
+  4 pt below), else the notch geometry holds. Alcove quitting, the setting
+  turning off or the bar hiding stops the poll. Notch silhouette
+  measurement, announcer pill, standing gauges, wings-only bracket,
+  reduce-motion handling: not ported.
 * The `wrapMenuBar` choice is a constant (`ScreenBarController.wrapMenuBar`),
   not a setting.
-* The icon is a programmatic placeholder.
