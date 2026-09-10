@@ -178,17 +178,26 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     public var hours: [UsageHistoryHour]
     public var pricing: UsagePricing?
     public var account: UsageAccount?
+    /// How many transcript records the scan counted; 0 means the provider
+    /// has no local records at all (as opposed to a range with none).
+    public var records: Int?
+    /// True while the daemon's scan is still running and these rows are
+    /// what it has so far; a `usage_history_ready` event follows.
+    public var partial: Bool
 
-    public init(provider: String, range: String, days: [UsageHistoryDay] = [], hours: [UsageHistoryHour] = [], pricing: UsagePricing? = nil, account: UsageAccount? = nil) {
+    public init(provider: String, range: String, days: [UsageHistoryDay] = [], hours: [UsageHistoryHour] = [], pricing: UsagePricing? = nil,
+                account: UsageAccount? = nil, records: Int? = nil, partial: Bool = false) {
         self.provider = provider
         self.range = range
         self.days = days
         self.hours = hours
         self.pricing = pricing
         self.account = account
+        self.records = records
+        self.partial = partial
     }
 
-    enum CodingKeys: String, CodingKey { case provider, range, days, hours, pricing, account }
+    enum CodingKeys: String, CodingKey { case provider, range, days, hours, pricing, account, records, partial }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -198,9 +207,17 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         hours = try c.decodeIfPresent([UsageHistoryHour].self, forKey: .hours) ?? []
         pricing = try c.decodeIfPresent(UsagePricing.self, forKey: .pricing)
         account = try c.decodeIfPresent(UsageAccount.self, forKey: .account)
+        records = try? c.decodeIfPresent(Int.self, forKey: .records)
+        partial = (try? c.decodeIfPresent(Bool.self, forKey: .partial)) ?? false
     }
 
     public var isEmpty: Bool { days.isEmpty && hours.isEmpty }
+    /// The scan *finished* and found nothing for this provider on this
+    /// Mac. A partial answer is a scan still running, not a verdict — and
+    /// the daemon pads its answer with a row per day whether or not it
+    /// read anything, so an all-zero month with no records is this, not a
+    /// month that happened to be quiet.
+    public var hasNoLocalRecords: Bool { records == 0 && !partial && (isEmpty || totalTokens == 0) }
     public var totalCost: Double { days.reduce(0) { $0 + $1.costUsd } }
     public var totalTokens: Int { days.reduce(0) { $0 + $1.totalTokens } }
     public var totalCacheRead: Int { days.reduce(0) { $0 + $1.cacheRead } }

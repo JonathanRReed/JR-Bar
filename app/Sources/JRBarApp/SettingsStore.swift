@@ -1,3 +1,4 @@
+import JRBarUI
 import AppKit
 import JRBarCore
 import Observation
@@ -65,6 +66,8 @@ final class SettingsStore {
     var onOpenEffects: (@MainActor () -> Void)?
     /// Devices › Creator Micro 2 › Open Control Center…
     var onOpenControlCenter: (@MainActor () -> Void)?
+    /// Usage › Open Usage Center… — where the graphs actually live.
+    var onOpenUsageCenter: (@MainActor () -> Void)?
     var deck: DeckState? { core.deck }
     var calibrating: String?
     var doctorReport: JSONValue?
@@ -95,6 +98,21 @@ final class SettingsStore {
     @ObservationIgnored private var errorClear: DispatchWorkItem?
     /// Bumped whenever the overlay changes so observers re-read.
     private var overlayVersion = 0
+
+    /// `menu_bar_icon_style`: an app-owned key. The daemon answers a write
+    /// of it with `ok` and then keeps its own value (the Python settings
+    /// dataclass has no field for it), so the app is the one that
+    /// remembers, in `app-state.json`. The write still goes out, so a
+    /// daemon that learns the key one day stays in step.
+    var menuBarIconStyle: String = StatusIconStyle.meters.rawValue {
+        didSet {
+            guard menuBarIconStyle != oldValue else { return }
+            onSetMenuBarIconStyle?(menuBarIconStyle)
+            set("menu_bar_icon_style", .string(menuBarIconStyle))
+        }
+    }
+    /// Persists the choice; wired to `AppState` by the delegate.
+    var onSetMenuBarIconStyle: (@MainActor (String) -> Void)?
 
     init(core: CoreModel) {
         self.core = core

@@ -101,6 +101,36 @@ struct UsageHistoryTests {
     }
 }
 
+@Suite("Usage history verdicts")
+struct UsageHistoryVerdictTests {
+    static func zeroDays(_ count: Int) -> [UsageHistoryDay] {
+        (0..<count).map { UsageHistoryDay(date: String(format: "2026-09-%02d", $0 + 1)) }
+    }
+
+    @Test("records 0 means this Mac has nothing local, padded rows or not")
+    func noLocalRecords() {
+        // The daemon answers with a row per day whether or not it read
+        // anything, so an all-zero month with no records is the verdict.
+        let padded = UsageHistory(provider: "devin", range: "30d", days: Self.zeroDays(30), records: 0)
+        #expect(padded.hasNoLocalRecords)
+        #expect(!padded.isEmpty, "the rows are there; they are just all zero")
+        let bare = UsageHistory(provider: "devin", range: "30d", records: 0)
+        #expect(bare.hasNoLocalRecords)
+    }
+
+    @Test("a scan still running is never a verdict, and a real quiet month is not one either")
+    func notAVerdict() {
+        let pending = UsageHistory(provider: "claude", range: "30d", records: 0, partial: true)
+        #expect(!pending.hasNoLocalRecords, "the scan has not finished")
+        let quiet = UsageHistory(provider: "claude", range: "30d", days: UsageHistoryVerdictTests.zeroDays(30), records: 4_120)
+        #expect(!quiet.hasNoLocalRecords, "records were read; this range is simply empty")
+        let busy = UsageHistory(provider: "claude", range: "7d",
+                                days: [UsageHistoryDay(date: "2026-09-10", tokensIn: 10)], records: 2)
+        #expect(!busy.hasNoLocalRecords)
+        #expect(UsageHistory(provider: "claude", range: "7d").hasNoLocalRecords == false, "no count at all is not a zero count")
+    }
+}
+
 @Suite("Usage provider hints")
 struct UsageProviderHintTests {
     @Test("action and reason decode from the daemon's state and are optional")

@@ -1,3 +1,4 @@
+import JRBarUI
 import JRBarCore
 import SwiftUI
 
@@ -11,9 +12,7 @@ struct GeneralPage: View {
             Toggle(isOn: Binding(get: { store.launchAtLogin }, set: { store.setLaunchAtLogin($0) })) {
                 SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Registers JR-Bar with the system so it starts with your Mac.")
             }
-            SettingPicker(store, "Menu bar icon", path: "menu_bar_icon_style", options: [
-                ("glyph", "Glyph only"), ("glyph_ring", "Glyph with usage ring"), ("glyph_label", "Glyph with label"),
-            ], default: "glyph")
+            MenuBarStylePicker(store: store)
             SettingToggle(store, "Show tips", subtitle: "Occasional hints in the panel about what the light means.", path: "tips_enabled", default: true)
         }
 
@@ -59,6 +58,144 @@ struct GeneralPage: View {
         guard store.updaterAvailable else { return "JR-Bar \(version)" }
         guard let checked = store.lastUpdateCheck else { return "JR-Bar \(version) · never checked" }
         return "JR-Bar \(version) · last checked \(checked.formatted(.relative(presentation: .named)))"
+    }
+}
+
+/// `menu_bar_icon_style` as five rows, each drawing the style it names on
+/// a strip of menu bar, from the live providers when the daemon has any
+/// (so the preview is the reader's own menu bar) and from a sample
+/// otherwise.
+struct MenuBarStylePicker: View {
+    @Bindable var store: SettingsStore
+
+    private var current: StatusIconStyle { StatusIconStyle(setting: store.menuBarIconStyle) }
+
+    /// The meters as the menu bar would draw them now: the providers shown
+    /// in the panel, in that order; a sample while the core is away.
+    private var meters: [StatusMeter] {
+        let preferred = store.document.strings("usage_graph_providers") ?? []
+        let shown = AppDelegate.meteredProviders(preferred: preferred, usage: store.core.isLive ? store.core.usage : [])
+        guard !shown.isEmpty else { return StatusItemController.sampleMeters }
+        return shown.prefix(StatusIconRenderer.maxMeters).map { provider in
+            StatusItemController.meter(for: provider.id,
+                                       fraction: (UsageCenterStore.primaryWindow(of: provider)?.usedPct ?? 0) / 100,
+                                       approximate: provider.isDerived)
+        }
+    }
+
+    private var overflow: Int {
+        let preferred = store.document.strings("usage_graph_providers") ?? []
+        let shown = AppDelegate.meteredProviders(preferred: preferred, usage: store.core.isLive ? store.core.usage : [])
+        return max(0, shown.count - StatusIconRenderer.maxMeters)
+    }
+
+    var body: some View {
+        Group {
+            VStack(alignment: .leading, spacing: 6) {
+                SettingLabel(title: "Menu bar icon", subtitle: "What the status item shows at a glance.")
+                VStack(spacing: 0) {
+                    ForEach(Array(StatusIconStyle.allCases.enumerated()), id: \.element) { index, style in
+                        if index > 0 { Divider().opacity(0.5) }
+                        MenuBarStyleRow(style: style,
+                                        selected: current == style,
+                                        meters: meters,
+                                        overflow: overflow,
+                                        label: labelText) {
+                            store.menuBarIconStyle = style.rawValue
+                        }
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+            }
+        }
+    }
+
+    private var labelText: String? {
+        guard store.core.isLive, let aggregate = store.core.state?.aggregate else {
+            return StatusIconRenderer.label(active: 2, needsYou: 1, ready: 0)
+        }
+        return StatusIconRenderer.label(active: aggregate.active, needsYou: aggregate.needsYou, ready: aggregate.ready)
+            ?? "quiet"
+    }
+}
+
+/// One row of the picker: a radio mark, the preview on its own dark strip,
+/// and the style's name and sentence.
+struct MenuBarStyleRow: View {
+    let style: StatusIconStyle
+    let selected: Bool
+    let meters: [StatusMeter]
+    let overflow: Int
+    let label: String?
+    let action: () -> Void
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.6))
+                MenuBarPreview(style: style, meters: meters, overflow: overflow, label: label)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(style.title).foregroundStyle(.primary)
+                    Text(style.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+            .background(selected ? AnyShapeStyle(Color.accentColor.opacity(0.10))
+                                 : AnyShapeStyle(Color.primary.opacity(hovering ? 0.04 : 0)))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityLabel("\(style.title). \(style.subtitle)")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// The status item as it would look, drawn by the same renderer the menu
+/// bar uses, on a strip that reads as a menu bar in either appearance.
+struct MenuBarPreview: View {
+    let style: StatusIconStyle
+    let meters: [StatusMeter]
+    let overflow: Int
+    let label: String?
+    @Environment(\.colorScheme) private var scheme
+
+    /// Wide enough for the roomiest preview (the label style's "1 ask · 2
+    /// working"), so every row's text starts at the same x.
+    static let width: CGFloat = 108
+
+    private var spec: StatusIconSpec {
+        StatusIconSpec(style: style,
+                       ringFraction: meters.first?.fraction ?? 0.42,
+                       tintHex: "#00E5FF",
+                       meters: style.isMeters ? meters : [],
+                       overflow: style.isMeters ? overflow : 0,
+                       dot: style.isMeters ? .working : .idle,
+                       phase: 0.5)
+    }
+
+    var body: some View {
+        let image = StatusIconRenderer.shared.image(for: spec)
+        let size = StatusIconRenderer.size(for: spec)
+        HStack(spacing: 5) {
+            Image(nsImage: image)
+                .renderingMode(image.isTemplate ? .template : .original)
+                .foregroundStyle(image.isTemplate && !style.isMeters ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
+                .frame(width: size.width, height: size.height)
+            if style == .glyphLabel, let label {
+                Text(label).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 7)
+        // One width for every chip, so the names beside them line up.
+        .frame(width: Self.width, height: 26)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.primary.opacity(0.07)))
     }
 }
 
@@ -188,7 +325,7 @@ struct UsagePage: View {
             Text("Show in the panel")
         }
 
-        Section("Display") {
+        Section {
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
                 ("tokens", "Tokens"), ("cost", "Cost"), ("percent", "Percent"),
             ], default: "tokens", segmented: true)
@@ -196,6 +333,16 @@ struct UsagePage: View {
             SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
                 (1, "Today"), (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
+            LabeledContent {
+                Button("Open Usage Center") { store.onOpenUsageCenter?() }
+                    .help("The graphs live in the Usage Center (⌘U)")
+            } label: {
+                SettingLabel(title: "Graphs", subtitle: "Per-provider history, cost and pace, for the range above.")
+            }
+        } header: {
+            Text("Display")
+        } footer: {
+            SectionNote("Graphs live in the Usage Center (⌘U). This range is what it opens on and what the panel's sparklines cover.")
         }
 
         Section {

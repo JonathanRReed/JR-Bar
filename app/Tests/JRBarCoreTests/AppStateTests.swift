@@ -38,6 +38,21 @@ struct AppStateTests {
         #expect(object?["showScreenBar"] as? Bool == false)
     }
 
+    @Test("the menu bar icon style is remembered here, since the daemon drops it")
+    func menuBarIconStyle() throws {
+        let file = temporaryFile()
+        defer { try? FileManager.default.removeItem(at: file.url.deletingLastPathComponent()) }
+        #expect(file.load().menuBarIconStyle == nil, "unset means the app's default")
+        try file.save(AppState(menuBarIconStyle: "glyph_ring"))
+        #expect(file.load().menuBarIconStyle == "glyph_ring")
+        let object = try JSONSerialization.jsonObject(with: Data(contentsOf: file.url)) as? [String: Any]
+        #expect(object?["menuBarIconStyle"] as? String == "glyph_ring")
+        // A file written by a build that did not know the key still reads.
+        try Data(#"{"showScreenBar": false}"#.utf8).write(to: file.url)
+        #expect(file.load().menuBarIconStyle == nil)
+        #expect(file.load().showScreenBar == false)
+    }
+
     @Test("saving again replaces the file and leaves no temporary files behind")
     func atomicReplace() throws {
         let file = temporaryFile()

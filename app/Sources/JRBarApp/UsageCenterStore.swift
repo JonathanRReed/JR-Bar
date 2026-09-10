@@ -35,6 +35,19 @@ final class UsageCenterStore {
     private(set) var histories: [String: UsageHistory] = [:]
     private(set) var loading: Set<String> = []
     private(set) var errors: [String: String] = [:]
+    /// Providers whose scan is still running daemon-side: either the reply
+    /// said `partial`, or it never came inside the (generous) timeout. The
+    /// card keeps its skeleton and waits for `usage_history_ready` rather
+    /// than accusing the core of being broken on a first, cold scan.
+    private(set) var scanning: Set<String> = []
+
+    /// How many times a cold first load is retried on its own before the
+    /// card admits an error; a `usage_history_ready` event short-circuits
+    /// the wait.
+    static let coldRetries = 2
+    static let coldRetryDelay: TimeInterval = 6
+
+    @ObservationIgnored private var attempts: [String: Int] = [:]
 
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var lastEventID: String?
@@ -106,6 +119,9 @@ final class UsageCenterStore {
                 resetPulses[provider] = Date()
                 if !provider.isEmpty { load(provider: provider, force: true) }
             }
+            if event.kind == CoreEvent.usageHistoryReadyKind {
+                historyDidBecomeReady(provider: event.provider, range: event.range)
+            }
         }
         let live = core.isLive
         let ids = core.usage.map(\.id)
@@ -132,7 +148,17 @@ final class UsageCenterStore {
 
     func isLoading(_ provider: String) -> Bool { loading.contains(key(provider)) }
 
+    /// The daemon is still scanning: what is shown (if anything) is partial.
+    func isScanning(_ provider: String) -> Bool { scanning.contains(key(provider)) }
+
     func error(for provider: String) -> String? { errors[key(provider)] }
+
+    /// The scan ran and this Mac has no transcripts for the provider at
+    /// all — a different thing from a range with nothing in it.
+    func hasNoLocalRecords(_ provider: String) -> Bool {
+        guard let history = history(for: provider) else { return false }
+        return history.hasNoLocalRecords && !isScanning(provider)
+    }
 
     func loadAll() {
         guard isOpen, core.isLive else { return }
@@ -145,6 +171,7 @@ final class UsageCenterStore {
         guard core.isLive else { return }
         let key = key(provider)
         if !force, histories[key] != nil || loading.contains(key) { return }
+        if force { attempts[key] = 0 }
         loading.insert(key)
         errors[key] = nil
         let range = self.range
@@ -153,10 +180,97 @@ final class UsageCenterStore {
             do {
                 let history = try await self.core.usageHistory(provider: provider, range: range)
                 self.histories[key] = history
+                // The daemon answered from what it had while its scan runs
+                // on: keep the skeleton and wait to be told it landed.
+                if history.partial {
+                    self.scanning.insert(key)
+                    self.retryCold(provider: provider, key: key)
+                } else {
+                    self.scanning.remove(key)
+                    self.attempts[key] = 0
+                }
             } catch {
-                self.errors[key] = Self.describe(error)
+                // A cold scan can outlive even the long timeout. That is
+                // the core being slow, not the core being wrong: hold the
+                // skeleton, ask again, and only give up after a couple of
+                // tries. Anything else (a refusal, an unknown provider) is
+                // shown at once.
+                let cold = (error as? CoreClientError) == .timeout && self.histories[key] == nil
+                if cold, (self.attempts[key] ?? 0) < Self.coldRetries {
+                    self.scanning.insert(key)
+                    self.retryCold(provider: provider, key: key)
+                } else {
+                    self.scanning.remove(key)
+                    self.errors[key] = Self.describe(error)
+                }
             }
             self.loading.remove(key)
+        }
+    }
+
+    /// Asks again after a pause, unless a `usage_history_ready` event has
+    /// already done it. Counted, so a daemon that never finishes still
+    /// ends in an honest error row rather than a skeleton forever.
+    private func retryCold(provider: String, key: String) {
+        attempts[key] = (attempts[key] ?? 0) + 1
+        guard (attempts[key] ?? 0) <= Self.coldRetries else {
+            scanning.remove(key)
+            if histories[key] == nil { errors[key] = "The core is still scanning transcripts. Try Refresh in a moment." }
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.coldRetryDelay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.isOpen, self.scanning.contains(key) else { return }
+                self.loading.insert(key)
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.reload(provider: provider, key: key)
+                }
+            }
+        }
+    }
+
+    /// One more `usage_history` for a scan that was still running.
+    private func reload(provider: String, key: String) async {
+        do {
+            let history = try await core.usageHistory(provider: provider, range: range)
+            histories[key] = history
+            if history.partial {
+                retryCold(provider: provider, key: key)
+            } else {
+                scanning.remove(key)
+                errors[key] = nil
+                attempts[key] = 0
+            }
+        } catch {
+            if (attempts[key] ?? 0) < Self.coldRetries {
+                retryCold(provider: provider, key: key)
+            } else {
+                scanning.remove(key)
+                if histories[key] == nil { errors[key] = Self.describe(error) }
+            }
+        }
+        loading.remove(key)
+    }
+
+    /// `usage_history_ready {provider, range?}`: the daemon's background
+    /// scan landed. Only the ranges this window is showing are re-read; a
+    /// daemon that never sends the event costs nothing (the retry above
+    /// covers it).
+    private func historyDidBecomeReady(provider: String?, range: String?) {
+        guard isOpen else { return }
+        if let range, !range.isEmpty, range != self.range.rawValue { return }
+        let providers = (provider?.isEmpty == false) ? [provider!] : core.usage.map(\.id)
+        for id in providers {
+            let key = key(id)
+            scanning.remove(key)
+            attempts[key] = 0
+            guard histories[key] != nil || errors[key] != nil || loading.contains(key) else { continue }
+            loading.insert(key)
+            Task { [weak self] in
+                guard let self else { return }
+                await self.reload(provider: id, key: key)
+            }
         }
     }
 

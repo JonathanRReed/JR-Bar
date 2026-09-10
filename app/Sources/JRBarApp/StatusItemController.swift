@@ -30,11 +30,38 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onOpenControlCenter: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
     /// The style and ring the next `update` draws with.
-    var iconStyle: StatusIconStyle = .glyph { didSet { if iconStyle != oldValue { redraw() } } }
+    var iconStyle: StatusIconStyle = .meters {
+        didSet {
+            guard iconStyle != oldValue else { return }
+            syncBreathing()
+            applyPulseAnimation()
+            redraw()
+        }
+    }
     var ringFraction: Double? { didSet { if ringFraction != oldValue { redraw() } } }
     var labelText: String? { didSet { if labelText != oldValue { redraw() } } }
+    /// One meter per provider shown in the panel, in the panel's order,
+    /// already capped by the renderer's `maxMeters` with the rest in `overflow`.
+    var meters: [StatusMeter] = [] { didSet { if meters != oldValue { redraw() } } }
+    var meterOverflow = 0 { didSet { if meterOverflow != oldValue { redraw() } } }
+    /// The state dot; `.working` and `.ask` run the 2 Hz breathing timer,
+    /// the other two are still pictures.
+    var dotState: StatusDotState = .idle {
+        didSet {
+            guard dotState != oldValue else { return }
+            syncBreathing()
+            redraw()
+        }
+    }
 
     private static let pulseKey = "jrbar.escalationPulse"
+    /// The breathing clock: two frames a second, only while the dot moves.
+    private static let breathingInterval: TimeInterval = 0.5
+    private var breathing: Timer?
+    private var phase: Double = 0
+    /// The width the status item was last given, so a same-width redraw
+    /// does not churn the menu bar's layout.
+    private var currentWidth: CGFloat = 0
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -42,7 +69,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         super.init()
 
         if let button = statusItem.button {
-            button.image = renderer.image(for: StatusIconSpec(style: .glyph))
+            button.image = renderer.image(for: StatusIconSpec(style: .meters))
             button.imagePosition = .imageOnly
             button.toolTip = "JR-Bar"
             button.target = self
@@ -112,26 +139,52 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             .foregroundColor: NSColor.secondaryLabelColor,
         ])
         aggregateTint = state.tint
-        statusItem.button?.toolTip = "JR-Bar · \(state.label)" + (detail.isEmpty ? "" : " · \(detail)")
+        stateSummary = "JR-Bar · \(state.label)" + (detail.isEmpty ? "" : " · \(detail)")
+        statusItem.button?.toolTip = stateSummary
         redraw()
     }
+
+    /// "JR-Bar · Working · 2 working · 1 needs you", the tooltip's first half.
+    private var stateSummary = "JR-Bar"
 
     /// Redraws only when the spec or the label actually changed; the
     /// renderer hands back the cached image for a repeated spec.
     private func redraw() {
         guard let button = statusItem.button else { return }
         let tint: NSColor? = isPulsing ? .systemOrange : aggregateTint
-        let spec = StatusIconSpec(style: iconStyle, ringFraction: iconStyle == .glyphRing ? ringFraction : nil, tintHex: tint?.statusHex)
+        let spec = StatusIconSpec(style: iconStyle,
+                                  ringFraction: iconStyle == .glyphRing ? ringFraction : nil,
+                                  tintHex: tint?.statusHex,
+                                  meters: iconStyle.isMeters ? meters : [],
+                                  overflow: iconStyle.isMeters ? meterOverflow : 0,
+                                  dot: iconStyle.isMeters ? (isPulsing ? .ask : dotState) : .idle,
+                                  phase: phase)
         let label = iconStyle == .glyphLabel ? labelText : nil
         if spec != currentSpec {
             currentSpec = spec
             let image = renderer.image(for: spec)
             if button.image !== image { button.image = image }
             // A template image takes the tint from the button; a coloured
-            // one carries its own.
-            button.contentTintColor = image.isTemplate ? tint : nil
+            // one carries its own. A meter strip is never tinted whole:
+            // the meters carry the only colour that means anything.
+            button.contentTintColor = image.isTemplate && !iconStyle.isMeters ? tint : nil
+            if iconStyle.isMeters {
+                let width = StatusIconRenderer.size(for: spec).width
+                if width != currentWidth {
+                    currentWidth = width
+                    statusItem.length = width
+                    logFrame(width: width)
+                }
+            } else {
+                currentWidth = 0
+            }
         }
-        if label != currentLabel {
+        if iconStyle.isMeters {
+            let readout = StatusIconRenderer.accessibilityLabel(spec)
+            button.toolTip = stateSummary + (spec.meters.isEmpty ? "" : "\n" + spec.meters.map(\.readout).joined(separator: " · "))
+            button.setAccessibilityLabel(readout)
+        }
+        if label != currentLabel || (iconStyle.isMeters && button.imagePosition != .imageOnly) {
             currentLabel = label
             if let label {
                 button.attributedTitle = NSAttributedString(string: label, attributes: [
@@ -144,19 +197,67 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             } else {
                 button.title = ""
                 button.imagePosition = .imageOnly
-                statusItem.length = NSStatusItem.squareLength
+                // The meter strip sets its own width above; the other
+                // styles are square.
+                if !iconStyle.isMeters { statusItem.length = NSStatusItem.squareLength }
             }
+        }
+    }
+
+    /// Every width change prints where the item is, the way the panel
+    /// prints its frame: `screencapture -R` can then crop exactly the
+    /// status item, which is the only way to photograph it on a menu bar
+    /// that collapses its extras.
+    private func logFrame(width: CGFloat) {
+        guard let rect = anchorRect, let screen = NSScreen.screens.first else { return }
+        let top = screen.frame.maxY - rect.maxY
+        print(String(format: "status item: %@ %d meters (+%d) dot=%@ x=%.0f y=%.0f w=%.0f h=%.0f top=%.0f (screencapture -R%.0f,%.0f,%.0f,%.0f)",
+                     iconStyle.rawValue, meters.count, meterOverflow, dotState.rawValue,
+                     rect.minX, rect.minY, width, rect.height, top, rect.minX, top, width, rect.height))
+    }
+
+    /// The 2 Hz clock behind the breathing dot: it runs only while the dot
+    /// actually moves (working or an open ask) and only in the meter
+    /// styles, so a quiet menu bar costs nothing. Reduce Motion holds the
+    /// dot at its brightest instead of breathing.
+    private func syncBreathing() {
+        let wanted = iconStyle.isMeters && dotState.animates && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if wanted, breathing == nil {
+            phase = 0.5
+            let timer = Timer(timeInterval: Self.breathingInterval, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.phase = (self.phase + 0.25).truncatingRemainder(dividingBy: 1)
+                    self.redraw()
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            breathing = timer
+        } else if !wanted, breathing != nil {
+            breathing?.invalidate()
+            breathing = nil
+            phase = 0.5
         }
     }
 
     /// Stage-2 escalation: the icon breathes amber until the ask resolves.
     /// With Reduce Motion the icon holds amber without animating.
     func setEscalationPulse(_ on: Bool) {
-        guard on != isPulsing, let button = statusItem.button else { return }
+        guard on != isPulsing else { return }
         isPulsing = on
+        applyPulseAnimation()
+        redraw()
+    }
+
+    /// The whole-item fade is for the glyph styles, which have nowhere else
+    /// to put the escalation. In the meter styles the state dot is already
+    /// pulsing amber, and fading the strip on top of that only makes the
+    /// meters unreadable — so the layer animation is left off there.
+    private func applyPulseAnimation() {
+        guard let button = statusItem.button else { return }
         button.wantsLayer = true
         button.layer?.removeAnimation(forKey: Self.pulseKey)
-        if on, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if isPulsing, !iconStyle.isMeters, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let pulse = CABasicAnimation(keyPath: "opacity")
             pulse.fromValue = 1.0
             pulse.toValue = 0.3
@@ -167,7 +268,6 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             button.layer?.add(pulse, forKey: Self.pulseKey)
         }
         button.layer?.opacity = 1
-        redraw()
     }
 
     func setFeed(description: String) {
@@ -235,7 +335,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     static func renderStyles(to directory: String) {
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let scale: CGFloat = 8
+        let sample = StatusItemController.sampleMeters
         let samples: [(String, StatusIconSpec, String?)] = [
+            ("meters_idle", StatusIconSpec(style: .meters, meters: sample, dot: .idle), nil),
+            ("meters_working", StatusIconSpec(style: .meters, tintHex: "#00E5FF", meters: sample, dot: .working, phase: 0.5), nil),
+            ("meters_ask", StatusIconSpec(style: .meters, meters: sample, dot: .ask, phase: 0.4), nil),
+            ("meters_done", StatusIconSpec(style: .meters, meters: sample, dot: .done), nil),
+            ("meters_overflow", StatusIconSpec(style: .meters, meters: sample, overflow: 2, dot: .working, phase: 0.5), nil),
+            ("meters_percent", StatusIconSpec(style: .metersPercent, meters: sample, dot: .working, phase: 0.5), nil),
             ("glyph", StatusIconSpec(style: .glyph), nil),
             ("glyph_working", StatusIconSpec(style: .glyph, tintHex: "#00E5FF"), nil),
             ("glyph_ring_42", StatusIconSpec(style: .glyphRing, ringFraction: 0.42), nil),
@@ -248,7 +355,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             let font = NSFont.monospacedDigitSystemFont(ofSize: 11.5 * scale, weight: .medium)
             let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.white]
             let textWidth = label.map { ($0 as NSString).size(withAttributes: attributes).width + 6 * scale } ?? 0
-            let size = NSSize(width: 26 * scale + textWidth, height: 24 * scale)
+            let iconSize = StatusIconRenderer.size(for: spec)
+            let size = NSSize(width: (iconSize.width + 8) * scale + textWidth, height: 24 * scale)
             let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width), pixelsHigh: Int(size.height), bitsPerSample: 8,
                                        samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
             NSGraphicsContext.saveGraphicsState()
@@ -266,7 +374,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             } else {
                 tinted = image
             }
-            tinted.draw(in: NSRect(x: 4 * scale, y: 3 * scale, width: 18 * scale, height: 18 * scale))
+            tinted.draw(in: NSRect(x: 4 * scale, y: (24 - iconSize.height) / 2 * scale,
+                                   width: iconSize.width * scale, height: iconSize.height * scale))
             if let label {
                 (label as NSString).draw(at: NSPoint(x: 26 * scale, y: 5.5 * scale), withAttributes: attributes)
             }
@@ -275,6 +384,28 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 try? png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("\(name).png"))
             }
         }
+    }
+
+    /// Four believable providers for the icon previews and the Settings
+    /// picker, used whenever the daemon has nothing to meter yet.
+    static var sampleMeters: [StatusMeter] {
+        [
+            StatusMeter(id: "claude", name: "Claude", glyph: .symbol("asterisk"), fraction: 0.16),
+            StatusMeter(id: "codex", name: "Codex", glyph: .symbol("chevron.left.forwardslash.chevron.right"), fraction: 0.83),
+            StatusMeter(id: "gemini", name: "Gemini", glyph: .symbol("sparkle"), fraction: 0.97),
+            StatusMeter(id: "devin", name: "Devin", glyph: .symbol("hammer.fill"), fraction: 0.41, approximate: true),
+        ]
+    }
+
+    /// A provider's panel style as a menu-bar meter.
+    static func meter(for provider: String, fraction: Double, approximate: Bool) -> StatusMeter {
+        let style = ProviderStyle.style(for: provider)
+        let glyph: StatusMeter.Glyph
+        switch style.glyph {
+        case .symbol(let name): glyph = .symbol(name)
+        case .text(let text): glyph = .text(text)
+        }
+        return StatusMeter(id: style.id, name: style.name, glyph: glyph, fraction: fraction, approximate: approximate)
     }
 }
 

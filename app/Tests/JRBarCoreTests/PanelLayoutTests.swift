@@ -94,6 +94,26 @@ struct PanelLayoutTests {
         #expect(layout.totalHeight > layout.maxHeight)   // the window clamps to the screen; the lists cannot go lower
     }
 
+    @Test("the History footer adds its own row, and only when hidden_count says so")
+    func hiddenFooter() {
+        let without = L.Content(asks: 0, sessions: 2, hasWhyRow: true, usageProviders: 2, hasHiddenFooter: false)
+        let with = L.Content(asks: 0, sessions: 2, hasWhyRow: true, usageProviders: 2, hasHiddenFooter: true)
+        #expect(L.fixedHeight(with) == L.fixedHeight(without) + L.hiddenFooterHeight)
+        let a = L.compute(content: without, screenHeight: Self.tall)
+        let b = L.compute(content: with, screenHeight: Self.tall)
+        #expect(b.totalHeight == a.totalHeight + L.hiddenFooterHeight)
+        #expect(b.sessionsHeight == a.sessionsHeight, "the footer sits under the list, it does not eat rows")
+        #expect(a != b)
+    }
+
+    @Test("with nothing listed the footer still fits under the empty state")
+    func hiddenFooterWithEmptyList() {
+        let content = L.Content(asks: 0, sessions: 0, hasWhyRow: false, usageProviders: 0, hasHiddenFooter: true)
+        let layout = L.compute(content: content, screenHeight: Self.tall)
+        #expect(layout.sessionsHeight == L.emptySessionsHeight)
+        #expect(layout.totalHeight == L.fixedHeight(content) + L.emptySessionsHeight + L.emptyUsageHeight)
+    }
+
     @Test("the same content on the same screen always yields the same layout")
     func deterministic() {
         let content = L.Content(asks: 1, sessions: 9, hasWhyRow: true, usageProviders: 5)

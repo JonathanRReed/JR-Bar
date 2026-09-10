@@ -281,7 +281,8 @@ struct ProviderUsageCard: View {
                     .monospacedDigit()
             }
         }
-        if let error = store.error(for: provider.id) {
+        let scanning = store.isScanning(provider.id)
+        if let error = store.error(for: provider.id), history == nil {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                 Text(error).font(.callout).foregroundStyle(.secondary)
@@ -289,12 +290,19 @@ struct ProviderUsageCard: View {
                 Button("Retry") { store.load(provider: provider.id, force: true) }.controlSize(.small)
             }
             .padding(.vertical, 12)
+        } else if store.hasNoLocalRecords(provider.id) {
+            // The scan finished and found nothing to read on this Mac: say
+            // so, rather than drawing thirty days of zero. (The daemon pads
+            // its answer with a row per day either way, so this has to be
+            // asked before the chart.)
+            NoLocalRecordsHint(style: style, provider: provider)
         } else if let history, !history.isEmpty {
             UsageChart(history: history, range: store.range, metric: store.metric, accent: style.accent)
                 .frame(height: 150)
+            if scanning { ScanningNote() }
             costRow(history)
-        } else if store.isLoading(provider.id) || history == nil {
-            UsageSkeleton()
+        } else if store.isLoading(provider.id) || scanning || history == nil {
+            UsageSkeleton(scanning: scanning)
         } else {
             Text("Nothing recorded in this range.")
                 .font(.callout)
@@ -510,8 +518,53 @@ struct UsageChart: View {
     }
 }
 
+/// The scan is still running behind a graph that is already drawn.
+struct ScanningNote: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small).scaleEffect(0.7).frame(width: 12, height: 12)
+            Text("Still reading transcripts — this will fill in.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.top, 2)
+    }
+}
+
+/// The provider keeps no transcripts on this Mac, so there is nothing for
+/// the graph to draw and never will be until it writes some.
+struct NoLocalRecordsHint: View {
+    let style: ProviderStyle
+    let provider: CoreProviderUsage
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "tray")
+                .font(.system(size: 15, weight: .light))
+                .foregroundStyle(style.accent.opacity(0.8))
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(style.name) reports no local records")
+                    .font(.callout.weight(.medium))
+                Text("The percentages above come from the provider; the graph needs transcripts on this Mac, and the core found none.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.04)))
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// Grey bars while `usage_history` is in flight.
 struct UsageSkeleton: View {
+    /// True when the daemon told us its scan is still running: the caption
+    /// says so rather than implying the request is merely slow.
+    var scanning = false
     @ViewState private var breathing = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -528,7 +581,7 @@ struct UsageSkeleton: View {
                 }
             }
             .frame(height: 110)
-            Text("Loading history…")
+            Text(scanning ? "Reading transcripts — the core is still scanning." : "Loading history…")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

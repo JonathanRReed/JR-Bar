@@ -143,7 +143,9 @@ public final class CoreClient: @unchecked Sendable {
 
     /// Sends a command and waits for its reply (`ok` or not; an error
     /// reply is returned, not thrown). Throws when the socket is down.
-    public func send(name: String, args: [String: JSONValue] = [:]) async throws -> CoreReply {
+    /// `timeout` overrides `replyTimeout` for one command (a cold
+    /// `usage_history` scan can take tens of seconds).
+    public func send(name: String, args: [String: JSONValue] = [:], timeout: TimeInterval? = nil) async throws -> CoreReply {
         let command = CoreCommand(id: nextCommandID(), name: name, args: args)
         let bytes = try CoreCodec.encode(command: command)
         let reply: CoreReply = try await withCheckedThrowingContinuation { continuation in
@@ -162,7 +164,7 @@ public final class CoreClient: @unchecked Sendable {
                 }
                 return
             }
-            let timeout = replyTimeout
+            let timeout = timeout ?? replyTimeout
             let id = command.id
             Task.detached { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))

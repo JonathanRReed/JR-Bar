@@ -72,11 +72,11 @@ public final class CoreModel {
     // MARK: Commands
 
     @discardableResult
-    public func send(_ name: String, args: [String: JSONValue] = [:]) async throws -> CoreReply {
+    public func send(_ name: String, args: [String: JSONValue] = [:], timeout: TimeInterval? = nil) async throws -> CoreReply {
         guard let client else { throw CoreClientError.notConnected }
         inFlightCommands += 1
         defer { inFlightCommands -= 1 }
-        return try await client.send(name: name, args: args)
+        return try await client.send(name: name, args: args, timeout: timeout)
     }
 
     /// Sends and forgets; failures land in `lastDecodeFailure` for the log view.
@@ -100,19 +100,28 @@ public final class CoreModel {
     /// Acknowledges completions; the reply's `batch` is kept so `undoClear`
     /// can put them back within `EventPolicy.undoWindow`.
     public func clearCompleted(sessions: [String]? = nil) {
-        let scope: JSONValue = sessions.map { .array($0.map(JSONValue.string)) } ?? .string("all")
         Task { [weak self] in
             guard let self else { return }
-            do {
-                let reply = try await self.send("clear_completed", args: ["sessions": scope])
-                if reply.ok, let batch = reply.result?["batch"]?.stringValue {
-                    self.lastClear = (batch, Date())
-                }
-            } catch {
-                self.lastDecodeFailure = "clear_completed: \(error)"
-            }
+            do { _ = try await self.clearCompletedNow(sessions: sessions) }
+            catch { self.lastDecodeFailure = "clear_completed: \(error)" }
         }
     }
+
+    /// `clear_completed` and its reply: `ok` with `{batch, cleared[]}`, the
+    /// batch remembered for `undoClear`. Throws when the socket is down.
+    @discardableResult
+    public func clearCompletedNow(sessions: [String]? = nil) async throws -> CoreReply {
+        let scope: JSONValue = sessions.map { .array($0.map(JSONValue.string)) } ?? .string("all")
+        let reply = try await send("clear_completed", args: ["sessions": scope])
+        if reply.ok, let batch = reply.result?["batch"]?.stringValue {
+            lastClear = (batch, Date())
+        }
+        return reply
+    }
+
+    /// The daemon's count of sessions it keeps out of `state.sessions`
+    /// (acknowledged, older); `list_history` still has them.
+    public var hiddenSessionCount: Int { state?.hiddenCount ?? 0 }
 
     /// The last `clear_completed` batch and when it happened.
     public private(set) var lastClear: (batch: String, at: Date)?
@@ -197,17 +206,23 @@ public final class CoreModel {
     }
 
     /// Sends and decodes; a `not ok` reply becomes its `CoreReplyError`.
-    public func request<T: Decodable>(_ name: String, args: [String: JSONValue] = [:], as type: T.Type) async throws -> T {
-        let reply = try await send(name, args: args)
+    public func request<T: Decodable>(_ name: String, args: [String: JSONValue] = [:], as type: T.Type, timeout: TimeInterval? = nil) async throws -> T {
+        let reply = try await send(name, args: args, timeout: timeout)
         guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "\(name) failed") }
         return try ReplyDecoding.decode(type, from: reply.result)
     }
 
     // MARK: Usage Center (app-proposed extensions, see app/README.md)
 
+    /// How long a `usage_history` request may take: a cold transcript scan
+    /// runs tens of seconds on the daemon's socket thread.
+    public static let usageHistoryTimeout: TimeInterval = 30
+
     /// `usage_history {provider, range}` → daily and hourly token/cost rows.
+    /// Waits `usageHistoryTimeout` rather than the default 10 s.
     public func usageHistory(provider: String, range: UsageHistoryRange) async throws -> UsageHistory {
-        try await request("usage_history", args: ["provider": .string(provider), "range": .string(range.rawValue)], as: UsageHistory.self)
+        try await request("usage_history", args: ["provider": .string(provider), "range": .string(range.rawValue)],
+                          as: UsageHistory.self, timeout: Self.usageHistoryTimeout)
     }
 
     /// `refresh_usage {providers[]}`; an empty list means every provider.

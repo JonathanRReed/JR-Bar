@@ -17,15 +17,23 @@ public struct AppState: Codable, Equatable, Sendable {
     public var loginItemRegistered: Bool
     /// The Screen Bar is shown under the notch.
     public var showScreenBar: Bool
+    /// `menu_bar_icon_style`, which the app owns rather than the daemon:
+    /// the core answers `set_setting` for this key with `ok` and then keeps
+    /// its own value (it is one of `SettingsKey.appIntroduced`, absent from
+    /// the Python settings dataclass), so a choice made in Settings only
+    /// sticks if it is written here. nil means the app's default.
+    public var menuBarIconStyle: String?
 
-    public init(bundledHooksInstalledFor: String? = nil, loginItemRegistered: Bool = false, showScreenBar: Bool = true) {
+    public init(bundledHooksInstalledFor: String? = nil, loginItemRegistered: Bool = false, showScreenBar: Bool = true,
+                menuBarIconStyle: String? = nil) {
         self.bundledHooksInstalledFor = bundledHooksInstalledFor
         self.loginItemRegistered = loginItemRegistered
         self.showScreenBar = showScreenBar
+        self.menuBarIconStyle = menuBarIconStyle
     }
 
     private enum CodingKeys: String, CodingKey {
-        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar
+        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys are
@@ -35,6 +43,7 @@ public struct AppState: Codable, Equatable, Sendable {
         bundledHooksInstalledFor = (try? container.decodeIfPresent(String.self, forKey: .bundledHooksInstalledFor)) ?? nil
         loginItemRegistered = (try? container.decodeIfPresent(Bool.self, forKey: .loginItemRegistered)) ?? false
         showScreenBar = (try? container.decodeIfPresent(Bool.self, forKey: .showScreenBar)) ?? true
+        menuBarIconStyle = (try? container.decodeIfPresent(String.self, forKey: .menuBarIconStyle)) ?? nil
     }
 }
 

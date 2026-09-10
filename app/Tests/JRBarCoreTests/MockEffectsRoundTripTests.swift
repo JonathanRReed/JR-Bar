@@ -18,11 +18,26 @@ struct MockEffectsRoundTripTests {
         return model
     }
 
+    /// `usage_history` until the daemon stops calling it partial: the
+    /// mock finishes its simulated scan on the second ask, as the daemon
+    /// does once the scan is warm.
+    @MainActor
+    static func fullHistory(_ model: CoreModel, provider: String, range: UsageHistoryRange) async throws -> UsageHistory {
+        var history = try await model.usageHistory(provider: provider, range: range)
+        var tries = 0
+        while history.partial, tries < 20 {
+            try? await Task.sleep(for: .milliseconds(120))
+            history = try await model.usageHistory(provider: provider, range: range)
+            tries += 1
+        }
+        return history
+    }
+
     @Test("usage_history and refresh_usage")
     @MainActor
     func usage() async throws {
         let socket = MockCoreIntegrationTests.temporarySocketPath()
-        let mock = try MockCoreIntegrationTests.launchMock(socket: socket, extraArguments: ["--step", "600"])
+        let mock = try MockCoreIntegrationTests.launchMock(socket: socket, extraArguments: ["--step", "600", "--history-scan", "0.4"])
         defer {
             if mock.isRunning { mock.terminate() }
             try? FileManager.default.removeItem(atPath: socket)
@@ -30,7 +45,7 @@ struct MockEffectsRoundTripTests {
         let model = try await Self.connectedModel(socket: socket)
         defer { model.stop() }
 
-        #expect(model.usage.count == 4)
+        #expect(model.usage.count == 5)
         let gemini = try #require(model.usage.first { $0.id == "gemini" })
         #expect(gemini.windows.first?.usedPct ?? 0 >= 91)
         #expect(gemini.forecast?.exhaustsAt != nil)
@@ -40,16 +55,42 @@ struct MockEffectsRoundTripTests {
         #expect(model.usage.first { $0.id == "claude" }?.account?.fidelity == "official")
         #expect(!model.usageSamples.samples(provider: "claude", window: "5h").isEmpty)
 
-        let week = try await model.usageHistory(provider: "claude", range: .week)
+        // A cold scan answers with what it has, marked `partial`, and says
+        // so again with a `usage_history_ready` event when it lands.
+        let cold = try await model.usageHistory(provider: "claude", range: .week)
+        #expect(cold.partial, "the first ask for a range catches the scan mid-flight")
+        #expect(cold.days.isEmpty, "nothing cached yet: the daemon answers pending, not wrong")
+        #expect(cold.records == 0)
+        #expect(!cold.hasNoLocalRecords, "a scan that has not finished is not a verdict about the Mac")
+        let announced = await MockCoreIntegrationTests.wait {
+            model.lastEvent?.kind == CoreEvent.usageHistoryReadyKind
+        }
+        #expect(announced, "the scan announces itself when it finishes")
+        #expect(model.lastEvent?.provider == "claude")
+        #expect(model.lastEvent?.range == "7d")
+        #expect(model.lastEvent?.notify == false, "it is a hint to re-ask, not a banner")
+
+        let week = try await Self.fullHistory(model, provider: "claude", range: .week)
+        #expect(!week.partial)
         #expect(week.days.count == 7)
         #expect(week.hours.count == 168)
         #expect(week.pricing?.approximate == true)
         #expect(week.account?.plan == "Max 20×")
-        let year = try await model.usageHistory(provider: "codex", range: .year)
+        #expect((week.records ?? 0) > 0)
+        #expect(!week.hasNoLocalRecords)
+        let year = try await Self.fullHistory(model, provider: "codex", range: .year)
         #expect(year.days.count == 365)
         #expect(year.range == "365d")
-        let none = try await model.usageHistory(provider: "cursor", range: .month)
+        let none = try await Self.fullHistory(model, provider: "cursor", range: .month)
         #expect(none.isEmpty)
+        #expect(none.records == 0)
+        #expect(none.hasNoLocalRecords, "the scan ran and this Mac has nothing local for that provider")
+        // Signed in, reporting windows, and still nothing to scan: the
+        // Usage Center says so rather than drawing a month of zero.
+        let devin = try await Self.fullHistory(model, provider: "devin", range: .month)
+        #expect(devin.records == 0)
+        #expect(devin.hasNoLocalRecords)
+        #expect(try #require(model.usage.first { $0.id == "devin" }).windows.count == 2)
         await #expect(throws: CoreReplyError.self) {
             _ = try await model.usageHistory(provider: "nobody", range: .month)
         }
