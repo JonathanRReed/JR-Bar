@@ -408,6 +408,21 @@ def test_release_gate_runs_the_bundled_daemon_doctor_against_the_installed_app()
     assert 'hook shim: $app/Contents/Helpers/jrbar-hook' in text
 
 
+def test_release_gate_quiesces_the_running_app_before_it_installs_over_it() -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+
+    # A running JR-Bar rewrites its own settings as devices and sessions come
+    # and go, so a field that moved between the before and after snapshots
+    # could not be told apart from an installer that damaged it. Quitting
+    # first is also what a real upgrade does.
+    assert "tell application \"JR-Bar\" to quit" in text
+    assert "pgrep -x JR-Bar" in text
+    assert "refusing to install underneath it" in text
+    # And the Mac is left the way it was found.
+    assert "relaunching" in text
+    assert "start_app" in text
+
+
 def test_release_gate_installs_into_the_home_applications_folder_by_default() -> None:
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 

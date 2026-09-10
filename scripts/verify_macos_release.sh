@@ -594,6 +594,39 @@ fi
 # --------------------------------------------------------------- installed app
 # Everything below touches the JR-Bar installed on this Mac.
 phase "installed upgrade at $INSTALLED_APP"
+was_running=0
+# A running JR-Bar owns its settings file and rewrites it as devices and
+# sessions come and go. Installing underneath it would both be unrealistic
+# (a real upgrade quits first) and make settings preservation unprovable:
+# a field that changed between the snapshots would be indistinguishable
+# from an installer that damaged it. So quit it, install, check, restore.
+stop_app() {
+    if /usr/bin/pgrep -x JR-Bar >/dev/null 2>&1; then
+        was_running=1
+        echo "quitting the running JR-Bar so the install can be observed"
+        # Quitting stops the supervised daemon too, which takes a moment, and
+        # an app still coming up may not be scriptable yet — so re-send the
+        # quit every five seconds rather than trusting one Apple event.
+        waited=0
+        while /usr/bin/pgrep -x JR-Bar >/dev/null 2>&1 && [ "$waited" -lt 30 ]; do
+            if [ $((waited % 5)) -eq 0 ]; then
+                /usr/bin/osascript -e 'tell application "JR-Bar" to quit' >/dev/null 2>&1 || true
+            fi
+            /bin/sleep 1
+            waited=$((waited + 1))
+        done
+        if /usr/bin/pgrep -x JR-Bar >/dev/null 2>&1; then
+            echo "JR-Bar did not quit; refusing to install underneath it." >&2
+            exit 1
+        fi
+    fi
+}
+start_app() {
+    if [ "$was_running" = "1" ]; then
+        echo "relaunching $INSTALLED_APP"
+        /usr/bin/open -a "$INSTALLED_APP" || true
+    fi
+}
 install_pkg() {
     if [ "$INSTALL_SCOPE" = "system" ]; then
         /usr/bin/sudo /usr/sbin/installer -pkg "$pkg" -target "$INSTALLER_TARGET"
@@ -632,6 +665,7 @@ else
             baseline_ready=1
         fi
     fi
+    stop_app
     before_settings="$(/usr/bin/mktemp -t jrbar-settings-before.XXXXXX.json)"
     /bin/cp "$SETTINGS_PATH" "$before_settings"
 
@@ -788,6 +822,7 @@ echo "clean install verified"
         /bin/rm -f "$before_uninstall_settings"
         install_pkg
     fi
+    start_app
 fi
 
 # ------------------------------------------------------------------ SBOM
