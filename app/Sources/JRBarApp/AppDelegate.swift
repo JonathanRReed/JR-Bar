@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import JRBarUI
 import Observation
+import ServiceManagement
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -31,12 +32,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
     private static let showScreenBarKey = "showScreenBar"
+    /// The packaged build whose `agent-monitor install all` last succeeded.
+    private static let hooksInstalledForKey = "bundledHooksInstalledFor"
+    /// Set once the first packaged launch has registered the login item.
+    private static let loginItemRegisteredKey = "loginItemRegisteredOnFirstRun"
 
     private var terminationSignal: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [Self.showScreenBarKey: true])
+
+        // `JRBAR_LOGIN_ITEM=on|off|status` only touches the login item and
+        // exits: scripts/install-agents.sh uses it to hand the Mac between
+        // the packaged app (login item) and the dev LaunchAgents.
+        if let request = ProcessInfo.processInfo.environment["JRBAR_LOGIN_ITEM"], !request.isEmpty {
+            let service = SMAppService.mainApp
+            do {
+                switch request {
+                case "on": try service.register()
+                case "off": try service.unregister()
+                default: break
+                }
+                print("login item: \(Self.describe(service.status))")
+                exit(0)
+            } catch {
+                print("login item: \(error.localizedDescription)")
+                exit(1)
+            }
+        }
 
         // `JRBAR_APPEARANCE=light|dark` pins every window to one appearance
         // (screenshots of both looks without touching the system setting).
@@ -152,10 +176,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         watchSocketDirectory(core.socketPath)
 
         // Core supervision: with JRBAR_CORE_EXEC set, the daemon is our
-        // child and we keep it alive; otherwise we connect to whatever
-        // listens on the socket.
+        // child and we keep it alive. A packaged bundle carries its own
+        // daemon under Contents/Helpers and supervises that. Otherwise we
+        // connect to whatever listens on the socket (the dev LaunchAgents).
         if let command = ProcessInfo.processInfo.environment["JRBAR_CORE_EXEC"], !command.isEmpty {
-            startSupervisor(command: command, core: core, store: store)
+            if let supervisor = CoreSupervisor(commandLine: command) {
+                attachSupervisor(supervisor, describedAs: "`\(command)`", core: core, store: store)
+            }
+        } else if let bundled = CoreSupervisor.bundledCore(in: Bundle.main) {
+            attachSupervisor(CoreSupervisor(bundled: bundled), describedAs: "the bundled daemon (\(bundled.buildStamp))",
+                             core: core, store: store)
+            completeFirstRun(with: bundled, core: core)
         }
 
         let shown = defaults.bool(forKey: Self.showScreenBarKey)
@@ -255,8 +286,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Core supervision
 
-    private func startSupervisor(command: String, core: CoreModel, store: PanelStore) {
-        guard let supervisor = CoreSupervisor(commandLine: command) else { return }
+    private func attachSupervisor(_ supervisor: CoreSupervisor, describedAs description: String,
+                                  core: CoreModel, store: PanelStore) {
         self.supervisor = supervisor
         supervisor.onOutput = { [weak core] stream, line in
             Task { @MainActor [weak core] in
@@ -273,8 +304,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         store.onRestartCore = { [weak supervisor] in supervisor?.restart() }
         store.supervisorState = .idle
-        core.appendLocalLog(level: "supervisor", "supervising `\(command)`")
+        core.appendLocalLog(level: "supervisor", "supervising \(description)")
         supervisor.start()
+    }
+
+    /// The first launch of a packaged build points every provider's hooks at
+    /// the bundled shim (`jrbar-core agent-monitor install all`, once per
+    /// build stamp) and, the very first time, registers the app as a login
+    /// item. Personal app: launch at login is on by default and Settings ›
+    /// General turns it off.
+    private func completeFirstRun(with bundled: CoreSupervisor.BundledCore, core: CoreModel) {
+        let defaults = UserDefaults.standard
+        let stamp = bundled.buildStamp
+        if defaults.string(forKey: Self.hooksInstalledForKey) != stamp {
+            core.appendLocalLog(level: "supervisor", "first launch of \(stamp): installing provider hooks for \(bundled.hookShim)")
+            DispatchQueue.global(qos: .utility).async {
+                let result = bundled.run(["agent-monitor", "install", "all"])
+                Task { @MainActor [weak core] in
+                    for line in result.output.split(separator: "\n") where !line.isEmpty {
+                        core?.appendLocalLog(level: "hooks", String(line))
+                    }
+                    if result.status == 0 {
+                        UserDefaults.standard.set(stamp, forKey: Self.hooksInstalledForKey)
+                        core?.appendLocalLog(level: "supervisor", "provider hooks installed for \(stamp)")
+                    } else {
+                        core?.appendLocalLog(level: "supervisor", "provider hook install exited \(result.status); will retry next launch")
+                    }
+                    NSLog("JR-Bar hooks: install all exited %d", result.status)
+                }
+            }
+        }
+        if !defaults.bool(forKey: Self.loginItemRegisteredKey) {
+            do {
+                try SMAppService.mainApp.register()
+                core.appendLocalLog(level: "supervisor", "launch at login: registered (Settings › General turns it off)")
+            } catch {
+                core.appendLocalLog(level: "supervisor", "launch at login: \(error.localizedDescription)")
+            }
+            defaults.set(true, forKey: Self.loginItemRegisteredKey)
+        }
+        NSLog("JR-Bar login item: %@", Self.describe(SMAppService.mainApp.status))
+    }
+
+    private static func describe(_ status: SMAppService.Status) -> String {
+        switch status {
+        case .enabled: return "enabled"
+        case .requiresApproval: return "requires approval (System Settings › General › Login Items)"
+        case .notRegistered: return "not registered"
+        case .notFound: return "not found"
+        @unknown default: return "unknown"
+        }
     }
 
     /// An accessory app has no menu bar of its own, but the Settings window's
