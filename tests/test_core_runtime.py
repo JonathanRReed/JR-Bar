@@ -543,7 +543,7 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     assert dot_command.payload is dot and dot_result.request is dot
     assert handed == [(f"brightness 76\n{result.write.program}", result.write.state)]
     assert dot_result.write.program.endswith(result.write.program)
-    assert dot_result.label.endswith(f"linked to {pro.device.name}")
+    assert dot_result.label.endswith(f"extend with {pro.device.name}")
 
     controller._apply_hardware_write_result(submitted[0], result)
     assert controller._core_linked_results == {}
@@ -649,7 +649,7 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
     result = controller._sync_hardware_device(ambient)
     # Default linked scale 0.3 of the Dot's full brightness: 255 * 0.3 = 76.
     assert handed == [(f"brightness 76\n{pro_write.program}", pro_write.state)]
-    assert result.write.program.endswith(pro_write.program) and result.label == "SidePulse Dot linked"
+    assert result.write.program.endswith(pro_write.program) and result.label == "SidePulse Dot extend"
 
     plain = HardwareWriteRequest(dot_device, AgentMode.WORKING, None, (), None, 0.5)
     controller._sync_hardware_device(plain)
@@ -670,10 +670,74 @@ def test_linked_dot_program_folds_brightness_lines(headless) -> None:
     controller = headless
     controller.settings = controller.settings.with_linked_dot_scale(0.5)
     dot = SimpleNamespace(brightness=200)
-    out = controller._core_linked_dot_program("brightness 100\n#112233 500ms\nrepeat", dot)
+    out = controller._core_dot_plan(dot, "brightness 100\n#112233 500ms\nrepeat")
     # min(strip 100, dot 200) * 0.5 = 50; the strip's own line is folded in.
-    assert out == "brightness 50\n#112233 500ms\nrepeat"
-    assert controller._core_linked_dot_program("#FFFFFF", SimpleNamespace(brightness=255)) == "brightness 128\n#FFFFFF"
+    assert out.program == "brightness 50\n#112233 500ms\nrepeat"
+    assert (
+        controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF").program
+        == "brightness 128\n#FFFFFF"
+    )
+
+
+def test_the_dots_role_decides_what_it_plays(headless) -> None:
+    """``dot_role`` is the authority over the Dot, not the strip and not a
+    per-device display kind. The live 0.8 bug: an eight-LED chase written to
+    a two-LED Dot (LEDs 0 and 1 black in most frames, so the Dot looked
+    dead), while the Dot's ``why`` stayed frozen on a long-gone quota alert
+    because linked mode had taken its render path away."""
+    from pathlib import Path as _Path
+
+    from jrbar.device_writer import leds_addressed_beyond
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, StatusBarDevice
+
+    controller = headless
+    controller.settings = controller.settings.with_devices_linked(True)
+    dot_device = StatusBarDevice(
+        "sidepulse:dot:1", "SidePulse Dot", _Path("/Volumes/PulseDot"),
+        _Path("/Volumes/PulseDot/LEDS.LED"), True, "quota_runway",
+    )
+    request = HardwareWriteRequest(dot_device, AgentMode.WORKING, None, (), None, 0.5)
+    chase = (
+        "#000000 #000000 #000000 #000000 #02111E #000000 #000000 #000000 250ms none\n"
+        "off 250ms none\nrepeat"
+    )
+    controller._core_linked_pro_program = (chase, None)
+    controller._core_linked_pro_leds = 8
+
+    # extend: the strip's colours, rendered for two LEDs, never wider.
+    controller.settings = controller.settings.with_dot_role("extend")
+    assert controller._core_linked_dot_follows(request) is True
+    plan = controller._core_dot_plan(SimpleNamespace(brightness=255))
+    assert leds_addressed_beyond(plan.program, 2) == ()
+    assert "#02111E" in plan.program
+    assert plan.role == "extend"
+
+    # asks: dark while nobody is needed, amber the moment someone is.
+    controller.settings = controller.settings.with_dot_role("asks")
+    with controller._core_lock:
+        controller._core_documents["state"] = {"aggregate": {"needs_you": 0}}
+    # The brightness line still applies: it scales the device's resting glow.
+    assert controller._core_dot_plan(SimpleNamespace(brightness=255)).program == "brightness 76\noff"
+    # A session merely waiting on input carries no answerable ask row, but
+    # the fleet headline still says needs_you -- and a person is still needed.
+    with controller._core_lock:
+        controller._core_documents["state"] = {
+            "aggregate": {"needs_you": 0, "mode": "needs_you"}
+        }
+    assert controller._core_dot_beacon_facts().ask_count == 1
+    with controller._core_lock:
+        controller._core_documents["state"] = {"aggregate": {"needs_you": 1}}
+    asking = controller._core_dot_plan(SimpleNamespace(brightness=255))
+    assert asking.program.splitlines()[1].startswith("#FF9F0A") and asking.why == "waiting"
+    # No strip needed: a beacon is not a continuation of anything.
+    controller._core_linked_pro_program = None
+    assert controller._core_linked_dot_follows(request) is True
+
+    # status: the Dot renders its own two-LED display, as it always has.
+    controller.settings = controller.settings.with_dot_role("status")
+    assert controller._core_linked_dot_follows(request) is False
+    assert controller._core_dot_plan(SimpleNamespace(brightness=255)) is None
 
 
 # --- clear_completed / undo_clear over the real command path -----------------

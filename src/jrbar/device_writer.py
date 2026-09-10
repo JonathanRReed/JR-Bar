@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys as _sys
 from pathlib import Path
 
 from . import _device_writer_legacy as _legacy
@@ -16,6 +17,38 @@ def _led_count_for_target(target: Path) -> int:
     from .led_status import led_count_for_target
 
     return led_count_for_target(target)
+
+
+def leds_addressed_beyond(text: str, led_count: int) -> tuple[int, ...]:
+    """LED indices this program paints that the device does not have.
+
+    Both spellings count: a colour list longer than the device
+    ("color-list-too-long") and a named index past its last LED
+    ("index-out-of-range"). The firmware parses either and then throws the
+    extra away, and the animation validator agrees with it -- both are
+    WARNINGS, not errors, so nothing on this path used to notice. That is
+    how an eight-colour strip program reached a two-LED Dot and rendered as
+    two black LEDs beside a lit strip. A program is written for one device
+    or it is not written at all.
+    """
+    from .animation import ColorList, IndexedPaint, PaintStep, read_program
+
+    try:
+        animation, _problems = read_program(text, led_count=led_count)
+    except Exception:
+        return ()
+    indices: set[int] = set()
+    for step in animation.steps:
+        if type(step) is not PaintStep:
+            continue
+        for segment in step.segments:
+            if type(segment) is ColorList:
+                indices.update(range(led_count, len(segment.colors)))
+            elif type(segment) is IndexedPaint:
+                indices.update(
+                    int(index) for index, _color in segment.assignments if int(index) >= led_count
+                )
+    return tuple(sorted(indices))
 
 
 def write_led_program(
@@ -40,6 +73,20 @@ def write_led_program(
         file_name=file_name,
     )
     led_count = _led_count_for_target(target)
+    stray = leds_addressed_beyond(normalized, led_count)
+    if stray:
+        # Refuse and say so, rather than writing bytes the device will
+        # silently drop. Rendering for the wrong LED count is a caller bug
+        # every time; a device left showing its previous program is a far
+        # better outcome than one showing the wrong four-fifths of someone
+        # else's animation.
+        message = (
+            f"LED program addresses LED{'s' if len(stray) > 1 else ''} "
+            f"{', '.join(str(index) for index in stray)} on a {led_count}-LED device; "
+            "render for this device's LED count."
+        )
+        print(f"jrbar: {message}", file=_sys.stderr)
+        raise _legacy.DeviceWriteError(message)
     compiled = compile_presentation_program(normalized, led_count=led_count)
     if not compiled.accepted:
         raise _legacy.DeviceWriteError(

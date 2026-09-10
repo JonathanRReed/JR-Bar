@@ -10,6 +10,12 @@ from typing import Any
 from .auto_dim import AutoDimSettings
 from .battery import DEFAULT_POWER_CHANGE_PREVIEW_SECONDS
 from .colors import ColorSettings
+from .dot_role import (
+    DEFAULT_DOT_ROLE,
+    DOT_LED_COUNT,
+    migrated_role_for_display,
+    normalize_dot_role,
+)
 from .dnd_policy import (
     DndMode,
     DndOverride,
@@ -19,7 +25,12 @@ from .dnd_policy import (
     parse_dnd_settings,
     serialize_dnd_settings,
 )
-from .led_status import DEFAULT_CHANNEL_GAIN, normalize_channel_gain
+from .led_status import (
+    DEFAULT_CHANNEL_GAIN,
+    DEFAULT_FILE_NAME,
+    led_count_for_target,
+    normalize_channel_gain,
+)
 from .providers import PROVIDER_REGISTRY
 from .signals import (
     DEFAULT_ALERT_BURST,
@@ -405,6 +416,14 @@ class AgentMonitorSettings:
     # are physically much brighter than the strip's, so equal numbers read
     # as a Dot that outshines the Pro.
     linked_dot_scale: float = 0.3
+    # What a linked Dot is FOR (jrbar.dot_role): "extend" replays the
+    # strip's own program narrowed to two LEDs, "asks" turns the Dot into a
+    # dedicated attention beacon that is dark until someone is needed,
+    # "status" leaves the Dot on its own two-LED semantic display.
+    dot_role: str = DEFAULT_DOT_ROLE
+    # Whether the "asks" beacon also lights (green) for a completion nobody
+    # has looked at yet. Off: an unseen completion is not someone waiting.
+    dot_role_include_completions: bool = False
     screen_bar_gauges_enabled: bool = False
     # Follow Alcove's visible capsule width (alpha-measured) so an
     # expanded live activity never outgrows the bracket. On by default;
@@ -1055,6 +1074,12 @@ class AgentMonitorSettings:
     def with_linked_dot_scale(self, scale: float) -> AgentMonitorSettings:
         return replace(self, linked_dot_scale=_clamp_linked_dot_scale(scale))
 
+    def with_dot_role(self, role: object) -> AgentMonitorSettings:
+        return replace(self, dot_role=normalize_dot_role(role))
+
+    def with_dot_role_include_completions(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, dot_role_include_completions=bool(enabled))
+
     def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_gauges_enabled=bool(enabled))
 
@@ -1536,6 +1561,8 @@ class AgentMonitorSettings:
             "link_screen_bar_to_hardware": self.link_screen_bar_to_hardware,
             "devices_linked": self.devices_linked,
             "linked_dot_scale": self.linked_dot_scale,
+            "dot_role": normalize_dot_role(self.dot_role),
+            "dot_role_include_completions": self.dot_role_include_completions,
             "screen_bar_gauges_enabled": self.screen_bar_gauges_enabled,
             "screen_bar_follow_alcove": self.screen_bar_follow_alcove,
             "screen_bar_show_in_full_screen": self.screen_bar_show_in_full_screen,
@@ -1730,13 +1757,14 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
 
     led_display = _led_display_setting(data.get("led_display"), LED_DISPLAY_AGENT)
     parsed_dnd = parse_dnd_settings(data)
+    devices = _device_display_settings(data.get("devices"), led_display)
     return AgentMonitorSettings(
         codex_transcripts_enabled=_bool_setting(transcript.get("codex"), False),
         pi_transcripts_enabled=_bool_setting(transcript.get("pi"), False),
         gemini_transcripts_enabled=_bool_setting(transcript.get("gemini"), False),
         claude_transcripts_enabled=_bool_setting(transcript.get("claude"), False),
         led_display=led_display,
-        devices=_device_display_settings(data.get("devices"), led_display),
+        devices=devices,
         virtual_status_device_enabled=_bool_setting(
             data.get("virtual_status_device_enabled"), False
         ),
@@ -1887,6 +1915,10 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         devices_linked=_bool_setting(data.get("devices_linked"), True),
         linked_dot_scale=_clamp_linked_dot_scale(data.get("linked_dot_scale")),
+        dot_role=_dot_role_setting(data, devices),
+        dot_role_include_completions=_bool_setting(
+            data.get("dot_role_include_completions"), False
+        ),
         screen_bar_gauges_enabled=_bool_setting(data.get("screen_bar_gauges_enabled"), False),
         screen_bar_follow_alcove=_bool_setting(data.get("screen_bar_follow_alcove"), True),
         screen_bar_show_in_full_screen=_bool_setting(
@@ -2108,6 +2140,31 @@ def normalize_closed_lid_grace_minutes(
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return default
     return max(MIN_CLOSED_LID_GRACE_MINUTES, min(MAX_CLOSED_LID_GRACE_MINUTES, float(value)))
+
+
+def _dot_role_setting(data: dict, devices: tuple[DeviceDisplaySetting, ...]) -> str:
+    """The stored ``dot_role``, or one migrated from the Dot's old display.
+
+    Before roles existed, "do not let the Dot follow the strip" could only
+    be said by pinning the Dot to a dedicated readout -- quota runway,
+    Effect Studio, battery. That is a role in everything but name, and it
+    is the exact per-device display kind that used to survive as a stale
+    ``lights.surfaces.dot.why`` after linked mode took the render path
+    away from it. Migrated ONCE: the moment the file carries a ``dot_role``
+    key, the key is the only answer.
+    """
+    if "dot_role" in data:
+        return normalize_dot_role(data.get("dot_role"))
+    for device in devices:
+        try:
+            if led_count_for_target(Path(device.path) / DEFAULT_FILE_NAME) != DOT_LED_COUNT:
+                continue
+        except Exception:
+            continue
+        migrated = migrated_role_for_display(device.led_display)
+        if migrated is not None:
+            return migrated
+    return DEFAULT_DOT_ROLE
 
 
 def _led_display_setting(value: object, default: str) -> str:
