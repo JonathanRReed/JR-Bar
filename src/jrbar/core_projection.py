@@ -200,6 +200,11 @@ class SurfaceFacts:
     brightness: float | None = None
     why: str | None = None
     override: str | None = None
+    #: Only the ``dot`` surface carries this: what a linked Dot is FOR
+    #: (``jrbar.dot_role`` -- ``extend`` / ``asks`` / ``status``). Absent
+    #: means the surface has no role to have, or the Dot is rendering its
+    #: own display.
+    role: str | None = None
     why_detail: dict[str, Any] | None = None
 
 
@@ -1025,7 +1030,7 @@ def build_lights_document(
         document["auto_dim"] = dict(auto_dim)
     for name, facts in surfaces.items():
         entry: dict[str, Any] = {"program": facts.program}
-        for key in ("led_count", "anchor", "motion", "static_fallback", "brightness", "why", "override", "why_detail"):
+        for key in ("led_count", "anchor", "motion", "static_fallback", "brightness", "why", "override", "role", "why_detail"):
             value = getattr(facts, key)
             if value is not None:
                 entry[key] = value

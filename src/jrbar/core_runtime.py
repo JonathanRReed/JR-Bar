@@ -1835,42 +1835,112 @@ def build_headless_controller_class() -> type:
                     if led_count_for_target(request.device.target) != 2 and write.program:
                         # The strip's latest program is what a linked Dot
                         # replays, whichever path asks to write the Dot next.
+                        # Its LED COUNT rides along: a program means nothing
+                        # without the device it was rendered for, and the Dot
+                        # has to narrow it before it can play it.
                         self._core_linked_pro_program = (write.program, write.state)
+                        self._core_linked_pro_leds = led_count_for_target(request.device.target)
             except Exception:
                 pass
 
-        def _core_linked_dot_program(self, program: str, controller) -> str:
-            """The strip's program at the Dot's brightness times the linked
-            scale. Any ``brightness`` line the strip's render carried is
-            folded in; the firmware takes the last brightness line, so one
-            combined line goes first and no other remains."""
-            from ._led_status_legacy import apply_brightness, normalize_brightness
+        # -- what the Dot is FOR (jrbar.dot_role) ------------------------------
 
-            lines = program.splitlines()
-            existing = 255
-            kept: list[str] = []
-            for line in lines:
-                parts = line.strip().split()
-                if len(parts) == 2 and parts[0] == "brightness":
-                    try:
-                        existing = min(existing, int(parts[1]))
-                    except ValueError:
-                        pass
-                    continue
-                kept.append(line)
-            scale = float(getattr(self.settings, "linked_dot_scale", 0.3))
-            device = normalize_brightness(getattr(controller, "brightness", 255))
-            combined = min(existing, device) * scale
-            return apply_brightness("\n".join(kept), combined)
+        def _core_dot_beacon_facts(self):
+            """Whether a person is needed right now, for the ``asks`` role.
 
-        def _core_linked_dot_follows(self, request) -> bool:
-            """True when this request targets the Dot and linked mode says it
-            must replay the strip rather than render its own program."""
-            from ._led_status_legacy import led_count_for_target
+            The published ``state`` document already counts exactly this,
+            past stale rows and cleared receipts, and the app reads the same
+            numbers -- so the Dot and the Agent Browser can never disagree
+            about whether anybody is waiting.
+            """
+            from .dot_role import DotBeaconFacts
+
+            with self._core_lock:
+                aggregate = (self._core_documents.get("state") or {}).get("aggregate") or {}
+            try:
+                stage = int(self.current_escalation_stage())
+            except Exception:
+                stage = 0
+            mode = str(aggregate.get("mode") or "")
+            # ``needs_you`` counts answerable asks; ``mode`` is the whole
+            # fleet's headline and says "needs_you" for a session that is
+            # merely waiting on input with no ask row to answer. Either is a
+            # person being needed, which is the only question this surface
+            # exists to answer, so a headline with no countable ask still
+            # lights the beacon.
+            asks = int(aggregate.get("needs_you") or 0)
+            return DotBeaconFacts(
+                ask_count=max(asks, 1 if mode == "needs_you" else 0),
+                blocked=bool(aggregate.get("failed") or 0) or mode == "failed",
+                unseen_completions=int(aggregate.get("ready") or 0),
+                escalation_stage=stage,
+            )
+
+        def _core_dot_plan(self, controller=None, program: str | None = None):
+            """The role's whole answer for the Dot, or ``None`` to fall through.
+
+            ``None`` means ``status`` (or ``extend`` with nothing to extend):
+            the Dot renders its own two-LED semantic display
+            (``dot_binary_heartbeat`` through the ambient dispatch) exactly
+            as an unlinked Dot always has.
+
+            ``controller`` is optional because the ``lights`` frame wants the
+            role and the ``why`` without wanting a brightness line.
+            """
+            from ._led_status_legacy import normalize_brightness
+            from .dot_role import plan_dot_surface
 
             if not bool(getattr(self.settings, "devices_linked", True)):
+                return None
+            strip = getattr(self, "_core_linked_pro_program", None)
+            body = program if program is not None else (strip[0] if strip else None)
+            brightness = None
+            if controller is not None:
+                scale = float(getattr(self.settings, "linked_dot_scale", 0.3))
+                device = normalize_brightness(getattr(controller, "brightness", 255))
+                # The strip's own brightness line still caps the Dot: the
+                # linked scale is a ratio between two devices, not a licence
+                # to outshine.
+                existing = min(
+                    (
+                        int(parts[1])
+                        for parts in (line.strip().split() for line in (body or "").splitlines())
+                        if len(parts) == 2 and parts[0] == "brightness" and parts[1].isdigit()
+                    ),
+                    default=255,
+                )
+                brightness = round(min(existing, device) * scale)
+            return plan_dot_surface(
+                role=getattr(self.settings, "dot_role", None),
+                semantic=getattr(getattr(self, "_current_resolved_glance", None), "semantic", None),
+                facts=self._core_dot_beacon_facts(),
+                strip_program=body,
+                strip_led_count=int(getattr(self, "_core_linked_pro_leds", 8) or 8),
+                brightness=brightness,
+                include_completions=bool(
+                    getattr(self.settings, "dot_role_include_completions", False)
+                ),
+            )
+
+        def _core_linked_dot_follows(self, request) -> bool:
+            """True when this request targets the Dot and its role says the
+            daemon, not the Dot's own display path, decides what it shows.
+
+            The role is the authority, and it outranks a per-device display
+            kind: an ``extend`` or ``asks`` Dot that still carries a stale
+            ``quota_runway`` from before roles existed follows its role.
+            ``asks`` needs no strip at all -- an attention beacon is not a
+            continuation of anything.
+            """
+            from ._led_status_legacy import led_count_for_target
+            from .dot_role import DotRole, normalize_dot_role
+
+            role = normalize_dot_role(getattr(self.settings, "dot_role", None))
+            if role == DotRole.STATUS.value:
                 return False
-            if getattr(self, "_core_linked_pro_program", None) is None:
+            if not bool(getattr(self.settings, "devices_linked", True)):
+                return False
+            if role == DotRole.EXTEND.value and getattr(self, "_core_linked_pro_program", None) is None:
                 return False
             try:
                 if led_count_for_target(request.device.target) != 2:
@@ -1880,21 +1950,24 @@ def build_headless_controller_class() -> type:
             identity = str(getattr(request, "coalesce_identity", "") or "")
             # Previews the operator asked for (calibration, Effect Studio)
             # still reach the Dot; ambient candidates and ordinary renders
-            # do not: the Dot is the strip's continuation.
+            # do not: the role owns this surface.
             return identity in ("", "latest") or identity.startswith("ambient-")
 
         def _sync_hardware_device(self, request):
             if self._core_linked_dot_follows(request):
-                program, state = self._core_linked_pro_program
                 controller = self.agent_controller_for_device(request.device)
-                write = controller.sync_program(self._core_linked_dot_program(program, controller), state)
-                return legacy.HardwareWriteResult(
-                    request=request,
-                    write=write,
-                    label=f"{request.device.name} linked",
-                    agent_display_rendered=True,
-                    completed_at=self._runtime_worker_monotonic(),
-                )
+                plan = self._core_dot_plan(controller)
+                if plan is not None:
+                    strip = getattr(self, "_core_linked_pro_program", None)
+                    state = strip[1] if strip else legacy.LedDisplayState.IDLE
+                    write = controller.sync_program(plan.program, state)
+                    return legacy.HardwareWriteResult(
+                        request=request,
+                        write=write,
+                        label=f"{request.device.name} {plan.role}",
+                        agent_display_rendered=True,
+                        completed_at=self._runtime_worker_monotonic(),
+                    )
             return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
 
         # -- linked Pro + Dot writes -------------------------------------------
@@ -1944,27 +2017,33 @@ def build_headless_controller_class() -> type:
             return result
 
         def _core_linked_dot_write(self, dot_request, pro_result):
-            """Write the Pro's exact program to the Dot.
+            """The Dot's program, written in the Pro's own worker command.
 
-            Linked mode means one animation across both strips. The
-            firmware ignores per-index colours beyond its LED count, so the
-            Pro's program bytes played on the Dot are LEDs 0 and 1 of the
-            same wave, restarted at the same instant. The Dot's own
-            brightness and channel gains still apply through its controller.
-            Before this the Dot fell through to its ambient "binary
-            heartbeat" candidate: a solid two-LED status code at full
-            brightness that never moved.
+            Linked mode means one clock across both devices: the Dot is
+            written from the Pro's presentation, immediately after it, so
+            the two restart together. What the Dot PLAYS is its role's
+            business (``jrbar.dot_role``) -- the strip's animation narrowed
+            to two LEDs for ``extend``, the attention beacon for ``asks``.
+
+            It used to be the Pro's exact bytes, on the theory that "the
+            firmware ignores per-index colours beyond its LED count" made
+            them LEDs 0 and 1 of the same wave. It does ignore them, which
+            is the problem: an eight-LED chase whose lit index was anywhere
+            but 0 or 1 arrived at the Dot as two black LEDs.
             """
             write = getattr(pro_result, "write", None)
             program = getattr(write, "program", None)
             if not program or getattr(write, "error", None) is not None:
                 return self._sync_hardware_device(dot_request)
             controller = self.agent_controller_for_device(dot_request.device)
-            dot_write = controller.sync_program(self._core_linked_dot_program(program, controller), write.state)
+            plan = self._core_dot_plan(controller, program)
+            if plan is None:
+                return self._sync_hardware_device(dot_request)
+            dot_write = controller.sync_program(plan.program, write.state)
             return legacy.HardwareWriteResult(
                 request=dot_request,
                 write=dot_write,
-                label=f"{dot_request.device.name} linked to {pro_result.request.device.name}",
+                label=f"{dot_request.device.name} {plan.role} with {pro_result.request.device.name}",
                 agent_display_rendered=True,
                 completed_at=self._runtime_worker_monotonic(),
             )
@@ -2980,20 +3059,41 @@ def build_headless_controller_class() -> type:
                     override=override,
                     why_detail=self._core_why_detail(surface_why, facts, glance),
                 )
-            if devices_linked and "dot" in surfaces and "hardware" in surfaces:
-                # Linked Pro + Dot: the Dot carries the strip's anchor so the
-                # app reads both as one unit (core_runtime linked writes).
+            if "dot" in surfaces and surfaces["dot"].why != "preview":
+                # The Dot's ROLE outranks its per-device display kind. That
+                # kind is recorded by the render path the role took away, so
+                # on a role-driven Dot it is frozen at whatever it was the
+                # last time the Dot rendered for itself -- which is how a
+                # long-finished quota alert kept the Dot's ``why`` at
+                # ``capacity`` beside a strip that said ``working``.
                 dot = surfaces["dot"]
-                if surfaces["dot"].why != "preview":
-                    surfaces["dot"] = SurfaceFacts(
-                        program=dot.program,
-                        led_count=dot.led_count,
-                        anchor=hardware_anchor if hardware_anchor is not None else dot.anchor,
-                        brightness=dot.brightness,
-                        why=dot.why,
-                        override=dot.override,
-                        why_detail=dot.why_detail,
-                    )
+                dot_plan = self._core_dot_plan()
+                # Linked Pro + Dot also share an anchor, so the app reads the
+                # two as one unit (core_runtime linked writes).
+                anchor = (
+                    hardware_anchor
+                    if devices_linked and "hardware" in surfaces and hardware_anchor is not None
+                    else dot.anchor
+                )
+                why = dot_plan.why if dot_plan is not None else dot.why
+                surfaces["dot"] = SurfaceFacts(
+                    program=dot.program,
+                    led_count=dot.led_count,
+                    anchor=anchor,
+                    brightness=dot.brightness,
+                    why=why,
+                    override=dot.override,
+                    role=dot_plan.role if dot_plan is not None else None,
+                    why_detail=(
+                        self._core_why_detail(
+                            why,
+                            self._core_light_facts(None, preview=False, display_kind=None),
+                            glance,
+                        )
+                        if dot_plan is not None
+                        else dot.why_detail
+                    ),
+                )
             virtual = self.virtual_status_device
             call = getattr(virtual, "_live_program_call", None)
             virtual_device = next(

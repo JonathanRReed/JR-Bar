@@ -620,6 +620,89 @@ directory; `scripts/install-agents.sh --pkg` is what `make clean-install`
 runs, plain `scripts/install-agents.sh` puts the dev layout back and turns
 the login item off.
 
+## The Dot's role (`lights.surfaces.dot.role`)
+
+Added 2026-09-10. A linked Dot has two LEDs and, until now, exactly one
+job: replay the strip. That is one good answer, not the only one, so the
+Dot now carries a **role** — `dot_role` in the settings document, and
+`role` on the `dot` surface of every `lights` frame.
+
+```json
+"dot":{"program":"brightness 46\n#FF9F0A 1200ms cosine\noff 1200ms cosine\nrepeat",
+       "led_count":2,"anchor":1788982891.31,"brightness":0.8,
+       "role":"asks","why":"waiting","why_detail":{…}}
+```
+
+| `role` | what the Dot plays |
+| --- | --- |
+| `extend` (default) | The strip's own program, phase-locked, **rendered for two LEDs**. The strip's eight indices are downsampled into two bands (0–3 and 4–7), each band showing its brightest lit colour, so a chase still sweeps and a solid colour stays solid. |
+| `asks` | A designated attention beacon: dark while everything is fine, lit only when a session needs the person. A glance at the Dot alone answers "do they need me?". |
+| `status` | The Dot renders its own two-LED semantic display (`dot_binary_heartbeat` through the ambient dispatch), exactly as an unlinked Dot always has. `role` is then absent from the frame: nothing is driving the Dot but the Dot. |
+
+`role` appears on the `dot` surface only, and only while a role is
+actually driving it (never on a `preview`). It is `jrbar.dot_role`'s
+answer, and it **outranks the per-device display kind**: that kind is
+recorded by the render path a role takes away, so on a role-driven Dot it
+freezes at whatever it was the last time the Dot rendered for itself. That
+is why a Dot could sit at `why: "capacity"` for hours after a quota alert
+had gone, next to a strip that said `working`. The role now decides the
+Dot's `why` as well as its program.
+
+### The `asks` beacon
+
+| state | colour | cadence |
+| --- | --- | --- |
+| nobody is needed | dark (`off`, so the device's own `resting_glow` applies) | — |
+| an ask is open (`aggregate.needs_you`) | amber `#FF9F0A` | breathes; tightens with the escalation stage |
+| something is blocked or failed (`aggregate.failed`) | red `#FF0000` | the stage-2 cadence, whatever the ask's age |
+| an unseen completion (`aggregate.ready`) | green `#00FF66` | the slowest cadence — and **only** when `dot_role_include_completions` is on |
+
+Precedence is the person's: blocked outranks waiting, which outranks
+merely finished. The beacon returns to dark the moment the ask resolves.
+
+Escalation is visible in the cadence, never in the flash rate:
+
+| escalation stage | on / off | cycle | peak |
+| --- | --- | --- | --- |
+| 0 (none) | 1200 ms / 1200 ms | 2.4 s | 0.42 Hz |
+| 1 (ramp) | 900 ms / 900 ms | 1.8 s | 0.56 Hz |
+| 2 (menu bar) | 600 ms / 600 ms | 1.2 s | 0.83 Hz |
+| 3 (final) | 500 ms / 500 ms | 1.0 s | 1.0 Hz |
+
+Both phases are `cosine`, so it is a breath and not a blink. Every cadence
+sits at or under 1 Hz — half the `presentation_compiler` ceiling of 2 Hz,
+and exactly at its 1 Hz saturated-red ceiling, so the red state needs no
+separate table. The compiler is still the authority; `dot_role` simply
+never hands it work to do.
+
+### Settings
+
+Both live in the `settings` document and are writable with `set_setting`:
+
+| path | type | default | meaning |
+| --- | --- | --- | --- |
+| `dot_role` | `"extend"` \| `"asks"` \| `"status"` | `"extend"` | What the Dot is for. An unknown value reads as `extend`. |
+| `dot_role_include_completions` | bool | `false` | Whether the `asks` beacon also lights green for a completion nobody has looked at yet. |
+
+Migrated once, on the first load of a settings file with no `dot_role`
+key: a Dot whose per-device `led_display` was pinned to a dedicated
+readout (`quota_runway`, `studio`, `battery`) meant "do not follow the
+strip", and becomes `status`. Everything else — `agent` above all — held
+no opinion and becomes the `extend` default. Once the key exists it is the
+only answer.
+
+### The write boundary
+
+No program rendered for one LED count may reach a device with another.
+`device_writer.write_led_program` refuses a program that addresses LEDs the
+target does not have — both spellings, a colour list longer than the device
+and a named index past its last LED — logs the refusal to stderr, and
+raises `DeviceWriteError`. The animation validator calls both of those a
+*warning* (the firmware parses the extra and then discards it), which is
+exactly why nothing noticed an eight-colour strip program being written to
+a two-LED Dot: LEDs 0 and 1 were black in most frames of the chase, so a
+lit strip sat beside a Dot that looked dead.
+
 ## Versioning
 
 `v` is bumped only for incompatible changes. Additive fields are always
