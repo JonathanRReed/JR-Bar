@@ -481,3 +481,62 @@ def test_extra_lookups_serve_new_sessions_before_refreshing_expired_ones() -> No
     assert plan_extra_lookups(ids, cached, now=60.0, ttl=30.0, budget=10) == ["d", "e", "a", "b"]
     assert plan_extra_lookups(ids, cached, now=60.0, ttl=30.0, budget=0) == []
     assert plan_extra_lookups([], cached, now=60.0, ttl=30.0, budget=3) == []
+
+
+def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> None:
+    """Once the strip has written, every ordinary or ambient request for
+    the Dot replays the strip's program through the Dot's controller. The
+    live bug: an ambient "binary heartbeat" write landed on the Dot right
+    after the linked write and left it on a solid colour at full brightness.
+    Operator previews still reach the Dot."""
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
+
+    controller = headless
+    pro_device = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
+    dot_device = StatusBarDevice("sidepulse:dot:1", "SidePulse Dot", Path("/Volumes/PulseDot"), Path("/Volumes/PulseDot/LEDS.LED"), True, "agent")
+    controller.settings = controller.settings.with_devices_linked(True)
+    controller._runtime_worker_monotonic = lambda: 5.0
+
+    pro = HardwareWriteRequest(pro_device, AgentMode.WORKING, None, (), None, 0.5)
+    pro_write = LedStatusWrite(LedDisplayState.WORKING, pro_device.target, "#112233 500ms pulse\nrepeat", True)
+    controller._hardware_write_generation = 1
+    controller._hardware_write_active = True
+    command = controller._hardware_write_command(pro, 100.0)
+    controller._core_note_hardware_write(
+        command,
+        HardwareWriteResult(request=pro, write=pro_write, label="SidePulse Working", agent_display_rendered=True, completed_at=4.0),
+    )
+    assert controller._core_linked_pro_program == (pro_write.program, pro_write.state)
+
+    handed = []
+
+    class FakeDotController:
+        def sync_program(self, program, state):
+            handed.append((program, state))
+            return LedStatusWrite(state, dot_device.target, program, True)
+
+    controller.agent_controller_for_device = lambda device: FakeDotController()
+    ambient = HardwareWriteRequest(
+        dot_device, AgentMode.WORKING, None, (), None, 0.5,
+        override_program="0:#001B22 1:#14732D", override_state=LedDisplayState.WORKING,
+        coalesce_identity="ambient-dot-heartbeat",
+    )
+    result = controller._sync_hardware_device(ambient)
+    assert handed == [(pro_write.program, pro_write.state)]
+    assert result.write.program == pro_write.program and result.label == "SidePulse Dot linked"
+
+    plain = HardwareWriteRequest(dot_device, AgentMode.WORKING, None, (), None, 0.5)
+    controller._sync_hardware_device(plain)
+    assert len(handed) == 2
+
+    preview = HardwareWriteRequest(
+        dot_device, AgentMode.WORKING, None, (), None, 0.5,
+        override_program="#FFFFFF 500ms\nrepeat", override_state=LedDisplayState.ASK,
+        coalesce_identity="preview-effect-studio", preview_session_id="s",
+    )
+    assert controller._core_linked_dot_follows(preview) is False
+
+    controller.settings = controller.settings.with_devices_linked(False)
+    assert controller._core_linked_dot_follows(plain) is False
