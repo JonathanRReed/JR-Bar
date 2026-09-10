@@ -4,6 +4,16 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.8.0 (in progress)
 
+- Usage history: the transcript scan keeps the newest files when a corpus
+  is over the per-source cap (now 8,192, was 4,096) instead of the first
+  in path order. `~/.codex/sessions` is date-partitioned, so the old rule
+  dropped exactly the current days: 5,540 rollouts on the Mac left
+  `usage_history codex 7d` at 0 records and `30d` nine days short.
+  Codex records now carry the turn's model from the rollout's
+  `turn_context` rows (`gpt-5.6-sol`, `gpt-5.4-mini`, …), so the price
+  quote is the table row for that model rather than the config default or
+  the reference estimate; the Codex scan cache is rebuilt once
+  (`CODEX_CACHE_SEMANTICS_VERSION` 5).
 - Core protocol: the Creator Micro 2 lives in the daemon. `state.deck`
   (device, 13 slots, 7 auxiliary controls, banks, rail, keymap,
   input check, last input, settings) is projected from the session board,

@@ -47,3 +47,9 @@ This is the short list of what comes after, in rough order.
 - Executable effect plugins. Effects stay data-only JSON packs.
 - Windows or a native Linux runtime. Only remote-peer viewing crosses the
   Mac boundary.
+
+## Upstream research
+
+Upstream (SidePulse, CodexBar, T3 Code) is reviewed on the cadence in
+[UPSTREAM-RESEARCH-CADENCE.md](UPSTREAM-RESEARCH-CADENCE.md); the
+current snapshot is the [2026-08-30 refresh](UPSTREAM-REFRESH-2026-08-30.md).

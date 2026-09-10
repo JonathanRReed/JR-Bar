@@ -30,6 +30,7 @@ coverage instead of silently inheriting another model's price.
 from __future__ import annotations
 
 import hashlib
+import heapq
 import hmac
 import json
 import math
@@ -60,7 +61,8 @@ from .usage_file_index import UsageFileIndex
 from .usage_heatmap import build_usage_heatmap
 
 CACHE_VERSION = 7
-CODEX_CACHE_SEMANTICS_VERSION = 4
+# 5: records carry the turn_context model instead of the literal ``codex``.
+CODEX_CACHE_SEMANTICS_VERSION = 5
 # The byte budget below is the real bound; this one only stops the candidate
 # list itself from growing without limit. At 4096 it bound FIRST on the owner's
 # corpus -- 5,605 transcripts across ~/.claude and ~/.codex -- so ~1,500 files
@@ -68,7 +70,12 @@ CODEX_CACHE_SEMANTICS_VERSION = 4
 # with nothing inside the window costs ~320 bytes to remember, so 8192 of them
 # is 2.6MB of an 8MB budget.
 USAGE_CACHE_MAX_FILES = 8192
-USAGE_INVENTORY_MAX_FILES = 4096
+# Per-source cap on files a scan reads. When a corpus is larger the NEWEST
+# files by mtime are kept: ~/.codex/sessions is date-partitioned and walked
+# in path order, so keeping the first N dropped exactly the current days
+# (5,540 rollouts against a 4,096 cap left every usage_history range from
+# 7d up empty for the last nine days).
+USAGE_INVENTORY_MAX_FILES = 8192
 USAGE_FILE_MAX_BYTES = 64 * 1024 * 1024
 # Keep large transcript files admissible while bounding the memory a single
 # hostile JSONL record can make json.loads allocate. Real provider records are
@@ -714,9 +721,14 @@ def _scan_codex_lines(
     rate_limit_windows: tuple[dict, ...] = ()
     malformed_lines = 0
     eof_newline = True
+    current_model = "codex"
     for line in handle:
         eof_newline = line.endswith("\n")
-        if CODEX_MARKER not in line and '"session_meta"' not in line:
+        if (
+            CODEX_MARKER not in line
+            and '"session_meta"' not in line
+            and '"turn_context"' not in line
+        ):
             continue
         if len(line.encode("utf-8")) > USAGE_RECORD_MAX_BYTES:
             malformed_lines += 1
@@ -753,6 +765,14 @@ def _scan_codex_lines(
                 root_id = _codex_private_id(
                     "codex-session:", raw_root, dedupe_secret
                 )
+            continue
+        if row.get("type") == "turn_context" and isinstance(payload, dict):
+            # The model the turn actually ran on (``gpt-5.3-codex-spark``,
+            # ``gpt-6-astra``); token rows never name it. Later records
+            # are priced at this model instead of the literal ``codex``.
+            candidate_model = payload.get("model")
+            if isinstance(candidate_model, str) and 0 < len(candidate_model) <= 128:
+                current_model = candidate_model.strip() or current_model
             continue
         limits = payload.get("rate_limits") if isinstance(payload, dict) else None
         if isinstance(limits, dict):
@@ -835,7 +855,7 @@ def _scan_codex_lines(
         )
         records.append(
             (
-                "codex", logical_session_id, "codex", epoch,
+                "codex", logical_session_id, current_model, epoch,
                 delta[0], delta[1], delta[2], delta[3], dedupe,
             )
         )
@@ -1546,7 +1566,10 @@ def _discover_usage_files(
     if stat.S_ISLNK(root_info.st_mode) or not stat.S_ISDIR(root_info.st_mode):
         return coverage, [], None
 
-    candidates: list[_DiscoveredUsageFile] = []
+    # A min-heap by (mtime, path) of at most ``max_files`` entries: once
+    # full, an older file is evicted for a newer one, so truncation always
+    # drops the oldest transcripts, never the current ones.
+    kept: list[tuple[int, str, _DiscoveredUsageFile]] = []
     seen_physical_files: set[tuple[int, int]] = set()
     walk_errors: list[OSError] = []
 
@@ -1597,12 +1620,17 @@ def _discover_usage_files(
                 if info.st_size > max_file_bytes:
                     coverage.oversized_files += 1
                     continue
-                if len(candidates) >= max_files:
-                    coverage.truncated_files += 1
+                entry = (info.st_mtime_ns, str(path), _DiscoveredUsageFile(path=path, info=info))
+                if len(kept) < max_files:
+                    heapq.heappush(kept, entry)
                     continue
-                candidates.append(_DiscoveredUsageFile(path=path, info=info))
+                coverage.truncated_files += 1
+                if max_files > 0 and entry[:2] > kept[0][:2]:
+                    heapq.heapreplace(kept, entry)
     except OSError:
         walk_errors.append(OSError(f"failed to walk usage root: {root}"))
+    # Path order, as the walk produced it, so cache eviction stays stable.
+    candidates = [entry[2] for entry in sorted(kept, key=lambda entry: entry[1])]
 
     try:
         current_root_info = root.lstat()
