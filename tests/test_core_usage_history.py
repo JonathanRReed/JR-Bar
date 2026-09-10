@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timedelta
 
 import pytest
@@ -132,3 +133,150 @@ def test_gemini_answers_a_reference_quote_without_transcripts() -> None:
     # A named Gemini model prices from its own row.
     assert history.price_quote("gemini", "gemini-3-pro").input_per_mtok == 2.0
     assert history.price_quote("gemini", "Gemini 3.8 Flash").source == "table"
+
+
+# -- UsageHistoryService --------------------------------------------------------
+class _Clock:
+    def __init__(self, start: float = 1_000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class _Threads:
+    """Records the scan threads the service starts, so a test can join them
+    instead of polling a clock the contract forbids."""
+
+    def __init__(self) -> None:
+        self.threads: list[threading.Thread] = []
+
+    def __call__(self, **kwargs) -> threading.Thread:
+        thread = threading.Thread(**kwargs)
+        self.threads.append(thread)
+        return thread
+
+    def settle(self, timeout: float = 5.0) -> None:
+        for thread in tuple(self.threads):
+            thread.join(timeout)
+
+
+class _Gate:
+    """A scan that blocks until released, so a test controls its duration."""
+
+    def __init__(self, records: list[tuple]) -> None:
+        self.release = threading.Event()
+        self.records = records
+        self.calls: list[tuple[str, int]] = []
+
+    def __call__(self, provider: str, days: int) -> list[tuple]:
+        self.calls.append((provider, days))
+        self.release.wait(5.0)
+        return self.records
+
+
+def _service(scan, publish=None, clock=None, threads=None, **kw):
+    return history.UsageHistoryService(
+        scan,
+        publish,
+        codex_default_model=lambda: None,
+        clock=clock or _Clock(),
+        budget=0.2,
+        fresh=60.0,
+        thread_factory=threads or _Threads(),
+        **kw,
+    )
+
+
+def test_service_answers_inside_the_budget_when_the_scan_is_quick() -> None:
+    now = datetime.now()
+    service = _service(lambda provider, days: [_record("codex", "gpt-5.6", now)])
+    document = service.document("codex", "7d", account={"plan": "pro"}, state="live")
+    assert document["records"] == 1
+    assert document["pending"] is False and document["stale"] is False
+    assert document["account"] == {"plan": "pro"} and document["state"] == "live"
+    assert document["scanned_at"] is not None
+
+
+def test_service_answers_pending_then_pushes_ready_when_a_cold_scan_outlives_the_budget() -> None:
+    now = datetime.now()
+    gate = _Gate([_record("codex", "gpt-5.6", now)])
+    events: list[tuple[str, dict]] = []
+    clock = _Clock()
+    threads = _Threads()
+    service = _service(gate, lambda kind, **fields: events.append((kind, fields)), clock=clock, threads=threads)
+
+    first = service.document("codex", "30d")
+    assert first["pending"] is True and first["records"] == 0 and first["scanned_at"] is None
+    assert service.is_scanning()
+    clock.now += 45.0  # the cold scan took longer than the budget
+    gate.release.set()
+    threads.settle()
+    assert not service.is_scanning()
+    assert events == [
+        (
+            history.READY_EVENT,
+            {"provider": "codex", "label": "codex", "detail": "30d", "range": "30d", "records": 1, "scanned_at": clock.now},
+        )
+    ]
+    # The next request answers from memory, fresh, with no rescan.
+    second = service.document("codex", "30d")
+    assert second["records"] == 1 and second["pending"] is False and second["stale"] is False
+    assert gate.calls == [("codex", 30)]
+
+
+def test_service_answers_the_last_document_stale_while_a_rescan_runs_and_stays_quiet_when_quick() -> None:
+    now = datetime.now()
+    clock = _Clock()
+    events: list[str] = []
+    first_gate = _Gate([_record("codex", "gpt-5.6", now)])
+    first_gate.release.set()
+    scans = {"n": 0}
+    slow = _Gate([_record("codex", "gpt-5.6", now, dedupe="a"), _record("codex", "gpt-5.6", now, dedupe="b")])
+
+    def scan(provider: str, days: int) -> list[tuple]:
+        scans["n"] += 1
+        return first_gate(provider, days) if scans["n"] == 1 else slow(provider, days)
+
+    threads = _Threads()
+    service = _service(scan, lambda kind, **fields: events.append(kind), clock=clock, threads=threads)
+    assert service.document("codex", "7d")["records"] == 1
+    assert events == []  # inside the budget: no event
+    clock.now += history.FRESH_SECONDS + 1  # memory is older than fresh: a rescan starts
+    stale = service.document("codex", "7d")
+    assert stale["records"] == 1 and stale["stale"] is True and stale["pending"] is False
+    slow.release.set()
+    threads.settle()
+    assert service.document("codex", "7d")["records"] == 2
+    assert events == [history.READY_EVENT]
+
+
+def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_scan() -> None:
+    calls: list[tuple[str, int]] = []
+    logged: list[str] = []
+
+    def scan(provider: str, days: int) -> list[tuple]:
+        calls.append((provider, days))
+        if provider == "claude":
+            raise OSError("cache unreadable")
+        return []
+
+    threads = _Threads()
+    service = _service(scan, log=logged.append, threads=threads)
+    service.warm()
+    service.warm()  # a second warm while the first runs starts nothing new
+    threads.settle()
+    assert sorted(calls) == [("claude", 30), ("codex", 30)]
+    assert any("claude 30d failed: OSError" in line for line in logged)
+    # A failed scan leaves no document: the next request is pending, not wrong.
+    assert service.document("claude", "30d", budget=0.0)["pending"] is True
+    assert service.document("codex", "30d")["pending"] is False
+
+
+def test_service_rejects_a_bad_range_and_answers_unscanned_providers_empty() -> None:
+    service = _service(lambda provider, days: [])
+    with pytest.raises(ValueError):
+        service.document("codex", "2d")
+    document = service.document("gemini", "7d")
+    assert document["records"] == 0 and document["pending"] is False
+    assert document["pricing"]["estimated"] is True

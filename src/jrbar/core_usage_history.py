@@ -10,14 +10,14 @@ output, dedupe)``.
 
 from __future__ import annotations
 
+import threading
 import time
-from collections.abc import Iterable
+import tomllib
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
-
-import tomllib
 
 from . import usage_stats
 from .state_paths import default_state_dir
@@ -247,13 +247,201 @@ def scan_provider_records(provider: str, *, days: int, home: Path | None = None)
     return [record for record in totals.records if record and record[0] == provider]
 
 
+#: How long a reply may wait for a running scan before it answers from
+#: memory: the app abandons a command after 10 s and the Usage window
+#: should never feel that; a warm scan finishes inside this.
+REPLY_BUDGET_SECONDS: Final = 2.0
+#: A document younger than this answers without a rescan at all.
+FRESH_SECONDS: Final = 60.0
+#: The event the daemon pushes when a scan that outlived the budget lands.
+READY_EVENT: Final = "usage_history_ready"
+#: Ranges the startup warm-up scans so the first request finds a hot cache.
+WARM_RANGE: Final = "30d"
+
+
+@dataclass(slots=True)
+class _Entry:
+    document: dict[str, Any] | None = None
+    scanned_at: float = 0.0
+    inflight: threading.Event | None = None
+    #: True once a request was answered pending or stale for the running
+    #: scan: that client is owed a ``usage_history_ready`` event.
+    owed: bool = False
+    error: str | None = None
+
+
+class UsageHistoryService:
+    """Serves ``usage_history`` inside a reply budget, scanning off-thread.
+
+    Scans run on their own thread under one lock (the transcript cache is
+    not built for concurrent writers); a request waits for the scan it
+    needs at most ``budget`` seconds, then answers what memory holds, marked
+    ``pending`` (nothing yet) or ``stale`` (an older document), and the
+    scan's completion is announced with a ``usage_history_ready`` event
+    carrying the fresh document's counts. A document younger than ``fresh``
+    is answered as is, no scan. ``scan`` is ``(provider, days) -> records``;
+    ``publish`` is ``(kind, **fields)``; ``codex_default_model`` is read at
+    bucketing time so a config change prices the next answer.
+    """
+
+    def __init__(
+        self,
+        scan: Callable[[str, int], list[tuple]],
+        publish: Callable[..., None] | None = None,
+        *,
+        budget: float = REPLY_BUDGET_SECONDS,
+        fresh: float = FRESH_SECONDS,
+        codex_default_model: Callable[[], str | None] = default_codex_model,
+        log: Callable[[str], None] | None = None,
+        clock: Callable[[], float] = time.time,
+        thread_factory: Callable[..., threading.Thread] | None = None,
+    ) -> None:
+        self._scan = scan
+        self._publish = publish
+        self._budget = float(budget)
+        self._fresh = float(fresh)
+        self._codex_default_model = codex_default_model
+        self._log = log
+        self._clock = clock
+        self._thread_factory = thread_factory
+        self._scan_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._entries: dict[tuple[str, int], _Entry] = {}
+
+    # -- public ---------------------------------------------------------------
+    def document(
+        self,
+        provider: str,
+        range_name: str,
+        *,
+        account: dict[str, Any] | None = None,
+        state: str | None = None,
+        budget: float | None = None,
+    ) -> dict[str, Any]:
+        days = range_days(range_name)
+        if days is None:
+            raise ValueError("range must be one of " + ", ".join(RANGE_DAYS))
+        if provider not in SCANNED_PROVIDERS:
+            return self._finish(
+                usage_history_document([], provider=provider, range_name=range_name, codex_default_model=self._codex_default_model()),
+                account, state, pending=False, stale=False, scanned_at=self._clock(),
+            )
+        key = (provider, days)
+        now = self._clock()
+        with self._state_lock:
+            entry = self._entries.setdefault(key, _Entry())
+            if entry.document is not None and entry.inflight is None and now - entry.scanned_at < self._fresh:
+                return self._finish(entry.document, account, state, pending=False, stale=False, scanned_at=entry.scanned_at)
+            event = self._start_locked(key, entry, now)
+        wait = self._budget if budget is None else float(budget)
+        event.wait(max(0.0, wait))
+        with self._state_lock:
+            entry = self._entries[key]
+            if entry.inflight is not None:
+                entry.owed = True
+            if entry.document is None:
+                empty = usage_history_document([], provider=provider, range_name=range_name, codex_default_model=self._codex_default_model())
+                return self._finish(empty, account, state, pending=True, stale=False, scanned_at=None)
+            stale = entry.inflight is not None
+            return self._finish(entry.document, account, state, pending=False, stale=stale, scanned_at=entry.scanned_at)
+
+    def warm(self, providers: Iterable[str] = SCANNED_PROVIDERS, range_name: str = WARM_RANGE) -> None:
+        """Start the scans a first request would need, without waiting."""
+        days = range_days(range_name)
+        if days is None:
+            return
+        now = self._clock()
+        with self._state_lock:
+            for provider in providers:
+                if provider in SCANNED_PROVIDERS:
+                    key = (provider, days)
+                    self._start_locked(key, self._entries.setdefault(key, _Entry()), now)
+
+    def is_scanning(self) -> bool:
+        with self._state_lock:
+            return any(entry.inflight is not None for entry in self._entries.values())
+
+    # -- internals -------------------------------------------------------------
+    def _start_locked(self, key: tuple[str, int], entry: _Entry, _now: float) -> threading.Event:
+        if entry.inflight is not None:
+            return entry.inflight
+        event = threading.Event()
+        entry.inflight = event
+        entry.owed = False
+        # Resolved here, not captured as a default at import time: which
+        # ``threading.Thread`` is in force must not depend on when this
+        # module happened to be imported.
+        factory = self._thread_factory or threading.Thread
+        thread = factory(target=self._run, args=(key, event), name=f"JRBarUsageScan-{key[0]}-{key[1]}", daemon=True)
+        thread.start()
+        return event
+
+    def _run(self, key: tuple[str, int], event: threading.Event) -> None:
+        provider, days = key
+        range_name = next((name for name, count in RANGE_DAYS.items() if count == days), f"{days}d")
+        document: dict[str, Any] | None = None
+        error: str | None = None
+        started = self._clock()
+        try:
+            with self._scan_lock:
+                records = self._scan(provider, days)
+            document = usage_history_document(
+                records, provider=provider, range_name=range_name, codex_default_model=self._codex_default_model()
+            )
+        except Exception as exc:  # the scan must never take the daemon down
+            error = exc.__class__.__name__
+        finished = self._clock()
+        with self._state_lock:
+            entry = self._entries.setdefault(key, _Entry())
+            if document is not None:
+                entry.document = document
+                entry.scanned_at = finished
+            entry.error = error
+            entry.inflight = None
+            owed = entry.owed
+            entry.owed = False
+        event.set()
+        if self._log is not None:
+            if error is not None:
+                self._log(f"core: usage history scan {provider} {range_name} failed: {error}")
+            else:
+                self._log(f"core: usage history scan {provider} {range_name} {finished - started:.1f}s records={document['records'] if document else 0}")
+        if self._publish is not None and document is not None and owed:
+            self._publish(
+                READY_EVENT,
+                provider=provider,
+                label=provider,
+                detail=range_name,
+                range=range_name,
+                records=document["records"],
+                scanned_at=finished,
+            )
+
+    @staticmethod
+    def _finish(
+        document: dict[str, Any],
+        account: dict[str, Any] | None,
+        state: str | None,
+        *,
+        pending: bool,
+        stale: bool,
+        scanned_at: float | None,
+    ) -> dict[str, Any]:
+        return {**document, "account": account, "state": state, "pending": pending, "stale": stale, "scanned_at": scanned_at}
+
+
 __all__ = [
     "CODEX_RECORD_MODEL",
+    "FRESH_SECONDS",
     "HOURS_SHOWN",
     "RANGE_DAYS",
+    "READY_EVENT",
     "REFERENCE_MODEL",
+    "REPLY_BUDGET_SECONDS",
     "SCANNED_PROVIDERS",
+    "WARM_RANGE",
     "PriceQuote",
+    "UsageHistoryService",
     "default_codex_model",
     "price_quote",
     "quote_cost",

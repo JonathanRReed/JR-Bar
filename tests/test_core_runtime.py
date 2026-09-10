@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -120,8 +121,11 @@ class _TimerAPI:
         return SimpleNamespace(invalidate=lambda: None)
 
 
+REAL_THREAD = threading.Thread
+
+
 class _Thread:
-    def __init__(self, *, target, daemon, name=None):
+    def __init__(self, *, target, daemon, name=None, args=()):
         self.target = target
         self.daemon = daemon
         self.name = name
@@ -451,6 +455,8 @@ def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: p
 def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     from jrbar import core_usage_history
 
+    # The scan runs off the socket thread, so this command needs real ones.
+    monkeypatch.setattr(threading, "Thread", REAL_THREAD)
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     calls: list[tuple[str, int]] = []
@@ -469,6 +475,13 @@ def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monke
     with pytest.raises(CommandError) as unknown:
         controller._core_dispatch("usage_history", {"provider": "grok", "range": "7d"})
     assert unknown.value.code == "not_found"
+    # Gemini has no configured account and no transcripts to scan here, but
+    # it has a price table: the window still gets a rate card, marked
+    # estimated, instead of a not_found the Usage window cannot render.
+    gemini = controller._core_dispatch("usage_history", {"provider": "gemini", "range": "7d"})
+    assert gemini["records"] == 0 and gemini["pending"] is False
+    assert gemini["pricing"]["estimated"] is True
+    assert gemini["pricing"]["model"] == core_usage_history.REFERENCE_MODEL["gemini"]
 
 
 def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:

@@ -1029,7 +1029,37 @@ def _cmd_export_effect_pack(self, args):
     return {"path": str(written), "effects": len(payload["effects"]), "bytes": len(encoded), "id": payload["id"]}
 
 
-_USAGE_SCAN_LOCK = threading.Lock()
+#: Seconds after the daemon is ready before the transcript caches warm.
+USAGE_WARM_DELAY_SECONDS = 8.0
+
+
+def _usage_history_service(self):
+    """The daemon's one ``UsageHistoryService`` (scans off the socket thread)."""
+    from . import core_usage_history
+
+    service = getattr(self, "_core_usage_history_service", None)
+    if service is None:
+        service = core_usage_history.UsageHistoryService(
+            lambda provider, days: core_usage_history.scan_provider_records(provider, days=days),
+            self._core_publish_event,
+            log=self._core_log,
+        )
+        self._core_usage_history_service = service
+    return service
+
+
+def _usage_history_warm_later(self) -> None:
+    """Warm the transcript caches shortly after start so the first
+    ``usage_history`` answers inside its budget instead of a cold scan."""
+
+    def warm() -> None:
+        time.sleep(USAGE_WARM_DELAY_SECONDS)
+        try:
+            _usage_history_service(self).warm()
+        except Exception as error:
+            self._core_log(f"core: usage history warm-up failed: {error.__class__.__name__}")
+
+    threading.Thread(target=warm, name="JRBarUsageWarm", daemon=True).start()
 
 
 @command("usage_history", main_thread=False)
@@ -1040,8 +1070,7 @@ def _cmd_usage_history(self, args):
     if not provider:
         raise CommandError("not_found", "provider is required")
     range_name = str(args.get("range") or "30d")
-    days = core_usage_history.range_days(range_name)
-    if days is None:
+    if core_usage_history.range_days(range_name) is None:
         raise CommandError("invalid_range", "range must be 7d, 30d, 90d or 365d")
     with self._core_lock:
         state = self._core_documents.get("state") or {}
@@ -1052,22 +1081,18 @@ def _cmd_usage_history(self, args):
             account = entry.get("account")
             source_state = entry.get("state")
             break
-    if account is None and source_state is None and provider not in core_usage_history.SCANNED_PROVIDERS:
+    # A provider with no configured account still answers when the daemon
+    # can say something true about it: transcripts to scan, or a price table
+    # to quote (Gemini has no transcripts here but the Usage window still
+    # shows its rate card, marked estimated). Anything else is not found.
+    if (
+        account is None
+        and source_state is None
+        and provider not in core_usage_history.SCANNED_PROVIDERS
+        and provider not in core_usage_history.REFERENCE_MODEL
+    ):
         raise CommandError("not_found", f"no usage source for {provider}")
-    with _USAGE_SCAN_LOCK:
-        try:
-            records = core_usage_history.scan_provider_records(provider, days=days)
-        except Exception as error:
-            self._core_log(f"core: usage history scan failed: {error.__class__.__name__}")
-            records = []
-    return core_usage_history.usage_history_document(
-        records,
-        provider=provider,
-        range_name=range_name,
-        account=account,
-        state=source_state,
-        codex_default_model=core_usage_history.default_codex_model(),
-    )
+    return _usage_history_service(self).document(provider, range_name, account=account, state=source_state)
 
 
 @command("refresh_usage")
@@ -1585,6 +1610,7 @@ def build_headless_controller_class() -> type:
             self._core_housekeeping_timer = _schedule_timer(HOUSEKEEPING_SECONDS, self, "coreHousekeepingTick:", True)
             if os.environ.get("JRBAR_SUPERVISED") == "1":
                 self._core_supervision_timer = _schedule_timer(SUPERVISION_SECONDS, self, "coreSupervisionTick:", True)
+            _usage_history_warm_later(self)
             legacy.log_status_bar(f"core: ready pid={os.getpid()} socket={self._core.socket_path}")
 
         def applicationWillTerminate_(self, notification):
