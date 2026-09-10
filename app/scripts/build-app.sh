@@ -117,16 +117,16 @@ if [[ "$SPARKLE_LINKED" == "1" && "${JRBAR_EMBED_SPARKLE:-1}" != "0" ]]; then
 fi
 
 echo "==> rendering AppIcon.icns"
+# Every size is drawn at its own pixel size by the script (no sips
+# downsampling); JRBAR_ICONSET_KEEP=/dir also keeps the PNGs for review.
 ICON_TMP="$(mktemp -d)"
-swift "$APP_DIR/scripts/make-icon.swift" "$ICON_TMP/icon_1024.png"
 ICONSET="$ICON_TMP/AppIcon.iconset"
-mkdir -p "$ICONSET"
-for size in 16 32 128 256 512; do
-    sips -z "$size" "$size" "$ICON_TMP/icon_1024.png" --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
-    double=$((size * 2))
-    sips -z "$double" "$double" "$ICON_TMP/icon_1024.png" --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
-done
+swift "$APP_DIR/scripts/make-icon.swift" "$ICONSET"
 iconutil -c icns "$ICONSET" -o "$BUNDLE/Contents/Resources/AppIcon.icns"
+if [[ -n "${JRBAR_ICONSET_KEEP:-}" ]]; then
+    mkdir -p "$JRBAR_ICONSET_KEEP"
+    cp "$ICONSET"/*.png "$JRBAR_ICONSET_KEEP/"
+fi
 rm -rf "$ICON_TMP"
 
 if [[ "${JRBAR_SKIP_SIGN:-0}" == "1" ]]; then
