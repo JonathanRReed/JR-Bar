@@ -39,7 +39,10 @@ final class EventCoordinator {
             if let pulse = delivery.statusPulse { parts.append(pulse ? "pulse on" : "pulse off") }
             if delivery.chime == .start { parts.append("chime every \(Int(EventPolicy.chimeInterval)) s") }
             if delivery.chime == .stop, sounds.isChiming { parts.append("chime off") }
-            summary += " → " + parts.joined(separator: ", ")
+            // A delivery whose whole job is to take a banner away has
+            // nothing else to name; the log said "event ask_resolved → ".
+            if parts.isEmpty, delivery.withdrawNotification != nil { parts.append("banner withdrawn") }
+            summary += parts.isEmpty ? " (quiet)" : " → " + parts.joined(separator: ", ")
         }
         core.appendLocalLog(summary)
         NSLog("JR-Bar: %@", summary)
