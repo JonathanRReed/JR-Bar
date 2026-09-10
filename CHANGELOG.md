@@ -2,7 +2,7 @@
 
 All notable changes to JR-Bar are documented here.
 
-## 0.8.0 (in progress)
+## 0.8.0
 
 - Usage history: the transcript scan keeps the newest files when a corpus
   is over the per-source cap (now 8,192, was 4,096) instead of the first

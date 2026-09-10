@@ -1,7 +1,6 @@
 import plistlib
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 from packaging.verify_entitlements import (
     FORBIDDEN_ENTITLEMENTS,

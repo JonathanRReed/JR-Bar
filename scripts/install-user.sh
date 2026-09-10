@@ -7,8 +7,8 @@ BIN_DIR="${JRBAR_BIN_DIR:-${SIDEPULSE_BIN_DIR:-$HOME/.local/bin}}"
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_DIR="$INSTALL_ROOT/venv"
 
-if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
-    echo "JR-Bar requires Python 3.10+. Set PYTHON_BIN to a supported interpreter." >&2
+if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(sys.version_info < (3, 12))'; then
+    echo "JR-Bar requires Python 3.12+. Set PYTHON_BIN to a supported interpreter." >&2
     exit 2
 fi
 

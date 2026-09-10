@@ -7,7 +7,7 @@ name = "jrbar"
 version = "0.8.0"
 description = "Standalone macOS agent monitoring, usage and optional hardware controls."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Peter Kuhar", email = "peter@pkuhar.com" }]
@@ -20,8 +20,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: System :: Hardware",
@@ -106,6 +104,14 @@ allowed-confusables = ["\u2013", "\u2212"]
 ignore = [
     "RUF046",  # int(len(...)) casts kept for PyObjC bridge clarity
     "RUF059",  # unpacked-but-unused tuple parts document payload shape
+    # Raising `requires-python` to 3.12 turns on two pyupgrade rules that
+    # would rewrite the whole tree at once. Both are deferred deliberately:
+    # UP017 (`timezone.utc` -> `datetime.UTC`) is cosmetic across ~320
+    # sites, and UP042 (`(str, Enum)` -> `StrEnum`) changes `str()` and
+    # f-string output on ~226 enums, which the wire protocol and the log
+    # lines depend on. Every other pyupgrade rule stays enforced.
+    "UP017",
+    "UP042",
 ]
 
 [tool.ruff.lint.per-file-ignores]
