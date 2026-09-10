@@ -604,6 +604,305 @@ def _cmd_apply_effect(self, args):
     }
 
 
+def _jsonable(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    return value
+
+
+def _effects_cache(self):
+    cache = getattr(type(self), "_effect_assignment_cache", None)
+    if cache is None:
+        raise CommandError("unsupported", "effect assignments are unavailable")
+    return cache
+
+
+def _effect_packs(self) -> tuple:
+    from .effect_pack_store import EffectPackStore
+
+    try:
+        return tuple(EffectPackStore().list())
+    except Exception as exc:
+        self._core_log(f"core: effect packs unavailable: {exc.__class__.__name__}")
+        return ()
+
+
+def _effect_catalog(self) -> dict[str, Any]:
+    from . import core_effects
+
+    cache = _effects_cache(self)
+    packs = _effect_packs(self)
+    paths = {pack.pack_id: str(getattr(self, "_core_pack_paths", {}).get(pack.pack_id, "")) or None for pack in packs}
+    return _jsonable(
+        core_effects.catalog_document(
+            cache.registry(),
+            packs,
+            generation=cache.generation,
+            pack_paths={key: value for key, value in paths.items() if value},
+        )
+    )
+
+
+def _assignments_document(self) -> dict[str, Any]:
+    from . import core_effects
+
+    cache = _effects_cache(self)
+    return core_effects.assignment_document(
+        cache.snapshot(),
+        parameters=core_effects.load_assignment_parameters(),
+        active_scene=getattr(self.settings, "active_scene", None),
+        generation=cache.generation,
+    )
+
+
+def _require_effect(self, effect_id: object):
+    cache = _effects_cache(self)
+    if not isinstance(effect_id, str) or not effect_id:
+        raise CommandError("unknown_effect", "effect_id is required")
+    effect = cache.registry().get(effect_id)
+    if effect is None:
+        raise CommandError("unknown_effect", f"no such effect: {effect_id}")
+    return effect
+
+
+@command("list_effects", main_thread=False)
+def _cmd_list_effects(self, args):
+    return _effect_catalog(self)
+
+
+@command("render_effect", main_thread=False)
+def _cmd_render_effect(self, args):
+    from . import core_effects
+
+    effect = _require_effect(self, args.get("effect_id"))
+    try:
+        led_count = int(args.get("led_count") or 8)
+    except (TypeError, ValueError) as error:
+        raise CommandError("invalid_args", "led_count must be a number") from error
+    pack_effect = core_effects.pack_effect_for(_effect_packs(self), effect.identifier)
+    parameters = core_effects.normalize_parameters(effect, args.get("parameters"), pack_effect=pack_effect)
+    color = args.get("color") if isinstance(args.get("color"), str) else None
+    try:
+        program = core_effects.render_effect(effect, parameters, led_count=led_count, color=color)
+    except Exception as error:
+        raise CommandError("internal", f"render failed: {error.__class__.__name__}") from error
+    return {
+        "effect_id": effect.identifier,
+        "program": program,
+        "led_count": max(2, min(8, led_count)),
+        "parameters": _jsonable(parameters),
+        "cadence": core_effects.effect_cadence(effect, parameters),
+    }
+
+
+@command("list_assignments", main_thread=False)
+def _cmd_list_assignments(self, args):
+    return _assignments_document(self)
+
+
+def _assignment_scope(value: object):
+    from .effect_studio import AssignmentScope
+
+    try:
+        return AssignmentScope(str(value or ""))
+    except ValueError as error:
+        raise CommandError("invalid_scope", "unknown assignment scope") from error
+
+
+def _save_assignments(self, document) -> None:
+    from .effect_assignment_store import (
+        EffectAssignmentStoreError,
+        default_effect_assignment_path,
+        save_effect_assignments,
+    )
+
+    cache = _effects_cache(self)
+    try:
+        save_effect_assignments(default_effect_assignment_path(), document)
+    except (EffectAssignmentStoreError, OSError) as error:
+        raise CommandError("refused", f"could not save assignments: {error}") from error
+    cache.replace(document)
+    self.refresh_(None)
+
+
+@command("set_assignment")
+def _cmd_set_assignment(self, args):
+    from . import core_effects
+    from .effect_assignment_store import EffectAssignmentRecord, EffectAssignmentStoreError
+    from .effect_studio import AssignmentScope, EffectStudioError, plan_assignment
+
+    effect = _require_effect(self, args.get("effect_id"))
+    scope = _assignment_scope(args.get("scope"))
+    target = args.get("target_id")
+    target = str(target).strip() if target is not None else None
+    if target == "":
+        target = None
+    if scope is AssignmentScope.SEMANTIC and target in ("asking", "failure") and effect.identifier != "alert":
+        raise CommandError("reserved_semantic", "asking and failure keep their reserved effects")
+    cache = _effects_cache(self)
+    try:
+        plan = plan_assignment(effect.identifier, scope, target, cache.registry())
+        record = EffectAssignmentRecord(plan.effect_id, plan.scope, plan.target_id)
+        document = cache.snapshot().with_assignment(record)
+    except (EffectStudioError, EffectAssignmentStoreError, TypeError, ValueError) as error:
+        raise CommandError("invalid_target", str(error)) from error
+    _save_assignments(self, document)
+    pack_effect = core_effects.pack_effect_for(_effect_packs(self), effect.identifier)
+    parameters = _jsonable(core_effects.normalize_parameters(effect, args.get("parameters"), pack_effect=pack_effect))
+    table = core_effects.load_assignment_parameters()
+    key = core_effects.assignment_key(plan.scope.value, plan.target_id)
+    if parameters:
+        table[key] = parameters
+    else:
+        table.pop(key, None)
+    try:
+        core_effects.save_assignment_parameters(table)
+    except OSError as error:
+        self._core_log(f"core: assignment parameters not saved: {error}")
+    result = _assignments_document(self)
+    result["assignment"] = {
+        "effect_id": plan.effect_id,
+        "scope": plan.scope.value,
+        "target_id": plan.target_id,
+        "parameters": parameters,
+    }
+    return result
+
+
+@command("clear_assignment")
+def _cmd_clear_assignment(self, args):
+    from . import core_effects
+
+    scope = _assignment_scope(args.get("scope"))
+    target = args.get("target_id")
+    target = str(target).strip() if target is not None else None
+    if target == "":
+        target = None
+    cache = _effects_cache(self)
+    current = cache.snapshot()
+    document = current.without_assignment(scope, target)
+    removed = len(document.assignments) < len(current.assignments)
+    if removed:
+        _save_assignments(self, document)
+        table = core_effects.load_assignment_parameters()
+        if table.pop(core_effects.assignment_key(scope.value, target), None) is not None:
+            try:
+                core_effects.save_assignment_parameters(table)
+            except OSError:
+                pass
+    result = _assignments_document(self)
+    result["removed"] = removed
+    return result
+
+
+def _reload_effect_registry(self) -> None:
+    from . import core_effects
+
+    cache = _effects_cache(self)
+    cache.replace(cache.snapshot(), registry=core_effects.registry_with_packs(_effect_packs(self)))
+
+
+@command("import_effect_pack")
+def _cmd_import_effect_pack(self, args):
+    from .effect_pack_store import EffectPackStore, EffectPackStoreError, PackMutationStatus
+
+    raw = args.get("path")
+    if not isinstance(raw, str) or not raw.strip():
+        raise CommandError("invalid_args", "path is required")
+    path = Path(raw).expanduser()
+    try:
+        receipt = EffectPackStore().install(path)
+    except EffectPackStoreError as error:
+        raise CommandError("invalid_pack", str(error)) from error
+    except OSError as error:
+        raise CommandError("invalid_pack", f"cannot read pack: {error.__class__.__name__}") from error
+    if receipt.status is PackMutationStatus.REFUSED:
+        code = "conflict" if receipt.reason == "already_installed" else "refused"
+        raise CommandError(code, f"pack {receipt.pack_id} refused: {receipt.reason}")
+    if not hasattr(self, "_core_pack_paths"):
+        self._core_pack_paths = {}
+    self._core_pack_paths[receipt.pack_id] = str(path)
+    _reload_effect_registry(self)
+    self.refresh_(None)
+    catalog = _effect_catalog(self)
+    pack = next((entry for entry in catalog["packs"] if entry["id"] == receipt.pack_id), None)
+    catalog["imported"] = {
+        "id": receipt.pack_id,
+        "name": pack["name"] if pack else receipt.pack_id,
+        "effects": len(pack["effects"]) if pack else 0,
+    }
+    return catalog
+
+
+@command("export_effect_pack", main_thread=False)
+def _cmd_export_effect_pack(self, args):
+    from . import core_effects
+    from .effect_packs import MAX_PACK_BYTES, EffectPackError
+    from .private_export import write_private_export
+
+    raw = args.get("path")
+    if not isinstance(raw, str) or not raw.strip():
+        raise CommandError("invalid_args", "path is required")
+    path = Path(raw).expanduser()
+    ids = [str(item) for item in (args.get("ids") or []) if isinstance(item, str)]
+    if not ids:
+        raise CommandError("invalid_args", "ids[] is empty")
+    name = args.get("name") if isinstance(args.get("name"), str) else None
+    cache = _effects_cache(self)
+    try:
+        payload, encoded = core_effects.build_export_pack(cache.registry(), _effect_packs(self), ids, name=name, path=path)
+    except KeyError as error:
+        raise CommandError("unknown_effect", f"no such effect: {error.args[0]}") from error
+    except (EffectPackError, ValueError) as error:
+        raise CommandError("export_failed", str(error)) from error
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        written = write_private_export(path, encoded, max_bytes=MAX_PACK_BYTES)
+    except (OSError, ValueError) as error:
+        raise CommandError("export_failed", f"could not write {path}: {error.__class__.__name__}") from error
+    return {"path": str(written), "effects": len(payload["effects"]), "bytes": len(encoded), "id": payload["id"]}
+
+
+_USAGE_SCAN_LOCK = threading.Lock()
+
+
+@command("usage_history", main_thread=False)
+def _cmd_usage_history(self, args):
+    from . import core_usage_history
+
+    provider = str(args.get("provider") or "").strip()
+    if not provider:
+        raise CommandError("not_found", "provider is required")
+    range_name = str(args.get("range") or "30d")
+    days = core_usage_history.range_days(range_name)
+    if days is None:
+        raise CommandError("invalid_range", "range must be 7d, 30d, 90d or 365d")
+    with self._core_lock:
+        state = self._core_documents.get("state") or {}
+    account = None
+    source_state = None
+    for entry in ((state.get("usage") or {}).get("providers") or []):
+        if entry.get("id") == provider:
+            account = entry.get("account")
+            source_state = entry.get("state")
+            break
+    if account is None and source_state is None and provider not in core_usage_history.SCANNED_PROVIDERS:
+        raise CommandError("not_found", f"no usage source for {provider}")
+    with _USAGE_SCAN_LOCK:
+        try:
+            records = core_usage_history.scan_provider_records(provider, days=days)
+        except Exception as error:
+            self._core_log(f"core: usage history scan failed: {error.__class__.__name__}")
+            records = []
+    return core_usage_history.usage_history_document(
+        records, provider=provider, range_name=range_name, account=account, state=source_state
+    )
+
+
 @command("refresh_usage")
 def _cmd_refresh_usage(self, args):
     providers = tuple(p for p in (args.get("providers") or []) if isinstance(p, str))
