@@ -2051,6 +2051,18 @@ def build_headless_controller_class() -> type:
                         agent_display_rendered=True,
                         completed_at=self._runtime_worker_monotonic(),
                     )
+                # The role claimed this surface and then could not plan it,
+                # so the Dot is about to render something from a completely
+                # different vocabulary (its own binary heartbeat) while the
+                # protocol still says `role: extend`. That disagreement is
+                # exactly what made the 2026-09-10 defect so hard to place;
+                # it is worth a line in the flight recorder every time.
+                reason = str(getattr(request, "coalesce_identity", "") or "latest")
+                if reason != getattr(self, "_core_dot_plan_gap_logged", None):
+                    self._core_dot_plan_gap_logged = reason
+                    legacy.log_status_bar(
+                        f"core: dot role could not plan ({reason}); falling through"
+                    )
             return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
 
         # -- linked Pro + Dot writes -------------------------------------------
@@ -3113,6 +3125,9 @@ def build_headless_controller_class() -> type:
                 asks=state.get("asks") or [],
                 unseen_completion_ids=tuple(state.get("unseen_completions") or ()),
                 now=time.time(),
+                # The glance's ``relay_epoch`` is a monotonic reading; it is
+                # only a duration against a monotonic "now".
+                monotonic_now=time.monotonic(),
                 facts=facts,
                 glance=glance,
             )

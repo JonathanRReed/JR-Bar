@@ -618,3 +618,20 @@ def test_narrowing_uses_only_easings_the_source_used(name, program, source_leds)
         return
     pattern = r"\b(?:none|linear|pulse|cosine|ease)\b"
     assert set(re.findall(pattern, narrowed)) <= set(re.findall(pattern, program))
+
+
+def test_a_reassert_of_a_narrowed_program_still_addresses_every_led():
+    """The 240s reassert drops the program's first paint line on purpose.
+
+    That is safe only if no LED is named ONLY on the first line. The Dot's
+    old heartbeat named its second LED exactly there, so every reassert
+    wrote a program that could not address it at all -- a second,
+    independent route to the same stranded LED.
+    """
+    from jrbar.led_status import _steady_state_variant
+
+    narrowed = downsample_program(LIVE_PRO_FINITE_CUE, source_leds=8)
+    for variant in (narrowed, _steady_state_variant(narrowed)):
+        assert max(unaddressed_leds(variant).values()) == 0
+    # And the old shape is exactly what that rule punishes.
+    assert max(unaddressed_leds(_steady_state_variant(LIVE_DOT_STRANDED)).values()) > 0
