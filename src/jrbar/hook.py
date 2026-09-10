@@ -42,7 +42,13 @@ def format_hook_payload(
     logged_at: str | None = None,
     include_origin: bool = True,
 ) -> dict[str, Any]:
-    timestamp = logged_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Microseconds, not whole seconds: a hook burst (SessionStart,
+    # UserPromptSubmit and PreToolUse from one pi turn; Interrupt and
+    # SessionEnd from one Ctrl-C) lands inside a second, and the monitor
+    # orders records by their stamp. Whole seconds tied them and left the
+    # order to the per-event rank, which dropped the tool start and, for an
+    # interrupted Codex, the session end.
+    timestamp = logged_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     try:
         payload: Any = json.loads(payload_text or "{}")
     except json.JSONDecodeError as exc:
