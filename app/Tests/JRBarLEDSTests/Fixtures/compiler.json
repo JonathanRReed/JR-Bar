@@ -1,11 +1,11 @@
 [
  {
-  "program": "0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat",
+  "program": "brightness 46\n0:#000000 60ms cosine; 1:#000000 60ms cosine; 2:#000000 60ms cosine; 3:#000000 60ms cosine; 4:#000000 60ms cosine; 5:#000000 60ms cosine; 6:#000000 60ms cosine; 7:#000000 60ms cosine\n0:#280C20 500ms pulse 0ms; 1:#1D050A 500ms pulse 60ms; 2:#050625 500ms pulse 120ms; 3:#280C20 500ms pulse 180ms; 4:#1D050A 500ms pulse 240ms; 5:#050625 500ms pulse 300ms; 6:#280C20 500ms pulse 360ms; 7:#1D050A 500ms pulse 420ms\nrepeat",
   "led_count": 8,
   "accepted": true,
   "transformed": false,
   "reasons": [],
-  "output": "0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat"
+  "output": "brightness 46\n0:#000000 60ms cosine; 1:#000000 60ms cosine; 2:#000000 60ms cosine; 3:#000000 60ms cosine; 4:#000000 60ms cosine; 5:#000000 60ms cosine; 6:#000000 60ms cosine; 7:#000000 60ms cosine\n0:#280C20 500ms pulse 0ms; 1:#1D050A 500ms pulse 60ms; 2:#050625 500ms pulse 120ms; 3:#280C20 500ms pulse 180ms; 4:#1D050A 500ms pulse 240ms; 5:#050625 500ms pulse 300ms; 6:#280C20 500ms pulse 360ms; 7:#1D050A 500ms pulse 420ms\nrepeat"
  },
  {
   "program": "#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms; 1:#1D050A 420ms pulse 180ms; 2:#1D050A 420ms pulse 360ms; 3:#1D050A 420ms pulse 540ms; 4:#1D050A 420ms pulse 720ms; 5:#1D050A 420ms pulse 900ms; 6:#1D050A 420ms pulse 1080ms; 7:#1D050A 420ms pulse 1260ms\n#000000 600ms none\nrepeat",
@@ -24,12 +24,12 @@
   "output": "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat"
  },
  {
-  "program": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat",
+  "program": "#00E5FF #007785 #00373D #00171A #000708 #000000 #000000 #000000 250ms cosine\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nrepeat",
   "led_count": 8,
   "accepted": true,
   "transformed": false,
   "reasons": [],
-  "output": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat"
+  "output": "#00E5FF #007785 #00373D #00171A #000708 #000000 #000000 #000000 250ms cosine\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nrepeat"
  },
  {
   "program": "off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat",
@@ -48,12 +48,12 @@
   "output": "off"
  },
  {
-  "program": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms; 2:#00FF66 70ms none 90ms; 3:#00FF66 70ms none 135ms; 4:#00FF66 70ms none 180ms; 5:#00FF66 70ms none 225ms; 6:#00FF66 70ms none 270ms; 7:#00FF66 70ms none 315ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
+  "program": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms; 2:#00FF66 135ms pulse 90ms; 3:#00FF66 135ms pulse 135ms; 4:#00FF66 135ms pulse 180ms; 5:#00FF66 135ms pulse 225ms; 6:#00FF66 135ms pulse 270ms; 7:#00FF66 135ms pulse 315ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
   "led_count": 8,
   "accepted": true,
   "transformed": false,
   "reasons": [],
-  "output": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms; 2:#00FF66 70ms none 90ms; 3:#00FF66 70ms none 135ms; 4:#00FF66 70ms none 180ms; 5:#00FF66 70ms none 225ms; 6:#00FF66 70ms none 270ms; 7:#00FF66 70ms none 315ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
+  "output": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms; 2:#00FF66 135ms pulse 90ms; 3:#00FF66 135ms pulse 135ms; 4:#00FF66 135ms pulse 180ms; 5:#00FF66 135ms pulse 225ms; 6:#00FF66 135ms pulse 270ms; 7:#00FF66 135ms pulse 315ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
  },
  {
   "program": "#FF3A00",
@@ -72,12 +72,12 @@
   "output": "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\noff 850ms none\nrepeat"
  },
  {
-  "program": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 480ms\nrepeat",
+  "program": "#00E5FF #002529 320ms cosine\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nrepeat",
   "led_count": 2,
   "accepted": true,
   "transformed": false,
   "reasons": [],
-  "output": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 480ms\nrepeat"
+  "output": "#00E5FF #002529 320ms cosine\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nroll-right 2200ms linear\nrepeat"
  },
  {
   "program": "off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat",
@@ -96,12 +96,12 @@
   "output": "off"
  },
  {
-  "program": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
+  "program": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine",
   "led_count": 2,
   "accepted": true,
   "transformed": false,
   "reasons": [],
-  "output": "off 90ms cosine\n0:#00FF66 70ms none 0ms; 1:#00FF66 70ms none 45ms\noff 70ms none\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
+  "output": "off 90ms cosine\n0:#00FF66 135ms pulse; 1:#00FF66 135ms pulse 45ms\noff 70ms cosine\n#00FF66 280ms cosine\n#2EFF82 240ms cosine\n#00FF66 200ms cosine\n#00FF66 1400ms none\noff 900ms cosine"
  },
  {
   "program": "#FF3A00",
@@ -120,12 +120,12 @@
   "output": "off 160ms cosine\n#6E7278 1900ms cosine\noff 2550ms cosine"
  },
  {
-  "program": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat",
+  "program": "#00E5FF #007785 #00373D #00171A #000708 #000000 #000000 #000000 250ms cosine\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nrepeat",
   "led_count": 8,
   "accepted": true,
   "transformed": false,
   "reasons": [],
-  "output": "off 160ms cosine\n0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 170ms; 2:#00E5FF 1400ms pulse 340ms; 3:#00E5FF 1400ms pulse 510ms; 4:#00E5FF 1400ms pulse 680ms; 5:#00E5FF 1400ms pulse 850ms; 6:#00E5FF 1400ms pulse 1020ms; 7:#00E5FF 1400ms pulse 1190ms\nrepeat"
+  "output": "#00E5FF #007785 #00373D #00171A #000708 #000000 #000000 #000000 250ms cosine\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nroll-right 2s linear\nrepeat"
  },
  {
   "program": "brightness 140\n#FF3A00 1.6s none\noff 1.6s none\nrepeat",

@@ -61,8 +61,10 @@ def test_cycle_turns_render_the_chosen_rhythm_class() -> None:
     assert heartbeat != plain, "Cycle ignored the motion picker"
     assert gradient != plain
     assert heartbeat != gradient
-    # A positional turn owns the whole strip: indexed segments appear.
-    assert "0:" in gradient
+    # A positional turn owns the whole strip: a rolled per-position profile
+    # appears (eight colours on one line, then rotation).
+    assert "roll-right" in gradient
+    assert len(gradient.splitlines()[2].split()) == 8 + 2
     for text in (plain, heartbeat, gradient):
         firmware_ok(text)
 

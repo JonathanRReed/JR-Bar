@@ -1658,6 +1658,14 @@ def _provider_style_override(
     return PROVIDER_ANIMATION_STYLES.get(chosen)
 
 
+def _within_firmware_budget(program: str) -> bool:
+    """Whether this program still fits the device's 512 bytes / 20 lines."""
+    return (
+        len(program.encode("utf-8")) <= MAX_LED_BYTES
+        and program.count("\n") + 1 <= MAX_LED_LINES
+    )
+
+
 def _single_agent_program(
     color: str,
     state: LedDisplayState,
@@ -1684,19 +1692,29 @@ def _single_agent_program(
         )
         settle_ms = settle_duration_ms(duration_ms)
         floor_color = _floor_for_state(color, state, settings)
-        lines = [
-            f"{floor_color} {settle_ms}ms cosine",
-            *_motion_turn_lines(
-                color,
-                state,
-                settings,
-                provider=provider,
-                led_count=led_count,
-                duration_ms=duration_ms,
-            ),
-            "repeat",
-        ]
-        return apply_brightness("\n".join(lines), brightness)
+        body = _motion_turn_lines(
+            color,
+            state,
+            settings,
+            provider=provider,
+            led_count=led_count,
+            duration_ms=duration_ms,
+        )
+        # The settle line is a courtesy, not part of the shape: it eases a
+        # mid-breath interruption back to rest. A bouncing sweep spends most
+        # of the 512 bytes on its two lines, so when both will not fit the
+        # settle line goes first and the motion stays -- refusing the write
+        # entirely would freeze the strip on its previous program.
+        lead = f"{floor_color} {settle_ms}ms cosine"
+        for candidate in ([lead, *body, "repeat"], [*body, "repeat"]):
+            program = apply_brightness("\n".join(candidate), brightness)
+            if _within_firmware_budget(program):
+                return program
+        return apply_brightness(
+            "\n".join([lead, f"{_peak_for_state(color, state, settings)} "
+                        f"{duration_ms}ms pulse", "repeat"]),
+            brightness,
+        )
     fade_kwargs = _fade_kwargs_for_state(state, settings)
     style = _provider_style_override(state, settings, provider)
     if style is not None:
@@ -2007,16 +2025,14 @@ def _motion_segments(
     delay_ms: int = 0,
     chase_delay_ms: int = 0,
     provider: str | None = None,
-    compact: bool = False,
 ) -> tuple[str, str]:
     """One LED's (reset line segment, motion line segment) for this state.
 
-    ``compact`` is the shared-strip byte discipline: heartbeat is the one
-    motion that emits TWO segments per LED, and on an 8-LED strip with
-    two-plus agents that overflowed the firmware's 512-byte budget in
-    every non-Cycle blend -- the write was refused and the strip froze
-    on its stale program (2026-08-27 audit). Compact keeps the beat's
-    signature (one quick swell, long dark rest) in a single segment.
+    Exactly ONE segment per LED per line, always: the firmware keeps only the
+    last assignment an LED gets on a line and drops the rest (measured
+    2026-09-10), and a second segment for the same LED also overflowed the
+    512-byte budget on a shared 8-LED strip, which froze the strip on its
+    stale program (2026-08-27 audit). Both reasons point the same way.
 
     Every shape is two segments on the same two lines, so the caller's program
     keeps its exact two-line-plus-repeat structure no matter which states are
@@ -2070,15 +2086,16 @@ def _motion_segments(
         # "busy", a unison beat says "stop".
         return floor_segment, f"{led_index}:{peak} {beat_ms}ms pulse{tail}"
     if motion == MOTION_HEARTBEAT:
-        # Lub-dub: two quick swells, then the rest of the cycle dark.
+        # Lub-dub: two quick swells, then the rest of the cycle dark -- but
+        # ONE segment, always. Measured against the firmware (2026-09-10):
+        # when a line names the same LED twice the controller keeps the last
+        # assignment and drops the first outright, so the two-segment form
+        # this used to emit off the compact path played the SECOND beat only
+        # and read as a plain late thump. A shared strip gives each agent one
+        # line, so the double beat has nowhere to live; the single swell with
+        # a long dark rest is the readable half of the signature.
         beat_ms = max(1, cycle_ms // 6)
-        gap_ms = max(1, cycle_ms // 10)
-        if compact:
-            return floor_segment, f"{led_index}:{peak} {beat_ms}ms pulse{tail}"
-        return floor_segment, (
-            f"{led_index}:{peak} {beat_ms}ms pulse{tail}; "
-            f"{led_index}:{peak} {beat_ms}ms pulse {delay_ms + beat_ms + gap_ms}ms"
-        )
+        return floor_segment, f"{led_index}:{peak} {beat_ms}ms pulse{tail}"
     if motion == MOTION_TWINKLE:
         # One brief spark per cycle at a frozen scattered offset.
         spark_ms = max(1, cycle_ms // 5)
@@ -2139,9 +2156,14 @@ def _motion_segments(
                 f"{led_index}:{peak} {width_ms}ms pulse {delay_ms + chase_delay_ms}ms",
             )
         if motion == MOTION_STACK:
+            # Eased, not snapped: this LED's arrival in the pile is a step in
+            # a progress bar, and a bare `none` made every step a hard edge
+            # on a strip whose whole vocabulary is otherwise smooth.
+            rise_ms = max(1, cycle_ms // 4)
             return (
                 floor_segment,
-                f"{led_index}:{peak} {cycle_ms}ms none {delay_ms + chase_delay_ms}ms",
+                f"{led_index}:{peak} {rise_ms}ms cosine "
+                f"{delay_ms + chase_delay_ms}ms",
             )
         return (
             floor_segment,
@@ -2158,7 +2180,12 @@ def _cycle_turn_lines(
     led_count: int,
     duration_ms: int,
 ) -> list[str]:
-    """One agent's TURN in the Cycle layout, in its chosen rhythm class."""
+    """One agent's TURN in the Cycle layout, in its chosen rhythm class.
+
+    Compact: a Cycle turn shares the 512 bytes with every other agent's turn,
+    so a circulating motion gets one lap here where the solo render gets a
+    whole set of them.
+    """
     return _motion_turn_lines(
         _display_color_for_agent(agent, settings),
         agent.state,
@@ -2166,6 +2193,30 @@ def _cycle_turn_lines(
         provider=agent.provider,
         led_count=led_count,
         duration_ms=duration_ms,
+        compact=True,
+    )
+
+
+#: How many laps a circulating motion rolls before repainting its profile.
+#: The repaint is a ~200 ms hesitation once per set, so amortising it over
+#: several laps is the difference between a wave and a wave with a hiccup.
+MOTION_ROLL_LAPS = 6
+
+
+def _travel_step_ms(duration_ms: int, led_count: int) -> int:
+    """The step a bouncing head takes between neighbours.
+
+    A bounce is two sweeps, and a sweep costs one step per LED plus the two
+    the tail needs at each end, so this is the step that makes one there-and-
+    back take the configured cycle -- about one sweep a second at the default
+    speed.
+    """
+    from . import motion_shapes
+
+    span = 2 * (max(2, int(led_count)) + 1)
+    return max(
+        motion_shapes.MIN_STEP_MS,
+        min(motion_shapes.MAX_STEP_MS, max(1, int(duration_ms)) // span),
     )
 
 
@@ -2177,14 +2228,23 @@ def _motion_turn_lines(
     provider: str | None,
     led_count: int,
     duration_ms: int,
+    compact: bool = False,
 ) -> list[str]:
     """A whole-strip rendering of this color/state's chosen rhythm.
 
     The owner of these lines has the full strip for `duration_ms`, so
-    positional shapes get a real line to travel. Every shape stays
-    inside the safety compiler's floors (the compiler still has the
-    last word). Deterministic bytes -- write dedupe holds. Shared by
-    the Cycle layout's turns and the solo/preview render."""
+    positional shapes get a real line to travel. Every shape comes from
+    ``motion_shapes``, whose geometry was measured against the firmware
+    rather than inferred (see that module's header): the travelling ones are
+    built on ``roll``, which crossfades continuously and therefore has no
+    seam, and the bouncing ones hand the crest from line to line at full
+    brightness rather than letting the strip go dark to turn around.
+
+    Deterministic bytes -- write dedupe holds. Shared by the Cycle layout's
+    turns and the solo/preview render.
+    """
+    from . import motion_shapes as shapes
+
     if _is_static_agent_state(state):
         return [
             f"{_peak_for_state(color, state, settings)} {duration_ms}ms cosine"
@@ -2200,75 +2260,137 @@ def _motion_turn_lines(
     if motion == MOTION_STEADY:
         return [f"{peak} {duration_ms}ms cosine"]
     if motion == MOTION_BLINK:
+        # The one shape that is meant to have hard edges. Everything else in
+        # the vocabulary eases, which is what keeps a blink readable as an
+        # interruption rather than as a faster breath.
         half = max(1, duration_ms // 2)
         return [f"{peak} {half}ms none", f"{floor_color} {half}ms none"]
     if motion == MOTION_HEARTBEAT:
-        beat = max(250, duration_ms // 6)
-        rest = max(250, duration_ms - 3 * beat)
-        return [
-            f"{peak} {beat}ms pulse",
-            f"{peak} {beat}ms pulse {max(0, beat // 2)}ms",
-            f"{floor_color} {rest}ms none",
-        ]
+        return shapes.lub_dub(peak, floor_color, cycle_ms=duration_ms)
     if motion == MOTION_DUOTONE:
         from .presentation_policy import _hue_shifted_color
 
-        half = max(250, duration_ms // 2)
-        return [
-            f"{peak} {half}ms pulse",
-            f"{_hue_shifted_color(peak, 40.0)} {half}ms pulse",
-        ]
-    if motion in (MOTION_FLICKER, MOTION_TWINKLE, MOTION_DRIFT, MOTION_AURORA):
-        seed = 617 if motion == MOTION_AURORA else 271
-        segments = [
-            f"{index}:{peak} "
-            f"{max(250, (2 * duration_ms) // 3 + (index * 137) % 331)}ms pulse "
-            f"{(index * seed) % max(1, duration_ms // 3)}ms"
-            for index in range(led_count)
-        ]
-        return ["; ".join(segments)]
-    if motion in (
+        return shapes.crossfade(
+            peak, _hue_shifted_color(peak, 40.0), cycle_ms=duration_ms
+        )
+    if motion in (MOTION_TWINKLE, MOTION_FLICKER):
+        # Twinkle sparks over darkness; flicker shimmers over a lit bed at a
+        # shorter spark, so the two read as different weather rather than as
+        # one scatter with two names.
+        twinkle = motion == MOTION_TWINKLE
+        return shapes.scatter(
+            peak,
+            floor_color if twinkle else shapes.shade(peak, 0.12),
+            led_count=led_count,
+            cycle_ms=duration_ms,
+            spark_fraction=0.26 if twinkle else 0.15,
+            seed=3 if twinkle else 5,
+        )
+    if motion in (MOTION_DRIFT, MOTION_AURORA):
+        # Aurora rests on a LUMINOUS bed (light moving on water at night)
+        # where drift rests near-dark; the swells are wider still.
+        aurora = motion == MOTION_AURORA
+        return shapes.drift(
+            peak,
+            shapes.shade(peak, 0.22 if aurora else 0.06),
+            led_count=led_count,
+            cycle_ms=duration_ms,
+            seed=5 if aurora else 3,
+            stretch=2.0 if aurora else 1.6,
+        )
+
+    laps = 1 if compact else MOTION_ROLL_LAPS
+    if motion in _TRAVELLING_MOTIONS and not shapes.positional(led_count):
+        # Two LEDs have nowhere for a head to travel. Rolling a bright/dim
+        # pair is a slow crossfade -- the Dot's whole positional vocabulary,
+        # and never a two-LED strobe.
+        return shapes.travelling_wave(
+            peak,
+            led_count=led_count,
+            lap_ms=duration_ms,
+            tail=shapes.DOT_TAIL,
+            laps=laps,
+        )
+    if motion == MOTION_CHASE:
+        return shapes.travelling_wave(
+            peak, led_count=led_count, lap_ms=duration_ms, laps=laps
+        )
+    if motion == MOTION_COMET:
+        return shapes.travelling_wave(
+            peak,
+            led_count=led_count,
+            lap_ms=max(1, int(duration_ms * 0.6)),
+            tail=shapes.COMET_TAIL,
+            laps=laps,
+        )
+    if motion == MOTION_MARQUEE:
+        return shapes.travelling_wave(
+            peak,
+            led_count=led_count,
+            lap_ms=duration_ms,
+            tail=shapes.MARQUEE_TAIL,
+            laps=laps,
+        )
+    if motion == MOTION_TIDE:
+        return shapes.travelling_wave(
+            peak,
+            led_count=led_count,
+            lap_ms=2 * duration_ms,
+            tail=shapes.TIDE_TAIL,
+            laps=laps,
+        )
+    if motion == MOTION_GRADIENT:
+        return shapes.gradient_wave(
+            peak, led_count=led_count, lap_ms=duration_ms, laps=laps
+        )
+    if motion == MOTION_KITT:
+        return shapes.bounce(
+            peak,
+            floor_color,
+            led_count=led_count,
+            step_ms=_travel_step_ms(duration_ms, led_count),
+            tail_leds=2.0,
+        )
+    if motion == MOTION_SCANNER:
+        # The same bounce with a tighter head and a quicker step: a machine
+        # looking for something, where KITT is a machine thinking.
+        return shapes.bounce(
+            peak,
+            floor_color,
+            led_count=led_count,
+            step_ms=max(
+                shapes.MIN_STEP_MS,
+                int(_travel_step_ms(duration_ms, led_count) * 0.7),
+            ),
+            tail_leds=1.5,
+        )
+    if motion == MOTION_CONVERGE:
+        return shapes.converge(
+            peak,
+            floor_color,
+            led_count=led_count,
+            step_ms=_travel_step_ms(duration_ms, led_count),
+        )
+    if motion == MOTION_STACK:
+        return shapes.fill(
+            peak, floor_color, led_count=led_count, cycle_ms=duration_ms
+        )
+    return shapes.breath(peak, floor_color, cycle_ms=duration_ms)
+
+
+_TRAVELLING_MOTIONS = frozenset(
+    {
         MOTION_CHASE,
-        MOTION_SCANNER,
-        MOTION_KITT,
         MOTION_COMET,
-        MOTION_STACK,
-        MOTION_CONVERGE,
+        MOTION_MARQUEE,
         MOTION_TIDE,
         MOTION_GRADIENT,
-        MOTION_MARQUEE,
-    ):
-        from .presentation_policy import _hue_shifted_color
-
-        step = max(60, duration_ms // max(1, 2 * led_count))
-        width = max(250, min(duration_ms // 2, 3 * step))
-        segments = []
-        for index in range(led_count):
-            shade = peak
-            if motion in (MOTION_GRADIENT, MOTION_MARQUEE):
-                fraction = index / max(1, led_count - 1)
-                shade = _hue_shifted_color(peak, (fraction - 0.5) * 48.0)
-            if motion == MOTION_CONVERGE:
-                delay = min(index, led_count - 1 - index) * step
-            else:
-                delay = index * step
-            if motion == MOTION_TIDE:
-                segments.append(
-                    f"{index}:{shade} "
-                    f"{max(250, 2 * (led_count - index) * step)}ms pulse {delay}ms"
-                )
-            elif motion == MOTION_STACK:
-                segments.append(
-                    f"{index}:{shade} "
-                    f"{max(250, (led_count - index) * step + 300)}ms none {delay}ms"
-                )
-            else:
-                segments.append(f"{index}:{shade} {width}ms pulse {delay}ms")
-        lines = ["; ".join(segments)]
-        if motion == MOTION_STACK:
-            lines.append(f"{floor_color} 400ms cosine")
-        return lines
-    return [f"{peak} {duration_ms}ms pulse"]
+        MOTION_KITT,
+        MOTION_SCANNER,
+        MOTION_CONVERGE,
+        MOTION_STACK,
+    }
+)
 
 
 def _cycle_program(
@@ -2409,7 +2531,6 @@ def _round_robin_program(
             settle_ms=settle_ms,
             chase_delay_ms=(index * stagger_ms) % duration_ms,
             provider=agent.provider,
-            compact=(len(agents) >= 2 and led_count >= 4),
         )
         reset_segments.append(reset)
         pulse_segments.append(pulse)
@@ -2487,7 +2608,6 @@ def _relay_program(
             settle_ms=settle_ms,
             delay_ms=turn * step_ms,
             provider=agent.provider,
-            compact=(len(agents) >= 2 and led_count >= 4),
         )
         reset_segments.append(reset)
         pulse_segments.append(pulse)
@@ -2583,8 +2703,7 @@ def _spatial_split_program(
                 settle_ms=settle_ms,
                 chase_delay_ms=(position * stagger_ms) % max(1, duration_ms),
                 provider=agent.provider,
-                compact=(len(agents) >= 2 and led_count >= 4),
-            )
+                )
             segments.append(motion)
             reset_segments.append(reset)
         index += count

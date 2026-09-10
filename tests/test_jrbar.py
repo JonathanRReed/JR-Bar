@@ -4022,18 +4022,24 @@ for (const event of [
         # Done rests dark: the celebration flourish is the completion cue.
         self.assertEqual(program_for_display_state(LedDisplayState.DONE), "off")
         self.assertIn("#FF3A00 1.6s pulse", program_for_display_state(LedDisplayState.ASK))
+        # Working is a travelling wave built on `roll`, which crossfades
+        # between the shifted states: a painted head-and-tail profile plus
+        # laps of rotation, so the crest never has to die for the line to
+        # end (the staggered-pulse version blanked the strip once a lap).
+        dot = program_for_display_state(
+            LedDisplayState.WORKING, led_count=2
+        ).splitlines()
+        self.assertEqual(dot[0], "#00E5FF #002529 320ms cosine")
+        self.assertEqual(set(dot[1:-1]), {"roll-right 2200ms linear"})
+        self.assertEqual(dot[-1], "repeat")
+        pro = program_for_display_state(
+            LedDisplayState.WORKING, led_count=8
+        ).splitlines()
         self.assertEqual(
-            program_for_display_state(LedDisplayState.WORKING, led_count=2).splitlines(),
-            [
-                "off 160ms cosine",
-                "0:#00E5FF 1400ms pulse 0ms; 1:#00E5FF 1400ms pulse 480ms",
-                "repeat",
-            ],
+            pro[0],
+            "#00E5FF #007785 #00373D #00171A #000708 #000000 #000000 #000000 250ms cosine",
         )
-        self.assertEqual(
-            len(program_for_display_state(LedDisplayState.WORKING, led_count=8).splitlines()),
-            3,
-        )
+        self.assertEqual(set(pro[1:-1]), {"roll-right 2s linear"})
         # Dark rest needs no brightness header at all.
         self.assertEqual(
             program_for_display_state(LedDisplayState.DONE, brightness=128),
@@ -4053,9 +4059,16 @@ for (const event of [
             # out -- see led_status.strip_drive_code. The DSL around them is
             # untouched, which is the part this test is really about.
             cyan = apply_strip_transfer_to_hex("#00E5FF", (1.0, 1.0, 1.0))
+            dim = apply_strip_transfer_to_hex("#002529", (1.0, 1.0, 1.0))
             self.assertEqual(
                 (device / "LEDS.LED").read_text(),
-                f"off 160ms cosine\n0:{cyan} 1400ms pulse 0ms; 1:{cyan} 1400ms pulse 480ms\nrepeat",
+                "\n".join(
+                    [
+                        f"{cyan} {dim} 320ms cosine",
+                        *["roll-right 2200ms linear"] * 6,
+                        "repeat",
+                    ]
+                ),
             )
 
             write_mode_to_leds(AgentMode.IDLE_READY, device_path=device)
@@ -4084,12 +4097,12 @@ for (const event of [
             write_mode_to_leds(AgentMode.WORKING, device_path=device)
 
             lines = (device / "LEDS.LED").read_text().splitlines()
-            self.assertEqual(len(lines), 3)
-            self.assertEqual(lines[0], "off 160ms cosine")
             cyan = apply_strip_transfer_to_hex("#00E5FF", (1.0, 1.0, 1.0))
-            self.assertIn(f"0:{cyan} 1400ms pulse 0ms", lines[1])
-            self.assertIn(f"5:{cyan} 1400ms pulse 850ms", lines[1])
-            self.assertIn(f"7:{cyan} 1400ms pulse 1190ms", lines[1])
+            # Eight LEDs of head-and-tail profile, then laps of rotation.
+            self.assertEqual(len(lines[0].split()), 8 + 2)
+            self.assertTrue(lines[0].startswith(f"{cyan} "))
+            self.assertTrue(lines[0].endswith(" 250ms cosine"))
+            self.assertEqual(set(lines[1:-1]), {"roll-right 2s linear"})
             self.assertEqual(lines[-1], "repeat")
 
     def test_agent_led_controller_skips_unchanged_state(self) -> None:
@@ -8175,8 +8188,10 @@ class AnimationStyleTests(unittest.TestCase):
     def test_roll_style_applies_to_idle_not_just_working(self) -> None:
         settings = ColorSettings.defaults().with_mode_animation(colors_module.MODE_IDLE, ANIMATION_STYLE_ROLL)
         _, program = program_for_snapshot((_status("codex", AgentMode.IDLE_READY),), led_count=8, colors=settings)
-        self.assertIn("0:", program)
-        self.assertIn("7:", program)
+        # The roll style is a per-position profile carried by `roll`, so what
+        # marks it is eight colours on one line, not eight `index:` segments.
+        self.assertEqual(len(program.splitlines()[0].split()), 8 + 2)
+        self.assertIn("roll-right", program)
 
     def test_all_animation_styles_produce_valid_dsl_line_and_byte_limits(self) -> None:
         base = ColorSettings.defaults()
@@ -8194,7 +8209,8 @@ class AnimationStyleTests(unittest.TestCase):
         # Backward compatibility: any caller that doesn't pass *_style still
         # gets exactly today's original shapes.
         working = program_for_display_state(LedDisplayState.WORKING, led_count=8, brightness=255)
-        self.assertIn("pulse", working)
+        # Working's default is the rolled travelling wave now, not a pulse line.
+        self.assertIn("roll-right", working)
         idle = program_for_display_state(LedDisplayState.IDLE, led_count=8, brightness=255)
         # Idle's default is the asymmetric breath now, not a pulse line.
         self.assertIn("850ms none", idle)
