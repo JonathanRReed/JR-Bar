@@ -374,3 +374,47 @@ def test_suppressed_or_empty_plans_emit_nothing() -> None:
 
     assert dispatch.outputs == ()
     assert dispatch.suppressed == ()
+
+
+def test_the_dot_heartbeat_paints_both_leds_on_every_line() -> None:
+    """The live defect of 2026-09-10, in the surface that actually produced it.
+
+    /Volumes/PulseDot/LEDS.LED was carrying
+
+        0:#722CA1 1:#14732D 250ms none
+        0:#000000 250ms none
+        0:#722CA1 250ms none
+        0:#000000 250ms none
+        0:#000000 1500ms none
+        repeat 8
+
+    -- LED 2 named once and never again. The firmware's "unmentioned LEDs
+    hold" rule then kept it lit at that green through every later line AND
+    past the end of the bounded phrase, which is the "the first LED is still
+    showing bluish-green" the owner reported. A program has to be a complete
+    statement of the surface on every line it has.
+    """
+    from jrbar.animation import ColorList, IndexedPaint, PaintStep, WholeBar, read_program
+
+    dispatch = compile_ambient_effect_dispatch(
+        dot_binary_heartbeat=plan_dot_binary_heartbeat(
+            (SemanticEventKind.ASK,),
+            secondary_policy=DotSecondaryPolicy.UNSEEN_NOTIFICATIONS,
+            unseen_notification_present=True,
+        ),
+    )
+    dot = dispatch.for_surface(AmbientEffectSurface.SIDEPULSE_DOT)
+    assert dot is not None and dot.animated
+    animation, problems = read_program(dot.program, led_count=2)
+    assert errors_only(problems) == ()
+    lines = [step for step in animation.steps if type(step) is PaintStep]
+    assert len(lines) >= 2
+    for index, step in enumerate(lines):
+        addressed: set[int] = set()
+        for segment in step.segments:
+            if type(segment) in (WholeBar, ColorList):
+                addressed = {0, 1}
+                break
+            if type(segment) is IndexedPaint:
+                addressed.update(int(led) for led, _color in segment.assignments)
+        assert addressed == {0, 1}, f"line {index + 1} leaves an LED unaddressed"

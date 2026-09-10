@@ -385,3 +385,236 @@ def test_an_eight_led_program_still_reaches_an_eight_led_strip(tmp_path):
     volume.mkdir()
     (volume / "LEDS.LED").write_text("off\n", encoding="utf-8")
     write_led_program(LIVE_DOT_DEFECT, device_path=volume, dry_run=True)
+
+
+# --- the live 2026-09-10 defect: an LED painted once, then stranded ---------
+
+#: Exactly what the SidePulse Pro was playing when the owner caught the Dot
+#: holding one lit LED it could not explain. A whole-strip finite cue: four
+#: phases, one second, eight times.
+LIVE_PRO_FINITE_CUE = (
+    "brightness 59\n"
+    "#791BFF 180ms none\n"
+    "off 120ms none\n"
+    "#791BFF 180ms none\n"
+    "off 520ms none\n"
+    "repeat 8"
+)
+
+#: And exactly what was on /Volumes/PulseDot/LEDS.LED beside it. LED 1 is
+#: addressed on line one and never again, so it held #14732D -- the old
+#: two-LED status green, from a PREVIOUS program -- indefinitely. The owner:
+#: "the first LED is still showing bluish-green".
+LIVE_DOT_STRANDED = (
+    "brightness 59\n"
+    "0:#722CA1 1:#14732D 250ms none\n"
+    "0:#000000 250ms none\n"
+    "0:#722CA1 250ms none\n"
+    "0:#000000 250ms none\n"
+    "0:#000000 1500ms none\n"
+    "repeat 8"
+)
+
+
+def unaddressed_leds(program: str, led_count: int = DOT_LED_COUNT) -> dict[int, int]:
+    """LED -> the longest run of consecutive paint lines that never name it.
+
+    The invariant every emitted program has to satisfy: an LED that a line
+    does not address holds whatever it was last given, so a run longer than
+    one line is an LED showing something the current line never asked for --
+    and at the end of a bounded cue, forever.
+    """
+    from jrbar.animation import ColorList, IndexedPaint, PaintStep, WholeBar, read_program
+
+    animation, _problems = read_program(program, led_count=led_count)
+    runs = dict.fromkeys(range(led_count), 0)
+    worst = dict.fromkeys(range(led_count), 0)
+    for step in animation.steps:
+        if type(step) is not PaintStep:
+            continue
+        addressed: set[int] = set()
+        for segment in step.segments:
+            if type(segment) in (WholeBar, ColorList):
+                addressed = set(range(led_count))
+                break
+            if type(segment) is IndexedPaint:
+                addressed.update(int(index) for index, _color in segment.assignments)
+        for led in range(led_count):
+            runs[led] = 0 if led in addressed else runs[led] + 1
+            worst[led] = max(worst[led], runs[led])
+    return worst
+
+
+def test_the_live_stranded_dot_program_is_exactly_the_defect():
+    # The bug as captured, stated as a test so nobody has to take it on faith.
+    assert unaddressed_leds(LIVE_DOT_STRANDED) == {0: 0, 1: 4}
+    assert "#14732D" not in LIVE_PRO_FINITE_CUE
+
+
+def test_the_pros_finite_cue_narrows_with_every_led_addressed_every_line():
+    narrowed = downsample_program(LIVE_PRO_FINITE_CUE, source_leds=8)
+    assert narrowed is not None
+    assert max(unaddressed_leds(narrowed).values()) == 0
+
+
+def test_the_narrowed_cue_carries_the_sources_timing_easing_and_repeat():
+    narrowed = downsample_program(LIVE_PRO_FINITE_CUE, source_leds=8)
+    lines = narrowed.splitlines()
+    assert lines[0] == "brightness 59"
+    assert lines[-1] == "repeat 8"
+    # The source's four phases, at the source's four durations. The live
+    # defect ran 250/250/250/250/1500 against a source of 180/120/180/520.
+    assert [line for line in lines[1:-1]] == [
+        "#791BFF 180ms none",
+        "off 120ms none",
+        "#791BFF 180ms none",
+        "off 520ms none",
+    ]
+
+
+def test_narrowing_invents_no_colour_the_source_did_not_have():
+    import re
+
+    narrowed = downsample_program(LIVE_PRO_FINITE_CUE, source_leds=8)
+    source = set(re.findall(r"#[0-9A-Fa-f]{6}", LIVE_PRO_FINITE_CUE)) | {"#000000"}
+    assert set(re.findall(r"#[0-9A-Fa-f]{6}", narrowed)) <= source
+
+
+def test_narrowing_is_a_pure_function_of_the_source_program():
+    """No state from an earlier program can reach the conversion.
+
+    The stranded green was read back as evidence that the converter had
+    invented a colour. It had not -- but it also could not have SEEN that the
+    device was still showing one, and a converter whose output depends on
+    what happened to be on the hardware cannot be reasoned about at all.
+    """
+    once = downsample_program(LIVE_PRO_FINITE_CUE, source_leds=8)
+    # Narrow something else in between; the answer may not move.
+    downsample_program(LIVE_DOT_STRANDED, source_leds=2)
+    downsample_program(LIVE_DOT_DEFECT, source_leds=8)
+    assert downsample_program(LIVE_PRO_FINITE_CUE, source_leds=8) == once
+
+
+def test_a_source_line_that_names_one_band_still_paints_the_other():
+    # `0:#00E5FF` alone used to leave LED 1 on whatever it already showed.
+    narrowed = downsample_program("0:#00E5FF 500ms\n0:#000000 500ms\nrepeat", source_leds=8)
+    assert max(unaddressed_leds(narrowed).values()) == 0
+    assert narrowed.splitlines()[0].endswith("1:#000000 500ms")
+
+
+# --- the same invariants over the whole effect corpus -----------------------
+
+
+def effect_corpus() -> list[tuple[str, str, int]]:
+    """Every program the app can put on a strip (scripts/review_effects.py)."""
+    import sys
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parents[1]
+    if str(root / "scripts") not in sys.path:
+        sys.path.insert(0, str(root / "scripts"))
+    from review_effects import builtin_programs, effect_programs
+
+    return [*effect_programs(), *builtin_programs()]
+
+
+CORPUS = effect_corpus()
+
+
+def test_the_corpus_is_the_real_one_and_not_empty():
+    assert len(CORPUS) > 50
+    assert any(name.startswith("effect_") for name, _program, _leds in CORPUS)
+
+
+@pytest.mark.parametrize("name, program, source_leds", CORPUS, ids=[row[0] for row in CORPUS])
+def test_no_narrowed_program_ever_strands_an_led(name, program, source_leds):
+    narrowed = downsample_program(program, source_leds=source_leds)
+    if narrowed is None:
+        return  # refused outright, which is the other safe answer
+    assert stray_indices(narrowed) == ()
+    worst = unaddressed_leds(narrowed)
+    assert max(worst.values()) == 0, f"{name}: LEDs held across lines: {worst}"
+
+
+@pytest.mark.parametrize("name, program, source_leds", CORPUS, ids=[row[0] for row in CORPUS])
+def test_no_narrowed_program_ever_invents_a_colour(name, program, source_leds):
+    import re
+
+    narrowed = downsample_program(program, source_leds=source_leds)
+    if narrowed is None:
+        return
+    # Black is always available: it is what "this LED is not lit on this
+    # line" is spelled as, and `off` is not legal in indexed form.
+    source = {
+        color.upper() for color in re.findall(r"#[0-9A-Fa-f]{6}", program)
+    } | {"#000000"}
+    emitted = {color.upper() for color in re.findall(r"#[0-9A-Fa-f]{6}", narrowed)}
+    assert emitted <= source, f"{name}: invented {sorted(emitted - source)}"
+
+
+def _shape(program: str, led_count: int):
+    """(brightness levels, repeat markers, per-line durations) of a program."""
+    from jrbar.animation import (
+        BrightnessStep,
+        PaintStep,
+        RepeatStep,
+        read_program,
+        step_duration_ms,
+    )
+
+    animation, _problems = read_program(program, led_count=led_count)
+    return (
+        tuple(step.level for step in animation.steps if type(step) is BrightnessStep),
+        tuple(step.count for step in animation.steps if type(step) is RepeatStep),
+        tuple(
+            step_duration_ms(step)
+            for step in animation.steps
+            if type(step) is PaintStep
+        ),
+    )
+
+
+@pytest.mark.parametrize("name, program, source_leds", CORPUS, ids=[row[0] for row in CORPUS])
+def test_narrowing_keeps_the_strips_brightness_repeat_and_line_count(name, program, source_leds):
+    """Whatever the strip's clock is, the Dot runs the same one.
+
+    Line for line: the same brightness, the same repeat markers, the same
+    number of paint lines, and no line ever made LONGER. A line may get
+    shorter, and exactly one thing shortens it -- a wave staggered across
+    four source LEDs collapsing into one pulse in one band, which is
+    ``downsample_step``'s documented behaviour and is what the wave looks
+    like on two LEDs.
+    """
+    from jrbar.animation import errors_only, read_program
+
+    narrowed = downsample_program(program, source_leds=source_leds)
+    if narrowed is None:
+        return
+    _animation, problems = read_program(program, led_count=source_leds)
+    if errors_only(problems):
+        return
+    source_brightness, source_repeats, source_lines = _shape(program, source_leds)
+    narrow_brightness, narrow_repeats, narrow_lines = _shape(narrowed, DOT_LED_COUNT)
+    assert narrow_brightness == source_brightness
+    assert narrow_repeats == source_repeats
+    assert len(narrow_lines) == len(source_lines)
+    assert all(
+        narrow <= source for narrow, source in zip(narrow_lines, source_lines)
+    ), f"{name}: {narrow_lines} vs {source_lines}"
+
+
+@pytest.mark.parametrize("name, program, source_leds", CORPUS, ids=[row[0] for row in CORPUS])
+def test_narrowing_uses_only_easings_the_source_used(name, program, source_leds):
+    """Easing is how a step FEELS. Narrowing may not invent a feeling.
+
+    (Durations are checked numerically above -- ``1.6s`` and ``1600ms`` are
+    the same instruction spelled two ways, and the renderer picks the cheaper
+    spelling for the bytes.)
+    """
+    import re
+
+    narrowed = downsample_program(program, source_leds=source_leds)
+    if narrowed is None:
+        return
+    pattern = r"\b(?:none|linear|pulse|cosine|ease)\b"
+    assert set(re.findall(pattern, narrowed)) <= set(re.findall(pattern, program))

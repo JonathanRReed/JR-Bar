@@ -50,6 +50,7 @@ from enum import Enum
 from typing import Final
 
 from .animation import (
+    OFF,
     Animation,
     BrightnessStep,
     ColorList,
@@ -254,7 +255,10 @@ def downsample_segment(segment, *, source_leds: int, led_count: int = DOT_LED_CO
 
     ``WholeBar`` needs no work: "every LED" means every LED on whatever is
     listening. ``ColorList`` and ``IndexedPaint`` are banded. Indexed paint
-    keeps indexed form so its "unmentioned LEDs hold" rule survives.
+    keeps indexed form so its "unmentioned LEDs hold" rule survives -- but
+    see ``downsample_step``: what an unmentioned band holds is resolved from
+    the SOURCE program, never from whatever the device happened to be
+    showing.
     """
     bounds = _band_bounds(source_leds, led_count)
     if type(segment) is WholeBar:
@@ -280,7 +284,58 @@ def downsample_segment(segment, *, source_leds: int, led_count: int = DOT_LED_CO
     return segment
 
 
-def downsample_step(step: PaintStep, *, source_leds: int, led_count: int = DOT_LED_COUNT) -> PaintStep:
+def _paint_source_state(step: PaintStep, *, source_leds: int, state: list[str]) -> list[str]:
+    """The source strip's own per-index colours after one paint LINE.
+
+    Pure: it starts from black at line one and only ever reads the program
+    it was handed, so nothing an EARLIER program left on the device can
+    reach the conversion. That was the second half of the live defect -- an
+    unaddressed LED holding a colour from the Dot's previous program, which
+    then looked like the converter had invented a colour.
+    """
+    after = list(state)
+    for segment in step.segments:
+        if type(segment) is WholeBar:
+            color = BLACK if segment.color == OFF else normalize_color(segment.color)
+            after = [color] * source_leds
+        elif type(segment) is ColorList:
+            # The firmware's rule: LEDs past the list go dark.
+            colors = [normalize_color(color) for color in segment.colors]
+            after = [
+                colors[index] if index < len(colors) else BLACK
+                for index in range(source_leds)
+            ]
+        elif type(segment) is IndexedPaint:
+            for index, color in segment.assignments:
+                position = int(index)
+                if 0 <= position < source_leds:
+                    after[position] = normalize_color(color)
+    return after
+
+
+def _addressed_bands(segments, led_count: int) -> set[int]:
+    """Which destination LEDs a rendered line actually paints.
+
+    A ``WholeBar`` and a ``ColorList`` both paint every LED (the list's rule
+    is that LEDs past it go dark, which is still an instruction). Indexed
+    paint only claims what it names.
+    """
+    addressed: set[int] = set()
+    for segment in segments:
+        if type(segment) in (WholeBar, ColorList):
+            return set(range(led_count))
+        if type(segment) is IndexedPaint:
+            addressed.update(int(index) for index, _color in segment.assignments)
+    return addressed
+
+
+def downsample_step(
+    step: PaintStep,
+    *,
+    source_leds: int,
+    led_count: int = DOT_LED_COUNT,
+    resolved: tuple[str, ...] | None = None,
+) -> PaintStep:
     """One paint LINE re-rendered, not one segment at a time.
 
     A renderer that writes ``0:#RRGGBB; 1:#RRGGBB; ...`` emits eight
@@ -296,6 +351,13 @@ def downsample_step(step: PaintStep, *, source_leds: int, led_count: int = DOT_L
     warns about; keeping the earliest turns a wave crossing four LEDs into
     one pulse crossing one band, which is what the wave looks like from
     across the room anyway.
+
+    Then the line is made TOTAL. ``resolved`` is what every band shows
+    according to the source program at this line; any band the merged
+    segments did not name is painted with it explicitly. Without that a
+    band could be addressed on line one and never again -- the live defect
+    of 2026-09-10, where the Dot's second LED held a green from a finished
+    program "forever" because no later line ever mentioned it.
     """
     bounds = _band_bounds(source_leds, led_count)
     slots: list[object] = []
@@ -347,7 +409,32 @@ def downsample_step(step: PaintStep, *, source_leds: int, led_count: int = DOT_L
                     timing=Timing(duration_ms=duration_ms, easing=easing, delay_ms=delay),
                 )
             )
+    if resolved is not None and segments:
+        missing = sorted(set(range(led_count)) - _addressed_bands(segments, led_count))
+        if missing:
+            segments.append(
+                IndexedPaint(
+                    assignments=tuple(
+                        (band, resolved[band] if band < len(resolved) else BLACK)
+                        for band in missing
+                    ),
+                    # No delay, and never longer than the line already is, so
+                    # making the line total cannot re-time the animation.
+                    timing=Timing(duration_ms=_line_duration_ms(segments)),
+                )
+            )
     return PaintStep(segments=tuple(segments))
+
+
+def _line_duration_ms(segments) -> int | None:
+    """The longest duration already on this line, so a fill matches it."""
+    durations = [
+        segment.timing.duration_ms
+        for segment in segments
+        if getattr(segment, "timing", None) is not None
+        and segment.timing.duration_ms is not None
+    ]
+    return max(durations) if durations else None
 
 
 def downsample_program(
@@ -363,18 +450,41 @@ def downsample_program(
     LEDs that are not there. Timing, easing, delays, rolls, repeats and
     brightness are carried through untouched: the Dot stays phase-locked to
     the strip because it is running the same clock, not a re-timed copy.
+
+    Two invariants hold over everything this returns, and
+    ``tests/test_dot_role.py`` asserts both over the whole effect corpus:
+
+    * every LED the destination device has is addressed on every paint line
+      (or the line paints the whole strip at once), so nothing is painted
+      once and then stranded; and
+    * it is a pure function of ``program`` -- the source's own per-index
+      state is resolved here, from black, so no colour a previous program
+      left on the device can appear in the output.
     """
     if not isinstance(program, str) or not program.strip():
         return None
-    if source_leds <= led_count:
-        return program
-    animation, problems = read_program(program, led_count=source_leds)
+    source_leds = max(1, int(source_leds))
+    led_count = max(1, int(led_count))
+    animation, problems = read_program(
+        program, led_count=max(source_leds, led_count)
+    )
     if errors_only(problems):
         return None
+    bounds = _band_bounds(max(source_leds, led_count), led_count)
+    state = [BLACK] * max(source_leds, led_count)
     steps: list[object] = []
     for step in animation.steps:
         if type(step) is PaintStep:
-            narrowed = downsample_step(step, source_leds=source_leds, led_count=led_count)
+            state = _paint_source_state(step, source_leds=max(source_leds, led_count), state=state)
+            resolved = tuple(
+                _brightest(tuple(state[start:stop])) for start, stop in bounds
+            )
+            narrowed = downsample_step(
+                step,
+                source_leds=max(source_leds, led_count),
+                led_count=led_count,
+                resolved=resolved,
+            )
             if not narrowed.segments:
                 return None
             steps.append(narrowed)

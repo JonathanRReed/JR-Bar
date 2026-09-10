@@ -549,8 +549,14 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     assert result.request is pro
     dot_command, dot_result = controller._core_linked_results[submitted[0].key]
     assert dot_command.payload is dot and dot_result.request is dot
-    assert handed == [(f"brightness 76\n{result.write.program}", result.write.state)]
-    assert dot_result.write.program.endswith(result.write.program)
+    # 30% of the strip's LIGHT (nominal 149), and every LED addressed on the
+    # narrowed line -- a band painted once and never again is a band that
+    # holds a colour from a finished program forever.
+    assert handed == [("brightness 149\n0:#000000; 1:#000000", result.write.state)]
+    # The Dot plays the strip's program NARROWED, not the strip's bytes: the
+    # Pro's `0:#000000` says nothing about the Dot's second LED, and a line
+    # that says nothing about an LED is how one gets stranded.
+    assert dot_result.write.program == "brightness 149\n0:#000000; 1:#000000"
     assert dot_result.label.endswith(f"extend with {pro.device.name}")
 
     controller._apply_hardware_write_result(submitted[0], result)
@@ -655,8 +661,11 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
         coalesce_identity="ambient-dot-heartbeat",
     )
     result = controller._sync_hardware_device(ambient)
-    # Default linked scale 0.3 of the Dot's full brightness: 255 * 0.3 = 76.
-    assert handed == [(f"brightness 76\n{pro_write.program}", pro_write.state)]
+    # Default linked scale 0.3 of the Dot's full brightness -- 30% of the
+    # LIGHT, so the nominal code is linear_to_srgb(0.3) * 255 = 149. Scaling
+    # the CODE (255 * 0.3 = 76) reads like the same thing and is not: the
+    # write boundary decodes it, and 76 arrived as 6.7% of the strip's light.
+    assert handed == [(f"brightness 149\n{pro_write.program}", pro_write.state)]
     assert result.write.program.endswith(pro_write.program) and result.label == "SidePulse Dot extend"
 
     plain = HardwareWriteRequest(dot_device, AgentMode.WORKING, None, (), None, 0.5)
@@ -679,12 +688,87 @@ def test_linked_dot_program_folds_brightness_lines(headless) -> None:
     controller.settings = controller.settings.with_linked_dot_scale(0.5)
     dot = SimpleNamespace(brightness=200)
     out = controller._core_dot_plan(dot, "brightness 100\n#112233 500ms\nrepeat")
-    # min(strip 100, dot 200) * 0.5 = 50; the strip's own line is folded in.
-    assert out.program == "brightness 50\n#112233 500ms\nrepeat"
+    # The cap is min(strip 100, dot 200) = 100, and the scale is half the
+    # LIGHT that code means, re-encoded: 71. The strip's own line is folded in
+    # so the Dot never carries two.
+    assert out.program == "brightness 71\n#112233 500ms\nrepeat"
+    assert out.program.count("brightness") == 1
     assert (
         controller._core_dot_plan(SimpleNamespace(brightness=255), "#FFFFFF").program
-        == "brightness 128\n#FFFFFF"
+        == "brightness 188\n#FFFFFF"
     )
+
+
+def test_a_finished_finite_cue_re_arms_the_live_program_on_either_device(headless) -> None:
+    """The Pro was found dark, and the Dot holding one lit LED, because the
+    completion cue ended in ``repeat 8`` and nothing wrote again for four
+    minutes (the reassert backstop). A cue that ends is a cue that has to
+    hand the surface back."""
+    import time as _time
+    from pathlib import Path as _Path
+
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
+
+    controller = headless
+    for device_id, name, volume, cue in (
+        ("sidepulse:pro:1", "SidePulse", "SidePulse",
+         "#791BFF 180ms none\noff 120ms none\n#791BFF 180ms none\noff 520ms none\nrepeat 8"),
+        ("sidepulse:dot:1", "SidePulse Dot", "PulseDot",
+         "0:#722CA1 1:#14732D 250ms none\n0:#000000 1:#14732D 250ms none\nrepeat 8"),
+    ):
+        device = StatusBarDevice(
+            device_id, name, _Path(f"/Volumes/{volume}"),
+            _Path(f"/Volumes/{volume}/LEDS.LED"), True, "agent",
+        )
+        request = HardwareWriteRequest(device, AgentMode.WORKING, None, (), None, 0.5)
+        command = controller._hardware_write_command(request, 100.0)
+        write = LedStatusWrite(LedDisplayState.DONE, device.target, cue, True)
+        controller._core_note_hardware_write(
+            command,
+            HardwareWriteResult(
+                request=request, write=write, label=f"{name} Done",
+                agent_display_rendered=True, completed_at=1.0,
+            ),
+        )
+        assert device_id in controller._core_finite_cue_end
+
+        stub = SimpleNamespace(last_program_identity=("program", cue), last_attempt_monotonic=1.0)
+        controller.agent_led_controllers_by_device[device_id] = stub
+        # Mid-cue: nothing to do, and nothing may disturb the running cue.
+        assert controller._core_repaint_finished_cues(_time.monotonic()) is False
+        assert stub.last_program_identity is not None
+        # The instant it ends: the deduper is cleared so the next refresh
+        # genuinely rewrites, instead of deciding the device is up to date.
+        assert controller._core_repaint_finished_cues(
+            controller._core_finite_cue_end[device_id]
+        ) is True
+        assert stub.last_program_identity is None
+        assert stub.last_attempt_monotonic == 0.0
+        assert device_id not in controller._core_finite_cue_end
+        # And it fires exactly once.
+        assert controller._core_repaint_finished_cues(_time.monotonic() + 1000) is False
+
+    # A program that loops forever is not a cue and arms nothing.
+    device = StatusBarDevice(
+        "sidepulse:pro:1", "SidePulse", _Path("/Volumes/SidePulse"),
+        _Path("/Volumes/SidePulse/LEDS.LED"), True, "agent",
+    )
+    request = HardwareWriteRequest(device, AgentMode.WORKING, None, (), None, 0.5)
+    controller._core_note_hardware_write(
+        controller._hardware_write_command(request, 100.0),
+        HardwareWriteResult(
+            request=request,
+            write=LedStatusWrite(
+                LedDisplayState.WORKING, device.target,
+                "#00E5FF 600ms pulse\noff 600ms cosine\nrepeat", True,
+            ),
+            label="SidePulse Working", agent_display_rendered=True, completed_at=1.0,
+        ),
+    )
+    assert controller._core_finite_cue_end == {}
+
 
 
 def test_the_dots_role_decides_what_it_plays(headless) -> None:
@@ -726,7 +810,9 @@ def test_the_dots_role_decides_what_it_plays(headless) -> None:
     with controller._core_lock:
         controller._core_documents["state"] = {"aggregate": {"needs_you": 0}}
     # The brightness line still applies: it scales the device's resting glow.
-    assert controller._core_dot_plan(SimpleNamespace(brightness=255)).program == "brightness 76\noff"
+    # ``asks`` is a beacon, not a continuation: linked_dot_scale does not
+    # apply to it, so a full-brightness Dot carries no brightness line at all.
+    assert controller._core_dot_plan(SimpleNamespace(brightness=255)).program == "off"
     # A session merely waiting on input carries no answerable ask row, but
     # the fleet headline still says needs_you -- and a person is still needed.
     with controller._core_lock:
@@ -737,7 +823,7 @@ def test_the_dots_role_decides_what_it_plays(headless) -> None:
     with controller._core_lock:
         controller._core_documents["state"] = {"aggregate": {"needs_you": 1}}
     asking = controller._core_dot_plan(SimpleNamespace(brightness=255))
-    assert asking.program.splitlines()[1].startswith("#FF9F0A") and asking.why == "waiting"
+    assert asking.program.splitlines()[0].startswith("#FF9F0A") and asking.why == "waiting"
     # No strip needed: a beacon is not a continuation of anything.
     controller._core_linked_pro_program = None
     assert controller._core_linked_dot_follows(request) is True
