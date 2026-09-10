@@ -563,12 +563,15 @@ def test_approve_device_and_set_settings_persist_and_reconfigure(deck_live, monk
     assert load_integration_settings().settings.creator_micro_device_serial == SERIAL
     assert controller._core_build_state()["deck"]["device"]["approved"] is True
     assert len(controller._deck_test_runtimes) > before  # the output service was reconfigured
+    # With no pad in sight the remembered serial is not enabled blindly.
     rows.clear()
-    save_integration_settings(IntegrationSettings())
+    monkeypatch.setattr(core_runtime, "deck_probe", lambda: [])
+    save_integration_settings(IntegrationSettings().with_creator_micro(enabled=False, device_serial=SERIAL))
     controller._core_deck_integration_cache = None
     with pytest.raises(CommandError) as none:
         controller._core_dispatch("deck_approve_device", {})
     assert (none.value.code, none.value.message) == ("no_device", "No Creator Micro 2 is connected.")
+    assert load_integration_settings().settings.creator_micro_enabled is False
 
     with pytest.raises(CommandError) as bad:
         controller._core_dispatch("deck_set_settings", {"enabled": "yes"})
