@@ -1409,8 +1409,14 @@ def hook_shim_path() -> Path | None:
         return candidate if explicit and candidate.is_file() and os.access(candidate, os.X_OK) else None
     candidates: list[Path] = []
     if getattr(sys, "frozen", False):
-        candidates.append(Path(sys.executable).resolve().parent / HOOK_SHIM_NAME)
-        candidates.append(Path(sys.executable).resolve().parent.parent / "Helpers" / HOOK_SHIM_NAME)
+        # The packaged daemon is JR-Bar.app/Contents/Helpers/jrbar-core.app/
+        # Contents/MacOS/jrbar-core and the shim sits beside its bundle in
+        # Contents/Helpers (packaging/build_macos_pkg.sh); a bare onedir
+        # build keeps the shim beside the executable.
+        executable = Path(sys.executable).resolve()
+        if len(executable.parents) > 3:
+            candidates.append(executable.parents[3] / HOOK_SHIM_NAME)
+        candidates.append(executable.parent / HOOK_SHIM_NAME)
     candidates.append(Path(__file__).resolve().parents[2] / "hook" / "build" / HOOK_SHIM_NAME)
     # An installed deployment (scripts/install-agents.sh) keeps the shim
     # beside its venv; the daemon gets it through JRBAR_HOOK_EXEC, and the
