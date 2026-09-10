@@ -16,8 +16,8 @@
 # launchd keeps both agents alive (KeepAlive); the app connects to
 # ~/.local/state/jrbar/core.sock and reconnects with backoff whenever the
 # daemon restarts. The daemon's doctor document reports the commit it was
-# installed from (JRBAR_COMMIT). Hooks for claude and codex are re-pointed
-# at the installed shim.
+# installed from (JRBAR_COMMIT). Every provider's hooks are re-pointed at
+# the installed shim (`jrbar agent-monitor install all`).
 #
 # Re-run after every commit you want running. Revert to the Python UI:
 #   launchctl bootout gui/$UID/com.jonathanreed.jrbar.ui
@@ -130,10 +130,8 @@ pkill -f "jrbar core" 2>/dev/null || true
 pkill -f "jrbar status-bar" 2>/dev/null || true
 sleep 1
 
-echo "==> hooks: claude and codex run $SHIM"
-for provider in claude codex; do
-    JRBAR_HOOK_EXEC="$SHIM" "$PYTHON" -m jrbar agent-monitor install "$provider" | head -1
-done
+echo "==> hooks: every provider runs $SHIM"
+JRBAR_HOOK_EXEC="$SHIM" "$PYTHON" -m jrbar agent-monitor install all | grep -E '^[a-z]+:' || true
 
 write_plist "$CORE_LABEL" "$AGENTS/$CORE_LABEL.plist" "$PYTHON" -m jrbar core
 write_plist "$UI_LABEL" "$AGENTS/$UI_LABEL.plist" "$BINARY"

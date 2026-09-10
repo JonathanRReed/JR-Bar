@@ -71,7 +71,7 @@ def test_registering_a_tenth_provider_moves_nobody(monkeypatch) -> None:
         spec.provider: default_agent_color(spec.provider)
         for spec in colors_module.PROVIDER_SPECS
     }
-    assert len(before) == 10
+    assert len(before) == 12
 
     newcomer = replace(colors_module.PROVIDER_SPECS[0], provider="newcomer")
     specs = (

@@ -215,6 +215,8 @@ class DeviceDisplaySetting:
 class AgentMonitorSettings:
     codex_transcripts_enabled: bool = False
     claude_transcripts_enabled: bool = False
+    pi_transcripts_enabled: bool = False
+    gemini_transcripts_enabled: bool = False
     led_display: str = LED_DISPLAY_AGENT
     devices: tuple[DeviceDisplaySetting, ...] = ()
     virtual_status_device_enabled: bool = False
@@ -461,6 +463,10 @@ class AgentMonitorSettings:
             return self.codex_transcripts_enabled
         if provider == "claude":
             return self.claude_transcripts_enabled
+        if provider == "pi":
+            return self.pi_transcripts_enabled
+        if provider == "gemini":
+            return self.gemini_transcripts_enabled
         return False
 
     def with_transcript_provider(self, provider: str, enabled: bool) -> AgentMonitorSettings:
@@ -468,6 +474,10 @@ class AgentMonitorSettings:
             return replace(self, codex_transcripts_enabled=enabled)
         if provider == "claude":
             return replace(self, claude_transcripts_enabled=enabled)
+        if provider == "pi":
+            return replace(self, pi_transcripts_enabled=enabled)
+        if provider == "gemini":
+            return replace(self, gemini_transcripts_enabled=enabled)
         raise ValueError(f"Unknown transcript provider: {provider}")
 
     def with_led_display(self, display: str) -> AgentMonitorSettings:
@@ -1433,6 +1443,8 @@ class AgentMonitorSettings:
             "transcript_monitoring": {
                 "codex": self.codex_transcripts_enabled,
                 "claude": self.claude_transcripts_enabled,
+                "pi": self.pi_transcripts_enabled,
+                "gemini": self.gemini_transcripts_enabled,
             },
             "battery_monitoring": {
                 "full_charge_watts": self.battery_full_charge_watts,
@@ -1673,6 +1685,8 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
     parsed_dnd = parse_dnd_settings(data)
     return AgentMonitorSettings(
         codex_transcripts_enabled=_bool_setting(transcript.get("codex"), False),
+        pi_transcripts_enabled=_bool_setting(transcript.get("pi"), False),
+        gemini_transcripts_enabled=_bool_setting(transcript.get("gemini"), False),
         claude_transcripts_enabled=_bool_setting(transcript.get("claude"), False),
         led_display=led_display,
         devices=_device_display_settings(data.get("devices"), led_display),

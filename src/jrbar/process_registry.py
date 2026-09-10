@@ -45,6 +45,10 @@ START_TOLERANCE_SECONDS = 5.0
 _SHELL_NAMES = frozenset(
     {"sh", "bash", "zsh", "fish", "env", "python", "python3", "node", "caffeinate"}
 )
+# Interpreters that host a whole CLI (pi and gemini are node scripts, so ps
+# reports "node"): the nearest one above the hook is the agent process when
+# no named executable is found.
+_INTERPRETER_NAMES = frozenset({"node", "bun", "deno"})
 # Executable basenames that identify a provider's agent process. The first
 # ancestor with one of these names is the session's process; anything else
 # (shells, node wrappers) is skipped.
@@ -288,6 +292,7 @@ def discover_agent_process(
     current = os.getppid() if start_pid is None else start_pid
     seen: set[int] = set()
     fallback: ProcessEntry | None = None
+    interpreter: ProcessEntry | None = None
     while current > 1 and current not in seen and len(seen) < limit:
         seen.add(current)
         entry = table.get(current)
@@ -296,10 +301,12 @@ def discover_agent_process(
         name = entry.basename
         if name in wanted:
             return entry
+        if interpreter is None and fallback is None and name in _INTERPRETER_NAMES:
+            interpreter = entry
         if fallback is None and name and name not in _SHELL_NAMES:
             fallback = entry
         current = entry.ppid
-    return fallback
+    return interpreter or fallback
 
 
 def record_agent_process(

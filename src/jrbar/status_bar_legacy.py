@@ -7093,6 +7093,22 @@ class StatusBarController(NSObject):
         self.update_hooks("kiro", install=False)
 
     @objc.IBAction
+    def installPiHooks_(self, _sender):
+        self.update_hooks("pi", install=True)
+
+    @objc.IBAction
+    def uninstallPiHooks_(self, _sender):
+        self.update_hooks("pi", install=False)
+
+    @objc.IBAction
+    def installGeminiHooks_(self, _sender):
+        self.update_hooks("gemini", install=True)
+
+    @objc.IBAction
+    def uninstallGeminiHooks_(self, _sender):
+        self.update_hooks("gemini", install=False)
+
+    @objc.IBAction
     def toggleCodexTranscripts_(self, sender):
         self.set_transcript_monitoring("codex", sender.state() == NSOnState)
 
@@ -9372,6 +9388,8 @@ class StatusBarController(NSObject):
             for provider, enabled in (
                 (CODEX_TRANSCRIPT_PROVIDER, self.settings.codex_transcripts_enabled),
                 (CLAUDE_TRANSCRIPT_PROVIDER, self.settings.claude_transcripts_enabled),
+                ("pi-transcripts", self.settings.transcript_enabled("pi")),
+                ("gemini-transcripts", self.settings.transcript_enabled("gemini")),
             )
             if enabled
         }

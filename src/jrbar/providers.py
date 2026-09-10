@@ -227,6 +227,54 @@ KIRO_MANAGED_DESCRIPTION = (
     f"Kiro agent with {PRODUCT_DISPLAY_NAME} lifecycle monitoring enabled."
 )
 
+# Pi (@mariozechner/pi-coding-agent) runs TypeScript extensions in-process
+# (Node); JR-Bar owns one file, ~/.pi/agent/extensions/jrbar.ts, that spawns
+# the hook shim with a Claude-shaped payload for each lifecycle event. The
+# native event names are listed by the extension itself; the Python side only
+# ever sees canonical names. ``ui_prompt_start`` / ``ui_prompt_end`` are
+# registered defensively: pi 0.73.1 does not emit them, so PermissionRequest
+# arrives only on a pi that does.
+PI_EVENTS = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PermissionRequest",
+    "Stop",
+    "SessionEnd",
+)
+PI_NATIVE_EVENT_NAMES = {
+    "session_start": "SessionStart",
+    "turn_start": "UserPromptSubmit",
+    "tool_execution_start": "PreToolUse",
+    "tool_execution_end": "PostToolUse",
+    "ui_prompt_start": "PermissionRequest",
+    "ui_prompt_end": "PostToolUse",
+    "agent_end": "Stop",
+    "session_shutdown": "SessionEnd",
+}
+PI_EXTENSION_MARKER = "jrbar-pi-extension-v1"
+_PI_EXTENSION_MAX_SOURCE_BYTES = 32 * 1024
+
+# Gemini CLI's own hook event names, registered verbatim under ``hooks`` in
+# ~/.gemini/settings.json and canonicalised on ingest (BeforeAgent ->
+# UserPromptSubmit, BeforeTool -> PreToolUse, AfterTool -> PostToolUse,
+# AfterAgent -> Stop). Notification is the only waiting-for-you signal
+# (``notification_type: "ToolPermission"``, refined to PermissionRequest in
+# parse_log_line); nothing fires when the user answers. AfterModel fires per
+# streamed chunk and is deliberately not registered.
+GEMINI_EVENTS = (
+    "SessionStart",
+    "BeforeAgent",
+    "BeforeTool",
+    "AfterTool",
+    "Notification",
+    "AfterAgent",
+    "SessionEnd",
+)
+GEMINI_HOOK_NAME = "jrbar"
+GEMINI_HOOK_TIMEOUT_MS = 5000
+
 ANTIGRAVITY_HOOK_NAME = "jrbar-status"
 LEGACY_ANTIGRAVITY_HOOK_NAME = "sidepulse-status"
 ANTIGRAVITY_ENVELOPE_KEY = "antigravity"
@@ -264,8 +312,9 @@ def _is_jrbar_hook_invocation(parts) -> bool:
     parts = list(parts)
     if any(Path(part).name == "hook_entry.py" for part in parts):
         return True
-    # The compiled shim (hook/jrbar-hook.c): `jrbar-hook --provider <id>`.
-    if parts and Path(parts[0]).name == HOOK_SHIM_NAME:
+    # The compiled shim (hook/jrbar-hook.c): `jrbar-hook --provider <id>`,
+    # bare or inside a shell wrapper (Antigravity's envelope pipes into it).
+    if any(Path(part).name == HOOK_SHIM_NAME for part in parts):
         return True
     if "-m" in parts and any(module in parts for module in HOOK_CLIENT_MODULES):
         return True
@@ -274,10 +323,21 @@ def _is_jrbar_hook_invocation(parts) -> bool:
     )
 
 
+def _shim_hook_arguments(arguments: list, provider: str) -> bool:
+    """``[<jrbar-hook>, --provider, <provider>, --log, <path>]``: the compiled
+    shim's argv, the shape every installer writes when the shim exists."""
+    return (
+        len(arguments) == 5
+        and Path(arguments[0]).is_absolute()
+        and Path(arguments[0]).name == HOOK_SHIM_NAME
+        and arguments[1:4] == ["--provider", provider, "--log"]
+    )
+
+
 def _valid_opencode_hook_arguments(
     arguments: object,
 ) -> tuple[str, ...] | None:
-    if not isinstance(arguments, list) or len(arguments) not in (6, 7):
+    if not isinstance(arguments, list) or len(arguments) not in (5, 6, 7):
         return None
     if not all(
         isinstance(argument, str)
@@ -322,7 +382,7 @@ def _valid_opencode_hook_arguments(
         and arguments[2] in ("hook-log", "hook-client")
         and arguments[3:6] == ["--provider", "opencode", "--log"]
     )
-    if not (python_shape or module_shape or frozen_shape):
+    if not (python_shape or module_shape or frozen_shape or _shim_hook_arguments(arguments, "opencode")):
         return None
     if len(arguments[-1]) > 4096 or "\x00" in arguments[-1]:
         return None
@@ -475,7 +535,7 @@ def managed_opencode_plugin_log_path(text: str) -> Path | None:
 
 
 def _valid_openclaw_hook_arguments(arguments: object) -> tuple[str, ...] | None:
-    if not isinstance(arguments, list) or len(arguments) != 7:
+    if not isinstance(arguments, list) or len(arguments) not in (5, 7):
         return None
     if not all(
         isinstance(argument, str)
@@ -485,12 +545,16 @@ def _valid_openclaw_hook_arguments(arguments: object) -> tuple[str, ...] | None:
         for argument in arguments
     ):
         return None
-    module_shape = arguments[1] == "-m" and arguments[2] in HOOK_CLIENT_MODULES
-    frozen_shape = arguments[1:3] == ["agent-monitor", "hook-client"]
-    if not (module_shape or frozen_shape):
-        return None
-    if arguments[3:6] != ["--provider", "openclaw", "--log"]:
-        return None
+    if len(arguments) == 5:
+        if not _shim_hook_arguments(arguments, "openclaw"):
+            return None
+    else:
+        module_shape = arguments[1] == "-m" and arguments[2] in HOOK_CLIENT_MODULES
+        frozen_shape = arguments[1:3] == ["agent-monitor", "hook-client"]
+        if not (module_shape or frozen_shape):
+            return None
+        if arguments[3:6] != ["--provider", "openclaw", "--log"]:
+            return None
     log_path = Path(arguments[-1]).expanduser()
     if (
         not log_path.is_absolute()
@@ -1245,6 +1309,67 @@ def _detect_kiro_config_at(config_path: Path) -> ProviderConfig:
     )
 
 
+def default_pi_extension_path(home: Path | None = None) -> Path:
+    base = home or Path.home()
+    return base / ".pi" / "agent" / "extensions" / "jrbar.ts"
+
+
+_PI_HOOK_COMMAND_LINE = re.compile(r"^const HOOK_COMMAND = (\[.*\]);$", re.MULTILINE)
+
+
+def managed_pi_extension_command(text: str) -> list[str] | None:
+    """The shim argv baked into a managed pi extension, or None when the
+    file is not ours (no marker, or a command that is not JR-Bar's)."""
+    if not isinstance(text, str) or PI_EXTENSION_MARKER not in text:
+        return None
+    match = _PI_HOOK_COMMAND_LINE.search(text)
+    if match is None:
+        return None
+    try:
+        arguments = json.loads(match.group(1))
+    except ValueError:
+        return None
+    if (
+        not isinstance(arguments, list)
+        or not arguments
+        or not all(isinstance(item, str) and item for item in arguments)
+        or not is_jrbar_hook_command(" ".join(shlex.quote(item) for item in arguments), "pi")
+    ):
+        return None
+    return list(arguments)
+
+
+def detect_pi_config(home: Path | None = None) -> ProviderConfig:
+    path = default_pi_extension_path(home)
+    if not path.exists():
+        return ProviderConfig("pi", path, False, False, (), ())
+    try:
+        if path.is_symlink() or path.stat().st_size > _PI_EXTENSION_MAX_SOURCE_BYTES:
+            return ProviderConfig("pi", path, True, False, (), ())
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ProviderConfig("pi", path, True, False, (), ())
+    command = managed_pi_extension_command(text)
+    if command is None:
+        return ProviderConfig("pi", path, True, False, (), ())
+    paths = extract_log_paths_from_command(" ".join(shlex.quote(item) for item in command))
+    return ProviderConfig("pi", path, True, True, tuple(sorted(PI_EVENTS)), _dedupe_paths(list(paths)))
+
+
+def default_gemini_config_path(home: Path | None = None) -> Path:
+    base = home or Path.home()
+    return base / ".gemini" / "settings.json"
+
+
+def detect_gemini_config(home: Path | None = None) -> ProviderConfig:
+    return detect_json_hook_config(
+        "gemini",
+        default_gemini_config_path(home),
+        GEMINI_EVENTS,
+        lambda command: is_jrbar_hook_command(command, "gemini"),
+    )
+
+
 PROVIDER_SPECS = (
     ProviderSpec("codex", "Codex", CODEX_EVENTS, "codex-toml", default_codex_config_path, detect_codex_config),
     ProviderSpec("claude", "Claude", CLAUDE_EVENTS, "claude-json", default_claude_config_path, detect_claude_config),
@@ -1273,6 +1398,15 @@ PROVIDER_SPECS = (
         "kiro-json",
         default_kiro_agent_config_path,
         detect_kiro_config,
+    ),
+    ProviderSpec("pi", "Pi", PI_EVENTS, "pi-extension", default_pi_extension_path, detect_pi_config),
+    ProviderSpec(
+        "gemini",
+        "Gemini CLI",
+        GEMINI_EVENTS,
+        "gemini-json",
+        default_gemini_config_path,
+        detect_gemini_config,
     ),
 )
 PROVIDER_REGISTRY = {spec.provider: spec for spec in PROVIDER_SPECS}
@@ -1478,6 +1612,38 @@ _PROVIDER_SOURCE_REGISTRATIONS = (
             ),
         ),
     ),
+    # live_agent_events only: pi 0.73.1 has no ui_prompt events, so no ask can
+    # be named until a pi that emits them ships.
+    ProviderSourceRegistration(
+        ProviderIdentifier("pi"),
+        AdapterIdentifier("hooks"),
+        SourceInstanceIdentifier("global"),
+        ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+        (
+            (
+                CapabilityIdentifier("live_agent_events"),
+                (SchemaVersion(1, 0), SchemaVersion(1, 1)),
+            ),
+        ),
+    ),
+    # Gemini's Notification(ToolPermission) is a real ask, so the request
+    # lane is declared.
+    ProviderSourceRegistration(
+        ProviderIdentifier("gemini"),
+        AdapterIdentifier("hooks"),
+        SourceInstanceIdentifier("global"),
+        ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+        (
+            (
+                CapabilityIdentifier("live_agent_events"),
+                (SchemaVersion(1, 0), SchemaVersion(1, 1)),
+            ),
+            (
+                CapabilityIdentifier("actionable_requests"),
+                (SchemaVersion(1, 0),),
+            ),
+        ),
+    ),
 )
 
 
@@ -1601,6 +1767,11 @@ def parse_log_line(provider: str, line: str) -> HookEvent | None:
     )
     if not event_name:
         return None
+    if provider == "gemini" and event_name == "Notification":
+        # ToolPermission is Gemini CLI's one ask-shaped signal.
+        kind = str(raw.get("notification_type") or raw.get("notificationType") or "")
+        if kind.strip().lower().replace("_", "") == "toolpermission":
+            event_name = "PermissionRequest"
 
     normalized_raw = normalize_event_payload(raw, event_name, logged_at)
 
@@ -1686,6 +1857,11 @@ def canonical_event_name(value: Any) -> str | None:
             # Kiro natives (camelCase normalizes to snake_case first).
             "agent_spawn": "SessionStart",
             "stop_failure": "StopFailure",
+            # Gemini CLI natives.
+            "before_agent": "UserPromptSubmit",
+            "before_tool": "PreToolUse",
+            "after_tool": "PostToolUse",
+            "after_agent": "Stop",
             # Cursor natives (camelCase normalizes to snake_case first).
             "before_shell_execution": "PreToolUse",
             "after_shell_execution": "PostToolUse",

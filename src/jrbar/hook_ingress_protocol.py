@@ -43,10 +43,12 @@ _HOOK_PROVIDERS: Final = frozenset(
         "cursor",
         "devin",
         "grok",
+        "gemini",
         "hermes",
         "kiro",
         "openclaw",
         "opencode",
+        "pi",
     }
 )
 

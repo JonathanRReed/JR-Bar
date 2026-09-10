@@ -4,6 +4,31 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Core protocol: `state.sessions[].label` is human (the provider's own
+  session title, else the derived project/prompt name, else the working
+  directory, else provider + short id; workers hang off their parent),
+  with new `short_id` and `cwd`; `lights.surfaces.*.why` is the documented
+  enum (`idle`, `working`, `waiting`, `completed`, `failed`, `capacity`,
+  `quiet`, `sleep_dim`, `idle_dim`, `battery`, `calendar`, `reminder`,
+  `escalation`, `preview`, `studio`, `unknown`) with `why_detail`;
+  `usage.providers[].windows[].name` is `5h` / `7d` / `Daily` / `Weekly` /
+  `Monthly` / `Credits`.
+- A volume named `PulseDot` (first-batch Dot firmware) is a 2-LED SidePulse
+  Dot with a stable identity, not an 8-LED strip.
+- Pro + Dot linked mode: the new `devices_linked` setting (default on)
+  writes both devices in one hardware worker command from the same
+  presentation and anchor; `lights.devices_linked` and `linked_skew_ms`
+  report it.
+- New providers: pi (`jrbar agent-monitor install pi` writes
+  `~/.pi/agent/extensions/jrbar.ts`) and Gemini CLI (`install gemini` adds
+  hooks to `~/.gemini/settings.json`), both with transcript fallbacks
+  (`transcript_monitoring.pi` / `.gemini`), lifecycle rules, colours that
+  survive dichromacy, and fixtures. The shim prints `{}` for Gemini (and
+  with `--emit-empty-json`); the hook doctor reads folded YAML, embedded
+  argv arrays and the Antigravity envelope; OpenClaw and OpenCode accept
+  the shim argv; `scripts/install-agents.sh` re-points every provider at
+  the installed shim.
+
 - Rename the software from SidePulse to JR-Bar. The Python package is `jrbar`
   (`sidepulse.*` imports and `python -m sidepulse.hook_client` keep working
   through a one-release shim), the CLI is `jrbar` (`sidepulse` stays as an

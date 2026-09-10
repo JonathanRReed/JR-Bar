@@ -13,6 +13,8 @@ JR-Bar owns provider accounting directly. CodexBar is an engineering reference o
 | Grok | `~/.grok/auth.json`, Grok billing API, local signals | subscription credit usage, cycle reset, account/plan, local token activity |
 | Antigravity | running Antigravity or `agy` loopback quota server | Gemini session/weekly and Claude+GPT session/weekly pools, dynamic detail lanes |
 | OpenAI API | encrypted JR-Bar Admin API key | organization/project spend, tokens, requests, models, daily history |
+| Pi | lifecycle hooks only (`~/.pi/agent/extensions/jrbar.ts`, `jrbar agent-monitor install pi`); session logs under `~/.pi/agent/sessions` as transcript fallback | sessions, prompts, tool runs, turn ends; no quota source (pi bills through whichever model provider it is pointed at) |
+| Gemini CLI | lifecycle hooks only (`hooks` in `~/.gemini/settings.json`, `jrbar agent-monitor install gemini`); chat logs under `~/.gemini/tmp/*/chats` as transcript fallback | sessions, prompts, tool runs, ToolPermission asks, turn ends; the Code Assist quota endpoint (`retrieveUserQuota`) is documented in `docs/research/gemini-cli-and-pi-hooks.md` and not read yet |
 
 Unknown provider-owned quota lanes remain visible in detail views but cannot trigger hardware or interruption alerts until their effect is declared. Missing data, measured zero, stale data, last-known-good data, permission failures, and unsupported sources are separate states.
 

@@ -65,6 +65,8 @@ _PROVIDER_LABELS: Final = {
     "kiro": "Kiro",
     "openclaw": "OpenClaw",
     "opencode": "OpenCode",
+    "pi": "Pi",
+    "gemini": "Gemini",
 }
 _PROVIDER_SEARCH_LABELS: Final = frozenset({"provider", *(label.casefold() for label in _PROVIDER_LABELS.values())})
 _PRODUCT_STATE_SEARCH_LABELS: Final = frozenset(
