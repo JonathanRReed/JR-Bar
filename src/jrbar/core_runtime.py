@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from . import core_deck
+from .completion_visibility import END_EVENT_NAMES
 from .core_projection import (
     READ_ONLY_SETTINGS,
     DeviceFacts,
@@ -65,6 +66,11 @@ CORE_VERSION: Final = "0.8.0"
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
+# How long after a session's last event the daemon keeps re-reading a
+# registry record the liveness sweep closed. Long enough for a provider's
+# own ``SessionEnd`` to land behind its process's exit, short enough that a
+# session that really was killed settles and stops costing a file read.
+UNSETTLED_EXTRAS_SECONDS: Final = 60.0
 # How long ``answer_ask`` waits on the answer surface's worker before it gives
 # up and says so. A delivery is a few process reads and one posted key; the
 # surface's own budget (answer_local.DELIVERY_BUDGET_SECONDS) is smaller, so
@@ -2902,11 +2908,38 @@ def build_headless_controller_class() -> type:
 
         def _core_extras_for(self, status) -> SessionExtras | None:
             cached = self._core_extras.get(status.agent_id)
-            if cached is not None and time.monotonic() - cached[0] < EXTRAS_TTL_SECONDS:
+            if (
+                cached is not None
+                and time.monotonic() - cached[0] < EXTRAS_TTL_SECONDS
+                and not self._core_extras_unsettled(cached[1], status)
+            ):
                 return cached[1]
             extras = self._core_lookup_extras(status)
             self._core_extras[status.agent_id] = (time.monotonic(), extras)
             return extras
+
+        @staticmethod
+        def _core_extras_unsettled(extras: SessionExtras, status) -> bool:
+            """Whether a cached answer of "the sweep ended this" is still
+            worth re-reading.
+
+            A one-shot CLI can exit before its own ``SessionEnd`` reaches the
+            daemon, so the liveness sweep sometimes closes the record first
+            and the provider's event upgrades it a moment later. Caching the
+            first answer for a full ``EXTRAS_TTL_SECONDS`` would leave a
+            finished run reading ``ended`` for half a minute before flipping
+            to Done. Only a freshly-ended session with a terminal event on it
+            is re-read, so a session that really was killed costs one small
+            file read per refresh for a minute and then settles.
+            """
+
+            if extras.provider_ended is not False:
+                return False
+            if getattr(status, "event_name", None) not in END_EVENT_NAMES:
+                return False
+            updated_at = getattr(status, "updated_at", None)
+            stamp = updated_at.timestamp() if hasattr(updated_at, "timestamp") else None
+            return stamp is not None and time.time() - stamp < UNSETTLED_EXTRAS_SECONDS
 
         def _core_lookup_extras(self, status) -> SessionExtras:
             from .process_registry import load_record, pid_exists

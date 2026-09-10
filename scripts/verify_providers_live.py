@@ -215,12 +215,17 @@ def wait_for_events(provider: str, since: int, session: str | None, wanted: tupl
 
 
 def in_order(names: list[str], wanted: tuple[str, ...]) -> bool:
-    positions = []
-    for name in wanted:
-        if name not in names:
-            return False
-        positions.append(names.index(name))
-    return positions == sorted(positions)
+    """Whether ``wanted`` appears in ``names`` in order, as a subsequence.
+
+    Not "the first of each is in order": a session can legitimately carry a
+    repeated event name -- a SIGINT'd run whose process the liveness sweep
+    reaps writes its own synthetic ``session_end`` beside the provider's --
+    and matching on first occurrences failed such a turn even though every
+    event it wanted did happen, in the order it wanted them.
+    """
+
+    remaining = iter(names)
+    return all(any(name == seen for seen in remaining) for name in wanted)
 
 
 # -- mock ------------------------------------------------------------------------
