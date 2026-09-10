@@ -161,6 +161,11 @@ class CreatorMicroOutputService:
                         self._condition.wait(timeout=remaining)
                         continue
                 if adapter is None:
+                    # Why this attempt failed, so a retry that never succeeds
+                    # still says what is wrong. A bare "reconnecting" reads the
+                    # same whether the pad is asleep or macOS is refusing the
+                    # open, which is the one thing the owner has to be told.
+                    transient: tuple[str, str] | None = None
                     try:
                         candidate = self._adapter_factory()
                         connected = candidate.connect()
@@ -169,6 +174,7 @@ class CreatorMicroOutputService:
                             if connected.code not in {"no_device", "transport_unavailable", "backoff"}:
                                 self._publish(False, connected.code, connected.detail)
                                 return
+                            transient = (connected.code, connected.detail)
                             raise OSError(connected.code)
                         adapter = candidate
                         last_output = None
@@ -185,13 +191,14 @@ class CreatorMicroOutputService:
                             self._input_reset_callback()
                         self._publish(True, "ready")
                         retry_delay = 1.0
-                    except OSError:
+                    except OSError as error:
                         if adapter is not None:
                             adapter.close()
                             adapter = None
                         if self._input_reset_callback is not None:
                             self._input_reset_callback()
-                        self._publish(False, "reconnecting")
+                        code, detail = transient or ("reconnecting", str(error))
+                        self._publish(False, code, detail)
                         retry_at = time.monotonic() + retry_delay
                         retry_delay = min(10.0, retry_delay * 2)
                         continue

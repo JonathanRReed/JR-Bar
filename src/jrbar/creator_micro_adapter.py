@@ -342,7 +342,13 @@ class CreatorMicro2Adapter:
         except NoDeviceError:
             return Receipt("no_device", "Creator Micro 2 vendor collection not found")
         except PermissionError as exc:
-            return Receipt(getattr(exc, "code", "permission_denied"), "Device access or approved identity was refused")
+            # The reason travels with the receipt: on real hardware a refused
+            # open is the difference between "grant Input Monitoring" and
+            # "the pad is unplugged", and the caller cannot see the exception.
+            return Receipt(
+                getattr(exc, "code", "permission_denied"),
+                str(exc) or "Device access or approved identity was refused",
+            )
         except (ImportError, OSError) as exc:
             return Receipt("transport_unavailable", str(exc))
         self.connected = True
