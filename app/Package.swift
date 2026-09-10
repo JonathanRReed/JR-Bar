@@ -23,6 +23,31 @@ if usingCommandLineToolsOnly {
     ]))
 }
 
+// Sparkle: `JRBAR_SPARKLE_FRAMEWORK_DIR` names a directory holding the pinned
+// Sparkle.framework (the packaging script's distribution; build-app.sh finds
+// it after one `make package`). With it the app imports and links Sparkle and
+// expects the framework at `Contents/Frameworks` (`@executable_path/../
+// Frameworks`); without it SparkleUpdater.swift compiles its stub half.
+let sparkleDirectory = ProcessInfo.processInfo.environment["JRBAR_SPARKLE_FRAMEWORK_DIR"] ?? ""
+let sparkleAvailable = !sparkleDirectory.isEmpty
+    && FileManager.default.fileExists(atPath: sparkleDirectory + "/Sparkle.framework/Modules/module.modulemap")
+var appSwiftSettings: [SwiftSetting] = []
+var appLinkerSettings: [LinkerSetting] = [
+    .linkedFramework("AppKit"),
+    .linkedFramework("SwiftUI"),
+    .linkedFramework("QuartzCore"),
+    .linkedFramework("AVFoundation"),
+    .linkedFramework("UserNotifications"),
+]
+if sparkleAvailable {
+    appSwiftSettings.append(.unsafeFlags(["-F", sparkleDirectory]))
+    appLinkerSettings.append(.linkedFramework("Sparkle"))
+    appLinkerSettings.append(.unsafeFlags([
+        "-F", sparkleDirectory,
+        "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
+    ]))
+}
+
 let package = Package(
     name: "JRBar",
     platforms: [.macOS(.v26)],
@@ -48,13 +73,8 @@ let package = Package(
         .executableTarget(
             name: "JRBarApp",
             dependencies: ["JRBarLEDS", "JRBarCore", "JRBarUI"],
-            linkerSettings: [
-                .linkedFramework("AppKit"),
-                .linkedFramework("SwiftUI"),
-                .linkedFramework("QuartzCore"),
-                .linkedFramework("AVFoundation"),
-                .linkedFramework("UserNotifications"),
-            ]
+            swiftSettings: appSwiftSettings,
+            linkerSettings: appLinkerSettings
         ),
         .testTarget(
             name: "JRBarLEDSTests",

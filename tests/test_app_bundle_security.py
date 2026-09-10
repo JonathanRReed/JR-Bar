@@ -1010,7 +1010,7 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert info["LSMinimumSystemVersion"] == "26.0"
     assert info["LSUIElement"] is True
     assert info["SUFeedURL"] == "https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
-    assert info["SUPublicEDKey"] == "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
+    assert info["SUPublicEDKey"] == "HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg="
     assert info["SURequireSignedFeed"] is True
     assert info["SUVerifyUpdateBeforeExtraction"] is True
     assert "JRBarCommit" in info
@@ -1040,11 +1040,12 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     assert (app / "Contents" / "Frameworks" / "Sparkle.framework" / "Versions" / "B" / "Sparkle").is_file()
     assert (app / "Contents" / "Resources" / "ThirdPartyLicenses" / "Sparkle.txt").read_text() == "fixture license\n"
 
-    # Build order: app, shim, Sparkle, sign, three verifiers, archive, PKG.
+    # Build order: Sparkle (the app links it), app, shim, sign, three
+    # verifiers, archive, PKG.
     assert event_log.read_text().splitlines() == [
+        "prepare_sparkle.py",
         "build-app.sh 0.5.0",
         "build.sh hook",
-        "prepare_sparkle.py",
         "sign_macos_app.py",
         "verify_macos_app.py",
         "verify_entitlements.py",

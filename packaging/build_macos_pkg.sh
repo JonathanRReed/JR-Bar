@@ -293,9 +293,21 @@ env -u PIP_BUILD_CONSTRAINT "$VENV_DIR/bin/python" -m pip install "$ROOT_DIR" --
 LC_ALL=C "$VENV_DIR/bin/python" -m pip list --format=freeze \
     | /usr/bin/sort > "$ENVIRONMENT_SNAPSHOT"
 
+# The pinned Sparkle distribution first: the Swift app links its framework
+# (SparkleUpdater.swift imports it through JRBAR_SPARKLE_FRAMEWORK_DIR) and
+# the bundle embeds it below.
+echo "==> Sparkle $SPARKLE_DISTRIBUTION"
+if [ -n "$SPARKLE_ARCHIVE" ]; then
+    "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/prepare_sparkle.py" --output "$SPARKLE_DISTRIBUTION" \
+        --archive "$SPARKLE_ARCHIVE"
+else
+    "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/prepare_sparkle.py" --output "$SPARKLE_DISTRIBUTION"
+fi
+
 echo "==> Swift app"
 /bin/mkdir -p "$(/usr/bin/dirname "$SWIFT_APP")"
-JRBAR_BUNDLE="$SWIFT_APP" JRBAR_VERSION="$VERSION" JRBAR_SKIP_SIGN=1 "$APP_BUILD_SCRIPT"
+JRBAR_BUNDLE="$SWIFT_APP" JRBAR_VERSION="$VERSION" JRBAR_SKIP_SIGN=1 \
+    JRBAR_SPARKLE_FRAMEWORK_DIR="$SPARKLE_DISTRIBUTION" JRBAR_EMBED_SPARKLE=0 "$APP_BUILD_SCRIPT"
 if [ ! -x "$SWIFT_APP/Contents/MacOS/JR-Bar" ]; then
     echo "the app build did not produce $SWIFT_APP/Contents/MacOS/JR-Bar" >&2
     exit 1
@@ -350,12 +362,6 @@ CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :NSAppleEventsUsageDescription string $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :NSAppleEventsUsageDescription $APPLE_EVENTS_USAGE_DESCRIPTION" "$CORE_PLIST"
 
-if [ -n "$SPARKLE_ARCHIVE" ]; then
-    "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/prepare_sparkle.py" --output "$SPARKLE_DISTRIBUTION" \
-        --archive "$SPARKLE_ARCHIVE"
-else
-    "$VENV_DIR/bin/python" "$ROOT_DIR/scripts/prepare_sparkle.py" --output "$SPARKLE_DISTRIBUTION"
-fi
 if [ -e "$APP_PATH/Contents/Frameworks/Sparkle.framework" ] || \
     [ -L "$APP_PATH/Contents/Frameworks/Sparkle.framework" ]; then
     echo "Refusing to overwrite an unexpected embedded Sparkle.framework." >&2
