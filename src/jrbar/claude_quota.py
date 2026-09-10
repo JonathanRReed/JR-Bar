@@ -25,6 +25,8 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Final
 
 from .capacity_sources import (
     EvidenceMetricKind,
@@ -38,6 +40,7 @@ from .capacity_types import (
     SourceHealthKind,
     SourceKey,
 )
+from .private_io import read_private_text
 from .reset_policy import parse_reset_epoch
 
 MAX_CLAUDE_WINDOWS = 32
@@ -372,6 +375,81 @@ def fetch_windows(
     return windows
 
 
+#: Claude's own words for a plan, mapped to the words its UI shows. Read from
+#: ``~/.claude.json``'s ``oauthAccount`` block, which Claude Code refreshes on
+#: sign-in and profile fetch; captured 2026-09-10::
+#:
+#:   {"oauthAccount": {"organizationType": "claude_max",
+#:                     "organizationRateLimitTier": "default_claude_max_20x",
+#:                     "userRateLimitTier": null, "seatTier": null, ...}}
+#:
+#: The usage endpoint itself states no plan at all (its top-level keys are
+#: only windows, ``limits``, ``spend`` and ``extra_usage``), so this file is
+#: the only non-prompting source for it. An unrecognised tier is title-cased
+#: rather than dropped: a new plan name should still reach the card.
+_CLAUDE_PLAN_LABELS: Final = {
+    "claude_pro": "Pro",
+    "claude_max": "Max",
+    "claude_team": "Team",
+    "claude_enterprise": "Enterprise",
+    "default_claude_pro": "Pro",
+    "default_claude_max_5x": "Max 5x",
+    "default_claude_max_20x": "Max 20x",
+    "default_claude_team": "Team",
+    "default_claude_enterprise": "Enterprise",
+    "pro": "Pro",
+    "max": "Max",
+    "max_5x": "Max 5x",
+    "max_20x": "Max 20x",
+    "team": "Team",
+    "enterprise": "Enterprise",
+}
+
+
+def claude_plan_label(value: object) -> str | None:
+    """One Claude tier word rendered the way Claude's own UI renders it."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    normalized = "_".join(value.strip().lower().replace("-", "_").split())[:64]
+    known = _CLAUDE_PLAN_LABELS.get(normalized)
+    if known is not None:
+        return known
+    trimmed = normalized.removeprefix("default_").removeprefix("claude_")
+    known = _CLAUDE_PLAN_LABELS.get(trimmed)
+    if known is not None:
+        return known
+    return " ".join(part.capitalize() for part in trimmed.split("_") if part)[:64] or None
+
+
+def plan_from_claude_config(home: Path | None = None) -> str | None:
+    """The signed-in Claude plan, from Claude Code's own local config.
+
+    Reads only ``oauthAccount``'s tier words. No Keychain, no prompt, no
+    network; returns None when the file is missing, unreadable or silent.
+    """
+    base = Path.home() if home is None else Path(home)
+    try:
+        payload = json.loads(
+            read_private_text(base / ".claude.json", max_bytes=8 * 1024 * 1024)
+        )
+    except (OSError, ValueError):
+        return None
+    account = payload.get("oauthAccount") if isinstance(payload, dict) else None
+    if not isinstance(account, dict):
+        return None
+    for key in (
+        "userRateLimitTier",
+        "organizationRateLimitTier",
+        "seatTier",
+        "organizationType",
+        "subscriptionType",
+    ):
+        label = claude_plan_label(account.get(key))
+        if label is not None:
+            return label
+    return None
+
+
 def _product_model_label(model: object) -> str | None:
     if not isinstance(model, dict):
         return None
@@ -402,8 +480,19 @@ def windows_from_payload(payload: object) -> list[dict]:
     ) -> bool:
         if not isinstance(entry, dict) or len(windows) >= MAX_CLAUDE_WINDOWS:
             return False
+        # Three states, and the endpoint distinguishes all three.
+        #   absent  -- the key is null ("seven_day_opus": null); `add` is
+        #              never reached, so no window and no lane.
+        #   unknown -- the window object is there and carries no percentage
+        #              key at all: present, no reading. Carried as None.
+        #   stated  -- a finite number.
+        # A percentage key holding a MALFORMED value is dropped, which is
+        # also what lets an aliased key ("seven_day_routines") fall through
+        # to its live sibling ("seven_day_cowork") instead of shadowing it.
         utilization = entry.get(percent_key)
-        if (
+        if utilization is None and percent_key not in entry:
+            utilization = None
+        elif (
             isinstance(utilization, bool)
             or not isinstance(utilization, (int, float))
             or not math.isfinite(float(utilization))
@@ -426,7 +515,9 @@ def windows_from_payload(payload: object) -> list[dict]:
         windows.append(
             {
                 "label": label,
-                "utilization": max(0.0, min(100.0, float(utilization))),
+                "utilization": (
+                    None if utilization is None else max(0.0, min(100.0, float(utilization)))
+                ),
                 "window_minutes": (
                     max(1, int(round(float(minutes))))
                     if isinstance(minutes, (int, float)) and float(minutes) > 0.0
@@ -545,12 +636,11 @@ def _lane_evidence(
         return None
 
     utilization = window.get("utilization")
-    if (
-        isinstance(utilization, bool)
-        or not isinstance(utilization, (int, float))
-        or not math.isfinite(float(utilization))
-    ):
-        return None
+    known = (
+        not isinstance(utilization, bool)
+        and isinstance(utilization, (int, float))
+        and math.isfinite(float(utilization))
+    )
 
     # `parse_reset_epoch` is the one place that accepts both the ISO string
     # and the epoch/millisecond forms this endpoint has used, and it returns
@@ -565,8 +655,12 @@ def _lane_evidence(
         # `windows_from_payload` already bounds this; bounding again keeps one
         # out-of-range window from raising and taking the whole batch --
         # including the sub-cap the owner needs -- down with it.
-        percent=max(0.0, min(100.0, float(utilization))),
-        state=ObservationState.OBSERVED,
+        percent=max(0.0, min(100.0, float(utilization))) if known else None,
+        # A window that is present and states no number is a reading we do
+        # not have, not a ceiling that has been reached. NULL is how this
+        # plane says "no reading"; the card prints the window and its
+        # boundary and withholds only the balance.
+        state=ObservationState.OBSERVED if known else ObservationState.NULL,
         reset_state=(
             ResetState.FUTURE if reset_epoch is not None else ResetState.UNKNOWN
         ),

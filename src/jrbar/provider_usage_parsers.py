@@ -62,6 +62,7 @@ def _snapshot(
     observed_at: float,
     lanes: tuple[UsageLane, ...] = (),
     account_label: str | None = None,
+    account_plan: str | None = None,
     input_tokens: int = 0,
     cached_input_tokens: int = 0,
     output_tokens: int = 0,
@@ -74,6 +75,7 @@ def _snapshot(
     return ProviderUsageSnapshot(
         provider_id=provider_id,
         account_label=account_label,
+        account_plan=account_plan,
         observed_at=observed_at,
         state=ProviderSourceState.READY,
         reason_code=None,
@@ -90,6 +92,40 @@ def _snapshot(
     )
 
 
+#: The limit families whose ``primary``/``secondary`` name the ACCOUNT's own
+#: Codex windows. Mirrors ``usage_stats.CODEX_ACCOUNT_LIMIT_IDS``; kept here
+#: so this module stays importable on its own.
+CODEX_ACCOUNT_LIMIT_IDS = frozenset({"codex"})
+
+
+def _slug(value: str, fallback: str) -> str:
+    slug = "-".join(
+        part for part in value.lower().replace("_", "-").replace(".", "-").split() if part
+    )
+    slug = "".join(char for char in slug if char.isalnum() or char in "-.:")[:96].strip("-")
+    return slug or fallback
+
+
+def _codex_product_name(entry: dict, raw_label: str) -> str:
+    """The short product name for a model-scoped Codex sub-cap.
+
+    Real payloads name these families as model ids -- ``limitName``
+    ``"GPT-5.3-Codex-Spark"`` under ``limitId`` ``"codex_bengalfox"``. The
+    row has to read "Spark Weekly", not the whole model id, so the trailing
+    word wins when the name is a hyphenated model id.
+    """
+    for key in ("limit_name", "limit_id"):
+        value = entry.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        name = value.strip()[:128]
+        parts = [part for part in name.replace("_", "-").split("-") if part]
+        if len(parts) > 2 and parts[-1].isalpha():
+            return parts[-1].capitalize() if parts[-1].islower() else parts[-1]
+        return name
+    return raw_label
+
+
 def parse_codex_usage(
     *,
     windows: list[dict] | tuple[dict, ...],
@@ -101,8 +137,19 @@ def parse_codex_usage(
     estimated_cost_usd: float | None = None,
     cache_savings_usd: float | None = None,
     account_label: str | None = None,
+    account_plan: str | None = None,
     source_id: str = "codex-rollouts",
 ) -> ProviderUsageSnapshot:
+    """Codex windows -> lanes. Three states, never two.
+
+    A window the payload does not carry produces NO lane (Codex states
+    absence explicitly: ``"secondary": null`` on a plan whose account limit
+    has only a weekly window). A window that is present and states no
+    percentage produces a lane whose ``remaining_percent`` is ``None`` --
+    unknown, which downstream renders as "no reading", not as spent. Only a
+    stated percentage produces a number, and 0 % remaining then means the
+    window really is exhausted.
+    """
     lanes: list[UsageLane] = []
     credits_remaining: float | None = None
     for index, entry in enumerate(tuple(windows)[:64]):
@@ -116,6 +163,18 @@ def parse_codex_usage(
         raw_label = str(entry.get("label") or f"limit-{index + 1}").strip()
         minutes = _number(entry.get("window_minutes"))
         normalized = raw_label.lower()
+        limit_id = entry.get("limit_id")
+        # Which family this window belongs to decides whether it may claim an
+        # ACCOUNT lane. Every family uses the same primary/secondary key
+        # names, so a Spark sub-cap's `primary` (300 minutes) reads exactly
+        # like an account 5-hour ceiling -- and did, on a Pro account whose
+        # account limit has no 5-hour window at all, as a red "5-hour · 100%"
+        # that never moved because that lane never existed.
+        account_family = entry.get("account_limit") is not False and (
+            not isinstance(limit_id, str)
+            or not limit_id
+            or limit_id in CODEX_ACCOUNT_LIMIT_IDS
+        )
         # For POSITIONAL labels the DURATION names the window. After the
         # Codex/ChatGPT account merge the CLI reports the WEEKLY window
         # as "primary" (window_minutes 10080, no 5-hour at all on Pro),
@@ -129,21 +188,39 @@ def parse_codex_usage(
             "limit",
             f"limit-{index + 1}",
         }
-        if positional and minutes is not None and 240.0 <= minutes <= 360.0:
-            lane_id, label = "five-hour", "5-hour"
-        elif positional and minutes is not None and 10000.0 <= minutes <= 10200.0:
-            lane_id, label = "weekly", "Weekly"
-        elif normalized in {"primary", "5-hour", "five-hour"}:
-            lane_id, label = "five-hour", "5-hour"
-        elif normalized in {"secondary", "weekly"}:
-            lane_id, label = "weekly", "Weekly"
+        horizon: tuple[str, str] | None = None
+        if minutes is not None and 240.0 <= minutes <= 360.0:
+            horizon = ("five-hour", "5-hour")
+        elif minutes is not None and 10000.0 <= minutes <= 10200.0:
+            horizon = ("weekly", "Weekly")
+        elif minutes is None and normalized in {"primary", "5-hour", "five-hour"}:
+            horizon = ("five-hour", "5-hour")
+        elif minutes is None and normalized in {"secondary", "weekly"}:
+            horizon = ("weekly", "Weekly")
+
+        if account_family and positional and horizon is not None:
+            lane_id, label = horizon
+        elif account_family and not positional and horizon is not None and normalized in {
+            "5-hour",
+            "five-hour",
+            "weekly",
+        }:
+            lane_id, label = horizon
+        elif not account_family:
+            # A model- or product-scoped sub-cap keeps its own dynamic lane,
+            # named after the product so no row can be mistaken for the
+            # account's ceiling.
+            product = _codex_product_name(entry, raw_label)
+            suffix = horizon[0] if horizon is not None else _slug(raw_label, f"limit-{index + 1}")
+            suffix_label = horizon[1] if horizon is not None else raw_label
+            lane_id = _slug(f"{product} {suffix}", f"limit-{index + 1}")
+            label = f"{product} {suffix_label}".strip()
         else:
-            lane_id = "-".join(
-                part for part in raw_label.lower().replace("_", "-").split() if part
-            )[:128] or f"limit-{index + 1}"
+            lane_id = _slug(raw_label, f"limit-{index + 1}")
             label = raw_label
         used = _number(entry.get("used_percent"))
         remaining = None if used is None else max(0.0, min(100.0, 100.0 - used))
+        lane_source = entry.get("source_id")
         lanes.append(
             normalize_dynamic_lane(
                 provider_id="codex",
@@ -151,7 +228,11 @@ def parse_codex_usage(
                 label=label,
                 remaining_percent=remaining,
                 reset_at=_reset_epoch(entry.get("resets_at", entry.get("reset_at"))),
-                source_id=source_id,
+                source_id=(
+                    lane_source
+                    if isinstance(lane_source, str) and lane_source.strip()
+                    else source_id
+                ),
                 known_lane_ids={"five-hour", "weekly"},
             )
         )
@@ -160,6 +241,7 @@ def parse_codex_usage(
         observed_at=observed_at,
         lanes=tuple(lanes),
         account_label=account_label,
+        account_plan=account_plan,
         input_tokens=input_tokens,
         cached_input_tokens=cached_input_tokens,
         output_tokens=output_tokens,
@@ -181,7 +263,15 @@ def parse_claude_usage(
     estimated_cost_usd: float | None = None,
     cache_savings_usd: float | None = None,
     account_label: str | None = None,
+    account_plan: str | None = None,
 ) -> ProviderUsageSnapshot:
+    """Claude windows -> lanes, with the same three states as Codex.
+
+    ``windows_from_payload`` emits nothing for a window the account does not
+    have (the endpoint writes those as ``null``: ``"seven_day_opus": null``),
+    and a ``utilization`` of ``None`` for a window that is present and states
+    no number. Only a stated number becomes a percentage.
+    """
     lanes: list[UsageLane] = []
     for index, entry in enumerate(tuple(windows)[:64]):
         if not isinstance(entry, dict):
@@ -214,6 +304,7 @@ def parse_claude_usage(
         observed_at=observed_at,
         lanes=tuple(lanes),
         account_label=account_label,
+        account_plan=account_plan,
         input_tokens=input_tokens,
         cached_input_tokens=cached_input_tokens,
         output_tokens=output_tokens,
@@ -263,11 +354,22 @@ def parse_cursor_usage(payload: object, *, observed_at: float) -> ProviderUsageS
         if isinstance(account, dict) and account.get("email")
         else None
     )
+    # Cursor names the plan on the account block ("membershipType": "pro").
+    raw_plan = None
+    for source in (account if isinstance(account, dict) else {}, payload):
+        for key in ("membershipType", "membership_type", "plan", "planName", "tier"):
+            candidate = source.get(key) if isinstance(source, dict) else None
+            if isinstance(candidate, str) and candidate.strip():
+                raw_plan = candidate.strip()[:64]
+                break
+        if raw_plan is not None:
+            break
     return _snapshot(
         "cursor",
         observed_at=observed_at,
         lanes=lanes,
         account_label=account_label,
+        account_plan=raw_plan,
         estimated_cost_usd=(
             max(0.0, extra_cents) / 100.0 if extra_cents is not None else None
         ),
@@ -300,13 +402,14 @@ def parse_devin_usage(payload: object, *, observed_at: float) -> ProviderUsageSn
             # meant a correctly authenticated Devin card still showed
             # zero lanes, so the API-key dance could not have paid off
             # even when someone completed it.
+            if f"{lane_id}_percentage" not in payload:
+                # The key is absent: this account has no such window. A key
+                # that is PRESENT but unreadable is a window with no reading,
+                # and keeps its lane below with remaining_percent None.
+                continue
             flat_percent = payload.get(f"{lane_id}_percentage")
             flat_reset = payload.get(f"{lane_id}_reset_at")
-            if flat_percent is None:
-                continue
             entry = {"used_percent": _devin_used_percent(flat_percent), "resets_at": flat_reset}
-            if entry["used_percent"] is None:
-                continue
         lanes.append(
             UsageLane(
                 provider_id="devin",
@@ -329,11 +432,15 @@ def parse_devin_usage(payload: object, *, observed_at: float) -> ProviderUsageSn
         # "org/acme" and "organizations/org-0a14..." are URL shapes, not
         # names -- the card should read "acme", not a path fragment.
         label = label.removeprefix("organizations/").removeprefix("org/")
+    plan = payload.get("plan", payload.get("subscription_plan"))
     return _snapshot(
         "devin",
         observed_at=observed_at,
         lanes=tuple(lanes),
         account_label=label or None,
+        account_plan=(
+            str(plan).strip()[:64] if isinstance(plan, str) and plan.strip() else None
+        ),
     )
 
 
@@ -383,11 +490,17 @@ def parse_grok_usage(payload: object, *, observed_at: float) -> ProviderUsageSna
         bindable=True,
         source_id="grok-billing",
     )
+    raw_plan = config.get("planName", config.get("tier", payload.get("plan")))
     return _snapshot(
         "grok",
         observed_at=observed_at,
         lanes=(lane,),
         account_label=str(payload.get("email")).strip() if payload.get("email") else None,
+        account_plan=(
+            str(raw_plan).strip()[:64]
+            if isinstance(raw_plan, str) and raw_plan.strip()
+            else None
+        ),
     )
 
 
@@ -459,6 +572,11 @@ def parse_antigravity_usage(
                     source_id="antigravity-app",
                 )
             )
+    raw_plan = (
+        response.get("planName", response.get("tier"))
+        if isinstance(response, dict)
+        else None
+    )
     return _snapshot(
         "antigravity",
         observed_at=observed_at,
@@ -467,6 +585,11 @@ def parse_antigravity_usage(
             str(response.get("accountEmail")).strip()
             if isinstance(response, dict) and response.get("accountEmail")
             else account_label
+        ),
+        account_plan=(
+            str(raw_plan).strip()[:64]
+            if isinstance(raw_plan, str) and raw_plan.strip()
+            else None
         ),
         input_tokens=input_tokens,
         output_tokens=output_tokens,

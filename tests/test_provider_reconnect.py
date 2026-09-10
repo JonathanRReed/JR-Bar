@@ -205,6 +205,21 @@ def test_codex_app_server_probe_parses_replies():
     probe = codex_app_server_probe(runner=lambda: "\n".join(lines))
     assert probe == {
         "authenticated": True,
+        "plan": None,
+        "account_id": None,
+        "windows": [
+            {
+                "label": "primary",
+                "used_percent": 4.0,
+                "window_minutes": None,
+                "resets_at": 1788286790,
+                "limit_id": None,
+                "limit_name": None,
+                "account_limit": True,
+                "source_id": "codex-app-server",
+            }
+        ],
+        "limit_ids": (),
         "used_percent": 4.0,
         "resets_at": 1788286790.0,
         "window_minutes": None,
@@ -275,6 +290,21 @@ def test_codex_app_server_probe_keeps_transport_open_until_rate_limits_arrive(
 
     assert probe == {
         "authenticated": True,
+        "plan": None,
+        "account_id": None,
+        "windows": [
+            {
+                "label": "primary",
+                "used_percent": 95.0,
+                "window_minutes": 10080,
+                "resets_at": 1788286790,
+                "limit_id": None,
+                "limit_name": None,
+                "account_limit": True,
+                "source_id": "codex-app-server",
+            }
+        ],
+        "limit_ids": (),
         "used_percent": 95.0,
         "resets_at": 1788286790.0,
         "window_minutes": 10080,

@@ -868,6 +868,7 @@ def usage_document(
             )
         state = getattr(getattr(snapshot, "state", None), "value", None)
         account_label = getattr(snapshot, "account_label", None)
+        account_plan = getattr(snapshot, "account_plan", None)
         provider_id = getattr(snapshot, "provider_id", "unknown")
         forecast = None
         primary = primary_window(windows)
@@ -887,9 +888,19 @@ def usage_document(
                 "id": provider_id,
                 "instance": getattr(snapshot, "source_instance_id", "default"),
                 # The app's UsageAccount block: {plan, label, fidelity}.
+                # `plan` is the provider's own word for the subscription
+                # ("pro", "Max 20x"), never inferred from which windows
+                # arrived -- which windows an account HAS follows from the
+                # plan, not the other way round. The block is emitted as soon
+                # as either half is known.
                 "account": (
-                    {"plan": None, "label": account_label, "fidelity": "stale" if state == "stale" else "official"}
-                    if isinstance(account_label, str) and account_label
+                    {
+                        "plan": account_plan,
+                        "label": account_label if isinstance(account_label, str) and account_label else None,
+                        "fidelity": "stale" if state == "stale" else "official",
+                    }
+                    if (isinstance(account_label, str) and account_label)
+                    or (isinstance(account_plan, str) and account_plan)
                     else None
                 ),
                 "windows": windows,

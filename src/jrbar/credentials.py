@@ -23,6 +23,8 @@ reviewed once. Ad-hoc reads and third-party Keychain writes cannot.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import subprocess
@@ -30,6 +32,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Final
 
 from .private_io import atomic_private_write, read_private_text
 
@@ -246,6 +249,11 @@ class CodexTokens:
     account_id: str | None
     refresh_token: str | None
     last_refresh: str | None
+    #: ChatGPT plan word as OpenAI states it ("pro", "plus", "team",
+    #: "business"), read from the id_token's own claims. Which Codex windows
+    #: an account has follows from this: a Pro account's Codex limit is a
+    #: weekly ceiling with no 5-hour window, a Plus account's has both.
+    plan_type: str | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - defensive
         return f"CodexTokens(account_id={self.account_id!r}, tokens=<redacted>)"
@@ -255,6 +263,39 @@ def default_codex_auth_path() -> Path:
     override = os.environ.get("CODEX_HOME")
     base = Path(override).expanduser() if override else Path.home() / ".codex"
     return base / "auth.json"
+
+
+#: The namespaced claim OpenAI puts ChatGPT account facts under inside the
+#: Codex id_token. Captured 2026-09-10 from codex-cli 0.153.4's auth.json:
+#: {"https://api.openai.com/auth": {"chatgpt_plan_type": "pro",
+#:  "chatgpt_account_id": "...", "organizations": [...]}, ...}
+CODEX_ID_TOKEN_AUTH_CLAIM: Final = "https://api.openai.com/auth"
+
+
+def chatgpt_plan_type(id_token: object) -> str | None:
+    """The plan word from a Codex id_token, or None.
+
+    The token is read, never verified: it is a local file Codex itself wrote
+    and the only thing taken from it is a display/applicability word. No
+    trust decision hangs on this value.
+    """
+    if not isinstance(id_token, str) or id_token.count(".") != 2:
+        return None
+    body = id_token.split(".")[1]
+    if len(body) > 8192:
+        return None
+    padded = body + "=" * (-len(body) % 4)
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except (ValueError, TypeError, binascii.Error, UnicodeDecodeError):
+        return None
+    if not isinstance(claims, dict):
+        return None
+    auth = claims.get(CODEX_ID_TOKEN_AUTH_CLAIM)
+    plan = auth.get("chatgpt_plan_type") if isinstance(auth, dict) else None
+    if isinstance(plan, str) and plan.strip():
+        return plan.strip()[:64]
+    return None
 
 
 def read_codex_tokens(path: Path | None = None) -> CodexTokens | None:
@@ -280,4 +321,5 @@ def read_codex_tokens(path: Path | None = None) -> CodexTokens | None:
         account_id=account_id if isinstance(account_id, str) else None,
         refresh_token=refresh_token if isinstance(refresh_token, str) else None,
         last_refresh=last_refresh if isinstance(last_refresh, str) else None,
+        plan_type=chatgpt_plan_type(tokens.get("id_token")),
     )

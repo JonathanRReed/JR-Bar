@@ -968,14 +968,58 @@ def cached_codex_rate_limits(cache_path: Path) -> dict | None:
     return {"_inventory_windows": [dict(window) for window in windows]}
 
 
+#: The limit FAMILY that describes the account's own Codex ceilings.
+#:
+#: Codex reports several families side by side. The app-server's
+#: ``account/rateLimits/read`` answers with a default family under
+#: ``rateLimits`` plus the whole set under ``rateLimitsByLimitId``, and every
+#: family uses the same ``primary``/``secondary`` key names:
+#:
+#:   {"rateLimits": {"limitId": "codex", "primary": {...}, "secondary": null},
+#:    "rateLimitsByLimitId": {
+#:       "codex":           {"limitId": "codex", "limitName": null, ...},
+#:       "codex_bengalfox": {"limitId": "codex_bengalfox",
+#:                           "limitName": "GPT-5.3-Codex-Spark", ...}}}
+#:
+#: A rollout file carries exactly one family per record, tagged the same way
+#: (``limit_id`` / ``limit_name``). Reading a Spark rollout's ``primary`` --
+#: a 300-minute model sub-cap -- as the ACCOUNT's 5-hour ceiling is how a Pro
+#: account that has no 5-hour window at all grew a permanent red "5-hour ·
+#: 100%" row that never moved. Only this family names account windows.
+CODEX_ACCOUNT_LIMIT_IDS = frozenset({"codex"})
+
+
+def _codex_limit_identity(payload: dict) -> tuple[str | None, str | None]:
+    """``(limit_id, limit_name)`` for one rate-limit payload, either casing."""
+
+    def text(*names: str) -> str | None:
+        for name in names:
+            value = payload.get(name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:128]
+        return None
+
+    return text("limit_id", "limitId"), text("limit_name", "limitName")
+
+
 def codex_windows_from_limits(payload: object) -> list[dict]:
-    """Normalize embedded Codex limits without inventing window semantics."""
+    """Normalize embedded Codex limits without inventing window semantics.
+
+    Each emitted window carries the family it came from, so a downstream lane
+    can tell an ACCOUNT ceiling from a model-scoped sub-cap that shares the
+    ``primary``/``secondary`` key names, and a ``used_percent`` of ``None``
+    meaning "this window exists and states no balance" -- which is not the
+    same claim as "this window is spent" and not the same claim as "this plan
+    has no such window" (a key whose value is ``null``, which emits nothing).
+    """
     if not isinstance(payload, dict):
         return []
     inventory_windows = payload.get("_inventory_windows")
     if isinstance(inventory_windows, list):
         return [dict(window) for window in inventory_windows[:32] if isinstance(window, dict)]
     windows: list[dict] = []
+    family_id, family_name = _codex_limit_identity(payload)
+    account_family = family_id is None or family_id in CODEX_ACCOUNT_LIMIT_IDS
 
     def product_label(value: object) -> str:
         if not isinstance(value, str):
@@ -987,13 +1031,32 @@ def codex_windows_from_limits(payload: object) -> list[dict]:
             "spark": "Spark",
         }.get(normalized, "limit")
 
-    def add(label: str, entry: object) -> None:
+    def add(
+        label: str,
+        entry: object,
+        *,
+        limit_id: str | None = None,
+        limit_name: str | None = None,
+        account: bool | None = None,
+    ) -> None:
         if not isinstance(entry, dict) or len(windows) >= 32:
             return
-        percent = entry.get("used_percent")
-        if isinstance(percent, bool) or not isinstance(percent, (int, float)) or not math.isfinite(float(percent)):
+        # Three states, and the payload distinguishes all three.
+        #   absent  -- the key is missing or null; `add` is never reached, so
+        #              no window is emitted and no lane appears.
+        #   unknown -- the window object is there and carries no percent key
+        #              at all: it EXISTS and states no balance. Carried as
+        #              None so nothing downstream can read silence as spent.
+        #   stated  -- a finite number.
+        # A percent key holding a MALFORMED value (NaN, a bool, a string) is
+        # neither a reading nor a statement of presence, and is dropped, which
+        # is also what lets an aliased key fall through to its sibling.
+        percent = entry.get("used_percent", entry.get("usedPercent"))
+        if percent is None and not ("used_percent" in entry or "usedPercent" in entry):
+            percent = None
+        elif isinstance(percent, bool) or not isinstance(percent, (int, float)) or not math.isfinite(float(percent)):
             return
-        minutes = entry.get("window_minutes")
+        minutes = entry.get("window_minutes", entry.get("windowDurationMins"))
         if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
             seconds = entry.get("limit_window_seconds", entry.get("window_seconds"))
             minutes = (
@@ -1003,11 +1066,11 @@ def codex_windows_from_limits(payload: object) -> list[dict]:
             )
         if isinstance(minutes, (int, float)) and not math.isfinite(float(minutes)):
             minutes = None
-        reset_at = entry.get("resets_at", entry.get("reset_at"))
+        reset_at = entry.get("resets_at", entry.get("reset_at", entry.get("resetsAt")))
         windows.append(
             {
                 "label": product_label(label),
-                "used_percent": max(0.0, min(100.0, float(percent))),
+                "used_percent": None if percent is None else max(0.0, min(100.0, float(percent))),
                 "window_minutes": (
                     max(1, int(round(float(minutes))))
                     if isinstance(minutes, (int, float)) and float(minutes) > 0.0
@@ -1016,6 +1079,9 @@ def codex_windows_from_limits(payload: object) -> list[dict]:
                 "resets_at": (
                     reset_at if not isinstance(reset_at, bool) and isinstance(reset_at, (str, int, float)) else None
                 ),
+                "limit_id": family_id if limit_id is None else limit_id,
+                "limit_name": family_name if limit_name is None else limit_name,
+                "account_limit": account_family if account is None else account,
             }
         )
 
@@ -1026,15 +1092,20 @@ def codex_windows_from_limits(payload: object) -> list[dict]:
         for entry in additional:
             if not isinstance(entry, dict):
                 continue
-            label = product_label(entry.get("name") or entry.get("limit_name"))
+            raw_name = entry.get("name") or entry.get("limit_name")
+            product = raw_name.strip()[:128] if isinstance(raw_name, str) and raw_name.strip() else None
+            label = product_label(raw_name)
+            # An extra allowance is a sub-cap of the account, never the
+            # account's own ceiling, whichever family it arrived under.
+            scoped = {"limit_name": product, "account": False}
             nested = entry.get("rate_limit")
             if isinstance(nested, dict):
                 before = len(windows)
-                add(label, nested.get("primary", nested.get("primary_window")))
-                add(f"{label} secondary", nested.get("secondary", nested.get("secondary_window")))
+                add(label, nested.get("primary", nested.get("primary_window")), **scoped)
+                add(f"{label} secondary", nested.get("secondary", nested.get("secondary_window")), **scoped)
                 if len(windows) != before:
                     continue
-            add(label, entry)
+            add(label, entry, **scoped)
     # Banked credits ride the same evidence stream as windows: the
     # rollout's rate_limits carries {"credits": {has_credits, balance}}
     # and nothing surfaced it (t3code PR #7813 showed how much operators
@@ -1042,7 +1113,9 @@ def codex_windows_from_limits(payload: object) -> list[dict]:
     # travels under its own key and the parser lifts it off the lane
     # path into snapshot.credits_remaining.
     credits = payload.get("credits")
-    if isinstance(credits, dict) and credits.get("has_credits") is True:
+    if isinstance(credits, dict) and (
+        credits.get("has_credits") is True or credits.get("hasCredits") is True
+    ):
         try:
             balance = float(str(credits.get("balance", "")).replace(",", ""))
         except (TypeError, ValueError):
@@ -1125,6 +1198,15 @@ def _codex_lane_window_id(window: dict) -> str | None:
     for the same reason an undeclared label is: force-fitting it is how a
     7-day ceiling ended up filed as the 5-hour one.
     """
+    # The family gate comes first: `primary` under `codex_bengalfox`
+    # (GPT-5.3-Codex-Spark) is a model sub-cap, not the account's 5-hour
+    # ceiling, and binding it here put a permanent "5-hour · 100%" on an
+    # account whose plan has no 5-hour window at all.
+    if window.get("account_limit") is False:
+        return None
+    limit_id = window.get("limit_id")
+    if isinstance(limit_id, str) and limit_id and limit_id not in CODEX_ACCOUNT_LIMIT_IDS:
+        return None
     window_id = CODEX_LANE_IDENTITIES.get(window.get("label"))
     if window_id is None:
         return None
@@ -1182,16 +1264,23 @@ def _codex_lane_evidence(descriptor, window: object, *, observed_at: float):
         return None
 
     used = window.get("used_percent")
-    if isinstance(used, bool) or not isinstance(used, (int, float)) or not math.isfinite(float(used)):
-        return None
+    known = (
+        not isinstance(used, bool)
+        and isinstance(used, (int, float))
+        and math.isfinite(float(used))
+    )
 
     # `parse_reset_epoch` is the one place that accepts both the ISO string and
     # the epoch/second forms this file has carried, and returns None for
     # anything that is not a credible future boundary. A window with no such
     # boundary stays honestly reset-less rather than gaining a countdown.
     reset_epoch = parse_reset_epoch(window.get("resets_at"), now=observed_at)
-    percent = max(0.0, min(100.0, float(used)))
-    unattested = _codex_window_is_unattested(
+    percent = max(0.0, min(100.0, float(used))) if known else None
+    # Three states, never two. A window the payload does not carry emits no
+    # evidence at all (`codex_windows_from_limits` never builds one); a window
+    # that is present and states no balance is NULL here, which the card reads
+    # as "no reading"; only a stated number becomes OBSERVED.
+    unattested = not known or _codex_window_is_unattested(
         window,
         reset_epoch=reset_epoch,
         observed_at=observed_at,
