@@ -160,6 +160,46 @@ def test_adhoc_signing_omits_timestamp_but_keeps_hardened_runtime(
     assert all(("--options", "runtime") == argv[2:4] for argv in signing)
 
 
+def test_signer_entitles_the_bundled_daemon_and_supports_local_identities(
+    tmp_path: Path,
+) -> None:
+    app, entitlements, macho = _candidate(tmp_path)
+    daemon = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    shim = app / "Contents" / "Helpers" / "jrbar-hook"
+    for path in (daemon, shim):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"macho")
+        path.chmod(0o755)
+    macho = (*macho, daemon, shim)
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    sign_macos_app(
+        app,
+        identity="Nautilus Local Dev",
+        entitlements=entitlements,
+        runner=runner,
+        macho_detector=lambda path: path in macho,
+        hardened_runtime=False,
+        timestamp=False,
+    )
+
+    signing = [argv for argv in calls if "--sign" in argv]
+    targets = [Path(argv[-1]) for argv in signing]
+    daemon_bundle = (app / "Contents" / "Helpers" / "jrbar-core.app").resolve()
+    # The daemon executable is signed first, then its bundle (with the app's
+    # entitlements: it sends the Apple events), then the app.
+    assert targets.index(daemon.resolve()) < targets.index(daemon_bundle) < targets.index(app.resolve())
+    entitled = [Path(argv[-1]) for argv in signing if "--entitlements" in argv]
+    assert entitled == [daemon_bundle, app.resolve()]
+    assert shim.resolve() in targets
+    # A local identity without a Team ID: no hardened runtime, no timestamp.
+    assert all("runtime" not in argv and "--timestamp" not in argv for argv in signing)
+
+
 def test_sign_plan_rejects_symlink_that_escapes_bundle(tmp_path: Path) -> None:
     app, _entitlements, macho = _candidate(tmp_path)
     outside = tmp_path / "outside.dylib"

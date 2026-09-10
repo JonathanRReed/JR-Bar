@@ -43,7 +43,13 @@ def _package_fixture(
     )
     _write_executable(
         tools / "productbuild",
-        'printf \'productbuild:%s\\n\' "$*" >> "$PACKAGE_SMOKE_LOG"\nfor last do :; done\n: > "$last"\n',
+        'printf \'productbuild:%s\\n\' "$*" >> "$PACKAGE_SMOKE_LOG"\nfor last do :; done\n'
+        'case "$*" in *--synthesize*) printf \'<installer-gui-script minSpecVersion="2">'
+        '<pkg-ref id="com.jonathanreed.jrbar"/><options customize="never" require-scripts="false"/>'
+        '<choices-outline><line choice="default"><line choice="com.jonathanreed.jrbar"/></line></choices-outline>'
+        '<choice id="default"/><choice id="com.jonathanreed.jrbar" visible="false"><pkg-ref id="com.jonathanreed.jrbar"/></choice>'
+        '<pkg-ref id="com.jonathanreed.jrbar" version="0.5.0" onConclusion="none">JR-Bar-component.pkg</pkg-ref>'
+        '</installer-gui-script>\' > "$last" ;; *) : > "$last" ;; esac\n',
     )
     _write_executable(
         tools / "pkgutil",
@@ -53,7 +59,7 @@ def _package_fixture(
         app_path=app,
         scripts_dir=scripts,
         component_pkg=tmp_path / "JR-Bar-component.pkg",
-        output_pkg=tmp_path / "JR-Bar-0.5.0-arm64.pkg",
+        output_pkg=tmp_path / "JR-Bar-0.5.0.pkg",
         identifier="com.jonathanreed.jrbar",
         version="0.5.0",
         installer_sign_identity=None,
@@ -75,15 +81,25 @@ def test_unsigned_pkg_assembly_executes_tools_and_creates_exact_pkg(
 
     output = package_macos_artifact.assemble_package(request)
 
-    assert output == tmp_path / "JR-Bar-0.5.0-arm64.pkg"
+    assert output == tmp_path / "JR-Bar-0.5.0.pkg"
     assert output.is_file()
+    distribution = request.component_pkg.with_suffix(".dist.xml")
     assert log.read_text(encoding="utf-8").splitlines() == [
         "pkgbuild:--component "
         f"{request.app_path} --install-location /Applications --identifier "
         "com.jonathanreed.jrbar --version 0.5.0 --scripts "
         f"{request.scripts_dir} {request.component_pkg}",
-        f"productbuild:--package {request.component_pkg} {request.output_pkg}",
+        f"productbuild:--synthesize --package {request.component_pkg} {distribution}",
+        f"productbuild:--distribution {distribution} --package-path {request.component_pkg.parent} {request.output_pkg}",
     ]
+    # The distribution lets `installer -target CurrentUserHomeDirectory` install
+    # into ~/Applications without a password, and keeps the system install.
+    document = distribution.read_text(encoding="utf-8")
+    assert '<title>JR-Bar</title>' in document
+    assert 'enable_currentUserHome="true"' in document
+    assert 'enable_localSystem="true"' in document
+    assert 'enable_anywhere="false"' in document
+    assert 'hostArchitectures="arm64"' in document
 
 
 def test_signed_pkg_assembly_verifies_the_created_package(
@@ -99,8 +115,9 @@ def test_signed_pkg_assembly_verifies_the_created_package(
 
     package_macos_artifact.assemble_package(signed)
 
+    distribution = request.component_pkg.with_suffix(".dist.xml")
     assert log.read_text(encoding="utf-8").splitlines()[-2:] == [
-        f"productbuild:--package {request.component_pkg} --sign "
+        f"productbuild:--distribution {distribution} --package-path {request.component_pkg.parent} --sign "
         "Developer ID Installer: Test (TEAMID) --timestamp "
         f"{request.output_pkg}",
         f"pkgutil:--check-signature {request.output_pkg}",
@@ -135,6 +152,8 @@ def test_pkg_assembly_surfaces_productbuild_certificate_error(
     _write_executable(
         request.toolchain.productbuild,
         'printf \'productbuild:%s\\n\' "$*" >> "$PACKAGE_SMOKE_LOG"\n'
+        'case "$*" in *--synthesize*) for last do :; done; printf \'<installer-gui-script minSpecVersion="2">'
+        '<pkg-ref id="com.jonathanreed.jrbar">JR-Bar-component.pkg</pkg-ref></installer-gui-script>\' > "$last"; exit 0 ;; esac\n'
         'echo "productbuild: error: no signing certificate" >&2\nexit 1\n',
     )
     signed = replace(
@@ -252,7 +271,7 @@ def test_checksum_manifest_rejects_duplicate_outside_and_output_aliases(
 def test_checksum_manifest_rejects_assets_changed_after_release_evidence(
     tmp_path: Path,
 ) -> None:
-    artifact = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.pkg"
+    artifact = tmp_path / "dist" / "JR-Bar-0.5.0.pkg"
     artifact.parent.mkdir()
     artifact.write_bytes(b"candidate")
     evidence = tmp_path / "dist" / "release-verification.json"
@@ -262,7 +281,7 @@ def test_checksum_manifest_rejects_assets_changed_after_release_evidence(
                 "document": "jr-bar-release-evidence",
                 "artifacts": [
                     {
-                        "path": "dist/JR-Bar-0.5.0-arm64.pkg",
+                        "path": "dist/JR-Bar-0.5.0.pkg",
                         "kind": "file",
                         "bytes": len(b"candidate"),
                         "sha256": hashlib.sha256(b"candidate").hexdigest(),
@@ -487,15 +506,15 @@ def test_packaging_contract_requires_exact_sparkle_release_assets(
 
     assert result.returncode == 0, result.stderr
     contract = json.loads(result.stdout)
-    assert contract["schema_version"] == 3
+    assert contract["schema_version"] == 4
     assert contract["authoritative_macos_artifact"] == {
         "kind": "pkg",
-        "name": "JR-Bar-0.5.0-arm64.pkg",
+        "name": "JR-Bar-0.5.0.pkg",
         "primary": True,
         "required": True,
     }
     assert [item["name"] for item in contract["supplemental_macos_artifacts"]] == [
-        "JR-Bar-0.5.0-arm64.zip",
+        "JR-Bar-0.5.0.zip",
         "appcast.xml",
         "jr-bar-update-channel.json",
     ]
@@ -506,7 +525,7 @@ def test_packaging_contract_requires_exact_sparkle_release_assets(
 @pytest.mark.parametrize(
     ("format_name", "expected"),
     (
-        ("updater-path", "JR-Bar-0.5.0-arm64.zip"),
+        ("updater-path", "JR-Bar-0.5.0.zip"),
         ("appcast-path", "appcast.xml"),
         ("channel-metadata-path", "jr-bar-update-channel.json"),
     ),
@@ -553,8 +572,8 @@ def _publisher_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         "release-environment.txt",
         "performance-evidence.json",
         "jrbar-sbom.cdx.json",
-        "JR-Bar-0.5.0-arm64.pkg",
-        "JR-Bar-0.5.0-arm64.zip",
+        "JR-Bar-0.5.0.pkg",
+        "JR-Bar-0.5.0.zip",
         "appcast.xml",
         "jr-bar-update-channel.json",
         "release-verification.json",
@@ -574,9 +593,9 @@ def _publisher_fixture(tmp_path: Path) -> tuple[Path, dict[str, str]]:
         shift
     done
     case "$format" in
-        path) printf 'dist/JR-Bar-0.5.0-arm64.pkg\\n' ;;
+        path) printf 'dist/JR-Bar-0.5.0.pkg\\n' ;;
         developer-paths) printf 'dist/jrbar-0.5.0-py3-none-any.whl\\ndist/jrbar-0.5.0.tar.gz\\n' ;;
-        updater-path) printf 'dist/JR-Bar-0.5.0-arm64.zip\\n' ;;
+        updater-path) printf 'dist/JR-Bar-0.5.0.zip\\n' ;;
         appcast-path) printf 'dist/appcast.xml\\n' ;;
         channel-metadata-path) printf 'dist/jr-bar-update-channel.json\\n' ;;
         *) exit 89 ;;
@@ -615,7 +634,7 @@ esac
         """printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
 if [ "$1 $2 $3" = "release view v0.5.0" ]; then
     if [ -f "$FAKE_GH_STATE/version-published" ]; then
-        printf 'JR-Bar-0.5.0-arm64.zip\\n'
+        printf 'JR-Bar-0.5.0.zip\\n'
         exit 0
     fi
     exit 1
@@ -628,7 +647,7 @@ fi
 if [ "$1 $2 $3" = "release upload v0.5.0" ]; then
     if [ "${FAKE_GH_FAIL_VERSION_UPLOAD:-0}" = "1" ]; then exit 42; fi
     case "$*" in
-        *JR-Bar-0.5.0-arm64.zip*) : > "$FAKE_GH_STATE/archive-uploaded" ;;
+        *JR-Bar-0.5.0.zip*) : > "$FAKE_GH_STATE/archive-uploaded" ;;
         *) exit 43 ;;
     esac
     exit 0
@@ -677,7 +696,7 @@ def test_publisher_publishes_version_archive_before_mutating_durable_feed(
     version_upload = next(index for index, line in enumerate(commands) if line.startswith("release upload v0.5.0"))
     version_publish = next(index for index, line in enumerate(commands) if line.startswith("release edit v0.5.0"))
     feed_uploads = [index for index, line in enumerate(commands) if line.startswith("release upload updates")]
-    assert "JR-Bar-0.5.0-arm64.zip" in commands[version_upload]
+    assert "JR-Bar-0.5.0.zip" in commands[version_upload]
     assert feed_uploads and version_upload < version_publish < min(feed_uploads)
     assert "jr-bar-update-channel.json" in commands[feed_uploads[0]]
     assert "appcast.xml" in commands[feed_uploads[-1]]

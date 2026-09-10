@@ -24,6 +24,11 @@ from jrbar.status_bar_launch import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+# The packaged layout: the Swift app, the PyInstaller daemon bundle under
+# Helpers with its own libpython, and the compiled hook shim beside it.
+CORE_HELPER = Path("Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core")
+HOOK_SHIM = Path("Contents/Helpers/jrbar-hook")
+RUNTIME = Path("Contents/Helpers/jrbar-core.app/Contents/Frameworks/libpython3.12.dylib")
 
 
 def load_verifier_module():
@@ -49,9 +54,14 @@ def make_bundle(
     executable.parent.mkdir(parents=True)
     executable.write_bytes(b"main-mach-o")
     executable.chmod(0o755)
+    for helper, payload in ((CORE_HELPER, b"core-mach-o"), (HOOK_SHIM, b"shim-mach-o")):
+        path = bundle / helper
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+        path.chmod(0o755)
     if include_runtime:
-        runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
-        runtime.parent.mkdir(parents=True)
+        runtime = bundle / RUNTIME
+        runtime.parent.mkdir(parents=True, exist_ok=True)
         runtime.write_bytes(b"python-mach-o")
         runtime.chmod(0o755)
     info = {
@@ -74,16 +84,24 @@ def verifier_runner(
     signature_valid: bool = True,
 ) -> Callable[..., subprocess.CompletedProcess[str]]:
     executable = bundle / "Contents" / "MacOS" / "JR-Bar"
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
+    core = bundle / CORE_HELPER
+    shim = bundle / HOOK_SHIM
     dependency_map = dependencies or {
         str(executable): (
-            "@rpath/Python.framework/Versions/3.13/Python",
+            "@rpath/Sparkle.framework/Versions/B/Sparkle",
             "/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa",
             "/usr/lib/libSystem.B.dylib",
         ),
+        str(core): ("@rpath/libpython3.12.dylib", "/usr/lib/libSystem.B.dylib"),
+        str(shim): ("/usr/lib/libSystem.B.dylib",),
         str(runtime): ("/usr/lib/libSystem.B.dylib",),
     }
-    rpath_map = rpaths or {str(executable): ("@executable_path/../Frameworks",)}
+    rpath_map = rpaths or {
+        str(executable): ("@executable_path/../Frameworks",),
+        str(core): ("@executable_path/../Frameworks",),
+    }
+    always_macho = {str(core), str(shim)}
 
     def run(command: Sequence[str | os.PathLike[str]], **_kwargs):
         arguments = [str(part) for part in command]
@@ -96,7 +114,8 @@ def verifier_runner(
             )
         if arguments[0].endswith("file"):
             target = arguments[-1]
-            kind = "Mach-O 64-bit executable arm64" if target in dependency_map else "data"
+            macho = target in dependency_map or target in always_macho
+            kind = "Mach-O 64-bit executable arm64" if macho else "data"
             return subprocess.CompletedProcess(arguments, 0, f"{target}: {kind}\n", "")
         if arguments[0].endswith("otool") and arguments[1] == "-L":
             target = arguments[-1]
@@ -269,7 +288,7 @@ def test_packaged_bundle_rejects_dangerous_environment(
 def test_packaged_bundle_rejects_external_macho_dependency(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
     executable = bundle / "Contents" / "MacOS" / "JR-Bar"
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
 
     result = verify(
         bundle,
@@ -386,7 +405,7 @@ def test_packaged_bundle_requires_runtime_payload_to_be_macho(tmp_path: Path) ->
 
 def test_packaged_bundle_rejects_hard_linked_internal_runtime(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
     external_runtime = tmp_path / "external-python"
     external_runtime.write_bytes(b"python-mach-o")
     external_runtime.chmod(0o755)
@@ -408,10 +427,11 @@ def test_packaged_bundle_rejects_hard_linked_nested_macho_payload(
 ) -> None:
     bundle = make_bundle(tmp_path)
     executable = bundle / "Contents" / "MacOS" / "JR-Bar"
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
     external_payload = tmp_path / "external-addon.dylib"
     external_payload.write_bytes(b"addon-mach-o")
     nested_payload = bundle / "Contents" / "Frameworks" / "addon.dylib"
+    nested_payload.parent.mkdir(parents=True, exist_ok=True)
     os.link(external_payload, nested_payload)
     assert nested_payload.stat().st_nlink == 2
 
@@ -444,7 +464,7 @@ def test_packaged_bundle_rejects_dependency_path_traversal(
 ) -> None:
     bundle = make_bundle(tmp_path)
     executable = bundle / "Contents" / "MacOS" / "JR-Bar"
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
 
     result = verify(
         bundle,
@@ -483,7 +503,7 @@ def test_packaged_bundle_rejects_identity_runtime_or_signature_failure(
 def test_packaged_bundle_accepts_internal_runtime_and_apple_dependencies(tmp_path: Path) -> None:
     bundle = make_bundle(tmp_path)
     executable = bundle / "Contents" / "MacOS" / "JR-Bar"
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
 
     result = verify(
         bundle,
@@ -509,7 +529,7 @@ def test_packaged_bundle_accepts_loader_relative_rpath_that_stays_inside_bundle(
 ) -> None:
     bundle = make_bundle(tmp_path)
     executable = bundle / "Contents" / "MacOS" / "JR-Bar"
-    runtime = bundle / "Contents" / "Frameworks" / "Python.framework" / "Python"
+    runtime = bundle / RUNTIME
 
     result = verify(
         bundle,
@@ -746,6 +766,10 @@ def _write_executable(path: Path, source: str) -> None:
 
 
 def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_path: Path) -> None:
+    """The whole builder against doubles: the Swift app, the shim, the frozen
+    daemon and every signing, verification, archive and package step are
+    stand-ins that record what they were asked to do; the script's own work
+    (assembly, Info.plist, layout, artifact names) is checked for real."""
     project = tmp_path / "project"
     packaging_dir = project / "packaging"
     scripts_dir = packaging_dir / "scripts"
@@ -787,6 +811,15 @@ def test_package_builder_uses_isolated_roots_identity_and_pre_pkg_verifier(tmp_p
     event_log = tmp_path / "events.log"
     python_template = tmp_path / "venv-python"
     pyinstaller_template = tmp_path / "pyinstaller"
+    app_build_script = tmp_path / "build-app.sh"
+    hook_build_script = tmp_path / "build-hook.sh"
+    plist_head = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+        '<plist version="1.0"><dict>'
+    )
+    # The venv python: pip is a no-op; every packaging script logs its name,
+    # and the ones that create artifacts create empty stand-ins.
     _write_executable(
         python_template,
         """#!/bin/sh
@@ -794,8 +827,10 @@ set -eu
 if [ "${1:-}" = "-m" ]; then
     exit 0
 fi
-case "${1:-}" in
-    */prepare_sparkle.py)
+script="$(/usr/bin/basename "${1:-}")"
+echo "$script" >> "$PACKAGE_TEST_EVENT_LOG"
+case "$script" in
+    prepare_sparkle.py)
         output=""
         while [ "$#" -gt 0 ]; do
             case "$1" in
@@ -804,57 +839,81 @@ case "${1:-}" in
             esac
         done
         [ -n "$output" ]
-        /bin/mkdir -p "$output/Sparkle.framework"
+        /bin/mkdir -p "$output/Sparkle.framework/Versions/B" "$output/bin"
+        printf 'fixture framework\n' > "$output/Sparkle.framework/Versions/B/Sparkle"
         printf 'fixture license\n' > "$output/LICENSE"
         exit 0
         ;;
-    */package_macos_artifact.py)
+    package_sparkle_archive.py|package_macos_artifact.py)
         output=""
         while [ "$#" -gt 0 ]; do
             case "$1" in
-                --output-pkg) output="$2"; shift 2 ;;
+                --output|--output-pkg) output="$2"; shift 2 ;;
                 *) shift ;;
             esac
         done
         [ -n "$output" ]
         : > "$output"
-        echo package >> "$PACKAGE_TEST_EVENT_LOG"
         exit 0
         ;;
 esac
-echo verify >> "$PACKAGE_TEST_EVENT_LOG"
 exit 0
 """,
     )
+    # PyInstaller: the bundle layout it makes for a --windowed onedir build.
     _write_executable(
         pyinstaller_template,
-        """#!/bin/sh
+        f"""#!/bin/sh
 set -eu
 dist=""
+name=""
 identifier=""
-case "${PYINSTALLER_CONFIG_DIR:-}" in
+windowed=0
+case "${{PYINSTALLER_CONFIG_DIR:-}}" in
     "$PACKAGE_TEST_BUILD_ROOT"/*) ;;
     *) exit 92 ;;
 esac
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --distpath) dist="$2"; shift 2 ;;
+        --name) name="$2"; shift 2 ;;
         --osx-bundle-identifier) identifier="$2"; shift 2 ;;
+        --windowed) windowed=1; shift ;;
         *) shift ;;
     esac
 done
-app="$dist/JR-Bar.app"
-/bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks/Python.framework"
-/bin/cp /usr/bin/true "$app/Contents/MacOS/JR-Bar"
-/bin/cp /usr/bin/true "$app/Contents/Frameworks/Python.framework/Python"
-/bin/cat > "$app/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>$identifier</string>
-<key>CFBundleExecutable</key><string>JR-Bar</string>
-</dict></plist>
-EOF
+[ "$windowed" = 1 ]
+app="$dist/$name.app"
+/bin/mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
+/bin/cp /usr/bin/true "$app/Contents/MacOS/$name"
+/bin/cp /usr/bin/true "$app/Contents/Frameworks/libpython3.12.dylib"
+printf '%s' '{plist_head}' > "$app/Contents/Info.plist"
+printf '<key>CFBundleIdentifier</key><string>%s</string>' "$identifier" >> "$app/Contents/Info.plist"
+printf '<key>CFBundleExecutable</key><string>%s</string></dict></plist>' "$name" >> "$app/Contents/Info.plist"
+""",
+    )
+    # The Swift app build (app/scripts/build-app.sh) and the shim build.
+    _write_executable(
+        app_build_script,
+        f"""#!/bin/sh
+set -eu
+[ "${{JRBAR_SKIP_SIGN:-}}" = "1" ]
+[ -n "${{JRBAR_VERSION:-}}" ]
+echo "build-app.sh $JRBAR_VERSION" >> "$PACKAGE_TEST_EVENT_LOG"
+/bin/mkdir -p "$JRBAR_BUNDLE/Contents/MacOS" "$JRBAR_BUNDLE/Contents/Resources"
+/bin/cp /usr/bin/true "$JRBAR_BUNDLE/Contents/MacOS/JR-Bar"
+printf '%s' '{plist_head}' > "$JRBAR_BUNDLE/Contents/Info.plist"
+printf '<key>CFBundleIdentifier</key><string>com.jonathanreed.jrbar</string>' >> "$JRBAR_BUNDLE/Contents/Info.plist"
+printf '<key>CFBundleExecutable</key><string>JR-Bar</string><key>LSUIElement</key><true/></dict></plist>' >> "$JRBAR_BUNDLE/Contents/Info.plist"
+""",
+    )
+    _write_executable(
+        hook_build_script,
+        """#!/bin/sh
+set -eu
+echo "build.sh hook" >> "$PACKAGE_TEST_EVENT_LOG"
+/bin/mkdir -p "$JRBAR_HOOK_BUILD_DIR"
+/bin/cp /usr/bin/true "$JRBAR_HOOK_BUILD_DIR/jrbar-hook"
 """,
     )
     build_python = tmp_path / "build-python"
@@ -877,19 +936,25 @@ case "$1" in
         ;;
     */release_artifact_contract.py)
         version=""
-        architecture=""
         dist_dir=""
+        format=""
         shift
         while [ "$#" -gt 0 ]; do
             case "$1" in
                 --version) version="$2"; shift 2 ;;
-                --architecture) architecture="$2"; shift 2 ;;
+                --architecture) shift 2 ;;
                 --dist-dir) dist_dir="$2"; shift 2 ;;
-                --format) shift 2 ;;
+                --format) format="$2"; shift 2 ;;
                 *) exit 91 ;;
             esac
         done
-        printf '%s/JR-Bar-%s-%s.pkg\n' "$dist_dir" "$version" "$architecture"
+        case "$format" in
+            path) printf '%s/JR-Bar-%s.pkg\n' "$dist_dir" "$version" ;;
+            updater-path) printf '%s/JR-Bar-%s.zip\n' "$dist_dir" "$version" ;;
+            appcast-path) printf '%s/appcast.xml\n' "$dist_dir" ;;
+            channel-metadata-path) printf '%s/jr-bar-update-channel.json\n' "$dist_dir" ;;
+            *) exit 89 ;;
+        esac
         exit 0
         ;;
 esac
@@ -900,7 +965,9 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
 /bin/chmod 755 "$3/bin/python" "$3/bin/pyinstaller"
 """,
     )
-    for command_name in ("dirname", "head", "mkdir", "pwd", "python3", "rm", "sed", "uname"):
+    for command_name in (
+        "dirname", "head", "mkdir", "pwd", "python3", "rm", "sed", "uname", "security", "codesign", "xcrun",
+    ):
         _write_executable(fake_bin / command_name, "#!/bin/sh\nexit 93\n")
     build_root = tmp_path / "isolated-build"
     output_root = tmp_path / "isolated-output"
@@ -910,25 +977,43 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
         "BUILD_PYTHON": str(build_python),
         "BUILD_ROOT": str(build_root),
         "OUTPUT_ROOT": str(output_root),
+        "APP_BUILD_SCRIPT": str(app_build_script),
+        "HOOK_BUILD_SCRIPT": str(hook_build_script),
+        # The keychain and notary tools must never be consulted in local-only mode.
+        "SECURITY_TOOL": str(fake_bin / "security"),
+        "CODESIGN_TOOL": str(fake_bin / "codesign"),
+        "XCRUN_TOOL": str(fake_bin / "xcrun"),
         "PATH": f"{fake_bin}:/usr/bin:/bin:/usr/sbin:/sbin",
         "PACKAGE_TEST_EVENT_LOG": str(event_log),
         "PACKAGE_TEST_BUILD_ROOT": str(build_root),
         "PACKAGE_TEST_PYTHON_TEMPLATE": str(python_template),
         "PACKAGE_TEST_PYINSTALLER_TEMPLATE": str(pyinstaller_template),
     }
+    for variable in ("APP_SIGN_IDENTITY", "INSTALLER_SIGN_IDENTITY", "JRBAR_SPARKLE_HISTORY_DIR"):
+        environment.pop(variable, None)
     result = subprocess.run(
         ["/bin/bash", str(packaging_dir / "build_macos_pkg.sh")],
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=60,
         env=environment,
     )
 
     assert result.returncode == 0, result.stderr
-    app = build_root / "pyinstaller" / "JR-Bar.app"
+    app = build_root / "app" / "JR-Bar.app"
     info = plistlib.loads((app / "Contents" / "Info.plist").read_bytes())
     assert info["CFBundleIdentifier"] == "com.jonathanreed.jrbar"
+    assert info["CFBundleExecutable"] == "JR-Bar"
     assert info["CFBundleDisplayName"] == "JR-Bar"
+    assert info["CFBundleShortVersionString"] == "0.5.0"
+    assert info["CFBundleVersion"] == "0.5.0"
+    assert info["LSMinimumSystemVersion"] == "26.0"
+    assert info["LSUIElement"] is True
+    assert info["SUFeedURL"] == "https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
+    assert info["SUPublicEDKey"] == "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
+    assert info["SURequireSignedFeed"] is True
+    assert info["SUVerifyUpdateBeforeExtraction"] is True
+    assert "JRBarCommit" in info
     assert info["NSAppleEventsUsageDescription"] == (
         "JR-Bar uses Automation only to open a reviewed resume command in "
         "Terminal or iTerm2 when you choose Open."
@@ -939,15 +1024,37 @@ if [ "$1" != "-m" ] || [ "$2" != "venv" ]; then exit 90; fi
     )
     entitlements = plistlib.loads((packaging_dir / "entitlements.plist").read_bytes())
     assert entitlements["com.apple.security.automation.apple-events"] is True
-    # Three script-file invocations verify the app, then the isolated package
-    # assembly seam creates the exact PKG output.
+
+    # The layout: Swift app, the frozen daemon bundle and the shim under
+    # Helpers, Sparkle and its license.
+    assert os.access(app / "Contents" / "MacOS" / "JR-Bar", os.X_OK)
+    daemon = app / "Contents" / "Helpers" / "jrbar-core.app"
+    assert os.access(daemon / "Contents" / "MacOS" / "jrbar-core", os.X_OK)
+    assert (daemon / "Contents" / "Frameworks" / "libpython3.12.dylib").is_file()
+    daemon_info = plistlib.loads((daemon / "Contents" / "Info.plist").read_bytes())
+    assert daemon_info["CFBundleIdentifier"] == "com.jonathanreed.jrbar.core"
+    assert daemon_info["LSUIElement"] is True
+    assert daemon_info["LSMinimumSystemVersion"] == "26.0"
+    assert daemon_info["CFBundleShortVersionString"] == "0.5.0"
+    assert os.access(app / "Contents" / "Helpers" / "jrbar-hook", os.X_OK)
+    assert (app / "Contents" / "Frameworks" / "Sparkle.framework" / "Versions" / "B" / "Sparkle").is_file()
+    assert (app / "Contents" / "Resources" / "ThirdPartyLicenses" / "Sparkle.txt").read_text() == "fixture license\n"
+
+    # Build order: app, shim, Sparkle, sign, three verifiers, archive, PKG.
     assert event_log.read_text().splitlines() == [
-        "verify",
-        "verify",
-        "verify",
-        "verify",
-        "package",
+        "build-app.sh 0.5.0",
+        "build.sh hook",
+        "prepare_sparkle.py",
+        "sign_macos_app.py",
+        "verify_macos_app.py",
+        "verify_entitlements.py",
+        "verify_sparkle_bundle.py",
+        "package_sparkle_archive.py",
+        "package_macos_artifact.py",
     ]
-    assert list(output_root.glob("JR-Bar-*.pkg"))
-    assert not list(output_root.glob("*.zip"))
+    assert (output_root / "JR-Bar-0.5.0.pkg").is_file()
+    assert (output_root / "JR-Bar-0.5.0.zip").is_file()
     assert not list(output_root.glob("*appcast*"))
+    assert "signing: ad-hoc (-)" in result.stdout
+    assert "not notarized" in result.stdout
+    assert "appcast not signed: ALLOW_UNSIGNED is local-only." in result.stdout

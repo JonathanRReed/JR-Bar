@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Fail-closed verification for a packaged JR-Bar.app candidate."""
+"""Fail-closed verification for a packaged JR-Bar.app candidate.
+
+The bundle is the Swift app (``Contents/MacOS/JR-Bar``) carrying the frozen
+Python daemon (``Contents/Helpers/jrbar-core.app``, PyInstaller's bundle
+layout, executable ``Contents/MacOS/jrbar-core`` inside it) and the compiled
+hook shim (``Contents/Helpers/jrbar-hook``). Every Mach-O must link only
+Apple system libraries or code inside the bundle, and the Python runtime
+must be the one inside ``Helpers/jrbar-core.app``.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +24,10 @@ from jrbar.trusted_tools import trusted_system_tool
 
 EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
 EXPECTED_EXECUTABLE_NAME = "JR-Bar"
+CORE_HELPER_ROOT = Path("Contents/Helpers/jrbar-core.app")
+CORE_HELPER = CORE_HELPER_ROOT / "Contents/MacOS/jrbar-core"
+HOOK_SHIM = Path("Contents/Helpers/jrbar-hook")
+HELPER_EXECUTABLES = (CORE_HELPER, HOOK_SHIM)
 APPLE_LIBRARY_ROOTS = (Path("/System/Library"), Path("/usr/lib"))
 DANGEROUS_ENVIRONMENT_PREFIXES = ("PYTHON", "DYLD_")
 DANGEROUS_ENVIRONMENT_NAMES = {"LD_LIBRARY_PATH"}
@@ -75,6 +87,10 @@ def verify_packaged_app(
         executable_path = contents / "MacOS" / executable_name
         if not _is_executable_regular_file(executable_path, payload_file_set):
             errors.append(f"bundle executable is missing or not executable: {executable_path}")
+    helper_paths = tuple(bundle_path / helper for helper in HELPER_EXECUTABLES)
+    for helper in helper_paths:
+        if not _is_executable_regular_file(helper, payload_file_set):
+            errors.append(f"bundled helper is missing or not executable: {helper}")
 
     environment = info.get("LSEnvironment")
     if environment is not None and not isinstance(environment, dict):
@@ -88,6 +104,10 @@ def verify_packaged_app(
     runtime_files = _internal_runtime_files(payload_files)
     if not runtime_files:
         errors.append("bundle is missing an internal Python runtime payload")
+    core_root = bundle_path / CORE_HELPER_ROOT
+    for runtime in runtime_files:
+        if core_root not in runtime.parents:
+            errors.append(f"Python runtime outside Contents/Helpers/jrbar-core.app: {runtime}")
 
     for import_file in payload_files:
         if import_file.suffix != ".pth" and import_file.name != "pyvenv.cfg":
@@ -116,6 +136,9 @@ def verify_packaged_app(
         errors.append("internal Python runtime is not Mach-O")
     if executable_path is not None and executable_path not in macho_files:
         errors.append(f"bundle executable is not a Mach-O file: {executable_path}")
+    for helper in helper_paths:
+        if helper in payload_file_set and helper not in macho_files:
+            errors.append(f"bundled helper is not a Mach-O file: {helper}")
 
     otool = trusted_system_tool("otool")
     for macho in macho_files:
@@ -320,9 +343,25 @@ def _loader_reference_is_allowed(
             return False
         if token == "@rpath":
             return bool(suffix) and ".." not in Path(suffix).parts
-        base = executable.parent if token == "@executable_path" and executable else loader.parent
+        if token == "@executable_path":
+            # A helper executable's own references resolve against it; a
+            # library under Helpers/jrbar-core is loaded by jrbar-core.
+            base = _executable_for(loader, bundle=bundle, executable=executable).parent
+        else:
+            base = loader.parent
         return _path_is_inside_bundle((base / suffix).resolve(strict=False), bundle)
     return False
+
+
+def _executable_for(loader: Path, *, bundle: Path, executable: Path | None) -> Path:
+    core_root = bundle / CORE_HELPER_ROOT
+    if core_root in loader.parents:
+        return bundle / CORE_HELPER
+    if loader == bundle / HOOK_SHIM:
+        return loader
+    if executable is not None:
+        return executable
+    return loader
 
 
 def _absolute_path_is_allowed(path: Path, bundle: Path) -> bool:
@@ -391,6 +430,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = verify_packaged_app(args.bundle)
     if result.accepted:
         print(f"accepted: {result.bundle_path}")
+        print("helpers: " + ", ".join(str(helper) for helper in HELPER_EXECUTABLES))
         print(f"Mach-O files inspected: {len(result.macho_files)}")
         print(f"dependencies inspected: {len(result.dependencies)}")
         print(f"rpaths inspected: {len(result.rpaths)}")

@@ -12,6 +12,11 @@ from pathlib import Path
 
 BUNDLE_SUFFIXES = frozenset({".app", ".appex", ".bundle", ".framework", ".plugin", ".xpc"})
 SIGNABLE_FILE_SUFFIXES = frozenset({".dylib", ".so"})
+# Nested code that carries the app's entitlements. The bundled daemon sends
+# Apple events (opening a session in Terminal or iTerm2), so under the
+# hardened runtime it needs the same automation entitlement as the app.
+# Signing the nested bundle signs its main executable with them.
+ENTITLED_HELPERS = frozenset({"Contents/Helpers/jrbar-core.app"})
 CommandRunner = Callable[..., subprocess.CompletedProcess]
 
 
@@ -117,13 +122,11 @@ def _sign_command(
     identity: str,
     entitlements: Path | None,
     timestamp: bool,
+    hardened_runtime: bool = True,
 ) -> list[str]:
-    command = [
-        "/usr/bin/codesign",
-        "--force",
-        "--options",
-        "runtime",
-    ]
+    command = ["/usr/bin/codesign", "--force"]
+    if hardened_runtime:
+        command.extend(["--options", "runtime"])
     if timestamp:
         command.append("--timestamp")
     if entitlements is not None:
@@ -139,21 +142,33 @@ def sign_macos_app(
     entitlements: Path,
     runner: CommandRunner = subprocess.run,
     macho_detector: Callable[[Path], bool] | None = None,
+    hardened_runtime: bool = True,
+    timestamp: bool | None = None,
 ) -> SignPlan:
+    """Sign every Mach-O and nested bundle, deepest first, then the app.
+
+    ``hardened_runtime`` is on by default; a local identity without a Team
+    ID (``Nautilus Local Dev``) cannot pass library validation for its own
+    frameworks, so the builder turns it off for those. ``timestamp`` defaults
+    to "everything but ad-hoc".
+    """
     if not isinstance(identity, str) or not identity.strip():
         raise ValueError("signing identity is required")
     entitlement_path = Path(entitlements).resolve(strict=True)
     if not _safe_regular_file(entitlement_path, entitlement_path.parent):
         raise ValueError("entitlements must be a safe regular file")
     plan = build_sign_plan(app, macho_detector=macho_detector)
-    timestamp = identity != "-"
+    if timestamp is None:
+        timestamp = identity != "-"
     for target in (*plan.nested_code, *plan.nested_bundles):
+        relative = target.relative_to(plan.app).as_posix()
         runner(
             _sign_command(
                 target,
                 identity=identity,
-                entitlements=None,
+                entitlements=entitlement_path if relative in ENTITLED_HELPERS else None,
                 timestamp=timestamp,
+                hardened_runtime=hardened_runtime,
             ),
             capture_output=True,
             text=True,
@@ -166,6 +181,7 @@ def sign_macos_app(
             identity=identity,
             entitlements=entitlement_path,
             timestamp=timestamp,
+            hardened_runtime=hardened_runtime,
         ),
         capture_output=True,
         text=True,
@@ -194,13 +210,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("app", type=Path)
     parser.add_argument("--identity", required=True)
     parser.add_argument("--entitlements", type=Path, required=True)
+    parser.add_argument(
+        "--no-runtime",
+        action="store_true",
+        help="Sign without the hardened runtime (local identities without a Team ID).",
+    )
+    parser.add_argument(
+        "--no-timestamp",
+        action="store_true",
+        help="Skip the Apple timestamp server (offline or local-only builds).",
+    )
     args = parser.parse_args(argv)
     try:
         plan = sign_macos_app(
             args.app,
             identity=args.identity,
             entitlements=args.entitlements,
+            hardened_runtime=not args.no_runtime,
+            timestamp=False if args.no_timestamp else None,
         )
+    except subprocess.CalledProcessError as exc:
+        detail = " ".join(str(exc.stderr or exc.stdout or "").split())
+        print(f"macOS signing failed: {exc}: {detail[:800]}")
+        return 1
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"macOS signing failed: {exc}")
         return 1

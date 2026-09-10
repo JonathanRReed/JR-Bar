@@ -52,7 +52,7 @@ def _archive(
                 "CFBundleName": "JR Bar",
                 "CFBundleShortVersionString": version,
                 "CFBundleVersion": build,
-                "LSMinimumSystemVersion": "11.0",
+                "LSMinimumSystemVersion": "26.0",
                 "SUFeedURL": (
                     "https://github.com/JonathanRReed/JR-Bar/"
                     "releases/download/updates/appcast.xml"
@@ -64,7 +64,7 @@ def _archive(
         )
     output_dir = tmp_path / "archives"
     output_dir.mkdir(exist_ok=True)
-    output = output_dir / f"JR-Bar-{version}-{architecture}.zip"
+    output = output_dir / f"JR-Bar-{version}.zip"
     package_sparkle_archive.package_archive(app=app, output=output)
     return output
 
@@ -88,7 +88,7 @@ def _fake_sparkle(
             stream,
         )
     behavior = {
-        "current_archive": "JR-Bar-0.5.0-arm64.zip",
+        "current_archive": "JR-Bar-0.5.0.zip",
         "item_signature": ITEM_SIGNATURE,
         "feed_signature": FEED_SIGNATURE,
         "signed_feed_marker": True,
@@ -127,7 +127,7 @@ def _fake_sparkle(
             archive = stage / behavior["current_archive"]
             if behavior["require_previous"]:
                 assert (stage / "appcast.xml").is_file()
-                assert (stage / "JR-Bar-0.4.0-arm64.zip").is_file()
+                assert (stage / "JR-Bar-0.4.0.zip").is_file()
             with zipfile.ZipFile(archive) as source:
                 info = plistlib.loads(source.read("JR-Bar.app/Contents/Info.plist"))
             version = str(info["CFBundleShortVersionString"])
@@ -168,7 +168,7 @@ def _fake_sparkle(
                 previous = (
                     "<item><sparkle:version>40</sparkle:version>"
                     "<sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>"
-                    f'<enclosure url="https://example.invalid/JR-Bar-0.4.0-arm64.zip" length="1" '
+                    f'<enclosure url="https://example.invalid/JR-Bar-0.4.0.zip" length="1" '
                     f'sparkle:edSignature="{signature}"/></item>'
                 )
             xml = (
@@ -277,10 +277,10 @@ def test_generate_stable_channel_signs_exact_feed_and_writes_candidate_metadata(
     assert enclosure is not None
     assert item.find(f"{{{SPARKLE_NAMESPACE}}}channel") is None
     assert item.findtext(f"{{{SPARKLE_NAMESPACE}}}phasedRolloutInterval") == "86400"
-    assert item.findtext(f"{{{SPARKLE_NAMESPACE}}}minimumSystemVersion") == "11.0"
+    assert item.findtext(f"{{{SPARKLE_NAMESPACE}}}minimumSystemVersion") == "26.0"
     assert enclosure.attrib["url"] == (
         "https://github.com/JonathanRReed/JR-Bar/"
-        "releases/download/v0.5.0/JR-Bar-0.5.0-arm64.zip"
+        "releases/download/v0.5.0/JR-Bar-0.5.0.zip"
     )
     assert enclosure.attrib[f"{{{SPARKLE_NAMESPACE}}}edSignature"] == ITEM_SIGNATURE
 

@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Assemble JR-Bar's compatibility-named macOS PKG artifact."""
+"""Assemble JR-Bar's macOS PKG artifact.
+
+One component package (``JR-Bar.app`` installed to ``/Applications``, the
+reviewed postinstall) wrapped by a product archive whose distribution allows
+both a system install (``installer -target /``, needs an administrator) and
+a home-directory install (``installer -target CurrentUserHomeDirectory``,
+lands in ``~/Applications`` with no password).
+"""
 
 from __future__ import annotations
 
@@ -7,8 +14,11 @@ import argparse
 import os
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
+
+PRODUCT_TITLE = "JR-Bar"
 
 
 class PackageAssemblyError(RuntimeError):
@@ -87,6 +97,40 @@ def _validate_request(request: PackageRequest) -> None:
         raise PackageAssemblyError("package outputs must not be directories")
 
 
+def _distribution_document(synthesized: Path, *, component_name: str) -> str:
+    """Return the synthesized distribution with the reviewed install domains."""
+
+    try:
+        root = ET.fromstring(synthesized.read_bytes())
+    except (OSError, ET.ParseError) as exc:
+        raise PackageAssemblyError(f"productbuild --synthesize wrote an unreadable distribution: {exc}") from None
+    if root.tag != "installer-gui-script":
+        raise PackageAssemblyError("synthesized distribution is not an installer-gui-script")
+    for stale in root.findall("domains") + root.findall("title") + root.findall("options"):
+        root.remove(stale)
+    title = ET.Element("title")
+    title.text = PRODUCT_TITLE
+    root.insert(0, title)
+    root.insert(
+        1,
+        ET.Element(
+            "options",
+            {"customize": "never", "require-scripts": "false", "hostArchitectures": "arm64"},
+        ),
+    )
+    root.insert(
+        2,
+        ET.Element(
+            "domains",
+            {"enable_anywhere": "false", "enable_currentUserHome": "true", "enable_localSystem": "true"},
+        ),
+    )
+    references = [element.get("file") for element in root.iter("pkg-ref") if element.get("file")]
+    if references and any(reference != component_name for reference in references):
+        raise PackageAssemblyError("synthesized distribution references an unexpected component")
+    return ET.tostring(root, encoding="unicode") + "\n"
+
+
 def assemble_package(request: PackageRequest) -> Path:
     """Build one PKG and verify its installer signature when requested."""
 
@@ -121,10 +165,31 @@ def assemble_package(request: PackageRequest) -> Path:
     if not request.component_pkg.is_file():
         raise PackageAssemblyError(f"pkgbuild reported success without creating: {request.component_pkg}")
 
+    distribution = request.component_pkg.with_suffix(".dist.xml")
+    distribution.unlink(missing_ok=True)
+    _run(
+        "productbuild --synthesize",
+        [
+            str(request.toolchain.productbuild),
+            "--synthesize",
+            "--package",
+            str(request.component_pkg),
+            str(distribution),
+        ],
+    )
+    if not distribution.is_file():
+        raise PackageAssemblyError(f"productbuild --synthesize reported success without creating: {distribution}")
+    distribution.write_text(
+        _distribution_document(distribution, component_name=request.component_pkg.name),
+        encoding="utf-8",
+    )
+
     product_command = [
         str(request.toolchain.productbuild),
-        "--package",
-        str(request.component_pkg),
+        "--distribution",
+        str(distribution),
+        "--package-path",
+        str(request.component_pkg.parent),
     ]
     if request.installer_sign_identity:
         product_command.extend(["--sign", request.installer_sign_identity, "--timestamp"])

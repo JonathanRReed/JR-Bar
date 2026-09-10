@@ -9,6 +9,7 @@ import binascii
 import hashlib
 import json
 import os
+import platform
 import plistlib
 import re
 import shutil
@@ -45,7 +46,7 @@ SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 METADATA_NAME = "jr-bar-update-channel.json"
 APPCAST_NAME = "appcast.xml"
 PHASED_ROLLOUT_INTERVAL = 86400
-MINIMUM_SUPPORTED_MACOS = "11.0"
+MINIMUM_SUPPORTED_MACOS = "26.0"
 
 _HEX_64 = re.compile(r"[0-9a-f]{64}\Z")
 _SAFE_ACCOUNT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -263,7 +264,14 @@ def _decode_signature(value: object, *, label: str, byte_length: int) -> str:
     return value
 
 
-def _archive_identity(archive: Path) -> ArchiveIdentity:
+def _build_architecture(architecture: str | None) -> str:
+    value = architecture or platform.machine()
+    if _SAFE_ARCHITECTURE.fullmatch(value) is None or ".." in value:
+        raise SparkleChannelError("build architecture is unsafe")
+    return value
+
+
+def _archive_identity(archive: Path, *, architecture: str | None = None) -> ArchiveIdentity:
     resolved_archive = _require_regular_file(archive, label="Sparkle update archive")
     try:
         package_sparkle_archive.validate_archive(archive=resolved_archive)
@@ -283,12 +291,9 @@ def _archive_identity(archive: Path) -> ArchiveIdentity:
         raise SparkleChannelError("Sparkle update archive has an unsafe current version")
     if not isinstance(build, str) or _SAFE_BUILD.fullmatch(build) is None:
         raise SparkleChannelError("Sparkle update archive has an unsafe current build")
-    prefix = f"JR-Bar-{version}-"
-    if not resolved_archive.name.startswith(prefix) or not resolved_archive.name.endswith(".zip"):
+    if resolved_archive.name != package_sparkle_archive.expected_archive_name(version):
         raise SparkleChannelError("Sparkle update archive name does not match its current version")
-    architecture = resolved_archive.name[len(prefix) : -len(".zip")]
-    if _SAFE_ARCHITECTURE.fullmatch(architecture) is None or ".." in architecture:
-        raise SparkleChannelError("Sparkle update archive name has an unsafe architecture")
+    architecture = _build_architecture(architecture)
     if document.get("SUFeedURL") != FEED_URL:
         raise SparkleChannelError("Sparkle update archive has the wrong feed URL")
     if document.get("SURequireSignedFeed") is not True:
@@ -557,6 +562,7 @@ def validate_channel_outputs(
     candidate_id: str,
     sparkle_distribution: Path,
     keychain_account: str | None = None,
+    architecture: str | None = None,
 ) -> None:
     """Cryptographically verify and rehash a candidate-bound channel output set."""
 
@@ -573,7 +579,7 @@ def validate_channel_outputs(
     resolved_archive = _require_regular_file(archive, label="Sparkle update archive")
     resolved_appcast = _require_regular_file(appcast, label="generated appcast")
     resolved_metadata = _require_regular_file(metadata, label="update channel metadata")
-    identity = _archive_identity(resolved_archive)
+    identity = _archive_identity(resolved_archive, architecture=architecture)
     try:
         document = json.loads(resolved_metadata.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -684,6 +690,7 @@ def generate_channel(
     keychain_account: str | None = None,
     previous_appcast: Path | None = None,
     previous_archives: tuple[Path, ...] = (),
+    architecture: str | None = None,
 ) -> ChannelOutputs:
     """Generate, sign, validate, and atomically install one update channel."""
 
@@ -695,7 +702,7 @@ def generate_channel(
         Path(sparkle_distribution)
     )
     resolved_archive = _require_regular_file(Path(archive), label="Sparkle update archive")
-    identity = _archive_identity(resolved_archive)
+    identity = _archive_identity(resolved_archive, architecture=architecture)
     credential_arguments = _credentials(keychain_account=keychain_account)
     _validate_keychain_public_key(
         generate_keys,
@@ -829,6 +836,7 @@ def generate_channel(
             candidate_id=candidate_id,
             sparkle_distribution=Path(sparkle_distribution),
             keychain_account=keychain_account,
+            architecture=identity.architecture,
         )
         os.replace(staged_appcast, final_appcast)
         os.replace(staged_metadata, final_metadata)
@@ -840,6 +848,7 @@ def generate_channel(
         candidate_id=candidate_id,
         sparkle_distribution=Path(sparkle_distribution),
         keychain_account=keychain_account,
+        architecture=identity.architecture,
     )
     return ChannelOutputs(appcast=final_appcast, metadata=final_metadata)
 
@@ -854,6 +863,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--keychain-account")
     parser.add_argument("--previous-appcast", type=Path)
     parser.add_argument("--previous-archive", type=Path, action="append", default=[])
+    parser.add_argument("--architecture", help="Build architecture recorded in the metadata (default: this Mac's).")
     args = parser.parse_args(argv)
     try:
         outputs = generate_channel(
@@ -865,6 +875,7 @@ def main(argv: list[str] | None = None) -> int:
             keychain_account=args.keychain_account,
             previous_appcast=args.previous_appcast,
             previous_archives=tuple(args.previous_archive),
+            architecture=args.architecture,
         )
     except SparkleChannelError as exc:
         print(f"Sparkle channel generation failed: {exc}", file=sys.stderr)

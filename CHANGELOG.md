@@ -2,7 +2,7 @@
 
 All notable changes to JR-Bar are documented here.
 
-## Unreleased
+## 0.8.0 (in progress)
 
 - Core protocol: the Creator Micro 2 lives in the daemon. `state.deck`
   (device, 13 slots, 7 auxiliary controls, banks, rail, keymap,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -75,28 +76,43 @@ def test_cli_entrypoint_keeps_the_foreground_status_bar_import_inside_the_branch
     assert nested_imports[0].names[0].asname == "status_bar_main"
 
 
-def test_packaged_application_uses_public_router_and_native_usage_host() -> None:
+def test_bundled_daemon_entry_is_the_public_router_only() -> None:
+    # jrbar-core (the frozen helper inside JR-Bar.app) is the CLI router:
+    # `core`, `agent-monitor install all`, `hooks doctor`, `doctor`. The
+    # Swift app is the UI, so the old no-argument status-bar branch is gone.
     source = (ROOT / "packaging" / "jrbar_entry.py").read_text(encoding="utf-8")
 
     assert "from jrbar.cli_entry import jrbar_main" in source
     assert "from jrbar.cli import jrbar_main" not in source
-    assert (
-        "from jrbar.provider_usage_status_bar import main as status_bar_main"
-        in source
+    assert "provider_usage_status_bar" not in source
+    assert "status_bar_main" not in source
+
+
+def test_bundled_daemon_entry_emulates_python_dash_m(tmp_path) -> None:
+    # `jrbar-core -m jrbar.hook_client ...` must behave like
+    # `python -m jrbar.hook_client ...` so an interpreter-style hook command
+    # can name the frozen binary.
+    import runpy
+    import subprocess
+    import sys
+
+    entry = ROOT / "packaging" / "jrbar_entry.py"
+    probe = tmp_path / "jrbar_entry_probe.py"
+    probe.write_text("import sys\nprint('probe', sys.argv[0].endswith('jrbar_entry_probe.py'), sys.argv[1:])\n", encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(entry), "-m", "jrbar_entry_probe", "--flag", "value"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{ROOT / 'src'}"},
     )
 
-
-def test_packaged_application_defers_status_bar_import_out_of_module_scope() -> None:
-    tree = _source_tree(ROOT / "packaging" / "jrbar_entry.py")
-
-    top_level_imports = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom)
-        and node.module == "jrbar.provider_usage_status_bar"
-    ]
-
-    assert top_level_imports == []
+    assert result.returncode == 0, result.stderr
+    # Like `python -m`: argv[0] is the module's file, the rest is untouched.
+    assert "probe True ['--flag', 'value']" in result.stdout
+    assert runpy.run_module  # the entry uses runpy; keep the import honest
 
 
 def test_provider_usage_status_bar_supports_direct_module_startup() -> None:
