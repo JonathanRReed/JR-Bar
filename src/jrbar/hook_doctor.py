@@ -57,9 +57,16 @@ def registered_commands(config_path: Path, provider: str) -> list[list[str]]:
     except OSError:
         return []
     if path.suffix in (".yaml", ".yml"):
-        # A folded scalar breaks the command after an option word; join
-        # the indented continuation back onto it.
-        text = re.sub(r"(--provider|--log)[ \t]*\n[ \t]+", r"\1 ", text)
+        # Hermes writes each command as a plain scalar folded over several
+        # indented lines, breaking wherever the line got long (after the
+        # shim path, after ``--log``, ...). Let the YAML parser unfold it
+        # and scan the resulting strings; fall back to a regex join only
+        # when the file does not parse.
+        scalars = _yaml_string_scalars(text)
+        if scalars is not None:
+            text = "\n".join(scalar for scalar in scalars if "--provider" in scalar)
+        else:
+            text = re.sub(r"(--provider|--log)[ \t]*\n[ \t]+", r"\1 ", text)
     found: list[list[str]] = []
     for match in _JSON_ARGV.finditer(text):
         if text[max(0, match.start() - 24) : match.start()].rstrip().endswith("FALLBACK_COMMAND ="):
@@ -100,6 +107,31 @@ def registered_commands(config_path: Path, provider: str) -> list[list[str]]:
             if parts not in found:
                 found.append(parts)
     return found
+
+
+def _yaml_string_scalars(text: str) -> list[str] | None:
+    """Every string scalar in a YAML document, folded scalars joined the way
+    the parser sees them; ``None`` when the text is not parseable YAML."""
+    try:
+        from ruamel.yaml import YAML
+
+        data = YAML(typ="safe").load(text)
+    except Exception:
+        return None
+    scalars: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, str):
+            scalars.append(" ".join(node.split()))
+        elif isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                walk(value)
+
+    walk(data)
+    return scalars
 
 
 def socket_answers(path: Path, timeout: float = 0.3) -> bool:

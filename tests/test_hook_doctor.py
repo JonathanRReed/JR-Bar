@@ -86,3 +86,39 @@ def test_registered_commands_unwrap_the_antigravity_envelope_and_skip_fallbacks(
     extension = tmp_path / "jrbar.ts"
     extension.write_text('const HOOK_COMMAND = ["/opt/jrbar/bin/jrbar-hook", "--provider", "pi", "--log", "/tmp/pi.jsonl"];\nconst FALLBACK_COMMAND = ["/venv/bin/python", "-m", "jrbar.hook_client", "--provider", "pi", "--log", "/tmp/pi.jsonl"];\n')
     assert [classify_command(parts) for parts in registered_commands(extension, "pi")] == ["shim"]
+
+
+def test_registered_commands_unfold_hermes_long_path_scalars(tmp_path: Path) -> None:
+    """Hermes folds a plain scalar wherever the line got long: after the
+    bundled shim path and after ``--log``, not only after ``--provider``."""
+    hermes = tmp_path / "config.yaml"
+    shim = "/Users/someone/Applications/JR-Bar.app/Contents/Helpers/jrbar-hook"
+    hermes.write_text(
+        "hooks:\n"
+        "  on_session_start:\n"
+        f"  - command: \n      {shim} \n      --provider hermes --log \n      /Users/someone/.local/state/jrbar/hermes.jsonl\n"
+        "    timeout: 10\n"
+        f"  pre_tool_call:\n  - command: \n      {shim} \n      --provider hermes --log \n      /Users/someone/.local/state/jrbar/hermes.jsonl\n"
+        "    timeout: 10\n"
+    )
+    found = registered_commands(hermes, "hermes")
+    assert found == [[shim, "--provider", "hermes", "--log", "/Users/someone/.local/state/jrbar/hermes.jsonl"]]
+    assert classify_command(found[0]) == "shim"
+
+
+def test_hook_shim_path_finds_the_bundled_shim_when_frozen(tmp_path: Path, monkeypatch) -> None:
+    from jrbar import install
+
+    app = tmp_path / "JR-Bar.app" / "Contents"
+    core = app / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
+    core.parent.mkdir(parents=True)
+    core.write_text("")
+    shim = app / "Helpers" / "jrbar-hook"
+    shim.write_text("#!/bin/sh\n")
+    shim.chmod(0o755)
+    monkeypatch.delenv("JRBAR_HOOK_EXEC", raising=False)
+    monkeypatch.setenv("JRBAR_INSTALL_PREFIX", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(install.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(install.sys, "executable", str(core))
+    assert install.hook_shim_path() == shim.resolve()
+    assert install.hook_command_arguments("hermes", tmp_path / "hermes.jsonl")[0] == str(shim.resolve())
