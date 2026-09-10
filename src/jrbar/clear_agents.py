@@ -98,11 +98,14 @@ class CompletionPresentationKey:
     completed_at_epoch: float
 
     def __post_init__(self) -> None:
+        # ``SessionEnd`` is representable here: a widened clear acknowledges
+        # closed and stale rows too (``clearable_presentation_key``). What a
+        # *notification* may badge as new is a narrower question, and
+        # ``completion_presentation_key`` still answers it.
         if not (
             type(self.source_key) is SourceKey
             and _valid_identity_text(self.agent_id, limit=MAX_AGENT_ID_LENGTH)
             and _valid_identity_text(self.event_name, limit=MAX_EVENT_NAME_LENGTH)
-            and self.event_name != "SessionEnd"
             and _finite_nonnegative(self.completed_at_epoch)
         ):
             raise ValueError("invalid completion presentation key")
@@ -407,18 +410,18 @@ def _protected_signature_sort_key(
     )
 
 
-def _exact_completion_key(status: AgentStatus) -> CompletionPresentationKey | None:
-    if (
-        type(status) is not AgentStatus
-        or status.mode is not AgentMode.COMPLETED
-        or status.event_name == "SessionEnd"
-        or type(status.work_key) is not WorkKey
-        or type(status.work_key.source_key) is not SourceKey
-        or status.provider != status.work_key.source_key.provider_id
-        or not _valid_identity_text(status.agent_id, limit=MAX_AGENT_ID_LENGTH)
-        or not _valid_identity_text(status.event_name, limit=MAX_EVENT_NAME_LENGTH)
-    ):
-        return None
+def _identity_is_exact(status: AgentStatus) -> bool:
+    return (
+        type(status) is AgentStatus
+        and type(status.work_key) is WorkKey
+        and type(status.work_key.source_key) is SourceKey
+        and status.provider == status.work_key.source_key.provider_id
+        and _valid_identity_text(status.agent_id, limit=MAX_AGENT_ID_LENGTH)
+        and _valid_identity_text(status.event_name, limit=MAX_EVENT_NAME_LENGTH)
+    )
+
+
+def _key_for(status: AgentStatus) -> CompletionPresentationKey:
     return CompletionPresentationKey(
         source_key=status.work_key.source_key,
         agent_id=status.agent_id,
@@ -427,12 +430,46 @@ def _exact_completion_key(status: AgentStatus) -> CompletionPresentationKey | No
     )
 
 
+def _exact_completion_key(status: AgentStatus) -> CompletionPresentationKey | None:
+    if (
+        not _identity_is_exact(status)
+        or status.mode is not AgentMode.COMPLETED
+        or status.event_name == "SessionEnd"
+    ):
+        return None
+    return _key_for(status)
+
+
 def completion_presentation_key(
     status: AgentStatus,
 ) -> CompletionPresentationKey | None:
-    """Return an exact clearable key, or ``None`` when identity is unsafe."""
+    """Return an exact clearable key, or ``None`` when identity is unsafe.
+
+    The narrow question: is this row a *completion the user has not seen*?
+    A closed session (``SessionEnd``) is not news, so it has no key here.
+    """
 
     return _exact_completion_key(status)
+
+
+def clearable_presentation_key(
+    status: AgentStatus,
+) -> CompletionPresentationKey | None:
+    """Return a key for any row a widened clear may acknowledge.
+
+    Clearing the list is a different question from badging news. Everything
+    the panel lists as over -- a completion, a closed session, a run the
+    provider never confirmed, any row whose source stopped delivering -- can
+    be acknowledged, so that "Clear done" leaves only live sessions behind.
+    Live rows (working, waiting, blocked and still delivering) never get a
+    key: the clear must not touch them.
+    """
+
+    if not _identity_is_exact(status):
+        return None
+    if status.mode in {AgentMode.COMPLETED, AgentMode.ENDED_UNCONFIRMED} or status.stale:
+        return _key_for(status)
+    return None
 
 
 def _safe_preview_label(status: AgentStatus) -> str:
@@ -527,6 +564,7 @@ def project_clear_agents_preview(
     now_epoch: float,
     protected_statuses: Iterable[AgentStatus] = (),
     queued_agent_ids: Iterable[str] = (),
+    widened: bool = False,
 ) -> ClearAgentsPreview:
     """Project exact clear targets and a semantic stale-confirmation fence.
 
@@ -534,6 +572,11 @@ def project_clear_agents_preview(
     ``protected_statuses`` are rows, including remote rows, that the caller has
     already excluded from local clearing.  Queue identity is explicit because
     ``AgentMode`` intentionally has no inferred queued state.
+
+    ``widened`` acknowledges every finished-or-stale row rather than only
+    fresh completions (``clearable_presentation_key``): it is what
+    ``clear_completed`` asks for, so that clearing empties the list instead
+    of refusing the rows the user is actually looking at.
     """
 
     if type(state) is not ClearAgentsState or not _finite_nonnegative(now_epoch):
@@ -550,12 +593,13 @@ def project_clear_agents_preview(
         raise ClearAgentsPlanError(ClearAgentsRefusal.INVALID)
 
     acknowledged = state.acknowledged_keys
+    key_for_row = clearable_presentation_key if widened else _exact_completion_key
     targets: dict[CompletionPresentationKey, AgentStatus] = {}
     protected: list[tuple[AgentStatus, bool, bool]] = []
     for status in local_rows:
         remote = _is_remote(status)
         queued = status.agent_id in queued_ids
-        key = None if remote or queued else _exact_completion_key(status)
+        key = None if remote or queued else key_for_row(status)
         if key is not None:
             if key not in acknowledged:
                 targets.setdefault(key, status)
@@ -791,6 +835,7 @@ __all__ = [
     "ClearAgentsUndoPlan",
     "CompletionPresentationKey",
     "CompletionPresentationReceipt",
+    "clearable_presentation_key",
     "completion_presentation_key",
     "plan_clear_agents_commit",
     "plan_clear_agents_undo",

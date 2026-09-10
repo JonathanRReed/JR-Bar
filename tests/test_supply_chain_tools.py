@@ -235,9 +235,12 @@ def test_release_gate_generates_and_publisher_requires_evidence_artifacts() -> N
     assert "jrbar-sbom.cdx.json" in publish
     assert "release-verification.json" in publish
     assert "SHA256SUMS" in publish
-    assert "--format updater-path" in gate
-    assert "--format appcast-path" in gate
-    assert "--format channel-metadata-path" in gate
+    # The gate routes every path through one `contract` helper that passes
+    # --format through; the publisher spells each call out.
+    assert '--format "$1"' in gate
+    assert "contract updater-path" in gate
+    assert "contract appcast-path" in gate
+    assert "contract channel-metadata-path" in gate
     assert "--format updater-path" in publish
     assert "--format appcast-path" in publish
     assert "--format channel-metadata-path" in publish

@@ -15,6 +15,9 @@ from typing import Any
 
 from .boot_identity import boot_identifier_basis
 from .capacity_types import SourceKey
+from .completion_visibility import (
+    COMPLETED_VISIBLE_SECONDS as _COMPLETED_VISIBLE_SECONDS,
+)
 from .delegation import _reconcile_delegating_parents, status_counts_active
 from .freshness import bounded_age_seconds, is_recent
 from .latest_state_timing import (
@@ -128,7 +131,9 @@ LATEST_STATE_WRITE_INTERVAL_SECONDS = 1.0
 DETAIL_TEXT_CAP = 160
 CLAUDE_TRANSCRIPT_MTIME_HEARTBEAT_SKEW_SECONDS = 30.0
 CODEX_SESSION_INDEX_MAX_LINES = 5000
-COMPLETED_VISIBLE_SECONDS = 20 * 60.0
+# One number, defined in completion_visibility: how long a finished session
+# stays a fresh row here and a listed row in ``state.sessions``.
+COMPLETED_VISIBLE_SECONDS = _COMPLETED_VISIBLE_SECONDS
 IDLE_VISIBLE_SECONDS = 0.0
 POST_TOOL_WORKING_VISIBLE_SECONDS = 2 * 60.0
 # one clock for "working went silent" -- see operator_state

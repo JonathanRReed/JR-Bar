@@ -469,18 +469,53 @@ def _cmd_snooze(self, args):
 
 @command("clear_completed")
 def _cmd_clear_completed(self, args):
+    """Acknowledge every finished-or-stale row the panel is listing.
+
+    Not "clear recent completions": the rows the user is looking at, whatever
+    made them stop -- a Stop, a closed terminal, a process that died, a source
+    that went quiet. Afterwards ``state.sessions`` holds only live sessions and
+    the rest are in ``list_history``. ``sessions`` may name a subset;
+    ``"all"`` (the default) takes the lot.
+    """
     import secrets
 
     from .clear_agents import ClearAgentsPlanError, plan_clear_agents_commit
+    from .completion_visibility import project_clearable_sessions
 
-    legacy = self._core_legacy()
     snapshot = getattr(self, "last_snapshot", None)
     if snapshot is None:
         raise CommandError("not_found", "no snapshot yet")
     if getattr(self, "_clear_agents_operation_pending", False):
         raise CommandError("busy", "a clear is already in flight")
+    requested = args.get("sessions")
+    if requested in (None, "all", "*"):
+        session_ids = None
+    elif isinstance(requested, (list, tuple)):
+        session_ids = [str(value) for value in requested if isinstance(value, str)]
+        if not session_ids:
+            return {"batch": None, "cleared": []}
+    else:
+        raise CommandError("invalid_args", "sessions must be a list or \"all\"")
+    with self._core_lock:
+        listed = [
+            str(row.get("id") or "")
+            for row in (self._core_documents.get("state") or {}).get("sessions") or ()
+        ]
+    if not listed:
+        # No published document yet (a command before the first refresh):
+        # fall back to the snapshot's own rows.
+        listed = [
+            str(getattr(status, "agent_id", ""))
+            for status in (*snapshot.statuses, *getattr(snapshot, "stale_statuses", ()))
+        ]
     try:
-        preview = legacy.clear_agents_preview(snapshot, self)
+        preview = project_clearable_sessions(
+            (*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())),
+            listed_ids=listed,
+            state=self.clear_agents_state,
+            now_epoch=time.time(),
+            session_ids=session_ids,
+        )
         if preview.clearable_count <= 0:
             return {"batch": None, "cleared": []}
         plan = plan_clear_agents_commit(
@@ -495,17 +530,41 @@ def _cmd_clear_completed(self, args):
     except (TypeError, ValueError) as error:
         raise CommandError("internal", str(error)) from error
     self._clear_agents_preview = preview
-    self._submit_clear_agents_plan("commit", plan)
-    cleared = [
-        getattr(getattr(item, "key", None), "agent_id", None) or getattr(item, "label", None)
-        for item in getattr(preview, "items", ())
-    ]
+    _apply_clear_agents_plan(self, "commit", plan)
     self._core_last_clear_batch = plan.batch_receipt.batch_id
-    return {"batch": plan.batch_receipt.batch_id, "cleared": [item for item in cleared if item]}
+    # Every acknowledged row, not only the twenty the popover previews.
+    cleared = sorted({key.agent_id for key in plan.batch_receipt.newly_added_keys})
+    return {"batch": plan.batch_receipt.batch_id, "cleared": cleared}
+
+
+def _apply_clear_agents_plan(self, kind: str, plan) -> None:
+    """Save the receipts and republish, in order, on this thread.
+
+    The menu's own path hands the write to the persistence writer and picks
+    the result up later on the main thread. A command has to answer now: the
+    reply says the rows are gone, so the next ``state`` must already agree.
+    """
+    from .clear_agents_store import save_clear_agents_state
+
+    try:
+        save_clear_agents_state(self.clear_agents_path, plan.next_state)
+    except (OSError, TypeError, ValueError) as error:
+        raise CommandError("refused", f"could not save the clear receipts: {error}") from error
+    self.clear_agents_state = plan.next_state
+    self.current_mailbox_projection = None
+    self._menu_signature = None
+    if kind == "commit":
+        self._clear_agents_commit_plan = plan
+    self._core_publish_state()
 
 
 @command("undo_clear")
 def _cmd_undo_clear(self, args):
+    """Put a cleared batch back, inside its 300 s window.
+
+    The rows return to ``state.sessions`` exactly as they were: the undo
+    removes the receipts, and visibility is recomputed from them.
+    """
     from .clear_agents import ClearAgentsCommitPlan, ClearAgentsPlanError, plan_clear_agents_undo
 
     batch = str(args.get("batch") or getattr(self, "_core_last_clear_batch", "") or "")
@@ -517,8 +576,9 @@ def _cmd_undo_clear(self, args):
     except ClearAgentsPlanError as error:
         reason = getattr(getattr(error, "reason", None), "value", "refused")
         raise CommandError("expired" if reason == "expired" else "refused", str(reason)) from error
-    self._submit_clear_agents_plan("undo", plan)
-    return {"batch": batch, "restored": []}
+    restored = sorted({key.agent_id for key in plan.batch_receipt.newly_added_keys})
+    _apply_clear_agents_plan(self, "undo", plan)
+    return {"batch": batch, "restored": restored}
 
 
 def _apply_settings_document(self, document: dict[str, Any], *, touched: list[str]) -> int:
@@ -2569,6 +2629,9 @@ def build_headless_controller_class() -> type:
             record = None
             cwd = None
             name = None
+            # None until the process registry actually answers: "no record"
+            # must not read as "the process died".
+            process_alive: bool | None = None
             session_id = getattr(status, "session_id", None)
             if session_id:
                 try:
@@ -2577,7 +2640,9 @@ def build_headless_controller_class() -> type:
                     record = None
                 if record is not None:
                     cwd = record.cwd or None
-                    if record.ended_at_epoch is None and pid_exists(record.pid):
+                    alive = record.ended_at_epoch is None and pid_exists(record.pid)
+                    process_alive = bool(alive)
+                    if alive:
                         pid = record.pid
                 name, cwd = self._core_session_title(status.provider, session_id, pid or (record.pid if record else None), cwd)
             origin_label = getattr(status, "origin", None)
@@ -2590,7 +2655,14 @@ def build_headless_controller_class() -> type:
                     terminal["tty"] = tty
                 if not terminal:
                     terminal = None
-            return SessionExtras(pid=pid, origin=origin, terminal=terminal, cwd=cwd, name=name)
+            return SessionExtras(
+                pid=pid,
+                origin=origin,
+                terminal=terminal,
+                process_alive=process_alive,
+                cwd=cwd,
+                name=name,
+            )
 
         def _core_session_title(self, provider: str, session_id: str, pid: int | None, cwd: str | None):
             """(name, cwd) from the provider's own session record: Claude's
@@ -2700,6 +2772,15 @@ def build_headless_controller_class() -> type:
             except Exception:
                 return int(round(float(device.brightness) / 255.0 * 100.0)) if device.brightness is not None else None
 
+        def _core_acknowledged_keys(self):
+            """The Clear Agents receipts that keep cleared rows off the list."""
+            from .clear_agents import ClearAgentsState
+
+            state = getattr(self, "clear_agents_state", None)
+            if type(state) is not ClearAgentsState:
+                return frozenset()
+            return state.acknowledged_keys
+
         def _core_build_state(self) -> dict[str, Any]:
             from .lid_sleep import sleep_helper_installed
 
@@ -2773,6 +2854,7 @@ def build_headless_controller_class() -> type:
                 intake_report=intake,
                 settings_generation=self._core_settings_generation,
                 extras_by_id=extras,
+                acknowledged_keys=self._core_acknowledged_keys(),
             )
             try:
                 document["deck"] = self._core_deck_document(document["sessions"])

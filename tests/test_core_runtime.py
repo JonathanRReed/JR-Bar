@@ -661,3 +661,157 @@ def test_linked_dot_program_folds_brightness_lines(headless) -> None:
     # min(strip 100, dot 200) * 0.5 = 50; the strip's own line is folded in.
     assert out == "brightness 50\n#112233 500ms\nrepeat"
     assert controller._core_linked_dot_program("#FFFFFF", SimpleNamespace(brightness=255)) == "brightness 128\n#FFFFFF"
+
+
+# --- clear_completed / undo_clear over the real command path -----------------
+
+
+def _visibility_snapshot(now):
+    """A snapshot shaped like the owner's report: one live session and four
+    rows the panel keeps calling "Done · stale" an hour later."""
+    from datetime import datetime, timedelta, timezone
+
+    from jrbar.capacity_types import SourceKey
+    from jrbar.models import AgentMode, AgentStatus
+    from jrbar.provider_facts import WorkIdentifier, WorkKey
+
+    collected_at = datetime.fromtimestamp(now, tz=timezone.utc)
+
+    def status(agent_id, *, provider, mode, event_name, minutes_ago, stale):
+        source = SourceKey(provider, "hooks", "local", "agent_events")
+        return AgentStatus(
+            provider=provider,
+            agent_id=agent_id,
+            display_name=agent_id.rsplit(":", 1)[-1],
+            mode=mode,
+            updated_at=collected_at - timedelta(minutes=minutes_ago),
+            event_name=event_name,
+            session_id=agent_id.rsplit(":", 1)[-1],
+            stale=stale,
+            work_key=WorkKey(source, WorkIdentifier(agent_id.replace(":", "."))),
+        )
+
+    live = status("claude:session:live", provider="claude", mode=AgentMode.WORKING, event_name="UserPromptSubmit", minutes_ago=0.2, stale=False)
+    done = status("devin:session:troubled", provider="devin", mode=AgentMode.COMPLETED, event_name="Stop", minutes_ago=3.5, stale=True)
+    done_18 = status("devin:session:fair-tal", provider="devin", mode=AgentMode.COMPLETED, event_name="Stop", minutes_ago=18.1, stale=True)
+    closed = status("codex:session:closed", provider="codex", mode=AgentMode.COMPLETED, event_name="SessionEnd", minutes_ago=5.0, stale=True)
+    quiet = status("devin:session:lapis-fl", provider="devin", mode=AgentMode.IDLE_READY, event_name="SessionStart", minutes_ago=6.0, stale=True)
+    return SimpleNamespace(
+        aggregate=SimpleNamespace(mode=AgentMode.WORKING),
+        statuses=(live,),
+        stale_statuses=(done, done_18, closed, quiet),
+        collected_at=collected_at,
+    )
+
+
+@pytest.fixture()
+def cleared(headless, tmp_path: Path):
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.clear_agents_path = tmp_path / "clear-agents.json"
+    controller.last_snapshot = _visibility_snapshot(time.time())
+    controller._core_publish_state()
+    return controller
+
+
+def _listed(controller) -> list[str]:
+    with controller._core_lock:
+        return [row["id"] for row in (controller._core_documents["state"] or {})["sessions"]]
+
+
+def test_clear_completed_leaves_only_live_sessions_and_undo_puts_them_back(cleared) -> None:
+    controller = cleared
+    before = _listed(controller)
+    assert before == [
+        "claude:session:live",
+        "devin:session:troubled",
+        "devin:session:fair-tal",
+        "codex:session:closed",
+        "devin:session:lapis-fl",
+    ]
+
+    reply = controller._core_dispatch("clear_completed", {"sessions": "all"})
+
+    assert reply["batch"]
+    # Every row that was over, including the closed session and the quiet
+    # one -- not only "completed recently".
+    assert reply["cleared"] == [
+        "codex:session:closed",
+        "devin:session:fair-tal",
+        "devin:session:lapis-fl",
+        "devin:session:troubled",
+    ]
+    assert _listed(controller) == ["claude:session:live"]
+    with controller._core_lock:
+        state = controller._core_documents["state"]
+    assert state["hidden_count"] == 4
+    assert state["unseen_completions"] == [] and state["aggregate"]["ready"] == 0
+    assert controller.clear_agents_path.exists()
+
+    undone = controller._core_dispatch("undo_clear", {"batch": reply["batch"]})
+    assert undone["batch"] == reply["batch"]
+    assert undone["restored"] == reply["cleared"]
+    assert _listed(controller) == before
+
+
+def test_clear_completed_can_name_a_subset_and_never_touches_live_rows(cleared) -> None:
+    controller = cleared
+
+    reply = controller._core_dispatch(
+        "clear_completed",
+        {"sessions": ["devin:session:troubled", "claude:session:live"]},
+    )
+
+    # The live row was asked for and refused; only the finished one cleared.
+    assert reply["cleared"] == ["devin:session:troubled"]
+    assert _listed(controller) == [
+        "claude:session:live",
+        "devin:session:fair-tal",
+        "codex:session:closed",
+        "devin:session:lapis-fl",
+    ]
+
+
+def test_clearing_a_list_with_nothing_over_is_a_no_op(cleared) -> None:
+    controller = cleared
+    controller._core_dispatch("clear_completed", {"sessions": "all"})
+    again = controller._core_dispatch("clear_completed", {"sessions": "all"})
+    assert again == {"batch": None, "cleared": []}
+    assert controller._core_dispatch("clear_completed", {"sessions": []}) == {"batch": None, "cleared": []}
+    with pytest.raises(CommandError) as bad:
+        controller._core_dispatch("clear_completed", {"sessions": "some"})
+    assert bad.value.code == "invalid_args"
+
+
+def test_undo_clear_expires_after_its_window(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
+    controller = cleared
+    reply = controller._core_dispatch("clear_completed", {"sessions": "all"})
+    later = time.time() + 301.0
+    monkeypatch.setattr(core_runtime.time, "time", lambda: later)
+    with pytest.raises(CommandError) as expired:
+        controller._core_dispatch("undo_clear", {"batch": reply["batch"]})
+    assert expired.value.code == "expired"
+    with pytest.raises(CommandError) as unknown:
+        controller._core_dispatch("undo_clear", {"batch": "nope"})
+    assert unknown.value.code == "not_found"
+
+
+def test_a_dead_process_reads_ended_not_done(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The green check is a claim about the provider, and a session whose
+    process is gone has nobody left to make it."""
+    from jrbar import process_registry
+
+    monkeypatch.setattr(
+        process_registry,
+        "load_record",
+        lambda provider, session_id: SimpleNamespace(pid=999_999, cwd="/tmp/x", ended_at_epoch=None),
+    )
+    monkeypatch.setattr(process_registry, "pid_exists", lambda pid: False)
+    controller = cleared
+    controller._core_extras.clear()
+    controller._core_publish_state()
+    with controller._core_lock:
+        rows = {row["id"]: row for row in controller._core_documents["state"]["sessions"]}
+    done = rows["devin:session:troubled"]
+    assert done["lifecycle"] == "ended" and done["mode"] == "ended_unconfirmed"
+    assert done["stale"] is True and done["pid"] is None

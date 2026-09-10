@@ -15,6 +15,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
+from .completion_visibility import (
+    COMPLETED_VISIBLE_SECONDS,
+    END_EVENT_NAMES,
+    LIVE_VISIBLE_SECONDS,
+    acknowledged_epoch_by_session,
+    filter_visible_sessions,
+)
 from .models import AgentMode
 
 PROTOCOL_VERSION: Final = 1
@@ -203,6 +210,11 @@ class SessionExtras:
     pid: int | None = None
     origin: dict[str, Any] | None = None
     terminal: dict[str, Any] | None = None
+    # Tri-state, because "no pid" has two very different meanings: ``False``
+    # is "the process registry knew this session and its process is gone",
+    # ``None`` is "nobody looked, or there was never a record". Only the
+    # first one turns a completion into ``ended``.
+    process_alive: bool | None = None
     # What the process registry recorded from the hook payload.
     cwd: str | None = None
     # The provider's own session title: Claude's ``name`` from
@@ -400,13 +412,34 @@ def terminal_from_command(command: str | None) -> tuple[str, str] | None:
     return None
 
 
-def lifecycle_for_mode(mode: AgentMode, *, stale: bool) -> str:
-    if mode is AgentMode.COMPLETED:
-        return "completed"
+def lifecycle_for_mode(
+    mode: AgentMode,
+    *,
+    stale: bool,
+    event_name: str | None = None,
+    process_alive: bool | None = None,
+) -> str:
+    """The app's five words: ``active``, ``completed``, ``failed``,
+    ``ended``, ``stale``.
+
+    ``completed`` is a claim -- the green check, "Done" -- and only a
+    provider's own end event earns it. A run whose process died, or one the
+    collector merely *inferred* was finished (a notification that read as
+    done, an explicit status message), reads ``ended``: grey, no check.
+    ``event_name`` of ``None`` means the caller has no event to judge by and
+    keeps the older, looser reading.
+    """
+
     if mode is AgentMode.BLOCKED_ERROR:
         return "failed"
     if mode is AgentMode.ENDED_UNCONFIRMED:
         return "ended"
+    if mode is AgentMode.COMPLETED:
+        if process_alive is False:
+            return "ended"
+        if event_name is not None and event_name not in END_EVENT_NAMES:
+            return "ended"
+        return "completed"
     if stale:
         return "stale"
     return "active"
@@ -621,6 +654,23 @@ def session_document(
     provider = str(getattr(status, "provider", "unknown"))
     session_id = getattr(status, "session_id", None)
     cwd = getattr(status, "cwd", None) or (extras.cwd if extras is not None else None)
+    event_name = getattr(status, "event_name", None)
+    process_alive = extras.process_alive if extras is not None else None
+    lifecycle = lifecycle_for_mode(
+        mode,
+        stale=stale,
+        event_name=event_name if isinstance(event_name, str) else None,
+        process_alive=process_alive,
+    )
+    # A dead process without an end event is a session that stopped being
+    # delivered, whatever its last mode said.
+    if process_alive is False and event_name not in END_EVENT_NAMES:
+        stale = True
+    # ``mode`` travels beside ``lifecycle`` and the app reads whichever is
+    # more definite; a run demoted to ``ended`` must not still say
+    # ``completed`` or it renders as Done with a green check.
+    if lifecycle == "ended" and mode is AgentMode.COMPLETED:
+        mode = AgentMode.ENDED_UNCONFIRMED
     return {
         "id": agent_id,
         "provider": provider,
@@ -641,7 +691,7 @@ def session_document(
         ),
         "cwd": cwd,
         "mode": mode.value,
-        "lifecycle": lifecycle_for_mode(mode, stale=stale),
+        "lifecycle": lifecycle,
         "next_actor": next_actor,
         "since": updated_at,
         "updated_at": updated_at,
@@ -815,10 +865,19 @@ def build_state_document(
     peers: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
     deck: dict[str, Any] | None = None,
     usage_samples: object = None,
+    acknowledged_keys: object = (),
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
     object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
-    ``usage_samples`` is the daemon's ``UsageSampleBuffer`` for forecasts."""
+    ``usage_samples`` is the daemon's ``UsageSampleBuffer`` for forecasts;
+    ``acknowledged_keys`` are the Clear Agents receipts
+    (``ClearAgentsState.acknowledged_keys``) that keep cleared rows out of
+    the list.
+
+    ``sessions`` holds only what the panel should be looking at: live
+    sessions, plus finished ones nobody has acknowledged yet. Everything
+    older is in ``list_history``, and ``hidden_count`` says how many main
+    sessions that is (see ``completion_visibility``)."""
     extras_by_id = extras_by_id or {}
     statuses: list[object] = []
     seen: set[str] = set()
@@ -859,7 +918,12 @@ def build_state_document(
         )
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
-    sessions = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
+    projected = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
+    sessions, hidden_count, visible_completion_ids = filter_visible_sessions(
+        projected,
+        now=now,
+        acknowledged_at_by_id=acknowledged_epoch_by_session(acknowledged_keys or ()),
+    )
     asks = [
         ask_document(status, operator_state, with_session=True)
         for status in ask_statuses
@@ -867,7 +931,10 @@ def build_state_document(
     mains = [session for session in sessions if session["kind"] == "main"]
     working = sum(1 for session in mains if session["mode"] in {mode.value for mode in _WORKING_MODES} and not session["stale"])
     failed = sum(1 for session in mains if session["lifecycle"] == "failed" and not session["stale"])
-    ready = len(set(unseen_completion_ids))
+    # News is only news while the row that carries it is on screen: a
+    # completion that aged out or was cleared stops counting here too.
+    unseen = sorted(set(unseen_completion_ids) & set(visible_completion_ids))
+    ready = len(unseen)
     aggregate_source = getattr(getattr(snapshot, "aggregate", None), "mode", None)
     power = power or PowerFacts(False, "never", False, False)
     escalation = escalation or EscalationFacts()
@@ -891,6 +958,7 @@ def build_state_document(
             "total": len(mains),
         },
         "sessions": sessions,
+        "hidden_count": int(hidden_count),
         "asks": asks,
         "devices": [device_document(device) for device in devices],
         "usage": usage_document(usage_state, usage_samples=usage_samples, now=now),
@@ -931,7 +999,7 @@ def build_state_document(
             ),
         },
         "peers": list(peers),
-        "unseen_completions": sorted(set(unseen_completion_ids)),
+        "unseen_completions": unseen,
         "settings_generation": int(settings_generation),
     }
     if deck is not None:
@@ -1017,6 +1085,8 @@ def history_rows(ledger: object, *, since: float | None = None, limit: int = 500
 
 
 __all__ = [
+    "COMPLETED_VISIBLE_SECONDS",
+    "LIVE_VISIBLE_SECONDS",
     "ORIGIN_BUNDLE_IDS",
     "PROTOCOL_VERSION",
     "PROVIDER_LABELS",

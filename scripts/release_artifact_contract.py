@@ -12,9 +12,11 @@ from pathlib import Path
 PRODUCT_DISPLAY_NAME = "JR-Bar"
 COMPATIBILITY_APP_BUNDLE = "JR-Bar.app"
 AUTHORITATIVE_ARTIFACT_KIND = "pkg"
-# Optional overrides for packaging/build_macos_pkg.sh; the builder finds the
-# Developer ID identities, the notary profile and the Sparkle key itself.
-REQUIRED_SIGNING_INPUTS = (
+# Overrides, not requirements. Both packaging/build_macos_pkg.sh and
+# scripts/verify_macos_release.sh discover the Developer ID identities, the
+# notary keychain profile and the Sparkle signing account for themselves;
+# these names only exist to point them somewhere else.
+SIGNING_IDENTITY_OVERRIDES = (
     "APP_SIGN_IDENTITY",
     "INSTALLER_SIGN_IDENTITY",
     "NOTARY_PROFILE",
@@ -145,7 +147,7 @@ def developer_artifact_paths(
 def contract_document(*, version: str, architecture: str) -> dict[str, object]:
     _safe_component(architecture, label="architecture", pattern=_ARCHITECTURE_PATTERN)
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "product_display_name": PRODUCT_DISPLAY_NAME,
         "architecture": architecture,
         "minimum_macos": MINIMUM_SUPPORTED_MACOS,
@@ -156,7 +158,7 @@ def contract_document(*, version: str, architecture: str) -> dict[str, object]:
             "primary": True,
             "required": True,
         },
-        "required_signing_inputs": list(REQUIRED_SIGNING_INPUTS),
+        "signing_identity_overrides": list(SIGNING_IDENTITY_OVERRIDES),
         "developer_release_artifacts": [
             {
                 "kind": "wheel",
