@@ -231,25 +231,31 @@ KIRO_MANAGED_DESCRIPTION = (
 # (Node); JR-Bar owns one file, ~/.pi/agent/extensions/jrbar.ts, that spawns
 # the hook shim with a Claude-shaped payload for each lifecycle event. The
 # native event names are listed by the extension itself; the Python side only
-# ever sees canonical names. ``ui_prompt_start`` / ``ui_prompt_end`` are
-# registered defensively: pi 0.73.1 does not emit them, so PermissionRequest
-# arrives only on a pi that does.
+# ever sees canonical names.
+#
+# There is no PermissionRequest here, and there is nothing to register for
+# one: pi 0.73.1's ``ExtensionEvent`` union (checked in the installed
+# package's ``core/extensions/types.d.ts``) has no ``ui_prompt_start`` or
+# ``ui_prompt_end`` -- those names were wrong. Pi's tool gate is
+# ``tool_call``, and it asks the *extension*, not the person: a handler
+# returns ``{block, reason}`` and pi obeys. Nothing in pi ever waits for a
+# human to approve a tool, so JR-Bar has no ask to show for it.
 PI_EVENTS = (
     "SessionStart",
     "UserPromptSubmit",
     "PreToolUse",
     "PostToolUse",
-    "PermissionRequest",
     "Stop",
     "SessionEnd",
 )
 PI_NATIVE_EVENT_NAMES = {
     "session_start": "SessionStart",
-    "turn_start": "UserPromptSubmit",
+    # before_agent_start fires once per submitted prompt; turn_start fires
+    # once per model turn, so a tool loop re-announced the prompt after
+    # every tool result (two UserPromptSubmit records for one prompt).
+    "before_agent_start": "UserPromptSubmit",
     "tool_execution_start": "PreToolUse",
     "tool_execution_end": "PostToolUse",
-    "ui_prompt_start": "PermissionRequest",
-    "ui_prompt_end": "PostToolUse",
     "agent_end": "Stop",
     "session_shutdown": "SessionEnd",
 }
@@ -1612,7 +1618,7 @@ _PROVIDER_SOURCE_REGISTRATIONS = (
             ),
         ),
     ),
-    # live_agent_events only: pi 0.73.1 has no ui_prompt events, so no ask can
+    # live_agent_events only: pi 0.73.1 has no human tool-permission event
     # be named until a pi that emits them ships.
     ProviderSourceRegistration(
         ProviderIdentifier("pi"),

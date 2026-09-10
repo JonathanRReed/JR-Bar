@@ -173,7 +173,8 @@ def test_static_registry_has_literal_deterministic_source_and_capability_order()
             ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
             ("live_agent_events",),
         ),
-        # live_agent_events only: pi 0.73.1 emits no ui_prompt events.
+        # live_agent_events only: pi 0.73.1 has no human tool-permission
+        # event, so there is no ask for JR-Bar to act on.
         (
             "pi",
             "hooks",

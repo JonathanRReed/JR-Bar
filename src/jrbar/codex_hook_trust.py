@@ -86,8 +86,24 @@ def hook_identity_hash(
     return "sha256:" + hashlib.sha256(serialized).hexdigest()
 
 
+def canonical_config_path(config_path: Path) -> Path:
+    """The path Codex itself keys ``hooks.state`` by.
+
+    Codex canonicalizes the config path before it builds the key, so a
+    ``CODEX_HOME`` reached through a symlink (macOS ``/var/folders`` ->
+    ``/private/var/folders``, a home directory on a linked volume) must be
+    resolved here too. Writing the unresolved spelling produces keys that
+    never match: Codex then finds no trusted hash and silently runs no
+    hook at all -- no error, no record, nothing to see.
+    """
+    try:
+        return Path(config_path).resolve()
+    except OSError:
+        return Path(config_path)
+
+
 def hook_state_key(config_path: Path, event_name: str, group_index: int, handler_index: int) -> str:
-    return f"{config_path}:{EVENT_KEYS[event_name]}:{group_index}:{handler_index}"
+    return f"{canonical_config_path(config_path)}:{EVENT_KEYS[event_name]}:{group_index}:{handler_index}"
 
 
 def trusted_hashes_for_config(
@@ -107,6 +123,7 @@ def trusted_hashes_for_config(
     if not isinstance(hooks, dict):
         return {}
     result: dict[str, str] = {}
+    config_path = canonical_config_path(config_path)
     for event_name, key in EVENT_KEYS.items():
         groups = hooks.get(event_name)
         if not isinstance(groups, list):
@@ -145,6 +162,7 @@ def trusted_hashes_for_config(
 __all__ = [
     "EVENT_KEYS",
     "MATCHERLESS_EVENTS",
+    "canonical_config_path",
     "hook_identity_hash",
     "hook_state_key",
     "normalized_timeout",

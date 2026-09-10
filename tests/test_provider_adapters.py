@@ -1085,3 +1085,66 @@ def test_reducer_composition_emits_typed_edges_and_ignores_out_of_order_records(
     assert TransitionKind.COMPLETED in tuple(event.kind for event in completed.events)
     assert old.state.works[0].lifecycle is WorkLifecycle.COMPLETED
     assert old.events == ()
+
+
+def test_permission_request_with_tool_call_derives_its_request_identity() -> None:
+    """Codex and Claude Code PermissionRequest hooks name the call, never the request.
+
+    The identity is the turn plus the exact tool call (Codex's escalation
+    ``description`` excluded), so the PostToolUse for that call resolves the
+    request a PermissionRequest opened, and a payload naming no tool still
+    gets no identity.
+    """
+    opened, opened_batch = _batch(
+        _event(
+            "codex",
+            "PermissionRequest",
+            tool_name="Bash",
+            raw={"tool_input": {"command": "echo hi", "description": "why"}},
+        )
+    )
+    resolved, resolved_batch = _batch(
+        _event(
+            "codex",
+            "PostToolUse",
+            tool_name="Bash",
+            raw={"tool_input": {"command": "echo hi"}, "tool_use_id": "call_1"},
+        )
+    )
+    other, _other_batch = _batch(
+        _event(
+            "codex",
+            "PermissionRequest",
+            tool_name="Bash",
+            raw={"tool_input": {"command": "rm -rf build"}},
+        )
+    )
+
+    assert type(opened) is NormalizedProviderRecord
+    assert opened.provider_request_id is not None
+    assert opened.provider_request_id.value.startswith("derived:")
+    assert type(resolved) is NormalizedProviderRecord
+    assert resolved.provider_request_id == opened.provider_request_id
+    assert type(other) is NormalizedProviderRecord
+    assert other.provider_request_id != opened.provider_request_id
+    assert len(opened_batch.request_facts) == 1
+    assert opened_batch.request_facts[0].state is ProviderRequestState.LIVE
+    assert opened_batch.source_health is SourceHealth.HEALTHY
+    assert len(resolved_batch.request_facts) == 1
+    assert resolved_batch.request_facts[0].state is ProviderRequestState.RESOLVED
+
+
+def test_record_level_diagnostics_do_not_read_as_source_loss() -> None:
+    """A record without a request identity is still a fresh observation.
+
+    PARTIAL freshness is what the reducer treats as loss of the source; an
+    id-less PermissionRequest used to open a timing quarantine that held
+    the session's own SessionEnd.
+    """
+    _normalized, batch = _batch(_event("codex", "PermissionRequest"))
+
+    assert batch.source_health is SourceHealth.PARTIAL
+    assert batch.source_freshness is SourceFreshness.FRESH
+    assert tuple(item.identifier.value for item in batch.diagnostics) == (
+        "missing_request_identity",
+    )

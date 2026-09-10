@@ -553,11 +553,15 @@ unmanaged file is never overwritten), which spawns the shim argv baked at
 install time (`HOOK_COMMAND`; the Python client as `FALLBACK_COMMAND`)
 with a Claude-shaped payload `{hook_event_name, session_id, cwd,
 transcript_path, tool_name?, source: "pi"}` on stdin, never awaiting it:
-`session_start`→SessionStart, `turn_start`→UserPromptSubmit,
+`session_start`→SessionStart, `before_agent_start`→UserPromptSubmit,
 `tool_execution_start`→PreToolUse, `tool_execution_end`→PostToolUse,
-`agent_end`→Stop, `session_shutdown`→SessionEnd, and
-`ui_prompt_start`/`ui_prompt_end`→PermissionRequest/PostToolUse on a pi
-that emits them (0.73.1 does not, so pi has no ask lane yet).
+`agent_end`→Stop, `session_shutdown`→SessionEnd. `before_agent_start`
+fires once per submitted prompt where `turn_start` fires once per model
+turn, which announced the prompt again after every tool result. Pi has no
+ask lane and no event to give it one: 0.73.1's `ExtensionEvent` union has
+no `ui_prompt_start`/`ui_prompt_end` (that pair was a mistake), and its
+tool gate, `tool_call`, asks an extension for `{block, reason}` rather
+than a person.
 Transcript fallback (`transcript_monitoring.pi`) reads
 `~/.pi/agent/sessions/**/*.jsonl` (header `{"type":"session",…}`).
 

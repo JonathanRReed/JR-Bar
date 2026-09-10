@@ -78,3 +78,26 @@ timeout = 3
 
 def test_trusted_hashes_for_config_tolerates_bad_toml():
     assert trusted_hashes_for_config("[[hooks", Path("/x"), is_ours=lambda c: True) == {}
+
+
+def test_state_keys_use_the_path_codex_canonicalizes(tmp_path: Path) -> None:
+    """Codex keys ``hooks.state`` by the resolved config path.
+
+    A `CODEX_HOME` reached through a symlink -- macOS puts every temporary
+    directory under `/var/folders`, which is a link to `/private/var` --
+    otherwise gets keys Codex never looks up, and it then runs no hook at
+    all with no error to show for it.
+    """
+    real = tmp_path / "real"
+    real.mkdir()
+    config = real / "config.toml"
+    config.write_text(f"[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = '''{COMMAND}'''\n")
+    linked = tmp_path / "linked"
+    linked.symlink_to(real)
+    through_link = linked / "config.toml"
+
+    assert hook_state_key(through_link, "Stop", 0, 0) == hook_state_key(config.resolve(), "Stop", 0, 0)
+    hashes = trusted_hashes_for_config(
+        config.read_text(), through_link, is_ours=lambda c: "hook_entry.py" in c
+    )
+    assert list(hashes) == [f"{config.resolve()}:stop:0:0"]

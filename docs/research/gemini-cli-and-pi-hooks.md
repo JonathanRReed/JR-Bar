@@ -45,14 +45,20 @@ Inputs for the Gemini and Pi providers in Phase F.
   Events: `session_start` (reason startup/reload/new/resume/fork),
   `session_shutdown`, `before_agent_start`, `agent_start`, `agent_end`,
   `agent_settled`, `turn_start`, `turn_end`, `tool_call` (can block; use
-  `ctx.ui.confirm` for permission gates), `tool_execution_start/end`,
-  `ui_prompt_start/end`.
+  `ctx.ui.confirm` for permission gates), `tool_execution_start/end`.
+  There is no `ui_prompt_start/end`: an earlier reading of this note said
+  there was, and 0.73.1's `ExtensionEvent` union (installed package,
+  `dist/core/extensions/types.d.ts`) does not contain the names.
 - `ctx.sessionManager.getSessionFile()/getSessionId()` give identity.
 - Session logs: `~/.pi/agent/sessions/--<cwd with / \ : → ->--/<timestamp>_<uuid>.jsonl`,
   first line `{"type":"session","version":3,...}`; no end-of-session marker.
 - Child env markers: `PI_SESSION_ID`, `PI_SESSION_FILE`, `PI_CODING_AGENT=true`.
-- Mapping: session_start→SessionStart, turn_start→UserPromptSubmit,
-  tool_execution_start→PreToolUse, tool_execution_end→PostToolUse,
-  ui_prompt_start→PermissionRequest (ui_prompt_end resolves it),
-  agent_end→Stop, session_shutdown→SessionEnd. The extension posts each
-  event to the hook shim / socket with `{session_id, cwd, hook_event_name}`.
+- Mapping: session_start→SessionStart, before_agent_start→UserPromptSubmit
+  (not turn_start, which fires once per model turn and so re-announced the
+  prompt after every tool result), tool_execution_start→PreToolUse,
+  tool_execution_end→PostToolUse, agent_end→Stop,
+  session_shutdown→SessionEnd. Nothing maps to PermissionRequest: pi's
+  tool gate asks an extension for `{block, reason}`, never a person.
+  The extension posts each event to the hook shim / socket with
+  `{session_id, cwd, hook_event_name}`. Verified on 0.73.1 against the
+  mock endpoint on 2026-09-10 (scripts/verify_providers_live.py).
