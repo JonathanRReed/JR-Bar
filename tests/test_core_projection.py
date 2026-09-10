@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar.core_deck import DeckSlotFacts, build_deck_document, device_document
 from jrbar.core_projection import (
     WHY_VALUES,
@@ -37,10 +39,12 @@ from jrbar.core_projection import (
     short_session_id,
     strip_session_short_id,
     terminal_from_command,
+    usage_document,
     usage_window_name,
     why_detail,
     why_for_glance,
 )
+from jrbar.core_usage_samples import UsageSampleBuffer
 from jrbar.models import AgentMode, AgentStatus
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +181,11 @@ def fixture_inputs() -> dict:
             ),
         ),
     )
+    # An hour of the Claude 5h window climbing 12 points an hour: the
+    # forecast says it runs out before the reset (8040 s away, 58 % left).
+    usage_samples = UsageSampleBuffer()
+    for offset in range(60, -1, -5):
+        usage_samples.record("claude", "five_hour", 42.0 - 12.0 * offset / 60.0, at=NOW - offset * 60.0)
     dnd = SimpleNamespace(
         contributions=(
             SimpleNamespace(mode=SimpleNamespace(value="dim"), source=SimpleNamespace(value="schedule")),
@@ -252,6 +261,7 @@ def fixture_inputs() -> dict:
         settings_generation=17,
         extras_by_id=extras,
         deck=deck,
+        usage_samples=usage_samples,
     )
 
 
@@ -326,6 +336,13 @@ def test_state_document_projects_devices_usage_power_focus_and_health() -> None:
     assert claude["windows"][1]["resets_at"] == NOW + 277200.0
     assert codex["fidelity"] == "stale" and codex["state"] == "stale"
     assert codex["windows"][0]["resets_at"] is None
+    # The forecast is about the primary (5h) window, from the sample buffer.
+    assert claude["forecast"]["window_id"] == "five_hour" and claude["forecast"]["pace"] == "under"
+    assert claude["forecast"]["exhausts_at"] == pytest.approx(NOW + 58.0 / 12.0 * 3600.0, abs=1.0)
+    assert claude["forecast"]["remaining_pct"] == 58.0 and claude["forecast"]["samples"] == 13
+    # No history for codex yet: no forecast rather than a guess.
+    assert codex["forecast"] is None
+    assert usage_document(fixture_inputs()["usage_state"])["providers"][0]["forecast"] is None
     assert document["power"] == {
         "keep_awake": True,
         "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True},

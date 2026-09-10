@@ -58,6 +58,7 @@ from .core_projection import (
     why_for_glance,
 )
 from .core_server import CommandError, CoreServer, default_core_socket_path
+from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import PendingHookDrainer, pending_hook_files
 from .state_paths import default_state_dir
 
@@ -1447,6 +1448,8 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
+            # Usage window samples behind ``usage.providers[].forecast``.
+            self._core_usage_samples = UsageSampleBuffer.load(default_state_dir() / SAMPLES_FILE_NAME)
             # The Creator Micro 2 deck.
             self._core_deck_last_input: tuple[int, str, float] | None = None
             self._core_deck_receipt: dict[str, Any] | None = None
@@ -1528,7 +1531,17 @@ def build_headless_controller_class() -> type:
             if getattr(self, "_runtime_termination_started", False):
                 return None
             self._core_stop_server()
-            return objc.super(JRCoreHeadlessController, self).applicationWillTerminate_(notification)
+            try:
+                return objc.super(JRCoreHeadlessController, self).applicationWillTerminate_(notification)
+            finally:
+                self._core_quit_flush()
+
+        def _core_quit_flush(self) -> None:
+            """The daemon's last words: the usage sample buffer to disk."""
+            try:
+                self._core_usage_samples.save()
+            except Exception as exc:
+                legacy.log_status_bar(f"core: usage samples save at quit failed: {exc.__class__.__name__}")
 
         @objc.IBAction
         def quit_(self, _sender):
@@ -2672,15 +2685,24 @@ def build_headless_controller_class() -> type:
                 helper = sleep_helper_installed()
             except Exception:
                 helper = False
+            wall_now = time.time()
+            usage_state = getattr(self, "provider_usage_state", None)
+            samples = self._core_usage_samples
+            try:
+                samples.record_state(usage_state, now=wall_now)
+                samples.save_if_due()
+            except Exception:
+                legacy.log_status_bar(f"core: usage samples failed: {traceback.format_exc(limit=3)}")
             document = build_state_document(
-                now=time.time(),
+                now=wall_now,
                 generation=self._core_state_generation,
                 snapshot=snapshot,
                 ask_statuses=ask_statuses,
                 unseen_completion_ids=unseen,
                 operator_state=getattr(self, "current_operator_state", None),
                 devices=self._core_device_facts(),
-                usage_state=getattr(self, "provider_usage_state", None),
+                usage_state=usage_state,
+                usage_samples=samples,
                 power=PowerFacts(
                     keep_awake=bool(getattr(self.keep_awake, "holding_requested", False)),
                     closed_lid_policy=str(self.settings.closed_lid_awake_policy),
