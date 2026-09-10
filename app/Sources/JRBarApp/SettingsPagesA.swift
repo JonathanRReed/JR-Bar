@@ -140,7 +140,12 @@ struct MenuBarStyleRow: View {
                 MenuBarPreview(style: style, meters: meters, overflow: overflow, label: label)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(style.title).foregroundStyle(.primary)
-                    Text(style.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(style.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
                 }
                 Spacer(minLength: 4)
             }
@@ -167,8 +172,9 @@ struct MenuBarPreview: View {
     @Environment(\.colorScheme) private var scheme
 
     /// Wide enough for the roomiest preview (the label style's "1 ask · 2
-    /// working"), so every row's text starts at the same x.
-    static let width: CGFloat = 108
+    /// working", which is as long as `StatusIconRenderer.label` gets), so
+    /// every row's text starts at the same x and none of them truncates.
+    static let width: CGFloat = 152
 
     private var spec: StatusIconSpec {
         StatusIconSpec(style: style,

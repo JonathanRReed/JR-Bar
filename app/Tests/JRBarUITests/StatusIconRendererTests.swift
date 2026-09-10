@@ -27,8 +27,13 @@ struct StatusIconRendererTests {
         #expect(Self.pixels(glyph) != Self.pixels(ring), "the ring changes the picture")
         #expect(Self.pixels(glyph) == Self.pixels(label), "the label style draws the same glyph; the text is the button's title")
         #expect(StatusIconRenderer.label(active: 2, needsYou: 1, ready: 0) == "1 ask · 2 working")
+        // Width is the scarce thing: the label carries the two counts that
+        // matter most, never "1 ask · 1 working · 5 done".
+        #expect(StatusIconRenderer.label(active: 1, needsYou: 1, ready: 5) == "1 ask · 1 working")
+        #expect(StatusIconRenderer.label(active: 0, needsYou: 0, ready: 5) == "5 done")
+        #expect(StatusIconRenderer.label(active: 2, needsYou: 3, ready: 1, failed: 1) == "3 asks · 1 failed")
         #expect(StatusIconRenderer.label(active: 0, needsYou: 0, ready: 0) == nil)
-        #expect(StatusIconRenderer.label(active: 1, needsYou: 2, ready: 3, failed: 1) == "2 asks · 1 failed · 1 working · 3 done")
+        #expect(StatusIconRenderer.label(active: 1, needsYou: 2, ready: 3, failed: 1) == "2 asks · 1 failed")
     }
 
     @Test("the ring turns amber at 80 % and red at 95 %, which drops the template flag")

@@ -271,7 +271,11 @@ public final class StatusIconRenderer: @unchecked Sendable {
         if failed > 0 { parts.append("\(failed) failed") }
         if active > 0 { parts.append("\(active) working") }
         if ready > 0 { parts.append("\(ready) done") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        // Width is the scarce thing on a notched MacBook: an item much
+        // past 80 pt is given no slot at all. "1 ask · 1 working · 5 done"
+        // is three counts too many for the bar, so the two that matter
+        // most go on it and the tooltip carries the rest.
+        return parts.isEmpty ? nil : parts.prefix(2).joined(separator: " · ")
     }
 
     // MARK: Drawing
