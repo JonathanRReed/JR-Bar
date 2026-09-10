@@ -129,6 +129,28 @@ struct LightWhyEnumTests {
         #expect(try #require(Self.explain("idle", [], motion: "breathe", fallback: "#020204")).headline == "Idle breath: Nothing is running")
     }
 
+    @Test("capacity names a window with a reading, never one nobody measured")
+    func capacityIgnoresUnknownWindows() throws {
+        // Codex reports its weekly window without a number; Claude's 5h is
+        // at 96 %. Reading the null as zero used to make Codex the calmest
+        // provider and Claude the fullest -- but a `max` over zeros could
+        // just as easily have named "Codex 7d window at 0%" as the reason
+        // the light is amber.
+        let mixed = CoreUsage(refreshedAt: nil, providers: [
+            CoreProviderUsage(id: "codex", windows: [CoreUsageWindow(key: "weekly", name: "7d", usedPct: nil)]),
+            CoreProviderUsage(id: "claude", windows: [CoreUsageWindow(key: "five_hour", name: "5h", usedPct: 96)]),
+        ])
+        #expect(try #require(Self.explain("capacity", [Self.main], usage: mixed)).headline == "Amber ember: Claude 5h window at 96%")
+
+        // Nothing measured at all: the generic line, and no invented number.
+        let blind = CoreUsage(refreshedAt: nil, providers: [
+            CoreProviderUsage(id: "codex", windows: [CoreUsageWindow(key: "weekly", name: "7d", usedPct: nil)]),
+        ])
+        let generic = try #require(Self.explain("capacity", [Self.main], usage: blind))
+        #expect(generic.reason == "A usage window is nearly spent")
+        #expect(!generic.headline.contains("0%"))
+    }
+
     @Test("an unknown why falls back to the motion and the top session, never a UUID")
     func unknownFallback() throws {
         let unknown = try #require(Self.explain("moon_phase", [Self.codexDone, Self.legacy]))

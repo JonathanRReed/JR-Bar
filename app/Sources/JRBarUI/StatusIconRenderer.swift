@@ -61,27 +61,38 @@ public struct StatusMeter: Hashable, Sendable {
     public var id: String
     public var name: String
     public var glyph: Glyph
-    /// 0…1 of the provider's primary window.
-    public var fraction: Double
+    /// 0…1 of the provider's primary window — nil when the provider reports
+    /// the window without a number. A column drawn at zero for that would
+    /// say "plenty left" about something nobody measured, so an unmeasured
+    /// column gets its own mark instead.
+    public var fraction: Double?
     /// The figure is derived rather than official: the percent style says `~`.
     public var approximate: Bool
 
-    public init(id: String, name: String, glyph: Glyph, fraction: Double, approximate: Bool = false) {
+    public init(id: String, name: String, glyph: Glyph, fraction: Double?, approximate: Bool = false) {
         self.id = id
         self.name = name
         self.glyph = glyph
-        self.fraction = max(0, min(1, fraction))
+        self.fraction = fraction.map { max(0, min(1, $0)) }
         self.approximate = approximate
     }
 
+    /// The window exists and nobody said how full it is.
+    public var isUnknown: Bool { fraction == nil }
+
     public var warning: StatusIconSpec.RingWarning {
+        guard let fraction else { return .none }
         if fraction >= 0.95 { return .red }
         if fraction >= 0.80 { return .amber }
         return .none
     }
 
-    /// "Claude 82 %" for the tooltip.
-    public var readout: String { "\(name) \(approximate ? "~" : "")\(Int((fraction * 100).rounded())) %" }
+    /// "Claude 82 %" for the tooltip, "Claude no reading" for a window the
+    /// provider reports without a number.
+    public var readout: String {
+        guard let fraction else { return "\(name) no reading" }
+        return "\(name) \(approximate ? "~" : "")\(Int((fraction * 100).rounded())) %"
+    }
 }
 
 /// The dot at the left of the meters: what the agents are doing right now,
@@ -153,7 +164,7 @@ public struct StatusIconSpec: Hashable, Sendable {
         key.ringFraction = ringFraction.map { ($0 * 50).rounded() / 50 }
         key.meters = meters.map { meter in
             var bucketed = meter
-            bucketed.fraction = (meter.fraction * 50).rounded() / 50
+            bucketed.fraction = meter.fraction.map { ($0 * 50).rounded() / 50 }
             return bucketed
         }
         key.phase = style.isMeters && dot.animates ? (phase * 4).rounded() / 4 : 0
@@ -247,8 +258,13 @@ public final class StatusIconRenderer: @unchecked Sendable {
     }
 
     static func percentText(_ meter: StatusMeter) -> String {
-        (meter.approximate ? "~" : "") + "\(Int((meter.fraction * 100).rounded()))"
+        guard let fraction = meter.fraction else { return unknownPercentText }
+        return (meter.approximate ? "~" : "") + "\(Int((fraction * 100).rounded()))"
     }
+
+    /// What the percent style prints for a window with no reading. Two
+    /// dashes, never "0".
+    static let unknownPercentText = "--"
 
     static func overflowWidth(_ overflow: Int) -> CGFloat {
         ("+\(overflow)" as NSString).size(withAttributes: [.font: overflowFont]).width.rounded(.up)
@@ -439,12 +455,22 @@ public final class StatusIconRenderer: @unchecked Sendable {
         let track = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         ink.withAlphaComponent(0.22).setFill()
         track.fill()
-        guard meter.fraction > 0.001 else { return }
+        guard let fraction = meter.fraction else {
+            // No reading: a bar across the middle of the track. An empty
+            // column would read as a window that is barely touched, which
+            // is exactly the thing nobody knows.
+            let bar = NSRect(x: rect.minX, y: rect.midY - unknownMarkHeight / 2,
+                             width: rect.width, height: unknownMarkHeight)
+            ink.withAlphaComponent(0.75).setFill()
+            NSBezierPath(rect: bar).fill()
+            return
+        }
+        guard fraction > 0.001 else { return }
         // The fill is the track's own shape cut off at the level, not a
         // capsule of its own. A capsule cannot be shorter than it is wide,
         // so every figure under 29 % used to draw the same 3.5 pt blob and
         // 1 % was indistinguishable from 36 % on the real menu bar.
-        let height = max(minimumFill, rect.height * CGFloat(meter.fraction))
+        let height = max(minimumFill, rect.height * CGFloat(fraction))
         NSGraphicsContext.saveGraphicsState()
         track.addClip()
         meterColor(meter, ink: ink, template: template).setFill()
@@ -456,6 +482,9 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// shows something, so an empty column always means "nothing reported"
     /// rather than "nothing used".
     static let minimumFill: CGFloat = 1.5
+
+    /// The height of the dash that marks a column with no reading.
+    static let unknownMarkHeight: CGFloat = 1.5
 
     /// An SF Symbol scaled into the box, or one or two characters centred
     /// in it; both in `color`.

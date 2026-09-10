@@ -637,7 +637,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let usage = core.isLive ? core.usage : []
         let primary = preferred.lazy.compactMap { id in usage.first { $0.id == id } }.first ?? usage.first
         let window = primary?.windows.first { $0.name.lowercased() == "5h" } ?? primary?.windows.first
-        statusItem.ringFraction = window.map { $0.usedPct / 100 }
+        // A window with no reading draws no ring at all: an empty ring is
+        // a ring at zero, and this window was never measured.
+        statusItem.ringFraction = window.flatMap { $0.usedPct }.map { $0 / 100 }
         refreshMeters(preferred: preferred, usage: usage)
         if core.isLive, let aggregate = core.state?.aggregate {
             let failed = core.sessions.filter { SessionActivity.reduce($0) == .failed }.count
@@ -670,7 +672,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem.meters = shown.prefix(cap).map { provider in
             let window = UsageCenterStore.primaryWindow(of: provider)
             return StatusItemController.meter(for: provider.id,
-                                              fraction: (window?.usedPct ?? 0) / 100,
+                                              fraction: window.flatMap { $0.usedPct }.map { $0 / 100 },
                                               approximate: provider.isDerived)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)

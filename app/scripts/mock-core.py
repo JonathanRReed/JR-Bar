@@ -1116,7 +1116,10 @@ class World:
             # Mac: `usage_history` answers `records: 0` and the Usage
             # Center says so instead of drawing a month of zero. Second, so
             # it is on the first screen next to a card with a real graph.
-            "devin": {"h5": 4.0, "d7": 9.0, "d30": None, "fidelity": "official", "pace": "on_pace", "rate": 0.4, "state": "ok"},
+            # Devin's weekly window is the third state: present, and
+            # reported without a number (`used_pct: null`). The app has to
+            # draw it as unread -- not as a window at zero with plenty left.
+            "devin": {"h5": 4.0, "d7": None, "d30": None, "fidelity": "official", "pace": "on_pace", "rate": 0.4, "state": "ok"},
             "gemini": {"h5": 91.0, "d7": 48.0, "d30": None, "fidelity": "derived", "pace": "ahead", "rate": 14.0, "state": "warning"},
             "codex": {"h5": 12.0, "d7": 30.0, "d30": 22.0, "fidelity": "derived", "pace": "on_pace", "rate": 6.0, "state": "ok"},
             "cursor": {"h5": None, "d7": None, "d30": None, "fidelity": "manual", "pace": None, "rate": 0.0, "state": "not_signed_in"},
@@ -1273,7 +1276,9 @@ class World:
                 continue
             windows = [
                 {"id": "five-hour", "name": "5h", "used_pct": round(u["h5"], 1), "resets_at": now + 2 * 3600 + 840},
-                {"id": "weekly", "name": "7d", "used_pct": round(u["d7"], 1), "resets_at": now + 3 * 86400 + 5 * 3600},
+                {"id": "weekly", "name": "7d",
+                 "used_pct": None if u["d7"] is None else round(u["d7"], 1),
+                 "resets_at": now + 3 * 86400 + 5 * 3600},
             ]
             if u.get("d30") is not None:
                 windows.append({"name": "30d", "used_pct": round(u["d30"], 1), "resets_at": now + 19 * 86400 + 7 * 3600})
@@ -1919,7 +1924,10 @@ class World:
                     continue
                 before = u["h5"]
                 u["h5"] = min(99.0, u["h5"] + amount)
-                u["d7"] = min(99.0, u["d7"] + amount * 0.3)
+                # A window with no reading stays unread: burning through
+                # the 5h one cannot invent a number for it.
+                if u["d7"] is not None:
+                    u["d7"] = min(99.0, u["d7"] + amount * 0.3)
                 if u.get("d30") is not None:
                     u["d30"] = min(99.0, u["d30"] + amount * 0.08)
                 changed = True
