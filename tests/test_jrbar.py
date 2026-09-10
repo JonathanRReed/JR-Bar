@@ -4823,7 +4823,12 @@ for (const event of [
         )
 
     def test_frozen_hook_command_uses_internal_cli(self) -> None:
-        with patch("jrbar.install.sys.frozen", True, create=True):
+        # Without a bundled shim (a checkout's hook/build/jrbar-hook must not
+        # leak into this case) a frozen build registers its internal CLI.
+        with (
+            patch("jrbar.install.sys.frozen", True, create=True),
+            patch("jrbar.install.hook_shim_path", return_value=None),
+        ):
             command = hook_command("codex", Path("/tmp/codex events.jsonl"))
 
         self.assertEqual(

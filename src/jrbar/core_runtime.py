@@ -1070,8 +1070,10 @@ def _cmd_open_legacy_window(self, args):
         method(None)
     else:
         method()
+    from .window_presentation import activate_app
+
     try:
-        _application().activateIgnoringOtherApps_(True)
+        activate_app()
     except Exception:
         pass
     return {"window": name}
