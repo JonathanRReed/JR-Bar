@@ -439,10 +439,24 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
         )
 
     controller._sync_hardware_device = fake_sync
+    # The linked Dot write hands the Dot the Pro's program bytes through the
+    # Dot's own controller; stub that path so the timing fixture holds.
+    handed = []
+
+    class FakeDotController:
+        def sync_program(self, program, state):
+            handed.append((program, state))
+            return LedStatusWrite(state, dot.device.target, program, True)
+
+    controller.agent_controller_for_device = lambda device: FakeDotController()
+    controller._runtime_worker_monotonic = lambda: completed["dot"]
     result = controller._execute_hardware_write_command(submitted[0])
     assert result.request is pro
     dot_command, dot_result = controller._core_linked_results[submitted[0].key]
     assert dot_command.payload is dot and dot_result.request is dot
+    assert handed == [(result.write.program, result.write.state)]
+    assert dot_result.write.program == result.write.program
+    assert dot_result.label.endswith(f"linked to {pro.device.name}")
 
     controller._apply_hardware_write_result(submitted[0], result)
     assert controller._core_linked_results == {}
