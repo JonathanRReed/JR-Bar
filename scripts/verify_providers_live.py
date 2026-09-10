@@ -57,6 +57,27 @@ PI_MODEL = "mock-model"
 MOCK_API_KEY = "sk-ant-mock-key-for-jrbar-drills"
 
 
+def drain(fd: int) -> bytes:
+    """Read whatever the pty has, so the agent never blocks on a full buffer.
+
+    A TUI keeps drawing while it waits for an answer; stop reading and it
+    stops being able to write, which looks from the outside like the turn
+    ending on its own.
+    """
+    out = bytearray()
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0)
+        if not ready:
+            return bytes(out)
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            return bytes(out)
+        if not chunk:
+            return bytes(out)
+        out += chunk
+
+
 class Check:
     def __init__(self) -> None:
         self.rows: list[tuple[str, str, str]] = []
@@ -423,15 +444,24 @@ def codex_ask_drill(check: Check, scratch: Path, work: Path, home: Path) -> None
             check.fail("codex ask", "no permission_request within 45s")
             return
         check.ok("codex ask recorded", f"permission_request for {thread[:8]}")
-        ask = None
-        for _ in range(15):
+        ask, state = None, {}
+        for _ in range(30):
             state = core_state()
             ask = next((a for a in state.get("asks", []) if thread in json.dumps(a)), None)
             if ask is not None:
                 break
+            drain(fd)
             time.sleep(1.0)
         if ask is None:
-            check.fail("codex ask in state.asks", "not named within 15s")
+            rows = [
+                {k: row.get(k) for k in ("id", "lifecycle", "mode", "event", "stale")}
+                for row in state.get("sessions", [])
+                if thread in str(row.get("id"))
+            ]
+            check.fail(
+                "codex ask in state.asks",
+                f"not named within 30s; asks={json.dumps(state.get('asks'))[:160]} row={json.dumps(rows)[:200]}",
+            )
             return
         check.ok("codex ask in state.asks", json.dumps(ask)[:160])
         session = f"codex:session:{thread}"
@@ -573,20 +603,31 @@ def claude_ask_drill(check: Check, scratch: Path, work: Path) -> None:
             check.fail("claude ask recorded", f"no permission_request within 90s; saw {names}; screen: {tail!r}")
             return
         check.ok("claude ask recorded", f"permission_request for {session[:8]}")
-        ask = None
-        for _ in range(15):
-            ask = next((a for a in core_state().get("asks", []) if session in json.dumps(a)), None)
+        ask, state = None, {}
+        for _ in range(30):
+            state = core_state()
+            ask = next((a for a in state.get("asks", []) if session in json.dumps(a)), None)
             if ask is not None:
                 break
+            drain(fd)
             time.sleep(1.0)
         if ask is None:
-            check.fail("claude ask in state.asks", "not named within 15s")
+            rows = [
+                {k: row.get(k) for k in ("id", "lifecycle", "mode", "event", "stale")}
+                for row in state.get("sessions", [])
+                if session in str(row.get("id"))
+            ]
+            check.fail(
+                "claude ask in state.asks",
+                f"not named within 30s; asks={json.dumps(state.get('asks'))[:160]} row={json.dumps(rows)[:200]}",
+            )
             return
         check.ok("claude ask in state.asks", json.dumps(ask)[:160])
         for label, args in (
             ("answer_ask", {}),
             ("answer_ask only_if_frontmost=false", {"only_if_frontmost": False}),
         ):
+            drain(fd)
             reply, _ = core_command(
                 "answer_ask", {"session": f"claude:session:{session}", "decision": "approve", **args}
             )
