@@ -717,10 +717,10 @@ struct SessionDragRow: View {
         HStack(spacing: 10) {
             ProviderTile(style: style, size: 22)
             VStack(alignment: .leading, spacing: 1) {
-                Text(session.label ?? session.id)
+                Text(session.displayLabel)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                 Text(activity.word)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -755,7 +755,7 @@ struct SessionDragRow: View {
         .draggable(session.id) {
             HStack(spacing: 8) {
                 ProviderTile(style: style, size: 20)
-                Text(session.label ?? session.id).font(.system(size: 12, weight: .medium))
+                Text(session.displayLabel).font(.system(size: 12, weight: .medium))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -770,7 +770,7 @@ struct SessionDragRow: View {
             }
             Button("Open session") { store.core.openSession(session.id) }
         }
-        .accessibilityLabel("\(session.label ?? session.id), \(activity.word)\(boundKey.map { ", key \($0 + 1)" } ?? "")")
+        .accessibilityLabel("\(session.displayLabel), \(activity.word)\(boundKey.map { ", key \($0 + 1)" } ?? "")")
     }
 }
 

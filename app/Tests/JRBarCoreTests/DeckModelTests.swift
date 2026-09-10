@@ -54,6 +54,11 @@ struct DeckModelTests {
         #expect(keys[7].state == .unknown, "an unknown state word degrades to unknown")
         #expect(keys[8].isReserved && keys[8].pinned)
         #expect(keys[9].isEmpty && keys[9].title == "Unassigned" && keys[9].subtitle == "No session assigned", "a missing index is padded")
+        // A key is named the way every other surface names a session: the
+        // provider is already the tile, and a UUID is never printed whole.
+        let doubled = DeckSlot(index: 0, identity: "id", session: "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+                               label: "Claude fca1eb06-f6d1-413e-aa5f-dd19d8e05973", provider: "claude")
+        #expect(doubled.title == "fca1eb06")
         #expect(keys[12].isEmpty && !keys[12].navigable)
         #expect(!keys.contains { $0.session == "ghost" }, "index 13 is not one of the thirteen keys")
         #expect(deck.boundSessions.contains("ghost"), "but the raw list still carries it")
