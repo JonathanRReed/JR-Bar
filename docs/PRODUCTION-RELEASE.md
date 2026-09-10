@@ -13,9 +13,9 @@ make fast            # lint, contract tests (the builder runs against doubles), 
 make package         # packaging/build_macos_pkg.sh
 ```
 
-`make package` builds the Swift app, the compiled hook shim and the frozen
-daemon, assembles and signs `build/macos-pkg/app/JR-Bar.app` inside out,
-verifies it, and writes:
+`make package` prepares the pinned Sparkle distribution, builds the Swift
+app against it, the compiled hook shim and the frozen daemon, assembles and
+signs `build/macos-pkg/app/JR-Bar.app` inside out, verifies it, and writes:
 
 ```text
 dist/JR-Bar-<version>.pkg        installer (system or home-directory domain)
@@ -52,11 +52,28 @@ JR-Bar 0.8.0 (<commit>)
 - **The feed** is signed when the private half of
   `packaging/sparkle_public_ed_key.txt` is in the login keychain (accounts
   tried: `SPARKLE_KEY_ACCOUNT`, `ed25519`, `io.jrbar.app`,
-  `com.jonathanreed.jrbar`). Otherwise there is no `appcast.xml`, and
-  installed apps will not see the release. The public key is baked into
-  every app as `SUPublicEDKey`; changing keys means changing it in
-  `packaging/sparkle_public_ed_key.txt`, `scripts/generate_sparkle_channel.py`
-  and `src/jrbar/sparkle_updater.py` before the first release that uses it.
+  `com.jonathanreed.jrbar`). On this Mac that is the login keychain item
+  "Private key for signing Sparkle updates", account
+  `com.jonathanreed.jrbar`, generated 2026-09-10 with Sparkle 2.9.6's
+  `generate_keys --account com.jonathanreed.jrbar`; its public half is
+  `HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg=`. (The older `ed25519`
+  account holds an unrelated key from July; nothing trusts it.) Back the
+  private key up with `generate_keys --account com.jonathanreed.jrbar -x
+  <file>`: losing it means every installed app stops trusting the feed.
+  Otherwise there is no `appcast.xml`, and installed apps will not see the
+  release. The public key is baked into every app as `SUPublicEDKey`;
+  changing keys means changing it in `packaging/sparkle_public_ed_key.txt`,
+  `scripts/generate_sparkle_channel.py`, `src/jrbar/sparkle_updater.py` and
+  the tests (`tests/test_sparkle_channel.py` also pins its SHA-256
+  fingerprint) before the first release that uses it.
+- **The in-app updater** is `app/Sources/JRBarApp/SparkleUpdater.swift`
+  over the embedded framework: "Check for Updates…" in the app menu,
+  automatic checks off until Settings › General turns them on, the
+  `stable` / `beta` channel from the same page (`beta` allows
+  `<sparkle:channel>beta</sparkle:channel>` items, which
+  `JRBAR_RELEASE_CHANNEL=beta make package` produces). The Swift build links
+  the framework from the distribution the packaging script prepares first
+  (`JRBAR_SPARKLE_FRAMEWORK_DIR`; `app/README.md`).
 
 Retaining earlier releases in the feed: put the currently published
 `appcast.xml` and every `JR-Bar-*.zip` it references in a directory and set
@@ -67,9 +84,11 @@ beta entry (no phased rollout); stable entries roll out over one day.
 ## Check it on this Mac
 
 ```sh
+osascript -e 'tell application "JR-Bar" to quit'   # if it is running: the app stops its daemon
 make clean-install           # installs the PKG into ~/Applications (no password) and launches it
-ps -o pid,ppid,command -p "$(pgrep -x JR-Bar)"; pgrep -lP "$(pgrep -x JR-Bar)"
+ps -o pid,ppid,rss,command -p "$(pgrep -x JR-Bar)"; pgrep -lP "$(pgrep -x JR-Bar)"
 ~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core hooks doctor
+~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core doctor   # commit, memory
 ```
 
 The app must be supervising `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core`,

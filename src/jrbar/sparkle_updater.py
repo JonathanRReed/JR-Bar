@@ -22,7 +22,7 @@ UPDATE_FEED_URL = (
     "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
-EXPECTED_PUBLIC_ED_KEY = "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
+EXPECTED_PUBLIC_ED_KEY = "HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg="
 SPARKLE_FRAMEWORK_RELATIVE_PATH = Path(
     "Contents",
     "Frameworks",

@@ -39,6 +39,21 @@ swift test                  # 143 tests / 26 suites; the parity test fans out ov
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
 
+Sparkle: `build-app.sh` links the pinned Sparkle.framework when
+`JRBAR_SPARKLE_FRAMEWORK_DIR` names a directory holding it (the default is
+`../build/macos-pkg/sparkle-distribution`, which exists after one `make
+package`), embeds it in the dev bundle and writes the feed URL and the
+committed public key (`packaging/sparkle_public_ed_key.txt`) into its
+Info.plist, so the dev app can check the real feed. Without the framework
+(`JRBAR_SPARKLE_FRAMEWORK_DIR=` or a fresh clone) `SparkleUpdater.swift`
+compiles its stub half: "Check for Updates…" stays in the app menu,
+disabled, with the reason as its tooltip. The packaging script prepares
+the distribution first and passes it in (`JRBAR_EMBED_SPARKLE=0`: it embeds
+and signs the framework itself). Plain `swift build` / `swift test` never
+link it. The manifest reads the variable at evaluation time and SwiftPM
+re-evaluates it when the environment changes, so switching modes is one
+rebuild.
+
 `swift test` on a CLT-only machine needs swift-testing's macro plugin and
 runtime, which the CLT installs outside the default search paths. The manifest
 detects that setup and adds the flags itself (`-load-plugin-library` and two
@@ -743,19 +758,30 @@ three layers):
 
 ## Stubbed or deliberately deferred
 
-* There is no bundled `Contents/Helpers/jrbar-core` yet: `JRBAR_CORE_EXEC`
-  is the only way for the app itself to supervise a core; on this Mac
-  launchd supervises the daemon as its own agent (`scripts/install-agents.sh`)
-  and the app just connects. The file feeds remain the fallback while
-  nothing is connected.
+* The packaged bundle supervises `Contents/Helpers/jrbar-core.app` (the
+  frozen daemon) itself; a dev bundle has no daemon and either supervises
+  `JRBAR_CORE_EXEC` or connects to whatever listens on the socket. The
+  file feeds remain the fallback while nothing is connected.
 * Notifications need the user to allow them the first time one is due
   (the system prompt). `quota_crossed` / `quota_reset` banners are on
   unless `quota_alerts_enabled` is false. Nothing is done for
   `peer_arrived` / `peer_departed` beyond the toast. Escalation stage 3 is
   a repeating chime (Hero, every 30 s); the `takeover` tier gets the same
   chime, no full-screen takeover.
-* Settings: Software Update is a stub button plus an app-local channel
-  choice (no updater). Launch at login registers with `SMAppService`,
+* Software Update: the app owns a `SparkleUpdater` (`SparkleUpdater.swift`)
+  over the embedded framework: "Check for Updates…" in the app menu
+  (`AppDelegate.checkForUpdates(_:)`, validated by
+  `SPUUpdater.canCheckForUpdates`), automatic checks off until turned on
+  (`SparkleUpdater.shared?.automaticallyChecksForUpdates`; the first
+  launch writes `SUEnableAutomaticChecks=false` to user defaults so
+  Sparkle never shows its own prompt), and the channel picker's
+  `updateChannel` default read by `allowedChannels(for:)` (`beta` adds the
+  beta-tagged items). Still to bind on the General page: its "Check for
+  Updates…" button should `NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil)`
+  instead of reporting a stub error, an automatic-checks toggle should
+  bind `SparkleUpdater.shared?.automaticallyChecksForUpdates`, and the
+  panel overflow has no "Check for Updates…" row yet.
+  Launch at login registers with `SMAppService`,
   which only works from a bundled, signed app. `reset_settings` and
   `undo_clear`'s `batch` shape are app-proposed details the mock answers;
   the real daemon has to adopt them. `subscribe` is not surfaced.

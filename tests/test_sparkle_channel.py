@@ -17,8 +17,8 @@ from scripts import package_sparkle_archive
 
 ROOT = Path(__file__).resolve().parents[1]
 SPARKLE_NAMESPACE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
-PUBLIC_KEY = "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
-PUBLIC_KEY_FINGERPRINT = "9c134249398dd15c364a29451de3d81436d8eda97a0c706fa59047e6607f59ac"
+PUBLIC_KEY = "HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg="
+PUBLIC_KEY_FINGERPRINT = "c1d510386a3907f632184efb16d14db3c79303fb1a1b693fb2a985a4106b418b"
 ITEM_SIGNATURE = base64.b64encode(b"i" * 64).decode("ascii")
 FEED_SIGNATURE = base64.b64encode(b"f" * 64).decode("ascii")
 CANDIDATE_ID = "c" * 64

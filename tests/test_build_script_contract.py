@@ -69,7 +69,9 @@ def test_package_builder_assembles_the_swift_app_daemon_and_shim() -> None:
     # The Swift app is the bundle; the frozen daemon and the shim ride under Helpers.
     assert 'APP_BUILD_SCRIPT="${APP_BUILD_SCRIPT:-$ROOT_DIR/app/scripts/build-app.sh}"' in text
     assert 'HOOK_BUILD_SCRIPT="${HOOK_BUILD_SCRIPT:-$ROOT_DIR/hook/build.sh}"' in text
-    assert 'JRBAR_BUNDLE="$SWIFT_APP" JRBAR_VERSION="$VERSION" JRBAR_SKIP_SIGN=1 "$APP_BUILD_SCRIPT"' in text
+    assert 'JRBAR_BUNDLE="$SWIFT_APP" JRBAR_VERSION="$VERSION" JRBAR_SKIP_SIGN=1 \\\n    JRBAR_SPARKLE_FRAMEWORK_DIR="$SPARKLE_DISTRIBUTION" JRBAR_EMBED_SPARKLE=0 "$APP_BUILD_SCRIPT"' in text
+    # Sparkle is prepared before the app build so the app can link it.
+    assert text.index('prepare_sparkle.py') < text.index('"$APP_BUILD_SCRIPT"\n')
     assert 'JRBAR_HOOK_BUILD_DIR="$HOOK_DIR" "$HOOK_BUILD_SCRIPT"' in text
     assert "--onedir --windowed" in text
     assert '--osx-bundle-identifier "$CORE_ID"' in text

@@ -5,7 +5,7 @@ import Observation
 import ServiceManagement
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var statusItem: StatusItemController?
     private var screenBar: ScreenBarController?
     private var interaction: ScreenBarInteraction?
@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var events: EventCoordinator?
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
+    private var updater: SparkleUpdater?
+    private var checkForUpdatesItem: NSMenuItem?
     private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
@@ -89,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let settingsWindow = SettingsWindowController(store: settingsStore)
         self.settingsStore = settingsStore
         self.settingsWindow = settingsWindow
+        // Software update: the embedded Sparkle, or a stub that says why not.
+        let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
+        self.updater = updater
         installMainMenu()
         self.statusItem = statusItem
         self.screenBar = screenBar
@@ -368,6 +373,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k"))
         appMenu.addItem(.separator())
+        let checkForUpdates = NSMenuItem(title: "Check for Updates…", action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        checkForUpdates.target = self
+        if let updater, !updater.isAvailable { checkForUpdates.toolTip = updater.availability.description }
+        checkForUpdatesItem = checkForUpdates
+        appMenu.addItem(checkForUpdates)
+        appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
         main.addItem(appItem)
@@ -393,6 +404,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings(_ sender: Any?) {
         settingsWindow?.show()
+    }
+
+    // MARK: Software update
+
+    /// "Check for Updates…" from the app menu, the panel or Settings ›
+    /// General (`NSApp.sendAction(#selector(AppDelegate.checkForUpdates(_:)), to: nil, from: nil)`
+    /// reaches this through the responder chain). Sparkle shows its own UI.
+    @objc func checkForUpdates(_ sender: Any?) {
+        guard let updater, updater.isAvailable else {
+            settingsStore?.report(error: "Software update: \(updater?.availability.description ?? "unavailable")")
+            return
+        }
+        updater.checkForUpdates(sender)
+    }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(checkForUpdates(_:)) {
+            return updater?.canCheckForUpdates ?? false
+        }
+        return true
     }
 
     @objc private func openUsageCenter(_ sender: Any?) {

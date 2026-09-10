@@ -19,8 +19,31 @@ IDENTITY="${JRBAR_SIGN_IDENTITY:-Nautilus Local Dev}"
 VERSION="${JRBAR_VERSION:-$(sed -n 's/^version = "\([^"]*\)"$/\1/p' "$APP_DIR/../pyproject.toml" | head -1)}"
 [[ -n "$VERSION" ]] || { echo "cannot read the project version from pyproject.toml" >&2; exit 1; }
 
+# Sparkle: link the pinned framework when it is around. JRBAR_SPARKLE_FRAMEWORK_DIR
+# names the distribution directory (the packaging script's
+# build/macos-pkg/sparkle-distribution is the default once `make package` has
+# run); empty disables it. JRBAR_EMBED_SPARKLE=0 leaves the framework out of
+# the bundle (the packaging script embeds and signs it itself).
+if [[ -z "${JRBAR_SPARKLE_FRAMEWORK_DIR+x}" ]]; then
+    JRBAR_SPARKLE_FRAMEWORK_DIR="$APP_DIR/../build/macos-pkg/sparkle-distribution"
+fi
+if [[ -n "$JRBAR_SPARKLE_FRAMEWORK_DIR" && -f "$JRBAR_SPARKLE_FRAMEWORK_DIR/Sparkle.framework/Modules/module.modulemap" ]]; then
+    JRBAR_SPARKLE_FRAMEWORK_DIR="$(cd "$JRBAR_SPARKLE_FRAMEWORK_DIR" && pwd)"
+    SPARKLE_LINKED=1
+else
+    JRBAR_SPARKLE_FRAMEWORK_DIR=""
+    SPARKLE_LINKED=0
+fi
+export JRBAR_SPARKLE_FRAMEWORK_DIR
+SPARKLE_PUBLIC_KEY="$(tr -d '[:space:]' < "$APP_DIR/../packaging/sparkle_public_ed_key.txt")"
+SPARKLE_FEED_URL="https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml"
+
 cd "$APP_DIR"
-echo "==> swift build -c release"
+if [[ "$SPARKLE_LINKED" == "1" ]]; then
+    echo "==> swift build -c release (Sparkle from $JRBAR_SPARKLE_FRAMEWORK_DIR)"
+else
+    echo "==> swift build -c release (no Sparkle.framework: the updater is a stub)"
+fi
 swift build -c release --product JRBarApp
 BIN_DIR="$(swift build -c release --show-bin-path)"
 BINARY="$BIN_DIR/JRBarApp"
@@ -75,10 +98,23 @@ cat > "$BUNDLE/Contents/Info.plist" <<PLIST
 	<string>Copyright © 2026 Jonathan Reed</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<key>SUFeedURL</key>
+	<string>$SPARKLE_FEED_URL</string>
+	<key>SUPublicEDKey</key>
+	<string>$SPARKLE_PUBLIC_KEY</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>
 PLIST
 printf 'APPL????' > "$BUNDLE/Contents/PkgInfo"
+if [[ "$SPARKLE_LINKED" == "1" && "${JRBAR_EMBED_SPARKLE:-1}" != "0" ]]; then
+    echo "==> embedding Sparkle.framework"
+    mkdir -p "$BUNDLE/Contents/Frameworks"
+    ditto "$JRBAR_SPARKLE_FRAMEWORK_DIR/Sparkle.framework" "$BUNDLE/Contents/Frameworks/Sparkle.framework"
+fi
 
 echo "==> rendering AppIcon.icns"
 ICON_TMP="$(mktemp -d)"

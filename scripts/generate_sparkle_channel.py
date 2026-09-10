@@ -33,7 +33,7 @@ EXPECTED_SPARKLE_DISTRIBUTION_SHA256 = (
     "a57379fc39978044fe38787bda8ca8613d48bc9da48296514622be83651d17ce"
 )
 DEFAULT_KEYCHAIN_ACCOUNT = "com.jonathanreed.jrbar"
-EXPECTED_PUBLIC_KEY = "IlvZMoPh67naKxN2ZvlnfdHildsgGxPWeEi8IOhVQ+8="
+EXPECTED_PUBLIC_KEY = "HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg="
 EXPECTED_BUNDLE_IDENTIFIER = "com.jonathanreed.jrbar"
 FEED_URL = (
     "https://github.com/JonathanRReed/JR-Bar/"

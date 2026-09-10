@@ -38,11 +38,13 @@ is the bundled shim, and registers itself as a login item (`SMAppService`).
    the artifact names from `scripts/release_artifact_contract.py`.
 2. Makes a fresh Python 3.12 venv from the hash-locked
    `requirements/release-lock.txt` and installs the checkout into it.
-3. Builds the Swift app (`app/scripts/build-app.sh`, unsigned), the shim
-   (`hook/build.sh`) and the daemon (`pyinstaller --onedir --windowed`,
-   entry `packaging/jrbar_entry.py`).
-4. Assembles the bundle, embeds Sparkle (`scripts/prepare_sparkle.py`,
-   digest-pinned download), writes the Info.plist keys.
+3. Prepares Sparkle (`scripts/prepare_sparkle.py`, digest-pinned
+   download), then builds the Swift app against it
+   (`app/scripts/build-app.sh` with `JRBAR_SPARKLE_FRAMEWORK_DIR`, unsigned,
+   framework not embedded), the shim (`hook/build.sh`) and the daemon
+   (`pyinstaller --onedir --windowed`, entry `packaging/jrbar_entry.py`).
+4. Assembles the bundle, embeds the Sparkle framework, writes the
+   Info.plist keys.
 5. Signs inside out (`packaging/sign_macos_app.py`): every Mach-O, then the
    nested bundles (the daemon bundle with `packaging/entitlements.plist`, it
    sends the Apple events), then the app with the entitlements.
@@ -91,11 +93,16 @@ xcrun notarytool store-credentials jrbar-notary \
 ```
 
 To turn the feed on, the private key for the committed public key must be
-in the login keychain (`generate_keys --account io.jrbar.app -p` prints the
-public half). A new key means committing its public half to
-`packaging/sparkle_public_ed_key.txt`, `EXPECTED_PUBLIC_KEY` in
-`scripts/generate_sparkle_channel.py` and `EXPECTED_PUBLIC_ED_KEY` in
-`src/jrbar/sparkle_updater.py`; nothing published yet trusts the old one.
+in the login keychain: on this Mac it is under account
+`com.jonathanreed.jrbar` (`build/macos-pkg/sparkle-distribution/bin/generate_keys
+--account com.jonathanreed.jrbar -p` prints the public half,
+`HOglzj7oHy/NF0HMxpSkOzP036QpoaD+6YzwAGr5iIg=`). A new key means committing
+its public half to `packaging/sparkle_public_ed_key.txt`,
+`EXPECTED_PUBLIC_KEY` in `scripts/generate_sparkle_channel.py`,
+`EXPECTED_PUBLIC_ED_KEY` in `src/jrbar/sparkle_updater.py` and the tests
+(`tests/test_sparkle_channel.py` pins the key and its SHA-256 fingerprint,
+`tests/test_app_bundle_security.py` the key); nothing published yet trusts
+the old one.
 
 ## Installing
 

@@ -506,41 +506,49 @@ fallback (`transcript_monitoring.gemini`) reads
 ```sh
 python -m jrbar core                    # headless daemon on ~/.local/state/jrbar/core.sock
 python -m jrbar core --socket /tmp/x    # elsewhere (tests; AF_UNIX paths are capped at 104 bytes)
+JRBAR_TRACEMALLOC=1 python -m jrbar core   # + a tracemalloc report in the log every 60 s (a number = seconds)
 jrbar status-bar start                  # the old Python UI; refuses to run beside the daemon
 ```
+
+On this Mac the running pair is the packaged app, `~/Applications/JR-Bar.app`
+(installed from `dist/JR-Bar-<version>.pkg` by `make clean-install`, which
+puts it there without a password): the app supervises
+`Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core` as its
+child (`JRBAR_SUPERVISED=1`, `JRBAR_HOOK_EXEC` = the bundled shim,
+`JRBAR_COMMIT` from the bundle's `JRBarCommit`), re-points every provider's
+hook at `Contents/Helpers/jrbar-hook` on the first launch of a build, and
+registers itself as a login item. launchd is not involved: no LaunchAgents,
+no `~/.local/share/jrbar` venv. The daemon's `doctor` reply carries the
+`commit` it was built from (`-dirty` = uncommitted changes) and a `memory`
+field (`rss_mb`, `peak_rss_mb`; with `JRBAR_TRACEMALLOC` also `traced_mb`
+and the top files). The frozen daemon sits around 160–200 MB RSS, of which
+roughly 100 MB is shared framework text (`footprint <pid>` shows the
+private ~110 MB).
+
+Stop, reinstall, start:
+
+```sh
+osascript -e 'tell application "JR-Bar" to quit'   # the app stops its child (SIGTERM, 3 s grace)
+installer -pkg dist/JR-Bar-0.8.0.pkg -target CurrentUserHomeDirectory
+open ~/Applications/JR-Bar.app
+~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core hooks doctor
+```
+
+`hooks doctor` prints the shim the daemon would install (the bundled
+`Contents/Helpers/jrbar-hook` when frozen) and what each provider's config
+runs today; every provider must say `runs=shim`.
 
 Under the Swift app in development: `JRBAR_CORE_EXEC=scripts/run-core.sh`
 makes the app spawn and supervise the daemon (`CoreSupervisor`; the script
 execs `.venv/bin/python -m jrbar core`, passing `JRBAR_CORE_SOCKET` through
-as `--socket`).
+as `--socket`). A dev daemon run by hand (`.venv/bin/python -m jrbar core`)
+needs the packaged app quit first: one process owns the event socket.
 
-On this Mac the running pair comes from `scripts/install-agents.sh`, which
-installs the package (non-editable) into `~/.local/share/jrbar/venv`, the
-shim into `~/.local/share/jrbar/bin`, the app bundle into `~/Applications`,
-and loads two LaunchAgents, both `KeepAlive` + `RunAtLoad`:
-
-| label | runs |
-| --- | --- |
-| `com.jonathanreed.jrbar.core` | `~/.local/share/jrbar/venv/bin/python -m jrbar core` (logs `~/.local/state/jrbar/core.{out,err}.log`) |
-| `com.jonathanreed.jrbar.ui` | `~/Applications/JR-Bar.app/Contents/MacOS/JR-Bar` (logs `ui.{out,err}.log`) |
-
-The daemon is its own agent rather than the app's `JRBAR_CORE_EXEC` child,
-and nothing launchd runs lives under `~/Downloads`: a launchd job that
-reads a checkout there (the app bundle, or python reading `pyvenv.cfg`)
-blocks on a "would like to access files in your Downloads folder" TCC
-prompt until someone answers it. launchd restarts the daemon within its
-5 s throttle when it dies; the app reconnects on the protocol backoff. The
-script also boots out and parks the old `com.jonathanreed.jrbar.app`
-(Python status bar) plist in the state directory. Re-run it after every
-commit that should be running; `doctor` reports the installed commit.
-
-Revert to the Python UI:
-
-```sh
-launchctl bootout gui/$UID/com.jonathanreed.jrbar.ui
-launchctl bootout gui/$UID/com.jonathanreed.jrbar.core
-.venv/bin/python -m jrbar status-bar start
-```
+The two development LaunchAgents (`com.jonathanreed.jrbar.core` / `.ui`,
+`scripts/install-agents.sh`) are parked as `*.plist.disabled` in the state
+directory; `scripts/install-agents.sh --pkg` is what `make clean-install`
+runs, plain `scripts/install-agents.sh` puts the dev layout back and turns
+the login item off.
 
 ## Versioning
 
