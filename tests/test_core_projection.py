@@ -501,3 +501,17 @@ def test_why_detail_names_the_session_behind_the_light() -> None:
     )
     assert lights["surfaces"]["hardware"]["why_detail"]["session"] == CODEX_ID
     assert lights["devices_linked"] is False
+
+
+def test_install_probe_sessions_are_not_sessions() -> None:
+    inputs = fixture_inputs()
+    probe = _status(agent_id="codex:session:jrbar-install-probe", session_id="jrbar-install-probe", provider="codex", display_name="Codex jrbar-install-probe", work_key="wk-probe")
+    inputs["snapshot"] = SimpleNamespace(
+        aggregate=inputs["snapshot"].aggregate,
+        statuses=(*inputs["snapshot"].statuses, probe),
+        stale_statuses=inputs["snapshot"].stale_statuses,
+        collected_at=inputs["snapshot"].collected_at,
+    )
+    document = build_state_document(**inputs)
+    assert all(not row["id"].endswith("-install-probe") for row in document["sessions"])
+    assert document["aggregate"]["total"] == 3

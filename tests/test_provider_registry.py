@@ -173,6 +173,22 @@ def test_static_registry_has_literal_deterministic_source_and_capability_order()
             ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
             ("live_agent_events",),
         ),
+        # live_agent_events only: pi 0.73.1 emits no ui_prompt events.
+        (
+            "pi",
+            "hooks",
+            "global",
+            ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+            ("live_agent_events",),
+        ),
+        # Notification(ToolPermission) is a real ask.
+        (
+            "gemini",
+            "hooks",
+            "global",
+            ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+            ("live_agent_events", "actionable_requests"),
+        ),
     )
 
 
@@ -195,6 +211,8 @@ def test_each_hook_provider_has_exactly_one_registered_hook_source() -> None:
         "opencode",
         "antigravity",
         "kiro",
+        "pi",
+        "gemini",
     )
     assert tuple(registration.provider_id.value for registration in hook_registrations) == (
         HOOK_PROVIDERS
@@ -207,7 +225,7 @@ def test_negotiated_rows_use_unique_canonical_source_keys_one_per_capability() -
     keys = tuple(row.source_key for row in rows)
 
     assert all(type(key) is SourceKey for key in keys)
-    assert len(keys) == len(set(keys)) == 19
+    assert len(keys) == len(set(keys)) == 22
     assert tuple(_row_identity(row) for row in rows[:4]) == (
         ("codex", "hooks", "global", "live_agent_events"),
         ("codex", "hooks", "global", "actionable_requests"),

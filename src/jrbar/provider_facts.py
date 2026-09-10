@@ -58,6 +58,8 @@ _PRODUCT_PROVIDER_LABELS: Final = {
     "opencode": "OpenCode",
     "antigravity": "Antigravity",
     "kiro": "Kiro",
+    "pi": "Pi",
+    "gemini": "Gemini",
 }
 _PRIVATE_IDENTIFIER_COMPONENT: Final = re.compile(
     r"(?:^|[._~:\-])"

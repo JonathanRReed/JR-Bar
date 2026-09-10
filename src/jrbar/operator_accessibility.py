@@ -82,6 +82,8 @@ _PRODUCT_PROVIDER_LABELS: Final = {
     "kiro": "Kiro",
     "openclaw": "OpenClaw",
     "opencode": "OpenCode",
+    "pi": "Pi",
+    "gemini": "Gemini",
 }
 _LIFECYCLE_LABELS: Final = {
     WorkLifecycle.IDLE: "Idle",

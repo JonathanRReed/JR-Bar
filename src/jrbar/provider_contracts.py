@@ -481,6 +481,8 @@ _FIRST_PARTY_ADAPTERS = {
     # google-antigravity policy rather than by a quota adapter here.
     ProviderIdentifier("antigravity"): frozenset({AdapterIdentifier("hooks")}),
     ProviderIdentifier("kiro"): frozenset({AdapterIdentifier("hooks")}),
+    ProviderIdentifier("pi"): frozenset({AdapterIdentifier("hooks")}),
+    ProviderIdentifier("gemini"): frozenset({AdapterIdentifier("hooks")}),
 }
 
 _CAPACITY_CAPABILITY_IDENTIFIERS = frozenset(

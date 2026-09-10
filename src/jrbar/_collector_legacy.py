@@ -92,9 +92,22 @@ from .providers import (
     parse_log_line,
 )
 from .settings import AgentMonitorSettings, load_settings
+from .transcript_sessions import (
+    GEMINI_TRANSCRIPT_MAX_FILES,
+    GEMINI_TRANSCRIPT_PROVIDER,
+    PI_TRANSCRIPT_MAX_FILES,
+    PI_TRANSCRIPT_PROVIDER,
+    default_gemini_chats_root,
+    default_pi_sessions_root,
+    iter_gemini_transcript_file,
+    iter_pi_transcript_file,
+)
 
 CODEX_TRANSCRIPT_PROVIDER = "codex-transcripts"
 CLAUDE_TRANSCRIPT_PROVIDER = "claude-transcripts"
+TRANSCRIPT_PROVIDERS = frozenset(
+    {CODEX_TRANSCRIPT_PROVIDER, CLAUDE_TRANSCRIPT_PROVIDER, PI_TRANSCRIPT_PROVIDER, GEMINI_TRANSCRIPT_PROVIDER}
+)
 CODEX_TRANSCRIPT_MAX_FILES = 12
 CODEX_TRANSCRIPT_MAX_LINES = 500
 CLAUDE_TRANSCRIPT_MAX_FILES = 24
@@ -643,10 +656,7 @@ class AgentMonitor:
                 suppressed_work_keys.update(fact.key for fact in batch.work_facts)
                 continue
             if status is not None and keep_status:
-                transcript_source = record.raw.get("source") in {
-                    CODEX_TRANSCRIPT_PROVIDER,
-                    CLAUDE_TRANSCRIPT_PROVIDER,
-                }
+                transcript_source = record.raw.get("source") in TRANSCRIPT_PROVIDERS
                 for fact in batch.work_facts:
                     status_overlays[fact.key] = CanonicalStatusOverlay(
                         watermark=fact.watermark,
@@ -813,6 +823,14 @@ class AgentMonitor:
                 continue
             if source.provider == CLAUDE_TRANSCRIPT_PROVIDER:
                 yield from self._iter_claude_transcript_records(source.path)
+                continue
+            if source.provider == PI_TRANSCRIPT_PROVIDER:
+                for path in self._recent_transcript_files(source.path, limit=PI_TRANSCRIPT_MAX_FILES, provider=PI_TRANSCRIPT_PROVIDER):
+                    yield from self._cached_transcript_records(PI_TRANSCRIPT_PROVIDER, path, iter_pi_transcript_file)
+                continue
+            if source.provider == GEMINI_TRANSCRIPT_PROVIDER:
+                for path in self._recent_transcript_files(source.path, limit=GEMINI_TRANSCRIPT_MAX_FILES, provider=GEMINI_TRANSCRIPT_PROVIDER):
+                    yield from self._cached_transcript_records(GEMINI_TRANSCRIPT_PROVIDER, path, iter_gemini_transcript_file)
                 continue
             yield from self._cached_log_records(source)
 
@@ -1411,6 +1429,8 @@ _PRODUCT_PROVIDER_LABELS = {
     "openclaw": "OpenClaw",
     "opencode": "OpenCode",
     "kiro": "Kiro",
+    "pi": "Pi",
+    "gemini": "Gemini",
 }
 
 
@@ -2013,6 +2033,10 @@ def default_sources(settings: AgentMonitorSettings | None = None) -> tuple[Sourc
             sources.append(SourceSpec(CODEX_TRANSCRIPT_PROVIDER, Path.home() / ".codex" / "sessions"))
         if provider == "claude" and active_settings.claude_transcripts_enabled:
             sources.append(SourceSpec(CLAUDE_TRANSCRIPT_PROVIDER, Path.home() / ".claude" / "projects"))
+        if provider == "pi" and active_settings.transcript_enabled("pi"):
+            sources.append(SourceSpec(PI_TRANSCRIPT_PROVIDER, default_pi_sessions_root()))
+        if provider == "gemini" and active_settings.transcript_enabled("gemini"):
+            sources.append(SourceSpec(GEMINI_TRANSCRIPT_PROVIDER, default_gemini_chats_root()))
     return unique_sources(sources)
 
 

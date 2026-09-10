@@ -51,6 +51,9 @@ def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> N
         ("github", "copilot-ide", "GitHub Copilot", "ide_extension", "inventory"),
         ("kiro", "cli", "Kiro CLI", "cli", "lifecycle"),
         ("kiro", "jrbar-agent", "Kiro JR-Bar agent", "local_harness", "lifecycle"),
+        ("pi", "cli", "Pi", "cli", "lifecycle"),
+        ("pi", "jrbar-extension", "Pi JR-Bar extension", "local_harness", "lifecycle"),
+        ("gemini", "jrbar-hooks", "Gemini CLI JR-Bar hooks", "local_harness", "lifecycle"),
     )
 
 

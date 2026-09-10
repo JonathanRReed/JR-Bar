@@ -8,6 +8,7 @@ payload is read or printed.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -19,7 +20,14 @@ from typing import Any
 from .core_server import default_core_socket_path
 from .hook_pending import pending_hook_files
 from .install import hook_command_arguments, hook_shim_path
-from .providers import HOOK_CLIENT_MODULES, HOOK_SHIM_NAME, PROVIDER_SPECS, _is_jrbar_hook_invocation, detect_log_path
+from .providers import (
+    HOOK_CLIENT_MODULES,
+    HOOK_SHIM_NAME,
+    PROVIDER_SPECS,
+    _is_jrbar_hook_invocation,
+    detect_log_path,
+    openclaw_hook_dir,
+)
 from .state_paths import default_state_dir
 
 
@@ -35,13 +43,39 @@ def classify_command(arguments: list[str]) -> str:
     return "foreign"
 
 
+_JSON_ARGV = re.compile(r"\[\s*\"[^\]]*?--provider[^\]]*?\]")
+
+
 def registered_commands(config_path: Path, provider: str) -> list[list[str]]:
-    """Every JR-Bar hook invocation for ``provider`` found in the config text."""
+    """Every JR-Bar hook invocation for ``provider`` found in the config
+    text: a shell command on one line (JSON, TOML), a YAML scalar folded
+    over several indented lines (Hermes), or a JSON argv array embedded
+    in an installed handler (OpenClaw, OpenCode, the pi extension)."""
+    path = config_path.expanduser()
     try:
-        text = config_path.expanduser().read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
+    if path.suffix in (".yaml", ".yml"):
+        # A folded scalar breaks the command after an option word; join
+        # the indented continuation back onto it.
+        text = re.sub(r"(--provider|--log)[ \t]*\n[ \t]+", r"\1 ", text)
     found: list[list[str]] = []
+    for match in _JSON_ARGV.finditer(text):
+        if text[max(0, match.start() - 24) : match.start()].rstrip().endswith("FALLBACK_COMMAND ="):
+            continue  # the pi extension's python fallback, not what runs
+        try:
+            argv = json.loads(match.group(0))
+        except ValueError:
+            continue
+        if (
+            isinstance(argv, list)
+            and all(isinstance(item, str) for item in argv)
+            and "--provider" in argv
+            and argv[argv.index("--provider") + 1 :][:1] == [provider]
+            and argv not in found
+        ):
+            found.append(argv)
     pattern = re.compile(r"[^\"'\n]*--provider[= ]+" + re.escape(provider) + r"[^\"'\n]*")
     for match in pattern.finditer(text):
         candidate = match.group(0).strip()
@@ -49,6 +83,19 @@ def registered_commands(config_path: Path, provider: str) -> list[list[str]]:
             parts = shlex.split(candidate)
         except ValueError:
             continue
+        # YAML list/key prefixes ("- command:") are not part of the argv,
+        # nor is the shell around Antigravity's envelope ("... | jrbar-hook
+        # ... >/dev/null 2>&1; printf '{}'").
+        while parts and (parts[0] == "-" or parts[0].endswith(":") or parts[0] in ("|", ";")):
+            parts = parts[1:]
+        start = next((i for i, part in enumerate(parts) if Path(part).name == HOOK_SHIM_NAME), None)
+        if start is None:
+            start = next((i for i, part in enumerate(parts) if part == "-m"), None)
+            start = max(0, start - 1) if start is not None else 0
+        parts = parts[start:]
+        end = next((i for i, part in enumerate(parts) if part[:1] in (">", "|", ";") or part.startswith("2>") or part.endswith(";")), None)
+        if end is not None:
+            parts = [part.rstrip(";") for part in parts[:end]] if end > 0 else parts
         if parts and (_is_jrbar_hook_invocation(parts) or "--provider" in parts):
             if parts not in found:
                 found.append(parts)
@@ -79,6 +126,10 @@ def hook_doctor_report(home: Path | None = None) -> dict[str, Any]:
             entry["installed"] = bool(config.exists and config.hook_events)
             entry["hook_events"] = len(config.hook_events)
             registered = registered_commands(config.config_path, spec.provider)
+            if spec.provider == "openclaw":
+                # The argv lives in the installed handler, not the gateway config.
+                handler = openclaw_hook_dir(home) / "handler.ts"
+                registered.extend(parts for parts in registered_commands(handler, "openclaw") if parts not in registered)
             entry["registered"] = sorted({classify_command(parts) for parts in registered}) or (["none"])
             entry["registered_commands"] = [" ".join(shlex.quote(p) for p in parts) for parts in registered[:3]]
         except Exception as exc:

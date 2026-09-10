@@ -102,6 +102,26 @@
       "fixtureVersion": 1,
       "sha256": "sha256:38636f4e14e5dc5fa0a741c452b5641087b3b2a7f799a50eeeaaf17ed85cd70d",
       "synthetic": true
+    },
+    {
+      "provider": "pi",
+      "fixtureId": "pi-session-start",
+      "fixtureType": "hook-event",
+      "sourceReference": "pi-extension-v1",
+      "reviewedOn": "2026-08-29",
+      "fixtureVersion": 1,
+      "sha256": "sha256:d4b0c721523df3df42ff3d25c657d006c385cea98ced17dd6d5a17096e510441",
+      "synthetic": true
+    },
+    {
+      "provider": "gemini",
+      "fixtureId": "gemini-session-start",
+      "fixtureType": "hook-event",
+      "sourceReference": "gemini-hooks-v1",
+      "reviewedOn": "2026-08-29",
+      "fixtureVersion": 1,
+      "sha256": "sha256:f85bc07029b16fa56ac9440803295813315a890776e9955bb76e93f3dbfe374d",
+      "synthetic": true
     }
   ]
 }

@@ -75,7 +75,9 @@ def hook_client_main(provider: str, log_path: Path) -> int:
             return 0
         return run_hook_client(provider, Path(log_path).expanduser(), payload_text)
     finally:
-        if provider == "cursor":
+        # Cursor and Gemini CLI read a hook's stdout as its JSON verdict;
+        # "{}" is the documented no-op.
+        if provider in ("cursor", "gemini"):
             try:
                 sys.stdout.write("{}\n")
                 sys.stdout.flush()

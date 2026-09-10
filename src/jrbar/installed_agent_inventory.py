@@ -221,6 +221,9 @@ _INVENTORY_CANDIDATES: Final = (
     _candidate("github", "copilot-ide", SurfaceDetectorKind.EXTENSION_IDENTIFIER, "github-copilot", "vscode", ("github.copilot",), InventoryMarkerKind.DIRECTORY),
     _candidate("kiro", "cli", SurfaceDetectorKind.PATH_MARKER, "kiro-cli", "home", (".local", "bin", "kiro-cli"), InventoryMarkerKind.EXECUTABLE_LINK_OR_FILE, alternate_locations=(("homebrew", ("bin", "kiro-cli")), ("local_bin", ("bin", "kiro-cli")))),
     _candidate("kiro", "jrbar-agent", SurfaceDetectorKind.CONFIG_MARKER, "kiro-hooks-v1", "home", (".kiro", "agents", "jrbar.json"), InventoryMarkerKind.REGULAR_FILE, configured=True, alternate_locations=(("home", (".kiro", "agents", "sidepulse.json")),)),
+    _candidate("pi", "cli", SurfaceDetectorKind.PATH_MARKER, "pi-cli", "home", (".local", "bin", "pi"), InventoryMarkerKind.EXECUTABLE_LINK_OR_FILE, alternate_locations=(("homebrew", ("bin", "pi")), ("local_bin", ("bin", "pi")))),
+    _candidate("pi", "jrbar-extension", SurfaceDetectorKind.CONFIG_MARKER, "pi-extension-v1", "home", (".pi", "agent", "extensions", "jrbar.ts"), InventoryMarkerKind.REGULAR_FILE, configured=True),
+    _candidate("gemini", "jrbar-hooks", SurfaceDetectorKind.CONFIG_MARKER, "gemini-hooks-v1", "home", (".gemini", "settings.json"), InventoryMarkerKind.REGULAR_FILE, configured=True),
 )
 
 

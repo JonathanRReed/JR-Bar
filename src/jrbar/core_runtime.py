@@ -168,6 +168,34 @@ def set_path(root: Any, path: str, value: Any) -> bool:
     return True
 
 
+def plan_extra_lookups(
+    agent_ids: list[str],
+    cached: dict[str, tuple[float, Any]],
+    *,
+    now: float,
+    ttl: float,
+    budget: int,
+) -> list[str]:
+    """Which sessions get a registry / session-title lookup this build.
+
+    Never-looked-up sessions come first, then the stalest expired entries,
+    within ``budget``: refreshing the same first few every build starved
+    everything after them of a label (each expired at the same moment, so
+    the budget went to the same ids every time)."""
+    fresh: list[str] = []
+    expired: list[tuple[float, str]] = []
+    for agent_id in agent_ids:
+        entry = cached.get(agent_id)
+        if entry is None:
+            fresh.append(agent_id)
+        elif now - entry[0] >= ttl:
+            expired.append((entry[0], agent_id))
+    expired.sort()
+    chosen = fresh[:budget]
+    chosen.extend(agent_id for _at, agent_id in expired[: max(0, budget - len(chosen))])
+    return chosen
+
+
 def screen_bar_anchor(own: float | None, hardware: float | None, *, linked: bool) -> float | None:
     """The Screen Bar's playback anchor. Linked to a strip it follows the
     strip's write-completion moment: the strip loops from there and never
@@ -1797,14 +1825,21 @@ def build_headless_controller_class() -> type:
             except Exception:
                 unseen = frozenset()
             extras: dict[str, SessionExtras] = {}
-            lookups = 0
             if snapshot is not None:
-                for status in (*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())):
+                statuses = [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())]
+                now = time.monotonic()
+                planned = set(
+                    plan_extra_lookups(
+                        [status.agent_id for status in statuses if not status.stale],
+                        self._core_extras,
+                        now=now,
+                        ttl=EXTRAS_TTL_SECONDS,
+                        budget=MAX_EXTRA_LOOKUPS_PER_BUILD,
+                    )
+                )
+                for status in statuses:
                     cached = self._core_extras.get(status.agent_id)
-                    if cached is not None and time.monotonic() - cached[0] < EXTRAS_TTL_SECONDS:
-                        extras[status.agent_id] = cached[1]
-                    elif lookups < MAX_EXTRA_LOOKUPS_PER_BUILD and not status.stale:
-                        lookups += 1
+                    if status.agent_id in planned:
                         extras[status.agent_id] = self._core_extras_for(status)
                     elif cached is not None:
                         extras[status.agent_id] = cached[1]
@@ -2135,6 +2170,7 @@ __all__ = [
     "device_transitions",
     "get_path",
     "mono_to_epoch",
+    "plan_extra_lookups",
     "run_core",
     "screen_bar_anchor",
     "set_path",

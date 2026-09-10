@@ -454,3 +454,15 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     controller._submit_hardware_write_requests([pro, dot], 100.0)
     assert [command.payload for command in submitted] == [pro, dot]
     assert controller._core_linked_companion is None
+
+
+def test_extra_lookups_serve_new_sessions_before_refreshing_expired_ones() -> None:
+    from jrbar.core_runtime import plan_extra_lookups
+
+    cached = {"a": (0.0, None), "b": (1.0, None), "c": (50.0, None)}
+    ids = ["a", "b", "c", "d", "e"]
+    # d and e were never looked up: they win, then the stalest expired (a, b); c is fresh.
+    assert plan_extra_lookups(ids, cached, now=60.0, ttl=30.0, budget=3) == ["d", "e", "a"]
+    assert plan_extra_lookups(ids, cached, now=60.0, ttl=30.0, budget=10) == ["d", "e", "a", "b"]
+    assert plan_extra_lookups(ids, cached, now=60.0, ttl=30.0, budget=0) == []
+    assert plan_extra_lookups([], cached, now=60.0, ttl=30.0, budget=3) == []

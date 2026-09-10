@@ -624,6 +624,20 @@ PROVIDER_BRAND_COLORS: dict[str, str] = {
     # instead: Y 0.081, worst-case dE 17.8 vs claude, grid-searched
     # against the FINAL table including the other two lifts.
     "kiro": "#A00848",
+    # Not Gemini's real blue, and deliberately so: #4796E3 (kept as the
+    # "Google" picker seed) is dE 3.0 from opencode's purple for a
+    # protanope and inside 12 dE of codex and devin for a deuteranope, and
+    # the purple end of Gemini's gradient collapses onto kiro.
+    # Grid-searched 2026-09-10 against every reserved colour under normal,
+    # deuteranopia and protanopia: this green clears 24.5 dE worst case and
+    # stays bright (Y 0.33) on the strip.
+    "gemini": "#3BB056",
+    # Pi has no brand colour to keep. The warm band is the only region the
+    # palette still leaves open once blues, purples and greens are spoken
+    # for; this brick red is 24.1 dE from everything (and 24 dE from the
+    # gemini green under every vision model) with Y 0.10, above the unlit
+    # floor.
+    "pi": "#914130",
     # 2026-08-20: every registered provider now has a DELIBERATE entry --
     # the positional fallback is a mechanism, not a palette. cursor,
     # hermes, and opencode keep the exact colours the fallback had been
@@ -3679,7 +3693,10 @@ BRAND_SEED_COLORS: tuple[tuple[str, str], ...] = (
     ("Claude", PROVIDER_BRAND_COLORS["claude"]),
     ("OpenAI", "#10A37F"),
     ("Codex", PROVIDER_BRAND_COLORS["codex"]),
-    ("Gemini", "#4796E3"),
+    # Google's Gemini blue as a picker chip. Named for the company so it
+    # cannot be mistaken for the Gemini CLI provider's own light, which
+    # is not this blue (see PROVIDER_BRAND_COLORS).
+    ("Google", "#4796E3"),
 )
 
 # The app's own signal colours, named. These are not brands and not palette

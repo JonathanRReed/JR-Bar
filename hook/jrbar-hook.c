@@ -11,7 +11,8 @@
  *
  *   jrbar-hook --provider <id> [--log <path>]
  *
- * For --provider cursor the shim prints "{}" on stdout, as Cursor's hook
+ * For --provider cursor or gemini (or with --emit-empty-json) the shim
+ * prints "{}" on stdout, as Cursor's and Gemini CLI's hook
  * contract requires; otherwise it prints nothing.
  */
 #include <errno.h>
@@ -138,13 +139,15 @@ static void queue_pending(const char *dir, const char *provider, pid_t ppid, dou
 int main(int argc, char **argv) {
     uint64_t deadline = now_ms() + HARD_BUDGET_MS;
     const char *provider = NULL, *log = NULL;
-    for (int i = 1; i + 1 < argc; i++) {
-        if (!strcmp(argv[i], "--provider")) provider = argv[++i];
-        else if (!strcmp(argv[i], "--log")) log = argv[++i];
+    int emit_empty = 0;
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--provider") && i + 1 < argc) provider = argv[++i];
+        else if (!strcmp(argv[i], "--log") && i + 1 < argc) log = argv[++i];
+        else if (!strcmp(argv[i], "--emit-empty-json")) emit_empty = 1;
     }
     if (!provider || !*provider || strlen(provider) > 32) return 0;
     for (const char *c = provider; *c; c++) if (!((*c >= 'a' && *c <= 'z') || *c == '_')) return 0;
-    int cursor = !strcmp(provider, "cursor");
+    int cursor = emit_empty || !strcmp(provider, "cursor") || !strcmp(provider, "gemini");
 
     char *payload = malloc(MAX_PAYLOAD + 1);
     size_t len = 0;

@@ -43,6 +43,9 @@ from .providers import (
     CODEX_EVENTS,
     CURSOR_EVENTS,
     DEVIN_EVENTS,
+    GEMINI_EVENTS,
+    GEMINI_HOOK_NAME,
+    GEMINI_HOOK_TIMEOUT_MS,
     GROK_EVENTS,
     HERMES_EVENTS,
     HOOK_CLIENT_MODULES,
@@ -53,15 +56,19 @@ from .providers import (
     LEGACY_ANTIGRAVITY_HOOK_NAME,
     LEGACY_OPENCLAW_HOOK_NAME,
     OPENCLAW_HOOK_NAME,
+    PI_EXTENSION_MARKER,
+    PI_NATIVE_EVENT_NAMES,
     _is_jrbar_hook_invocation,
     default_antigravity_config_path,
     default_cursor_config_path,
     default_devin_config_path,
+    default_gemini_config_path,
     default_grok_hook_config_path,
     default_hermes_config_path,
     default_kiro_agent_config_path,
     default_openclaw_config_path,
     default_opencode_plugin_path,
+    default_pi_extension_path,
     detect_log_path,
     is_jrbar_hook_command,
     is_legacy_log_path,
@@ -1183,6 +1190,212 @@ def uninstall_openclaw_hooks(
     return InstallResult("openclaw", config, target_log, changed, backup, dry_run)
 
 
+def pi_extension_source(
+    command: list[str],
+    fallback_command: list[str] | None = None,
+) -> str:
+    """The managed ``~/.pi/agent/extensions/jrbar.ts``.
+
+    Pi loads extensions in-process (Node) and hands each one its own event
+    stream; this file spawns the hook shim per event with a Claude-shaped
+    payload on stdin, never awaiting it, so an agent turn is never held up
+    by the light. ``command`` is the shim argv baked at install time;
+    ``fallback_command`` (the Python hook client) runs only when the shim
+    binary cannot be spawned.
+    """
+    if not command or not all(isinstance(part, str) and part for part in command):
+        raise ValueError("pi hook command must be a non-empty argv")
+    fallback = list(fallback_command or [])
+    handlers = "\n".join(
+        f'  pi.on({json.dumps(native)} as any, (event: any, ctx: any) => post(payload(ctx, {json.dumps(canonical)}, event)));'
+        for native, canonical in PI_NATIVE_EVENT_NAMES.items()
+    )
+    return (
+        f"// {PI_EXTENSION_MARKER}\n"
+        f"// Installed by `jrbar agent-monitor install pi`; reinstall to change, "
+        f"`jrbar agent-monitor uninstall pi` to remove.\n"
+        "// Posts each pi lifecycle event to the JR-Bar daemon through the hook shim.\n"
+        'import {{ spawn }} from "node:child_process";\n'
+        'import type {{ ExtensionAPI }} from "@mariozechner/pi-coding-agent";\n'
+        "\n"
+        f"const HOOK_COMMAND = {json.dumps(command)};\n"
+        f"const FALLBACK_COMMAND = {json.dumps(fallback)};\n"
+        "\n"
+        "function run(argv: string[], text: string, onFail?: () => void): void {{\n"
+        "  if (argv.length === 0) return;\n"
+        "  try {{\n"
+        '    const child = spawn(argv[0], argv.slice(1), {{ stdio: ["pipe", "ignore", "ignore"], windowsHide: true }});\n'
+        "    let failed = false;\n"
+        "    child.on(\"error\", () => {{ if (!failed && onFail) {{ failed = true; onFail(); }} }});\n"
+        '    child.stdin.on("error", () => {{}});\n'
+        "    child.stdin.end(text);\n"
+        "  }} catch {{\n"
+        "    if (onFail) onFail();\n"
+        "  }}\n"
+        "}}\n"
+        "\n"
+        "function post(payload: Record<string, unknown>): void {{\n"
+        "  const text = JSON.stringify(payload);\n"
+        "  run(HOOK_COMMAND, text, () => run(FALLBACK_COMMAND, text));\n"
+        "}}\n"
+        "\n"
+        "function payload(ctx: any, hookEvent: string, event: any): Record<string, unknown> {{\n"
+        "  const manager = ctx?.sessionManager;\n"
+        "  const out: Record<string, unknown> = {{\n"
+        "    hook_event_name: hookEvent,\n"
+        "    session_id: manager?.getSessionId?.() ?? process.env.PI_SESSION_ID ?? null,\n"
+        "    cwd: ctx?.cwd ?? process.cwd(),\n"
+        "    transcript_path: manager?.getSessionFile?.() ?? process.env.PI_SESSION_FILE ?? null,\n"
+        '    source: "pi",\n'
+        "  }};\n"
+        '  if (event && typeof event.toolName === "string") out.tool_name = event.toolName;\n'
+        '  if (event && typeof event.reason === "string") out.reason = event.reason;\n'
+        "  return out;\n"
+        "}}\n"
+        "\n"
+        "export default function (pi: ExtensionAPI) {{\n"
+        f"{handlers}\n"
+        "}}\n"
+    ).replace("{{", "{").replace("}}", "}")
+
+
+def install_pi_extension(
+    log_path: Path | None = None,
+    config_path: Path | None = None,
+    dry_run: bool = False,
+    python_executable: str | None = None,
+) -> InstallResult:
+    """Publish JR-Bar's pi extension, and only that file. An existing
+    ``jrbar.ts`` is overwritten only when it carries the managed marker."""
+    config = config_path or default_pi_extension_path()
+    target_log = (log_path or detect_log_path("pi")).expanduser()
+    config_leaf = _validated_optional_config(config, dry_run=dry_run)
+    original = _decode_config(config_leaf)
+    if original and PI_EXTENSION_MARKER not in original:
+        raise ValueError(f"refusing to overwrite unmanaged pi extension: {config}")
+    command = hook_command_arguments("pi", target_log, python_executable)
+    fallback = (
+        hook_command_arguments("pi", target_log, sys.executable or "python3")
+        if Path(command[0]).name == HOOK_SHIM_NAME
+        else []
+    )
+    new_text = pi_extension_source(command, fallback)
+    changed = new_text != original
+    backup = None
+    if changed and not dry_run:
+        backup = _transactional_provider_publish(
+            config_leaf=config_leaf,
+            target_log=target_log,
+            writes={config: new_text},
+            backup_config=bool(original),
+        )
+    return InstallResult("pi", config, target_log, changed, backup, dry_run)
+
+
+def uninstall_pi_extension(
+    log_path: Path | None = None,
+    config_path: Path | None = None,
+    dry_run: bool = False,
+) -> InstallResult:
+    config = config_path or default_pi_extension_path()
+    target_log = (log_path or detect_log_path("pi")).expanduser()
+    try:
+        original = config.read_text() if config.is_file() and not config.is_symlink() else ""
+    except OSError:
+        original = ""
+    changed = bool(original) and PI_EXTENSION_MARKER in original
+    backup = None
+    if changed and not dry_run:
+        backup = backup_file(config)
+        config.unlink(missing_ok=True)
+    return InstallResult("pi", config, target_log, changed, backup, dry_run)
+
+
+def _gemini_hook_entry(command: str) -> dict[str, Any]:
+    return {
+        "matcher": "*",
+        "hooks": [
+            {
+                "name": GEMINI_HOOK_NAME,
+                "type": "command",
+                "command": command,
+                "timeout": GEMINI_HOOK_TIMEOUT_MS,
+            }
+        ],
+    }
+
+
+def install_gemini_hooks(
+    log_path: Path | None = None,
+    config_path: Path | None = None,
+    dry_run: bool = False,
+    python_executable: str | None = None,
+) -> InstallResult:
+    """Adds JR-Bar's command under ``hooks`` in ~/.gemini/settings.json
+    (a shared user-level file: every other key is preserved untouched).
+    Antigravity's separate ``~/.gemini/config/hooks.json`` is never read
+    or written here."""
+    config = config_path or default_gemini_config_path()
+    target_log = (log_path or detect_log_path("gemini")).expanduser()
+    config_leaf = _validated_optional_config(config, dry_run=dry_run)
+    data = _strict_json_object(_decode_config(config_leaf), path=config)
+
+    original = json.dumps(data, sort_keys=True)
+    hooks = _strict_hooks_object(data, path=config)
+    command = hook_command("gemini", target_log, python_executable)
+
+    for event_name in GEMINI_EVENTS:
+        entries = hooks.get(event_name, [])
+        if not isinstance(entries, list):
+            raise ValueError(f"Expected hooks.{event_name} array in {config}")
+        cleaned = remove_json_command_hooks_for_log(entries, target_log, "gemini")
+        cleaned.append(_gemini_hook_entry(command))
+        hooks[event_name] = cleaned
+
+    changed = json.dumps(data, sort_keys=True) != original
+    backup = None
+    if changed and not dry_run:
+        backup = _transactional_provider_publish(
+            config_leaf=config_leaf,
+            target_log=target_log,
+            writes={config: json.dumps(data, indent=2, sort_keys=False) + "\n"},
+            backup_config=True,
+        )
+    return InstallResult("gemini", config, target_log, changed, backup, dry_run)
+
+
+def uninstall_gemini_hooks(
+    log_path: Path | None = None,
+    config_path: Path | None = None,
+    dry_run: bool = False,
+) -> InstallResult:
+    config = config_path or default_gemini_config_path()
+    target_log = (log_path or detect_log_path("gemini")).expanduser()
+    data = read_json_config(config, tighten=not dry_run)
+
+    original = json.dumps(data, sort_keys=True)
+    hooks = data.get("hooks")
+    if isinstance(hooks, dict):
+        for event_name in list(hooks):
+            entries = hooks.get(event_name)
+            if event_name not in GEMINI_EVENTS or not isinstance(entries, list):
+                continue
+            cleaned = remove_json_command_hooks_for_log(entries, target_log, "gemini")
+            if cleaned:
+                hooks[event_name] = cleaned
+            else:
+                hooks.pop(event_name, None)
+        if not hooks:
+            data.pop("hooks", None)
+
+    changed = json.dumps(data, sort_keys=True) != original
+    backup = None
+    if changed and not dry_run:
+        backup = backup_file(config)
+        _private_config_write(config, json.dumps(data, indent=2, sort_keys=False) + "\n")
+    return InstallResult("gemini", config, target_log, changed, backup, dry_run)
+
+
 def hook_shim_path() -> Path | None:
     """The compiled hook shim (hook/jrbar-hook.c), when one is available.
 
@@ -1199,6 +1412,11 @@ def hook_shim_path() -> Path | None:
         candidates.append(Path(sys.executable).resolve().parent / HOOK_SHIM_NAME)
         candidates.append(Path(sys.executable).resolve().parent.parent / "Helpers" / HOOK_SHIM_NAME)
     candidates.append(Path(__file__).resolve().parents[2] / "hook" / "build" / HOOK_SHIM_NAME)
+    # An installed deployment (scripts/install-agents.sh) keeps the shim
+    # beside its venv; the daemon gets it through JRBAR_HOOK_EXEC, and the
+    # CLI run by hand finds the same copy here.
+    prefix = os.environ.get("JRBAR_INSTALL_PREFIX") or "~/.local/share/jrbar"
+    candidates.append(Path(prefix).expanduser() / "bin" / HOOK_SHIM_NAME)
     for candidate in candidates:
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
@@ -1711,6 +1929,8 @@ INSTALLERS = {
     "opencode": install_opencode_plugin,
     "antigravity": install_antigravity_hooks,
     "kiro": install_kiro_hooks,
+    "pi": install_pi_extension,
+    "gemini": install_gemini_hooks,
 }
 
 UNINSTALLERS = {
@@ -1724,6 +1944,8 @@ UNINSTALLERS = {
     "opencode": uninstall_opencode_plugin,
     "antigravity": uninstall_antigravity_hooks,
     "kiro": uninstall_kiro_hooks,
+    "pi": uninstall_pi_extension,
+    "gemini": uninstall_gemini_hooks,
 }
 
 

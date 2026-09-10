@@ -147,7 +147,7 @@ class ThrowawayLocalTests(unittest.TestCase):
         reference anywhere in this pane: recolour every row to a hex nothing
         else uses, then assert no label anywhere still prints an old one."""
         replacements = {
-            spec.provider: f"#0{index}1{index}2{index}"
+            spec.provider: f"#{index:02X}{(index * 7) % 256:02X}{(index * 13) % 256:02X}"
             for index, spec in enumerate(PROVIDER_SPECS)
         }
         stale = {
@@ -304,7 +304,7 @@ def test_a_brand_hex_is_asserted_as_a_literal() -> None:
     assert brands["Codex"] == "#2B8FFF"
     assert brands["Claude"] == "#D97757"
     assert brands["OpenAI"] == "#10A37F"
-    assert brands["Gemini"] == "#4796E3"
+    assert brands["Google"] == "#4796E3"
 
 
 def test_the_two_brand_tables_cannot_disagree() -> None:

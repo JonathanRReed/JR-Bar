@@ -794,6 +794,9 @@ def build_state_document(
         agent_id = str(getattr(status, "agent_id", ""))
         if not agent_id or agent_id in seen:
             continue
+        if str(getattr(status, "session_id", "") or agent_id).endswith("-install-probe"):
+            # The installer's self-test hits the live daemon; it is not a session.
+            continue
         seen.add(agent_id)
         statuses.append(status)
     ask_ids = frozenset(str(getattr(status, "agent_id", "")) for status in ask_statuses)

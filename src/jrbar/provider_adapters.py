@@ -98,6 +98,8 @@ _PRODUCT_PROVIDER_LABELS: Final = {
     "opencode": "OpenCode",
     "antigravity": "Antigravity",
     "kiro": "Kiro",
+    "pi": "Pi",
+    "gemini": "Gemini",
 }
 _INERT_DIAGNOSTIC_IDS: Final = frozenset(
     {
@@ -572,6 +574,30 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "PreToolUse": _PRE_TOOL,
         "PostToolUse": _POST_TOOL,
         "Stop": _STOP,
+    },
+    # The pi extension translates pi's own events to these canonical names;
+    # PermissionRequest only arrives from a pi that emits ui_prompt events.
+    "pi": {
+        "SessionStart": _SESSION_START,
+        "UserPromptSubmit": _USER_PROMPT,
+        "PreToolUse": _PRE_TOOL,
+        "PostToolUse": _POST_TOOL,
+        "PermissionRequest": _PERMISSION_REQUEST,
+        "Stop": _STOP,
+        "SessionEnd": _SESSION_END,
+    },
+    # Gemini CLI: BeforeAgent/BeforeTool/AfterTool/AfterAgent canonicalise on
+    # ingest; Notification(ToolPermission) is refined to PermissionRequest
+    # before it gets here, other notifications stay informational.
+    "gemini": {
+        "SessionStart": _SESSION_START,
+        "UserPromptSubmit": _USER_PROMPT,
+        "PreToolUse": _PRE_TOOL,
+        "PostToolUse": _POST_TOOL,
+        "PermissionRequest": _PERMISSION_REQUEST,
+        "Notification": _NOTIFICATION,
+        "Stop": _STOP,
+        "SessionEnd": _SESSION_END,
     },
 }
 

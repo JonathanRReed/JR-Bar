@@ -327,6 +327,8 @@ class AgentMonitorTests(unittest.TestCase):
                 "opencode",
                 "antigravity",
                 "kiro",
+                "pi",
+                "gemini",
             ),
         )
         self.assertEqual(provider_spec("devin").label, "Devin")
@@ -3813,6 +3815,8 @@ for (const event of [
                 "opencode",
                 "antigravity",
                 "kiro",
+                "pi",
+                "gemini",
             )
         )
         with (
@@ -3846,6 +3850,8 @@ for (const event of [
                 "opencode",
                 "antigravity",
                 "kiro",
+                "pi",
+                "gemini",
             ],
         )
         guard.assert_called_once_with(scope="auto", dry_run=False, volume_uuid=None)
@@ -17281,7 +17287,7 @@ class ProviderPinTests(unittest.TestCase):
             self.assertEqual(load_settings(path).device_provider_pin("Dot"), "codex")
         self.assertIsNone(settings.with_device_provider_pin("Dot", None).device_provider_pin("Dot"))
         with self.assertRaises(ValueError):
-            settings.with_device_provider_pin("Dot", "gemini")
+            settings.with_device_provider_pin("Dot", "nobody")
 
     def test_ask_still_escalates_on_a_pinned_device(self) -> None:
         """The regression the spec demands: an ask from the OTHER

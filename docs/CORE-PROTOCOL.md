@@ -57,7 +57,7 @@ protocol 1. Timestamps are Unix epoch seconds.
  "aggregate":{"mode":"needs_you","needs_you":1,"active":1,"ready":1,"failed":0,"total":3},
  "sessions":[
    {"id":"claude:session:fca1eb06-…","provider":"claude","kind":"main",
-    "parent":null,"label":"jr-bar-b7","cwd":"/Users/j/Downloads/JR-Bar",
+    "parent":null,"label":"jr-bar-b7","short_id":"fca1eb06","cwd":"/Users/j/Downloads/JR-Bar",
     "mode":"tool_running","lifecycle":"active","next_actor":"provider",
     "since":1788982891.0,"updated_at":1788982891.0,"stale":false,
     "pid":9170,"origin":{"kind":"claude_app","label":"Claude App","bundle_id":"com.anthropic.claudefordesktop"},
@@ -90,8 +90,16 @@ Vocabulary:
 
 - `sessions[].id` is the existing agent id: `provider:session:<sid>` for a
   main session, `provider:agent:<id>` for a worker (`kind: "worker"`,
-  `parent` = the main session's id). `label` is the display name with its
-  short id stripped, the way the Python menu titled rows.
+  `parent` = the main session's id). `label` is human: the provider's own
+  session title when it has one (Claude's `name` from
+  `~/.claude/sessions/<pid>.json`, Codex's `thread_name` from
+  `~/.codex/session_index.jsonl`), else the collector's derived name with
+  its short id stripped (project / first prompt), else the working
+  directory's last path component, else `<Provider> <short id>`; a
+  worker is `<parent label> worker <short id>`. `short_id` is the first 8
+  characters of the session id (of the agent id for a worker); `cwd` comes
+  from the hook payload as the process registry recorded it, or the
+  provider's session record.
 - `mode` is the Python `AgentMode` value (`idle_ready`, `working`,
   `tool_running`, `waiting_for_input`, `long_task_progress`,
   `blocked_error`, `completed`, `ended_unconfirmed`, `unknown`).
@@ -111,10 +119,15 @@ Vocabulary:
 - Device ids are the Python device ids; the Screen Bar row is `screen-bar`
   with `enabled` (the Python `virtual_status_device_enabled` setting).
   Hardware `brightness` is the effective percent after idle/DND dimming.
-- `usage.providers[].windows[].used_pct` is `100 - remaining_percent` from
-  the provider usage lanes; `fidelity` is `stale` when the source is
-  stale, else `official`; `state` is the `ProviderSourceState` value.
-  `forecast` is not produced yet.
+- `usage.providers[].windows[].name` is the short form the panel shows:
+  `5h`, `7d`, `Daily`, `Weekly`, `Monthly`, `Credits` (a model-scoped lane
+  such as Claude's Fable window is `7d Fable`; a lane with no short form
+  keeps its label); `id` is the lane id (`five-hour`, `weekly`,
+  `fable-only`, …). `used_pct` is `100 - remaining_percent` from the
+  provider usage lanes; `resets_at` is the lane's reset epoch whenever the
+  lane knows it; `fidelity` is `stale` when the source is stale, else
+  `official`; `state` is the `ProviderSourceState` value. `forecast` is
+  not produced yet.
 - `focus` reflects the DND projection: `mode` is the active DND mode
   (`mute`, `dim`, `pause`, `asks_only`, `dark`) or `normal`, `source` is
   `manual`, `schedule`, `focus` or `default`, `until` the next transition.
@@ -133,11 +146,12 @@ end) and with every refresh.
 ```json
 {"t":"lights","v":1,
  "surfaces":{
-   "hardware":{"program":"#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms; …\nrepeat","led_count":8,"anchor":1788982891.31,"brightness":0.79,"why":"needs_you"},
-   "screen_bar":{"program":"…","led_count":8,"anchor":1788982891.31,"motion":"continuous","static_fallback":"…","brightness":1.0,"why":"needs_you","override":"dnd"},
-   "dot":{"program":"…","led_count":2,"anchor":…,"why":"needs_you"}
+   "hardware":{"program":"#000000 160ms cosine\n0:#1D050A 420ms pulse 0ms; …\nrepeat","led_count":8,"anchor":1788982891.31,"brightness":0.79,
+               "why":"waiting","why_detail":{"session":"codex:session:…","label":"sidepulse-core","provider":"codex","seconds_in_state":92.4,"brightness_factor":1.0,"dimming":[]}},
+   "screen_bar":{"program":"…","led_count":8,"anchor":1788982891.31,"motion":"continuous","static_fallback":"…","brightness":1.0,"why":"waiting","why_detail":{…},"override":"focus"},
+   "dot":{"program":"…","led_count":2,"anchor":1788982891.31,"why":"waiting","why_detail":{…}}
  },
- "linked":true}
+ "linked":true,"devices_linked":true,"linked_skew_ms":11.0}
 ```
 
 - `hardware` is the first connected 8-LED strip (a second one is
@@ -153,10 +167,49 @@ end) and with every refresh.
   (`core_runtime.screen_bar_anchor`).
 - `motion` is `static`, `finite` or `continuous`; `static_fallback` is the
   reduced-motion program.
-- `why` is the glance semantic the program expresses: `needs_you`,
-  `completed_unseen`, `working`, `idle`, `failed`, `capacity`, or
-  `preview` while a `preview_program` holds the surface; `override` names
-  a glance override (a DND or idle dim) when one applies.
+- `why` is a stable enum the app maps to words and colours
+  (`core_projection.WHY_VALUES`):
+
+  | why | meaning |
+  | --- | --- |
+  | `idle` | nothing to do; the resting glow |
+  | `working` | an agent is working (glance `active`) |
+  | `waiting` | an agent is waiting on you (glance `attention`) |
+  | `completed` | a fresh, unseen completion (glance `fresh_completion`, or the completion sweep / all-clear display) |
+  | `failed` | a fresh or unresolved failure (glance, or the failure display) |
+  | `capacity` | a quota window is the story: the capacity glance, the quota alert / runway displays, a reset celebration |
+  | `quiet` | DND shows nothing (display admission `none`, brightness factor 0, or the Fully Dark display); also an idle light dimmed by DND |
+  | `sleep_dim` | idle and dimmed because the display is asleep |
+  | `idle_dim` | idle and dimmed by the idle-dim timer |
+  | `battery` | the battery display (selected, previewed, or the low-battery takeover) |
+  | `calendar` | a calendar glow |
+  | `reminder` | a reminders glow |
+  | `escalation` | the escalation takeover for an ignored ask |
+  | `preview` | a `preview_program`, a signal test or a peek holds the surface |
+  | `studio` | an Effect Studio pin owns the device |
+  | `unknown` | no glance yet |
+
+  Precedence: preview, then a device display kind that names the reason
+  (battery, calendar, reminder, escalation, studio, quota, failure,
+  completion, dark), then DND showing nothing, then the glance semantic;
+  an idle light that is merely dimmed says why (`idle_dim`, `sleep_dim`,
+  `quiet`), a working light stays `working` and reports its dimming in
+  `why_detail`. `why_detail` is `{session, label, provider,
+  seconds_in_state, brightness_factor, dimming}`: the session the light is
+  about (the oldest open ask for `waiting` / `escalation`, the newest
+  working main for `working`, the newest unseen completion, the newest
+  failure; null otherwise), how long it has been in that state (the ask's
+  age, else the session's `since`, else the glance's relay epoch), the
+  product of the dimming factors that applied to the device's brightness,
+  and the dimming words in the order applied: `idle_dim`, `quiet` (DND),
+  `sleep` (display asleep), `night`. `override` still names the glance
+  override (`focus`, `provider_pin`, …) when one applies.
+- `devices_linked` (the `devices_linked` setting, default on) is present
+  when both a Pro and a Dot are connected: their programs were written
+  back to back in one hardware worker command from the same presentation,
+  relay epoch and anchor, so the `dot` surface carries the strip's anchor
+  and the two loop as one unit. `linked_skew_ms` is the last measured
+  gap between the Pro's and the Dot's write completion (11 ms on this Mac).
 
 ### event
 Transient things the app should react to once. The daemon states the fact
@@ -183,7 +236,9 @@ writer: the controller's `settings` attribute is a property whose setter
 bumps `generation` and republishes, so a save from a menu action, a DND
 schedule tick, a device being remembered, or a command all reach the app.
 `document` is `AgentMonitorSettings.to_dict()`; `schema` is 3 for this
-shape. The app renders Settings from this and never keeps its own copy.
+shape (`devices_linked` and `transcript_monitoring.pi` /
+`transcript_monitoring.gemini` are additive). The app renders Settings
+from this and never keeps its own copy.
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```
@@ -279,9 +334,11 @@ Python hook client took 88 ms. If the socket is absent the shim appends
 `{"provider","ppid","ppid_start","payload"}` as one JSON line to
 `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and exits 0;
 the daemon drains those files at start and every 30 s, registering each
-payload's agent process from `ppid`/`ppid_start`. For Cursor the shim
-prints `{}` on stdout as that hook contract requires; otherwise it prints
-nothing.
+payload's agent process from `ppid`/`ppid_start` (for a node-hosted CLI
+such as pi or Gemini the nearest `node` ancestor is the agent process).
+For Cursor and Gemini CLI the shim prints `{}` on stdout as those hook
+contracts require (`--emit-empty-json` forces it for any provider);
+otherwise it prints nothing.
 
 `install.hook_command_arguments` registers the shim when `JRBAR_HOOK_EXEC`
 names one (an empty value disables it), when a bundled copy sits beside a
@@ -289,12 +346,46 @@ frozen executable, or when a source checkout has built
 `hook/build/jrbar-hook`; otherwise `python -m jrbar.hook_client` as before.
 On this Mac the installed copy is `~/.local/share/jrbar/bin/jrbar-hook`
 (`scripts/install-agents.sh` copies it there, sets `JRBAR_HOOK_EXEC` in the
-daemon's LaunchAgent and re-points the claude and codex hooks at it).
+daemon's LaunchAgent, and runs `jrbar agent-monitor install all` so every
+provider with a config on this Mac -- claude, codex, devin, grok, cursor,
+hermes, openclaw, opencode, antigravity, kiro, pi, gemini -- runs it; an
+installed package also finds that copy on its own). The OpenClaw handler,
+the OpenCode plugin and the pi extension embed the shim argv; Antigravity's
+envelope pipes into it.
 Both shapes are recognised as ours by every installer, uninstaller and
 detector, and the Codex trust hash is computed locally for whichever is
 written. `jrbar hooks doctor` shows, per provider, the command registered
-today and the one an install would write, the shim path, whether the
-ingress and core sockets answer, and any queued payloads.
+today (read from JSON and TOML configs, folded YAML, the argv arrays
+embedded in handlers, and the Antigravity envelope) and the one an
+install would write, the shim path, whether the ingress and core sockets
+answer, and any queued payloads.
+
+### Pi and Gemini CLI
+
+Pi (`@mariozechner/pi-coding-agent`) runs TypeScript extensions in-process
+under Node. `jrbar agent-monitor install pi` writes
+`~/.pi/agent/extensions/jrbar.ts` (marker `jrbar-pi-extension-v1`; an
+unmanaged file is never overwritten), which spawns the shim argv baked at
+install time (`HOOK_COMMAND`; the Python client as `FALLBACK_COMMAND`)
+with a Claude-shaped payload `{hook_event_name, session_id, cwd,
+transcript_path, tool_name?, source: "pi"}` on stdin, never awaiting it:
+`session_start`→SessionStart, `turn_start`→UserPromptSubmit,
+`tool_execution_start`→PreToolUse, `tool_execution_end`→PostToolUse,
+`agent_end`→Stop, `session_shutdown`→SessionEnd, and
+`ui_prompt_start`/`ui_prompt_end`→PermissionRequest/PostToolUse on a pi
+that emits them (0.73.1 does not, so pi has no ask lane yet).
+Transcript fallback (`transcript_monitoring.pi`) reads
+`~/.pi/agent/sessions/**/*.jsonl` (header `{"type":"session",…}`).
+
+Gemini CLI hooks live under `hooks` in `~/.gemini/settings.json`
+(`{"matcher":"*","hooks":[{"name":"jrbar","type":"command","command":…,"timeout":5000}]}`;
+every other key, and Antigravity's `~/.gemini/config/hooks.json`, is
+untouched): SessionStart, BeforeAgent→UserPromptSubmit, BeforeTool→PreToolUse,
+AfterTool→PostToolUse, Notification (`notification_type: ToolPermission`
+becomes PermissionRequest on ingest), AfterAgent→Stop, SessionEnd. The
+hook's stdout must be a JSON object, so the shim prints `{}`. Transcript
+fallback (`transcript_monitoring.gemini`) reads
+`~/.gemini/tmp/<project>/chats/session-*.jsonl`.
 
 ## Running it
 
