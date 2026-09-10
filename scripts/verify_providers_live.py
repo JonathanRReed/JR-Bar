@@ -56,6 +56,11 @@ INTERRUPTED_TURN = ("session_start", "user_prompt_submit", "pre_tool_use", "inte
 FINISHED_LIFECYCLES = frozenset({"completed", "ended"})
 #: The one word that means the provider said so: the green check.
 DONE_LIFECYCLES = frozenset({"completed"})
+#: How long a row may take to read as over. The daemon's periodic refresh is
+#: `status_bar.STATUS_BAR_REFRESH_SECONDS` (15 s) and a turn that finishes in
+#: milliseconds -- `pi -p` does -- can land between two ticks, so anything
+#: under one full period plus slack tests the daemon's clock, not its reading.
+ROW_WAIT_SECONDS = 45.0
 #: Over without a provider's end event: the liveness sweep's synthetic one.
 UNCONFIRMED_LIFECYCLES = frozenset({"ended"})
 PI_PROVIDER = "mock"
@@ -354,11 +359,13 @@ def check_turn(check: Check, provider: str, label: str, since: int, session: str
     else:
         check.fail(f"{label} events", f"session={session} got {names}")
         return session
-    row = session_row(provider, session, lifecycles=DONE_LIFECYCLES)
+    started = time.time()
+    row = session_row(provider, session, wait=ROW_WAIT_SECONDS, lifecycles=DONE_LIFECYCLES)
+    waited = time.time() - started
     if row is None:
-        check.fail(f"{label} state row", "no session row in state within 20s")
+        check.fail(f"{label} state row", f"no session row in state within {ROW_WAIT_SECONDS:.0f}s")
         return session
-    detail = f"lifecycle={row.get('lifecycle')} mode={row.get('mode')} event={row.get('event')}"
+    detail = f"lifecycle={row.get('lifecycle')} mode={row.get('mode')} event={row.get('event')} after={waited:.0f}s"
     # A one-shot CLI run sends a real Stop and SessionEnd and then exits.
     # That is the whole life of the run, and it has to read `completed` --
     # the green check, "Done". `ended` here is the defect: a finished run
