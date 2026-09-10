@@ -355,7 +355,7 @@ struct EffectInspectorPane: View {
                 ForEach(uses) { assignment in
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.turn.down.right").foregroundStyle(.tertiary)
-                        Text("\(assignment.scope.label) · \(assignment.targetLabel)")
+                        Text("\(assignment.scope.label) · \(store.targetTitle(for: assignment))")
                         Spacer()
                         Button("Remove") { store.remove(assignment) }.buttonStyle(.link).font(.caption)
                     }
@@ -568,7 +568,8 @@ struct EffectAssignmentsPane: View {
                     ForEach(document.byScope, id: \.scope) { group in
                         Section {
                             ForEach(group.assignments) { assignment in
-                                AssignmentRow(assignment: assignment, effect: store.catalog?.effect(assignment.effectID),
+                                AssignmentRow(assignment: assignment, title: store.targetTitle(for: assignment),
+                                              effect: store.catalog?.effect(assignment.effectID),
                                               selected: store.selectedID == assignment.effectID) {
                                     store.remove(assignment)
                                 } select: {
@@ -576,7 +577,7 @@ struct EffectAssignmentsPane: View {
                                 }
                             }
                         } header: {
-                            Text(group.scope.label)
+                            Text(group.scope == .global ? "Default" : group.scope.label)
                         }
                     }
                 }
@@ -616,6 +617,7 @@ struct EffectAssignmentsPane: View {
 
 struct AssignmentRow: View {
     let assignment: EffectAssignment
+    let title: String
     let effect: EffectDefinition?
     let selected: Bool
     let remove: () -> Void
@@ -628,7 +630,7 @@ struct AssignmentRow: View {
                             style: .band, dotSize: 6, paused: !selected, showsBackground: false)
                 .frame(width: 40)
             VStack(alignment: .leading, spacing: 1) {
-                Text(assignment.targetLabel).lineLimit(1)
+                Text(title).lineLimit(1)
                 HStack(spacing: 4) {
                     Text(effect?.label ?? assignment.effectID).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if !assignment.parameters.isEmpty, let effect, assignment.parameters != effect.defaultParameters {

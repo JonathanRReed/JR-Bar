@@ -236,22 +236,31 @@ public final class CoreModel {
         ], as: EffectPreview.self)
     }
 
+    /// `apply_effect {effect, scope, target, parameters}` (protocol 1): the
+    /// Effect Studio assignment for that scope and target. The reply carries
+    /// the assignment list; `parameters` is an app-proposed extension the
+    /// daemon may ignore.
     @discardableResult
     public func setAssignment(_ assignment: EffectAssignment) async throws -> EffectAssignmentDocument {
         var args: [String: JSONValue] = [
-            "effect_id": .string(assignment.effectID),
+            "effect": .string(assignment.effectID),
             "scope": .string(assignment.scope.rawValue),
+            "target": assignment.targetID.map(JSONValue.string) ?? .null,
             "parameters": .object(assignment.parameters),
         ]
-        if let target = assignment.targetID { args["target_id"] = .string(target) }
-        return try await request("set_assignment", args: args, as: EffectAssignmentDocument.self)
+        if assignment.parameters.isEmpty { args["parameters"] = nil }
+        return try await request("apply_effect", args: args, as: EffectAssignmentDocument.self)
     }
 
+    /// `apply_effect` with `effect: null` removes the assignment.
     @discardableResult
     public func clearAssignment(scope: EffectScope, targetID: String?) async throws -> EffectAssignmentDocument {
-        var args: [String: JSONValue] = ["scope": .string(scope.rawValue)]
-        if let targetID { args["target_id"] = .string(targetID) }
-        return try await request("clear_assignment", args: args, as: EffectAssignmentDocument.self)
+        let args: [String: JSONValue] = [
+            "effect": .null,
+            "scope": .string(scope.rawValue),
+            "target": targetID.map(JSONValue.string) ?? .null,
+        ]
+        return try await request("apply_effect", args: args, as: EffectAssignmentDocument.self)
     }
 
     /// `import_effect_pack {path}`: the daemon reads and validates the JSON

@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 64 tests / 12 suites; the parity test fans out over 29 programs
+swift test                  # 68 tests / 12 suites; the parity test fans out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # restart the built app
 ```
@@ -250,6 +250,50 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
 `doctor` returns a checklist document. `--step`, `--start-at`, `--no-loop`,
 `--socket`, `--once`.
 
+### Protocol extensions the mock proposes
+
+`docs/CORE-PROTOCOL.md` is the contract; these are what the Usage Center
+and Effect Studio need beyond it, answered by the mock and decoded
+tolerantly by `JRBarCore` (every field optional, unknown keys ignored).
+Documented here so the daemon can adopt the same shapes.
+
+* `state.usage.providers[]`: `account {plan, label, fidelity}` next to the
+  windows, and `forecast {exhausts_at, pace}` (the doc reserves `forecast`
+  without a shape; `pace` is `ahead` / `on_pace` / `behind`). A provider
+  whose `state` is `not_signed_in` (any state containing `sign`, `auth` or
+  `login`) may have no windows; the Usage Center shows how to fix it.
+* `usage_history {provider, range: 7d|30d|90d|365d}` →
+  `{provider, range, days[{date, tokens_in, tokens_out, cache_read,
+  cost_usd}], hours[{hour, at, …same}], pricing {input_per_mtok,
+  output_per_mtok, cache_read_per_mtok, as_of, approximate, currency},
+  account}`. Errors: `not_found` for an unknown provider, `invalid_range`.
+  `refresh_usage` replies `{requested_at, providers}` as the daemon does.
+* `list_effects` → `{effects[], packs[], cadences[], generation}`; each
+  effect is the registry's `EffectDefinition.to_dict()` shape (`id, label,
+  description, meaning, surfaces, parameters[{name, type, default,
+  description, minimum, maximum, choices, minimum_items, maximum_items,
+  allow_empty, unit}], safety, energy, reduce_motion_fallback, version,
+  catalog, role`) plus `pack` for `pack:<pack>:<effect>` ids, `preview
+  {program, led_count}` (the rendered 8-LED LEDS program) and `cadence` for
+  hard blinks. Packs: `{id, name, version, effects[], license, path}`.
+* `render_effect {effect_id, parameters, led_count, color?}` →
+  `{effect_id, program, led_count, parameters (normalised), cadence}`.
+* `list_assignments` → `{assignments[{effect_id, scope, target_id,
+  parameters}], active_scene, generation}`.
+* `apply_effect {effect, scope, target, parameters?}` is the protocol's
+  own command; the mock replies with the daemon's `{effect, scope, target,
+  assignments[]}` plus the fuller rows above, `active_scene` and
+  `generation`. `EffectAssignment` decodes both the lean `{effect, target}`
+  rows and the `{effect_id, target_id, parameters}` ones. Refusals are
+  `invalid_args`, as in the daemon.
+* `import_effect_pack {path}` → the new catalog plus `imported {id, name,
+  effects}`; `invalid_pack` for anything but a data-only JSON v2 pack under
+  256 KB, `conflict` for a pack id already loaded from elsewhere.
+  `export_effect_pack {ids[], path, name?}` writes a v2 pack and replies
+  `{path, effects, bytes, id}`.
+* `quota_reset` is emitted (the doc reserves it) with `provider` and
+  `detail` when the idle step puts a window back.
+
 ## The app (`JRBarApp`)
 
 * `LSUIElement` accessory app; `NSStatusItem` with a template glyph (a bar
@@ -409,6 +453,72 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
   Settings… and the status menu's Settings… (⌘,) open it; a minimal main
   menu gives the text fields ⌘C/⌘V/⌘A.
 
+* Usage Center (`UsageCenterWindowController`, `UsageCenterStore`,
+  `UsageCenterView`; ⌘U from the panel, the panel's Usage header
+  "Details ›", the footer overflow menu, the status menu and the app
+  menu): a 760×720 titled window with a range picker (7d / 30d / 90d /
+  365d), a Tokens / Cost picker and Refresh (`refresh_usage`, ⌘R). One
+  card per provider in `state.usage.providers`: tile, name, a state badge
+  ("Near limit", "Limited", "Stale"), the account line (plan · label ·
+  fidelity from `account`, else the history's), the primary (5h) percent
+  in the provider accent turning amber at 80 % and red at 95 % with `~`
+  when the fidelity is not official, then a ring per window with its reset
+  countdown and burn rate, and beside the rings the forecast reading:
+  the daemon's `forecast {exhausts_at, pace}` when it sends one, else a
+  least-squares pace over the last 45 minutes of `state` samples
+  (`UsageSampleLog` in `CoreModel`, `UsageForecaster` in `JRBarCore`):
+  "At this pace the 5h window runs out at 16:42 (in 1h 12m)", "Comfortable:
+  61 % left, resets before you'd hit it", "Used up", or "no pace yet". Under
+  a divider, a Swift Charts stacked bar graph of `usage_history` (input,
+  output and cache reads by day, by hour for 7d; or cost) with totals, the
+  cost estimate, the cache savings line (cache reads priced at the input
+  rate minus the cache rate) and the pricing disclosure ("Approximate: list
+  prices ($3.00 in / $15.00 out per M tokens, $0.30 cache), as of …
+  Subscription plans are not billed per token."). A `quota_reset` event
+  washes that card in its accent with a "Window reset" pill for ~1.5 s
+  (a fade under Reduce Motion) and reloads its history. Empty states:
+  "Core not connected", "No usage yet", "Sign in via the CLI" for a
+  provider whose `state` says it is signed out (windows stay hidden in the
+  panel), a breathing skeleton while a history loads, an error row with
+  Retry when the command fails, "Nothing recorded in this range".
+* Effect Studio (`EffectStudioWindowController`, `EffectStudioStore`,
+  `EffectStudioView`; Settings › Lighting › Effects…, the panel footer's
+  overflow menu, the status menu and the app menu): a 1060×680 window in
+  three panes. Library: a search field and the `list_effects` catalog
+  grouped by meaning ("Provider animation", "Attention required", "Pack ·
+  nightlab", …), each row a still of the effect's brightest frame (the
+  selected row animates), pack and Attention / Critical badges, a check
+  when an assignment uses it. Inspector: label, pack badge, id,
+  description and meaning; the live 8-LED preview (`LEDStripPreview`,
+  30 Hz, every program through the presentation compiler first) plus the
+  Screen Bar band under it; "Preview on hardware" (`preview_program` on
+  `hardware` for 5 s, a one-time consent alert remembered in
+  `UserDefaults`, a countdown while it plays); Assign… (⌘↩); fact chips
+  (safety, energy, surfaces, Reduce Motion fallback); a safety panel for
+  attention / critical effects and named cadences ("1.0 Hz · 500 ms on /
+  500 ms off", the 2 Hz clamp note); parameters as native controls from
+  `EffectParameter.control` (switch, slider with unit, integer slider or
+  stepper, menu, colour well, palette editor with add / remove / clear),
+  re-rendered through `render_effect` 150 ms after the last change, with
+  Reset to defaults; and the "Used by" list. Assignments: the Active scene
+  menu (`set_setting active_scene`), `list_assignments` grouped by scope in
+  precedence order (Device, Project, Provider instance, Provider, Scene,
+  State, Default) with the target's display name, the effect, "tuned" when
+  parameters differ from the defaults, a band preview and a remove button
+  (`apply_effect` with `effect: null`). The Assign sheet picks scope and
+  target (state, scene, provider, device menus; free text for instance and
+  project), keeps or drops the tuned parameters, warns on attention /
+  critical effects and refuses the reserved Needs-you / Failed states
+  before the daemon does. Toolbar: Import… (`NSOpenPanel` →
+  `import_effect_pack {path}`; the daemon parses and validates the JSON,
+  the app never does), Export… (`NSSavePanel` → `export_effect_pack {ids,
+  path, name}` for the selected effect, its whole pack, or every provider
+  animation) and Refresh.
+* Lighting page previews: each provider's colour well sits beside a 66 pt
+  band that plays that provider's working animation under the current
+  blend mode and cycle speed (rebuilt on every change, each provider a
+  phase apart), and the Celebrate completions row shows the done
+  celebration as eight dots, dimmed when the toggle is off.
 * Core supervision (`CoreSupervisor` in `JRBarCore`): with
   `JRBAR_CORE_EXEC` set the app spawns that command as a child, captures
   its stdout/stderr into the log tail (Advanced → log), retries the socket
@@ -431,12 +541,21 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
   a repeating chime (Hero, every 30 s); the `takeover` tier gets the same
   chime, no full-screen takeover.
 * Settings: Software Update is a stub button plus an app-local channel
-  choice (no updater). The Effects page is an empty state; Effect Studio
-  (`apply_effect`) is a later slice. Launch at login registers with
-  `SMAppService`, which only works from a bundled, signed app.
-  `reset_settings` and `undo_clear`'s `batch` shape are app-proposed
-  details the mock answers; the real daemon has to adopt them. `subscribe`
-  is not surfaced.
+  choice (no updater). Launch at login registers with `SMAppService`,
+  which only works from a bundled, signed app. `reset_settings` and
+  `undo_clear`'s `batch` shape are app-proposed details the mock answers;
+  the real daemon has to adopt them. `subscribe` is not surfaced.
+* Usage Center and Effect Studio run on app-proposed protocol extensions
+  (below) that only the mock answers today; against the real daemon the
+  cards show their quota rings and forecast from `state` and the history
+  section reports the `unknown_command` error with a Retry, and the studio
+  stays on its "Loading effects…" state until `list_effects` exists.
+  `apply_effect`'s `parameters` argument is an extension too: the daemon's
+  `EffectAssignmentRecord` has no parameters yet, so tuned values only
+  survive on the mock.
+* The Lighting page's tiny previews are built locally
+  (`LightingPreviewPrograms`): a reading of each blend mode and the
+  celebration, not the daemon's compiler output. The strip is the truth.
 * History rows are whatever `list_history` returns; the app does not
   persist its own copy, so nothing is shown while the core is away.
 * The aggregate fallback is a simple reduction of `latest.json` (needs input >

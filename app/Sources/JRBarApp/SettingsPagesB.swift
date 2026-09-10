@@ -131,8 +131,9 @@ struct ProviderSwatch: View {
                 Text(style.name)
                 HStack(spacing: 6) {
                     LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
-                                    style: .band, dotSize: 5, showsBackground: false)
-                        .frame(width: 44)
+                                    style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6,
+                                    phase: Double(SettingsKey.providers.firstIndex(of: provider) ?? 0) * cycle * 0.23)
+                        .frame(width: 66)
                         .accessibilityLabel("\(style.name) working animation preview")
                     Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
                         .font(.caption.monospaced())

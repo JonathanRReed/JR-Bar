@@ -28,9 +28,12 @@ App-proposed extensions (documented in app/README.md): `usage_history`
 (deterministic daily/hourly token and cost rows per provider), `list_effects`
 (the effect registry mirrored from src/jrbar/effect_registry.py plus a sample
 data-only pack, each effect with a rendered 8-LED LEDS preview),
-`render_effect` (the preview for chosen parameters), `list_assignments` /
-`set_assignment` / `clear_assignment` (scoped effect assignments), and
+`render_effect` (the preview for chosen parameters), `list_assignments`
+(the scoped assignments with their parameters and the active scene), and
 `import_effect_pack` / `export_effect_pack` (JSON v2 packs by path).
+Assignments are written through the protocol's own `apply_effect`
+(`{effect, scope, target}`, effect null to remove) with an app-proposed
+`parameters` argument.
 
 Standard library only.
 
@@ -982,10 +985,13 @@ class World:
         # `rate` is the percent of the 5h window burned per hour; the forecast
         # extrapolates it. Gemini starts near its limit so the Usage Center has
         # a "runs out before the reset" card; Cursor is not signed in.
+        # Order is the daemon's `usage_graph_providers` order; the near-limit
+        # provider comes second so the first screen of the Usage Center shows
+        # a comfortable card next to one that is about to run out.
         self.usage = {
             "claude": {"h5": 42.0, "d7": 61.0, "d30": 37.0, "fidelity": "official", "pace": "ahead", "rate": 12.0, "state": "ok"},
-            "codex": {"h5": 12.0, "d7": 30.0, "d30": 22.0, "fidelity": "derived", "pace": "on_pace", "rate": 6.0, "state": "ok"},
             "gemini": {"h5": 91.0, "d7": 48.0, "d30": None, "fidelity": "derived", "pace": "ahead", "rate": 14.0, "state": "warning"},
+            "codex": {"h5": 12.0, "d7": 30.0, "d30": 22.0, "fidelity": "derived", "pace": "on_pace", "rate": 6.0, "state": "ok"},
             "cursor": {"h5": None, "d7": None, "d30": None, "fidelity": "manual", "pace": None, "rate": 0.0, "state": "not_signed_in"},
         }
         self.usage_refreshed_at = now - 45
@@ -1621,10 +1627,12 @@ class World:
             self.push_settings()
             result = {"policy": self.document["closed_lid_awake_policy"]}
         elif name == "refresh_usage":
+            providers = [p for p in (args.get("providers") or []) if isinstance(p, str)]
             with self.lock:
                 self.usage_refreshed_at = time.time()
             self.tick_usage(0.0)
-            result = {"refreshed_at": self.usage_refreshed_at}
+            # The daemon's reply shape; the new numbers ride the next `state`.
+            result = {"requested_at": self.usage_refreshed_at, "providers": providers}
         elif name == "usage_history":
             provider = str(args.get("provider", ""))
             range_name = str(args.get("range", "30d"))
@@ -1650,44 +1658,50 @@ class World:
         elif name == "list_assignments":
             with self.lock:
                 result = self.assignment_document()
-        elif name == "set_assignment":
-            effect = self.find_effect(str(args.get("effect_id", "")))
-            if effect is None:
-                return self._error(cid, "unknown_effect", "no such effect")
-            scope = str(args.get("scope", ""))
+        elif name == "apply_effect":
+            # Protocol 1: {effect, scope, target}; `effect` null removes the
+            # assignment. `parameters` is the app's extension (the daemon's
+            # EffectAssignmentRecord has none yet). The reply carries the
+            # assignment list the way the daemon shapes it, plus the fuller
+            # rows and the active scene the studio renders.
+            scope = str(args.get("scope") or "global")
             if scope not in ("global", "semantic", "scene", "provider", "provider_instance", "project", "device"):
-                return self._error(cid, "invalid_scope", "unknown assignment scope")
-            target = args.get("target_id")
-            target = str(target).strip() if target is not None else None
-            if (scope == "global") != (not target):
-                return self._error(cid, "invalid_target", "global assignments take no target; every other scope needs one")
-            if scope == "semantic" and target in ("asking", "failure"):
-                return self._error(cid, "reserved_semantic", "asking and failure keep their reserved effects")
-            if scope == "scene" and target not in ("calm", "focus", "night", "demo", "travel", "dnd"):
-                return self._error(cid, "invalid_target", "unknown scene")
-            if target is not None and len(target) > 160:
-                return self._error(cid, "invalid_target", "target too long")
-            row = {"effect_id": effect["id"], "scope": scope, "target_id": target,
-                   "parameters": normalize_effect_parameters(effect, args.get("parameters") or {})}
-            with self.lock:
-                self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target)]
-                self.assignments.append(row)
-                self.effects_generation += 1
-                result = self.assignment_document()
-                result["assignment"] = row
-            self.push_log("info", f"assignment {scope}:{target or '*'} → {effect['id']}")
-        elif name == "clear_assignment":
-            scope = str(args.get("scope", ""))
-            target = args.get("target_id")
-            target = str(target).strip() if target is not None else None
-            with self.lock:
-                before = len(self.assignments)
-                self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target or None)]
-                removed = len(self.assignments) < before
+                return self._error(cid, "invalid_args", "unknown assignment scope")
+            target = args.get("target")
+            target = str(target).strip() or None if target is not None else None
+            effect_id = args.get("effect")
+            if effect_id in (None, "", "none"):
+                with self.lock:
+                    before = len(self.assignments)
+                    self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target)]
+                    removed = len(self.assignments) < before
+                    if removed:
+                        self.effects_generation += 1
+                    result = self.assignment_document()
+                    result.update({"effect": None, "scope": scope, "target": target, "removed": removed})
                 if removed:
+                    self.push_log("info", f"assignment {scope}:{target or '*'} removed")
+            else:
+                effect = self.find_effect(str(effect_id))
+                if effect is None:
+                    return self._error(cid, "invalid_args", f"unknown effect {effect_id!r}")
+                if (scope == "global") != (not target):
+                    return self._error(cid, "invalid_args", "global assignments take no target; every other scope needs one")
+                if scope == "semantic" and target in ("asking", "failure"):
+                    return self._error(cid, "invalid_args", "asking and failure keep their reserved effects")
+                if scope == "scene" and target not in ("calm", "focus", "night", "demo", "travel", "dnd"):
+                    return self._error(cid, "invalid_args", "unknown scene")
+                if target is not None and len(target) > 160:
+                    return self._error(cid, "invalid_args", "target too long")
+                row = {"effect_id": effect["id"], "scope": scope, "target_id": target,
+                       "parameters": normalize_effect_parameters(effect, args.get("parameters") or {})}
+                with self.lock:
+                    self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target)]
+                    self.assignments.append(row)
                     self.effects_generation += 1
-                result = self.assignment_document()
-                result["removed"] = removed
+                    result = self.assignment_document()
+                    result.update({"effect": effect["id"], "scope": scope, "target": target, "assignment": row})
+                self.push_log("info", f"assignment {scope}:{target or '*'} → {effect['id']}")
         elif name == "import_effect_pack":
             path = Path(str(args.get("path", ""))).expanduser()
             try:

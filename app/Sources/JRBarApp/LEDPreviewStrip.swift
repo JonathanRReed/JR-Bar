@@ -43,6 +43,9 @@ struct LEDStripPreview: View {
     var paused: Bool = false
     var showsBackground: Bool = true
     var cornerRadius: CGFloat = 9
+    /// Seconds into the program at which this preview starts, so a grid of
+    /// previews does not breathe in lockstep.
+    var phase: TimeInterval = 0
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ViewState private var origin = Date()
@@ -52,8 +55,10 @@ struct LEDStripPreview: View {
     var body: some View {
         let sampler = self.sampler
         let still = paused || reduceMotion || (sampler?.isStatic ?? true)
+        // A paused preview (a library row that is not selected) shows the
+        // program's brightest moment, not a black first frame.
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: still)) { context in
-            let colors = colors(sampler: sampler, at: context.date, still: reduceMotion)
+            let colors = colors(sampler: sampler, at: context.date, still: paused || reduceMotion)
             frame(colors)
         }
         .onChange(of: program) { _, _ in origin = Date() }
@@ -62,7 +67,7 @@ struct LEDStripPreview: View {
 
     private func colors(sampler: LEDSSampler?, at date: Date, still: Bool) -> [RGB] {
         guard let sampler else { return Array(repeating: RGB(r: 0.35, g: 0.05, b: 0.05), count: ledCount) }
-        var t = date.timeIntervalSince(origin)
+        var t = date.timeIntervalSince(origin) + phase
         if still {
             // The brightest instant of the first cycle, so a breathe is not shown at its floor.
             let span = sampler.cycleDuration ?? sampler.motionEndsAt ?? 0

@@ -131,8 +131,14 @@ struct ProviderUsageCard: View {
             } else if provider.windows.isEmpty {
                 Text("No quota window reported yet.").font(.callout).foregroundStyle(.secondary)
             } else {
-                windows
-                forecastLine
+                // Rings on the left, the reading on the right, so the card
+                // does not leave half its width empty.
+                HStack(alignment: .top, spacing: 18) {
+                    windows
+                    forecastLine
+                        .frame(maxWidth: 320, alignment: .leading)
+                        .padding(.top, 6)
+                }
             }
             if !provider.isSignedOut {
                 Divider()
@@ -218,28 +224,30 @@ struct ProviderUsageCard: View {
     }
 
     private var windows: some View {
-        HStack(alignment: .top, spacing: 22) {
+        HStack(alignment: .top, spacing: 14) {
             ForEach(provider.windows) { window in
                 QuotaRing(window: window, forecast: store.forecast(for: provider, window: window), accent: style.accent,
                           now: store.now, reduced: store.reduceMotion)
             }
-            Spacer(minLength: 0)
         }
     }
 
     private var forecastLine: some View {
         let window = primary ?? provider.windows[0]
         let forecast = store.forecast(for: provider, window: window)
-        return HStack(alignment: .firstTextBaseline, spacing: 7) {
+        return HStack(alignment: .top, spacing: 8) {
             Image(systemName: forecast.isCritical ? "exclamationmark.triangle.fill" : (forecast.verdict == .unknown ? "questionmark.circle" : "checkmark.circle"))
                 .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
-            VStack(alignment: .leading, spacing: 2) {
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 4) {
                 Text(forecast.headline(now: store.now))
                     .font(.callout.weight(forecast.isCritical ? .medium : .regular))
                     .foregroundStyle(forecast.isCritical ? .primary : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(forecastSource(forecast))
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .accessibilityElement(children: .combine)

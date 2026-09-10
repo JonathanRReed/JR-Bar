@@ -539,17 +539,22 @@ public struct EffectAssignment: Codable, Hashable, Sendable, Identifiable {
         self.parameters = parameters
     }
 
+    /// The daemon's `apply_effect` reply names rows `{effect, scope, target}`;
+    /// the mock's fuller rows say `effect_id` / `target_id` and carry
+    /// `parameters`. Both decode.
     enum CodingKeys: String, CodingKey {
-        case scope, parameters
+        case scope, parameters, effect, target
         case effectID = "effect_id"
         case targetID = "target_id"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        effectID = try c.decodeIfPresent(String.self, forKey: .effectID) ?? "none"
+        effectID = try c.decodeIfPresent(String.self, forKey: .effectID)
+            ?? c.decodeIfPresent(String.self, forKey: .effect) ?? "none"
         scope = EffectScope(rawValue: try c.decodeIfPresent(String.self, forKey: .scope) ?? "global") ?? .global
         targetID = try c.decodeIfPresent(String.self, forKey: .targetID)
+            ?? c.decodeIfPresent(String.self, forKey: .target)
         parameters = try c.decodeIfPresent([String: JSONValue].self, forKey: .parameters) ?? [:]
     }
 
