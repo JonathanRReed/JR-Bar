@@ -1052,10 +1052,16 @@ def _usage_history_warm_later(self) -> None:
     """Warm the transcript caches shortly after start so the first
     ``usage_history`` answers inside its budget instead of a cold scan."""
 
+    service = _usage_history_service(self)
+
     def warm() -> None:
-        time.sleep(USAGE_WARM_DELAY_SECONDS)
+        # Waiting on the service's own stopping flag, not sleeping: a quit
+        # inside the delay ends this thread now rather than leaving it to
+        # wake during interpreter shutdown.
+        if service.stopping.wait(USAGE_WARM_DELAY_SECONDS):
+            return
         try:
-            _usage_history_service(self).warm()
+            service.warm()
         except Exception as error:
             self._core_log(f"core: usage history warm-up failed: {error.__class__.__name__}")
 
@@ -1625,6 +1631,9 @@ def build_headless_controller_class() -> type:
         def _core_quit_flush(self) -> None:
             """The daemon's last words: the usage sample buffer to disk,
             then every mounted strip off."""
+            service = getattr(self, "_core_usage_history_service", None)
+            if service is not None:
+                service.close()
             try:
                 self._core_usage_samples.save()
             except Exception as exc:

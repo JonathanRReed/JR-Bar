@@ -280,3 +280,17 @@ def test_service_rejects_a_bad_range_and_answers_unscanned_providers_empty() -> 
     document = service.document("gemini", "7d")
     assert document["records"] == 0 and document["pending"] is False
     assert document["pricing"]["estimated"] is True
+
+
+def test_service_close_starts_nothing_further() -> None:
+    """A daemon on its way down must not begin a forty-second scan, and the
+    warm-up must stop waiting the moment it is told to."""
+    calls: list[tuple[str, int]] = []
+    threads = _Threads()
+    service = _service(lambda provider, days: calls.append((provider, days)) or [], threads=threads)
+    service.close()
+    assert service.stopping.is_set()
+    service.warm()
+    threads.settle()
+    assert calls == [] and threads.threads == []
+    assert service.document("codex", "7d", budget=0.0)["pending"] is True
