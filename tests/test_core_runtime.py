@@ -986,3 +986,28 @@ def test_a_dead_process_reads_ended_not_done(cleared, monkeypatch: pytest.Monkey
     done = rows["devin:session:troubled"]
     assert done["lifecycle"] == "ended" and done["mode"] == "ended_unconfirmed"
     assert done["stale"] is True and done["pid"] is None
+
+
+def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    """hidapi's IOHIDManager keeps the run loop of whichever thread first
+    touched it. A fresh thread per probe leaves it holding a run loop that
+    went with its thread, and the next enumeration -- or a device arriving
+    during one -- dies on a pointer-authentication trap inside
+    CoreFoundation. That is not an exception anything can catch: it takes
+    the daemon down, and the supervisor restarts it into the same crash
+    ten seconds later.
+    """
+    monkeypatch.setattr(threading, "Thread", REAL_THREAD)
+    threads: list[int] = []
+
+    def fake_probe() -> list:
+        threads.append(threading.get_ident())
+        return []
+
+    monkeypatch.setattr(core_runtime, "deck_probe", fake_probe)
+    controller = headless
+    for _ in range(3):
+        controller._core_deck_probe_now(wait=True)
+    assert len(threads) == 3
+    assert len(set(threads)) == 1, "each probe enumerated on a different thread"
+    assert threads[0] != threading.get_ident()
