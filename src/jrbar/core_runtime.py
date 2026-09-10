@@ -1451,13 +1451,39 @@ def build_headless_controller_class() -> type:
                 return result
             dot_request = companion[2]
             try:
-                dot_result = self._sync_hardware_device(dot_request)
+                dot_result = self._core_linked_dot_write(dot_request, result)
             except Exception as exc:
                 legacy.log_status_bar(f"core: linked dot write failed: {exc.__class__.__name__}")
                 return result
             dot_command = self._hardware_write_command(dot_request, command.deadline - 1.0)
             self._core_linked_results[command.key] = (dot_command, dot_result)
             return result
+
+        def _core_linked_dot_write(self, dot_request, pro_result):
+            """Write the Pro's exact program to the Dot.
+
+            Linked mode means one animation across both strips. The
+            firmware ignores per-index colours beyond its LED count, so the
+            Pro's program bytes played on the Dot are LEDs 0 and 1 of the
+            same wave, restarted at the same instant. The Dot's own
+            brightness and channel gains still apply through its controller.
+            Before this the Dot fell through to its ambient "binary
+            heartbeat" candidate: a solid two-LED status code at full
+            brightness that never moved.
+            """
+            write = getattr(pro_result, "write", None)
+            program = getattr(write, "program", None)
+            if not program or getattr(write, "error", None) is not None:
+                return self._sync_hardware_device(dot_request)
+            controller = self.agent_controller_for_device(dot_request.device)
+            dot_write = controller.sync_program(program, write.state)
+            return legacy.HardwareWriteResult(
+                request=dot_request,
+                write=dot_write,
+                label=f"{dot_request.device.name} linked to {pro_result.request.device.name}",
+                agent_display_rendered=True,
+                completed_at=self._runtime_worker_monotonic(),
+            )
 
         def _apply_hardware_write_result(self, command, result) -> None:
             self._core_note_hardware_write(command, result)
