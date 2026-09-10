@@ -574,6 +574,7 @@ def test_application_did_finish_launching_only_arms_plain_timers_once(
     assert [selector for _, selector, _ in _TimerAPI.calls] == [
         "refresh:",
         "pollLid:",
+        "pollLiveness:",
     ]
     assert target.start_event_server.call_count == 1
     assert target.start_cloud_ingest_server.call_count == 1
