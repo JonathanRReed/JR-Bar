@@ -1,125 +1,136 @@
-# Final testing from main
+# Final testing for 0.8
 
-The September 7, 2026 integration consolidates the existing branch histories and
-finishes the supported Control Center source work. Use `main`, not one of the
-historical feature, production, or fix branches. The resolutions are recorded in
-[the branch ledger](BRANCH-CONSOLIDATION-2026-09-07.md).
+0.8 is a Swift menu-bar app over a Python daemon. Both halves have to pass, and
+the parts that matter most -- a real agent CLI, a real device, a real account --
+cannot be proved by either test suite. This is the order to run them in, what
+each one actually covers, and what is left over for the owner's own eyes.
 
-This is a candidate for final testing. Native macOS, physical device, live account,
-and signed installed-release acceptance still require evidence from the owner's
-Mac. Source-level success is not a release certificate.
+Everything here runs on the owner's Mac from a clean `main`. Source-level
+success is not a release certificate; [PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md)
+is the separate gate for signing, notarization and publishing.
 
-## One command
-
-Commit or stash local changes before switching branches. From the repository:
+## The five gates
 
 ```sh
-git fetch origin
-git switch main
-git pull --ff-only
-make final-test
+make fast                                          # 1. seconds
+.venv/bin/python -m pytest -q -p no:cacheprovider tests   # 2. ~6 minutes
+cd app && swift test && cd ..                      # 3. ~2 minutes
+make package                                       # 4. ~4 minutes
+.venv/bin/python scripts/verify_providers_live.py --asks   # 5. ~4 minutes
 ```
 
-Python 3.12 must be installed and available to `scripts/bootstrap-dev.sh`.
-The existing bootstrap accepts Homebrew's usual Python 3.12 paths or an explicit
-base interpreter, for example `PYTHON=python3.12 make final-test`. It creates the
-pinned `.venv`; final verification then uses that environment. It does not try to
-bootstrap using a nonexistent virtual environment. An existing `.venv` of another
-Python version is refused rather than silently replaced; set `JRBAR_DEV_VENV`
-to a new directory to preserve it.
+Nothing is skipped because it is slow. Gate 5 needs the packaged app installed
+and running, so it comes after gate 4 and after the install below.
 
-`make final-test` runs the fast source gate, the full Mac pytest suite, wheel/sdist
-builds, Twine checks, clean-venv installation, release-version/dependency/secret
-checks and SBOM generation using the existing verification scripts. It does not
-sign or publish a release, install a PKG, flash firmware, or exercise a real board.
-The package build replaces the generated `build/` and `dist/` directories.
-Inherited `PYTEST_ADDOPTS` filters are cleared so they cannot turn final acceptance
-into an unnoticed partial run.
+### 1. `make fast`
 
-Results stay in the ignored, private `.jrbar-verification/` directory, separated
-by timestamp and commit. Each run records the source SHA/worktree state, macOS
-version, installed dependency versions, command log and exit code. The full test
-suite writes `tests.xml` when it reaches pytest. An earlier gate failure will not
-produce a full-suite XML file. Nothing is uploaded automatically.
+Ruff over `src tests packaging scripts` plus the contract tests that answer in
+seconds: the deterministic-timing contract (no wall-clock sleeps or unbounded
+joins in tests), the packaging and release-gate contracts, the provider fixture
+and settings-schema coverage checks, the Creator Micro wire conformance. It is
+the gate to run before every commit; the full suite is the gate before a push.
 
-For a correctly bootstrapped environment, `./scripts/final-test.sh --no-bootstrap`
-reuses it. `--allow-dirty` is available only for explicitly non-candidate debugging.
-A successful final candidate must start and end at the same clean source revision.
-Never use `git reset --hard` to discard personal changes merely to satisfy this gate.
+### 2. The full Python suite
 
-## Source changes in this integration
+`.venv/bin/python -m pytest -q -p no:cacheprovider tests`. `-p no:cacheprovider`
+keeps the run from writing into the checkout. Clear any inherited
+`PYTEST_ADDOPTS` first -- a filter turns final acceptance into an unnoticed
+partial run. Python 3.12 or newer; `scripts/bootstrap-dev.sh` (via `make
+bootstrap`) builds the pinned `.venv` and refuses an existing one of another
+version rather than replacing it.
 
-- Fix coalesced persistence when the newest state equals the previously written
-  state while a different save is in progress. Pending saves drain on close.
-- Persist compact-rail edge selection in the versioned board store; older saved
-  boards migrate to rail-off. The saved edge is restored when Control Center is
-  next opened. Display identity is not persisted and the rail does not independently
-  launch before Control Center has been opened.
-- Revoke queued actions and pending Shortcuts before a bank/pin/slot context change.
-  Bind virtual-input confirmation to the connection generation, board revision and
-  current mapping settings. Refuse input during termination; reap killed children.
-- Refuse a new keymap apply while an interrupted-write recovery is outstanding.
-  A verified original keymap can close that recovery without another device write.
-- Repair the obsolete repository-name test and the portable test environment for
-  injected battery subprocesses. Native menu/controller checks explicitly require
-  AppKit instead of failing import on Linux; the Mac suite still runs them.
-- Include Creator Micro and final-readiness regressions in both fast and portable
-  gates. Preserve the older plan and reconcile all recorded historical branch tips.
+### 3. `swift test`
 
-## Verification already performed
+From `app/`. Protocol codec over fixture frames, the settings document, panel
+layout, the LEDS parity and keyframe suites, supervisor restart and backoff, and
+the mock-daemon integration tests that round-trip every command the app sends.
+`app/scripts/mock-core.py` is the daemon stand-in; `swift test` never needs a
+running JR-Bar. On a CLT-only machine see `app/README.md` for the swift-testing
+macro plugin note.
 
-Targeted portable execution used Linux, Python 3.13.5 and pytest 9.0.2, not the
-release's pinned Mac environment. Across 65 selected test files, 644 checks passed
-and three native AppKit checks were skipped. The new concurrency, stale-action,
-recovery, child-reaping and fresh-checkout entrypoint regressions were observed
-failing before their corresponding fixes. Python compilation and shell syntax
-checks were also performed. These results do not substitute for `make final-test`
-on the target Mac or prove behavior under every supported Python runtime.
+### 4. `make package`
 
-## Device acceptance
+`packaging/build_macos_pkg.sh`: builds the Swift app in release, embeds the
+Python daemon and the compiled hook shim, signs with the Developer ID identity,
+verifies the bundle, entitlements and the Sparkle framework, and writes
+`dist/JR-Bar-0.8.0.pkg`, the zip, and a signed appcast. It does not notarize.
 
-Start without accessories and open **Control Center...** from the JR-Bar menu.
-Check session state, stable slots and explicit banks. Change **Compact rail** to
-each edge; close/reopen Control Center and restart the app to verify saved choice.
-Check external displays, scaling, Dock placement, full-screen Spaces, keyboard
-navigation, VoiceOver, reduced motion and contrast.
+Never run two at once -- `pgrep -f build_macos_pkg` before starting.
 
-Before remapping the Creator Micro, close Input and any other device writer and
-use **Export original keymap...**. Inspect the exact selected profile/layer and
-unbound macros. Apply only the previewed configuration. Storage verification does
-not prove the firmware has activated it; reconnect if required by the firmware.
+To put the build live, so the daemon under test is the one just built:
 
-Keep **Input check: pause device actions** on while exercising every key, encoder
-and supported joystick input. Verify aggregate and per-session lighting, navigation,
-bank changes, duplicate suppression, USB/Bluetooth identity, quiet-device shutdown,
-sleep/wake and reconnect. Retest SidePulse Pro/Dot independently. Unsupported
-firmware/control shapes must stay refused, not be overridden as a workaround.
+```sh
+kill -TERM "$(pgrep -f 'JR-Bar.app/Contents/MacOS/JR-Bar')"
+while pgrep -f 'jrbar-core core' >/dev/null; do sleep 1; done
+installer -pkg dist/JR-Bar-0.8.0.pkg -target CurrentUserHomeDirectory
+open ~/Applications/JR-Bar.app
+```
 
-Test restore and interrupted-transfer recovery on a scratch/test setup before
-relying on it for a valuable device configuration. A pending recovery must be
-resolved through Restore, not repeated Apply. Unrelated later edits must not be
-silently overwritten. Restore the original firmware map before uninstalling JR-Bar.
+`doctor` over the socket reports the commit the daemon is running; check it says
+what you just built before trusting gate 5.
 
-## Provider and release acceptance
+### 5. `scripts/verify_providers_live.py`
 
-For each enabled provider, test a fresh observation, absent executable, unsupported
-schema, offline/stale state, expired credentials, account switch and disabled
-integration. Prove no account/source identities merge. Verify every exposed
-navigation action reaches the intended session. No universal approval or interrupt
-channel is assumed for externally owned sessions. T3 remains read-only; CodexBar
-and Input are reference applications, not required runtime dependencies.
+The only gate that runs real agents. It starts `scripts/mock_llm_server.py` -- a
+stdlib-only OpenAI/Anthropic/Gemini endpoint that always answers the same way,
+one shell tool call then "done" -- builds a scratch home per provider so the
+owner's own configs are never touched, runs one turn, and asserts what the
+daemon recorded in `~/.local/state/jrbar/<provider>.jsonl` and in `state`:
 
-Use [PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md) only after source and device checks
-pass for the actual candidate. Signing/notarization, package receipt installation,
-updater upgrade/downgrade, uninstall and Instruments evidence remain separate.
-No release tag, installer signing, account mutation or firmware update is part of
-this consolidation.
+    session_start > user_prompt_submit > pre_tool_use > post_tool_use > stop > session_end
 
-## Intentional scope boundaries
+Then, for Codex, the same turn interrupted mid-tool with SIGINT
+(`… > pre_tool_use > interrupt > session_end`), and `usage_history codex 7d`
+answering with records and non-zero tokens.
 
-The supported product is the standalone monitor and capability-scoped hardware
-control center, including verified keymap transfers and supported auxiliary
-mappings. It is not a generic editor for every Input smart action/macro or a
-firmware flashing/service utility. Provider observation does not grant execution
-authority. Those unsupported functions remain explicit rather than being presented
-as features that only need testing. Details are in [CONTROL-CENTER.md](CONTROL-CENTER.md).
+`--asks` adds the approval drills: an interactive Codex under `-a on-request`
+and an interactive Claude Code, each in a pty, each made to ask by the mock, and
+`answer_ask` sent for the ask that appears in `state.asks`.
+
+Flags: `--only codex pi claude gemini usage` restricts the run, `--keep` leaves
+the scratch directory, `--shim` points at a different hook shim. It refuses to
+start if a mock server is already running. Exit 0 when nothing failed.
+
+What it will not prove: Gemini CLI is skipped because it refuses a local
+endpoint ("Invalid auth method selected"), so its hooks are unexercised here.
+`answer_ask` reaches `unsupported` on every provider -- the ask is seen and
+listed, but no in-place answer handler is registered in the daemon, so nothing
+can be approved from JR-Bar yet. Both are recorded as what they are, not as
+passes.
+
+## What no gate covers
+
+These need the owner, the hardware and the accounts.
+
+**Device.** Open **Control Center...** with no accessories, then with each.
+Session state, stable slots, explicit banks, the compact rail on each edge,
+saved across a restart. External displays, scaling, Dock placement, full-screen
+Spaces, keyboard navigation, VoiceOver, reduced motion, increased contrast.
+Before remapping a Creator Micro, close Input and every other device writer and
+use **Export original keymap...**; apply only the previewed configuration;
+storage is not activation, so reconnect if the firmware asks. Keep **Input
+check: pause device actions** on while exercising every key, encoder and
+joystick input. Test restore and interrupted-transfer recovery on a scratch
+device configuration before trusting it with a real one, and restore the
+original map before uninstalling.
+
+**Providers.** For each enabled provider: a fresh observation, the executable
+absent, an unsupported schema, offline and stale state, expired credentials, an
+account switch, the integration disabled. No two accounts or sources may merge.
+Every navigation action must reach the session it names.
+
+**The app in use.** The menu bar at each width, the panel, the Usage window
+against a cold and a warm scan, History, Effect Studio, Settings. Sleep, wake,
+display changes, log out and back in.
+
+**Release.** Signing, notarization, receipt installation, updater upgrade and
+downgrade, uninstall. [PRODUCTION-RELEASE.md](PRODUCTION-RELEASE.md).
+
+## Scope boundaries
+
+The supported product is the monitor and the capability-scoped hardware control
+center, including verified keymap transfers and supported auxiliary mappings. It
+is not a general editor for every Input smart action, and not a firmware service
+utility. Observing a provider grants no authority to act for it. T3 Code and
+Alcove are the only external application integrations; CodexBar is an
+engineering reference that is never launched, queried or required at runtime.

@@ -4,6 +4,41 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.8.0
 
+- Usage history answers inside a reply budget. A cold Codex scan over
+  5,541 rollouts takes 45 s and the app abandons a command after 10 s, so
+  the Usage window showed nothing at all. The scan now runs on its own
+  thread and the reply waits at most 2 s for it; past that the reply is
+  what memory holds -- `pending: true` with empty rows, or the last
+  document with `stale: true` -- and a new `usage_history_ready` event
+  says when the fresh one has landed. The daemon warms both providers'
+  30-day scans 8 s after start. Measured over the socket: first ask
+  answers pending at 2.02 s, the event lands at 2.4 s, every later ask is
+  under 10 ms; Claude answers inline at 1.3 s. A provider with a price
+  table but no configured account (Gemini) now answers empty rows and its
+  reference quote instead of `not_found`.
+- Codex ran whole turns with JR-Bar seeing nothing whenever `CODEX_HOME`
+  was reached through a symlink. Codex canonicalizes the config path
+  before it looks up `hooks.state."<config>:<event>:…"`, so the
+  unresolved spelling produced keys it never reads -- and it then runs no
+  hook at all, silently. The trust writer resolves the path.
+- Pi's `ui_prompt_start`/`ui_prompt_end` do not exist. 0.73.1's
+  `ExtensionEvent` union has no such names; its tool gate, `tool_call`,
+  asks an extension for `{block, reason}` rather than a person, so pi has
+  no ask lane and `PermissionRequest` is gone from its event set.
+  `before_agent_start`, not `turn_start`, is the prompt: `turn_start`
+  fires once per model turn and re-announced the prompt after every tool
+  result.
+- A Codex `PermissionRequest` used to hold the session's own `SessionEnd`
+  behind a timing quarantine: per-record diagnostics (no request id, no
+  request capability, no request authority) were reported as the *source*
+  losing freshness. A request identity is now derived from the turn and
+  the exact tool call when the payload names no request.
+- New: `scripts/mock_llm_server.py`, a stdlib-only OpenAI/Anthropic/Gemini
+  endpoint that answers every turn the same way, and
+  `scripts/verify_providers_live.py`, which drives Codex, pi and Claude
+  Code through real turns against it in scratch homes and asserts what the
+  daemon recorded. `docs/FINAL-TESTING.md` is rewritten around the five
+  0.8 gates. The supported Python floor is 3.12.
 - Usage history: the transcript scan keeps the newest files when a corpus
   is over the per-source cap (now 8,192, was 4,096) instead of the first
   in path order. `~/.codex/sessions` is date-partitioned, so the old rule
