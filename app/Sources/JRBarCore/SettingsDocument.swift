@@ -144,6 +144,12 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
     /// `transcript_monitoring.*` (schema 3 added gemini and pi).
     public static let transcriptProviders = ["claude", "codex", "gemini", "pi"]
     public static let fadeModes = ["working", "ask", "idle"]
+    /// `colors.MODE_COLOR_KEYS`. Five since 2026-09-10: `error` was added
+    /// because FAILED rendered in the `ask` slot, so "it broke" and "it
+    /// needs you" were the same light on every surface. `error` is
+    /// deliberately NOT in `fadeModes` -- it shares the ask's pulse range,
+    /// only the colour is its own (`colors._STATE_TO_FADE_MODE_KEY`).
+    public static let modes = ["idle", "working", "done", "ask", "error"]
 
     public static let all: [SettingsKey] = {
         var keys: [SettingsKey] = [
@@ -249,6 +255,9 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         for mode in fadeModes {
             keys.append(SettingsKey(.lighting, "colors.fade_floor.\(mode)", .number))
             keys.append(SettingsKey(.lighting, "colors.fade_ceiling.\(mode)", .number))
+        }
+        for mode in modes {
+            keys.append(SettingsKey(.lighting, "colors.mode_colors.\(mode)", .string))
         }
         return keys
     }()

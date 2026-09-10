@@ -60,6 +60,19 @@ struct LightingPage: View {
         }
 
         Section {
+            LazyVGrid(columns: swatchColumns, alignment: .leading, spacing: 8) {
+                ForEach(SettingsKey.modes, id: \.self) { mode in
+                    ModeSwatch(store: store, mode: mode)
+                }
+            }
+            .padding(.vertical, 2)
+        } header: {
+            Text("State colours")
+        } footer: {
+            SectionNote("What each state looks like, whoever is running. Ask and Error are separate colours on purpose: \"it needs you\" and \"it broke\" used to be the same light, and if you set them to the same colour the lights will still pull them apart.")
+        }
+
+        Section {
             ForEach(SettingsKey.fadeModes, id: \.self) { mode in
                 FadeRow(store: store, mode: mode)
             }
@@ -249,6 +262,54 @@ struct ProviderSwatch: View {
             }
         }
         .help("How \(style.name) looks while working: \(LightingPage.blendModes.first { $0.value == blend }?.label ?? blend), one cycle every \(SettingsStore.seconds(cycle))")
+    }
+}
+
+/// One state's colour well beside a live preview of that state's own
+/// rhythm -- the light language's five motions, not five flat swatches.
+struct ModeSwatch: View {
+    @Bindable var store: SettingsStore
+    let mode: String
+
+    /// `colors.MODE_ROW_LABELS`, plus the one-liner that says what the
+    /// state MEANS -- the Ask/Error pair is only useful if a person knows
+    /// which is which.
+    static let labels: [String: (name: String, detail: String)] = [
+        "idle": ("Idle", "Nothing is running."),
+        "working": ("Working", "An agent is busy."),
+        "done": ("Done", "A run just finished."),
+        "ask": ("Ask", "Waiting on you — a permission prompt or a question."),
+        "error": ("Error", "Something broke. Nothing you type answers it."),
+    ]
+
+    static let defaults: [String: String] = [
+        "idle": "#020204", "working": "#00E5FF", "done": "#00FF66",
+        "ask": "#FF3A00", "error": "#B00020",
+    ]
+
+    var body: some View {
+        let path = "colors.mode_colors.\(mode)"
+        let fallback = Self.defaults[mode] ?? "#8E8E93"
+        let hex = store.document.string(SettingsPath(path)) ?? fallback
+        let label = Self.labels[mode] ?? (name: mode.capitalized, detail: "")
+        HStack(spacing: 8) {
+            ColorPicker("", selection: store.color(path, default: fallback), supportsOpacity: false)
+                .labelsHidden()
+                .disabled(!store.isProvided(path))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(label.name)
+                HStack(spacing: 6) {
+                    LEDStripPreview(program: LightingPreviewPrograms.state(mode, colorHex: hex),
+                                    style: .band, dotSize: 6, showsBackground: true, cornerRadius: 6)
+                        .frame(width: 66)
+                        .accessibilityLabel("\(label.name) preview")
+                    Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : fallback))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+        .help(label.detail)
     }
 }
 

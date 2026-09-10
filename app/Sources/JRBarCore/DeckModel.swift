@@ -185,7 +185,11 @@ public enum DeckSlotState: String, Codable, Hashable, Sendable, CaseIterable {
     /// The colour the lighting layer gives this state (solid, no breathing).
     public var lightingHex: String {
         switch self {
-        case .inputRequired, .failure: return DeckLighting.askHex
+        case .inputRequired: return DeckLighting.askHex
+        // Not askHex. A key for a session that broke and a key for one
+        // holding a permission prompt were the same colour under your
+        // fingers until 2026-09-10.
+        case .failure: return DeckLighting.errorHex
         case .active: return DeckLighting.workingHex
         case .completed: return DeckLighting.doneHex
         default: return DeckLighting.idleHex
@@ -198,6 +202,8 @@ public enum DeckLighting {
     public static let askHex = "#FF3A00"
     public static let workingHex = "#00E5FF"
     public static let doneHex = "#00FF66"
+    /// `colors.MODE_ERROR` — "it broke", never a shade of "it needs you".
+    public static let errorHex = "#B00020"
     public static let idleHex = "#020204"
 
     /// Dark enough to count as "off" when drawing a key.

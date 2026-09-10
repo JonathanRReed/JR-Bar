@@ -247,9 +247,12 @@ field is one the Control Center and the Rail decode.
   `active`, `completed`, `idle`, `stale`, `unavailable`, `unknown`,
   `ended_unconfirmed`), `navigable` whether the navigation resolver has a
   verified target, `color` the solid per-key colour the lighting layer
-  writes (`creator_micro_lighting`: ask `#FF3A00`, working `#00E5FF`, done
-  `#00FF66`, dark `#020204`) or `#000000` while the pad is not driven (no
-  output service ready, or session mode off).
+  writes (`creator_micro_lighting`: ask `#FF3A00`, error `#B00020`, working
+  `#00E5FF`, done `#00FF66`, dark `#020204`) or `#000000` while the pad is
+  not driven (no output service ready, or session mode off). `failure` and
+  `quota_exhausted` take the error colour, `input_required` and
+  `quota_warning` the ask one -- a key you can answer and a key you cannot
+  are never the same colour.
 - `aux[]` are AG13..AG19 (one encoder, three inputs; four joystick
   sectors) with the explicit `deck-controls.json` mapping kind bound to
   each (`next_bank`, `open_usage`, …) or null; labels come from the
@@ -725,7 +728,7 @@ Dot's `why` as well as its program.
 | --- | --- | --- |
 | nobody is needed | dark (`off`, so the device's own `resting_glow` applies) | — |
 | an ask is open (`aggregate.needs_you`) | amber `#FF9F0A` | breathes; tightens with the escalation stage |
-| something is blocked or failed (`aggregate.failed`) | red `#FF0000` | the stage-2 cadence, whatever the ask's age |
+| something is blocked or failed (`aggregate.failed`) | error red `#B00020` (`colors.MODE_ERROR`) | the stage-2 cadence, whatever the ask's age |
 | an unseen completion (`aggregate.ready`) | green `#00FF66` | the slowest cadence — and **only** when `dot_role_include_completions` is on |
 
 Precedence is the person's: blocked outranks waiting, which outranks

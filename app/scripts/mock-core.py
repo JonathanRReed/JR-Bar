@@ -881,7 +881,7 @@ def default_settings_document() -> dict:
             "fade_ceiling": {"ask": 0.5, "idle": 0.5, "working": 0.5},
             "fade_floor": {"ask": 0.01, "idle": 0.01, "working": 0.01},
             "mode_animation": {"ask": "pulse", "idle": "pulse", "working": "roll"},
-            "mode_colors": {"ask": "#FF3A00", "done": "#00FF66", "idle": "#020204", "working": "#00E5FF"},
+            "mode_colors": {"ask": "#FF3A00", "done": "#00FF66", "error": "#B00020", "idle": "#020204", "working": "#00E5FF"},
             "provider_animation": {},
             "round_robin_urgency_alert": True,
             "session_colors": {},

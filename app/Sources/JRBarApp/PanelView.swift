@@ -129,15 +129,15 @@ struct ActivityMark: View {
                     .scaleEffect(reduced ? 1 : (phase ? 1.0 : 0.85))
             case .waiting:
                 ZStack {
-                    Circle().fill(Color.orange.opacity(0.35))
+                    Circle().fill(SessionActivity.waiting.tint.opacity(0.35))
                         .scaleEffect(reduced ? 1.4 : (phase ? 2.1 : 1.0))
                         .opacity(reduced ? 0.6 : (phase ? 0 : 0.8))
-                    Circle().fill(Color.orange)
+                    Circle().fill(SessionActivity.waiting.tint)
                 }
             case .done:
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.green.opacity(0.9))
+                    .foregroundStyle(SessionActivity.done.tint.opacity(0.9))
             case .ended:
                 // The process went away without finishing anything: grey,
                 // and deliberately not the green check a completion earns.
@@ -146,7 +146,7 @@ struct ActivityMark: View {
             case .failed:
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.red.opacity(0.9))
+                    .foregroundStyle(SessionActivity.failed.tint.opacity(0.9))
             case .idle:
                 Circle().fill(.quaternary)
             }
@@ -556,15 +556,11 @@ struct SessionRowView: View {
     /// label column never shifts as the clock ticks.
     static let trailingWidth: CGFloat = 96
 
-    /// Waiting is the only word that shouts; an ended run is quieter than
-    /// a finished one, so "Done" and "Ended" never read the same.
-    static func wordColor(_ activity: SessionActivity) -> Color {
-        switch activity {
-        case .waiting: return .orange
-        case .ended: return Color.secondary.opacity(0.65)
-        default: return .secondary
-        }
-    }
+    /// Waiting and failed are the words that shout -- a failure used to be
+    /// as quiet as "Idle" here, which is the app-side half of the same
+    /// defect the strip had. An ended run is quieter than a finished one,
+    /// so "Done" and "Ended" never read the same. See SessionActivity.tint.
+    static func wordColor(_ activity: SessionActivity) -> Color { activity.wordColor }
 
     var body: some View {
         RowChrome(selected: store.selectedID == row.id, active: store.isOpen, height: CGFloat(PanelLayout.sessionRowHeight), action: { store.open(row) }) {

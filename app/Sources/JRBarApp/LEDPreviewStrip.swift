@@ -167,6 +167,38 @@ enum LightingPreviewPrograms {
         }
     }
 
+    /// One STATE's own rhythm in its own colour: the light language's five
+    /// motions (`colors.STATE_MOTION`), so the Lighting page's state rows
+    /// preview what the strip actually plays rather than a flat swatch.
+    ///
+    /// Ask and Error are the pair this exists for. They are different
+    /// colours now, and they are also different rhythms -- a beat that
+    /// eases versus a hard square that does not -- so the row shows both
+    /// channels of the distinction at once.
+    static func state(_ mode: String, colorHex: String, cycleSeconds: Double = 1.6, ledCount: Int = 8) -> String {
+        let hex = normalized(colorHex)
+        let ms = max(500, Int(cycleSeconds * 1000))
+        let n = max(2, ledCount)
+        switch mode {
+        case "working":
+            let step = max(40, ms / n)
+            let segments = (0..<n).map { "\($0):\(hex) \(ms)ms pulse \($0 * step)ms" }.joined(separator: "; ")
+            return "\(scaled(hex, 0.10))\n\(segments)\nrepeat"
+        case "ask":
+            // A beat: one short sharp swell, resting lifted rather than dark.
+            let beat = max(480, ms / 3)
+            return "\(scaled(hex, 0.5))\n\(hex) \(beat)ms pulse\nrepeat"
+        case "error":
+            // A blink: a hard square, no easing at all, at 1 Hz.
+            return "\(scaled(hex, 0.5)) \(ms / 2)ms none\n\(hex) \(ms / 2)ms none\nrepeat"
+        case "done":
+            return hex
+        default:
+            // Idle: one slow swell, every LED together.
+            return "\(scaled(hex, 0.02))\n\(hex) \(ms * 3)ms pulse\nrepeat"
+        }
+    }
+
     /// The celebration: a fast ripple, a bloom, a hold, then off (the
     /// reference program in Tests/JRBarLEDSTests/Fixtures/programs).
     static func celebration(colorHex: String = "#00FF66", ledCount: Int = 8) -> String {

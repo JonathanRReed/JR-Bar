@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import SwiftUI
 
 /// How a provider looks everywhere in the app: its name, the accent the
@@ -47,6 +48,39 @@ struct ProviderStyle: Hashable, Sendable {
         // Unknown providers get a neutral tile and a readable name, never a blank.
         let name = key.isEmpty ? "Agent" : key.prefix(1).uppercased() + key.dropFirst()
         return ProviderStyle(id: key, name: name, accentHex: "#8E8E93", glyph: .symbol("questionmark"))
+    }
+}
+
+/// What colour a state is, everywhere in the app. One place, because the
+/// alternative is what shipped: `Color.orange` and `Color.red` written out
+/// at each call site, some rows colouring a failure and some not, and the
+/// hardware meanwhile painting failures in the Ask colour.
+///
+/// These are the system's semantic colours rather than the hardware hexes
+/// (`colors.MODE_*`) on purpose -- a menu is not a strip and should follow
+/// the user's accent and contrast settings -- but the vocabulary is the
+/// same one, and the split that matters is the same split: waiting is
+/// amber, failed is red, and they are never each other.
+extension SessionActivity {
+    var tint: Color {
+        switch self {
+        case .working: return .accentColor
+        case .waiting: return .orange
+        case .done: return .green
+        case .failed: return .red
+        case .ended, .idle: return .secondary
+        }
+    }
+
+    /// Whether the state word is worth shouting. Waiting shouts because it
+    /// is costing you time; failed shouts because it is over and you do not
+    /// know it. Everything else is quiet.
+    var wordIsLoud: Bool { self == .waiting || self == .failed }
+
+    /// The colour the state WORD takes in a row.
+    var wordColor: Color {
+        if wordIsLoud { return tint }
+        return self == .ended ? Color.secondary.opacity(0.65) : .secondary
     }
 }
 
