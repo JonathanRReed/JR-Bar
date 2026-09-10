@@ -34,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
+    /// When the last `completed` event arrived: the menu bar's state dot
+    /// holds green for `completionDotWindow` after it.
+    private var lastCompletionAt: Date?
+    private var completionReset: Timer?
     /// The app's remembered facts (hooks stamp, login item, Screen Bar) in
     /// `~/.local/state/jrbar/app-state.json`; user defaults are Sparkle's.
     private let appStateFile = AppStateFile()
@@ -95,6 +99,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let settingsWindow = SettingsWindowController(store: settingsStore)
         self.settingsStore = settingsStore
         self.settingsWindow = settingsWindow
+        // The menu bar style is the app's own: seed the picker from
+        // `app-state.json` and write every choice straight back to it.
+        settingsStore.menuBarIconStyle = appState.menuBarIconStyle ?? StatusIconStyle.meters.rawValue
+        settingsStore.onSetMenuBarIconStyle = { [weak self] value in
+            guard let self else { return }
+            self.appState.menuBarIconStyle = value
+            self.persistAppState()
+            self.refreshIconStyle()
+        }
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
@@ -154,6 +167,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.usageWindow = usageWindow
         store.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
+        settingsStore.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         let effectsStore = EffectStudioStore(core: core)
         let effectsWindow = EffectStudioWindowController(store: effectsStore)
         self.effectsStore = effectsStore
@@ -193,7 +207,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         // Daemon protocol: beats the files whenever it is live.
-        core.onEvent = { [weak events] event in events?.handle(event) }
+        core.onEvent = { [weak events, weak self] event in
+            events?.handle(event)
+            if event.kind == "completed" { self?.noteCompletion() }
+            // The daemon finished a transcript scan: the panel's sparklines
+            // were drawn from a partial answer and can be redrawn now.
+            if event.kind == CoreEvent.usageHistoryReadyKind { self?.store?.refreshSparklines(force: true) }
+        }
         observeCore()
         watchSocketDirectory(core.socketPath)
 
@@ -237,10 +257,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak panel] in
                 MainActor.assumeIsolated { panel?.open() }
             }
-            // `JRBAR_OPEN_PANEL=why` also hovers the "Why this light" row.
+            // `JRBAR_OPEN_PANEL=why` also hovers the "Why this light" row;
+            // `=clear` sends Clear done once the core is live, so the
+            // footer's Undo offer can be photographed.
             if openPanel == "why" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak panel] in
                     MainActor.assumeIsolated { panel?.showWhyPopover() }
+                }
+            }
+            if openPanel == "clear" {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak store] in
+                    MainActor.assumeIsolated { store?.clearCompleted() }
                 }
             }
         }
@@ -584,17 +611,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         statusItem.update(state: store.aggregate, detail: store.headerCounts)
     }
 
-    /// `menu_bar_icon_style` plus what the ring and the label show: the
-    /// primary provider's 5 h window and the aggregate counts.
+    /// `menu_bar_icon_style` plus what each style shows: the meters (one
+    /// per provider shown in the panel, in that order), the ring's primary
+    /// window and the label's aggregate counts.
     private func refreshIconStyle() {
         guard let core, let statusItem else { return }
         let document = core.settings.map { SettingsDocument($0.document) }
-        statusItem.iconStyle = StatusIconStyle(setting: document?.string("menu_bar_icon_style"))
+        // The style is the app's own (`app-state.json`). The daemon answers
+        // a write of this key with `ok` and then keeps its value — the
+        // Python settings dataclass has no field for it — so its copy is
+        // frozen at the old `glyph` default and is not read here; unset
+        // means the app's default, the meters.
+        statusItem.iconStyle = StatusIconStyle(setting: appState.menuBarIconStyle)
         let preferred = document?.strings("usage_graph_providers") ?? []
         let usage = core.isLive ? core.usage : []
         let primary = preferred.lazy.compactMap { id in usage.first { $0.id == id } }.first ?? usage.first
         let window = primary?.windows.first { $0.name.lowercased() == "5h" } ?? primary?.windows.first
         statusItem.ringFraction = window.map { $0.usedPct / 100 }
+        refreshMeters(preferred: preferred, usage: usage)
         if core.isLive, let aggregate = core.state?.aggregate {
             let failed = core.sessions.filter { SessionActivity.reduce($0) == .failed }.count
             statusItem.labelText = StatusIconRenderer.label(active: aggregate.active, needsYou: aggregate.needsYou, ready: aggregate.ready, failed: failed)
@@ -611,6 +645,66 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         } else {
             statusItem.setEscalationPulse(false)
         }
+    }
+
+    /// The meter strip: one cell per provider the panel shows (Settings ›
+    /// Usage, "Show in the panel", in that order), each metered by its
+    /// primary window — the 5 h one when the provider has it, else the
+    /// first it reports. Providers that report no window at all (signed
+    /// out, disabled) are left out rather than drawn empty. Past
+    /// `maxMeters` the rest become "+n".
+    private func refreshMeters(preferred: [String], usage: [CoreProviderUsage]) {
+        guard let statusItem else { return }
+        let shown = Self.meteredProviders(preferred: preferred, usage: usage)
+        let cap = StatusIconRenderer.maxMeters
+        statusItem.meters = shown.prefix(cap).map { provider in
+            let window = UsageCenterStore.primaryWindow(of: provider)
+            return StatusItemController.meter(for: provider.id,
+                                              fraction: (window?.usedPct ?? 0) / 100,
+                                              approximate: provider.isDerived)
+        }
+        statusItem.meterOverflow = max(0, shown.count - cap)
+        statusItem.dotState = dotState()
+    }
+
+    /// The providers the strip meters, in the panel's order: the ones
+    /// named by `usage_graph_providers` first, then anything else the
+    /// daemon reports, each of which must have a window to meter.
+    static func meteredProviders(preferred: [String], usage: [CoreProviderUsage]) -> [CoreProviderUsage] {
+        let metered = usage.filter { !$0.windows.isEmpty }
+        guard !preferred.isEmpty else { return metered }
+        var seen = Set<String>()
+        var result: [CoreProviderUsage] = []
+        for id in preferred {
+            guard let provider = metered.first(where: { $0.id == id }), seen.insert(provider.id).inserted else { continue }
+            result.append(provider)
+        }
+        return result
+    }
+
+    /// The dot at the left of the strip: an open ask beats work, work
+    /// beats a fresh completion, and a completion holds for
+    /// `completionDotWindow` before the dot goes quiet again.
+    static let completionDotWindow: TimeInterval = 6
+
+    private func dotState() -> StatusDotState {
+        guard let core, core.isLive, let state = core.state else { return .idle }
+        if !state.asks.isEmpty || state.mainSessions.contains(where: { $0.ask != nil }) { return .ask }
+        if state.aggregate.active > 0 || core.sessions.contains(where: { SessionActivity.reduce($0) == .working }) { return .working }
+        if let at = lastCompletionAt, Date().timeIntervalSince(at) < Self.completionDotWindow { return .done }
+        return .idle
+    }
+
+    /// The last `completed` event, for the green dot. A timer puts the dot
+    /// back to quiet when the window runs out (no state may arrive in that
+    /// time to do it for us).
+    private func noteCompletion() {
+        lastCompletionAt = Date()
+        completionReset?.invalidate()
+        completionReset = Timer.scheduledTimer(withTimeInterval: Self.completionDotWindow + 0.1, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshIconStyle() }
+        }
+        refreshIconStyle()
     }
 
     private func refreshLights() {

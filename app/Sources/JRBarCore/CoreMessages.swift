@@ -441,11 +441,15 @@ public struct CoreState: Codable, Hashable, Sendable {
     public var settingsGeneration: Int?
     /// The Creator Micro 2 deck (app-proposed extension, see app/README.md).
     public var deck: DeckState?
+    /// Sessions the daemon keeps out of `sessions` (acknowledged
+    /// completions, older ended runs) that `list_history` still has; nil
+    /// from a daemon that does not count them.
+    public var hiddenCount: Int?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
-                health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil) {
+                health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -459,11 +463,13 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.health = health
         self.settingsGeneration = settingsGeneration
         self.deck = deck
+        self.hiddenCount = hiddenCount
     }
 
     enum CodingKeys: String, CodingKey {
         case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck
         case settingsGeneration = "settings_generation"
+        case hiddenCount = "hidden_count"
     }
 
     public init(from decoder: Decoder) throws {
@@ -482,6 +488,13 @@ public struct CoreState: Codable, Hashable, Sendable {
         settingsGeneration = try c.decodeIfPresent(Int.self, forKey: .settingsGeneration)
         // A malformed deck must not take the whole state down with it.
         deck = try? c.decodeIfPresent(DeckState.self, forKey: .deck)
+        if let count = try? c.decodeIfPresent(Int.self, forKey: .hiddenCount) {
+            hiddenCount = max(0, count)
+        } else if let count = try? c.decodeIfPresent(Double.self, forKey: .hiddenCount) {
+            hiddenCount = max(0, Int(count))
+        } else {
+            hiddenCount = nil
+        }
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -683,10 +696,19 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     public var input: DeckInput?
     public var code: String?
     public var message: String?
+    /// `usage_history_ready`: the range (`7d`, `30d`, …) whose scan finished
+    /// for `provider`; nil means every range.
+    public var range: String?
+
+    /// `usage_history_ready {provider, range?}`: the daemon's background
+    /// scan for `usage_history` has fresh rows; a client that asked earlier
+    /// and got a partial or slow answer should ask again. `notify: false`;
+    /// a daemon that never sends it costs nothing.
+    public static let usageHistoryReadyKind = "usage_history_ready"
 
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
-                input: DeckInput? = nil, code: String? = nil, message: String? = nil) {
+                input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -700,9 +722,10 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.input = input
         self.code = code
         self.message = message
+        self.range = range
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message }
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -725,6 +748,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         input = try? c.decodeIfPresent(DeckInput.self, forKey: .input)
         code = try? c.decodeIfPresent(String.self, forKey: .code)
         message = try? c.decodeIfPresent(String.self, forKey: .message)
+        range = try? c.decodeIfPresent(String.self, forKey: .range)
     }
 
     /// `deck_receipt` as a receipt value.

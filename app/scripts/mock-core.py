@@ -740,6 +740,7 @@ USAGE_PRICING = {
     "gemini": {"input_per_mtok": 1.25, "output_per_mtok": 10.0, "cache_read_per_mtok": 0.31, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
 }
 USAGE_ACCOUNTS = {
+    "devin": {"plan": "Team", "label": None, "fidelity": "official"},
     "claude": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},
     "codex": {"plan": "Plus", "label": "ChatGPT", "fidelity": "derived"},
     "gemini": {"plan": "AI Pro", "label": None, "fidelity": "manual"},
@@ -748,7 +749,7 @@ USAGE_ACCOUNTS = {
 USAGE_SCALE = {"claude": 1.0, "codex": 0.45, "gemini": 0.12}
 
 
-def usage_history(provider: str, range_name: str, now: float) -> dict:
+def usage_history(provider: str, range_name: str, now: float, *, partial: bool = False) -> dict:
     """Deterministic daily and hourly rows: a weekday rhythm, a busier
     recent fortnight, and per-provider scale; costs from USAGE_PRICING."""
     days_wanted = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}.get(range_name, 30)
@@ -793,8 +794,21 @@ def usage_history(provider: str, range_name: str, now: float) -> dict:
                       "cache_read": cache, "cost_usd": cost(tin, tout, cache)})
     if scale == 0.0:
         days, hours = [], []
-    return {"provider": provider, "range": range_name, "days": days, "hours": hours,
-            "pricing": pricing, "account": USAGE_ACCOUNTS.get(provider)}
+    # `records` is the transcript count the scan read: 0 means this Mac has
+    # nothing local for the provider (the Usage Center says so rather than
+    # drawing an empty axis).
+    records = 0 if scale == 0.0 else sum(1 for d in days if d["tokens_in"]) * 7 + len(hours)
+    document = {"provider": provider, "range": range_name, "days": days, "hours": hours,
+                "pricing": pricing, "account": USAGE_ACCOUNTS.get(provider), "records": records,
+                "partial": False}
+    if partial:
+        # What a scan that has not finished yet can answer with: the newest
+        # couple of days, marked, with a `usage_history_ready` to follow.
+        document["days"] = days[-2:]
+        document["hours"] = hours[-24:] if hours else []
+        document["records"] = records // 8
+        document["partial"] = True
+    return document
 
 
 # The settings document, seeded from `AgentMonitorSettings().to_dict()` in
@@ -914,7 +928,7 @@ def default_settings_document() -> dict:
                        "0:#00FF66 180ms ease 80ms; 7:#00FF66 180ms ease 80ms\n#00FF66 220ms ease\noff 320ms ease-out",
         },
         "link_screen_bar_to_hardware": True,
-        "menu_bar_icon_style": "glyph",
+        "menu_bar_icon_style": "meters",
         "menu_bar_label_enabled": False,
         "notification_policy_version": 1,
         "operator_history_retention_days": 0,
@@ -948,7 +962,7 @@ def default_settings_document() -> dict:
         "usage_display_mode": "tokens",
         "usage_event_hook_path": "",
         "usage_graph_days": 7,
-        "usage_graph_providers": ["claude", "codex"],
+        "usage_graph_providers": ["claude", "codex", "gemini"],
         "virtual_status_device_enabled": True,
         "virtual_status_device_wraps_menu_bar": False,
         "webhook_events": [],
@@ -1074,11 +1088,16 @@ class World:
         # `rate` is the percent of the 5h window burned per hour; the forecast
         # extrapolates it. Gemini starts near its limit so the Usage Center has
         # a "runs out before the reset" card; Cursor is not signed in.
-        # Order is the daemon's `usage_graph_providers` order; the near-limit
-        # provider comes second so the first screen of the Usage Center shows
-        # a comfortable card next to one that is about to run out.
+        # Order is the daemon's own: a comfortable provider with a real
+        # graph first, then one that reports windows but keeps no local
+        # transcripts, then the one that is about to run out.
         self.usage = {
             "claude": {"h5": 42.0, "d7": 61.0, "d30": 37.0, "fidelity": "official", "pace": "ahead", "rate": 12.0, "state": "ok"},
+            # Signed in and reporting windows, but nothing to scan on this
+            # Mac: `usage_history` answers `records: 0` and the Usage
+            # Center says so instead of drawing a month of zero. Second, so
+            # it is on the first screen next to a card with a real graph.
+            "devin": {"h5": 4.0, "d7": 9.0, "d30": None, "fidelity": "official", "pace": "on_pace", "rate": 0.4, "state": "ok"},
             "gemini": {"h5": 91.0, "d7": 48.0, "d30": None, "fidelity": "derived", "pace": "ahead", "rate": 14.0, "state": "warning"},
             "codex": {"h5": 12.0, "d7": 30.0, "d30": 22.0, "fidelity": "derived", "pace": "on_pace", "rate": 6.0, "state": "ok"},
             "cursor": {"h5": None, "d7": None, "d30": None, "fidelity": "manual", "pace": None, "rate": 0.0, "state": "not_signed_in"},
@@ -1140,6 +1159,16 @@ class World:
         self.history: list[dict] = []
         self.clear_batches: dict[str, dict] = {}
         self.batch_counter = 0
+        # Sessions the daemon has stopped listing because they were
+        # acknowledged; `list_history` still has them. The seed stands for
+        # the runs that ended before this process started.
+        self.hidden_count = 3
+        # `usage_history` scans: the first ask per (provider, range) is
+        # answered partially and finished by an event, like the daemon's.
+        self.history_scanned: set[tuple[str, str]] = set()
+        self.history_inflight: set[tuple[str, str]] = set()
+        self.history_scan_seconds = 3.0
+        self.hot_history = False
         self.quota_crossed: dict[str, set] = {}
         self.ask_opened_at: dict[str, float] = {}
         self._seed_history(now)
@@ -1251,6 +1280,7 @@ class World:
             "escalation": self.escalation,
             "health": {"hooks": dict(self.hooks), "sources": {"codex": {"fresh": True}}},
             "settings_generation": self.settings_generation,
+            "hidden_count": self.hidden_count,
             "deck": self.deck_state(),
             # Forward-compatibility bait: the app must ignore this.
             "x_mock_extra": {"note": "unknown keys are fine"},
@@ -1260,7 +1290,9 @@ class World:
 
     def deck_remember(self, sid: str) -> str:
         """A session seen for the first time is appended to the board (positions are stable)."""
-        s = self.sessions[sid]
+        s = self.sessions.get(sid)
+        if s is None:
+            return deck_identity(sid)
         identity = deck_identity(sid)
         if identity not in self.deck_identities:
             self.deck_order.append(identity)
@@ -1586,11 +1618,24 @@ class World:
     def push_log(self, level: str, message: str) -> None:
         self.broadcast(self.log_message(level, message))
 
+    def finish_history_scan(self, provider: str, range_name: str) -> None:   # noqa: D401
+        """The off-thread `usage_history` scan landed: tell every client so
+        the one that got a partial answer can ask again. `notify: false`;
+        an app that ignores the event still catches up on its own."""
+        with self.lock:
+            self.history_inflight.discard((provider, range_name))
+        self.push_log("info", f"usage_history scan finished: {provider} {range_name}")
+        self.push_event("usage_history_ready", None, None, provider=provider, range=range_name, notify=False)
+
     # -- mutations used by the timeline and commands ---------------------------
 
     def set_mode(self, sid: str, mode: str, lifecycle: str = "active", next_actor: str = "provider") -> None:
         with self.lock:
-            s = self.sessions[sid]
+            # A session the client acknowledged is gone from the world; the
+            # timeline must not resurrect it.
+            s = self.sessions.get(sid)
+            if s is None:
+                return
             changed = (s["mode"], s["lifecycle"], s["next_actor"]) != (mode, lifecycle, next_actor)
             s["mode"], s["lifecycle"], s["next_actor"] = mode, lifecycle, next_actor
             s["updated_at"] = time.time()
@@ -1601,12 +1646,14 @@ class World:
         with self.lock:
             ask = {"session": sid, "kind": kind, "opened_at": time.time(), "summary": summary}
             self.asks = [a for a in self.asks if a["session"] != sid] + [ask]
-            self.sessions[sid]["ask"] = {"kind": kind, "opened_at": ask["opened_at"], "summary": summary}
+            if sid in self.sessions:
+                self.sessions[sid]["ask"] = {"kind": kind, "opened_at": ask["opened_at"], "summary": summary}
             self.ask_opened_at[sid] = ask["opened_at"]
             self.set_mode(sid, "waiting", "active", "user")
             self.escalation = {"stage": "none", "since": None}
-        s = self.sessions[sid]
-        self.record("asked", s["provider"], sid, s["label"], summary)
+        s = self.sessions.get(sid)
+        if s is not None:
+            self.record("asked", s["provider"], sid, s["label"], summary)
 
     def resolve_ask(self, sid: str, decision: str, source: str = "timeout") -> bool:
         with self.lock:
@@ -1718,7 +1765,7 @@ class World:
             log("timeline: codex completes")
             self.set_mode(CODEX_ID, "idle", "completed", "user")
             self.record("completed", "codex", CODEX_ID, "sidepulse-core", "Rebuilt build/ and ran the suite",
-                        time.time() - self.sessions[CODEX_ID]["since"] + 1500)
+                        time.time() - self.sessions.get(CODEX_ID, {}).get("since", time.time()) + 1500)
             self.push_state()
             self.push_lights("done")
             self.push_event("completed", CODEX_ID, "sidepulse-core", sound="glass", provider="codex")
@@ -1749,7 +1796,7 @@ class World:
             self.set_mode(CLAUDE_ID, "idle", "completed", "user")
             self.set_mode(CLAUDE_WORKER_ID, "idle", "completed", "user")
             self.record("completed", "claude", CLAUDE_ID, "jr-bar-b7", "Events, history and the Why row",
-                        time.time() - self.sessions[CLAUDE_ID]["since"] + 3600)
+                        time.time() - self.sessions.get(CLAUDE_ID, {}).get("since", time.time()) + 3600)
             self.push_state()
             self.push_lights("done")
             self.push_event("completed", CLAUDE_ID, "jr-bar-b7", sound="glass", provider="claude")
@@ -1757,10 +1804,12 @@ class World:
             log("timeline: idle")
             with self.lock:
                 for sid in (CLAUDE_ID, CODEX_ID, CLAUDE_WORKER_ID):
-                    if self.sessions[sid]["lifecycle"] == "completed":
+                    if self.sessions.get(sid, {}).get("lifecycle") == "completed":
                         self.set_mode(sid, "idle", "active", "provider")
-                if self.sessions[GEMINI_ID]["lifecycle"] == "failed":
-                    self.set_mode(GEMINI_ID, "idle", "active", "user")
+                if self.sessions.get(GEMINI_ID, {}).get("lifecycle") == "failed":
+                    # The process went away without a completion: "ended",
+                    # which the panel greys rather than checking off.
+                    self.set_mode(GEMINI_ID, "idle", "ended", "provider")
                 reset = [pid for pid, crossed in self.quota_crossed.items() if crossed]
                 for pid in reset:
                     self.usage[pid]["h5"] = 12.0
@@ -1910,24 +1959,27 @@ class World:
             self.broadcast(self.lights())
             result = {"value": self.brightness}
         elif name == "clear_completed":
+            # Acknowledging a row takes it out of `state.sessions` for good
+            # (it lives on in `list_history`) and counts it in
+            # `hidden_count` — the daemon's behaviour since 0.8: a cleared
+            # session must never come back on the next state.
             scope = args.get("sessions", "all")
             with self.lock:
                 cleared = []
                 snapshot = {}
-                for s in self.sessions.values():
-                    if s["lifecycle"] == "completed" and (scope == "all" or s["id"] in (scope or [])):
-                        snapshot[s["id"]] = {k: s[k] for k in ("lifecycle", "mode", "next_actor", "since")}
-                        s["lifecycle"] = "active"
-                        s["mode"] = "idle"
-                        s["next_actor"] = "provider"
-                        s["since"] = time.time()
+                for s in list(self.sessions.values()):
+                    done = s["lifecycle"] in ("completed", "ended", "stale") or s.get("stale")
+                    if done and (scope == "all" or s["id"] in (scope or [])):
+                        snapshot[s["id"]] = dict(s)
+                        del self.sessions[s["id"]]
+                        self.hidden_count += 1
                         cleared.append(s["id"])
                 self.batch_counter += 1
                 batch = f"b-{self.batch_counter}"
                 self.clear_batches[batch] = {"at": time.time(), "sessions": snapshot}
             self.push_state()
             self.push_lights(self.light_for_world())
-            self.push_log("info", f"cleared {len(cleared)} completed ({batch})")
+            self.push_log("info", f"cleared {len(cleared)} finished ({batch})")
             result = {"batch": batch, "cleared": cleared}
         elif name == "undo_clear":
             batch = str(args.get("batch", ""))
@@ -1939,10 +1991,10 @@ class World:
                                       "message": "that batch can no longer be undone" if entry else "no such batch"}}
                 restored = []
                 for sid, snap in entry["sessions"].items():
-                    if sid in self.sessions:
-                        self.sessions[sid].update(snap)
-                        self.sessions[sid]["updated_at"] = time.time()
-                        restored.append(sid)
+                    self.sessions[sid] = dict(snap)
+                    self.sessions[sid]["updated_at"] = time.time()
+                    self.hidden_count = max(0, self.hidden_count - 1)
+                    restored.append(sid)
             self.push_state()
             self.push_lights(self.light_for_world())
             self.push_log("info", f"undid clear {batch}: {len(restored)} restored")
@@ -2043,7 +2095,29 @@ class World:
                 return self._error(cid, "not_found", f"no usage source for {provider}")
             if range_name not in ("7d", "30d", "90d", "365d"):
                 return self._error(cid, "invalid_range", "range must be 7d, 30d, 90d or 365d")
-            result = usage_history(provider, range_name, time.time())
+            # The daemon scans transcripts off-thread and answers inside a
+            # budget: the first ask for a (provider, range) gets what the
+            # scan has so far, marked `partial`, and a `usage_history_ready`
+            # event lands when it finishes. --hot-history skips that.
+            key = (provider, range_name)
+            started = False
+            with self.lock:
+                if not self.hot_history and key not in self.history_scanned:
+                    self.history_scanned.add(key)
+                    self.history_inflight.add(key)
+                    started = True
+                inflight = key in self.history_inflight
+            if started:
+                threading.Timer(self.history_scan_seconds, self.finish_history_scan, (provider, range_name)).start()
+            if started:
+                # Nothing cached and the scan has just begun: the daemon's
+                # `pending` answer — no rows, marked partial.
+                result = usage_history(provider, range_name, time.time(), partial=True)
+                result["days"], result["hours"], result["records"] = [], [], 0
+            else:
+                # Asked again while the scan runs: what memory holds, still
+                # marked partial (the daemon's `stale` answer).
+                result = usage_history(provider, range_name, time.time(), partial=inflight)
             result["state"] = self.usage[provider]["state"]
         elif name == "list_effects":
             with self.lock:
@@ -2180,7 +2254,7 @@ class World:
                 return self.deck_error(cid, "not_found", "Configure this auxiliary control in Settings > Devices.")
             result = {"index": index, "action": action, "identity": identity, "session": sid}
             if action == "reveal_session":
-                s = self.sessions[sid]
+                s = self.sessions.get(sid) or {"label": "session", "terminal": {}}
                 result["activated"] = s.get("terminal", {}).get("app")
                 self.push_log("info", f"deck: key {index + 1} reveals {s['label']}")
             elif action in ("next_bank", "previous_bank"):
@@ -2431,6 +2505,12 @@ def main() -> int:
                              "8 pro reconnected, 9 deck conflict, 10 conflict cleared, 11 gemini failed, "
                              "12 claude completed, 13 idle)")
     parser.add_argument("--mode", default="0600", help="socket file mode (octal)")
+    parser.add_argument("--hot-history", action="store_true",
+                        help="answer usage_history in full at once (no partial first answer, no usage_history_ready)")
+    parser.add_argument("--history-scan", type=float, default=3.0, metavar="SECONDS",
+                        help="how long the simulated usage_history scan takes before usage_history_ready (default 3)")
+    parser.add_argument("--hidden", type=int, default=3, metavar="N",
+                        help="state.hidden_count to start with (acknowledged sessions History still has)")
     parser.add_argument("--deck", choices=("approved", "unapproved", "absent", "usb", "recovering"), default="approved",
                         help="how the Creator Micro 2 starts: approved over Bluetooth (default), connected but "
                              "not yet approved, not connected, approved over USB, or with an interrupted keymap "
@@ -2460,6 +2540,9 @@ def main() -> int:
 
     stop = threading.Event()
     world = World(step_seconds=args.step, loop=args.loop and not args.no_loop)
+    world.hot_history = args.hot_history
+    world.history_scan_seconds = max(0.0, args.history_scan)
+    world.hidden_count = max(0, args.hidden)
     world.deck_present = args.deck != "absent"
     world.deck_approved = args.deck in ("approved", "usb", "recovering")
     world.deck_transport = "usb" if args.deck == "usb" else "bluetooth"

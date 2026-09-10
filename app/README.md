@@ -15,8 +15,8 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | --- | --- |
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
 | `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, keyframe renderer, presentation-safety compiler. No AppKit. |
-| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math and label rules, the history model, the Creator Micro 2 deck model and rail geometry, the Alcove capsule geometry, and the child-process supervisor. Foundation only. |
-| `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer. |
+| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math, label and activity rules, the usage sparkline reduction, the history model, the Creator Micro 2 deck model and rail geometry, the Alcove capsule geometry, and the child-process supervisor. Foundation only. |
+| `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer (glyph styles and the meter strip). |
 | `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Usage Center, Effect Studio and Control Center windows, the deck rail, notifications, sounds, HUD, file-feed fallback. |
 | `Tests/JRBarLEDSTests/` | Swift Testing suites plus the firmware fixtures they check against. |
 | `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, the explanation table and the documented `why` vocabulary, the panel layout math, usage window and session label rules, the event policy, history filtering, the deck model and rail geometry, supervisor restart/backoff, and mock-daemon integration tests (every app-proposed command round-tripped). |
@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 167 tests / 29 suites; the parity and keyframe tests fan out over 29 programs
+swift test                  # 190 tests / 33 suites; the parity and keyframe tests fan out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -121,16 +121,25 @@ Developer switches (environment variables read at launch):
   connects to whatever listens on the socket.
 * `JRBAR_OPEN_PANEL=1` opens the panel shortly after launch (screenshots);
   `JRBAR_OPEN_PANEL=why` also hovers the "Why this light" row so its popover
-  shows. `JRBAR_OPEN_HISTORY=1` opens the History window.
+  shows, `JRBAR_OPEN_PANEL=clear` sends Clear done once the core is live so
+  the footer's Undo offer can be photographed. `JRBAR_OPEN_HISTORY=1` opens
+  the History window.
   `JRBAR_OPEN_CONTROL_CENTER=1` opens the Control Center (`apply`,
   `restore` or `clear` also opens that sheet);
   `JRBAR_DECK_RAIL=left|right|top|bottom` sends `deck_rail` for that edge
   once the core is live.
 * `JRBAR_RENDER_ICONS=/dir` writes the menu-bar icon styles as 8× PNGs
-  (glyph, working tint, ring at 42 / 85 / 97 %, label) for design review.
+  (the meter strip idle / working / ask / done / with an overflow / with
+  the percent, then glyph, working tint, ring at 42 / 85 / 97 %, label)
+  for design review. Every width change also prints `status item: meters 3
+  meters (+0) dot=working x= y= w= h= top= (screencapture -R…)`, so the
+  item itself can be photographed on a menu bar that collapses its
+  extras.
 * `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on `general`, `agents`,
   `usage`, `devices`, `lighting`, `notifications`, `remote`, `advanced` or
   `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
+  `JRBAR_USAGE_HEIGHT=900` does the same for the Usage Center, so a whole
+  provider card (rings, forecast, graph) fits in one screenshot.
 * `JRBAR_PLAIN_MATERIAL=1` uses an `NSVisualEffectView` instead of `NSGlassEffectView`.
 * `JRBAR_APPEARANCE=light|dark` pins every window to one appearance
   (screenshots of both looks without touching the system setting).
@@ -311,8 +320,10 @@ world). Every step is recorded for `list_history` (rows `{at, kind,
 provider, session, label, detail, duration, unseen}`; kinds started /
 completed / asked / answered / failed / ended); rows recorded with no client
 connected, and a seeded batch from yesterday and earlier today, are
-`unseen: true`. `clear_completed` replies with a `batch` that `undo_clear`
-restores for 300 s. When supervised it exits once its parent is gone. Its
+`unseen: true`. `clear_completed` takes every done, ended or stale
+session out of `state.sessions` for good — counting it in `hidden_count`,
+as the daemon does since 0.8 — and replies with a `batch` that
+`undo_clear` puts back for 300 s (`--hidden N` seeds the count, default 3). When supervised it exits once its parent is gone. Its
 settings document is seeded from the real Python defaults
 (`default_settings_document()`, `auto_dim` included; a write under
 `auto_dim.*` republishes `lights` with the mock's `auto_dim` decision:
@@ -328,7 +339,12 @@ board below (`--deck approved|unapproved|absent|usb|recovering` picks how
 the pad starts). `--step`, `--start-at`, `--loop` (the timeline plays once
 by default: it makes sounds), `--socket` (default `$TMPDIR/jrbar-mock.sock`;
 the installed daemon's path is refused without
-`--i-know-this-is-the-real-socket`), `--once`.
+`--i-know-this-is-the-real-socket`), `--once`, `--hidden N`,
+`--history-scan SECONDS` and `--hot-history` (the `usage_history` scan,
+below). Its last timeline step leaves Gemini `lifecycle: "ended"` rather
+than active, so the panel's grey Ended row has something to draw, and
+`devin` reports windows with no local transcripts at all
+(`usage_history` → `records: 0`).
 
 ### Protocol extensions the mock proposes
 
@@ -340,6 +356,10 @@ The daemon adopted them on 2026-09-09 (`usage_history`, `list_effects`,
 `import_effect_pack`, `export_effect_pack`, `reset_settings`, `undo_clear`'s
 `batch`); the contract documents the daemon's shapes, the mock mirrors them.
 
+* `state.hidden_count`: how many sessions the daemon keeps out of
+  `state.sessions` because they were acknowledged (`list_history` still
+  has them). The panel's "3 earlier in History →" row. A daemon that does
+  not count them sends nothing and the row stays away.
 * `state.usage.providers[]`: `account {plan, label, fidelity}` next to the
   windows, and `forecast {exhausts_at, pace}` (the doc reserves `forecast`
   without a shape; `pace` is `ahead` / `on_pace` / `behind`). A provider
@@ -349,8 +369,16 @@ The daemon adopted them on 2026-09-09 (`usage_history`, `list_effects`,
   `{provider, range, days[{date, tokens_in, tokens_out, cache_read,
   cost_usd}], hours[{hour, at, …same}], pricing {input_per_mtok,
   output_per_mtok, cache_read_per_mtok, as_of, approximate, currency},
-  account}`. Errors: `not_found` for an unknown provider, `invalid_range`.
-  `refresh_usage` replies `{requested_at, providers}` as the daemon does.
+  account, records, partial}`. Errors: `not_found` for an unknown provider,
+  `invalid_range`. `records` is how many transcript records the scan read
+  (0 means this Mac has none for that provider, whatever rows the answer
+  is padded with); `partial` is true while the scan is still running, and
+  a `usage_history_ready {provider, range}` event (`notify: false`)
+  follows when it lands, which is the client's cue to ask again. The mock
+  answers the first ask for a (provider, range) with the daemon's
+  `pending` shape — no rows, `partial: true` — and finishes the simulated
+  scan `--history-scan` seconds later; `--hot-history` answers in full at
+  once. `refresh_usage` replies `{requested_at, providers}` as the daemon does.
 * `list_effects` → `{effects[], packs[], cadences[], generation}`; each
   effect is the registry's `EffectDefinition.to_dict()` shape (`id, label,
   description, meaning, surfaces, parameters[{name, type, default,
@@ -459,16 +487,48 @@ three layers):
   right click or Option-click shows a utility menu (state, core status,
   lights source, Open Panel, History…, "Show Screen Bar" toggle (persisted),
   Settings…, Quit). `menu_bar_icon_style` picks the look
-  (`StatusIconRenderer` in `JRBarUI`, 18×18 pt, cached per spec, redrawn
-  only when the spec changes): `glyph`; `glyph_ring`, the glyph inside a
-  thin ring showing the primary provider's 5 h window (the first of
-  `usage_graph_providers` that reports usage), amber from 80 %, red from
-  95 % (a non-template image then, so the ring keeps its colour); and
-  `glyph_label`, the glyph beside "1 ask · 2 working" as the button's
-  title. Stage-2 escalation pulses the icon amber (a layer opacity
-  animation; Reduce Motion holds amber) until the ask resolves; the state's
-  `escalation.stage` is the source of truth so a launch mid-escalation
-  catches up.
+  (`StatusIconRenderer` in `JRBarUI`, cached per spec, redrawn only when
+  the spec changes):
+
+  * `meters` (the default): a 22 pt-tall strip that is worth a glance. A
+    state dot at the left — breathing while anything works (a 2 Hz timer,
+    running only then; Reduce Motion holds it bright), pulsing amber while
+    an ask is open, green for six seconds after a completion, a hollow dot
+    otherwise — then one 3.5 pt column per provider shown in the panel
+    (Settings › Usage, "Show in the panel", in that order), each filled
+    from the bottom by its primary window (the 5 h one when the provider
+    reports it, else the first), amber from 80 % and red from 95 %.
+    Providers past five become "+n"; a provider that reports no window at
+    all is left out. The strip is a template image while every window is
+    calm and the dot is quiet, so it takes the menu bar's own colour;
+    colour appears only when it means something. The tooltip and the
+    accessibility label read the figures out ("JR-Bar · working · Claude
+    16 %, Codex 83 % · 2 more").
+  * `meters_percent`: the same columns, then the leading provider's glyph
+    and number ("✳ 16", `~` when the figure is derived).
+  * `glyph`, `glyph_ring` (the glyph inside a thin ring of the primary
+    provider's 5 h window, amber from 80 %, red from 95 %) and
+    `glyph_label` (the glyph beside "1 ask · 2 working" as the button's
+    title), all 18×18 pt, as before.
+
+  Width is the scarce thing on a notched MacBook: an item much past 80 pt
+  is given no slot at all and macOS hides it behind the "«" (measured on
+  the owner's Mac, where a glyph-and-bar cell per provider — 115 pt for
+  three — never appeared). A column per provider keeps five providers, the
+  dot and the insets to about 43 pt.
+
+  `menu_bar_icon_style` is the app's own key: the daemon answers
+  `set_setting` for it with `ok` and then keeps its value (the Python
+  settings dataclass has no field for it, which is why it is in
+  `SettingsKey.appIntroduced`), so the choice is remembered in
+  `app-state.json` and the write still goes out for a daemon that learns
+  the key later. Unset means `meters`.
+
+  Stage-2 escalation pulses the icon amber (a layer opacity animation;
+  Reduce Motion holds amber) until the ask resolves — in the meter styles
+  the state dot carries it instead, since fading the whole strip would
+  make the columns unreadable. The state's `escalation.stage` is the
+  source of truth so a launch mid-escalation catches up.
 * Events → the Mac (`EventCoordinator`, decisions from `EventPolicy`):
   sounds through `AVAudioPlayer` on the system AIFFs (Glass, Funk, Basso,
   Pop, Hero for the chime), so a muted alert channel does not silence
@@ -508,26 +568,42 @@ three layers):
   selection tint only for the keyboard's row. Sections: header (aggregate
   word, counts, connection dot with a tooltip), Sessions (asks pinned first
   with Approve/Deny sending `answer_ask`; then waiting, failed, working,
-  done, idle rows with the provider tile, the label (`SessionLabel`: the
+  done, ended, idle rows with the provider tile, the label (`SessionLabel`: the
   daemon's label with a leading provider name dropped and UUIDs shortened,
   else `short_id`, so "Claude Claude fca1eb06-…" can never appear), cwd
   tail, state word and activity mark, elapsed time, worker badge; click
-  sends `open_session`), Usage (per provider: the 5h and 7d bars, or the
+  sends `open_session`. `lifecycle: "ended"` — the process went away
+  without finishing anything — is its own grey word with a hollow ring,
+  never the green check a `completed` run earns (`SessionActivity` in
+  `JRBarCore`). Under the list, when `state.hidden_count` is not zero,
+  "3 earlier in History →" opens History, where the runs the daemon has
+  stopped listing still are), Usage (per provider: the 5h and 7d bars, or the
   first two windows, labelled by `UsageWindowLabel` (`five-hour`/`5h` →
   5h, `weekly`/`7d` → 7d, `daily`, `monthly`, `credits`, else the first
   six characters of the name) in the provider accent turning amber at
   80 % and red at 95 %, the percent right-aligned in its own column with
   `~` when the fidelity is not `official`, one line of reset countdowns,
-  pace hint), Devices (Pro / Dot / Screen Bar chips; the Screen Bar chip
+  pace hint, and at the end of that line a seven-day tokens sparkline — no
+  axes, no numbers, the newest day brightest, a hairline for a day with
+  nothing in it (`UsageSparkline` in `JRBarCore`), fed from
+  `usage_history {range: 7d}` fetched in the background at most once every
+  ten minutes per provider, redrawn when a `usage_history_ready` event
+  says the scan landed, and simply absent for a provider with nothing to
+  show), Devices (Pro / Dot / Screen Bar chips; the Screen Bar chip
   toggles the band; a brightness slider sends `set_brightness` for `all`,
   throttled to one command per 120 ms while dragging and flushed on
-  release), and a footer (Clear done → `clear_completed all`, Quiet… →
+  release), and a footer (Clear done → `clear_completed {sessions:
+  "all"}`, which acknowledges every done, ended and stale row the panel
+  listed; on `reply.ok` the button becomes "Undo clear 4:58" for the whole
+  300 s window and sends `undo_clear {batch}`, Quiet… →
   `quiet` for 30 min / 1 h / 4 h / 12 h, History (⌘Y), an overflow menu
   (Control Center ⌘K, Effects…, History ⌘Y, Usage Center ⌘U, then Check
   for Updates… and Settings… ⌘,), a gear for Settings…, Quit; every footer
-  control's tooltip names its shortcut). Empty states: "No agents right now" when live and
-  quiet; "Core is starting" / "Core not connected" with the file-feed
-  summary when not. With a supervised core that gave up, the header shows
+  control's tooltip names its shortcut). Empty states are drawn, not
+  written: a soft mark, a headline and one line of what happens next —
+  "No agents right now" when live and quiet ("All clear" when everything
+  listed has been acknowledged), "Core is starting" / "Core not connected"
+  with the file-feed summary when not. With a supervised core that gave up, the header shows
   "Core crashed 10× in 2 min" with a Restart button and a red dot.
 * "Why this light": the last row of the Sessions section is the
   `LightExplanation` headline ("Amber pulse: Codex sidepulse-core is
@@ -636,13 +712,18 @@ three layers):
   to one write per 120 ms, and shows refused writes in a transient line.
   A key the document lacks renders its default, disabled, with a "Not
   provided by core" caption; with no document at all a banner says so.
-  Pages: General (launch at login via `SMAppService`, icon style, tips,
+  Pages: General (launch at login via `SMAppService`, the menu bar icon
+  as five rows each drawing the style it names on a strip of menu bar —
+  from the reader's own providers when the core is live, a sample
+  otherwise — tips,
   Screen Bar on/Alcove/full screen/link, global brightness, Software Update
   stub with an app-local channel), Agents (twelve provider rows with hook
   status from `state.health.hooks`, Install/Reinstall/Remove →
   `install_hooks` / `uninstall_hooks`, per-provider "Open in", transcript
   toggles, sub-agent asks), Usage (providers shown, display mode, graph
-  range, Claude plan-limits consent (writes `claude_plan_limits_enabled`
+  range with an "Open Usage Center" button beside it and "Graphs live in
+  the Usage Center (⌘U). This range is what it opens on and what the
+  panel's sparklines cover." under it, Claude plan-limits consent (writes `claude_plan_limits_enabled`
   and `…_consent_version` together), quota thresholds, capacity history),
   Devices & Screen Bar (a card per `devices[]` entry with display mode,
   brightness, auto-brightness, provider pin, asks-only, Calibrate… sheet
@@ -695,11 +776,21 @@ three layers):
   washes that card in its accent with a "Window reset" pill for ~1.5 s
   (a fade under Reduce Motion) and reloads its history. Pace words are the
   daemon's (`ahead`, `on`, `under`, `exhausted`), rendered by the same
-  `PanelStore.paceHint` as the panel ("on pace", "under pace", "used up"). Empty states:
+  `PanelStore.paceHint` as the panel ("on pace", "under pace", "used up"). A history is never allowed to look
+  like a broken command on a cold start: the request waits 30 s rather
+  than the usual 10, an answer marked `partial` keeps the skeleton (or
+  draws what came with "Still reading transcripts — this will fill in."
+  under it), a `usage_history_ready` event re-reads that provider at once,
+  and a timeout with nothing cached is retried twice, six seconds apart,
+  before it becomes an error row. Empty states:
   "Core not connected", "No usage yet", "Sign in via the CLI" for a
   provider whose `state` says it is signed out (windows stay hidden in the
-  panel), a breathing skeleton while a history loads, an error row with
-  Retry when the command fails, "Nothing recorded in this range".
+  panel), a breathing skeleton while a history loads ("Reading transcripts
+  — the core is still scanning." while the daemon says so), an error row
+  with Retry when the command fails, "Nothing recorded in this range", and
+  — when the scan finished and `records` is 0 — "Devin reports no local
+  records", which is a fact about the provider rather than a month of zero
+  bars (the daemon pads its answer with a row per day either way).
 * Effect Studio (`EffectStudioWindowController`, `EffectStudioStore`,
   `EffectStudioView`; Settings › Lighting › Effects…, the panel footer's
   overflow menu, the status menu and the app menu): a 1060×680 window in
@@ -824,8 +915,9 @@ three layers):
   channel picker calls `channelDidChange()`. The panel's overflow menu has
   the same "Check for Updates…" row; when the updater is unavailable the
   panel shows the reason as a toast.
-* App state: the hooks-installed stamp, the login-item marker and the
-  Screen Bar flag live in `~/.local/state/jrbar/app-state.json`
+* App state: the hooks-installed stamp, the login-item marker, the
+  Screen Bar flag and the menu bar icon style live in
+  `~/.local/state/jrbar/app-state.json`
   (`AppState` / `AppStateFile` in JRBarCore, tolerant read, atomic write,
   seeded once from the old user-defaults keys when the file is absent),
   not in `UserDefaults`: on the owner's Mac cfprefsd stopped persisting
@@ -867,9 +959,14 @@ three layers):
   "8870963f" over the Claude tile); the app does not persist its own copy,
   so nothing is shown while the core is away.
 * Settings keys the daemon does not serve show "Not provided by core"
-  rather than a blank: today `menu_bar_icon_style`,
-  `quota_alert_thresholds` and `cloud_ingest_token_path` (the
-  `SettingsKey.appIntroduced` set). macOS notification permission for the
+  rather than a blank: today `quota_alert_thresholds` and
+  `cloud_ingest_token_path` (the `SettingsKey.appIntroduced` set).
+  `menu_bar_icon_style` is in that set too, and worse: the daemon *does*
+  send a value for it and answers a write with `ok` while keeping its own
+  ("glyph", the Python default it has no field to change). So the app owns
+  that key — the choice lives in `app-state.json`, the picker reads and
+  writes it there, and the `set_setting` still goes out for a daemon that
+  learns the key later. macOS notification permission for the
   bundle id is the user's: a denied permission logs "notification skipped:
   permission denied" in the Advanced log and the sound still plays.
 * The aggregate fallback is a simple reduction of `latest.json` (needs input >

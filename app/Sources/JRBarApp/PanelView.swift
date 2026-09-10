@@ -138,6 +138,11 @@ struct ActivityMark: View {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(Color.green.opacity(0.9))
+            case .ended:
+                // The process went away without finishing anything: grey,
+                // and deliberately not the green check a completion earns.
+                Circle()
+                    .strokeBorder(Color.secondary.opacity(0.55), lineWidth: 1.4)
             case .failed:
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 11, weight: .semibold))
@@ -354,6 +359,10 @@ struct SessionsSection: View {
                 .clipped()
                 .modifier(ScrollEdgeFade(active: layout.sessionsScroll))
             }
+            if store.hiddenCount > 0 {
+                HiddenSessionsRow(store: store)
+                    .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
+            }
             if let explanation = store.lightExplanation {
                 WhyLightRow(explanation: explanation, store: store)
                     .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
@@ -361,6 +370,46 @@ struct SessionsSection: View {
         }
         .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
         .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
+        .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.hiddenCount > 0)
+    }
+}
+
+/// "3 earlier in History →": the runs the daemon has stopped listing
+/// because they were acknowledged. Clicking opens History, where they are.
+struct HiddenSessionsRow: View {
+    @Bindable var store: PanelStore
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button { store.openHistory() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 12)
+                Text(store.hiddenFooterText)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .contentTransition(.numericText())
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .opacity(hovering && store.isOpen ? 1 : 0.45)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: CGFloat(PanelLayout.hiddenFooterHeight) - 3)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(hovering && store.isOpen ? 0.05 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.top, 3)
+        .onHover { hovering = $0 }
+        .help("Sessions you have already cleared live in History (⌘Y)")
+        .accessibilityLabel("\(store.hiddenFooterText). Opens History.")
     }
 }
 
@@ -440,34 +489,62 @@ struct WhyLightRow: View {
     }
 }
 
+/// Nothing to list: a drawn state rather than a sentence in the void — a
+/// soft mark, the headline, and one line saying what happens next. Live
+/// and quiet reads differently from "the core is not there".
 struct SessionsEmptyState: View {
     @Bindable var store: PanelStore
 
+    private var live: Bool { store.isLive }
+
+    private var symbol: String {
+        live ? "moon.stars" : "antenna.radiowaves.left.and.right.slash"
+    }
+
+    private var headline: String {
+        if live { return store.hiddenCount > 0 ? "All clear" : "No agents right now" }
+        return store.coreMayBeStarting ? "Core is starting" : "Core not connected"
+    }
+
+    private var detail: String {
+        if live {
+            return store.hiddenCount > 0
+                ? "Everything you had running is finished and acknowledged."
+                : "Claude, Codex, Gemini and friends appear the moment they start."
+        }
+        return "Showing the file feeds: \(store.fallbackDetail.lowercased())."
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if store.isLive {
-                Label("No agents right now", systemImage: "moon.zzz")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Text("Sessions from Claude, Codex, Gemini and friends appear here the moment they start.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
-            } else {
-                Label(store.coreMayBeStarting ? "Core is starting" : "Core not connected", systemImage: "antenna.radiowaves.left.and.right.slash")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Text("Showing the file feeds: \(store.fallbackDetail.lowercased()).")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(2)
+        HStack(alignment: .center, spacing: 11) {
+            ZStack {
+                Circle().fill(.primary.opacity(0.05))
+                Circle().strokeBorder(.primary.opacity(0.07), lineWidth: 0.5)
+                Image(systemName: symbol)
+                    .font(.system(size: 14, weight: .light))
+                    .foregroundStyle(live ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange.opacity(0.75)))
             }
+            .frame(width: 30, height: 30)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(headline)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
-        .padding(.top, 4)
+        .padding(.top, 6)
         .frame(height: CGFloat(PanelLayout.emptySessionsHeight), alignment: .top)
         .clipped()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(headline). \(detail)")
     }
 }
 
@@ -478,6 +555,16 @@ struct SessionRowView: View {
     /// The state word, mark and elapsed time sit in one fixed column so the
     /// label column never shifts as the clock ticks.
     static let trailingWidth: CGFloat = 96
+
+    /// Waiting is the only word that shouts; an ended run is quieter than
+    /// a finished one, so "Done" and "Ended" never read the same.
+    static func wordColor(_ activity: SessionActivity) -> Color {
+        switch activity {
+        case .waiting: return .orange
+        case .ended: return Color.secondary.opacity(0.65)
+        default: return .secondary
+        }
+    }
 
     var body: some View {
         RowChrome(selected: store.selectedID == row.id, active: store.isOpen, height: CGFloat(PanelLayout.sessionRowHeight), action: { store.open(row) }) {
@@ -503,7 +590,7 @@ struct SessionRowView: View {
                     HStack(spacing: 5) {
                         Text(row.activity.word)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(row.activity == .waiting ? Color.orange : Color.secondary)
+                            .foregroundStyle(Self.wordColor(row.activity))
                             .lineLimit(1)
                             .contentTransition(.opacity)
                         ActivityMark(activity: row.activity, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen)
@@ -679,12 +766,19 @@ struct UsageRow: View {
                     if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
                     if let secondary { QuotaBar(window: secondary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
                 }
-                Text(resetLine(primary: primary, secondary: secondary))
-                    .font(.system(size: 10))
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                HStack(spacing: 6) {
+                    Text(resetLine(primary: primary, secondary: secondary))
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 2)
+                    if let values = store.sparkline(for: usage.id) {
+                        UsageSparklineView(values: values, accent: style.accent)
+                            .transition(.opacity)
+                    }
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -718,6 +812,45 @@ struct UsageRow: View {
         case "behind", "under": return .secondary
         default: return Color.secondary.opacity(0.7)
         }
+    }
+}
+
+/// Seven days of tokens as seven bars, oldest at the left. No axes, no
+/// labels, no numbers: it is there to say "busy Tuesday, quiet weekend"
+/// in the corner of a 50 pt row, and the Usage Center has the real graph.
+struct UsageSparklineView: View {
+    /// Tokens per day, oldest first (`UsageSparkline.tokensPerDay`).
+    let values: [Double]
+    let accent: Color
+
+    static let barWidth: CGFloat = 3.5
+    static let gap: CGFloat = 1.5
+    static let height: CGFloat = 11
+
+    private var normalised: [Double] { UsageSparkline.normalised(values) }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: Self.gap) {
+            ForEach(Array(normalised.enumerated()), id: \.offset) { index, value in
+                // A day with nothing in it keeps its place as a hairline at
+                // the baseline, dimmer than any real bar, so a quiet
+                // weekend never reads as a day that was not counted.
+                RoundedRectangle(cornerRadius: 0.8, style: .continuous)
+                    .fill(accent.opacity(value <= 0.001 ? 0.18 : (index == normalised.count - 1 ? 0.85 : 0.42)))
+                    .frame(width: Self.barWidth, height: max(1, Self.height * CGFloat(value)))
+            }
+        }
+        .frame(height: Self.height, alignment: .bottom)
+        .help(Self.summary(values))
+        .accessibilityLabel("Last 7 days of tokens")
+        .accessibilityValue(Self.summary(values))
+    }
+
+    /// "7 days · 41.2M tokens · today 6.1M".
+    static func summary(_ values: [Double]) -> String {
+        let total = values.reduce(0, +)
+        let today = values.last ?? 0
+        return "Last 7 days · \(UsageFormat.tokens(Int(total))) tokens · today \(UsageFormat.tokens(Int(today)))"
     }
 }
 
@@ -856,8 +989,17 @@ struct PanelFooter: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            FooterButton(title: "Clear done", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
-                .help("Acknowledge finished sessions (undo within 5 minutes from History)")
+            if let countdown = store.undoCountdown {
+                FooterButton(title: "Undo clear", dimmed: false, shortcut: countdown, active: store.isOpen) { store.undoClear() }
+                    .help("Put the sessions you just cleared back (\(countdown) left)")
+                    .transition(.opacity)
+            } else {
+                FooterButton(title: "Clear done", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
+                    .help(store.completedCount == 0
+                          ? "Nothing finished to acknowledge"
+                          : "Acknowledge the \(store.completedCount) finished, ended and stale sessions; Undo stays here for 5 minutes")
+                    .transition(.opacity)
+            }
             Menu {
                 Button("30 minutes") { store.quiet(minutes: 30) }
                 Button("1 hour") { store.quiet(minutes: 60) }
@@ -904,6 +1046,7 @@ struct PanelFooter: View {
         }
         .padding(.horizontal, 8)
         .frame(height: CGFloat(PanelLayout.footerHeight))
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.undoCountdown == nil)
     }
 }
 

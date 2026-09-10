@@ -205,6 +205,39 @@ struct CodecTests {
         #expect(state.usage == nil)
     }
 
+    @Test("hidden_count decodes as a count, however the daemon spells it, and is optional")
+    func hiddenCount() throws {
+        func state(_ line: String) throws -> CoreState {
+            guard case .state(let state) = try CoreCodec.decode(line: line) else {
+                Issue.record("not a state"); return CoreState()
+            }
+            return state
+        }
+        #expect(try state(#"{"t":"state","v":1,"hidden_count":4}"#).hiddenCount == 4)
+        #expect(try state(#"{"t":"state","v":1,"hidden_count":4.0}"#).hiddenCount == 4, "a JSON number is a number")
+        #expect(try state(#"{"t":"state","v":1,"hidden_count":-2}"#).hiddenCount == 0, "never a negative count")
+        #expect(try state(#"{"t":"state","v":1,"hidden_count":"lots"}"#).hiddenCount == nil, "nonsense is no count, not a decode failure")
+        #expect(try state(#"{"t":"state","v":1}"#).hiddenCount == nil, "a daemon that does not count them says nothing")
+    }
+
+    @Test("usage_history_ready decodes provider and range, and an older daemon's event still decodes")
+    func usageHistoryReady() throws {
+        guard case .event(let event) = try CoreCodec.decode(
+            line: #"{"t":"event","v":1,"id":"ev-9","kind":"usage_history_ready","provider":"codex","range":"30d","notify":false}"#
+        ) else {
+            Issue.record("not an event"); return
+        }
+        #expect(event.kind == CoreEvent.usageHistoryReadyKind)
+        #expect(event.provider == "codex")
+        #expect(event.range == "30d")
+        #expect(event.notify == false)
+
+        guard case .event(let bare) = try CoreCodec.decode(line: #"{"t":"event","v":1,"id":"ev-10","kind":"completed"}"#) else {
+            Issue.record("not an event"); return
+        }
+        #expect(bare.range == nil, "the field is optional everywhere else")
+    }
+
     @Test("commands encode to the documented frame")
     func encodeCommand() throws {
         let command = CoreCommand(id: "c-42", name: "open_session", args: ["session": "claude:session:fca1eb06-f6d1"])

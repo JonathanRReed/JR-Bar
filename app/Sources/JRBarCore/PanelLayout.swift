@@ -20,6 +20,9 @@ public struct PanelLayout: Hashable, Sendable {
     public static let sectionLabelHeight: Double = 26
     public static let sessionsBottomPadding: Double = 4
     public static let whyRowHeight: Double = 30
+    /// "3 earlier in History →" under the Sessions list when the daemon
+    /// keeps acknowledged sessions out of `state.sessions`.
+    public static let hiddenFooterHeight: Double = 24
     public static let usageBottomPadding: Double = 6
     public static let devicesHeight: Double = 82
     public static let footerHeight: Double = 34
@@ -47,12 +50,15 @@ public struct PanelLayout: Hashable, Sendable {
         public var sessions: Int
         public var hasWhyRow: Bool
         public var usageProviders: Int
+        /// `state.hidden_count > 0`: the History footer row is shown.
+        public var hasHiddenFooter: Bool
 
-        public init(asks: Int = 0, sessions: Int = 0, hasWhyRow: Bool = false, usageProviders: Int = 0) {
+        public init(asks: Int = 0, sessions: Int = 0, hasWhyRow: Bool = false, usageProviders: Int = 0, hasHiddenFooter: Bool = false) {
             self.asks = asks
             self.sessions = sessions
             self.hasWhyRow = hasWhyRow
             self.usageProviders = usageProviders
+            self.hasHiddenFooter = hasHiddenFooter
         }
 
         public var sessionsEmpty: Bool { asks + sessions == 0 }
@@ -84,7 +90,7 @@ public struct PanelLayout: Hashable, Sendable {
     /// Everything but the two lists.
     public static func fixedHeight(_ content: Content) -> Double {
         headerHeight + hairline
-            + sectionLabelHeight + (content.hasWhyRow ? whyRowHeight : 0) + sessionsBottomPadding + hairline
+            + sectionLabelHeight + (content.hasHiddenFooter ? hiddenFooterHeight : 0) + (content.hasWhyRow ? whyRowHeight : 0) + sessionsBottomPadding + hairline
             + sectionLabelHeight + usageBottomPadding + hairline
             + devicesHeight + hairline
             + footerHeight

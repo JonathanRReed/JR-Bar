@@ -3,35 +3,6 @@ import Foundation
 import JRBarCore
 import Observation
 
-/// What a session is doing, reduced to the five things the panel can show.
-enum SessionActivity: Equatable {
-    case working
-    case waiting
-    case done
-    case failed
-    case idle
-
-    var word: String {
-        switch self {
-        case .working: return "Working"
-        case .waiting: return "Waiting on you"
-        case .done: return "Done"
-        case .failed: return "Failed"
-        case .idle: return "Idle"
-        }
-    }
-
-    static func reduce(_ session: CoreSession) -> SessionActivity {
-        let lifecycle = session.lifecycle?.lowercased() ?? "active"
-        let mode = session.mode?.lowercased() ?? ""
-        if lifecycle == "failed" || mode == "failed" || mode == "error" { return .failed }
-        if lifecycle == "completed" || lifecycle == "done" || mode == "completed" { return .done }
-        if session.ask != nil || mode == "waiting" || mode == "ask" || session.nextActor == "user" { return .waiting }
-        if ["working", "tool_running", "thinking", "running", "active"].contains(mode) { return .working }
-        return .idle
-    }
-}
-
 /// One line in the Sessions section.
 struct SessionRow: Identifiable, Equatable {
     let id: String
@@ -163,6 +134,7 @@ final class PanelStore {
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
+        refreshSparklines()
     }
 
     func panelDidClose() {
@@ -177,7 +149,17 @@ final class PanelStore {
 
     /// What the panel shows, counted for `PanelLayout`.
     var layoutContent: PanelLayout.Content {
-        PanelLayout.Content(asks: askRows.count, sessions: plainRows.count, hasWhyRow: lightExplanation != nil, usageProviders: usage.count)
+        PanelLayout.Content(asks: askRows.count, sessions: plainRows.count, hasWhyRow: lightExplanation != nil,
+                            usageProviders: usage.count, hasHiddenFooter: hiddenCount > 0)
+    }
+
+    /// `state.hidden_count`: sessions the daemon keeps out of `sessions`
+    /// because they were acknowledged, which `list_history` still has.
+    var hiddenCount: Int { isLive ? core.hiddenSessionCount : 0 }
+
+    /// "3 earlier in History", the footer row's words.
+    var hiddenFooterText: String {
+        hiddenCount == 1 ? "1 earlier in History" : "\(hiddenCount) earlier in History"
     }
 
     /// The panel's geometry for the current content and screen, computed
@@ -273,7 +255,10 @@ final class PanelStore {
             case .failed: return 2
             case .working: return 3
             case .done: return 4
-            case .idle: return 5
+            // An ended run is over and nobody is waiting on it: it sits
+            // under the finished ones, above the merely idle.
+            case .ended: return 5
+            case .idle: return 6
             }
         }
         return rows.sorted { a, b in
@@ -304,7 +289,10 @@ final class PanelStore {
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
-    var completedCount: Int { rows.filter { $0.activity == .done }.count }
+    /// What "Clear done" acknowledges: finished runs, ended ones and
+    /// anything the daemon has marked stale — the same rows
+    /// `clear_completed {sessions: "all"}` clears daemon-side.
+    var completedCount: Int { rows.filter { $0.activity.isClearable || $0.stale }.count }
 
     // MARK: Derived: why this light
 
@@ -330,6 +318,53 @@ final class PanelStore {
     /// Providers with at least one window; signed-out ones are the Usage Center's business.
     var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !$0.windows.isEmpty } : [] }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
+
+    // MARK: Derived: the usage sparklines
+
+    /// Tokens per day for the last week, per provider, oldest first: what
+    /// the tiny graph in each usage row draws. Filled in the background
+    /// from `usage_history`, never on the way to showing the panel.
+    private(set) var sparklines: [String: [Double]] = [:]
+    /// One `usage_history` per provider per this long, at most. A cold
+    /// scan is expensive daemon-side and nothing in the row moves faster.
+    static let sparklineInterval: TimeInterval = 600
+    @ObservationIgnored private var sparklineFetchedAt: [String: Date] = [:]
+
+    func sparkline(for provider: String) -> [Double]? {
+        guard let values = sparklines[provider], UsageSparkline.hasSignal(values) else { return nil }
+        return values
+    }
+
+    /// Asks the daemon for a week of history for every provider the panel
+    /// shows, unless it asked recently. Failures are silent: a row without
+    /// a sparkline simply has none. `force` is for the
+    /// `usage_history_ready` event, which means the rows just changed.
+    func refreshSparklines(force: Bool = false) {
+        guard core.isLive else { return }
+        let now = Date()
+        for provider in usage {
+            let id = provider.id
+            if !force, let at = sparklineFetchedAt[id], now.timeIntervalSince(at) < Self.sparklineInterval { continue }
+            sparklineFetchedAt[id] = now
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    let history = try await self.core.usageHistory(provider: id, range: .week)
+                    let values = UsageSparkline.tokensPerDay(history)
+                    if UsageSparkline.hasSignal(values) {
+                        self.sparklines[id] = values
+                    } else {
+                        self.sparklines.removeValue(forKey: id)
+                    }
+                    // A partial answer is worth drawing, but it should not
+                    // hold the slot for the next ten minutes.
+                    if history.partial { self.sparklineFetchedAt[id] = nil }
+                } catch {
+                    self.sparklineFetchedAt[id] = nil     // try again next time the panel opens
+                }
+            }
+        }
+    }
 
     /// The two windows a usage row draws: the 5 h window (else the first)
     /// and the 7 d window (else the next one).
@@ -370,10 +405,71 @@ final class PanelStore {
         onClose?()
     }
 
+    /// The batch the daemon's last `clear_completed` reply named, and when
+    /// it landed: while it is inside `EventPolicy.undoWindow` the footer
+    /// offers Undo in place of "Clear done".
+    var undoOffer: (batch: String, at: Date, cleared: Int)?
+
+    /// True while the offer stands (the clock ticks every second the panel
+    /// is open, so this goes false on its own).
+    var canUndoClear: Bool {
+        guard let undoOffer else { return false }
+        return now.timeIntervalSince(undoOffer.at) < EventPolicy.undoWindow
+    }
+
+    /// "Undo (4:38)": how long is left to take the clear back.
+    var undoCountdown: String? {
+        guard let undoOffer, canUndoClear else { return nil }
+        let left = Int((EventPolicy.undoWindow - now.timeIntervalSince(undoOffer.at)).rounded(.up))
+        return String(format: "%d:%02d", left / 60, left % 60)
+    }
+
+    /// `clear_completed {sessions: "all"}`: the daemon acknowledges every
+    /// done, ended and stale row it listed. Undo is offered inline, in the
+    /// footer, for the whole 300 s window rather than in a toast that is
+    /// gone in two seconds.
     func clearCompleted() {
         guard completedCount > 0 else { show(toast: "Nothing to clear"); return }
-        core.clearCompleted()
-        show(toast: "Cleared · undo within 5 min from the core")
+        let count = completedCount
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.clearCompletedNow()
+                guard reply.ok else {
+                    self.show(toast: "Clear failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    return
+                }
+                let cleared = reply.result?["cleared"]?.arrayValue?.count ?? count
+                if let batch = reply.result?["batch"]?.stringValue {
+                    self.undoOffer = (batch, Date(), cleared)
+                    self.show(toast: cleared == 1 ? "Cleared 1 · Undo in the footer" : "Cleared \(cleared) · Undo in the footer")
+                } else {
+                    self.show(toast: "Cleared \(cleared)")
+                }
+            } catch {
+                self.show(toast: "Clear failed: the core is not answering")
+            }
+        }
+    }
+
+    /// `undo_clear {batch}` for the offer that is standing.
+    func undoClear() {
+        guard let offer = undoOffer, canUndoClear else { return }
+        undoOffer = nil
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.send("undo_clear", args: ["batch": .string(offer.batch)])
+                if reply.ok {
+                    let restored = reply.result?["restored"]?.arrayValue?.count ?? offer.cleared
+                    self.show(toast: restored == 1 ? "Restored 1 session" : "Restored \(restored) sessions")
+                } else {
+                    self.show(toast: "Undo failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                }
+            } catch {
+                self.show(toast: "Undo failed: the core is not answering")
+            }
+        }
     }
 
     func quiet(minutes: Int) {

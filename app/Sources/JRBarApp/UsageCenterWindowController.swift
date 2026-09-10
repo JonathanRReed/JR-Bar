@@ -37,6 +37,11 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
         window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 760, height: 720))
         window.minSize = NSSize(width: 640, height: 440)
+        // Developer switch, as in Settings: a tall window puts a whole
+        // provider card (rings, forecast, graph) in one screenshot.
+        if let tall = ProcessInfo.processInfo.environment["JRBAR_USAGE_HEIGHT"].flatMap(Double.init) {
+            window.setContentSize(NSSize(width: 760, height: tall))
+        }
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
