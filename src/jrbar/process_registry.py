@@ -530,15 +530,33 @@ class ProcessSweeper:
         return self._table
 
     def sweep(self, sessions: Iterable[tuple[str, str]]) -> list[DeadAgentProcess]:
+        return self.classify(sessions)[0]
+
+    def classify(
+        self, sessions: Iterable[tuple[str, str]]
+    ) -> tuple[list[DeadAgentProcess], frozenset[tuple[str, str]]]:
+        """``(dead sessions, sessions this table just proved alive)``.
+
+        The live set is affirmative only. A session is in it because a
+        record named a pid, that pid is in the process table, and its start
+        time still matches -- the same three questions that make a session
+        dead when any of them fails. A session MISSING from the set is one
+        the registry could not vouch for (no record, no readable process
+        table, a reused pid), never one it proved alive, so a caller may
+        treat membership as "still running" and absence as "no idea".
+        """
+
         wanted = [(p, s) for p, s in dict.fromkeys(sessions) if p and s]
         if not wanted:
-            return []
+            return [], frozenset()
         table = self._refresh_table()
         if not table:
-            # Cannot see the process table: never declare anything dead.
-            return []
+            # Cannot see the process table: never declare anything dead --
+            # and never vouch for anything either.
+            return [], frozenset()
         claude_index: dict[str, ProcessEntry] | None = None
         dead: list[DeadAgentProcess] = []
+        live: set[tuple[str, str]] = set()
         for provider, session_id in wanted:
             record = load_record(provider, session_id, state_dir=self.state_dir)
             if record is None and provider == "claude":
@@ -553,11 +571,12 @@ class ProcessSweeper:
                 continue
             alive, reason = process_is_live(record, table)
             if alive:
+                live.add((provider, session_id))
                 continue
             ended = replace(record, ended_at_epoch=self._clock(), end_reason=reason)
             write_record(ended, state_dir=self.state_dir)
             dead.append(DeadAgentProcess(ended, reason))
-        return dead
+        return dead, frozenset(live)
 
 
 def prune_registry(

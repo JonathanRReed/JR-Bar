@@ -154,6 +154,41 @@ def test_sweeper_ends_dead_and_keeps_alive(tmp_path: Path):
     assert sweeper.sweep([("codex", "dead")]) == []
 
 
+def test_classify_names_the_living_as_well_as_the_dead(tmp_path: Path):
+    """The sweep answers both halves of one question, and the live half is
+    the only evidence strong enough to outvote the silence timer. It is
+    affirmative only: a session the registry never recorded, or one whose
+    pid was recycled, is absent from it rather than presumed alive."""
+
+    alive = pr.ProcessEntry(300, 1, 5.0, "/opt/homebrew/bin/codex")
+    dead = pr.ProcessEntry(301, 1, 6.0, "/opt/homebrew/bin/codex")
+    reused = pr.ProcessEntry(302, 1, 7.0, "/opt/homebrew/bin/codex")
+    pr.record_agent_process("codex", "alive", alive, state_dir=tmp_path)
+    pr.record_agent_process("codex", "dead", dead, state_dir=tmp_path)
+    pr.record_agent_process("codex", "reused", reused, state_dir=tmp_path)
+    table = _table(
+        (300, 1, 5.0, "/opt/homebrew/bin/codex"),
+        # Same pid, started a minute later: somebody else's process now.
+        (302, 1, 67.0, "/bin/zsh"),
+    )
+    sweeper = pr.ProcessSweeper(
+        state_dir=tmp_path, table_loader=lambda: table, claude_index_loader=dict, clock=lambda: 1000.0
+    )
+    gone, live = sweeper.classify(
+        [("codex", "alive"), ("codex", "dead"), ("codex", "reused"), ("codex", "unknown")]
+    )
+    assert live == frozenset({("codex", "alive")})
+    assert sorted(d.record.session_id for d in gone) == ["dead", "reused"]
+
+
+def test_classify_vouches_for_nothing_without_a_process_table(tmp_path: Path):
+    """No table is no evidence in either direction."""
+
+    pr.record_agent_process("codex", "s", pr.ProcessEntry(9, 1, 1.0, "codex"), state_dir=tmp_path)
+    sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=dict, claude_index_loader=dict)
+    assert sweeper.classify([("codex", "s")]) == ([], frozenset())
+
+
 def test_sweeper_uses_claude_index_for_unregistered_sessions(tmp_path: Path):
     index = {"claude-sess": pr.ProcessEntry(777, 0, 5.0, "claude")}
     sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=lambda: _table((1, 0, 0.0, "/sbin/launchd")), claude_index_loader=lambda: index, clock=lambda: 50.0)

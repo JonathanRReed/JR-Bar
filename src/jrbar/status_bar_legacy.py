@@ -9569,13 +9569,19 @@ class StatusBarController(NSObject):
         self.schedule_event_refresh()
 
     def reap_dead_agent_processes(self) -> None:
-        """End every live-looking session whose OS process is gone.
+        """End every live-looking session whose OS process is gone, and tell
+        the monitor which ones are still running.
 
         Hooks cannot report a kill. Without this, a Ctrl-C'd agent sat
         "Working" for the silence window and then lingered as "ended
         (unconfirmed)" for the presence horizon. The synthetic SessionEnd
         goes through the ordinary hook pipeline so it is persisted and
         reduced like a real one.
+
+        The sweep answers both halves of one question, so the sessions it
+        found alive are published too: that is the evidence
+        ``status_for_snapshot`` needs to stop the silence timer from ending
+        a session whose agent is demonstrably still there.
         """
         from .liveness_sweep import reap_dead_agents
         from .process_registry import ProcessSweeper
@@ -9605,6 +9611,13 @@ class StatusBarController(NSObject):
         except Exception as exc:
             log_status_bar(f"liveness sweep error: {exc}")
             return False
+        # The live half of the same answer. The silence timer would
+        # otherwise call a long, quiet tool run "ended (unconfirmed)" while
+        # its process is right there in the table.
+        try:
+            self.monitor.note_live_sessions(result.live_sessions)
+        except Exception as exc:
+            log_status_bar(f"liveness sweep live set skipped: {exc}")
         for dead in result.ended_sessions:
             log_status_bar(
                 "liveness: ended "

@@ -1,4 +1,4 @@
-"""End sessions whose agent process is gone.
+"""End sessions whose agent process is gone -- and name the ones still running.
 
 The sweep runs inside the app on every refresh tick. For each session that
 still looks alive (working, tool running, waiting, idle) it asks the
@@ -8,6 +8,13 @@ ordinary hook pipeline, so the record is persisted, deduplicated, and
 reduced exactly like one the agent would have sent itself. The synthetic
 record carries ``reason`` so the menu can say "process exited" rather than
 "completed".
+
+The same pass answers the opposite question for free, and
+``SweepResult.live_sessions`` carries it: which sessions the process table
+just proved alive. The collector needs that, because otherwise a silence
+timer is the only evidence it has, and a long tool run that legitimately
+says nothing for twenty minutes gets called dead while its process is
+sitting right there in the table.
 """
 
 from __future__ import annotations
@@ -41,6 +48,11 @@ SYNTHETIC_REASON_PREFIX = "jrbar_process_"
 class SweepResult:
     ended_sessions: tuple[DeadAgentProcess, ...]
     synthesized_events: int
+    # The other half of the sweep, and the half the silence timer needs:
+    # the ``(provider, session_id)`` pairs whose process the table just
+    # proved alive. Affirmative only -- a session absent from this set is
+    # one nobody could vouch for, not one known dead.
+    live_sessions: frozenset[tuple[str, str]] = frozenset()
 
 
 def _subagent_worker_id(status: AgentStatus) -> str | None:
@@ -106,7 +118,11 @@ def reap_dead_agents(
 ) -> SweepResult:
     rows = [status for status in statuses if status.mode in LIVE_MODES and status.session_id]
     sessions = [(status.provider, status.session_id) for status in rows if status.session_id]
-    dead = sweeper.sweep(sessions)
+    classify = getattr(sweeper, "classify", None)
+    if callable(classify):
+        dead, live = classify(sessions)
+    else:  # a sweeper double that only knows the old question
+        dead, live = sweeper.sweep(sessions), frozenset()
     synthesized = 0
     for item in dead:
         for payload in synthetic_end_payloads(item, rows):
@@ -120,7 +136,7 @@ def reap_dead_agents(
                 synthesized += 1
             except Exception:
                 continue
-    return SweepResult(tuple(dead), synthesized)
+    return SweepResult(tuple(dead), synthesized, frozenset(live))
 
 
 __all__ = ["LIVE_MODES", "SweepResult", "reap_dead_agents", "synthetic_end_payloads"]

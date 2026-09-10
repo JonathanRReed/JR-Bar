@@ -138,6 +138,11 @@ IDLE_VISIBLE_SECONDS = 0.0
 POST_TOOL_WORKING_VISIBLE_SECONDS = 2 * 60.0
 # one clock for "working went silent" -- see operator_state
 WORKING_SILENCE_SECONDS = ACTIVE_SILENCE_SECONDS
+# How long the liveness sweep's answer is worth trusting. The sweep runs
+# every 5 s (LIVENESS_POLL_SECONDS); if it stops -- a wedged thread, a
+# process table we cannot read -- its last answer must expire rather than
+# keep a session that really did die reading "Working" forever.
+LIVE_SESSION_TRUST_SECONDS = 30.0
 CODEX_USAGE_LIMIT_TERMINAL_CLASSIFICATIONS = frozenset({"usage_limit_exceeded"})
 LATEST_STATE_MAX_BYTES = 4 * 1_024 * 1_024
 MAX_PENDING_OPERATOR_EVENTS = 2_000
@@ -369,6 +374,7 @@ def _snapshot_from_operator_state(
     idle_visible_seconds: float,
     post_tool_working_visible_seconds: float,
     canonical_projected_uses_age_windows: bool,
+    session_is_live: Callable[[AgentStatus], bool] | None = None,
 ) -> MonitorSnapshot:
     projected = tuple(
         agent_status_from_canonical_work(
@@ -410,6 +416,7 @@ def _snapshot_from_operator_state(
             status,
             collected_at,
             post_tool_working_visible_seconds=post_tool_working_visible_seconds,
+            session_is_live=session_is_live,
         )
         projected_status = projected_by_agent_id.get(status.agent_id)
         is_stale = (
@@ -501,7 +508,58 @@ class MonitorSnapshot:
         }
 
 
-class AgentMonitor:
+class LiveSessionMemory:
+    """What the liveness sweep last proved alive, and when it said so.
+
+    Every monitor that turns silence into ``ENDED_UNCONFIRMED`` needs this,
+    because the silence timer is the weaker evidence of the two: it infers
+    an ending, while the process table observes one. The sweep already
+    forks a ``ps`` for the dead half of the question every five seconds, so
+    the live half costs nothing extra.
+
+    The defaults are class attributes so a monitor that never hears from a
+    sweep -- a test, a replay, an import -- behaves exactly as it did
+    before this existed.
+    """
+
+    _live_sessions: frozenset[tuple[str, str]] = frozenset()
+    _live_sessions_at: float = 0.0
+
+    def note_live_sessions(
+        self, sessions: Iterable[tuple[str, str]], *, now: float | None = None
+    ) -> None:
+        """Record the ``(provider, session_id)`` pairs the sweep just proved
+        alive (``liveness_sweep.SweepResult.live_sessions``)."""
+
+        pairs = frozenset(
+            (str(provider), str(session_id))
+            for provider, session_id in sessions
+            if provider and session_id
+        )
+        # One rebind of two attributes: readers never need the monitor lock.
+        self._live_sessions_at = time.time() if now is None else now
+        self._live_sessions = pairs
+
+    def session_is_live(self, status: AgentStatus) -> bool:
+        """Whether the sweep vouched for this session's process, recently.
+
+        Affirmative only: every "no" here -- no session id, no sweep, a
+        sweep too old to trust -- leaves the silence rule exactly in
+        charge, so this can never keep a killed session looking alive.
+        """
+
+        session_id = getattr(status, "session_id", None)
+        if not session_id:
+            return False
+        live = self._live_sessions
+        if not live:
+            return False
+        if time.time() - self._live_sessions_at > LIVE_SESSION_TRUST_SECONDS:
+            return False
+        return (str(getattr(status, "provider", "")), str(session_id)) in live
+
+
+class AgentMonitor(LiveSessionMemory):
     def __init__(
         self,
         sources: Iterable[SourceSpec] | None = None,
@@ -583,6 +641,7 @@ class AgentMonitor:
                 idle_visible_seconds=self.idle_visible_seconds,
                 post_tool_working_visible_seconds=self.post_tool_working_visible_seconds,
                 canonical_projected_uses_age_windows=True,
+                session_is_live=self.session_is_live,
             )
         statuses_by_key = self._latest_statuses()
 
@@ -593,6 +652,7 @@ class AgentMonitor:
                 status,
                 now,
                 post_tool_working_visible_seconds=self.post_tool_working_visible_seconds,
+                session_is_live=self.session_is_live,
             )
             is_stale = self.is_stale_status(effective, now)
             current = _replace_stale(effective, is_stale)
@@ -978,7 +1038,7 @@ class AgentMonitor:
         )
 
 
-class LiveAgentMonitor:
+class LiveAgentMonitor(LiveSessionMemory):
     """Own the sole mutable canonical reducer state for live production flow."""
 
     def __init__(
@@ -2861,7 +2921,28 @@ def status_for_snapshot(
     now: datetime,
     *,
     post_tool_working_visible_seconds: float,
+    session_is_live: Callable[[AgentStatus], bool] | None = None,
 ) -> AgentStatus:
+    """The mode the snapshot should show, once silence is taken into account.
+
+    ``session_is_live`` is the process registry's answer, and **it beats the
+    silence timer**. The timer was the only evidence we had when this rule
+    was written: hooks cannot report a kill, so a working session that went
+    quiet past its window was probably a Ctrl-C nobody reported, and
+    ``ENDED_UNCONFIRMED`` is the honest word for "probably over, nobody said
+    so". But a long tool run legitimately says nothing for many minutes, and
+    the registry now knows the difference: it can see the agent's process in
+    the table. When it does, the session is not over -- it is working
+    quietly -- and demoting it would call a live agent dead.
+
+    The predicate is affirmative-only by contract (see
+    ``ProcessSweeper.classify``): ``True`` means "this process was seen
+    alive", and anything else means "nobody could vouch for it", which
+    leaves the silence rule exactly as it was. That asymmetry is what keeps
+    the fix this rule was protecting: a session whose process is gone, and
+    which never sent a terminal event, still reads ended.
+    """
+
     # LONG_TASK_PROGRESS included: else a hang there burned 1h awake.
     working_shaped = status.mode in (
         AgentMode.WORKING,
@@ -2874,6 +2955,9 @@ def status_for_snapshot(
         else:
             window = WORKING_SILENCE_SECONDS
         if not is_recent(now, status.updated_at, window):
+            if session_is_live is not None and session_is_live(status):
+                # Liveness beats silence: still working, just quiet.
+                return status
             # the provider never confirmed an ending
             return _replace_mode(status, AgentMode.ENDED_UNCONFIRMED)
     return status

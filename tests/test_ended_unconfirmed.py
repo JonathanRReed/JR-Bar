@@ -62,6 +62,75 @@ def test_a_live_turn_is_untouched() -> None:
     assert live.mode is AgentMode.WORKING
 
 
+def test_liveness_beats_silence_for_a_long_quiet_tool_run() -> None:
+    """A silence timer INFERS an ending; the process table OBSERVES one.
+
+    A long tool run legitimately says nothing for many minutes, and
+    demoting it called the owner's own foreground session dead while
+    ``ps`` showed the process working. When the sweep can point at the
+    agent's process, the row stays exactly what it was.
+    """
+
+    quiet = _status(AgentMode.TOOL_RUNNING, "PreToolUse", silent_for=WORKING_SILENCE_SECONDS + 600)
+    kept = status_for_snapshot(
+        quiet,
+        _NOW,
+        post_tool_working_visible_seconds=POST_TOOL_WORKING_VISIBLE_SECONDS,
+        session_is_live=lambda status: True,
+    )
+    assert kept.mode is AgentMode.TOOL_RUNNING
+    assert kept is quiet, "a live session is left alone, not rebuilt"
+    # And the guard on the other side: only a "yes" outvotes the timer.
+    for answer in (False, None):
+        assert (
+            status_for_snapshot(
+                quiet,
+                _NOW,
+                post_tool_working_visible_seconds=POST_TOOL_WORKING_VISIBLE_SECONDS,
+                session_is_live=lambda status, answer=answer: bool(answer),
+            ).mode
+            is AgentMode.ENDED_UNCONFIRMED
+        ), answer
+
+
+def test_the_monitors_live_set_is_affirmative_and_expires() -> None:
+    """What the sweep proved, for as long as it is worth believing.
+
+    A sweep that stopped running -- a wedged thread, an unreadable process
+    table -- must not keep a session that really did die reading "Working"
+    forever, so its last answer expires and the silence rule takes over
+    again.
+    """
+
+    import time
+
+    from jrbar._collector_legacy import LIVE_SESSION_TRUST_SECONDS, LiveSessionMemory
+
+    memory = LiveSessionMemory()
+    quiet = _status(AgentMode.WORKING, "PreToolUse", silent_for=600.0)
+    other = AgentStatus(
+        provider="codex",
+        agent_id="codex:session:y",
+        display_name="codex y",
+        mode=AgentMode.WORKING,
+        updated_at=_NOW,
+        event_name="PreToolUse",
+        session_id="y",
+    )
+    # Nobody has swept yet: vouch for nothing.
+    assert memory.session_is_live(quiet) is False
+
+    now = time.time()
+    memory.note_live_sessions([("grok", "x")], now=now)
+    assert memory.session_is_live(quiet) is True
+    # A session the sweep did not name is not presumed alive.
+    assert memory.session_is_live(other) is False
+
+    # An answer older than the trust window is no answer at all.
+    memory.note_live_sessions([("grok", "x")], now=now - LIVE_SESSION_TRUST_SECONDS - 1.0)
+    assert memory.session_is_live(quiet) is False
+
+
 def test_ended_unconfirmed_never_counts_active_and_never_signals() -> None:
     ended = _status(AgentMode.ENDED_UNCONFIRMED, "PreToolUse", silent_for=700.0)
     assert status_counts_active(ended) is False

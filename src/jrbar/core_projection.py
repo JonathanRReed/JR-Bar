@@ -493,9 +493,19 @@ def lifecycle_for_mode(
 
     ``ended`` -- grey, no check -- is what is left: a session whose process
     is gone and which never sent a terminal event (the liveness sweep's
-    synthetic ``SessionEnd``, marked by ``provider_ended=False``), a
+    synthetic ``SessionEnd``, marked by ``provider_ended=False``), or a
     completion the collector merely *inferred* from something that was not
-    an end event, or ``ended_unconfirmed``.
+    an end event.
+
+    **A living process is never over.** ``ended_unconfirmed`` was invented
+    for "probably over, nobody said so", back when a silence timer was the
+    only evidence there was. It is not any more: when
+    ``process_alive is True`` the registry has just seen the agent's own
+    process in the table, and a session cannot be both running and ended.
+    Such a row reads ``active`` -- or ``stale`` once its information is old
+    enough for the collector to say so -- and never ``ended``, and never
+    ``completed`` either, because being alive is not a finish. A long tool
+    run that says nothing for twenty minutes is the ordinary case here.
 
     ``event_name`` of ``None`` means the caller has no event to judge by;
     ``provider_ended`` of ``None`` means the process registry had nothing
@@ -504,15 +514,18 @@ def lifecycle_for_mode(
 
     if mode is AgentMode.BLOCKED_ERROR:
         return "failed"
+    # What a session that is not over reads as: the collector's own word
+    # for how fresh the row is.
+    running = "stale" if stale else "active"
     if mode is AgentMode.ENDED_UNCONFIRMED:
-        return "ended"
+        return running if process_alive is True else "ended"
     if mode is AgentMode.COMPLETED:
-        if event_name is not None and event_name not in END_EVENT_NAMES:
-            # An inference, whatever the registry thinks: never the check.
-            return "ended"
-        if provider_ended is False:
-            # The sweep's synthetic end: this session never said it was done.
-            return "ended"
+        # An inference, whatever the registry thinks, and the sweep's
+        # synthetic end are both "this session never said it was done".
+        inferred = event_name is not None and event_name not in END_EVENT_NAMES
+        synthetic_end = provider_ended is False
+        if inferred or synthetic_end:
+            return running if process_alive is True else "ended"
         if provider_ended is True or (event_name is not None and event_name in END_EVENT_NAMES):
             return "completed"
         if process_alive is False:
@@ -805,6 +818,15 @@ def session_document(
     # ``completed`` or it renders as Done with a green check.
     if lifecycle == "ended" and mode is AgentMode.COMPLETED:
         mode = AgentMode.ENDED_UNCONFIRMED
+    # And the same rule the other way. A session the silence timer called
+    # ``ended_unconfirmed`` whose process the registry can still see is not
+    # over, so the mode beside the lifecycle must not say it is: the panel
+    # would print "Ended", the aggregate would drop it from ``active``, and
+    # the strip would stop showing work that is still happening. Working is
+    # the honest word -- ``ended_unconfirmed`` only ever replaces a
+    # working-shaped mode -- and ``since`` says how long it has been quiet.
+    if lifecycle in ("active", "stale") and mode is AgentMode.ENDED_UNCONFIRMED:
+        mode = AgentMode.WORKING
     return {
         "id": agent_id,
         "provider": provider,
