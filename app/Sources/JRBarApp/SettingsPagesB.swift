@@ -607,9 +607,14 @@ struct LogTail: View {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text(entry.at.map { Self.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "--:--:--")
                                 .foregroundStyle(.tertiary)
+                            // The daemon's level words run to "UPDATER";
+                            // a fixed column that wraps broke it across two
+                            // lines as "UPDATE / R".
                             Text((entry.level ?? "info").uppercased())
                                 .foregroundStyle(entry.level == "error" ? Color.red : (entry.level == "warn" || entry.level == "warning" ? .orange : .secondary))
-                                .frame(width: 44, alignment: .leading)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .frame(minWidth: 44, alignment: .leading)
                             Text(entry.message ?? "")
                                 .textSelection(.enabled)
                         }
