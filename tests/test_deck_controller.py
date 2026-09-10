@@ -29,7 +29,8 @@ def test_controller_ignores_input_during_termination():
     )
     dispatch = DeckInputDispatch(target, DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),)))
     dispatch.receive([{"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}}])
-    apply_deck_input(target, queued[0])
+    # Input during termination is dropped before it is ever queued.
+    assert queued == []
     assert not opened
 
 

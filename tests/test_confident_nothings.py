@@ -437,6 +437,7 @@ def test_an_install_that_could_not_get_trusted_says_so() -> None:
 
         with (
             patch("jrbar.install.should_refresh_codex_hook_trust", return_value=True),
+            patch("jrbar.install.local_codex_hook_hashes", return_value={}),
             patch("jrbar.install.codex_cli_path", return_value=None),
         ):
             result = install_codex_hooks(
