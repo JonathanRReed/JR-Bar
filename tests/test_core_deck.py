@@ -599,3 +599,40 @@ def test_device_access_receipts_say_what_to_do_whichever_operation_hit_them():
     )
     # A source-specific sentence still wins over the shared fallback.
     assert receipt_message("device_conflict") == "Close Input and other hardware controllers, then inspect again."
+
+
+def _plan_with(changes):
+    from jrbar.creator_micro_keymap import KeymapPlan
+
+    return KeymapPlan("{}", "{}", "a", "b", tuple(changes), 0, 0)
+
+
+def test_the_inspected_pad_outranks_the_local_journal_about_its_own_keymap():
+    """A pad configured by a build that kept no recovery journal reads as
+    stock from the files alone, which tells the owner his keys still type
+    letters while every one of them is a JR-Bar device input."""
+    from jrbar.core_deck import observed_keymap_state
+
+    configured = _plan_with(())
+    assert observed_keymap_state(configured, "stock") == "applied"
+
+    untouched = _plan_with(
+        f"Key {index}: KC_A -> KV_OAI_AG{index:02d}; replaces its normal keystroke with a JR-Bar device input."
+        for index in range(13)
+    )
+    assert observed_keymap_state(untouched, "applied") == "stock"
+
+
+def test_a_half_configured_layer_is_neither_word():
+    """Guessing here decides whether Apply or Restore is offered."""
+    from jrbar.core_deck import observed_keymap_state
+
+    assert observed_keymap_state(_plan_with(("Key 4: KC_E -> KV_OAI_AG04; x",)), "stock") == "unknown"
+
+
+def test_an_interrupted_transfer_still_outranks_the_inspection():
+    """The pad may be holding half a keymap; recovery is the urgent fact."""
+    from jrbar.core_deck import observed_keymap_state
+
+    assert observed_keymap_state(_plan_with(()), "recovering") == "recovering"
+    assert observed_keymap_state(None, "stock") == "stock"
