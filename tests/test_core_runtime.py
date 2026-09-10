@@ -1014,6 +1014,68 @@ def test_a_finished_one_shot_run_reads_done_though_its_process_is_gone(
     assert done["pid"] is None
 
 
+def test_a_swept_record_is_re_read_until_the_provider_end_can_land(
+    cleared, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A one-shot CLI can exit before its own `SessionEnd` reaches the
+    daemon, so the liveness sweep sometimes closes the record first and the
+    provider's event upgrades it a moment later. Caching "the sweep ended
+    this" for the full extras TTL left a finished run reading `ended` for
+    half a minute before flipping to Done."""
+
+    from datetime import datetime, timezone
+
+    from jrbar import process_registry
+
+    reason = ["process_exited"]
+    reads: list[str] = []
+
+    def load_record(provider, session_id):
+        reads.append(session_id)
+        return SimpleNamespace(pid=999_999, cwd="/tmp/x", ended_at_epoch=time.time(), end_reason=reason[0])
+
+    monkeypatch.setattr(process_registry, "load_record", load_record)
+    monkeypatch.setattr(process_registry, "pid_exists", lambda pid: False)
+    controller = cleared
+    controller._core_extras.clear()
+
+    def status(event_name: str, seconds_ago: float):
+        return SimpleNamespace(
+            agent_id="codex:session:just-finished",
+            provider="codex",
+            session_id="just-finished",
+            event_name=event_name,
+            origin=None,
+            updated_at=datetime.fromtimestamp(time.time() - seconds_ago, timezone.utc),
+        )
+
+    fresh = status("SessionEnd", 1.0)
+    assert controller._core_extras_for(fresh).provider_ended is False
+    before = len(reads)
+    # The provider's own SessionEnd lands a moment later: the next lookup
+    # sees it, without waiting for the cache to expire.
+    reason[0] = "hook"
+    assert controller._core_extras_for(fresh).provider_ended is True
+    assert len(reads) > before, "the swept record was re-read rather than trusted from cache"
+
+    # Settled: a record the sweep closed and nobody upgraded stops costing a
+    # read once its session has been quiet for a minute.
+    controller._core_extras.clear()
+    reason[0] = "process_exited"
+    old = status("SessionEnd", core_runtime.UNSETTLED_EXTRAS_SECONDS + 5)
+    assert controller._core_extras_for(old).provider_ended is False
+    settled = len(reads)
+    controller._core_extras_for(old)
+    assert len(reads) == settled
+    # So does a live-looking session: only a terminal event is worth waiting on.
+    controller._core_extras.clear()
+    working = status("PostToolUse", 1.0)
+    controller._core_extras_for(working)
+    quiet = len(reads)
+    controller._core_extras_for(working)
+    assert len(reads) == quiet
+
+
 def test_a_process_killed_without_an_end_event_reads_ended_not_done(
     cleared, monkeypatch: pytest.MonkeyPatch
 ) -> None:
