@@ -6,22 +6,31 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_package_installs_payload_without_mutating_external_integrations() -> None:
     text = (ROOT / "packaging" / "scripts" / "postinstall").read_text()
 
+    # The package owns its payload only: the app installs hooks and the
+    # login item itself on launch, so the postinstall touches nothing else.
     assert "setup --sd-eject-guard-scope user" not in text
     assert "status-bar install-sleep-helper" not in text
     assert "agent-monitor" not in text
     assert "sdejectguard" not in text
-    assert "setup-pending" in text
-    assert "setup-complete" in text
-    assert "explicit user action" in text
+    assert "launchctl" not in text
+    assert "Library/LaunchAgents" not in text
+    assert "/var/db" not in text
+    assert "no LaunchAgents, no /usr/local links, no hooks, no receipts" in text
 
 
-def test_package_never_replaces_an_unowned_cli_path() -> None:
+def test_package_never_touches_an_unowned_cli_path() -> None:
     text = (ROOT / "packaging" / "scripts" / "postinstall").read_text()
 
-    assert "readlink" in text
-    assert "left existing $CLI_LINK unchanged" in text
-    assert 'ln -sfn "$APP_BINARY" "$CLI_LINK"' in text
-    assert 'elif [ -L "$CLI_LINK" ]' in text
+    # No /usr/local link at all any more; the bundled binary is called by path.
+    assert "CLI_LINK" not in text
+    assert "ln -s" not in text
+    assert 'INSTALL_LOCATION="${2:-/Applications}"' in text
+    for helper in (
+        "JR-Bar.app/Contents/MacOS/JR-Bar",
+        "JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core",
+        "JR-Bar.app/Contents/Helpers/jrbar-hook",
+    ):
+        assert helper in text
 
 
 def test_supported_uninstaller_removes_only_owned_integrations() -> None:

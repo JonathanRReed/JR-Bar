@@ -8,7 +8,7 @@ set -eu
 
 INSTALL_LOCATION="${2:-/Applications}"
 APP_BINARY="$INSTALL_LOCATION/JR-Bar.app/Contents/MacOS/JR-Bar"
-CORE_BINARY="$INSTALL_LOCATION/JR-Bar.app/Contents/Helpers/jrbar-core/jrbar-core"
+CORE_BINARY="$INSTALL_LOCATION/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core"
 HOOK_SHIM="$INSTALL_LOCATION/JR-Bar.app/Contents/Helpers/jrbar-hook"
 
 for required in "$APP_BINARY" "$CORE_BINARY" "$HOOK_SHIM"; do
