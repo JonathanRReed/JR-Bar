@@ -39,6 +39,7 @@ from typing import Any, Final
 
 from . import core_deck
 from .core_projection import (
+    READ_ONLY_SETTINGS,
     TERMINAL_BUNDLE_IDS,
     DeviceFacts,
     EscalationFacts,
@@ -540,6 +541,8 @@ def _cmd_set_setting(self, args):
     path = str(args.get("path") or "")
     if not path:
         raise CommandError("invalid_path", "path is required")
+    if split_path(path)[0] in READ_ONLY_SETTINGS:
+        raise CommandError("read_only", f"{path!r} is a fact about the daemon, not a preference")
     document = self.settings.to_dict()
     _current, exists = get_path(document, path)
     if not exists and not isinstance(get_path(document, ".".join(str(p) for p in split_path(path)[:-1]))[0], dict):
@@ -2386,13 +2389,24 @@ def build_headless_controller_class() -> type:
             if server is None or settings is None:
                 return
             try:
-                document = build_settings_document(settings.to_dict(), generation=self._core_settings_generation)
+                document = build_settings_document(
+                    settings.to_dict(),
+                    generation=self._core_settings_generation,
+                    read_only=self._core_read_only_settings(),
+                )
             except Exception:
                 legacy.log_status_bar(f"core: settings projection failed: {traceback.format_exc(limit=6)}")
                 return
             with self._core_lock:
                 self._core_documents["settings"] = document
             server.publish_settings(document)
+
+        def _core_read_only_settings(self) -> dict[str, Any]:
+            """The daemon's own facts the Settings window shows but never
+            writes: today the cloud ingest bearer token's path."""
+            from .cloud_ingest import default_token_path
+
+            return {"cloud_ingest_token_path": str(default_token_path())}
 
         def _core_publish_event(self, kind: str, **fields: Any) -> None:
             server = getattr(self, "_core", None)

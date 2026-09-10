@@ -292,6 +292,40 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert controller.settings.alert_burst == status_bar.AgentMonitorSettings().alert_burst
 
 
+def test_app_introduced_settings_are_served_and_the_token_path_is_read_only(headless) -> None:
+    """The three keys the app catalogued as "Not provided by core":
+    ``menu_bar_icon_style`` and ``quota_alert_thresholds`` are real,
+    persisted preferences; ``cloud_ingest_token_path`` is the daemon's own
+    fact, in the document but never writable."""
+    from jrbar.cloud_ingest import default_token_path
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    server = controller._core
+    document = next(payload for kind, payload in server.published if kind == "settings")["document"]
+    assert document["menu_bar_icon_style"] == "glyph"
+    assert document["quota_alert_thresholds"] == [90.0, 95.0]
+    assert document["cloud_ingest_token_path"] == str(default_token_path())
+
+    reply = controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "glyph_ring"})
+    assert reply["value"] == "glyph_ring" and controller.settings.menu_bar_icon_style == "glyph_ring"
+    # An unknown style falls back to the glyph rather than failing.
+    assert controller._core_dispatch("set_setting", {"path": "menu_bar_icon_style", "value": "neon"})["value"] == "glyph"
+    reply = controller._core_dispatch("set_setting", {"path": "quota_alert_thresholds", "value": [95, 80.5, 95]})
+    assert reply["value"] == [80.5, 95.0] and controller.settings.quota_alert_thresholds == (80.5, 95.0)
+    assert controller._core_dispatch("set_setting", {"path": "quota_alert_thresholds", "value": []})["value"] == [90.0, 95.0]
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("set_setting", {"path": "cloud_ingest_token_path", "value": "/tmp/x"})
+    assert refused.value.code == "read_only"
+    # The path is not a preference, so a reset leaves it alone and the
+    # settings file never carries it.
+    assert controller._core_dispatch("reset_settings", {"paths": ["cloud_ingest_token_path"]})["reset"] == []
+    assert "cloud_ingest_token_path" not in controller.settings.to_dict()
+    published = [payload for kind, payload in server.published if kind == "settings"][-1]["document"]
+    assert published["cloud_ingest_token_path"] == str(default_token_path())
+    assert published["quota_alert_thresholds"] == [90.0, 95.0]
+
+
 def test_doctor_and_history_answer_without_a_snapshot(headless) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)

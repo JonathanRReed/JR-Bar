@@ -367,6 +367,11 @@ def test_lights_and_settings_documents() -> None:
     assert lights["surfaces"]["dot"] == {"program": "#FF3A00 1.6s pulse\nrepeat", "led_count": 2}
     settings = build_settings_document({"alert_burst": 3, "devices": []}, generation=17)
     assert settings == {"t": "settings", "v": 1, "generation": 17, "schema": 3, "document": {"alert_burst": 3, "devices": []}}
+    # Read-only daemon facts ride in the document; only catalogued ones.
+    settings = build_settings_document(
+        {"alert_burst": 3}, generation=18, read_only={"cloud_ingest_token_path": "/s/t.token", "pid": 1}
+    )
+    assert settings["document"] == {"alert_burst": 3, "cloud_ingest_token_path": "/s/t.token"}
 
 
 def test_history_rows_from_the_activity_ledger() -> None:

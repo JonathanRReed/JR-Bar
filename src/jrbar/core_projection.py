@@ -933,18 +933,29 @@ def build_lights_document(
     return document
 
 
+#: Keys the daemon adds to the settings document that no settings file
+#: carries: facts about the daemon, not preferences. ``set_setting`` on one
+#: replies ``read_only``; ``reset_settings`` ignores it.
+READ_ONLY_SETTINGS: Final = frozenset({"cloud_ingest_token_path"})
+
+
 def build_settings_document(
     settings_dict: dict[str, Any],
     *,
     generation: int,
     schema: int = SETTINGS_SCHEMA,
+    read_only: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    document = dict(settings_dict)
+    for key, value in (read_only or {}).items():
+        if key in READ_ONLY_SETTINGS:
+            document[key] = value
     return {
         "t": "settings",
         "v": PROTOCOL_VERSION,
         "generation": int(generation),
         "schema": int(schema),
-        "document": dict(settings_dict),
+        "document": document,
     }
 
 
@@ -977,6 +988,7 @@ __all__ = [
     "ORIGIN_BUNDLE_IDS",
     "PROTOCOL_VERSION",
     "PROVIDER_LABELS",
+    "READ_ONLY_SETTINGS",
     "SETTINGS_SCHEMA",
     "TERMINAL_APPS",
     "TERMINAL_BUNDLE_IDS",

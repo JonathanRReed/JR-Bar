@@ -17448,23 +17448,23 @@ class QuotaAlertTests(unittest.TestCase):
         self.assertEqual(self.controller.completion_sweep_until, 0.0)
         refresh.assert_not_called()
 
-    def test_threshold_settings_migrate_disabled_and_are_not_resaved(self) -> None:
+    def test_threshold_settings_normalise_and_round_trip(self) -> None:
         from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
         configured = AgentMonitorSettings().with_quota_alert_thresholds([90, 50.5, 90])
-        self.assertEqual(configured.quota_alert_thresholds, (90.0, 95.0))
+        self.assertEqual(configured.quota_alert_thresholds, (50.5, 90.0))
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             save_settings(configured.with_quota_alerts_enabled(True), path)
             loaded = load_settings(path)
             payload = json.loads(path.read_text())
-        # Alerts persist now (real, consumed, UI-toggleable); custom
-        # thresholds still normalize to the locked 90/95 and stay
-        # unserialized.
+        # Alerts and thresholds persist (real, consumed, edited from the
+        # native Settings window since 2026-09-10); the list is sorted and
+        # deduplicated on the way in, and an empty list means the defaults.
         self.assertTrue(loaded.quota_alerts_enabled)
-        self.assertEqual(loaded.quota_alert_thresholds, (90.0, 95.0))
+        self.assertEqual(loaded.quota_alert_thresholds, (50.5, 90.0))
         self.assertIn("quota_alerts_enabled", payload)
-        self.assertNotIn("quota_alert_thresholds", payload)
+        self.assertEqual(payload["quota_alert_thresholds"], [50.5, 90.0])
         self.assertEqual(
             AgentMonitorSettings().with_quota_alert_thresholds([]).quota_alert_thresholds,
             (90.0, 95.0),

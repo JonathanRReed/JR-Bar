@@ -224,11 +224,15 @@ def test_settings_migration_disables_legacy_quota_authority_and_runway(
     api.anthropic.com on the 5-minute worker, from a value they were never
     asked for. It needs fresh consent, stamped by this build.
 
-    quota_alert_thresholds and the quota webhooks still cannot load --
-    nothing consumes an authorised threshold crossing. The runway LED
-    left this set on 2026-08-26: the JR usage plane's gated lanes feed
-    quota_runway_state now, so the choice persists and round-trips
-    (rendering still fails closed to Agent when no lane has a percent).
+    The quota webhooks still cannot load -- nothing consumes an
+    authorised threshold crossing over a webhook. quota_alert_thresholds
+    left this set on 2026-09-10: the native Settings window edits the two
+    steppers and track_quota_thresholds consumes the tuple, so a sane
+    stored list loads (normalised: sorted, deduplicated, 0 < x <= 100).
+    The runway LED left this set on 2026-08-26: the JR usage plane's
+    gated lanes feed quota_runway_state now, so the choice persists and
+    round-trips (rendering still fails closed to Agent when no lane has
+    a percent).
     """
     target = tmp_path / "settings.json"
     target.write_text(
@@ -264,7 +268,7 @@ def test_settings_migration_disables_legacy_quota_authority_and_runway(
     # true now loads as true -- the old strip-on-load guarded a promise
     # the app could not keep, and it can keep it now.
     assert restored.quota_alerts_enabled is True
-    assert restored.quota_alert_thresholds == (90.0, 95.0)
+    assert restored.quota_alert_thresholds == (10.0, 50.0, 90.0)
     # 2026-08-26: the runway choice survives the load -- the JR usage
     # plane now feeds quota_runway_state, so the downgrade is retired.
     assert restored.led_display == LED_DISPLAY_QUOTA_RUNWAY
@@ -281,7 +285,8 @@ def test_settings_migration_disables_legacy_quota_authority_and_runway(
     # turn them back into active authority.
     reloaded = load_settings(target)
     assert reloaded.quota_alerts_enabled is True
-    assert reloaded.quota_alert_thresholds == (90.0, 95.0)
+    assert reloaded.quota_alert_thresholds == (10.0, 50.0, 90.0)
+    assert migrated["quota_alert_thresholds"] == [10.0, 50.0, 90.0]
     assert reloaded.led_display == LED_DISPLAY_QUOTA_RUNWAY
     assert migrated["led_display"] == LED_DISPLAY_QUOTA_RUNWAY
     assert migrated["devices"][0]["led_display"] == LED_DISPLAY_QUOTA_RUNWAY
@@ -297,11 +302,13 @@ def test_settings_migration_programmatic_legacy_quota_controls_fail_closed(
     grants a READ, not an effect. It is still not reachable from a forged
     dataclass, because the value alone is not consent -- only a stamp this
     build wrote is, and `replace()` cannot forge one it does not set.
-    Thresholds and quota webhooks still grant an EFFECT with no
-    authority-fed producer, so they stay unreachable from both the
-    mutators and a hand-forged dataclass. The runway display gained its
-    producer on 2026-08-26 (the JR usage plane's gated lanes), so its
-    mutators and persistence are honest preferences now.
+    Quota webhooks still grant an EFFECT with no authority-fed producer,
+    so they stay unreachable from both the mutators and a hand-forged
+    dataclass. The runway display gained its producer on 2026-08-26 (the
+    JR usage plane's gated lanes), and the thresholds gained theirs on
+    2026-09-10 (the native Settings steppers feeding
+    track_quota_thresholds), so their mutators and persistence are honest
+    preferences now.
     """
     settings = (
         AgentMonitorSettings()
@@ -317,13 +324,13 @@ def test_settings_migration_programmatic_legacy_quota_controls_fail_closed(
     )
 
     assert settings.claude_plan_limits_enabled is True
-    # The alerts mutator honours its argument now (consumers exist);
-    # thresholds and quota webhooks below still fail closed -- nothing
-    # feeds them authority yet. The runway mutators honour their
+    # The alerts and thresholds mutators honour their argument now
+    # (consumers exist); quota webhooks below still fail closed --
+    # nothing feeds them authority yet. The runway mutators honour their
     # argument since 2026-08-26: the JR usage plane's gated lanes are
     # the runway LED's producer.
     assert settings.quota_alerts_enabled is True
-    assert settings.quota_alert_thresholds == (90.0, 95.0)
+    assert settings.quota_alert_thresholds == (25.0,)
     assert settings.led_display == LED_DISPLAY_QUOTA_RUNWAY
     assert settings.devices[0].led_display == LED_DISPLAY_QUOTA_RUNWAY
     with pytest.raises(ValueError):
@@ -352,10 +359,11 @@ def test_settings_migration_programmatic_legacy_quota_controls_fail_closed(
 
     payload = json.loads(target.read_text())
     assert payload["claude_plan_limits_enabled"] is True
-    # The alerts flag is persisted now (real feature); thresholds stay
-    # stripped -- still no authority-fed producer for custom values.
+    # The alerts flag and the thresholds are persisted now (real,
+    # consumed preferences); a forged out-of-range tuple is normalised
+    # on the way out, never dropped.
     assert payload["quota_alerts_enabled"] is True
-    assert "quota_alert_thresholds" not in payload
+    assert payload["quota_alert_thresholds"] == [1.0]
     assert payload["led_display"] == LED_DISPLAY_QUOTA_RUNWAY
     assert payload["devices"][0]["led_display"] == LED_DISPLAY_QUOTA_RUNWAY
     assert payload["webhook_events"] == ["completion"]
