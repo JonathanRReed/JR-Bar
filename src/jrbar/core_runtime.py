@@ -409,7 +409,7 @@ def _cmd_answer_ask(self, args):
     from .announcer_stack import announcer_alert_identity
     from .answer_controller import AnswerBrowserCommand
     from .answer_in_place import AnswerActionKind
-    from .answer_local import raise_application
+    from .answer_local import raise_application, session_host
 
     status = _find_status(self, args.get("session"))
     decision = str(args.get("decision") or "approve").lower()
@@ -431,7 +431,12 @@ def _cmd_answer_ask(self, args):
     if not bool(args.get("only_if_frontmost", True)):
         # Explicitly asked to answer a terminal that is not in front: raise it,
         # then let the unchanged check chain decide. Never a bypass.
-        for bundle_id in sorted(self._core_session_bundle_ids(status)):
+        host = session_host(
+            getattr(status, "provider", None),
+            getattr(status, "session_id", None),
+            getattr(status, "origin", None),
+        )
+        for bundle_id in sorted(host.bundle_ids):
             if raise_application(bundle_id):
                 break
     command_payload = AnswerBrowserCommand(
