@@ -71,6 +71,7 @@ LEGACY_WINDOWS: Final = {
     "control_center": "openDeckControlCenter_",
     "why": "openWhyPanel_",
 }
+_APP_OWNED_DIAGNOSTICS: Final = frozenset({"alcove_follow_state"})
 _HEALTHY_DIAGNOSTIC_CODES: Final = frozenset(
     {
         "source_checkout",
@@ -86,6 +87,26 @@ _HEALTHY_DIAGNOSTIC_CODES: Final = frozenset(
         "connected",
     }
 )
+
+
+def _running_commit() -> str | None:
+    """The commit this daemon runs: ``JRBAR_COMMIT`` from an installed
+    deployment (scripts/install-agents.sh), else the checkout's HEAD."""
+    explicit = os.environ.get("JRBAR_COMMIT")
+    if explicit:
+        return explicit
+    root = Path(__file__).resolve().parents[2]
+    if not (root / ".git").exists():
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    value = completed.stdout.strip()
+    return value or None
 
 
 def mono_to_epoch(value: object) -> float | None:
@@ -142,6 +163,42 @@ def set_path(root: Any, path: str, value: Any) -> bool:
         return False
     node[leaf] = value
     return True
+
+
+def screen_bar_anchor(own: float | None, hardware: float | None, *, linked: bool) -> float | None:
+    """The Screen Bar's playback anchor. Linked to a strip it follows the
+    strip's write-completion moment: the strip loops from there and never
+    re-anchors on a Screen Bar re-sync, so the bar must not either."""
+    if linked and hardware is not None:
+        return hardware
+    return own
+
+
+def device_transitions(
+    previous: dict[str, bool] | None, devices: list[Any]
+) -> tuple[dict[str, bool], list[tuple[str, str, str]]]:
+    """(connected-by-name, [(event kind, name, device id)]) for one refresh.
+
+    Keyed by name: a device's id moves from its mount path to its firmware
+    serial once STATUS.TXT is read, and that is not a disconnect/connect
+    pair. The first refresh (``previous`` None) reports nothing.
+    """
+    connected: dict[str, bool] = {}
+    ids: dict[str, str] = {}
+    for device in devices:
+        name = str(getattr(device, "name", "") or getattr(device, "device_id", ""))
+        connected[name] = connected.get(name, False) or bool(getattr(device, "connected", False))
+        if getattr(device, "connected", False) or name not in ids:
+            ids[name] = str(getattr(device, "device_id", name))
+    events: list[tuple[str, str, str]] = []
+    if previous is not None:
+        for name, is_connected in connected.items():
+            if is_connected and not previous.get(name, False):
+                events.append(("device_connected", name, ids.get(name, name)))
+        for name, was_connected in previous.items():
+            if was_connected and not connected.get(name, False):
+                events.append(("device_disconnected", name, ids.get(name, name)))
+    return connected, events
 
 
 def settings_from_document(document: dict[str, Any], *, scratch_dir: Path | None = None):
@@ -1098,6 +1155,17 @@ def build_headless_controller_class() -> type:
         def applicationDidFinishLaunching_(self, _notification):
             if getattr(self, "_runtime_started", False) or getattr(self, "_runtime_termination_started", False):
                 return None
+            try:
+                self._core_launch()
+            except Exception:
+                # AppKit swallows exceptions raised in delegate callbacks; a
+                # daemon that came up half-way must say so and stop.
+                legacy.log_status_bar(f"core: launch failed: {traceback.format_exc(limit=8)}")
+                self._core_stop_server()
+                _application().terminate_(self)
+                raise
+
+        def _core_launch(self) -> None:
             _application().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
             self.load_operator_local_state()
             self.trim_oversized_state_logs()
@@ -1237,19 +1305,12 @@ def build_headless_controller_class() -> type:
                             label=self._core_label(status),
                         )
             self._core_prev_asks = asks
-            devices = {
-                device.device_id: bool(device.connected)
-                for device in self.status_bar_devices(remember=False)
-                if device.device_id != legacy.VIRTUAL_DEVICE_ID
-            }
-            if previous_devices is not None:
-                names = {device.device_id: device.name for device in self.status_bar_devices(remember=False)}
-                for device_id, connected in devices.items():
-                    if connected and not previous_devices.get(device_id, False):
-                        self._core_publish_event("device_connected", label=names.get(device_id, device_id), detail=device_id)
-                for device_id, connected in previous_devices.items():
-                    if connected and not devices.get(device_id, False):
-                        self._core_publish_event("device_disconnected", label=names.get(device_id, device_id), detail=device_id)
+            devices, transitions = device_transitions(
+                previous_devices,
+                [d for d in self.status_bar_devices(remember=False) if d.device_id != legacy.VIRTUAL_DEVICE_ID],
+            )
+            for kind, name, device_id in transitions:
+                self._core_publish_event(kind, label=name, detail=device_id)
             self._core_prev_devices = devices
             self._core_publish_state()
             self._core_publish_lights()
@@ -1739,8 +1800,7 @@ def build_headless_controller_class() -> type:
                 program, kwargs = call
                 motion = kwargs.get("motion")
                 anchor = mono_to_epoch(kwargs.get("started_at"))
-                if linked and hardware_anchor is not None:
-                    anchor = max(anchor or 0.0, hardware_anchor)
+                anchor = screen_bar_anchor(anchor, hardware_anchor, linked=linked)
                 surfaces["screen_bar"] = SurfaceFacts(
                     program=str(program),
                     led_count=legacy.LED_COUNT,
@@ -1771,10 +1831,15 @@ def build_headless_controller_class() -> type:
             try:
                 result = collect_diagnostics()
                 for finding in result.findings:
+                    healthy = finding.code.value in _HEALTHY_DIAGNOSTIC_CODES
+                    if finding.check.value in _APP_OWNED_DIAGNOSTICS:
+                        # Alcove following is the app's job now; the daemon
+                        # not running it is the design, not a fault.
+                        healthy = True
                     checks.append(
                         {
                             "name": finding.check.value,
-                            "ok": finding.code.value in _HEALTHY_DIAGNOSTIC_CODES,
+                            "ok": healthy,
                             "detail": f"{finding.code.value} ({finding.count}/{finding.limit})",
                         }
                     )
@@ -1798,6 +1863,8 @@ def build_headless_controller_class() -> type:
             return {
                 "ok": all(check["ok"] for check in checks),
                 "core_version": CORE_VERSION,
+                "commit": _running_commit(),
+                "python": sys.executable,
                 "pid": os.getpid(),
                 "socket": str(server.socket_path) if server is not None else None,
                 "uptime_seconds": round(time.time() - self._core_started_at, 1),
@@ -1878,9 +1945,11 @@ __all__ = [
     "HeadlessNotificationClient",
     "build_headless_controller_class",
     "command_names",
+    "device_transitions",
     "get_path",
     "mono_to_epoch",
     "run_core",
+    "screen_bar_anchor",
     "set_path",
     "settings_from_document",
     "split_path",

@@ -147,8 +147,10 @@ end) and with every refresh.
   `screen_bar` surface mirrors `hardware`.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when
-  `linked` (the `link_screen_bar_to_hardware` setting) the Screen Bar
-  takes the later of the two so both surfaces loop together.
+  `linked` (the `link_screen_bar_to_hardware` setting) and a strip is
+  connected the Screen Bar carries the strip's anchor, because the strip
+  loops from its write and never re-anchors on a Screen Bar re-sync
+  (`core_runtime.screen_bar_anchor`).
 - `motion` is `static`, `finite` or `continuous`; `static_fallback` is the
   reduced-motion program.
 - `why` is the glance semantic the program expresses: `needs_you`,
@@ -170,8 +172,10 @@ Kinds emitted today: `completed`, `failed`, `quota_crossed` (from the
 activity ledger), `ask_opened`, `ask_resolved` (from the ask set changing
 between refreshes; `detail` carries the summary), `escalation_stage`
 (`stage` 0…3), `device_connected`, `device_disconnected` (`label` is the
-device name, `detail` its id). Reserved, not emitted yet: `quota_reset`,
-`peer_arrived`, `peer_departed`.
+device name, `detail` its id; keyed by name, so a device whose id moves
+from its mount path to its firmware serial is not a disconnect/connect
+pair). Reserved, not emitted yet: `quota_reset`, `peer_arrived`,
+`peer_departed`.
 
 ### settings
 Full settings document, sent on connect and after every change from any
@@ -192,7 +196,10 @@ Answer to a command.
 ```
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
-`invalid_value`, `refused`, `expired`, `busy`, `unsupported`.
+`invalid_value`, `refused`, `expired`, `busy`, `unsupported`; the Effect
+Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
+`reserved_semantic`, `invalid_pack`, `conflict`, `export_failed`, and
+`usage_history` adds `invalid_range`.
 
 ### log
 Content-free diagnostics for the app's log view: every `log_status_bar`
@@ -231,7 +238,15 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
 | `list_history` | since, limit | Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `unseen` is newer than the last visit; the daemon marks everything seen when the last client disconnects, so what happens while the app is away stays flagged until it looks again. `{rows, total, last_seen}`. |
-| `doctor` | | `{ok, core_version, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}]}` from `doctor.py` plus the hook shim and pending-file checks. |
+| `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}]}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). |
+| `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model} or null, account, state, records}`. `tokens_in` counts input plus cache writes; `pricing` is the dominant model's list price. Claude and Codex have transcripts; any other provider answers empty rows. Runs on the socket thread; a cold scan over a month of transcripts takes tens of seconds, a warm one about a second. |
+| `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is the assignment cache's. |
+| `render_effect` | effect_id, parameters, led_count, color? | `{effect_id, program, led_count, parameters, cadence}`: the LEDS program the daemon would play for those parameters (unknown parameters dropped, bounds enforced), through the presentation safety compiler. Builtins use their registered shapes, provider animations the live solo renderer (`duration_seconds` sets the cycle), pack effects their `motion`/`color`/`cadence` data or a primitive for their meaning. |
+| `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). |
+| `set_assignment` | effect_id, scope, target_id?, parameters? | Validates through `effect_studio.plan_assignment` (global takes no target, `asking`/`failure` keep `alert`, scenes and semantic families are checked), saves the assignment document and the parameters sidecar, refreshes. Replies the assignment document plus `assignment`. |
+| `clear_assignment` | scope, target_id? | Removes that assignment; the document plus `removed`. |
+| `import_effect_pack` | path | `EffectPackStore.install` of a data-only JSON v2 pack (`invalid_pack` on anything the validator refuses, `conflict` when that pack id is installed), the registry rebuilt with every installed pack; replies the catalog plus `imported {id, name, effects}`. |
+| `export_effect_pack` | ids[], path, name? | Writes a data-only JSON v2 pack of those effects (pack effects keep their data, builtins become their motion plus parameter defaults, fallbacks kept only when exported too) through `write_private_export`; `{path, effects, bytes, id}`. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
@@ -256,9 +271,11 @@ JRBARHOOK\x01 + be32(header length) + be32(payload length)
 ```
 
 It waits up to 200 ms for the disposition and exits 0; the whole run is
-capped at 250 ms. Measured on this Mac: ~5 ms wall per invocation including
-the caller's fork/exec (the Python client took ~90 ms). If the socket is
-absent the shim appends
+capped at 250 ms. Measured on this Mac (2026-09-09, 100 invocations from a
+shell loop): 6.2 ms wall per invocation of which 3.3 ms is the bare
+fork/exec (`/usr/bin/true` in the same loop), so the shim's own work is
+about 3 ms; from Python's `subprocess.run` the median is 5.7 ms; the
+Python hook client took 88 ms. If the socket is absent the shim appends
 `{"provider","ppid","ppid_start","payload"}` as one JSON line to
 `$XDG_STATE_HOME/jrbar/<provider>.pending.jsonl` (mode 0600) and exits 0;
 the daemon drains those files at start and every 30 s, registering each
@@ -270,6 +287,9 @@ nothing.
 names one (an empty value disables it), when a bundled copy sits beside a
 frozen executable, or when a source checkout has built
 `hook/build/jrbar-hook`; otherwise `python -m jrbar.hook_client` as before.
+On this Mac the installed copy is `~/.local/share/jrbar/bin/jrbar-hook`
+(`scripts/install-agents.sh` copies it there, sets `JRBAR_HOOK_EXEC` in the
+daemon's LaunchAgent and re-points the claude and codex hooks at it).
 Both shapes are recognised as ours by every installer, uninstaller and
 detector, and the Codex trust hash is computed locally for whichever is
 written. `jrbar hooks doctor` shows, per provider, the command registered
@@ -280,12 +300,42 @@ ingress and core sockets answer, and any queued payloads.
 
 ```sh
 python -m jrbar core                    # headless daemon on ~/.local/state/jrbar/core.sock
-python -m jrbar core --socket /tmp/x    # elsewhere (tests)
+python -m jrbar core --socket /tmp/x    # elsewhere (tests; AF_UNIX paths are capped at 104 bytes)
 jrbar status-bar start                  # the old Python UI; refuses to run beside the daemon
 ```
 
-Under the Swift app: `JRBAR_CORE_EXEC="/path/.venv/bin/python -m jrbar core"`
-makes the app spawn and supervise the daemon (`CoreSupervisor`).
+Under the Swift app in development: `JRBAR_CORE_EXEC=scripts/run-core.sh`
+makes the app spawn and supervise the daemon (`CoreSupervisor`; the script
+execs `.venv/bin/python -m jrbar core`, passing `JRBAR_CORE_SOCKET` through
+as `--socket`).
+
+On this Mac the running pair comes from `scripts/install-agents.sh`, which
+installs the package (non-editable) into `~/.local/share/jrbar/venv`, the
+shim into `~/.local/share/jrbar/bin`, the app bundle into `~/Applications`,
+and loads two LaunchAgents, both `KeepAlive` + `RunAtLoad`:
+
+| label | runs |
+| --- | --- |
+| `com.jonathanreed.jrbar.core` | `~/.local/share/jrbar/venv/bin/python -m jrbar core` (logs `~/.local/state/jrbar/core.{out,err}.log`) |
+| `com.jonathanreed.jrbar.ui` | `~/Applications/JR-Bar.app/Contents/MacOS/JR-Bar` (logs `ui.{out,err}.log`) |
+
+The daemon is its own agent rather than the app's `JRBAR_CORE_EXEC` child,
+and nothing launchd runs lives under `~/Downloads`: a launchd job that
+reads a checkout there (the app bundle, or python reading `pyvenv.cfg`)
+blocks on a "would like to access files in your Downloads folder" TCC
+prompt until someone answers it. launchd restarts the daemon within its
+5 s throttle when it dies; the app reconnects on the protocol backoff. The
+script also boots out and parks the old `com.jonathanreed.jrbar.app`
+(Python status bar) plist in the state directory. Re-run it after every
+commit that should be running; `doctor` reports the installed commit.
+
+Revert to the Python UI:
+
+```sh
+launchctl bootout gui/$UID/com.jonathanreed.jrbar.ui
+launchctl bootout gui/$UID/com.jonathanreed.jrbar.core
+.venv/bin/python -m jrbar status-bar start
+```
 
 ## Versioning
 

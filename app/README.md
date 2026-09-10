@@ -73,6 +73,25 @@ Or let the app launch and supervise the mock as its child (what the bundled
 JRBAR_CORE_EXEC="python3 $PWD/scripts/mock-core.py --step 2.5" ./build/JR-Bar.app/Contents/MacOS/JR-Bar
 ```
 
+Against the real daemon from this checkout (stop the LaunchAgents first,
+`launchctl bootout gui/$UID/com.jonathanreed.jrbar.{ui,core}`, since only
+one daemon can own the hook sockets):
+
+```sh
+JRBAR_CORE_EXEC="$PWD/../scripts/run-core.sh" ./build/JR-Bar.app/Contents/MacOS/JR-Bar
+```
+
+What runs on this Mac is installed by `../scripts/install-agents.sh`: the
+package into `~/.local/share/jrbar/venv`, the hook shim into
+`~/.local/share/jrbar/bin`, this bundle into `~/Applications/JR-Bar.app`,
+and two LaunchAgents (`com.jonathanreed.jrbar.core`, `com.jonathanreed.jrbar.ui`).
+The daemon is a separate agent there, not a `JRBAR_CORE_EXEC` child, and
+nothing launchd runs lives under `~/Downloads`: a launchd job reading a
+checkout there (the bundle itself, or python reading `pyvenv.cfg`) blocks
+on a "would like to access files in your Downloads folder" prompt. Re-run
+the script after building to update the running app (see
+`docs/CORE-PROTOCOL.md`, "Running it").
+
 Developer switches (environment variables read at launch):
 
 * `JRBAR_CORE_SOCKET=/path/core.sock` overrides the daemon socket path
@@ -255,7 +274,10 @@ restores from the defaults, `install_hooks` / `uninstall_hooks` flip
 `docs/CORE-PROTOCOL.md` is the contract; these are what the Usage Center
 and Effect Studio need beyond it, answered by the mock and decoded
 tolerantly by `JRBarCore` (every field optional, unknown keys ignored).
-Documented here so the daemon can adopt the same shapes.
+The daemon adopted them on 2026-09-09 (`usage_history`, `list_effects`,
+`render_effect`, `list_assignments`, `set_assignment`, `clear_assignment`,
+`import_effect_pack`, `export_effect_pack`, `reset_settings`, `undo_clear`'s
+`batch`); the contract documents the daemon's shapes, the mock mirrors them.
 
 * `state.usage.providers[]`: `account {plan, label, fidelity}` next to the
   windows, and `forecast {exhausts_at, pace}` (the doc reserves `forecast`
@@ -532,8 +554,10 @@ Documented here so the daemon can adopt the same shapes.
 ## Stubbed or deliberately deferred
 
 * There is no bundled `Contents/Helpers/jrbar-core` yet: `JRBAR_CORE_EXEC`
-  is the only way to supervise a core (the mock stands in). The file feeds
-  remain the fallback while nothing is connected.
+  is the only way for the app itself to supervise a core; on this Mac
+  launchd supervises the daemon as its own agent (`scripts/install-agents.sh`)
+  and the app just connects. The file feeds remain the fallback while
+  nothing is connected.
 * Notifications need the user to allow them the first time one is due
   (the system prompt). `quota_crossed` / `quota_reset` banners are on
   unless `quota_alerts_enabled` is false. Nothing is done for
