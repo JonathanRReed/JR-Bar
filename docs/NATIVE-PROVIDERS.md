@@ -13,10 +13,31 @@ JR-Bar owns provider accounting directly. CodexBar is an engineering reference o
 | Grok | `~/.grok/auth.json`, Grok billing API, local signals | subscription credit usage, cycle reset, account/plan, local token activity |
 | Antigravity | running Antigravity or `agy` loopback quota server | Gemini session/weekly and Claude+GPT session/weekly pools, dynamic detail lanes |
 | OpenAI API | encrypted JR-Bar Admin API key | organization/project spend, tokens, requests, models, daily history |
-| Pi | lifecycle hooks only (`~/.pi/agent/extensions/jrbar.ts`, `jrbar agent-monitor install pi`); session logs under `~/.pi/agent/sessions` as transcript fallback | sessions, prompts, tool runs, turn ends; no quota source (pi bills through whichever model provider it is pointed at) |
+| Pi | lifecycle hooks only (`~/.pi/agent/extensions/jrbar.ts`, `jrbar agent-monitor install pi`); session logs under `~/.pi/agent/sessions` as transcript fallback | sessions, prompts, tool runs, turn ends; no asks (see below) and no quota source (pi bills through whichever model provider it is pointed at) |
 | Gemini CLI | lifecycle hooks only (`hooks` in `~/.gemini/settings.json`, `jrbar agent-monitor install gemini`); chat logs under `~/.gemini/tmp/*/chats` as transcript fallback | sessions, prompts, tool runs, ToolPermission asks, turn ends; the Code Assist quota endpoint (`retrieveUserQuota`) is documented in `docs/research/gemini-cli-and-pi-hooks.md` and not read yet |
 
 Unknown provider-owned quota lanes remain visible in detail views but cannot trigger hardware or interruption alerts until their effect is declared. Missing data, measured zero, stale data, last-known-good data, permission failures, and unsupported sources are separate states.
+
+## What the CLIs actually emit
+
+`scripts/verify_providers_live.py` runs each installed CLI through one real turn against `scripts/mock_llm_server.py` -- a scripted local endpoint, no quota, no network -- in a scratch home, and checks what the daemon recorded. Last run on the owner's Mac, 2026-09-10, against Codex 0.153.4, pi 0.73.1, Claude Code 2.1.263 and Gemini CLI 0.46.0.
+
+| Provider | One turn | Interrupted mid-tool | Tool permission |
+| --- | --- | --- | --- |
+| Codex | `SessionStart > UserPromptSubmit > PreToolUse > PostToolUse > Stop > SessionEnd` | `… > PreToolUse > Interrupt > SessionEnd` | `PermissionRequest` under `-a on-request`, listed in `state.asks` |
+| Claude Code | the same six | not drilled | `PermissionRequest`, listed in `state.asks` |
+| Pi | the same six | not drilled | none: pi has no human permission event at all |
+| Gemini CLI | not exercised | not drilled | `Notification` with `notification_type: "ToolPermission"` |
+
+Two things worth knowing before reading a quiet menu bar as a bug.
+
+**Codex hook trust is keyed by the resolved config path.** Codex looks up `hooks.state."<config>:<event>:<group>:<handler>"` after canonicalizing the config path, so a `CODEX_HOME` reached through a symlink needs the resolved spelling. Written any other way, Codex finds no trusted hash and runs no hook: no error, no record, nothing at all to see. `jrbar agent-monitor install codex` resolves it.
+
+**Pi cannot ask.** The `ui_prompt_start`/`ui_prompt_end` events an earlier note attributed to pi do not exist in 0.73.1's `ExtensionEvent` union. Pi's tool gate is `tool_call`, and it asks an *extension* -- a handler returns `{block, reason}` and pi obeys -- never a person. So pi sessions show working and done, and never needs-you.
+
+**Answering an ask is not implemented.** `answer_ask` finds the ask, checks that the session's terminal is frontmost, and then refuses with `unsupported`: no in-place answer handler is registered in the daemon, for any provider. Approving still means switching to the terminal. This is a missing feature, not a permission problem -- no grant in System Settings changes it. When a handler does land it will drive the session's terminal, and *then* JR-Bar will need **System Settings > Privacy & Security > Accessibility** turned on for `JR-Bar.app`.
+
+**Gemini CLI could not be driven locally.** It refuses a base-URL override with "Invalid auth method selected" (exit 41), so its hook path is unverified against a scripted endpoint; it is exercised only by real use.
 
 ## Basic setup
 
