@@ -114,6 +114,10 @@ struct ActivityMark: View {
     let activity: SessionActivity
     let accent: Color
     let reduced: Bool
+    /// Only an open panel breathes: a repeating SwiftUI animation keeps the
+    /// hosting view re-rendering at 60 Hz even while the window is ordered
+    /// out, which cost 13 % CPU with one working session and the panel closed.
+    var active: Bool = true
     @ViewState private var phase = false
 
     var body: some View {
@@ -146,10 +150,11 @@ struct ActivityMark: View {
         .onAppear { animate() }
         .onChange(of: activity) { animate() }
         .onChange(of: reduced) { animate() }
+        .onChange(of: active) { animate() }
     }
 
     private func animate() {
-        guard !reduced else { phase = false; return }
+        guard !reduced, active else { withAnimation(nil) { phase = false }; return }
         switch activity {
         case .working:
             phase = false
@@ -273,7 +278,7 @@ struct PanelHeader: View {
                     .contentTransition(.numericText())
             }
             Spacer(minLength: 8)
-            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion)
+            ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.isOpen)
                 .help(store.connectionDescription)
         }
         .padding(.horizontal, 14)
@@ -288,6 +293,7 @@ struct PanelHeader: View {
 struct ConnectionDot: View {
     let state: PanelStore.ConnectionDot
     let reduced: Bool
+    var active: Bool = true
     @ViewState private var phase = false
 
     private var color: Color {
@@ -306,12 +312,13 @@ struct ConnectionDot: View {
             .opacity(state == .connecting && !reduced ? (phase ? 1 : 0.3) : 1)
             .onAppear { pulse() }
             .onChange(of: state) { pulse() }
+            .onChange(of: active) { pulse() }
             .accessibilityLabel(state == .live ? "Core connected" : (state == .connecting ? "Connecting to core" : (state == .crashed ? "Core crashed" : "Using file feeds")))
     }
 
     private func pulse() {
-        phase = false
-        guard state == .connecting, !reduced else { return }
+        withAnimation(nil) { phase = false }
+        guard state == .connecting, !reduced, active else { return }
         withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) { phase = true }
     }
 }
@@ -499,7 +506,7 @@ struct SessionRowView: View {
                             .foregroundStyle(row.activity == .waiting ? Color.orange : Color.secondary)
                             .lineLimit(1)
                             .contentTransition(.opacity)
-                        ActivityMark(activity: row.activity, accent: row.style.accent, reduced: store.reduceMotion)
+                        ActivityMark(activity: row.activity, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen)
                     }
                     Text(PanelStore.elapsed(since: row.since, now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -541,7 +548,7 @@ struct AskRow: View {
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
-                    ActivityMark(activity: .waiting, accent: row.style.accent, reduced: store.reduceMotion)
+                    ActivityMark(activity: .waiting, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen)
                         .padding(.top, 3)
                     Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -865,15 +872,19 @@ struct PanelFooter: View {
             .fixedSize()
             Spacer()
             FooterButton(title: "History", dimmed: !store.isLive, shortcut: "⌘Y", active: store.isOpen) { store.openHistory() }
-                .help("Activity history")
+                .help("Activity history (⌘Y)")
             Menu {
-                Button { store.openUsageCenter() } label: { Text("Usage Center…") }
-                    .keyboardShortcut("u", modifiers: .command)
-                Button { store.openEffects() } label: { Text("Effect Studio…") }
                 Button { store.openControlCenter() } label: { Text("Control Center…") }
                     .keyboardShortcut("k", modifiers: .command)
+                Button { store.openEffects() } label: { Text("Effects…") }
+                Button { store.openHistory() } label: { Text("History…") }
+                    .keyboardShortcut("y", modifiers: .command)
+                Button { store.openUsageCenter() } label: { Text("Usage Center…") }
+                    .keyboardShortcut("u", modifiers: .command)
                 Divider()
                 Button { store.checkForUpdates() } label: { Text("Check for Updates…") }
+                Button { store.openSettings() } label: { Text("Settings…") }
+                    .keyboardShortcut(",", modifiers: .command)
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
             }
@@ -881,7 +892,7 @@ struct PanelFooter: View {
             .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Usage Center (⌘U), Effect Studio, Control Center (⌘K), Check for Updates")
+            .help("More: Control Center (⌘K), Effects, History (⌘Y), Usage Center (⌘U), Check for Updates, Settings (⌘,)")
             .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
