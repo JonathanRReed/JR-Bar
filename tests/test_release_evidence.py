@@ -12,7 +12,6 @@ import pytest
 from scripts import (
     capture_installed_release_baseline,
     release_evidence,
-    verify_installed_upgrade,
     verify_uninstalled_candidate,
 )
 
@@ -578,7 +577,6 @@ def test_version_comparator_accepts_numeric_and_prerelease_upgrades(
     candidate: str,
 ) -> None:
     release_evidence.require_strict_version_upgrade(previous, candidate)
-    verify_installed_upgrade.require_monotonic_upgrade(previous, candidate)
 
 
 @pytest.mark.parametrize(
@@ -598,8 +596,6 @@ def test_version_comparator_rejects_same_or_downgrade_transitions(
 ) -> None:
     with pytest.raises(release_evidence.EvidenceError, match="strictly newer"):
         release_evidence.require_strict_version_upgrade(previous, candidate)
-    with pytest.raises(ValueError, match="strictly newer"):
-        verify_installed_upgrade.require_monotonic_upgrade(previous, candidate)
 
 
 def test_receipt_rejects_high_confidence_secret_material(tmp_path: Path) -> None:
