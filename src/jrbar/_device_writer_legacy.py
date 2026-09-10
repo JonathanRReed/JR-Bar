@@ -19,6 +19,8 @@ MOUNT_ROOT = Path("/Volumes")
 DEVICE_NAME_HINTS = (
     "sidepulsepro",
     "sidepulsedot",
+    # A first-batch Dot whose volume label is just "PulseDot".
+    "pulsedot",
 )
 
 

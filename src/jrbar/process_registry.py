@@ -441,6 +441,46 @@ def claude_session_index(sessions_dir: Path | None = None) -> dict[str, ProcessE
     return result
 
 
+def claude_session_details(
+    session_id: str,
+    pid: int | None = None,
+    sessions_dir: Path | None = None,
+) -> dict[str, str] | None:
+    """``{"name", "cwd"}`` for a Claude session from its own
+    ``~/.claude/sessions/<pid>.json`` (the file whose ``sessionId``
+    matches; ``pid`` names the file to try first). None when unknown."""
+    base = sessions_dir if sessions_dir is not None else Path.home() / ".claude" / "sessions"
+    candidates: list[Path] = []
+    if isinstance(pid, int) and pid > 1:
+        candidates.append(base / f"{pid}.json")
+    try:
+        candidates.extend(sorted(base.glob("*.json"))[:512])
+    except OSError:
+        pass
+    seen: set[Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            if path.stat().st_size > MAX_RECORD_BYTES:
+                continue
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(payload, dict) or payload.get("sessionId") != session_id:
+            continue
+        details: dict[str, str] = {}
+        name = payload.get("name")
+        if isinstance(name, str) and name.strip():
+            details["name"] = name.strip()[:96]
+        cwd = payload.get("cwd")
+        if isinstance(cwd, str) and cwd.strip():
+            details["cwd"] = cwd
+        return details
+    return None
+
+
 # --------------------------------------------------------------------------
 # Sweep (runs in the app)
 
@@ -532,6 +572,7 @@ __all__ = [
     "DeadAgentProcess",
     "ProcessEntry",
     "ProcessSweeper",
+    "claude_session_details",
     "claude_session_index",
     "discover_agent_process",
     "list_processes",

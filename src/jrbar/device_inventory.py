@@ -156,7 +156,8 @@ def refine_facts_with_hardware_status(
 
 def _jrbar_candidate(path: Path) -> bool:
     normalized = "".join(character for character in path.name.lower() if character.isalnum())
-    return normalized.startswith("sidepulse")
+    # "PulseDot": the volume label old Dot firmware ships with.
+    return normalized.startswith("sidepulse") or normalized.startswith("pulsedot")
 
 
 def inventory_mounts(

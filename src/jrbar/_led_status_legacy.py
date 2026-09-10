@@ -50,6 +50,8 @@ IDLE_DIM = "#020204"
 LED_REASSERT_SECONDS = 240.0
 DEVICE_LED_COUNTS = {
     "sidepulsedot": 2,
+    # Old-firmware Dots mount as "PulseDot" (STATUS.TXT may not carry a serial).
+    "pulsedot": 2,
     "sidepulsepro": 8,
 }
 
