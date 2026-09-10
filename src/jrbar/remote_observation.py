@@ -19,7 +19,7 @@ import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Final, Protocol, TypeAlias
+from typing import Final, Protocol
 
 REMOTE_OBSERVATION_SCHEMA_VERSION: Final = 1
 MAX_EVENT_BYTES: Final = 16 * 1024
@@ -220,8 +220,8 @@ class RemoteObservationBatch:
     refusals: tuple[RemoteObservationRefusal, ...] = ()
 
 
-Signer: TypeAlias = Callable[[bytes], str]
-Verifier: TypeAlias = Callable[[bytes, str], bool]
+type Signer = Callable[[bytes], str]
+type Verifier = Callable[[bytes, str], bool]
 
 
 def _validate_identifier(value: object, limit: int, label: str) -> None:

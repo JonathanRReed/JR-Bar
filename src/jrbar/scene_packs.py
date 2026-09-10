@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Final, TypeVar
+from typing import Any, Final
 from urllib.parse import urlparse
 
 from .dnd_policy import DisplayAdmission
@@ -216,10 +216,7 @@ def migrate_scene_pack(payload: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-_EnumType = TypeVar("_EnumType")
-
-
-def _enum_value(enum_type: type[_EnumType], value: object, field: str) -> _EnumType:
+def _enum_value[EnumType](enum_type: type[EnumType], value: object, field: str) -> EnumType:
     if type(value) is not str:
         raise ScenePackError(f"{field} must be a known value")
     try:

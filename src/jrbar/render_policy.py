@@ -5,7 +5,6 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Generic, TypeVar
 
 from jrbar.accessibility_display import AccessibilityDisplayPreferences
 from jrbar.presentation_scheduler import FRAME_FALLBACK_INTERVAL_SECONDS
@@ -449,9 +448,6 @@ class GlowPaintKey:
         )
 
 
-_Value = TypeVar("_Value")
-
-
 @dataclass(frozen=True, slots=True)
 class RenderCacheMetrics:
     hits: int
@@ -459,12 +455,12 @@ class RenderCacheMetrics:
     evictions: int
 
 
-class BoundedRenderCache(Generic[_Value]):
+class BoundedRenderCache[Value]:
     def __init__(self, *, max_entries: int = 64) -> None:
         if max_entries <= 0:
             raise ValueError("max_entries must be positive")
         self.max_entries = int(max_entries)
-        self._values: OrderedDict[object, _Value] = OrderedDict()
+        self._values: OrderedDict[object, Value] = OrderedDict()
         self._hits = 0
         self._misses = 0
         self._evictions = 0
@@ -484,8 +480,8 @@ class BoundedRenderCache(Generic[_Value]):
         )
 
     def get_or_build(
-        self, key: object, builder: Callable[[], _Value]
-    ) -> _Value:
+        self, key: object, builder: Callable[[], Value]
+    ) -> Value:
         try:
             value = self._values.pop(key)
         except KeyError:
