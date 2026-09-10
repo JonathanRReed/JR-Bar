@@ -49,6 +49,89 @@ A new semantic meaning requires a reviewed change to `SemanticEventKind`, priori
 
 Reduce Motion is applied before motion planning and returns a static fallback plan with `FiniteEffectDecision.STATIC_SUBSTITUTE` and `StaticSubstitutionReason.REDUCE_MOTION`. No timed intro or loop may leak through. A plan that cannot fit one complete cycle also becomes a static fallback. The policy is pure; the runtime still sends the resulting animation through the existing writer and device validation gates.
 
+## What the temporal-safety compiler allows (and what it stops)
+
+`src/jrbar/presentation_compiler.py` is the mandatory gate on every visible
+program. Until 2026-09-10 it reasoned about cadence from the *text* of a
+program: any assignment written without a duration inside a loop was stretched
+to a 250 ms floor, and any per-LED colour change was treated as a flash. That
+is a good rule for a bar that blinks and a bad one for a bar that moves, and it
+is why the sweeps in this product read as rows of separate blinks rather than
+as travelling light.
+
+The rule is now the accessibility one, and it is **measured, not inferred**.
+`src/jrbar/flash_analysis.py` renders the compiled loop in pure Python and
+counts *general flashes* as WCAG 2.2 SC 2.3.1 and ISO 9241-391 define them. A
+flash is a pair of opposing changes in relative luminance that
+
+- moves at least **10%** of relative luminance (`FLASH_LUMINANCE_DELTA`) out of
+  a state darker than **0.80** (`FLASH_DARK_CEILING`),
+- on at least **25%** of the LEDs at once (`FLASH_AREA_FRACTION`, the area rule),
+- with at least **20%** Michelson contrast on the strip's mean luminance
+  (`FLASH_CONTRAST`).
+
+All three have to hold, and that is what separates flashing from motion:
+
+| Written | Verdict | Why |
+| --- | --- | --- |
+| `#FFFFFF 60ms none` / `off 60ms none`, looped | slowed | the whole field reverses, 8 times a second |
+| a head stepping one LED every 60 ms | untouched | one or two LEDs are lit at a time, so the *field* never reverses |
+| `roll-right 800ms linear` | untouched, always | a roll repaints nothing: it slides the arrangement one full wraparound and leaves it where it began |
+| `#FF0000 200ms pulse`, looped | slowed to 1 Hz | saturated red keeps the stricter limit |
+
+Concretely:
+
+1. **A per-LED paint keeps its phase.** `0:#00E5FF 480ms pulse 120ms` is
+   spatial motion; the compiler no longer applies a phase floor to indexed
+   segments at all. Stagger as finely as the firmware's 17 ms frame allows.
+2. **A field-wide paint still gets a phase floor** when it was written without
+   a duration inside a loop, because an untimed whole-bar or colour-list paint
+   is a strobe frame.
+3. **The compiled loop's measured flash rate must be at or under
+   `MAX_PRESENTATION_HZ` (2 Hz), or `MAX_SATURATED_RED_HZ` (1 Hz) whenever
+   saturated red is on screen.** A loop that flashes faster is slowed by a
+   whole-number factor. Whole-number scaling is deliberate: multiplying every
+   duration and delay by the same integer divides the flash rate by exactly
+   that integer and leaves every overlap and stagger intact, where rounding
+   phases individually collapses a stagger into unison -- a strip flashing in
+   unison being the thing this prevents.
+4. **The loop is never shorter than `MIN_PRESENTATION_CYCLE_MS` (500 ms).**
+5. **Nothing is refused for being lively; it is slowed.** A refusal leaves the
+   strip frozen on whatever it was showing, which is worse than a slower
+   version of what the author asked for. Only an unparseable or
+   firmware-invalid program falls back to `off`.
+
+The bar an author has to clear is therefore about the *field*, not the pixels:
+if most of the strip gets brighter and darker again more than twice a second,
+it will be slowed; if light merely moves, it will not be touched.
+
+### Writing a shape that stays smooth
+
+`src/jrbar/motion_shapes.py` holds the geometry every JR-Bar animation is
+built from, and its header records the firmware behaviour each shape depends
+on -- all of it measured against `jrbar/resources/sdled.wasm` rather than read
+off `LEDS_FORMAT.md`. The three that catch people out:
+
+- **A line lasts the longest `delay + duration` on it.** A per-LED bump cannot
+  outlive its own line, so a sweep made only of `pulse` segments must go dark
+  before its line can end. That is why `bounce()` ends its far LED on a
+  *rise* and opens the next line already at the crest.
+- **Only one segment per LED survives on a line.** The firmware keeps the last
+  assignment and drops the earlier ones outright. Two beats for one LED need
+  two lines; a heartbeat written as two segments on one line plays its second
+  beat only.
+- **`roll` interpolates continuously between the shifted states.** A painted
+  head-and-tail profile plus `roll-right D linear` is the only travelling
+  shape with no seam anywhere, and it costs about a quarter of the bytes of
+  the staggered-pulse equivalent.
+
+Render any new shape through `scripts/review_effects.py`, which samples every
+effect and built-in program through the real firmware at 60 Hz and writes both
+a strip-timeline PNG (rows = time, columns = LEDs) and a metrics table: max
+per-LED luminance jump per frame, measured flash rate, cycle length, bytes and
+lines. A sweep looks like a diagonal in the PNG and a blink looks like
+stripes; look at the picture before believing the numbers.
+
 ## Packs, history, and runtime ownership
 
 `src/jrbar/effect_packs.py` accepts only bounded JSON data. `validate_pack()` migrates version 1 to `CURRENT_PACK_VERSION` 2, requires `safety.data_only: true`, `safety.network: false`, and accessibility support for reduced motion and high contrast. `_reject_code()` rejects executable keys and code-like markers. `effect_definitions_from_pack()` namespaces IDs as `pack:<pack_id>:<effect_id>` and validates local fallbacks. `registry_with_pack()` returns a new registry and rejects collisions. `preview_pack()` is safe UI metadata; `export_pack()` emits canonical JSON.
@@ -85,6 +168,6 @@ The runtime owner composes routing, finite planning, admission and power policy,
 
 ## Verification map
 
-The authoritative tests are `tests/test_effect_registry.py`, `tests/test_semantic_effect_router.py`, `tests/test_finite_effect_policy.py`, `tests/test_effect_packs.py`, `tests/test_effect_history.py`, `tests/test_effect_history_store.py`, `tests/test_effect_studio.py`, `tests/test_ambient_effect_runtime.py`, `tests/test_semantic_effect_router.py`, and `tests/test_settings_accessibility.py`. Add runtime and surface tests for every destination declared by an effect.
+The authoritative tests are `tests/test_presentation_safety_compiler.py`, `tests/test_flash_analysis.py`, `tests/test_motion_shapes.py`, `tests/test_effect_registry.py`, `tests/test_semantic_effect_router.py`, `tests/test_finite_effect_policy.py`, `tests/test_effect_packs.py`, `tests/test_effect_history.py`, `tests/test_effect_history_store.py`, `tests/test_effect_studio.py`, `tests/test_ambient_effect_runtime.py`, `tests/test_semantic_effect_router.py`, and `tests/test_settings_accessibility.py`. Add runtime and surface tests for every destination declared by an effect.
 
 Acceptance requires source and rendered evidence: the definition validates, semantic selection is deterministic, policy is finite and accessible, packs remain inert JSON, history remains content-free, settings previews expose usable controls, and the installed surface honors suppression, Reduce Motion, power, and device-write policy.
