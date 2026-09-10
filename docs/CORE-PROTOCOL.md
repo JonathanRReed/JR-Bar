@@ -362,7 +362,10 @@ per observed control, whether or not input check is on) and
 `deck_receipt` (`code`, `message`: every keymap setup result and every
 change of the output service's reason, `ready`, `reconnecting`,
 `device_conflict`, …, with the Python app's sentence; the same receipt
-sits on `state.deck.device.receipt`). Reserved, not emitted yet:
+sits on `state.deck.device.receipt`) and `usage_history_ready` (`provider`,
+`range`, `records`, `scanned_at`; `label` is the provider, `detail` the
+range: a `usage_history` reply that went out `pending` or `stale` now has
+a fresh document behind it, ask again). Reserved, not emitted yet:
 `quota_reset`, `peer_arrived`, `peer_departed`.
 
 ### settings
