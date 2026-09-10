@@ -26,6 +26,7 @@ from .signals import (
     DEFAULT_QUOTA_THRESHOLDS,
     FOCUS_SIGNAL_POLICIES,
     normalize_alert_burst,
+    normalize_quota_thresholds,
 )
 from .private_io import (
     atomic_private_write,
@@ -53,6 +54,11 @@ LED_DISPLAY_CHOICES = (
     LED_DISPLAY_QUOTA_RUNWAY,
 )
 SETTINGS_SCHEMA_VERSION = 1
+#: ``menu_bar_icon_style``: the status item's picture. ``glyph`` alone,
+#: ``glyph_ring`` (the glyph inside a thin usage ring), ``glyph_label``
+#: (the glyph beside a short text).
+MENU_BAR_ICON_STYLES = ("glyph", "glyph_ring", "glyph_label")
+DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 # The consent generation the Claude plan-limits opt-in was granted under.
 # 0.2.1 shipped a build that PERSISTED `claude_plan_limits_enabled` while the
 # code documented the flag as inert, so a `true` sitting in a settings file
@@ -368,6 +374,8 @@ class AgentMonitorSettings:
     dnd_persisted_refusals: tuple[DndPersistedRefusal, ...] = ()
     tips_enabled: bool = True
     menu_bar_label_enabled: bool = False
+    # The native app's status item picture (MENU_BAR_ICON_STYLES).
+    menu_bar_icon_style: str = DEFAULT_MENU_BAR_ICON_STYLE
     # The Screen Bar's dim floor as a USER dial. 0 = pitch black: only
     # the moving signal shows (the relay dot ticking round, the timer
     # filling). 0.25 preserves the pre-dial behavior.
@@ -990,8 +998,13 @@ class AgentMonitorSettings:
         return replace(self, quota_alerts_enabled=bool(enabled))
 
     def with_quota_alert_thresholds(self, thresholds) -> AgentMonitorSettings:
-        del thresholds
-        return replace(self, quota_alert_thresholds=DEFAULT_QUOTA_THRESHOLDS)
+        # Honoured since 2026-09-10: the native Settings window edits the
+        # two steppers over the socket, and the crossing detector
+        # (status_bar_legacy.track_quota_thresholds) consumes the tuple.
+        # normalize_quota_thresholds keeps the values sane (0 < x <= 100,
+        # sorted, deduplicated, at most four) and falls back to 90/95 for
+        # anything unusable, including an empty list.
+        return replace(self, quota_alert_thresholds=normalize_quota_thresholds(thresholds))
 
     def with_alert_burst(self, burst: object) -> AgentMonitorSettings:
         """Honours its argument: unlike the threshold effects above, the
@@ -1059,6 +1072,9 @@ class AgentMonitorSettings:
 
     def with_menu_bar_label_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, menu_bar_label_enabled=bool(enabled))
+
+    def with_menu_bar_icon_style(self, style: object) -> AgentMonitorSettings:
+        return replace(self, menu_bar_icon_style=normalize_menu_bar_icon_style(style))
 
     def with_tips_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, tips_enabled=bool(enabled))
@@ -1498,6 +1514,7 @@ class AgentMonitorSettings:
             **dnd_payload,
             "tips_enabled": self.tips_enabled,
             "menu_bar_label_enabled": self.menu_bar_label_enabled,
+            "menu_bar_icon_style": normalize_menu_bar_icon_style(self.menu_bar_icon_style),
             "screen_bar_min_glow": self.screen_bar_min_glow,
             "link_screen_bar_to_hardware": self.link_screen_bar_to_hardware,
             "devices_linked": self.devices_linked,
@@ -1534,6 +1551,7 @@ class AgentMonitorSettings:
             "usage_event_hook_path": self.usage_event_hook_path,
             "studio_library": [list(item) for item in self.studio_library],
             "quota_alerts_enabled": self.quota_alerts_enabled,
+            "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
             "completion_notification_enabled": self.completion_notification_enabled,
@@ -1844,6 +1862,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         dnd_persisted_refusals=parsed_dnd.refusals,
         tips_enabled=_bool_setting(data.get("tips_enabled"), True),
         menu_bar_label_enabled=_bool_setting(data.get("menu_bar_label_enabled"), False),
+        menu_bar_icon_style=normalize_menu_bar_icon_style(data.get("menu_bar_icon_style")),
         screen_bar_min_glow=_fraction_setting(data.get("screen_bar_min_glow"), 0.25),
         link_screen_bar_to_hardware=_bool_setting(
             data.get("link_screen_bar_to_hardware"), True
@@ -1951,7 +1970,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             if data.get("usage_graph_days") in (7, 30, 90, 365)
             else 7
         ),
-        quota_alert_thresholds=DEFAULT_QUOTA_THRESHOLDS,
+        quota_alert_thresholds=normalize_quota_thresholds(data.get("quota_alert_thresholds")),
         alert_burst=(
             normalize_alert_burst(data.get("alert_burst"))
             if "alert_burst" in data
@@ -1990,6 +2009,15 @@ def _bool_setting(value: object, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     return default
+
+
+def normalize_menu_bar_icon_style(value: object) -> str:
+    """One of MENU_BAR_ICON_STYLES; anything else is the plain glyph."""
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in MENU_BAR_ICON_STYLES:
+            return lowered
+    return DEFAULT_MENU_BAR_ICON_STYLE
 
 
 def _claude_plan_limits_consented(data: dict) -> bool:

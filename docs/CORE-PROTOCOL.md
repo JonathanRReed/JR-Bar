@@ -336,6 +336,22 @@ through IOKit's HID event system (`min_fraction` at `lux_floor`, 1.0 at
 `lux_ceiling`, linear between) and falls back to `display` when there is
 no sensor. `set_setting` writes it by dot path (`auto_dim.mode`,
 `auto_dim.schedule.fraction`); an unknown mode falls back to `off`.
+
+Keys the app catalogued first and the daemon serves since 2026-09-10:
+
+- `menu_bar_icon_style`: `glyph` (default), `glyph_ring`, `glyph_label`.
+  The status item's picture is the app's; the daemon only keeps the
+  choice. An unknown value normalises to `glyph`.
+- `quota_alert_thresholds`: a list of percentages (`[90.0, 95.0]` by
+  default) the crossing detector feeds `quota_threshold` activity rows
+  from. `set_setting` takes a list of numbers; it comes back normalised
+  (0 < x <= 100, sorted, deduplicated, at most four), and an empty or
+  unusable list means the defaults.
+- `cloud_ingest_token_path`: the daemon's bearer-token file for cloud
+  ingest (`~/.local/state/jrbar/cloud-ingest.token`), a string. Read-only:
+  it is a fact about the daemon added to the document at publish time,
+  never a settings-file key, so `set_setting` on it replies `read_only`
+  and `reset_settings` ignores it.
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```
@@ -348,7 +364,7 @@ Answer to a command.
 ```
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
-`invalid_value`, `refused`, `expired`, `busy`, `unsupported`; the Effect
+`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`; the Effect
 Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
 `reserved_semantic`, `invalid_pack`, `conflict`, `export_failed`,
 `usage_history` adds `invalid_range`, and the deck commands add
@@ -384,7 +400,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Clear Agents commit for every clearable completion (a list is accepted but the batch is always the full preview in protocol 1). `{batch, cleared}`. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; `expired` after. |
-| `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. |
+| `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. |
 | `reset_settings` | paths[] | Each path back to `AgentMonitorSettings()`'s default. `{generation, reset}`. |
 | `set_brightness` | device or `all`, value 0..1 | `set_device_brightness` (turns auto-brightness off, as the slider does). |
 | `set_device_display` | device, mode | `agent`, `battery`, `studio`, `quota_runway`. |
