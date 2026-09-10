@@ -131,6 +131,15 @@ GPT_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
     ("gpt-5.4", 2.50, 15.0),
     ("gpt-5", 2.50, 15.0),
 )
+# Gemini models, same substring-match convention (Gemini 3 list prices:
+# Pro $2/$12, Flash $0.50/$3.00; cache reads 0.1x input like the others).
+# The Gemini CLI keeps no local transcript this scanner reads, so these
+# only ever price a usage_history quote, never a token row.
+GEMINI_MODEL_PRICING: tuple[tuple[str, float, float], ...] = (
+    ("flash-lite", 0.10, 0.40),
+    ("flash", 0.50, 3.00),
+    ("pro", 2.0, 12.0),
+)
 CACHE_READ_RATE = 0.1
 CACHE_WRITE_RATE = 1.25
 
@@ -454,6 +463,14 @@ def _pricing_for_model(model: str) -> tuple[float, float] | None:
 def _gpt_pricing_for_model(model: str) -> tuple[float, float] | None:
     lowered = str(model or "").lower()
     for marker, input_rate, output_rate in GPT_MODEL_PRICING:
+        if marker in lowered:
+            return input_rate, output_rate
+    return None
+
+
+def _gemini_pricing_for_model(model: str) -> tuple[float, float] | None:
+    lowered = str(model or "").lower()
+    for marker, input_rate, output_rate in GEMINI_MODEL_PRICING:
         if marker in lowered:
             return input_rate, output_rate
     return None

@@ -50,7 +50,10 @@ def test_days_and_hours_cover_the_range_and_dedupe_records() -> None:
         "approximate": True,
         "currency": "USD",
         "model": "fable",
+        "source": "table",
+        "estimated": False,
     }
+    assert document["estimated"] is False and document["estimated_records"] == 0
 
 
 def test_codex_costs_bill_cache_writes_at_the_input_rate() -> None:
@@ -64,12 +67,68 @@ def test_codex_costs_bill_cache_writes_at_the_input_rate() -> None:
     assert document["pricing"]["cache_read_per_mtok"] == pytest.approx(0.4)
 
 
-def test_unknown_models_and_ranges() -> None:
+def test_unknown_models_are_estimated_at_the_reference_rate_not_zero() -> None:
     document = history.usage_history_document(
-        [_record("claude", "unknown", NOW, dedupe="u")], provider="claude", range_name="90d", now=NOW.timestamp()
+        [_record("claude", "mystery-9", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="u")],
+        provider="claude", range_name="90d", now=NOW.timestamp(),
     )
-    assert document["days"][-1]["cost_usd"] == 0.0 and document["pricing"] is None
+    # Sonnet's rate stands in: 100k * $3 + 10k * $15 per MTok.
+    assert document["days"][-1]["cost_usd"] == pytest.approx((100_000 * 3.0 + 10_000 * 15.0) / 1e6, abs=1e-4)
+    assert document["pricing"]["model"] == "sonnet"
+    assert document["pricing"]["source"] == "reference" and document["pricing"]["estimated"] is True
+    assert document["estimated"] is True and document["estimated_records"] == 1
     with pytest.raises(ValueError):
         history.usage_history_document([], provider="claude", range_name="2d")
     assert history.range_days("365d") == 365 and history.range_days(7) is None
     assert history.scan_provider_records("grok", days=7) == []
+    # A provider with no table at all still bills nothing and quotes nothing.
+    assert history.price_quote("grok", "grok-4") is None
+    assert history.record_cost("grok", "grok-4", 1, 1, 1, 1) == 0.0
+
+
+def test_codex_records_are_priced_at_the_configured_default_model(tmp_path) -> None:
+    """Codex transcripts name their model ``codex``; the configured default
+    model's row prices them. A default the table does not know falls back
+    to the GPT-5.6 reference rate, marked estimated."""
+    known = history.usage_history_document(
+        [_record("codex", "codex", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="k")],
+        provider="codex", range_name="7d", now=NOW.timestamp(), codex_default_model="gpt-5.6-luna",
+    )
+    assert known["days"][-1]["cost_usd"] == pytest.approx((100_000 * 0.20 + 10_000 * 1.20) / 1e6, abs=1e-4)
+    assert known["pricing"]["model"] == "gpt-5.6-luna" and known["pricing"]["source"] == "codex_default"
+    assert known["pricing"]["estimated"] is False and known["estimated"] is False
+
+    unknown = history.usage_history_document(
+        [_record("codex", "codex", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="k")],
+        provider="codex", range_name="7d", now=NOW.timestamp(), codex_default_model="gpt-6-astra",
+    )
+    assert unknown["days"][-1]["cost_usd"] == pytest.approx((100_000 * 4.0 + 10_000 * 20.0) / 1e6, abs=1e-4)
+    assert unknown["pricing"] == {
+        **unknown["pricing"], "model": "gpt-5.6", "source": "reference", "estimated": True,
+        "input_per_mtok": 4.0, "output_per_mtok": 20.0, "cache_read_per_mtok": pytest.approx(0.4),
+    }
+    assert unknown["estimated"] is True and unknown["estimated_records"] == 1
+    # No config at all: the same reference fallback.
+    none = history.usage_history_document(
+        [_record("codex", "codex", NOW, dedupe="k")], provider="codex", range_name="7d", now=NOW.timestamp()
+    )
+    assert none["pricing"]["source"] == "reference"
+
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "config.toml").write_text('model = "gpt-5.6-sol"\nmodel_reasoning_effort = "low"\n')
+    assert history.default_codex_model(tmp_path) == "gpt-5.6-sol"
+    (tmp_path / ".codex" / "config.toml").write_text("model = [broken\n")
+    assert history.default_codex_model(tmp_path) is None
+    assert history.default_codex_model(tmp_path / "nowhere") is None
+
+
+def test_gemini_answers_a_reference_quote_without_transcripts() -> None:
+    document = history.usage_history_document([], provider="gemini", range_name="7d", now=NOW.timestamp())
+    assert document["records"] == 0 and all(row["cost_usd"] == 0.0 for row in document["days"])
+    assert document["pricing"]["model"] == "gemini-3-flash"
+    assert document["pricing"]["input_per_mtok"] == 0.5 and document["pricing"]["output_per_mtok"] == 3.0
+    assert document["pricing"]["source"] == "reference" and document["pricing"]["estimated"] is True
+    assert document["estimated"] is False
+    # A named Gemini model prices from its own row.
+    assert history.price_quote("gemini", "gemini-3-pro").input_per_mtok == 2.0
+    assert history.price_quote("gemini", "Gemini 3.8 Flash").source == "table"
