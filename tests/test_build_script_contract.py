@@ -19,10 +19,17 @@ def test_package_builder_fails_fast_and_never_defaults_to_apple_python_39() -> N
     assert "scripts/validate_release_version.py" in text
 
 
-def test_release_workflow_selects_the_locked_python_runtime() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "self-hosted-macos.yml").read_text(encoding="utf-8")
+def test_release_build_selects_the_locked_python_runtime() -> None:
+    # This used to be pinned on .github/workflows/self-hosted-macos.yml, which
+    # was retired on 2026-09-10 (see tests/test_workflow_contract.py). The
+    # release build happens on the owner's Mac, so the builder is where the
+    # locked runtime has to be enforced.
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'BUILD_PYTHON: "python3.12"' in workflow
+    assert "/opt/homebrew/bin/python3.12" in text
+    assert "python3.12" in text
+    assert "sys.version_info[:2] != (3, 12)" in text
+    assert "JR-Bar release packaging requires Python 3.12." in text
 
 
 def test_source_install_drops_only_the_incompatible_build_constraint() -> None:
