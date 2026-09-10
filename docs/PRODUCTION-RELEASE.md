@@ -1,177 +1,110 @@
-# JR-Bar production release gate
+# Releasing JR-Bar
 
-A release tag may be published only after the authoritative macOS gate passes from a clean `main` checkout that exactly matches `origin/main`.
+One command builds the product; the rest is checking what it printed and
+uploading three files. The old multi-receipt release gate
+(`scripts/verify_macos_release.sh`, `scripts/publish_release.sh`,
+`scripts/release_evidence.py`) predates the Swift app and is not part of
+this flow; it is kept only until its tests are retired.
 
-## Required evidence
+## Build
 
-Set the signing identities and notarization profile used by `packaging/build_macos_pkg.sh`:
-
-```bash
-export APP_SIGN_IDENTITY='Developer ID Application: …'
-export INSTALLER_SIGN_IDENTITY='Developer ID Installer: …'
-export NOTARY_PROFILE='sidepulse-notary'
-export SPARKLE_KEY_ACCOUNT='io.jrbar.app'
-export JRBAR_RELEASE_CHANNEL='stable'
+```sh
+make fast            # lint, contract tests (the builder runs against doubles), version contract
+make package         # packaging/build_macos_pkg.sh
 ```
 
-## Authoritative artifact
-
-The signed and notarized PKG remains the authoritative installer and manual
-recovery artifact:
+`make package` builds the Swift app, the compiled hook shim and the frozen
+daemon, assembles and signs `build/macos-pkg/app/JR-Bar.app` inside out,
+verifies it, and writes:
 
 ```text
-dist/JR-Bar-<version>-<architecture>.pkg
+dist/JR-Bar-<version>.pkg        installer (system or home-directory domain)
+dist/JR-Bar-<version>.zip        Sparkle update archive of the same bundle
+dist/appcast.xml                 signed feed (only with the Sparkle key in the keychain)
+dist/jr-bar-update-channel.json  what the feed binds: version, build, download URL, signature, hashes
+dist/release-environment.txt     pip freeze of the frozen daemon's environment
 ```
 
-The package installs `JR-Bar.app` (executable `JR-Bar`) and the `jrbar` CLI,
-with `sidepulse` kept as a command alias for one release.
-The application displays JR-Bar to people.
+The summary at the end says exactly what happened:
 
-Production packaging also creates a required supplemental Sparkle ZIP from the
-same signed, notarized, and stapled `JR-Bar.app`. The signed `appcast.xml`
-and `jr-bar-update-channel.json` bind that ZIP to the exact candidate. They do
-not become a second installer contract.
-
-Production packaging requires both Developer ID identities and a notarytool
-profile. Store the notarization credentials once. Omit `--password` so
-notarytool reads the app-specific password from its secure interactive prompt
-instead of placing it in process arguments:
-
-```bash
-xcrun notarytool store-credentials sidepulse-notary \
-  --apple-id <your-apple-id> --team-id AJ9VWBRNZN
+```text
+JR-Bar 0.8.0 (<commit>)
+  JR-Bar-0.8.0.pkg: ... (20M)
+  JR-Bar-0.8.0.zip: ... (20M)
+  signed:     developer-id (Developer ID Application: Jonathan Reed (AJ9VWBRNZN))
+  installer:  unsigned
+  notarized:  not notarized
 ```
 
-JR-Bar embeds pinned Sparkle 2.9.6 and exposes `Software Update` only from a
-complete packaged bundle. Sparkle owns its first automatic-check consent
-prompt because the app deliberately omits `SUEnableAutomaticChecks`. Stable is
-the default channel and uses a one-day phased rollout interval. Beta is an
-explicit opt-in channel. No JR-Bar GitHub Release or update feed has been
-published by this source tranche.
+`packaging/README.md` lists what each line depends on. In short:
 
-The prepared Sparkle framework, helpers, tools, and license must match exact
-distribution digest
-`a57379fc39978044fe38787bda8ca8613d48bc9da48296514622be83651d17ce`.
-The final signed-appcast receipt reruns pinned `sign_update --verify` against
-both the appcast and update archive. A matching version string alone is not a
-release provenance receipt.
+- **Signing** happens with whatever the keychain has, best first: Developer
+  ID Application (hardened runtime, timestamp), then `Nautilus Local Dev`,
+  then ad-hoc. Only a Developer ID build is distributable.
+- **Notarization** runs when the `jrbar-notary` keychain profile exists
+  (`xcrun notarytool store-credentials jrbar-notary --apple-id … --team-id
+  AJ9VWBRNZN`) and the build is Developer ID signed. The app is notarized
+  and stapled before the ZIP and PKG are cut, so both carry the ticket. A
+  PKG is notarized only when it is also signed, which needs a `Developer ID
+  Installer` certificate in the keychain. Without notarization the summary
+  says `not notarized`; Gatekeeper on another Mac will refuse the app until
+  it is.
+- **The feed** is signed when the private half of
+  `packaging/sparkle_public_ed_key.txt` is in the login keychain (accounts
+  tried: `SPARKLE_KEY_ACCOUNT`, `ed25519`, `io.jrbar.app`,
+  `com.jonathanreed.jrbar`). Otherwise there is no `appcast.xml`, and
+  installed apps will not see the release. The public key is baked into
+  every app as `SUPublicEDKey`; changing keys means changing it in
+  `packaging/sparkle_public_ed_key.txt`, `scripts/generate_sparkle_channel.py`
+  and `src/jrbar/sparkle_updater.py` before the first release that uses it.
 
-The dedicated Sparkle private key is stored in the owner's login Keychain under
-account `io.jrbar.app`. Only its public key is committed. Before a real
-release, export one encrypted offline backup with pinned Sparkle's
-`generate_keys --account io.jrbar.app -x <secure-path>` command. Never put
-that file in the checkout, shell arguments, logs, release evidence, or Git.
-The committed public-key fingerprint is
-`9c134249398dd15c364a29451de3d81436d8eda97a0c706fa59047e6607f59ac`.
+Retaining earlier releases in the feed: put the currently published
+`appcast.xml` and every `JR-Bar-*.zip` it references in a directory and set
+`JRBAR_SPARKLE_HISTORY_DIR` to it; the builder verifies them with the key
+before signing the replacement feed. `JRBAR_RELEASE_CHANNEL=beta` makes a
+beta entry (no phased rollout); stable entries roll out over one day.
 
-Create an Instruments-backed JSON evidence file with these fields:
+## Check it on this Mac
 
-```json
-{
-  "warm_launch_ms": 450,
-  "menu_open_p95_ms": 40,
-  "pane_switch_p95_ms": 80,
-  "longest_main_thread_task_ms": 12,
-  "idle_cpu_hidden_percent": 0.5,
-  "idle_cpu_static_bar_percent": 1.0,
-  "idle_cpu_motion_percent": 2.5,
-  "measurement_duration_seconds": 300,
-  "instruments_trace_reviewed": true,
-  "menu_tracking_io_observed": false
-}
+```sh
+make clean-install           # installs the PKG into ~/Applications (no password) and launches it
+ps -o pid,ppid,command -p "$(pgrep -x JR-Bar)"; pgrep -lP "$(pgrep -x JR-Bar)"
+~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core hooks doctor
 ```
 
-The measurements must come from the signed candidate on the release Mac after a five-minute warm period. Review the Instruments trace for main-thread subprocesses, filesystem walks, network requests, hardware writes, fsyncs, and unexpected AppKit work during menu tracking.
-
-## Installer ownership
-
-The signed package installs the application payload and an owned `jrbar` CLI link only. Package scripts do not install provider hooks, a user LaunchAgent, the privileged sleep helper, the eject guard, or T3 Code integration. Those are external mutable state and cannot be transactionally rolled back by Installer without risking pre-existing user setup.
-
-The ordinary user completes integrations from JR-Bar's first-run setup or explicit CLI commands. The release gate exercises the explicit installed `status-bar start` command after package installation before it checks the LaunchAgent. This keeps package installation reversible while still testing the installed integration path.
-
-## Run the gate
-
-Use a dedicated release Mac or disposable QA account and preserve an existing settings file for the
-installed-upgrade check. A differently versioned, Developer ID signed JR-Bar
-PKG must already be installed, with its package receipt present. Settings by
-themselves never count as upgrade evidence. The gate deliberately exercises the supported
-uninstaller, then reinstalls the exact same PKG. It preserves user settings but
-removes explicitly installed integrations and helpers. Do not run that portion
-against an everyday account. The default `software` profile requires no
-physical SidePulse and performs no hardware writes.
-
-```bash
-export JRBAR_PERFORMANCE_EVIDENCE='/absolute/path/outside-the-checkout/performance-evidence.json'
-export JRBAR_RUN_INSTALLED_UPGRADE=1
-export JRBAR_RUN_UNINSTALL=1
-export JRBAR_RELEASE_USER="$(id -un)"
-./scripts/verify_macos_release.sh
-```
-
-To verify optional SidePulse hardware, set `JRBAR_REQUIRED_HARDWARE` to
-`pro`, `dot`, `both`, or `any`, connect the selected devices, and set
-`JRBAR_HARDWARE_CONFIRM=1`. These profiles require reversible smoke writes
-and a receipt bound to the same candidate and hardware profile. A software
-release emits no hardware-smoke receipt and makes no physical-hardware
-validation claim.
-
-Set `JRBAR_RELEASE_CHANNEL=beta` only for a beta release. To retain prior
-stable and beta entries, set `JRBAR_SPARKLE_HISTORY_DIR` to an absolute
-external directory containing the currently published signed `appcast.xml`
-and every retained `JR-Bar-*.zip` it references. The gate verifies the prior
-feed and each retained archive with the pinned Keychain key before it signs a
-replacement feed. Omit this variable only for the first published feed.
-
-The gate builds first so one immutable candidate identity exists, then binds
-the full source suite, clean-wheel install, performance budget, Developer ID
-signatures, nested Sparkle signing, app and PKG notarization, app and PKG
-stapling, Gatekeeper, the exact updater ZIP and signed appcast, package
-contents, bundle closure, entitlements, requested hardware checks, installed
-upgrade, settings preservation, supported uninstall, and clean PKG reinstall
-to that exact candidate. The clean reinstall verifies `doctor` and
-`jrbar integrations status --json` without silently reinstalling external
-integrations.
-
-The developer-facing wheel and source distribution are rebuilt from the same
-clean release checkout in an empty candidate-owned staging directory. Their
-exact names come from the release-artifact contract, Twine validates them, and
-the evidence manifest records their bytes and SHA-256 values. Publication
-ignores unrelated files in `dist/` and refuses any asset whose bytes changed
-after the evidence manifest was assembled.
-
-Successful verification produces `dist/release-verification.json` using the
-`jr-bar-release-evidence` schema. It contains the commit, final stapled PKG
-hash, deterministic app-tree hash, signing identities, SBOM and performance
-hashes, the selected `hardware_profile`, and one bounded receipt for every required check. Assembly fails when
-a receipt is missing, duplicated, failed, malformed, secret-shaped, changed
-on disk, or bound to another candidate. The pre-staple digest is checked
-against the notarization log, the final PKG is independently validated by
-Stapler, and the stapling receipt links both digests without pretending they
-are byte-identical. `dist/performance-evidence.json` is the immutable copy included with
-the release assets.
-
-Before authorizing the release gate, enable T3 Code only when the release Mac has representative local data. Run a bounded probe and preserve the output with the release evidence:
-
-```bash
-jrbar integrations status --json
-jrbar integrations probe t3code --json
-```
-
-An unavailable optional third-party installation is not a failure for the core package. A configured integration that is present but violates its required schema, process, freshness, or installed-command contract blocks the associated compatibility claim.
+The app must be supervising `Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core core`,
+every provider's hook must run `Contents/Helpers/jrbar-hook`, the panel must
+show live sessions and the Screen Bar the daemon's program (the status
+menu's Lights line says `core`), and the login item must be registered
+(`log show --last 5m --predicate 'process == "JR-Bar"' | grep "login item"`).
 
 ## Publish
 
-`publish_release.sh` creates a draft release against the exact verified commit,
-uploads the exact checksummed PKG, supplemental updater ZIP, performance
-evidence, SBOM, candidate-bound manifest, and Python developer artifacts. It
-publishes the immutable version release before changing the durable `updates`
-release, then uploads channel metadata before the client-visible signed
-appcast. A failure before the version release is published deletes its draft
-and server-side tag. A feed-update failure leaves the prior signed appcast in
-place and must be repaired before another release.
+Releases live at `https://github.com/JonathanRReed/JR-Bar/releases`. The
+app's feed URL is fixed:
+`https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml`,
+so the feed is an asset of one durable release tagged `updates`, and each
+version's archive is an asset of its own `v<version>` release (the appcast
+enclosure URL is
+`https://github.com/JonathanRReed/JR-Bar/releases/download/v<version>/JR-Bar-<version>.zip`).
 
-```bash
-./scripts/publish_release.sh
-```
+1. Commit and push the version bump (`pyproject.toml`,
+   `src/jrbar/__init__.py`, the `## <version>` heading in `CHANGELOG.md`).
+2. `make package` from that commit (the summary must say `developer-id`,
+   `notarized: yes` and a signed appcast for a public release).
+3. The version release: `gh release create v<version> dist/JR-Bar-<version>.pkg
+   dist/JR-Bar-<version>.zip --title "JR-Bar <version>" --notes-file <notes>`.
+   Upload the ZIP under exactly the name the appcast enclosure uses.
+4. The feed, only after the version release is public: `gh release upload
+   updates dist/jr-bar-update-channel.json dist/appcast.xml --clobber`
+   (create the `updates` release once, as a plain release with no tag
+   semantics: `gh release create updates --title "Update feed" --notes
+   "Sparkle appcast; do not delete."`). Uploading the metadata first and the
+   appcast last means a half-finished upload never advertises an archive
+   that is not there yet.
+5. Install the PKG on a Mac that has the previous version and confirm
+   Sparkle offers the update (Settings › General › Software Update).
 
-Do not create or push a release tag manually. Do not treat a portable or unsigned package as a production candidate.
+Do not edit a published `appcast.xml` by hand: it carries an Ed25519
+signature over its bytes (`sign_update --verify`) and the app rejects a feed
+that does not verify.
