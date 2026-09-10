@@ -450,7 +450,9 @@ Answer to a command.
 ```
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
-`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`; the Effect
+`invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`;
+`answer_ask` adds `accessibility_required`, `session_gone`, `stale_ask` and
+`send_failed` (see below); the Effect
 Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
 `reserved_semantic`, `invalid_pack`, `conflict`, `export_failed`,
 `usage_history` adds `invalid_range`, and the deck commands add
@@ -482,7 +484,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | name | args | effect / result |
 | --- | --- | --- |
 | `open_session` | session, action? | The controller's `open_session` (terminal launch or provider URL, honouring the session-open preference). `{session, activated, origin}`. |
-| `answer_ask` | session, decision (`approve`/`deny`), only_if_frontmost (default true) | The Agent Browser's answer path (`AnswerController.perform_browser_answer`) for the session's live request. With `only_if_frontmost`, refused with `not_frontmost` unless the frontmost app is the session's terminal or origin app (or, when neither is known, any known terminal). `unsupported` when the provider has no answer handler. |
+| `answer_ask` | session, decision (`approve`/`deny`), only_if_frontmost (default true) | Answers the session's live request **in its own terminal**, by posting the key that provider's CLI takes at its permission prompt (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, host{pid, tty, app, app_pid, window_evidence}}`. `window_evidence` is `focused_tab_tty` (Terminal.app / iTerm2 named the focused tab and it is this session's), `host_process_ancestry` (the frontmost application's process is the one the session descends from) or `frontmost_application_only`. See the refusals below. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
@@ -521,6 +523,31 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `deck_set_settings` | enabled?, session_mode?, analog_enabled? | Writes `deck-controls.json` (bindings untouched), reconfigures the deck runtime. The three settings; `invalid_args` for anything but bools. |
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
+
+### answer_ask: the checks, and what each refusal means
+
+Answering means typing into a window the owner did not look at first, so every
+check below runs before anything leaves the daemon, in this order, and the
+first one that fails refuses. **Nothing skips them** -- `only_if_frontmost` does
+not gate them. `only_if_frontmost: false` means "raise the session's terminal
+first" (`NSRunningApplication.activateWithOptions_`), after which the same
+chain runs against whatever is genuinely in front; it is not a bypass and it
+can still refuse.
+
+| code | when | message |
+| --- | --- | --- |
+| `not_found` | the daemon's canonical state has no live request for that session | `no live ask for that session` |
+| `unsupported` | the provider's contract does not declare `answering`, or the answer controller would not accept the action (a typed reply, an already-sending attempt) | `this ask cannot be answered from here` |
+| `stale_ask` | the request left the live phase between the command and the keystroke -- answered in the terminal, timed out, superseded -- or the delivery overran `answer_local.DELIVERY_BUDGET_SECONDS` (4 s). Re-checked immediately before the key is posted, so a resolved ask never leaves a keystroke pending. | reason `resolved_elsewhere`, `resolved_while_sending`, `budget_exceeded`, `not_in_canonical_state` |
+| `session_gone` | the session's process is not running, or the daemon has no row for it | reason `no_live_process`, `no_session_row` |
+| `not_frontmost` | the window in front is not this session's. Reasons: `no_frontmost_app`; `unknown_host` (JR-Bar cannot say which app hosts the session); `frontmost_is:<bundle id>`; `other_window` (the frontmost application's process is not the one the session descends from); `other_tab:<tty>` (Terminal.app / iTerm2 named a focused tab that is not this session's). | the sentence plus the reason |
+| `accessibility_required` | `AXIsProcessTrusted()` is false, so a posted key would silently go nowhere | `JR-Bar cannot answer this ask until macOS lets it send the keystroke. Turn on System Settings > Privacy & Security > Accessibility > JR-Bar.` |
+| `send_failed` | macOS refused to build or deliver the event | the failure's name |
+| `busy` | the answer worker did not finish inside `ANSWER_REPLY_BUDGET_SECONDS` (6 s) | `answering did not finish in time` |
+
+The same surface backs the panel's Approve/Deny, the notification actions and a
+Creator Micro session key, so a refusal reads identically wherever it happens;
+the panel shows the refusal's own sentence rather than an exception name.
 
 ### subscribe
 Optional; protocol 1 always sends everything. Reserved.

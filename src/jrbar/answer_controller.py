@@ -128,6 +128,11 @@ class AnswerController:
             AnnouncerAlertIdentity, CanonicalRequestTruth
         ] = {}
         self.attempt_key: AnswerRequestAttemptKey | None = None
+        # The exact request the handler is answering right now, set before the
+        # runtime dispatches and cleared when the attempt is torn down. The
+        # local answer surface reads it to know WHICH session's terminal it may
+        # type into; without it a handler would only know the provider.
+        self.in_flight_request: CanonicalRequestTruth | None = None
         self._next_attempt_generation = 0
         self.stack_state = empty_announcer_stack_state()
         self.context: tuple[
@@ -156,6 +161,7 @@ class AnswerController:
     def _clear_attempt(self) -> None:
         self.runtime.clear()
         self.attempt_key = None
+        self.in_flight_request = None
 
     def _capability_for_request(
         self,
@@ -435,7 +441,8 @@ class AnswerController:
             AnswerActionKind.REPLY,
         } or not controls.can_send:
             return False
-        return self.runtime.submit(
+        self.in_flight_request = request
+        submitted = self.runtime.submit(
             capability.invocation,
             request_identity=attempt_key.request_identity,
             generation=attempt_key.generation,
@@ -443,6 +450,9 @@ class AnswerController:
             action=action,
             reply_text=reply_text,
         )
+        if not submitted:
+            self.in_flight_request = None
+        return submitted
 
     def handle_answer_intent(
         self,
@@ -564,6 +574,7 @@ class AnswerController:
     def reset(self) -> None:
         self.runtime.clear()
         self.attempt_key = None
+        self.in_flight_request = None
         self.stack_state = empty_announcer_stack_state()
         self.routes.clear()
         self.requests_by_identity.clear()

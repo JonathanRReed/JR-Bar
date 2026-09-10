@@ -113,6 +113,22 @@ class _AnswerSubmission:
     reply_text: str | None
 
 
+def _failure_text(error: BaseException) -> str:
+    """The sentence the answer surface shows when a send failed.
+
+    A handler that already knows why it refused says so in
+    ``answer_status_text`` (answer_local.AnswerRefusal), so the operator reads
+    "the session's terminal is not in front" instead of an exception name.
+    Anything else keeps the generic form.
+    """
+    explicit = getattr(error, "answer_status_text", None)
+    if type(explicit) is str:
+        collapsed = " ".join(explicit.split())
+        if collapsed and collapsed.isprintable():
+            return collapsed[:280]
+    return f"Send failed: {type(error).__name__}"[:280]
+
+
 def _default_timer_factory(
     delay: float,
     callback: Callable[[], None],
@@ -409,7 +425,7 @@ class AnswerRuntime:
                 failed = replace(
                     attempt,
                     state=AnswerAttemptState.FAILED,
-                    last_error=f"Send failed: {type(error).__name__}"[:280],
+                    last_error=_failure_text(error),
                 )
                 self._attempt = failed
                 self._schedule_change(failed)
@@ -457,9 +473,8 @@ class AnswerRuntime:
         try:
             result = getattr(future, "result")()
         except BaseException as error:
-            error_name = type(error).__name__
             state = AnswerAttemptState.FAILED
-            message = f"Send failed: {error_name}"[:280]
+            message = _failure_text(error)
         else:
             del result
             state = AnswerAttemptState.SENT

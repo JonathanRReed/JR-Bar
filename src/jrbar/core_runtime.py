@@ -40,7 +40,6 @@ from typing import Any, Final
 from . import core_deck
 from .core_projection import (
     READ_ONLY_SETTINGS,
-    TERMINAL_BUNDLE_IDS,
     DeviceFacts,
     EscalationFacts,
     LightFacts,
@@ -66,6 +65,11 @@ CORE_VERSION: Final = "0.8.0"
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
+# How long ``answer_ask`` waits on the answer surface's worker before it gives
+# up and says so. A delivery is a few process reads and one posted key; the
+# surface's own budget (answer_local.DELIVERY_BUDGET_SECONDS) is smaller, so
+# this only ever fires when the worker itself is wedged.
+ANSWER_REPLY_BUDGET_SECONDS: Final = 6.0
 MAX_EXTRA_LOOKUPS_PER_BUILD: Final = 6
 PREVIEW_MAX_SECONDS: Final = 30.0
 # The Creator Micro 2: how often the daemon looks for the pad over HID
@@ -390,9 +394,22 @@ def _cmd_open_session(self, args):
 
 @command("answer_ask")
 def _cmd_answer_ask(self, args):
+    """Answer one live ask in the session's own terminal.
+
+    The whole command is one round trip: the answer goes through the reviewed
+    ``local.answer_in_place`` surface (answer_local.py) on the runtime's
+    worker, and this handler waits for that surface's own verdict so the reply
+    says what actually happened rather than "dispatched". Every refusal code
+    the surface can produce is documented in docs/CORE-PROTOCOL.md.
+
+    ``only_if_frontmost`` (default true) does not gate the safety checks --
+    nothing does. False means "raise the session's terminal first"; the same
+    chain then runs against whatever is genuinely in front.
+    """
     from .announcer_stack import announcer_alert_identity
     from .answer_controller import AnswerBrowserCommand
     from .answer_in_place import AnswerActionKind
+    from .answer_local import raise_application
 
     status = _find_status(self, args.get("session"))
     decision = str(args.get("decision") or "approve").lower()
@@ -408,13 +425,15 @@ def _cmd_answer_ask(self, args):
                 break
     if request is None:
         raise CommandError("not_found", "no live ask for that session")
-    if bool(args.get("only_if_frontmost", True)):
-        frontmost = self._core_frontmost_bundle_id()
-        expected = self._core_session_bundle_ids(status)
-        if frontmost is None or (expected and frontmost not in expected) or (
-            not expected and frontmost not in TERMINAL_BUNDLE_IDS
-        ):
-            raise CommandError("not_frontmost", "the session's terminal is not in front")
+    surface = getattr(self, "local_answer_surface", None)
+    if surface is None:
+        raise CommandError("unsupported", "no local answer surface is registered")
+    if not bool(args.get("only_if_frontmost", True)):
+        # Explicitly asked to answer a terminal that is not in front: raise it,
+        # then let the unchanged check chain decide. Never a bypass.
+        for bundle_id in sorted(self._core_session_bundle_ids(status)):
+            if raise_application(bundle_id):
+                break
     command_payload = AnswerBrowserCommand(
         work_key=work_key,
         generation=state.generation,
@@ -423,13 +442,26 @@ def _cmd_answer_ask(self, args):
         reply_text=None,
     )
     snapshot = self.last_snapshot
+    surface.arm()
     accepted = self.answer_controller.perform_browser_answer(
         command_payload, state, tuple(snapshot.statuses)
     )
     if not accepted:
         raise CommandError("unsupported", "this ask cannot be answered from here")
+    if not surface.completed.wait(ANSWER_REPLY_BUDGET_SECONDS):
+        raise CommandError("busy", "answering did not finish in time")
+    outcome = surface.last_outcome
+    if outcome is None:
+        raise CommandError("send_failed", "the answer surface reported nothing")
+    if not outcome.delivered:
+        raise CommandError(outcome.code, outcome.message)
     self.refresh_(None)
-    return {"session": status.agent_id, "decision": decision, "answered": True}
+    return {
+        "session": status.agent_id,
+        "decision": decision,
+        "answered": True,
+        **outcome.document(),
+    }
 
 
 @command("snooze")
