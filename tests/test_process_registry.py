@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from jrbar import process_registry as pr
@@ -90,6 +91,34 @@ def test_note_hook_payload_registers_once_and_marks_session_end(tmp_path: Path):
     ended = pr.load_record("codex", "s1", state_dir=tmp_path)
     assert ended.ended_at_epoch is not None and ended.end_reason == "hook"
     assert len(calls) == 1
+
+
+def test_a_real_session_end_upgrades_a_record_the_sweep_already_closed(tmp_path: Path):
+    """`end_reason` is what the app reads to tell a provider's own end from
+    the liveness sweep's synthetic one. A one-shot CLI exits the instant it
+    finishes, so the sweep can close the record first -- a real `SessionEnd`
+    arriving afterwards still has to win, or the run never earns Done."""
+
+    table = _table(
+        (os.getppid(), 41, 10.0, "/bin/sh"),
+        (41, 1, 3.0, "/opt/homebrew/bin/codex"),
+    )
+    start = json.dumps({"hook_event_name": "SessionStart", "session_id": "s9", "cwd": "/w"})
+    pr.note_hook_payload("codex", start, state_dir=tmp_path, table_loader=lambda: table)
+    record = pr.load_record("codex", "s9", state_dir=tmp_path)
+    swept = replace(record, ended_at_epoch=1000.0, end_reason="process_exited")
+    pr.write_record(swept, state_dir=tmp_path)
+
+    pr.note_hook_payload(
+        "codex",
+        json.dumps({"hook_event_name": "SessionEnd", "session_id": "s9"}),
+        state_dir=tmp_path,
+        table_loader=lambda: table,
+    )
+    ended = pr.load_record("codex", "s9", state_dir=tmp_path)
+    assert ended.end_reason == "hook"
+    # The end time it already had is the truthful one; only the reason moves.
+    assert ended.ended_at_epoch == 1000.0
 
 
 def test_note_hook_payload_ignores_garbage(tmp_path: Path):

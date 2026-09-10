@@ -232,6 +232,14 @@ class SessionExtras:
     # ``~/.claude/sessions/<pid>.json``, Codex's ``thread_name`` from
     # ``~/.codex/session_index.jsonl``.
     name: str | None = None
+    # Tri-state, and the difference between "Done" and a grey row: ``True``
+    # is "the provider's own ``SessionEnd`` closed this session's registry
+    # record" (``end_reason == "hook"``), ``False`` is "the liveness sweep
+    # closed it because the process was gone" -- the synthetic end, whose
+    # ``SessionEnd`` nobody sent -- and ``None`` is "no record, nobody
+    # looked". A one-shot CLI run exits the moment it finishes, so
+    # ``process_alive`` alone cannot tell those two apart.
+    provider_ended: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,16 +478,28 @@ def lifecycle_for_mode(
     stale: bool,
     event_name: str | None = None,
     process_alive: bool | None = None,
+    provider_ended: bool | None = None,
 ) -> str:
     """The app's five words: ``active``, ``completed``, ``failed``,
     ``ended``, ``stale``.
 
     ``completed`` is a claim -- the green check, "Done" -- and only a
-    provider's own end event earns it. A run whose process died, or one the
-    collector merely *inferred* was finished (a notification that read as
-    done, an explicit status message), reads ``ended``: grey, no check.
-    ``event_name`` of ``None`` means the caller has no event to judge by and
-    keeps the older, looser reading.
+    provider's own end event earns it. **A real terminal event wins over a
+    dead process.** ``codex exec``, ``claude -p`` and ``pi -p`` each send a
+    real ``Stop`` and ``SessionEnd`` and then exit: that is the normal life
+    of a one-shot run, and it is ``completed``, not ``ended``. Demoting on
+    ``process_alive is False`` alone meant no finished one-shot run could
+    ever earn the check.
+
+    ``ended`` -- grey, no check -- is what is left: a session whose process
+    is gone and which never sent a terminal event (the liveness sweep's
+    synthetic ``SessionEnd``, marked by ``provider_ended=False``), a
+    completion the collector merely *inferred* from something that was not
+    an end event, or ``ended_unconfirmed``.
+
+    ``event_name`` of ``None`` means the caller has no event to judge by;
+    ``provider_ended`` of ``None`` means the process registry had nothing
+    to say. With neither, a dead process still reads ``ended``.
     """
 
     if mode is AgentMode.BLOCKED_ERROR:
@@ -487,9 +507,15 @@ def lifecycle_for_mode(
     if mode is AgentMode.ENDED_UNCONFIRMED:
         return "ended"
     if mode is AgentMode.COMPLETED:
-        if process_alive is False:
-            return "ended"
         if event_name is not None and event_name not in END_EVENT_NAMES:
+            # An inference, whatever the registry thinks: never the check.
+            return "ended"
+        if provider_ended is False:
+            # The sweep's synthetic end: this session never said it was done.
+            return "ended"
+        if provider_ended is True or (event_name is not None and event_name in END_EVENT_NAMES):
+            return "completed"
+        if process_alive is False:
             return "ended"
         return "completed"
     if stale:
@@ -761,14 +787,17 @@ def session_document(
     cwd = getattr(status, "cwd", None) or (extras.cwd if extras is not None else None)
     event_name = getattr(status, "event_name", None)
     process_alive = extras.process_alive if extras is not None else None
+    provider_ended = extras.provider_ended if extras is not None else None
     lifecycle = lifecycle_for_mode(
         mode,
         stale=stale,
         event_name=event_name if isinstance(event_name, str) else None,
         process_alive=process_alive,
+        provider_ended=provider_ended,
     )
     # A dead process without an end event is a session that stopped being
-    # delivered, whatever its last mode said.
+    # delivered, whatever its last mode said. A run that ended itself and
+    # then exited -- every one-shot CLI turn -- is not stale, it is over.
     if process_alive is False and event_name not in END_EVENT_NAMES:
         stale = True
     # ``mode`` travels beside ``lifecycle`` and the app reads whichever is

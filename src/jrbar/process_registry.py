@@ -383,9 +383,21 @@ def note_hook_payload(
     event = str(payload.get("hook_event_name") or "")
     existing = load_record(provider, session_id, state_dir=state_dir)
     if event == "SessionEnd":
-        if existing is not None and existing.ended_at_epoch is None:
+        # ``end_reason`` is what tells a provider's own end apart from the
+        # liveness sweep's synthetic one, and the app reads it to decide
+        # between "Done" and a grey row. A one-shot CLI exits the instant it
+        # finishes, so the sweep can close the record first; a real
+        # ``SessionEnd`` arriving afterwards still upgrades the reason,
+        # because the provider did send it. Only payloads the provider
+        # actually delivered reach here -- the sweep writes its synthetic
+        # end straight through ``process_hook_payload``.
+        if existing is not None and existing.end_reason != "hook":
             write_record(
-                replace(existing, ended_at_epoch=time.time(), end_reason="hook"),
+                replace(
+                    existing,
+                    ended_at_epoch=existing.ended_at_epoch or time.time(),
+                    end_reason="hook",
+                ),
                 state_dir=state_dir,
             )
         return
