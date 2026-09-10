@@ -1304,9 +1304,11 @@ def _cmd_deck_restore_keymap(self, args):
 def _cmd_deck_approve_device(self, args):
     from .creator_micro_settings import save_creator_micro_choice_async
 
-    if not self._core_deck_probe_rows() and not getattr(self, "_core_deck_probe_pending", False):
-        # Look once more before refusing: the pad may have just come on.
-        self._core_deck_probe_now(wait=True)
+    # Approval is of a pad that is here: look once more (it may have just
+    # come on), then refuse rather than enable a remembered serial blindly.
+    self._core_deck_probe_now(wait=True)
+    if not self._core_deck_probe_rows():
+        raise CommandError("no_device", core_deck.NO_DEVICE_MESSAGE)
     self._core_deck_settings_done.clear()
     save_creator_micro_choice_async(self, True)
     if not self._core_deck_settings_done.wait(DECK_APPROVE_TIMEOUT_SECONDS):
