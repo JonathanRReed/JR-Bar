@@ -429,6 +429,12 @@ def test_normalizers_skip_nonfinite_and_boolean_window_values_without_crashing()
             "used_percent": 40.0,
             "window_minutes": None,
             "resets_at": None,
+            # Every normalized window names the limit FAMILY it came from, so
+            # a model-scoped sub-cap's `primary` can never be read as the
+            # account's own 5-hour ceiling.
+            "limit_id": None,
+            "limit_name": None,
+            "account_limit": True,
         }
     ]
     assert claude == [

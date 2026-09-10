@@ -752,3 +752,96 @@ lit strip sat beside a Dot that looked dead.
 `v` is bumped only for incompatible changes. Additive fields are always
 allowed; the app ignores unknown keys, the daemon ignores unknown command
 args.
+
+## Usage windows: applicability, and the three states of a reading
+
+Added 2026-09-10 after a Pro account's Codex row carried a permanent red
+"5-hour · 100%" for a window that plan does not have.
+
+### `usage.providers[].account`
+
+```json
+"account": {"plan": "pro", "label": "d3a51c1c-…", "fidelity": "official"}
+```
+
+`plan` is the provider's own word for the subscription, never inferred from
+which windows arrived. Which windows an account *has* follows from its plan,
+so the plan is carried as a fact and applicability is derived from it rather
+than guessed backwards. The block appears as soon as either half is known;
+`plan` is `null` when no first-party source stated one.
+
+| provider | where `plan` comes from |
+| --- | --- |
+| `codex` | `rateLimits.planType` from `codex app-server`'s `account/rateLimits/read`, else a rollout's `plan_type`, else the `chatgpt_plan_type` claim in `~/.codex/auth.json`'s `id_token` |
+| `claude` | `oauthAccount`'s tier words in `~/.claude.json` (`userRateLimitTier`, `organizationRateLimitTier`, `seatTier`, `organizationType`), rendered as Claude's own UI renders them ("Pro", "Max 5x", "Max 20x"). The usage endpoint states no plan at all. |
+| `cursor` | `account.membershipType` when the payload carries it |
+| `devin`, `grok`, `antigravity` | a `plan` / `planName` / `tier` string when the payload carries one; otherwise `null` |
+| `openai-api` | not applicable — an API key has no consumer plan |
+
+### Three states, never two
+
+A window can be in exactly one of three states, and they reach the app as
+three different values in `usage.providers[].windows[]`:
+
+| state | what it means | on the wire |
+| --- | --- | --- |
+| **absent** | this account's plan has no such window | **no entry at all** in `windows[]` |
+| **unknown** | the window exists and the provider stated no number | an entry whose `used_pct` is `null` |
+| **exhausted** | the window exists and is spent | an entry whose `used_pct` is `100` |
+
+Absence is something providers state explicitly, and it must be read as a
+statement rather than as a zero. Codex writes `"secondary": null`; Claude
+writes `"seven_day_opus": null`. Neither is "0 % remaining".
+
+`used_pct: null` must never render as a full bar. A consumer that needs a
+number for layout should treat `null` as "no reading" and draw the window
+and its `resets_at` without a balance — the same thing the capacity plane
+calls `ObservationState.NULL`.
+
+A percentage key holding a **malformed** value (`NaN`, a bool, a string) is
+dropped rather than read as unknown: it is not the provider saying "no
+reading", and dropping it is also what lets an aliased key fall through to
+its live sibling.
+
+### Codex limit families
+
+Codex reports several limit **families** side by side, and every family uses
+the same `primary` / `secondary` key names:
+
+```json
+{"rateLimits": {"limitId": "codex", "limitName": null,
+                "primary": {"usedPercent": 100, "windowDurationMins": 10080,
+                            "resetsAt": 1789440279},
+                "secondary": null, "planType": "pro"},
+ "rateLimitsByLimitId": {
+   "codex": {…the same…},
+   "codex_bengalfox": {"limitId": "codex_bengalfox",
+                       "limitName": "GPT-5.3-Codex-Spark",
+                       "primary":   {"usedPercent": 100, "windowDurationMins": 300,
+                                     "resetsAt": 1789078256},
+                       "secondary": {"usedPercent": 85, "windowDurationMins": 10080,
+                                     "resetsAt": 1789501977}}}}
+```
+
+Only `limitId: "codex"` names the **account's** windows. Everything else —
+`codex_bengalfox`, `premium`, anything under `additional_rate_limits[]` — is
+a model- or product-scoped sub-cap. Two rules follow:
+
+1. **A window's horizon is its stated duration, not its key.** 240–360
+   minutes is the 5-hour window, 10000–10200 is the weekly one. A `primary`
+   carrying 10,080 minutes is the weekly ceiling under a renamed key.
+2. **A sub-cap never claims an account lane.** It gets its own dynamic lane
+   named after the product (`spark-five-hour` → "Spark 5-hour",
+   `spark-weekly` → "Spark Weekly"), `bindable: false`, with `model` set.
+
+A rollout file carries exactly one family per record, tagged `limit_id` /
+`limit_name`. Reading a Spark rollout's 300-minute `primary` as the account's
+5-hour ceiling is what produced the phantom row: an account whose plan has no
+5-hour window at all showed one, permanently at 100 %, because the lane it
+named never existed and so never moved.
+
+When a live `codex app-server` read is available it enumerates every family
+the account has, so for the families it covered it is the whole truth —
+including which windows a family does **not** have. Rollout windows for those
+families are discarded rather than merged; only families the live read did
+not cover fall back to rollout evidence.

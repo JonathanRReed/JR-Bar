@@ -752,6 +752,9 @@ def test_one_frozen_inventory_supplies_usage_and_codex_rate_evidence(
             "used_percent": 37.0,
             "window_minutes": 300,
             "resets_at": 1_777_777_777,
+            "limit_id": None,
+            "limit_name": None,
+            "account_limit": True,
         }
     ]
 
@@ -781,6 +784,9 @@ def test_cached_codex_rate_evidence_does_not_wait_for_a_historical_rescan(
             "used_percent": 41.0,
             "window_minutes": 300,
             "resets_at": 1_777_777_777,
+            "limit_id": None,
+            "limit_name": None,
+            "account_limit": True,
         }
     ]
 

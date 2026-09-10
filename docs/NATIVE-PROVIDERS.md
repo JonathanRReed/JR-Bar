@@ -6,7 +6,7 @@ JR-Bar owns provider accounting directly. CodexBar is an engineering reference o
 
 | Provider | Native sources | Main facts |
 | --- | --- | --- |
-| ChatGPT / Codex | Codex OAuth usage API, `codex app-server`, local Codex records | five-hour and weekly limits, dynamic additional lanes such as Spark, credits, resets, tokens, models, and estimates |
+| ChatGPT / Codex | Codex OAuth usage API, `codex app-server`, local Codex records | whichever of the five-hour and weekly account limits the plan actually has, plan name, dynamic sub-cap lanes such as Spark, credits, resets, tokens, models, and estimates |
 | Claude | Claude OAuth usage API, consented Claude browser session, local Claude records | five-hour, weekly, arbitrary model- or feature-scoped limits such as Fable, credits, extra usage, tokens, cache savings, and estimates |
 | Cursor | Cursor.app read-only SQLite auth, consented browser session | included plan, Auto/Composer, API/model usage, extra usage, resets, account identity |
 | Devin | encrypted JR-Bar manual bearer or consented Chromium localStorage | daily and weekly quota, reset times, organization identity |
@@ -105,6 +105,20 @@ jrbar providers browser-consent revoke cursor \
 ```
 
 The packaged reader supports Chromium-family cookie/localStorage databases and Firefox cookies. It copies stores to an isolated temporary directory before reading, never mutates browser data, restricts reads to the provider's allowlist, and stores validated imported values encrypted. Safari remains unavailable until a signed-bundle WebKit import path passes the same consent and account-isolation tests.
+
+## Which windows an account actually has
+
+Verified live 2026-09-10 against Codex 0.153.4 and Claude's OAuth usage endpoint on the owner's Mac. Full wire vocabulary in `docs/CORE-PROTOCOL.md`; the captured payloads are in `tests/fixtures/provider_usage/`.
+
+**Window applicability is a property of the plan, not of what happened to arrive.** Each provider's `account.plan` is recorded from what that provider states — Codex's `rateLimits.planType` (or the `chatgpt_plan_type` claim in `~/.codex/auth.json`), Claude's `oauthAccount` tier words in `~/.claude.json`, Cursor's `membershipType` — so which windows an account has is derived rather than guessed, and the card can label the account.
+
+**A window can be absent, unknown, or exhausted, and these are three different things.** Absent means the plan has no such window and nothing is drawn for it; providers say this explicitly (`"secondary": null` from Codex, `"seven_day_opus": null` from Claude) and it is never a zero. Unknown means the window exists and the provider stated no number: the row shows the window and its reset and withholds the balance. Exhausted means a stated 100 % used. Collapsing the first two into the third is what put a red "5-hour · 100%" on an account that has no 5-hour window.
+
+**Codex reports several limit families side by side, and only one of them is the account's.** `account/rateLimits/read` answers with a default family under `rateLimits` and the whole set under `rateLimitsByLimitId`. `limitId: "codex"` is the account's own ceilings; `codex_bengalfox` (`limitName` "GPT-5.3-Codex-Spark") and anything under `additional_rate_limits[]` are model- or product-scoped sub-caps that reuse the same `primary`/`secondary` key names. A sub-cap gets its own dynamic lane named after the product — "Spark 5-hour", "Spark Weekly", not bindable — and can never occupy an account lane. A window's horizon comes from its stated `windowDurationMins` (300 = five-hour, 10080 = weekly), never from its position.
+
+On this ChatGPT Pro account the `codex` family reports a weekly `primary` and `secondary: null` — a weekly ceiling and no 5-hour window at all — while the Spark family reports a 300-minute `primary`. A plan that does have a 5-hour window reports it as a 300-minute `primary` under the `codex` family, and still gets the `five-hour` lane it always did.
+
+A rollout file carries exactly one family per record. When a live `codex app-server` read is available it enumerates every family, so for the families it covered it is the whole truth — including which windows a family does not have — and rollout evidence for those families is discarded rather than merged.
 
 ## Usage Center and quality-of-life behavior
 

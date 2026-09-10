@@ -1,0 +1,19 @@
+{
+  "limit_id": "codex_bengalfox",
+  "limit_name": "GPT-5.3-Codex-Spark",
+  "primary": {
+    "used_percent": 100.0,
+    "window_minutes": 300,
+    "resets_at": 1789078256
+  },
+  "secondary": {
+    "used_percent": 85.0,
+    "window_minutes": 10080,
+    "resets_at": 1789501977
+  },
+  "credits": {"has_credits": false, "unlimited": false, "balance": null},
+  "individual_limit": null,
+  "spend_control_reached": null,
+  "plan_type": null,
+  "rate_limit_reached_type": null
+}

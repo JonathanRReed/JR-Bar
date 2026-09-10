@@ -1,0 +1,64 @@
+{
+  "rateLimits": {
+    "limitId": "codex",
+    "limitName": null,
+    "primary": {
+      "usedPercent": 100,
+      "windowDurationMins": 10080,
+      "resetsAt": 1789440279
+    },
+    "secondary": null,
+    "credits": {"hasCredits": false, "unlimited": false, "balance": "0"},
+    "individualLimit": null,
+    "spendControlReached": false,
+    "planType": "pro",
+    "rateLimitReachedType": "rate_limit_reached"
+  },
+  "rateLimitsByLimitId": {
+    "codex_bengalfox": {
+      "limitId": "codex_bengalfox",
+      "limitName": "GPT-5.3-Codex-Spark",
+      "primary": {
+        "usedPercent": 100,
+        "windowDurationMins": 300,
+        "resetsAt": 1789078256
+      },
+      "secondary": {
+        "usedPercent": 85,
+        "windowDurationMins": 10080,
+        "resetsAt": 1789501977
+      },
+      "credits": null,
+      "individualLimit": null,
+      "spendControlReached": null,
+      "planType": "pro",
+      "rateLimitReachedType": null
+    },
+    "codex": {
+      "limitId": "codex",
+      "limitName": null,
+      "primary": {
+        "usedPercent": 100,
+        "windowDurationMins": 10080,
+        "resetsAt": 1789440279
+      },
+      "secondary": null,
+      "credits": {"hasCredits": false, "unlimited": false, "balance": "0"},
+      "individualLimit": null,
+      "spendControlReached": false,
+      "planType": "pro",
+      "rateLimitReachedType": "rate_limit_reached"
+    }
+  },
+  "rateLimitResetCredits": {"availableCount": 0, "credits": []},
+  "accountId": "00000000-0000-4000-8000-000000000000",
+  "rateLimitUpsell": {
+    "banner_type": "pro_rate_limit_reached",
+    "title": "You're out of Codex messages",
+    "description": "Your rate limit resets on {time}. Add credits to continue using Codex now.",
+    "ctas": [{"action": "add_credits", "label": "Add Credits"}],
+    "reset_at": 1789440279,
+    "referral": null,
+    "request_url": null
+  }
+}

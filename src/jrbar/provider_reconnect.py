@@ -685,10 +685,47 @@ def codex_app_server_probe(
 ) -> dict | None:
     """Ask a read-only `codex app-server` for auth + rate limits.
 
-    Returns {"authenticated": bool | None, "used_percent": float | None,
-    "resets_at": float | None, "version": str | None} or None when the
-    CLI is missing or the handshake fails. The caller owns cadence. The
-    provider usage service runs this on its bounded background worker.
+    Returns None when the CLI is missing or the handshake fails, else::
+
+        {"authenticated": bool | None, "plan": str | None,
+         "account_id": str | None, "windows": [<normalized window>, ...],
+         "limit_ids": (str, ...), "used_percent": float | None,
+         "resets_at": float | None, "window_minutes": int | None,
+         "version": str | None}
+
+    ``used_percent`` / ``resets_at`` / ``window_minutes`` describe the
+    ACCOUNT family's primary window and are kept for callers that predate
+    ``windows``.
+
+    The exact shape ``account/rateLimits/read`` answers with, captured from
+    codex-cli 0.153.4 on a ChatGPT Pro account (2026-09-10)::
+
+        {"rateLimits": {
+            "limitId": "codex", "limitName": null,
+            "primary":   {"usedPercent": 100, "windowDurationMins": 10080,
+                          "resetsAt": 1789440279},
+            "secondary": null,
+            "credits": {"hasCredits": false, "unlimited": false, "balance": "0"},
+            "planType": "pro", "rateLimitReachedType": "rate_limit_reached"},
+         "rateLimitsByLimitId": {
+            "codex": {...same...},
+            "codex_bengalfox": {
+               "limitId": "codex_bengalfox", "limitName": "GPT-5.3-Codex-Spark",
+               "primary":   {"usedPercent": 100, "windowDurationMins": 300,
+                             "resetsAt": 1789078256},
+               "secondary": {"usedPercent": 85, "windowDurationMins": 10080,
+                             "resetsAt": 1789501977},
+               "planType": "pro"}},
+         "accountId": "…", "rateLimitResetCredits": {...},
+         "rateLimitUpsell": {...}}
+
+    Two things in there are load-bearing. ``secondary: null`` under the
+    ``codex`` family is Codex STATING that this plan's account limit has no
+    second window -- Pro has a weekly ceiling and no 5-hour one -- so nothing
+    may synthesize a 5-hour lane for it. And ``codex_bengalfox`` is a
+    model-scoped sub-cap that reuses the same ``primary``/``secondary`` key
+    names, so its 300-minute ``primary`` must never be read as the account's
+    5-hour ceiling. Both are carried through as ``limit_id`` on each window.
     """
     import queue
     import subprocess
@@ -713,7 +750,12 @@ def codex_app_server_probe(
             {"jsonrpc": "2.0", "id": 2, "method": "account/rateLimits/read"}
         )
         + "\n"
-        + json.dumps({"jsonrpc": "2.0", "id": 3, "method": "account/read"})
+        # `account/read` REQUIRES a params member: without one the server
+        # answers -32600 "Invalid request: missing field `params`" and
+        # `authenticated` stayed None forever.
+        + json.dumps(
+            {"jsonrpc": "2.0", "id": 3, "method": "account/read", "params": {}}
+        )
         + "\n"
     )
 
@@ -815,7 +857,16 @@ def codex_app_server_probe(
     used_percent: float | None = None
     resets_at: float | None = None
     window_minutes: int | None = None
-    limits = replies.get(2, {}).get("rateLimits")
+    plan: str | None = None
+    account_id: str | None = None
+    windows: list[dict] = []
+    limit_ids: list[str] = []
+    rate_limits = replies.get(2, {})
+    limits = rate_limits.get("rateLimits") if isinstance(rate_limits, dict) else None
+    if isinstance(rate_limits, dict):
+        raw_account = rate_limits.get("accountId", rate_limits.get("account_id"))
+        if isinstance(raw_account, str) and raw_account.strip():
+            account_id = raw_account.strip()[:128]
     if isinstance(limits, dict):
         primary = limits.get("primary")
         if isinstance(primary, dict):
@@ -831,6 +882,42 @@ def codex_app_server_probe(
             )
             if isinstance(duration, (int, float)) and not isinstance(duration, bool):
                 window_minutes = max(1, int(duration))
+    # Every family the account has, normalized through the one function that
+    # owns Codex window semantics. The account family comes first so its
+    # windows win any downstream first-match rule.
+    families: list[dict] = []
+    if isinstance(limits, dict):
+        families.append(limits)
+    by_id = rate_limits.get("rateLimitsByLimitId") if isinstance(rate_limits, dict) else None
+    if isinstance(by_id, dict):
+        seen = {
+            limits.get("limitId", limits.get("limit_id"))
+            if isinstance(limits, dict)
+            else None
+        }
+        for key, family in tuple(by_id.items())[:16]:
+            if not isinstance(family, dict):
+                continue
+            identity = family.get("limitId", family.get("limit_id")) or key
+            if identity in seen:
+                continue
+            seen.add(identity)
+            families.append(family)
+    for family in families:
+        if plan is None:
+            raw_plan = family.get("planType", family.get("plan_type"))
+            if isinstance(raw_plan, str) and raw_plan.strip():
+                plan = raw_plan.strip()[:64]
+        identity = family.get("limitId", family.get("limit_id"))
+        if isinstance(identity, str) and identity.strip():
+            limit_ids.append(identity.strip()[:128])
+        from .usage_stats import codex_windows_from_limits
+
+        for window in codex_windows_from_limits(family)[:32]:
+            window["source_id"] = "codex-app-server"
+            windows.append(window)
+        if len(windows) >= 32:
+            break
     authenticated: bool | None = None
     account = replies.get(3)
     if account is not None:
@@ -842,6 +929,10 @@ def codex_app_server_probe(
             authenticated = False
     return {
         "authenticated": authenticated,
+        "plan": plan,
+        "account_id": account_id,
+        "windows": windows,
+        "limit_ids": tuple(limit_ids),
         "used_percent": used_percent,
         "resets_at": resets_at,
         "window_minutes": window_minutes,

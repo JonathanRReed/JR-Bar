@@ -41,6 +41,7 @@ def _snapshot_document(snapshot: ProviderUsageSnapshot) -> dict[str, object]:
     return {
         "provider_id": snapshot.provider_id,
         "account_label": snapshot.account_label,
+        "account_plan": snapshot.account_plan,
         "observed_at": snapshot.observed_at,
         "state": snapshot.state.value,
         "reason_code": snapshot.reason_code,
@@ -117,6 +118,7 @@ def _snapshot(value: object) -> ProviderUsageSnapshot | None:
         return ProviderUsageSnapshot(
             provider_id=value.get("provider_id"),
             account_label=value.get("account_label"),
+            account_plan=value.get("account_plan"),
             observed_at=value.get("observed_at"),
             state=state,
             reason_code=value.get("reason_code"),

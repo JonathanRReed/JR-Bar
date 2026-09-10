@@ -120,6 +120,9 @@ def test_oversized_record_is_partial_and_following_record_survives(
                 "used_percent": 25.0,
                 "window_minutes": 300,
                 "resets_at": None,
+                "limit_id": None,
+                "limit_name": None,
+                "account_limit": True,
             },
         )
 

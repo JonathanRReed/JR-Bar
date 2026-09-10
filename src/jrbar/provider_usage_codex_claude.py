@@ -318,6 +318,38 @@ def _codex_reading_freshness(
     )
 
 
+def _codex_plan(
+    local_facts: dict[str, object],
+    live: object,
+    *,
+    home: Path,
+) -> str | None:
+    """The ChatGPT plan this Codex account is on, as OpenAI states it.
+
+    Three sources, all first-party, in falling order of freshness: the live
+    ``account/rateLimits/read`` (``rateLimits.planType``), whatever the local
+    scan carried off a rollout (``plan_type``), and the ``chatgpt_plan_type``
+    claim in Codex's own ``auth.json`` id_token. Which windows the account
+    HAS follows from the plan, so this is recorded as a fact rather than
+    inferred backwards from which lanes happened to arrive.
+    """
+    if isinstance(live, dict):
+        plan = live.get("plan")
+        if isinstance(plan, str) and plan.strip():
+            return plan.strip()[:64]
+    plan = local_facts.get("plan_type")
+    if isinstance(plan, str) and plan.strip():
+        return plan.strip()[:64]
+    try:
+        from .credentials import read_codex_tokens
+
+        tokens = read_codex_tokens(Path(home) / ".codex" / "auth.json")
+    except Exception:
+        return None
+    plan = getattr(tokens, "plan_type", None)
+    return plan.strip()[:64] if isinstance(plan, str) and plan.strip() else None
+
+
 def collect_codex(
     preference: ProviderPreference,
     *,
@@ -346,34 +378,69 @@ def collect_codex(
         windows = ()
     source_id = "codex-rollouts"
     observed_evidence_at = local_facts.get("windows_observed_at")
+    account_plan = _codex_plan(local_facts, live, home=Path(home))
     if isinstance(live, dict):
-        used = live.get("used_percent")
-        if isinstance(used, (int, float)) and not isinstance(used, bool):
-            live_minutes = live.get("window_minutes")
-            if not isinstance(live_minutes, (int, float)) or isinstance(
-                live_minutes, bool
-            ):
-                live_minutes = None
-            live_window = {
-                "label": "primary",
-                "used_percent": float(used),
-                "resets_at": live.get("resets_at"),
-                "window_minutes": live_minutes,
+        live_windows = live.get("windows")
+        live_windows = (
+            tuple(window for window in live_windows if isinstance(window, dict))
+            if isinstance(live_windows, (list, tuple))
+            else ()
+        )
+        if live_windows:
+            # The live read enumerates every limit family the account has, so
+            # for the families it covered it is the WHOLE truth -- including
+            # which windows a family does NOT have. A rollout is a snapshot of
+            # one family taken at whatever moment a turn ended; letting a
+            # stale one back in is how a window the account no longer has (or
+            # never had) survived as a lane that could not move.
+            covered = {
+                window.get("limit_id")
+                for window in live_windows
+                if isinstance(window.get("limit_id"), str)
             }
             windows = (
-                live_window,
+                *live_windows,
                 *(
                     window
                     for window in windows
-                    if not (
-                        isinstance(window, dict)
-                        and live_minutes is not None
-                        and window.get("window_minutes") == live_minutes
-                    )
+                    if isinstance(window, dict)
+                    and window.get("limit_id") not in covered
+                    # A rollout that names no family at all predates the
+                    # tagging and cannot be told apart from the account's
+                    # own; the live read outranks it.
+                    and isinstance(window.get("limit_id"), str)
                 ),
             )
             observed_evidence_at = observed_at
             source_id = "codex-app-server"
+        else:
+            used = live.get("used_percent")
+            if isinstance(used, (int, float)) and not isinstance(used, bool):
+                live_minutes = live.get("window_minutes")
+                if not isinstance(live_minutes, (int, float)) or isinstance(
+                    live_minutes, bool
+                ):
+                    live_minutes = None
+                live_window = {
+                    "label": "primary",
+                    "used_percent": float(used),
+                    "resets_at": live.get("resets_at"),
+                    "window_minutes": live_minutes,
+                }
+                windows = (
+                    live_window,
+                    *(
+                        window
+                        for window in windows
+                        if not (
+                            isinstance(window, dict)
+                            and live_minutes is not None
+                            and window.get("window_minutes") == live_minutes
+                        )
+                    ),
+                )
+                observed_evidence_at = observed_at
+                source_id = "codex-app-server"
     try:
         snapshot = parse_codex_usage(
             windows=windows,
@@ -389,6 +456,7 @@ def collect_codex(
                 if local_facts.get("account_label") is not None
                 else None
             ),
+            account_plan=account_plan,
             source_id=source_id,
         )
         return _codex_reading_freshness(
@@ -501,9 +569,16 @@ def collect_claude(
         )
     values = local or {}
     try:
+        from .claude_quota import plan_from_claude_config
+
+        account_plan = plan_from_claude_config(Path(home))
+    except Exception:
+        account_plan = None
+    try:
         return parse_claude_usage(
             windows=windows,
             observed_at=observed_at,
+            account_plan=account_plan,
             input_tokens=max(0, int(values.get("input_tokens", 0))),
             cached_input_tokens=max(0, int(values.get("cached_input_tokens", 0))),
             output_tokens=max(0, int(values.get("output_tokens", 0))),

@@ -229,6 +229,13 @@ class ProviderUsageSnapshot:
     credits_remaining: float | None
     incident: str | None
     source_instance_id: str = DEFAULT_SOURCE_INSTANCE_ID
+    #: The plan the PROVIDER says this account is on, in the provider's own
+    #: words ("pro", "max_20x", "team"). Which windows an account has is a
+    #: property of its plan -- a ChatGPT Pro account's Codex limit has only a
+    #: weekly window, a Plus account's has a 5-hour one too -- so the plan is
+    #: carried as a fact rather than inferred from which lanes happened to
+    #: arrive. None means no source stated it; it is never guessed.
+    account_plan: str | None = None
 
     def __post_init__(self) -> None:
         provider_descriptor(self.provider_id)
@@ -248,6 +255,14 @@ class ProviderUsageSnapshot:
             or not isinstance(self.source_instance_id, str)
             or _SOURCE_INSTANCE_ID.fullmatch(self.source_instance_id) is None
             or type(self.lanes) is not tuple
+            or (
+                self.account_plan is not None
+                and (
+                    not isinstance(self.account_plan, str)
+                    or not self.account_plan.strip()
+                    or len(self.account_plan) > 64
+                )
+            )
             or len(self.lanes) > _MAX_LANES
             or not all(
                 type(lane) is UsageLane and lane.provider_id == self.provider_id
