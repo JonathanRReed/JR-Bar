@@ -4,6 +4,7 @@ through the core server, and answers commands on the main thread."""
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,8 +17,10 @@ from jrbar import core_runtime, status_bar
 from jrbar.core_runtime import (
     HeadlessNotificationClient,
     command_names,
+    device_transitions,
     get_path,
     mono_to_epoch,
+    screen_bar_anchor,
     set_path,
     settings_from_document,
 )
@@ -49,6 +52,31 @@ def test_path_helpers() -> None:
     assert set_path(document, "new.nested.key", True) is True
     assert document["new"] == {"nested": {"key": True}}
     assert set_path(document, "", 1) is False
+
+
+def test_screen_bar_follows_the_strip_anchor_when_linked() -> None:
+    assert screen_bar_anchor(200.0, 100.0, linked=True) == 100.0
+    assert screen_bar_anchor(50.0, 100.0, linked=True) == 100.0
+    assert screen_bar_anchor(200.0, 100.0, linked=False) == 200.0
+    assert screen_bar_anchor(200.0, None, linked=True) == 200.0
+    assert screen_bar_anchor(None, None, linked=True) is None
+
+
+def test_device_transitions_key_on_the_device_name() -> None:
+    def device(device_id, name, connected=True):
+        return SimpleNamespace(device_id=device_id, name=name, connected=connected)
+
+    connected, events = device_transitions(None, [device("/Volumes/SidePulse", "SidePulse")])
+    assert connected == {"SidePulse": True} and events == []
+    # The id moves from the mount path to the firmware serial: no event.
+    connected, events = device_transitions(connected, [device("sidepulse:pro:serial:67", "SidePulse")])
+    assert events == []
+    connected, events = device_transitions(connected, [device("sidepulse:pro:serial:67", "SidePulse", connected=False), device("/Volumes/PulseDot", "PulseDot")])
+    assert events == [("device_connected", "PulseDot", "/Volumes/PulseDot"), ("device_disconnected", "SidePulse", "sidepulse:pro:serial:67")]
+    assert connected == {"SidePulse": False, "PulseDot": True}
+    # A stale path row beside the live serial row for the same device stays "connected".
+    connected, events = device_transitions({"SidePulse": True}, [device("/Volumes/SidePulse", "SidePulse", connected=False), device("sidepulse:pro:serial:67", "SidePulse")])
+    assert events == [] and connected == {"SidePulse": True}
 
 
 def test_mono_to_epoch_is_wall_clock_aligned() -> None:
@@ -271,6 +299,7 @@ def test_doctor_and_history_answer_without_a_snapshot(headless) -> None:
     doctor = controller._core_dispatch("doctor", {})
     assert doctor["core_version"] == core_runtime.CORE_VERSION
     assert doctor["pid"] == os.getpid()
+    assert doctor["python"] == sys.executable and "commit" in doctor
     assert {check["name"] for check in doctor["checks"]} >= {"hook shim", "pending hook lines"}
     assert "open_session" in doctor["commands"]
 
