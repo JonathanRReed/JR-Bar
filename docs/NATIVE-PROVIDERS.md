@@ -35,7 +35,20 @@ Two things worth knowing before reading a quiet menu bar as a bug.
 
 **Pi cannot ask.** The `ui_prompt_start`/`ui_prompt_end` events an earlier note attributed to pi do not exist in 0.73.1's `ExtensionEvent` union. Pi's tool gate is `tool_call`, and it asks an *extension* -- a handler returns `{block, reason}` and pi obeys -- never a person. So pi sessions show working and done, and never needs-you.
 
-**Answering an ask is not implemented.** `answer_ask` finds the ask, checks that the session's terminal is frontmost, and then refuses with `unsupported`: no in-place answer handler is registered in the daemon, for any provider. Approving still means switching to the terminal. This is a missing feature, not a permission problem -- no grant in System Settings changes it. When a handler does land it will drive the session's terminal, and *then* JR-Bar will need **System Settings > Privacy & Security > Accessibility** turned on for `JR-Bar.app`.
+**Answering an ask works for Claude Code and Codex, and only for them.** Approve and Deny -- from the panel, a notification action, the Screen Bar or a Creator Micro session key -- post the key that provider's own permission prompt takes into the session's terminal (`src/jrbar/answer_local.py`; the refusal vocabulary is in docs/CORE-PROTOCOL.md).
+
+| provider | approve | deny | what the prompt shows |
+| --- | --- | --- | --- |
+| Claude Code 2.1.263 | `1` | `esc` | `Do you want to proceed?` with `1. Yes` first; the `No` row's number moves with how many always-allow rows the tool earns, and the footer offers `Esc to cancel`. So approve is the stable `1` and deny is Esc. |
+| codex-cli 0.153.4 | `y` | `3` | `1. Yes, proceed (y)` / `2. …(p)` / `3. No, and tell Codex what to do differently (esc)`. Fixed numbering, so deny is the explicit `3` rather than Esc, which is also Codex's global interrupt. |
+
+Both were measured, not guessed: `scripts/verify_providers_live.py --asks` raises the real prompt against the scripted endpoint, and the keys above are the ones that made the tool run (approve) or the request abort (deny).
+
+The mechanism is a synthetic keystroke (`CGEventPostToPid`) to the process hosting the terminal, because macOS offers nothing better -- `TIOCSTI` refuses a tty that is not the caller's own controlling terminal, and Ghostty has no scripting interface. Because the key lands wherever focus is, JR-Bar refuses rather than risks it: the ask must still be live in canonical state, the session's process alive, the hosting application frontmost, the frontmost application's process an *ancestor* of the session's process, and (on Terminal.app and iTerm2, which will say) the focused tab's tty the session's tty. Any failure answers `not_frontmost` with the reason. There is no "type it anyway".
+
+**This needs Accessibility.** Without **System Settings > Privacy & Security > Accessibility > JR-Bar** turned on, the posted key silently goes nowhere, so JR-Bar checks `AXIsProcessTrusted()` first and refuses with `accessibility_required` naming that exact path instead of pretending it answered.
+
+**Every other provider still means switching to the terminal.** `answer_ask` replies `unsupported` for them, and the contract says so: only `codex/hooks` and `claude/hooks` declare `ProductCapability.ANSWERING`, so the Approve button is never offered where it would do nothing.
 
 **Gemini CLI could not be driven locally.** It refuses a base-URL override with "Invalid auth method selected" (exit 41), so its hook path is unverified against a scripted endpoint; it is exercised only by real use.
 

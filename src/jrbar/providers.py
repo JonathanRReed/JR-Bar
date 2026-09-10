@@ -23,6 +23,9 @@ from .provider_contracts import (
     ContractValidationError,
     NegotiatedCapability,
     NegotiatedProviderContract,
+    ProductCapability,
+    ProductCapabilityBinding,
+    ProductCapabilityDeclaration,
     ProviderIdentifier,
     SchemaVersion,
     SourceInstanceIdentifier,
@@ -1418,6 +1421,41 @@ PROVIDER_SPECS = (
 PROVIDER_REGISTRY = {spec.provider: spec for spec in PROVIDER_SPECS}
 HOOK_PROVIDERS = tuple(PROVIDER_REGISTRY)
 
+# Answering is a PRODUCT capability bound to one reviewed local surface
+# (``local.answer_in_place``); it grants no provider mutation authority and is
+# not derived from any read capability. A source may declare it only where
+# JR-Bar has a measured way to answer that provider's own permission prompt
+# -- see ``answer_local.ANSWER_KEYS``, the keys drilled against the real CLIs.
+# Declaring it anywhere else would make the Approve button look live and do
+# nothing, which is the bug this replaced.
+_ANSWERING_DECLARATION = ProductCapabilityDeclaration(
+    ProductCapability.ANSWERING,
+    supported=True,
+    binding=ProductCapabilityBinding.local("local.answer_in_place"),
+)
+_ANSWERING_SOURCES = frozenset(
+    {
+        (ProviderIdentifier("codex"), AdapterIdentifier("hooks")),
+        (ProviderIdentifier("claude"), AdapterIdentifier("hooks")),
+    }
+)
+
+
+def _product_capabilities_for(
+    registration: ProviderSourceRegistration,
+) -> tuple[ProductCapabilityDeclaration, ...]:
+    """The product declarations this exact source is allowed to carry."""
+    if (registration.provider_id, registration.adapter_id) not in _ANSWERING_SOURCES:
+        return ()
+    # Answering an ask presupposes seeing one: no request lane, no answering.
+    if not any(
+        capability_id == CapabilityIdentifier("actionable_requests")
+        for capability_id, _versions in registration.capability_versions
+    ):
+        return ()
+    return (_ANSWERING_DECLARATION,)
+
+
 _PROVIDER_SOURCE_REGISTRATIONS = (
     ProviderSourceRegistration(
         ProviderIdentifier("codex"),
@@ -1657,7 +1695,12 @@ def negotiated_provider_sources() -> tuple[NegotiatedProviderSource, ...]:
     """Negotiate one visible canonical row per declared read capability."""
     rows: list[NegotiatedProviderSource] = []
     for registration in _PROVIDER_SOURCE_REGISTRATIONS:
-        contract = negotiate_provider_contract(provider_contract_document(registration))
+        contract = negotiate_provider_contract(
+            provider_contract_document(
+                registration,
+                _product_capabilities_for(registration),
+            )
+        )
         negotiated_by_id = {
             capability.identifier: capability
             for capability in (

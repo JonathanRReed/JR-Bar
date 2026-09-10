@@ -197,6 +197,12 @@ from .answer_controller import (  # noqa: E402
     AnswerController,
     AnswerSurfacePresentation,
 )
+from .answer_local import (  # noqa: E402
+    AnswerRefusal,
+    LocalAnswerSurface,
+    LocalAnswerTarget,
+)
+from .answer_local import session_host as answer_local_session_host  # noqa: E402
 from .answer_runtime import ANSWER_CLOSE_TIMEOUT_SECONDS  # noqa: E402
 from .global_action_controller import (  # noqa: E402
     GlobalActionLifecycleCoordinator,
@@ -1955,6 +1961,19 @@ class StatusBarController(NSObject):
         )
         self.answer_handler_registry = self.answer_controller.handler_registry
         self.answer_runtime = self.answer_controller.runtime
+        # The one reviewed local route the ANSWERING product capability binds
+        # to. Registering it here is what turns a contract that DECLARES
+        # answering into one that can actually answer: without a handler for
+        # the exact invocation, answer_capability_for_request resolves to
+        # "Answer handler unavailable" and every Approve/Deny is refused.
+        self.local_answer_surface = LocalAnswerSurface(
+            resolve_target=self._local_answer_target,
+            log=log_status_bar,
+        )
+        self.local_answer_invocations = self.local_answer_surface.register(
+            self.answer_handler_registry,
+            self._answering_invocations(),
+        )
         self._announcer_stack_state = self.answer_controller.stack_state
         self._announcer_status_routes = self.answer_controller.routes
         self._announcer_requests_by_identity = (
@@ -12293,6 +12312,102 @@ class StatusBarController(NSObject):
         self.set_settings_message(f"{device.name if device else device_id}: removed.")
         self.refresh_settings_window()
         self.refresh_(None)
+
+    def _answering_invocations(self) -> tuple[object, ...]:
+        """Every distinct ANSWERING invocation the negotiated contracts declare.
+
+        One per contract, not per capability row: the same source's
+        ``live_agent_events`` and ``actionable_requests`` rows share a contract
+        and therefore resolve to the same invocation identity.
+        """
+        from .provider_contracts import ContractValidationError, ProductCapability
+
+        invocations: list[object] = []
+        seen: set[object] = set()
+        for contract in self._answer_contracts_by_source.values():
+            declaration = contract.product_capability(ProductCapability.ANSWERING)
+            if not declaration.supported:
+                continue
+            try:
+                invocation = contract.product_invocation_for(ProductCapability.ANSWERING)
+            except ContractValidationError:
+                continue
+            if invocation in seen:
+                continue
+            seen.add(invocation)
+            invocations.append(invocation)
+        return tuple(invocations)
+
+    def _status_for_request(self, request: object) -> AgentStatus | None:
+        """The live session row the canonical request belongs to."""
+        work_key = getattr(getattr(request, "key", None), "work_key", None)
+        if work_key is None:
+            return None
+        snapshot = self.last_snapshot
+        statuses = tuple(getattr(snapshot, "statuses", ()) or ())
+        for status in statuses:
+            if getattr(status, "request_key", None) == request.key:
+                return status
+        for status in statuses:
+            if getattr(status, "work_key", None) == work_key:
+                return status
+        return None
+
+    def _request_still_live(self, request: object, generation: int) -> bool:
+        """Whether the daemon's canonical state still names that exact ask.
+
+        Same request id, still in a live phase, and the state has only moved
+        forward. This is what stops a keystroke from landing on whatever
+        replaced a prompt that was answered in the terminal a moment ago.
+        """
+        state = getattr(self, "current_operator_state", None)
+        if state is None or getattr(state, "generation", -1) < generation:
+            return False
+        key = getattr(request, "key", None)
+        for candidate in getattr(state, "requests", ()):
+            if candidate.key != key:
+                continue
+            return str(candidate.phase.value).startswith("live")
+        return False
+
+    def _local_answer_target(self, decision: str) -> LocalAnswerTarget:
+        """The exact session the in-flight answer may type into."""
+        request = self.answer_controller.in_flight_request
+        if request is None:
+            raise AnswerRefusal(
+                "stale_ask",
+                "There is no ask in flight to answer.",
+                "no_in_flight_request",
+            )
+        state = getattr(self, "current_operator_state", None)
+        generation = int(getattr(state, "generation", 0) or 0)
+        if not self._request_still_live(request, generation):
+            raise AnswerRefusal(
+                "stale_ask",
+                "That ask is no longer live; nothing was sent.",
+                "not_in_canonical_state",
+            )
+        status = self._status_for_request(request)
+        if status is None:
+            raise AnswerRefusal(
+                "session_gone",
+                "JR-Bar can no longer see that session.",
+                "no_session_row",
+            )
+        provider = str(getattr(status, "provider", "") or "").lower()
+        host = answer_local_session_host(
+            provider,
+            getattr(status, "session_id", None),
+            getattr(status, "origin", None),
+        )
+        return LocalAnswerTarget(
+            provider=provider,
+            session_id=str(getattr(status, "agent_id", "") or ""),
+            session_pid=host.pid,
+            session_tty=host.tty,
+            expected_bundle_ids=host.bundle_ids,
+            is_live=lambda: self._request_still_live(request, generation),
+        )
 
     def open_session(self, status: AgentStatus | object, action: str | None, *, remember: bool) -> None:
         if not isinstance(status, AgentStatus):
