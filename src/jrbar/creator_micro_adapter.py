@@ -78,15 +78,37 @@ class DeviceCapability:
 
 @dataclass
 class DeviceConflict:
+    """Which answers on the wire are ours.
+
+    The firmware offers no ownership handshake, so a response to an id we
+    never issued is the only evidence that something else is driving the
+    pad. An id we issued and already completed is not that evidence: over
+    Bluetooth the pad can answer twice or late, and reading our own echo as
+    a second controller stops output for good on a pad nobody else is
+    touching. Completed ids are remembered for the rest of the connection's
+    recent history so that echo is recognised rather than accused.
+    """
+
     issued_ids: set[int] = field(default_factory=set)
+    completed_ids: deque[int] = field(default_factory=lambda: deque(maxlen=64))
     active: bool = False
 
     def observe(self, response_id: object) -> str | None:
-        if type(response_id) is not int or response_id not in self.issued_ids:
+        if type(response_id) is not int:
             self.active = True
             return "foreign_response_id"
-        self.issued_ids.remove(response_id)
-        return None
+        if response_id in self.issued_ids:
+            self.issued_ids.remove(response_id)
+            self.completed_ids.append(response_id)
+            return None
+        if response_id in self.completed_ids:
+            return "duplicate_response_id"
+        self.active = True
+        return "foreign_response_id"
+
+    def reset(self) -> None:
+        self.issued_ids.clear()
+        self.completed_ids.clear()
 
 
 class CreatorMicro2Framer:
@@ -353,7 +375,7 @@ class CreatorMicro2Adapter:
             return Receipt("transport_unavailable", str(exc))
         self.connected = True
         self.connection_generation += 1
-        self.conflict.issued_ids.clear()
+        self.conflict.reset()
         self._decoder = RpcStreamDecoder(max_bytes=self._rpc_max_bytes)
         return Receipt("connected")
 
@@ -449,8 +471,13 @@ class CreatorMicro2Adapter:
                 if "id" not in message:
                     self._queue_notification(message)
                     continue
-                if self.conflict.observe(message["id"]):
+                outcome = self.conflict.observe(message["id"])
+                if outcome == "foreign_response_id":
                     return Receipt("device_conflict", "foreign response id", recoverable=False), message
+                if outcome == "duplicate_response_id":
+                    # Our own answer arriving twice. Keep waiting for this
+                    # call's id rather than accusing a second controller.
+                    continue
                 if message["id"] != ident:
                     return Receipt("device_conflict", "response id race", recoverable=False), message
                 response = message
@@ -517,4 +544,4 @@ class CreatorMicro2Adapter:
                 self.transport.close()
             finally:
                 self.connected = False
-        self.conflict.issued_ids.clear()
+        self.conflict.reset()
