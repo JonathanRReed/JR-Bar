@@ -252,6 +252,21 @@ final class EffectStudioStore {
                                 parameters: draftUsesParameters ? values(for: effect) : [:])
     }
 
+    /// The row title for an assignment: the device's name, the provider's
+    /// display name, the state or scene word; ids for projects and instances.
+    func targetTitle(for assignment: EffectAssignment) -> String {
+        guard let target = assignment.targetID else { return "Everywhere" }
+        switch assignment.scope {
+        case .device:
+            if target == "screen-bar" { return "Screen Bar" }
+            return core.devices.first { $0.id == target }?.name ?? target
+        case .provider:
+            return ProviderStyle.style(for: target).name
+        default:
+            return assignment.targetLabel
+        }
+    }
+
     func commitAssignment() {
         guard let draft, draft.problem == nil else { return }
         assigning = false
@@ -259,7 +274,7 @@ final class EffectStudioStore {
             guard let self else { return }
             do {
                 self.assignments = try await self.core.setAssignment(draft)
-                self.show(status: "\(self.catalog?.effect(draft.effectID)?.label ?? draft.effectID) assigned to \(draft.scope.label.lowercased()) \(draft.targetLabel)")
+                self.show(status: "\(self.catalog?.effect(draft.effectID)?.label ?? draft.effectID) assigned to \(draft.scope.label.lowercased()) \(self.targetTitle(for: draft))")
             } catch {
                 self.fail("Assignment refused: \(Self.describe(error))")
             }

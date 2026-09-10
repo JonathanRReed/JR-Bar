@@ -201,4 +201,24 @@ struct EffectModelTests {
         #expect(assignment.scope == .global)
         #expect(assignment.effectID == "none")
     }
+
+    @Test("the daemon's apply_effect reply (effect/target, no parameters) decodes like the mock's rows")
+    func daemonReplyShape() throws {
+        // docs/CORE-PROTOCOL.md: `{effect, scope, target, assignments[{effect, scope, target}]}`.
+        let json = #"{"effect":"comet","scope":"provider","target":"codex","assignments":[{"effect":"breathe","scope":"global","target":null},{"effect":"comet","scope":"provider","target":"codex"}]}"#
+        let document = try JSONDecoder().decode(EffectAssignmentDocument.self, from: Data(json.utf8))
+        #expect(document.assignments.count == 2)
+        #expect(document.activeScene == nil)
+        #expect(document.generation == 0)
+        let codex = try #require(document.assignment(scope: .provider, targetID: "codex"))
+        #expect(codex.effectID == "comet")
+        #expect(codex.parameters.isEmpty)
+        let global = try #require(document.assignment(scope: .global, targetID: nil))
+        #expect(global.effectID == "breathe")
+        #expect(global.problem == nil)
+        // When both spellings are present the fuller one wins.
+        let both = try JSONDecoder().decode(EffectAssignment.self, from: Data(#"{"effect_id":"a","effect":"b","scope":"scene","target_id":"night","target":"day"}"#.utf8))
+        #expect(both.effectID == "a")
+        #expect(both.targetID == "night")
+    }
 }

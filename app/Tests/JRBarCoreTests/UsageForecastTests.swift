@@ -122,6 +122,36 @@ struct UsageForecastTests {
         #expect(log.samples(provider: "codex", window: "5h").count == UsageSampleLog.limit)
     }
 
+    @Test("degenerate samples: same instant, falling, or stale never yield a pace")
+    func degenerate() {
+        let window = CoreUsageWindow(name: "5h", usedPct: 50, resetsAt: Self.now + 3600)
+        // Every sample at the same instant: zero spread, no slope.
+        let same = [UsageSample(at: Self.now, usedPct: 10), UsageSample(at: Self.now, usedPct: 20), UsageSample(at: Self.now, usedPct: 30)]
+        #expect(UsageForecaster.rate(samples: same, now: Self.now) == nil)
+        // Steadily falling (a window draining as its lane resets) is a zero pace, never negative.
+        let falling = Self.samples([(30, 60), (20, 59.5), (10, 59.2), (0, 59)])
+        #expect(UsageForecaster.rate(samples: falling, now: Self.now) == 0)
+        #expect(UsageForecaster.forecast(window: window, daemon: nil, samples: falling, now: Self.now).verdict == .comfortable)
+        // Samples older than the lookback do not count, even when there are many.
+        let stale = Self.samples([(200, 10), (150, 30), (100, 50), (60, 70)])
+        #expect(UsageForecaster.rate(samples: stale, now: Self.now) == nil)
+        #expect(UsageForecaster.forecast(window: window, daemon: nil, samples: stale, now: Self.now).verdict == .unknown)
+        // A daemon forecast with no exhaustion time and no samples still carries its pace word.
+        let paceOnly = UsageForecaster.forecast(window: window, daemon: CoreUsageForecast(exhaustsAt: nil, pace: "behind"), samples: [], now: Self.now)
+        #expect(paceOnly.verdict == .unknown)
+        #expect(paceOnly.pace == "behind")
+        // 99.96 % counts as exhausted; 99.9 % does not.
+        let nearly = CoreUsageWindow(name: "5h", usedPct: 99.96, resetsAt: nil)
+        #expect(UsageForecaster.forecast(window: nearly, daemon: nil, samples: [], now: Self.now).verdict == .exhausted)
+        #expect(UsageForecaster.forecast(window: nearly, daemon: nil, samples: [], now: Self.now).headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "Used up: the 5h window is exhausted")
+        let almost = CoreUsageWindow(name: "5h", usedPct: 99.9, resetsAt: nil)
+        #expect(UsageForecaster.forecast(window: almost, daemon: nil, samples: [], now: Self.now).verdict == .unknown)
+        // A daemon exhaustion in the past is "used up" even below 100 %.
+        let past = UsageForecaster.forecast(window: window, daemon: CoreUsageForecast(exhaustsAt: Self.now - 1, pace: nil), samples: [], now: Self.now)
+        #expect(past.verdict == .exhausted)
+        #expect(past.source == .daemon)
+    }
+
     @Test("relative and clock formatting")
     func formatting() {
         let now = Date(timeIntervalSince1970: Self.now)

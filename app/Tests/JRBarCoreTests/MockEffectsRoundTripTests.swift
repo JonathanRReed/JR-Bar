@@ -4,8 +4,8 @@ import Testing
 
 /// Runs the mock with a slow timeline and round-trips every app-proposed
 /// command through the real client: usage_history, refresh_usage,
-/// list_effects, render_effect, list_assignments, set_assignment,
-/// clear_assignment, export_effect_pack and import_effect_pack.
+/// list_effects, render_effect, list_assignments, apply_effect (set and
+/// remove), export_effect_pack and import_effect_pack.
 @Suite("Mock core round trips", .serialized)
 struct MockEffectsRoundTripTests {
     @MainActor
