@@ -566,9 +566,14 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
     public var brightness: Double?
     public var why: String?
     public var whyDetail: CoreWhyDetail?
+    /// `dot` only, and only while a role is actually driving the Dot
+    /// (`docs/CORE-PROTOCOL.md`, "The Dot's role"): `extend` or `asks`.
+    /// Absent when the Dot renders its own display, and never on a preview.
+    public var role: String?
 
     public init(program: String, ledCount: Int? = nil, anchor: Double? = nil, motion: String? = nil,
-                staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil, whyDetail: CoreWhyDetail? = nil) {
+                staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil,
+                whyDetail: CoreWhyDetail? = nil, role: String? = nil) {
         self.program = program
         self.ledCount = ledCount
         self.anchor = anchor
@@ -577,10 +582,11 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         self.brightness = brightness
         self.why = why
         self.whyDetail = whyDetail
+        self.role = role
     }
 
     enum CodingKeys: String, CodingKey {
-        case program, anchor, motion, brightness, why
+        case program, anchor, motion, brightness, why, role
         case ledCount = "led_count"
         case staticFallback = "static_fallback"
         case whyDetail = "why_detail"
@@ -596,6 +602,7 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         brightness = try c.decodeIfPresent(Double.self, forKey: .brightness)
         why = try c.decodeIfPresent(String.self, forKey: .why)
         whyDetail = try? c.decodeIfPresent(CoreWhyDetail.self, forKey: .whyDetail)
+        role = try c.decodeIfPresent(String.self, forKey: .role)
     }
 }
 
