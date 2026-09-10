@@ -41,6 +41,6 @@ LID_ANIMATION_PRESETS: dict[str, tuple[tuple[str, float, str], ...]] = {
         ("Back On It", 1.2, "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse"),
         ("Status Sweep", 1.4, "#8A7CFF 250ms pulse\n#00E5FF 250ms cosine\n#12E3B0 250ms pulse\n#12E3B0 650ms pulse"),
         ("Rekindle", 1.6, "#331000 300ms cosine\n#FF6A3D 500ms cosine\n#FFD60A 800ms pulse"),
-        ("Double Take", 1.0, "#FFFFFF 120ms pulse\noff 100ms linear\n#00E5FF 180ms pulse\n#00E5FF 600ms pulse"),
+        ("Double Take", 1.3, "#FFFFFF 170ms pulse\noff 150ms cosine\n#00E5FF 240ms pulse\n#00E5FF 740ms pulse"),
     ),
 }

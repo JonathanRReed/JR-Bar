@@ -144,7 +144,12 @@ def test_multi_agent_segments_support_the_new_rhythms() -> None:
         )
 
     _, heartbeat = segments("heartbeat")
-    assert heartbeat.count("pulse") == 2  # lub-dub
+    # ONE segment, always: a line that names the same LED twice loses the
+    # first assignment outright in the firmware (measured 2026-09-10), so a
+    # two-segment lub-dub played its second beat only. On a shared strip the
+    # readable half of the signature is the single swell and the long rest.
+    assert heartbeat.count("pulse") == 1
+    assert heartbeat.count(":") == 1
 
     _, flicker = segments("flicker")
     _, breathe = segments("breathe")
@@ -159,7 +164,9 @@ def test_multi_agent_segments_support_the_new_rhythms() -> None:
     assert scanner != chase
     assert "pulse" in scanner and "pulse" in chase
     _, stack = segments("stack")
-    assert "none" in stack  # stack piles on hard, no easing
+    # Stack arrives and stays -- eased, because a bare `none` made every
+    # step of the pile a hard edge on an otherwise smooth strip.
+    assert "cosine" in stack and "pulse" not in stack
 
 
 def test_new_motions_pass_firmware_grammar_and_byte_budget() -> None:

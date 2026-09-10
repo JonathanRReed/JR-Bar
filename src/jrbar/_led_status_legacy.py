@@ -543,7 +543,7 @@ def _render_full_strip(
 # the breathing loops) since this only ever plays once, not repeatedly.
 DONE_CELEBRATION_SETTLE_MS = 90
 DONE_CELEBRATION_STEP_MS = 45
-DONE_CELEBRATION_FLASH_MS = 70
+DONE_CELEBRATION_FLASH_MS = 135
 DONE_CELEBRATION_PAUSE_MS = 70
 DONE_CELEBRATION_BLOOM_MS = 280
 # The celebration is the completion signal; holding the strip lit afterwards
@@ -586,15 +586,21 @@ def _done_celebration_program(done_color: str, led_count: int) -> str:
     transition into Done, never on an unchanged re-render.
     """
     count = max(1, int(led_count))
+    # The twinkle is a `pulse` per LED, three steps wide, not a hard `none`
+    # flash: at 45 ms steps the bumps overlap by two thirds, so the spark
+    # travels the strip as one crest instead of eight separate hard taps
+    # (the old shape jumped a whole strip-width of luminance between two
+    # frames, which is exactly what "doesn't look smooth" means).
     segments = [
-        f"{index}:{done_color} {DONE_CELEBRATION_FLASH_MS}ms none {index * DONE_CELEBRATION_STEP_MS}ms"
+        f"{index}:{done_color} {DONE_CELEBRATION_FLASH_MS}ms pulse"
+        + (f" {index * DONE_CELEBRATION_STEP_MS}ms" if index else "")
         for index in range(count)
     ]
     return "\n".join(
         [
             f"off {DONE_CELEBRATION_SETTLE_MS}ms cosine",
             "; ".join(segments),
-            f"off {DONE_CELEBRATION_PAUSE_MS}ms none",
+            f"off {DONE_CELEBRATION_PAUSE_MS}ms cosine",
             f"{done_color} {DONE_CELEBRATION_BLOOM_MS}ms cosine",
             f"{_crest_color(done_color)} {DONE_CELEBRATION_CREST_MS}ms cosine",
             f"{done_color} {DONE_CELEBRATION_CREST_SETTLE_MS}ms cosine",
@@ -746,23 +752,34 @@ def rolling_program(color: str, *, led_count: int = 8, floor: float = 0.0) -> st
     Retuned 2026-08-20 from 760ms/95ms ("skittish, almost glitchy") to a
     slow travelling swell -- these lights are meant to read as small art
     pieces breathing beside the work, not as activity spinners.
+
+    Rebuilt 2026-09-10 on ``roll`` after sampling the firmware: eight
+    overlapping ``pulse`` segments all have to die before their line can end,
+    so the old relay was a wave that swept across and then blinked the whole
+    strip dark before starting again ("blinks so much it doesn't look
+    smooth"). ``roll`` crossfades between the shifted states, so a painted
+    head-and-tail profile circulates with no seam at all -- and it costs a
+    quarter of the bytes, so several laps fit and even the once-per-set
+    profile repaint is amortised away.
     """
+    from . import motion_shapes as shapes
+
     count = max(2, min(8, int(led_count)))
-    delay_ms = 480 if count == 2 else 170
-    duration_ms = 1400
-    settle_ms = settle_duration_ms(duration_ms)
-    reset_line = f"{_pulse_floor_color(color, floor)} {settle_ms}ms cosine"
-    segments: list[str] = []
-    for active_index in range(count):
-        delay = active_index * delay_ms
-        segments.append(f"{active_index}:{color} {duration_ms}ms pulse {delay}ms")
-    return "\n".join(
-        [
-            reset_line,
-            "; ".join(segments),
-            "repeat",
-        ]
+    # 250 ms per LED. The roll interpolates linearly in the firmware's drive
+    # codes, so the crest's steepest step is set by how long it spends between
+    # neighbours; at 200 ms it was measurably the harshest frame-to-frame move
+    # in the whole vocabulary, and this is meant to be the calm one.
+    lap_ms = 2200 if count <= 2 else 250 * count
+    tail = shapes.DOT_TAIL if count <= 2 else shapes.CHASE_TAIL
+    lines = shapes.travelling_wave(
+        color,
+        led_count=count,
+        lap_ms=lap_ms,
+        tail=tail,
+        laps=shapes.MAX_PROGRAM_LINES // 3,
+        floor=floor,
     )
+    return "\n".join([*lines, "repeat"])
 
 
 def write_mode_to_leds(
@@ -896,6 +913,37 @@ def quota_runway_program(
     return "\n".join(["; ".join(segments), "repeat"])
 
 
+#: The three travelling signal patterns and the profile each one carries.
+_SIGNAL_TAILS = {
+    "sweep": "CHASE_TAIL",
+    "ripple": "TIDE_TAIL",
+    "comet": "COMET_TAIL",
+}
+
+
+def _travelling_signal(
+    hex_color: str,
+    speed_ms: int,
+    led_count: int,
+    *,
+    shapes_tail: str,
+) -> str:
+    """One circulating signal cue, sized so a finite cue keeps its length."""
+    from . import motion_shapes as shapes
+
+    tail = getattr(shapes, _SIGNAL_TAILS[shapes_tail])
+    lap_ms = min(65535, max(1, int(speed_ms)))
+    lines = shapes.travelling_wave(
+        hex_color,
+        led_count=led_count,
+        lap_ms=lap_ms,
+        tail=tail,
+        laps=1,
+        lead_ms=max(60, min(shapes.PROFILE_LEAD_MS, lap_ms // 8)),
+    )
+    return "\n".join([*lines, "repeat"])
+
+
 def style_to_program(
     style,
     brightness: float = 255,
@@ -943,42 +991,33 @@ def style_to_program(
     elif style.pattern == "solid":
         body = hex_color
     elif style.pattern == "sweep":
-        duration = min(65535, max(1, round(speed_ms / 2)))
-        segments = "; ".join(
-            f"{index}:{hex_color} {duration}ms pulse "
-            f"{min(65535, round(index * speed_ms / max(1, led_count)))}ms"
-            for index in range(led_count)
-        )
-        body = f"off 300ms cosine\n{segments}\nrepeat"
+        # A travelling swell. Rebuilt on `roll` (2026-09-10): eight
+        # overlapping `pulse` segments cannot outlive their own line, so the
+        # old sweep lit the strip across and then blanked it to start again.
+        # A rolled profile crossfades between the shifted states, so the
+        # crest simply keeps going.
+        body = _travelling_signal(hex_color, speed_ms, led_count, shapes_tail="sweep")
     elif style.pattern == "ripple":
-        # Overlapping full-length pulses, one LED-step apart: a wave
-        # that travels the strip -- the on-screen twin of Relay's chase.
-        duration = min(65535, max(1, speed_ms))
-        segments = "; ".join(
-            f"{index}:{hex_color} {duration}ms pulse "
-            f"{min(65535, round(index * speed_ms / max(1, led_count)))}ms"
-            for index in range(led_count)
-        )
-        body = f"off 300ms cosine\n{segments}\nrepeat"
+        # A broad swell through a strip that never goes dark -- the on-screen
+        # twin of Relay's chase.
+        body = _travelling_signal(hex_color, speed_ms, led_count, shapes_tail="ripple")
     elif style.pattern == "comet":
-        # A short bright head racing the strip, cosine decay as its tail.
-        duration = min(65535, max(1, round(speed_ms / 4)))
-        segments = "; ".join(
-            f"{index}:{hex_color} {duration}ms pulse "
-            f"{min(65535, round(index * speed_ms / max(1, led_count)))}ms"
-            for index in range(led_count)
-        )
-        body = f"off 300ms cosine\n{segments}\nrepeat"
+        # A short bright head racing the strip with a long dim tail.
+        body = _travelling_signal(hex_color, speed_ms, led_count, shapes_tail="comet")
     elif style.pattern == "sparkle":
-        # Deterministic scatter (a fixed co-prime permutation, so it
-        # renders identically everywhere) of short twinkles.
-        flash = min(65535, max(1, round(speed_ms / 6)))
-        segments = "; ".join(
-            f"{index}:{hex_color} {flash}ms pulse "
-            f"{min(65535, round(((index * 5 + 3) % max(1, led_count)) * speed_ms / max(1, led_count)))}ms"
-            for index in range(led_count)
+        # Deterministic scatter (a fixed co-prime offset per LED, so it
+        # renders identically everywhere) of short soft twinkles.
+        from . import motion_shapes as shapes
+
+        lines = shapes.scatter(
+            hex_color,
+            "#000000",
+            led_count=led_count,
+            cycle_ms=speed_ms,
+            spark_fraction=0.22,
+            seed=5,
         )
-        body = f"off 300ms cosine\n{segments}\nrepeat"
+        body = "\n".join([*lines, "repeat"])
     elif style.pattern == "heartbeat":
         # LUB-dub. Three things make this a heartbeat rather than a third
         # spelling of blink, and the old version had none of them:

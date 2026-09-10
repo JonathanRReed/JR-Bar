@@ -509,17 +509,27 @@ def test_idle_sessions_do_not_claim_strip_slots_while_anyone_works() -> None:
     _, program = program_for_snapshot(
         statuses, led_count=8, colors=ColorSettings.defaults(), brightness=255
     )
-    working_line = next(
-        line for line in program.splitlines() if "pulse" in line
-    )
-    peaks = {
-        segment.split("#", 1)[1][:6]
-        for segment in working_line.split("; ")
-        if "#" in segment
-    }
-    assert len(peaks) == 1, (
+    # The engaged agent's strip is a travelling wave: one painted
+    # head-and-tail profile carried by `roll`. Every colour on that line is a
+    # SHADE of one identity, so "did anyone else paint here" is a question
+    # about hue, not about the literal hex.
+    paint_line = next(line for line in program.splitlines() if "#" in line)
+    colors = [
+        [int(token[1:][index : index + 2], 16) for index in (0, 2, 4)]
+        for token in paint_line.split()
+        if token.startswith("#")
+    ]
+    head = max(colors, key=max)
+    strangers = []
+    for color in colors:
+        scale = max(color) / max(1, max(head))
+        # One code of slack per channel for the 8-bit quantisation, which is
+        # all the dim end of a tail has left to say a hue with.
+        if any(abs(value - channel * scale) > 2 for value, channel in zip(color, head)):
+            strangers.append(color)
+    assert not strangers, (
         "one engaged agent owns the strip; twelve idle sessions "
-        f"must not paint their whispers over it (saw peaks {peaks})"
+        f"must not paint their whispers over it (saw {strangers} beside {head})"
     )
 
 
