@@ -4,28 +4,34 @@ import SwiftUI
 /// The Raycast-style panel under the status item. 360 pt wide, 13 pt type,
 /// sections separated by hairlines rather than boxes, colour only where it
 /// carries meaning (provider tiles, state dots, quota bars).
+///
+/// Geometry is `PanelLayout`'s: every row is a fixed height, every label
+/// one line, the two lists scroll inside computed viewports, and the tree
+/// is exactly `layout.totalHeight` tall, so the window never has to be
+/// re-measured after it opens.
 struct PanelView: View {
     @Bindable var store: PanelStore
 
-    static let width: CGFloat = 360
-    static let sessionsMaxHeight: CGFloat = 300
+    static let width: CGFloat = CGFloat(PanelLayout.width)
 
     var body: some View {
+        let layout = store.layout
         VStack(spacing: 0) {
             PanelHeader(store: store)
             Hairline()
-            SessionsSection(store: store)
+            SessionsSection(store: store, layout: layout)
             Hairline()
-            UsageSection(store: store)
+            UsageSection(store: store, layout: layout)
             Hairline()
             DevicesSection(store: store)
             Hairline()
             PanelFooter(store: store)
         }
         .font(.system(size: 13))
-        .frame(width: Self.width)
-        .overlay(alignment: .bottom) { ToastView(text: store.toast, reduced: store.reduceMotion) }
-        .onGeometryChange(for: CGSize.self) { $0.size } action: { store.contentSize = $0 }
+        .frame(width: Self.width, height: CGFloat(layout.totalHeight), alignment: .top)
+        .clipped()
+        .overlay(alignment: .bottom) { ToastView(text: store.toast, reduced: store.reduceMotion, armed: store.animationsArmed) }
+        .onChange(of: layout) { _, newLayout in store.layoutDidChange(newLayout) }
     }
 }
 
@@ -33,7 +39,7 @@ struct PanelView: View {
 
 struct Hairline: View {
     var body: some View {
-        Rectangle().fill(.primary.opacity(0.08)).frame(height: 1)
+        Rectangle().fill(.primary.opacity(0.08)).frame(height: CGFloat(PanelLayout.hairline))
     }
 }
 
@@ -50,9 +56,10 @@ struct SectionLabel: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .tracking(0.2)
+                .lineLimit(1)
             Spacer()
             if let trailing {
-                Text(trailing).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+                Text(trailing).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit().lineLimit(1)
             }
             if let detailTitle, let onDetail {
                 Button(action: onDetail) {
@@ -62,14 +69,15 @@ struct SectionLabel: View {
                     }
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help("\(detailTitle) (⌘U)")
             }
         }
         .padding(.horizontal, 14)
-        .padding(.top, 9)
         .padding(.bottom, 4)
+        .frame(height: CGFloat(PanelLayout.sectionLabelHeight), alignment: .bottom)
     }
 }
 
@@ -163,31 +171,75 @@ struct CountBadge: View {
             .font(.system(size: 10, weight: .semibold))
             .monospacedDigit()
             .foregroundStyle(.secondary)
+            .lineLimit(1)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
             .background(Capsule().fill(.primary.opacity(0.08)))
     }
 }
 
-/// A hover-highlighting, selectable row container.
+/// A row that is a button: hover tint only under the pointer while the
+/// panel is open, a pressed tint only while the mouse is down, and the
+/// selection tint only for the keyboard's row.
 struct RowChrome<Content: View>: View {
     let selected: Bool
+    let active: Bool
+    let height: CGFloat
     let action: () -> Void
     @ViewBuilder let content: () -> Content
-    @ViewState private var hovering = false
 
     var body: some View {
-        content()
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+        Button(action: action) {
+            content()
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: height)
+        }
+        .buttonStyle(PanelRowStyle(selected: selected, active: active))
+        .padding(.horizontal, 6)
+    }
+}
+
+struct PanelRowStyle: ButtonStyle {
+    let selected: Bool
+    let active: Bool
+    @ViewState private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(selected ? Color.primary.opacity(0.10) : (hovering ? Color.primary.opacity(0.05) : Color.clear))
+                    .fill(Color.primary.opacity(fill(pressed: configuration.isPressed)))
             )
-            .padding(.horizontal, 6)
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .onHover { hovering = $0 }
-            .onTapGesture(perform: action)
+            .onChange(of: active) { _, isActive in if !isActive { hovering = false } }
+    }
+
+    private func fill(pressed: Bool) -> Double {
+        if pressed { return 0.13 }
+        if selected { return 0.10 }
+        if hovering && active { return 0.05 }
+        return 0
+    }
+}
+
+/// A list cut half a row from its end fades out over the last few points,
+/// so the cut reads as "more below" rather than a torn row.
+struct ScrollEdgeFade: ViewModifier {
+    let active: Bool
+    static let fade: CGFloat = 16
+
+    func body(content: Content) -> some View {
+        content.mask(
+            VStack(spacing: 0) {
+                Rectangle().fill(Color.black)
+                if active {
+                    LinearGradient(colors: [.black, .black.opacity(0)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: Self.fade)
+                }
+            }
+        )
     }
 }
 
@@ -200,6 +252,7 @@ struct PanelHeader: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(store.headerWord)
                 .font(.system(size: 15, weight: .semibold))
+                .lineLimit(1)
                 .contentTransition(.opacity)
                 .id("word-\(store.headerWord)")
                 .transition(.opacity)
@@ -224,11 +277,11 @@ struct PanelHeader: View {
                 .help(store.connectionDescription)
         }
         .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 10)
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: store.headerWord)
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: store.headerCounts)
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: store.coreCrashed)
+        .padding(.top, 2)
+        .frame(height: CGFloat(PanelLayout.headerHeight))
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.headerWord)
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.headerCounts)
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.coreCrashed)
     }
 }
 
@@ -267,6 +320,7 @@ struct ConnectionDot: View {
 
 struct SessionsSection: View {
     @Bindable var store: PanelStore
+    let layout: PanelLayout
 
     var body: some View {
         VStack(spacing: 0) {
@@ -275,7 +329,7 @@ struct SessionsSection: View {
                 SessionsEmptyState(store: store)
             } else {
                 ScrollView(.vertical) {
-                    VStack(spacing: 1) {
+                    VStack(spacing: CGFloat(PanelLayout.rowSpacing)) {
                         ForEach(store.askRows) { row in
                             AskRow(row: row, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
@@ -285,19 +339,21 @@ struct SessionsSection: View {
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
-                    .padding(.bottom, 6)
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion), value: store.rows.map(\.id))
+                    .padding(.bottom, CGFloat(PanelLayout.listBottomPadding))
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.rows.map(\.id))
                 }
-                .frame(maxHeight: PanelView.sessionsMaxHeight)
-                .fixedSize(horizontal: false, vertical: true)
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(height: CGFloat(layout.sessionsHeight))
+                .clipped()
+                .modifier(ScrollEdgeFade(active: layout.sessionsScroll))
             }
             if let explanation = store.lightExplanation {
                 WhyLightRow(explanation: explanation, store: store)
                     .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
             }
         }
-        .padding(.bottom, 4)
-        .animation(PanelMotion.contents(reduced: store.reduceMotion), value: store.lightExplanation == nil)
+        .padding(.bottom, CGFloat(PanelLayout.sessionsBottomPadding))
+        .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.lightExplanation == nil)
     }
 }
 
@@ -310,16 +366,19 @@ struct WhyLightRow: View {
     @ViewState private var frame: CGRect = .zero
     @ViewState private var pending: DispatchWorkItem?
 
+    private var showsHover: Bool { hovering && store.isOpen }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
             Image(systemName: "light.max")
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(hovering ? .secondary : .tertiary)
+                .foregroundStyle(showsHover ? .secondary : .tertiary)
                 .frame(width: 12)
             HStack(spacing: 0) {
                 Text("\(explanation.motion): ")
                     .fontWeight(.medium)
                     .foregroundStyle(.primary.opacity(0.85))
+                    .lineLimit(1)
                     .fixedSize()
                 Text(explanation.reason)
                     .foregroundStyle(.secondary)
@@ -334,12 +393,12 @@ struct WhyLightRow: View {
                 Image(systemName: "arrow.up.forward")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                    .opacity(hovering ? 1 : 0)
+                    .opacity(showsHover ? 1 : 0)
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(hovering ? 0.05 : 0)))
+        .frame(height: CGFloat(PanelLayout.whyRowHeight) - 3)
+        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(showsHover ? 0.05 : 0)))
         .padding(.horizontal, 6)
         .padding(.top, 3)
         .contentShape(Rectangle())
@@ -364,9 +423,10 @@ struct WhyLightRow: View {
                 store.whyHover(false, frame: frame)
             }
         }
+        .onChange(of: store.isOpen) { _, open in if !open { hovering = false; pending?.cancel(); pending = nil } }
         .onDisappear { pending?.cancel(); store.whyHover(false, frame: frame) }
         .onTapGesture { store.openExplainedSession() }
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: explanation.headline)
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: explanation.headline)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Why this light: \(explanation.headline)")
         .help("Why this light · hover for the programs and brightness settings")
@@ -381,12 +441,15 @@ struct SessionsEmptyState: View {
             if store.isLive {
                 Label("No agents right now", systemImage: "moon.zzz")
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Text("Sessions from Claude, Codex, Gemini and friends appear here the moment they start.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
+                    .lineLimit(2)
             } else {
                 Label(store.coreMayBeStarting ? "Core is starting" : "Core not connected", systemImage: "antenna.radiowaves.left.and.right.slash")
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Text("Showing the file feeds: \(store.fallbackDetail.lowercased()).")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
@@ -395,8 +458,9 @@ struct SessionsEmptyState: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
+        .frame(height: CGFloat(PanelLayout.emptySessionsHeight), alignment: .top)
+        .clipped()
     }
 }
 
@@ -404,18 +468,22 @@ struct SessionRowView: View {
     let row: SessionRow
     @Bindable var store: PanelStore
 
+    /// The state word, mark and elapsed time sit in one fixed column so the
+    /// label column never shifts as the clock ticks.
+    static let trailingWidth: CGFloat = 96
+
     var body: some View {
-        RowChrome(selected: store.selectedID == row.id, action: { store.open(row) }) {
+        RowChrome(selected: store.selectedID == row.id, active: store.isOpen, height: CGFloat(PanelLayout.sessionRowHeight), action: { store.open(row) }) {
             HStack(spacing: 9) {
                 ProviderTile(style: row.style)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
-                        Text(row.label).fontWeight(.medium).lineLimit(1)
+                        Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
                         if row.workers > 0 { CountBadge(text: "\(row.workers)").help("\(row.workers) workers") }
-                        if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary) }
+                        if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
                     }
                     HStack(spacing: 4) {
-                        Text(row.style.name).foregroundStyle(.secondary)
+                        Text(row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
                         if let tail = row.cwdTail {
                             Text("·").foregroundStyle(.quaternary)
                             Text(tail).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
@@ -429,16 +497,17 @@ struct SessionRowView: View {
                         Text(row.activity.word)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(row.activity == .waiting ? Color.orange : Color.secondary)
+                            .lineLimit(1)
                             .contentTransition(.opacity)
                         ActivityMark(activity: row.activity, accent: row.style.accent, reduced: store.reduceMotion)
                     }
-                    if let elapsed = PanelStore.elapsed(since: row.since, now: store.now) {
-                        Text(elapsed).font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
-                    }
+                    Text(PanelStore.elapsed(since: row.since, now: store.now) ?? " ")
+                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
+                .frame(width: Self.trailingWidth, alignment: .trailing)
             }
         }
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: row.activity)
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: row.activity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.label), \(row.style.name), \(row.activity.word)")
         .accessibilityAddTraits(.isButton)
@@ -451,14 +520,15 @@ struct AskRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
                 ProviderTile(style: row.style)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
-                        Text(row.label).fontWeight(.medium).lineLimit(1)
+                        Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
                         Text(row.ask?.kind?.capitalized ?? "Ask")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.orange)
+                            .lineLimit(1)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
                             .background(Capsule().fill(Color.orange.opacity(0.14)))
                     }
@@ -466,14 +536,15 @@ struct AskRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: 30, alignment: .topLeading)
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
                     ActivityMark(activity: .waiting, accent: row.style.accent, reduced: store.reduceMotion)
                         .padding(.top, 3)
-                    if let elapsed = PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) {
-                        Text(elapsed).font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary)
-                    }
+                    Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
+                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
             HStack(spacing: 6) {
@@ -487,7 +558,7 @@ struct AskRow: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        .frame(height: CGFloat(PanelLayout.askRowHeight))
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.orange.opacity(store.selectedID == row.id ? 0.14 : 0.08))
@@ -510,6 +581,7 @@ struct PillButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
             .foregroundStyle(prominent ? Color.white : Color.primary)
             .padding(.horizontal, 11)
             .padding(.vertical, 3.5)
@@ -526,6 +598,7 @@ struct PillButtonStyle: ButtonStyle {
 
 struct UsageSection: View {
     @Bindable var store: PanelStore
+    let layout: PanelLayout
 
     var body: some View {
         VStack(spacing: 0) {
@@ -534,21 +607,28 @@ struct UsageSection: View {
                 Text(store.isLive ? "No usage reported yet." : "Usage comes from the core.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
+                    .frame(height: CGFloat(PanelLayout.emptyUsageHeight), alignment: .top)
             } else {
-                VStack(spacing: 2) {
-                    ForEach(store.usage) { usage in
-                        UsageRow(usage: usage, store: store)
-                            .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
+                ScrollView(.vertical) {
+                    VStack(spacing: CGFloat(PanelLayout.usageRowSpacing)) {
+                        ForEach(store.usage) { usage in
+                            UsageRow(usage: usage, store: store)
+                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
+                        }
                     }
+                    .padding(.horizontal, 6)
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.usage.map(\.id))
                 }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 6)
-                .animation(PanelMotion.contents(reduced: store.reduceMotion), value: store.usage.map(\.id))
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(height: CGFloat(layout.usageHeight))
+                .clipped()
+                .modifier(ScrollEdgeFade(active: layout.usageScroll))
             }
         }
+        .padding(.bottom, CGFloat(PanelLayout.usageBottomPadding))
     }
 
     private var refreshed: String? {
@@ -562,52 +642,60 @@ struct UsageRow: View {
     let usage: CoreProviderUsage
     @Bindable var store: PanelStore
 
+    /// The percent column: `~100%` fits with room to spare.
+    static let percentWidth: CGFloat = 46
+
     private var style: ProviderStyle { ProviderStyle.style(for: usage.id) }
-    private var primary: CoreUsageWindow? { usage.windows.first { $0.name.lowercased() == "5h" } ?? usage.windows.first }
-    private var secondary: CoreUsageWindow? { usage.windows.first { $0.name.lowercased() == "7d" } ?? (usage.windows.count > 1 ? usage.windows[1] : nil) }
+    private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
 
     var body: some View {
+        let (primary, secondary) = windows
         HStack(alignment: .center, spacing: 9) {
             ProviderTile(style: style, size: 20)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(style.name).fontWeight(.medium)
+                    Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
                     if let hint = PanelStore.paceHint(usage.forecast?.pace) {
-                        Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace))
+                        Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
                     }
-                    Spacer()
-                    if let primary {
-                        Text((usage.isDerived ? "~" : "") + "\(Int(primary.usedPct.rounded()))%")
-                            .font(.system(size: 12, weight: .medium))
-                            .monospacedDigit()
-                            .foregroundStyle(barColor(primary.usedPct))
-                            .contentTransition(.numericText())
-                            .help(usage.isDerived ? "Derived estimate (\(usage.fidelity ?? "derived"))" : "Official figure")
-                    }
+                    Spacer(minLength: 4)
+                    Text(primary.map { (usage.isDerived ? "~" : "") + "\(Int($0.usedPct.rounded()))%" } ?? "")
+                        .font(.system(size: 12, weight: .medium))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .foregroundStyle(barColor(primary?.usedPct ?? 0))
+                        .contentTransition(.numericText())
+                        .frame(width: Self.percentWidth, alignment: .trailing)
+                        .help(usage.isDerived ? "Derived estimate (\(usage.fidelity ?? "derived"))" : "Official figure")
                 }
                 HStack(spacing: 8) {
-                    if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion) }
-                    if let secondary { QuotaBar(window: secondary, accent: style.accent, reduced: store.reduceMotion) }
+                    if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
+                    if let secondary { QuotaBar(window: secondary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
                 }
-                HStack(spacing: 8) {
-                    if let text = PanelStore.countdown(to: primary?.resetsAt, now: store.now) {
-                        Text("\(primary?.name ?? "") \(text)")
-                    }
-                    if let text = PanelStore.countdown(to: secondary?.resetsAt, now: store.now) {
-                        Text("·").foregroundStyle(.quaternary)
-                        Text("\(secondary?.name ?? "") \(text)")
-                    }
-                }
-                .font(.system(size: 10))
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
-                .lineLimit(1)
+                Text(resetLine(primary: primary, secondary: secondary))
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: primary?.usedPct)
+        .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: primary?.usedPct)
         .accessibilityElement(children: .combine)
+    }
+
+    /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line; a blank keeps the row height.
+    private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
+        var parts: [String] = []
+        if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
+        if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
+        if parts.isEmpty {
+            if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
+            return "no reset time"
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func barColor(_ pct: Double) -> Color {
@@ -629,24 +717,31 @@ struct QuotaBar: View {
     let window: CoreUsageWindow
     let accent: Color
     let reduced: Bool
+    var armed: Bool = true
+
+    /// `Monthly` and `Credits` at 10 pt fit this column; the bar takes the rest.
+    static let labelWidth: CGFloat = 42
 
     var body: some View {
         HStack(spacing: 5) {
-            Text(window.name)
+            Text(window.shortName)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 16, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: Self.labelWidth, alignment: .leading)
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.primary.opacity(0.08))
                     Capsule()
                         .fill(fill)
                         .frame(width: max(3, proxy.size.width * CGFloat(min(100, max(0, window.usedPct)) / 100)))
-                        .animation(PanelMotion.contents(reduced: reduced), value: window.usedPct)
+                        .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: window.usedPct)
                 }
             }
             .frame(height: 4)
         }
+        .help("\(window.name): \(Int(window.usedPct.rounded()))% used")
         .accessibilityLabel("\(window.name) \(Int(window.usedPct.rounded())) percent used")
     }
 
@@ -686,6 +781,7 @@ struct DevicesSection: View {
                 Spacer()
             }
             .padding(.horizontal, 14)
+            .frame(height: 20)
             .padding(.bottom, 8)
             HStack(spacing: 8) {
                 Image(systemName: "sun.min").font(.system(size: 10)).foregroundStyle(.tertiary)
@@ -699,14 +795,17 @@ struct DevicesSection: View {
                 .disabled(!store.isLive || !store.hasHardware)
                 Image(systemName: "sun.max").font(.system(size: 11)).foregroundStyle(.tertiary)
                 Text("\(Int((store.brightness * 100).rounded()))%")
-                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                     .frame(width: 34, alignment: .trailing)
                     .contentTransition(.numericText())
             }
             .padding(.horizontal, 14)
+            .frame(height: 18)
             .padding(.bottom, 10)
             .help(store.isLive ? "Strip brightness (sends set_brightness)" : "Brightness needs the core")
         }
+        .frame(height: CGFloat(PanelLayout.devicesHeight), alignment: .top)
+        .clipped()
     }
 
     private func deviceHelp(_ device: CoreDevice) -> String {
@@ -730,6 +829,7 @@ struct DeviceChip: View {
                 .frame(width: 5, height: 5)
             Text(name).font(.system(size: 11, weight: .medium))
                 .foregroundStyle(present ? .primary : .secondary)
+                .lineLimit(1)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3.5)
@@ -748,7 +848,7 @@ struct PanelFooter: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            FooterButton(title: "Clear done", dimmed: store.completedCount == 0) { store.clearCompleted() }
+            FooterButton(title: "Clear done", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
                 .help("Acknowledge finished sessions (undo within 5 minutes from History)")
             Menu {
                 Button("30 minutes") { store.quiet(minutes: 30) }
@@ -759,11 +859,11 @@ struct PanelFooter: View {
                 Text("Quiet…")
             }
             .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive))
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
             .menuIndicator(.hidden)
             .fixedSize()
             Spacer()
-            FooterButton(title: "History", dimmed: !store.isLive, shortcut: "⌘Y") { store.openHistory() }
+            FooterButton(title: "History", dimmed: !store.isLive, shortcut: "⌘Y", active: store.isOpen) { store.openHistory() }
                 .help("Activity history")
             Menu {
                 Button { store.openUsageCenter() } label: { Text("Usage Center…") }
@@ -775,7 +875,7 @@ struct PanelFooter: View {
                 Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
             }
             .menuStyle(.button)
-            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive))
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
             .menuIndicator(.hidden)
             .fixedSize()
             .help("More: Usage Center (⌘U), Effect Studio, Control Center (⌘K)")
@@ -783,13 +883,13 @@ struct PanelFooter: View {
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(FooterButtonStyle(dimmed: false))
+            .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
             .help("Settings… (⌘,)")
             .accessibilityLabel("Settings")
-            FooterButton(title: "Quit", dimmed: false, shortcut: "⌘Q") { store.quit() }
+            FooterButton(title: "Quit", dimmed: false, shortcut: "⌘Q", active: store.isOpen) { store.quit() }
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .frame(height: CGFloat(PanelLayout.footerHeight))
     }
 }
 
@@ -797,6 +897,7 @@ struct FooterButton: View {
     let title: String
     let dimmed: Bool
     var shortcut: String? = nil
+    var active: Bool = true
     let action: () -> Void
 
     var body: some View {
@@ -810,12 +911,13 @@ struct FooterButton: View {
             .lineLimit(1)
             .fixedSize()
         }
-        .buttonStyle(FooterButtonStyle(dimmed: dimmed))
+        .buttonStyle(FooterButtonStyle(dimmed: dimmed, active: active))
     }
 }
 
 struct FooterButtonStyle: ButtonStyle {
     let dimmed: Bool
+    var active: Bool = true
     @ViewState private var hovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -826,10 +928,11 @@ struct FooterButtonStyle: ButtonStyle {
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : (hovering ? 0.06 : 0)))
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.12 : (hovering && active ? 0.06 : 0)))
             )
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
+            .onChange(of: active) { _, isActive in if !isActive { hovering = false } }
     }
 }
 
@@ -838,6 +941,7 @@ struct FooterButtonStyle: ButtonStyle {
 struct ToastView: View {
     let text: String?
     let reduced: Bool
+    var armed: Bool = true
 
     var body: some View {
         ZStack {
@@ -845,6 +949,7 @@ struct ToastView: View {
                 Text(text)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Capsule().fill(.regularMaterial))
@@ -854,7 +959,7 @@ struct ToastView: View {
                     .id(text)
             }
         }
-        .animation(PanelMotion.contents(reduced: reduced), value: text)
+        .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: text)
         .allowsHitTesting(false)
     }
 }

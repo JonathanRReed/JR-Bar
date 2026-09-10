@@ -1174,7 +1174,8 @@ class World:
     def _session(sid, provider, label, cwd, since, *, kind="main", parent=None, origin=None, terminal=None,
                  pid=None, mode="idle", lifecycle="active", next_actor="provider"):
         return {
-            "id": sid, "provider": provider, "kind": kind, "parent": parent, "label": label, "cwd": cwd,
+            "id": sid, "provider": provider, "kind": kind, "parent": parent, "label": label,
+            "short_id": sid.rsplit(":", 1)[-1][:8], "cwd": cwd,
             "mode": mode, "lifecycle": lifecycle, "next_actor": next_actor, "since": since,
             "updated_at": since, "stale": False, "pid": pid, "origin": origin, "ask": None,
             "terminal": terminal, "workers": 0,
@@ -1217,8 +1218,8 @@ class World:
                                   "account": USAGE_ACCOUNTS.get(pid)})
                 continue
             windows = [
-                {"name": "5h", "used_pct": round(u["h5"], 1), "resets_at": now + 2 * 3600 + 840},
-                {"name": "7d", "used_pct": round(u["d7"], 1), "resets_at": now + 3 * 86400 + 5 * 3600},
+                {"id": "five-hour", "name": "5h", "used_pct": round(u["h5"], 1), "resets_at": now + 2 * 3600 + 840},
+                {"id": "weekly", "name": "7d", "used_pct": round(u["d7"], 1), "resets_at": now + 3 * 86400 + 5 * 3600},
             ]
             if u.get("d30") is not None:
                 windows.append({"name": "30d", "used_pct": round(u["d30"], 1), "resets_at": now + 19 * 86400 + 7 * 3600})
@@ -1466,17 +1467,29 @@ class World:
         motion = {"working": "chase", "ask": "beat", "done": "pulse", "idle": "breathe"}[self.lights_semantic]
         fallback = {"working": "#00E5FF", "ask": "#FF3A00", "done": "#00FF66", "idle": "#020204"}[self.lights_semantic]
         surface = {"program": strip, "led_count": 8, "anchor": self.anchor, "motion": motion,
-                   "static_fallback": fallback, "brightness": self.brightness, "why": why}
+                   "static_fallback": fallback, "brightness": self.brightness, "why": why,
+                   "why_detail": self.why_detail(why)}
         return {
             "t": "lights", "v": PROTOCOL_VERSION,
             "surfaces": {
                 "hardware": dict(surface),
                 "screen_bar": dict(surface),
                 "dot": {"program": dot, "led_count": 2, "anchor": self.anchor, "motion": motion,
-                        "static_fallback": fallback, "brightness": self.brightness, "why": why},
+                        "static_fallback": fallback, "brightness": self.brightness, "why": why,
+                        "why_detail": self.why_detail(why)},
             },
             "linked": True,
         }
+
+    def why_detail(self, why: str) -> dict:
+        """The daemon's `why_detail`: the session the light is about and how long it has been so."""
+        wanted = {"working": ("working", "tool_running", "thinking"), "needs_you": ("waiting", "ask"),
+                  "completed_unseen": ("completed",)}.get(why, ())
+        session = next((s for s in self.sessions.values() if s.get("kind") == "main" and s.get("mode") in wanted), None)
+        seconds = round(time.time() - self.anchor, 1) if self.anchor else 0.0
+        return {"session": session["id"] if session else None, "label": session["label"] if session else None,
+                "provider": session["provider"] if session else None, "seconds_in_state": max(0.0, seconds),
+                "brightness_factor": 1.0, "dimming": []}
 
     def settings(self) -> dict:
         return {

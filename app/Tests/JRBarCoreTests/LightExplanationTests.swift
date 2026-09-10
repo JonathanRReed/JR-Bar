@@ -51,7 +51,7 @@ struct LightExplanationTests {
         let state = Self.state(sessions: [Self.gemini, Self.claude])
         let explanation = try #require(LightExplainer.explain(lights: Self.lights(why: "completed_unseen"), state: state, settings: nil, now: Self.now))
         #expect(explanation.motion == "Green sweep")
-        #expect(explanation.reason == "docs-sweep finished 12 s ago")
+        #expect(explanation.reason == "Gemini docs-sweep finished 12 s ago")
         #expect(explanation.session == "gemini:1")
     }
 
