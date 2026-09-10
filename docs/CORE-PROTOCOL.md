@@ -31,6 +31,10 @@ regenerates it).
   daemon (`JRBAR_SUPERVISED=1`) exits on its own when its parent is gone.
   On connect the daemon sends `hello`, then the latest full `state`,
   `lights` and `settings`. After that it pushes documents as they change.
+  When the daemon terminates (`quit`, SIGTERM, its supervisor gone) it
+  writes `off` to every mounted strip, Pro and Dot alike, straight to
+  each volume after the legacy teardown, past the controllers' dedupe
+  and resting glow, so a quit never leaves a strip looping.
   If the socket drops, the app restarts the daemon and reconnects with
   backoff (0.5 s, 1 s, 2 s, 4 s, cap 5 s).
 - Every message has `"t"` (type) and `"v": 1`.

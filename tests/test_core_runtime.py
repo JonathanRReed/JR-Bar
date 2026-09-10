@@ -545,6 +545,42 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     assert controller._core_linked_companion is None
 
 
+def test_quitting_turns_every_mounted_strip_off_pro_and_dot(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Terminating writes ``off`` to each connected strip's own file: the
+    Pro and the Dot both, past the controllers' dedupe (a linked Dot's
+    last identity is the Pro's program) and the resting glow; an
+    unmounted device and the Screen Bar are skipped, and one failing
+    volume does not stop the other."""
+    from jrbar import device_writer
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
+    dot = StatusBarDevice("sidepulse:dot:1", "PulseDot", Path("/Volumes/PulseDot"), Path("/Volumes/PulseDot/LEDS.LED"), True, "agent")
+    gone = StatusBarDevice("sidepulse:pro:2", "Spare", Path("/Volumes/Spare"), Path("/Volumes/Spare/LEDS.LED"), False, "agent")
+    screen = StatusBarDevice(status_bar.VIRTUAL_DEVICE_ID, "Screen Bar", Path("/virtual"), Path("/virtual/LEDS.LED"), True, "agent")
+    controller.status_bar_devices = lambda *, remember=True: [pro, dot, gone, screen]
+    writes: list[tuple[str, Path, bool]] = []
+
+    def fake_write(text, *, device_path=None, file_name="LEDS.LED", dry_run=False, preserve_existing_inode=False):
+        writes.append((text, device_path, preserve_existing_inode))
+        if device_path == pro.target:
+            raise OSError("volume busy")
+        return device_path
+
+    monkeypatch.setattr(device_writer, "write_led_program", fake_write)
+    assert controller._core_lights_off() == ["sidepulse:dot:1"]
+    assert writes == [("off", pro.target, True), ("off", dot.target, True)]
+
+    # The real terminate path reaches it, once, after the legacy teardown.
+    writes.clear()
+    controller.applicationWillTerminate_(None)
+    assert [path for _text, path, _keep in writes] == [pro.target, dot.target]
+    controller.applicationWillTerminate_(None)
+    assert len(writes) == 2
+
+
 def test_extra_lookups_serve_new_sessions_before_refreshing_expired_ones() -> None:
     from jrbar.core_runtime import plan_extra_lookups
 
