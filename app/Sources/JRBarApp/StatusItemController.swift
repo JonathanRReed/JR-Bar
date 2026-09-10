@@ -25,6 +25,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onTogglePanel: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor () -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
+    var onOpenUsageCenter: (@MainActor () -> Void)?
+    var onOpenEffects: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
     /// The style and ring the next `update` draws with.
     var iconStyle: StatusIconStyle = .glyph { didSet { if iconStyle != oldValue { redraw() } } }
@@ -58,6 +60,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         open.target = self
         let history = NSMenuItem(title: "History…", action: #selector(openHistory(_:)), keyEquivalent: "y")
         history.target = self
+        let usage = NSMenuItem(title: "Usage Center…", action: #selector(openUsageCenter(_:)), keyEquivalent: "u")
+        usage.target = self
+        let effects = NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: "")
+        effects.target = self
 
         menu.addItem(headerItem)
         menu.addItem(detailItem)
@@ -66,6 +72,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(open)
         menu.addItem(history)
+        menu.addItem(usage)
+        menu.addItem(effects)
         menu.addItem(showBarItem)
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
         settings.target = self
@@ -194,6 +202,14 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openHistory(_ sender: Any?) {
         onOpenHistory?()
+    }
+
+    @objc private func openUsageCenter(_ sender: Any?) {
+        onOpenUsageCenter?()
+    }
+
+    @objc private func openEffects(_ sender: Any?) {
+        onOpenEffects?()
     }
 
     @objc private func toggleScreenBar(_ sender: NSMenuItem) {

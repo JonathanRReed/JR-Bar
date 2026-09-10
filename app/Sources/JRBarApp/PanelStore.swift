@@ -110,6 +110,8 @@ final class PanelStore {
     var onClose: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor () -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
+    var onOpenUsageCenter: (@MainActor () -> Void)?
+    var onOpenEffects: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
     var onContentSizeChange: (@MainActor (CGSize) -> Void)?
     /// The "Why this light" row is hovered (with its frame in the hosting
@@ -295,7 +297,8 @@ final class PanelStore {
 
     // MARK: Derived: usage and devices
 
-    var usage: [CoreProviderUsage] { core.isLive ? core.usage : [] }
+    /// Providers with at least one window; signed-out ones are the Usage Center's business.
+    var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !$0.windows.isEmpty } : [] }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
 
     /// The slider's value: a local drag wins, else the Pro's brightness, else the lights document's.
@@ -371,6 +374,16 @@ final class PanelStore {
     func openHistory() {
         onClose?()
         onOpenHistory?()
+    }
+
+    func openUsageCenter() {
+        onClose?()
+        onOpenUsageCenter?()
+    }
+
+    func openEffects() {
+        onClose?()
+        onOpenEffects?()
     }
 
     func restartCore() {

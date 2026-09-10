@@ -82,7 +82,7 @@ struct MockCoreIntegrationTests {
         #expect(model.sessions.count == 3, "workers roll up under their parent")
         #expect(model.sessions.map(\.provider).sorted() == ["claude", "codex", "gemini"])
         #expect(model.devices.map(\.kind).sorted() == ["dot", "pro", "screen_bar"])
-        #expect(model.usage.count == 3)
+        #expect(model.usage.count == 4)
         #expect(model.usage.first { $0.id == "claude" }?.windows.first?.usedPct == 42.0)
         #expect(model.usage.first { $0.id == "codex" }?.isDerived == true)
         let bar = try #require(model.lights?.screenBar)

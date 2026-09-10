@@ -65,7 +65,8 @@ let package = Package(
         ),
         .testTarget(
             name: "JRBarCoreTests",
-            dependencies: ["JRBarCore"],
+            // JRBarLEDS parses the effect previews the mock renders.
+            dependencies: ["JRBarCore", "JRBarLEDS"],
             resources: [.copy("Fixtures")],
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings

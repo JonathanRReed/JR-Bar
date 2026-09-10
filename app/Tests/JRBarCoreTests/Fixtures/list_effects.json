@@ -1,0 +1,1437 @@
+{
+ "effects": [
+  {
+   "id": "auto",
+   "label": "Automatic",
+   "description": "Follows the state: breathe when idle, chase while working.",
+   "meaning": "provider animation: auto",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "adaptive",
+   "parameters": [
+    {
+     "name": "mapping_source",
+     "type": "choice",
+     "default": "state",
+     "description": "Choose the current state map or a Scene-specific map.",
+     "choices": [
+      "state",
+      "scene"
+     ]
+    },
+    {
+     "name": "urgent_overrides",
+     "type": "boolean",
+     "default": true,
+     "description": "Keep reserved asking and failure motion overrides visible."
+    }
+   ],
+   "preview": {
+    "program": "#001214\n#00E5FF 2200ms pulse\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "breathe",
+   "label": "Breathe",
+   "description": "One slow swell, every LED together.",
+   "meaning": "provider animation: breathe",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "ambient",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.3,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "amplitude",
+     "type": "number",
+     "default": 1.0,
+     "description": "Relative distance between the luminous floor and crest.",
+     "minimum": 0.1,
+     "maximum": 1.0
+    }
+   ],
+   "preview": {
+    "program": "#001214\n#00E5FF 2200ms pulse\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "duotone",
+   "label": "Duotone",
+   "description": "A slow swell that alternates between two tones of the color. Cycle turns keep both tones; interleaved strips breathe.",
+   "meaning": "provider animation: duotone",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "identity_state",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.3,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "secondary_hue_offset_degrees",
+     "type": "number",
+     "default": 40.0,
+     "description": "Hue offset used when no explicit two-color palette is supplied.",
+     "minimum": -180.0,
+     "maximum": 180.0,
+     "unit": "degrees"
+    },
+    {
+     "name": "palette",
+     "type": "palette",
+     "default": [],
+     "description": "Optional validated identity and state colors; empty derives both tones.",
+     "minimum_items": 2,
+     "maximum_items": 2,
+     "allow_empty": true
+    }
+   ],
+   "preview": {
+    "program": "#00E5FF\n#003BFF 1100ms cosine\n#00E5FF 1100ms cosine\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "chase",
+   "label": "Chase",
+   "description": "The same swell, staggered into a travelling wave.",
+   "meaning": "provider animation: chase",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "directional_flow",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.3,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "direction",
+     "type": "choice",
+     "default": "forward",
+     "description": "Direction of travel.",
+     "choices": [
+      "forward",
+      "reverse"
+     ]
+    },
+    {
+     "name": "spacing",
+     "type": "integer",
+     "default": 1,
+     "description": "LED spacing between wave crests.",
+     "minimum": 1,
+     "maximum": 6
+    },
+    {
+     "name": "softness",
+     "type": "number",
+     "default": 1.0,
+     "description": "Edge softness of the travelling wave.",
+     "minimum": 0.0,
+     "maximum": 1.0
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00E5FF 2200ms pulse 0ms; 1:#00E5FF 2200ms pulse 275ms; 2:#00E5FF 2200ms pulse 550ms; 3:#00E5FF 2200ms pulse 825ms; 4:#00E5FF 2200ms pulse 1100ms; 5:#00E5FF 2200ms pulse 1375ms; 6:#00E5FF 2200ms pulse 1650ms; 7:#00E5FF 2200ms pulse 1925ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "gradient",
+   "label": "Gradient",
+   "description": "The travelling wave, but each LED carries its own shade of the color \u2014 a gradient rolling by. Shared strips keep the flare; Cycle turns keep the shades.",
+   "meaning": "provider animation: gradient",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "ambient",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.3,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "direction",
+     "type": "choice",
+     "default": "forward",
+     "description": "Direction of gradient travel.",
+     "choices": [
+      "forward",
+      "reverse"
+     ]
+    },
+    {
+     "name": "hue_span_degrees",
+     "type": "number",
+     "default": 48.0,
+     "description": "Derived palette span when no explicit endpoints are supplied.",
+     "minimum": 0.0,
+     "maximum": 120.0,
+     "unit": "degrees"
+    },
+    {
+     "name": "palette",
+     "type": "palette",
+     "default": [],
+     "description": "Optional bounded gradient endpoints; empty derives them from identity color.",
+     "minimum_items": 2,
+     "maximum_items": 2,
+     "allow_empty": true
+    },
+    {
+     "name": "smooth_morph",
+     "type": "boolean",
+     "default": true,
+     "description": "Morph smoothly when state colors change."
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00FFB3 2200ms pulse 0ms; 1:#00FFD0 2200ms pulse 275ms; 2:#00FFED 2200ms pulse 550ms; 3:#00F4FF 2200ms pulse 825ms; 4:#00D6FF 2200ms pulse 1100ms; 5:#00B9FF 2200ms pulse 1375ms; 6:#009CFF 2200ms pulse 1650ms; 7:#007FFF 2200ms pulse 1925ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "heartbeat",
+   "label": "Heartbeat",
+   "description": "Two quick swells, then a long rest \u2014 a lub-dub.",
+   "meaning": "provider animation: heartbeat",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "provider_identity",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "rest_ratio",
+     "type": "number",
+     "default": 0.5,
+     "description": "Fraction of the cycle reserved after the decorative lub-dub.",
+     "minimum": 0.35,
+     "maximum": 0.8
+    }
+   ],
+   "preview": {
+    "program": "#001214\n#00E5FF 550ms pulse\n#001214 183ms none\n#00E5FF 550ms pulse\n#001214 1100ms cosine\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "scanner",
+   "label": "Scanner",
+   "description": "A bright dot sweeps end to end and bounces back. Shared strips ride it as a narrow travelling flare.",
+   "meaning": "provider animation: scanner",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "mechanical",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "beam_width",
+     "type": "integer",
+     "default": 1,
+     "description": "Width of the bright scanning beam in LEDs.",
+     "minimum": 1,
+     "maximum": 8
+    },
+    {
+     "name": "trail",
+     "type": "number",
+     "default": 0.35,
+     "description": "Relative length of the fading trail.",
+     "minimum": 0.0,
+     "maximum": 1.0
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00E5FF 325ms pulse 0ms; 1:#00E5FF 325ms pulse 137ms; 2:#00E5FF 325ms pulse 274ms; 3:#00E5FF 325ms pulse 411ms; 4:#00E5FF 325ms pulse 548ms; 5:#00E5FF 325ms pulse 685ms; 6:#00E5FF 325ms pulse 822ms; 7:#00E5FF 325ms pulse 959ms\n0:#00E5FF 325ms pulse 959ms; 1:#00E5FF 325ms pulse 822ms; 2:#00E5FF 325ms pulse 685ms; 3:#00E5FF 325ms pulse 548ms; 4:#00E5FF 325ms pulse 411ms; 5:#00E5FF 325ms pulse 274ms; 6:#00E5FF 325ms pulse 137ms; 7:#00E5FF 325ms pulse 0ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "kitt",
+   "label": "Knight Rider",
+   "description": "The classic scanner: a wide bright eye sweeps end to end and back, overlapping as it goes. Shared strips ride it as a narrow travelling flare.",
+   "meaning": "provider animation: kitt",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "mechanical",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "beam_width",
+     "type": "integer",
+     "default": 3,
+     "description": "Width of the overlapping mechanical eye.",
+     "minimum": 2,
+     "maximum": 10
+    },
+    {
+     "name": "overlap",
+     "type": "number",
+     "default": 0.5,
+     "description": "Overlap between the eye's light bands.",
+     "minimum": 0.1,
+     "maximum": 1.0
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00E5FF 376ms pulse 0ms; 1:#00E5FF 376ms pulse 137ms; 2:#00E5FF 376ms pulse 274ms; 3:#00E5FF 376ms pulse 411ms; 4:#00E5FF 376ms pulse 548ms; 5:#00E5FF 376ms pulse 685ms; 6:#00E5FF 376ms pulse 822ms; 7:#00E5FF 376ms pulse 959ms\n0:#00E5FF 376ms pulse 959ms; 1:#00E5FF 376ms pulse 822ms; 2:#00E5FF 376ms pulse 685ms; 3:#00E5FF 376ms pulse 548ms; 4:#00E5FF 376ms pulse 411ms; 5:#00E5FF 376ms pulse 274ms; 6:#00E5FF 376ms pulse 137ms; 7:#00E5FF 376ms pulse 0ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "comet",
+   "label": "Comet",
+   "description": "A bright head sweeps one way, trailing off behind. Shared strips ride it as a narrow travelling flare.",
+   "meaning": "provider animation: comet",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "transition",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "head_width",
+     "type": "integer",
+     "default": 1,
+     "description": "Width of the bright comet head in LEDs.",
+     "minimum": 1,
+     "maximum": 6
+    },
+    {
+     "name": "trail_length",
+     "type": "integer",
+     "default": 3,
+     "description": "Length of the fading trail in LEDs.",
+     "minimum": 1,
+     "maximum": 12
+    },
+    {
+     "name": "direction",
+     "type": "choice",
+     "default": "forward",
+     "description": "Direction of comet travel.",
+     "choices": [
+      "forward",
+      "reverse"
+     ]
+    },
+    {
+     "name": "pass_mode",
+     "type": "choice",
+     "default": "continuous",
+     "description": "Continuous loop or a bounded transition pass count.",
+     "choices": [
+      "continuous",
+      "once",
+      "twice"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00E5FF 1100ms pulse 0ms; 1:#00E5FF 1100ms pulse 275ms; 2:#00E5FF 1100ms pulse 550ms; 3:#00E5FF 1100ms pulse 825ms; 4:#00E5FF 1100ms pulse 1100ms; 5:#00E5FF 1100ms pulse 1375ms; 6:#00E5FF 1100ms pulse 1650ms; 7:#00E5FF 1100ms pulse 1925ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "flicker",
+   "label": "Flicker",
+   "description": "A warm candle-like shimmer that never quite repeats.",
+   "meaning": "provider animation: flicker",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "ambient",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "seed",
+     "type": "integer",
+     "default": 271,
+     "description": "Seed for deterministic luminance variation.",
+     "minimum": 0,
+     "maximum": 2147483647
+    },
+    {
+     "name": "luminance_floor",
+     "type": "number",
+     "default": 0.35,
+     "description": "Lowest relative luminance.",
+     "minimum": 0.1,
+     "maximum": 0.8
+    },
+    {
+     "name": "variation",
+     "type": "number",
+     "default": 0.25,
+     "description": "Maximum deterministic luminance variation.",
+     "minimum": 0.0,
+     "maximum": 0.5
+    }
+   ],
+   "preview": {
+    "program": "#008695 275ms cosine\n#007885 275ms cosine\n#009CAD 275ms cosine\n#007A88 275ms cosine\n#008E9E 275ms cosine\n#009BAC 275ms cosine\n#00ADC1 275ms cosine\n#005963 275ms cosine\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "stack",
+   "label": "Stack",
+   "description": "LEDs pile on one by one until full, then it all lets go. Keeps its hard pile-on in shared strips.",
+   "meaning": "provider animation: stack",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "progress",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "fill_direction",
+     "type": "choice",
+     "default": "forward",
+     "description": "Direction in which LEDs accumulate.",
+     "choices": [
+      "forward",
+      "reverse"
+     ]
+    },
+    {
+     "name": "release_behavior",
+     "type": "choice",
+     "default": "all_at_once",
+     "description": "How a completed stack returns to its luminous floor.",
+     "choices": [
+      "all_at_once",
+      "hold",
+      "decay"
+     ]
+    },
+    {
+     "name": "data_mapping",
+     "type": "choice",
+     "default": "none",
+     "description": "Optional reliable count represented by the stack.",
+     "choices": [
+      "none",
+      "queue",
+      "milestone"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00E5FF 220ms none 0ms; 1:#00E5FF 220ms none 220ms; 2:#00E5FF 220ms none 440ms; 3:#00E5FF 220ms none 660ms; 4:#00E5FF 220ms none 880ms; 5:#00E5FF 220ms none 1100ms; 6:#00E5FF 220ms none 1320ms; 7:#00E5FF 220ms none 1540ms\n#001214 220ms none\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "twinkle",
+   "label": "Twinkle",
+   "description": "A dim base with single LEDs briefly sparking, scattered.",
+   "meaning": "provider animation: twinkle",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "ambient",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "density",
+     "type": "number",
+     "default": 0.15,
+     "description": "Maximum fraction of LEDs sparkling at once.",
+     "minimum": 0.02,
+     "maximum": 0.3
+    },
+    {
+     "name": "seed",
+     "type": "integer",
+     "default": 271,
+     "description": "Seed for deterministic sparkle placement.",
+     "minimum": 0,
+     "maximum": 2147483647
+    },
+    {
+     "name": "max_cluster",
+     "type": "integer",
+     "default": 1,
+     "description": "Largest allowed adjacent sparkle cluster.",
+     "minimum": 1,
+     "maximum": 2
+    }
+   ],
+   "preview": {
+    "program": "#001B1F\n7:#00E5FF 260ms pulse 0ms; 5:#00E5FF 260ms pulse 90ms\n#001B1F 440ms none\n5:#00E5FF 260ms pulse 0ms; 2:#00E5FF 260ms pulse 90ms\n#001B1F 440ms none\n2:#00E5FF 260ms pulse 0ms; 7:#00E5FF 260ms pulse 90ms\n#001B1F 440ms none\n7:#00E5FF 260ms pulse 0ms; 6:#00E5FF 260ms pulse 90ms\n#001B1F 440ms none\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "drift",
+   "label": "Drift",
+   "description": "Glacial detuned swells, like light on slow water.",
+   "meaning": "provider animation: drift",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "ambient",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 1.0,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "detune",
+     "type": "number",
+     "default": 0.08,
+     "description": "Phase variation between slow luminous swells.",
+     "minimum": 0.0,
+     "maximum": 0.25
+    },
+    {
+     "name": "sample_interval_seconds",
+     "type": "number",
+     "default": 0.25,
+     "description": "Minimum cadence for deterministic drift updates.",
+     "minimum": 0.1,
+     "maximum": 2.0,
+     "unit": "seconds"
+    }
+   ],
+   "preview": {
+    "program": "#002E33\n0:#00E5FF 2200ms pulse 136ms; 1:#00E5FF 2200ms pulse 567ms; 2:#00E5FF 2200ms pulse 261ms; 3:#00E5FF 2200ms pulse 592ms; 4:#00E5FF 2200ms pulse 560ms; 5:#00E5FF 2200ms pulse 404ms; 6:#00E5FF 2200ms pulse 392ms; 7:#00E5FF 2200ms pulse 29ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "converge",
+   "label": "Converge",
+   "description": "Two dots leave the ends and meet in the middle. In a Split block the fronts meet mid-block.",
+   "meaning": "provider animation: converge",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "handoff",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "variant",
+     "type": "choice",
+     "default": "endpoints_to_center",
+     "description": "Convergence geometry used for merge or handoff meaning.",
+     "choices": [
+      "endpoints_to_center",
+      "source_to_destination"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#00E5FF 880ms pulse 0ms; 7:#00E5FF 880ms pulse 0ms; 1:#00E5FF 880ms pulse 440ms; 6:#00E5FF 880ms pulse 440ms; 2:#00E5FF 880ms pulse 880ms; 5:#00E5FF 880ms pulse 880ms; 3:#00E5FF 880ms pulse 1320ms; 4:#00E5FF 880ms pulse 1320ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "aurora",
+   "label": "Aurora",
+   "description": "Rolling waves of light over a luminous base.",
+   "meaning": "provider animation: aurora",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "high",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "ambient",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 1.0,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "palette",
+     "type": "palette",
+     "default": [],
+     "description": "Optional bounded aurora palette; empty derives tones from identity color.",
+     "minimum_items": 2,
+     "maximum_items": 4,
+     "allow_empty": true
+    },
+    {
+     "name": "wave_count",
+     "type": "integer",
+     "default": 2,
+     "description": "Number of slow layered waves.",
+     "minimum": 1,
+     "maximum": 4
+    },
+    {
+     "name": "seed",
+     "type": "integer",
+     "default": 617,
+     "description": "Seed for deterministic wave phases.",
+     "minimum": 0,
+     "maximum": 2147483647
+    }
+   ],
+   "preview": {
+    "program": "#003940 #001440 #004026 #110040 #003940 #001440 #004026 #110040\n0:#00E5FF 2200ms pulse 1525ms; 2:#00FF99 2200ms pulse 998ms; 4:#00E5FF 2200ms pulse 588ms; 6:#00FF99 2200ms pulse 1799ms\n1:#00FF99 2200ms pulse 1413ms; 3:#00E5FF 2200ms pulse 37ms; 5:#00FF99 2200ms pulse 970ms; 7:#00E5FF 2200ms pulse 417ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "tide",
+   "label": "Tide",
+   "description": "The bar rises to full, then the water pulls back. Shared strips ride it as the full swell.",
+   "meaning": "provider animation: tide",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "capacity",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "fill_floor",
+     "type": "number",
+     "default": 0.15,
+     "description": "Minimum filled fraction before the tide rises.",
+     "minimum": 0.0,
+     "maximum": 0.8
+    },
+    {
+     "name": "fill_range",
+     "type": "number",
+     "default": 0.85,
+     "description": "Additional filled fraction at full tide.",
+     "minimum": 0.1,
+     "maximum": 1.0
+    }
+   ],
+   "preview": {
+    "program": "#001214\n0:#008999\n1:#00E5FF 137ms cosine 0ms; 2:#00E5FF 137ms cosine 137ms; 3:#00E5FF 137ms cosine 274ms; 4:#00E5FF 137ms cosine 411ms; 5:#00E5FF 137ms cosine 548ms; 6:#00E5FF 137ms cosine 685ms; 7:#00E5FF 137ms cosine 822ms\n1:#001214 137ms cosine 822ms; 2:#001214 137ms cosine 685ms; 3:#001214 137ms cosine 548ms; 4:#001214 137ms cosine 411ms; 5:#001214 137ms cosine 274ms; 6:#001214 137ms cosine 137ms; 7:#001214 137ms cosine 0ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "marquee",
+   "label": "Marquee",
+   "description": "A palette seeded from the color, endlessly rotating around the bar. Shared strips ride it as a narrow travelling flare.",
+   "meaning": "provider animation: marquee",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "identity",
+   "parameters": [
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 2.2,
+     "description": "Length of one complete motion cycle.",
+     "minimum": 0.5,
+     "maximum": 10.0,
+     "unit": "seconds"
+    },
+    {
+     "name": "spacing",
+     "type": "integer",
+     "default": 1,
+     "description": "LED spacing between palette bands.",
+     "minimum": 1,
+     "maximum": 8
+    },
+    {
+     "name": "direction",
+     "type": "choice",
+     "default": "forward",
+     "description": "Direction of palette rotation.",
+     "choices": [
+      "forward",
+      "reverse"
+     ]
+    },
+    {
+     "name": "palette_rotation_degrees",
+     "type": "number",
+     "default": 48.0,
+     "description": "Derived palette rotation when no explicit palette is supplied.",
+     "minimum": 0.0,
+     "maximum": 180.0,
+     "unit": "degrees"
+    },
+    {
+     "name": "pass_mode",
+     "type": "choice",
+     "default": "continuous",
+     "description": "Continuous loop or a bounded transition pass count.",
+     "choices": [
+      "continuous",
+      "once",
+      "twice"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#00E5FF #0019FF #00E5FF #0019FF #00E5FF #0019FF #00E5FF #0019FF\nroll-right 2200ms linear\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "steady",
+   "label": "Steady",
+   "description": "Holds its color. Never moves.",
+   "meaning": "provider animation: steady",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "persistent",
+   "parameters": [
+    {
+     "name": "luminance",
+     "type": "number",
+     "default": 1.0,
+     "description": "Relative persistent luminance.",
+     "minimum": 0.05,
+     "maximum": 1.0
+    }
+   ],
+   "preview": {
+    "program": "#00E5FF",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "blink",
+   "label": "Blink",
+   "description": "Hard-edged on/off, no easing.",
+   "meaning": "provider animation: blink",
+   "surfaces": [
+    "screen_bar",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "steady",
+   "version": 1,
+   "catalog": "provider_animation",
+   "role": "attention",
+   "parameters": [
+    {
+     "name": "cadence",
+     "type": "choice",
+     "default": "calm",
+     "description": "Named cadence; arbitrary flash frequency is intentionally unsupported.",
+     "choices": [
+      "calm",
+      "deliberate",
+      "double"
+     ]
+    },
+    {
+     "name": "repeat",
+     "type": "boolean",
+     "default": true,
+     "description": "Repeat the selected named cadence."
+    }
+   ],
+   "preview": {
+    "program": "#00E5FF 1100ms none\noff 1100ms none\nrepeat",
+    "led_count": 8
+   },
+   "cadence": {
+    "id": "calm",
+    "label": "Calm",
+    "on_ms": 1100,
+    "off_ms": 1100,
+    "pulses": 1,
+    "rest_ms": 0
+   }
+  },
+  {
+   "id": "none",
+   "label": "No effect",
+   "description": "Hold the selected color steady.",
+   "meaning": "steady color",
+   "surfaces": [
+    "status_bar",
+    "screen_bar",
+    "sidepulse_pro",
+    "sidepulse_dot",
+    "glance_light",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": null,
+   "role": "general",
+   "catalog": "general",
+   "parameters": [],
+   "version": 1,
+   "preview": {
+    "program": "#00E5FF",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "pulse",
+   "label": "Pulse",
+   "description": "A restrained brightness pulse.",
+   "meaning": "periodic activity",
+   "surfaces": [
+    "status_bar",
+    "screen_bar",
+    "sidepulse_pro",
+    "sidepulse_dot",
+    "glance_light",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "none",
+   "role": "general",
+   "catalog": "general",
+   "parameters": [],
+   "version": 1,
+   "preview": {
+    "program": "off 160ms cosine\n#00E5FF 1600ms pulse\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "rainbow",
+   "label": "Rainbow",
+   "description": "Cycle through the selected palette.",
+   "meaning": "cycling color activity",
+   "surfaces": [
+    "status_bar",
+    "screen_bar",
+    "sidepulse_pro",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "none",
+   "role": "general",
+   "catalog": "general",
+   "parameters": [],
+   "version": 1,
+   "preview": {
+    "program": "#FF0044 #FF7B00 #C3FF00 #04FF00 #00FFBB #0084FF #3C00FF #FB00FF\nroll 2s linear\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "alert",
+   "label": "Alert",
+   "description": "A high-visibility attention signal.",
+   "meaning": "attention required",
+   "surfaces": [
+    "status_bar",
+    "screen_bar",
+    "sidepulse_pro",
+    "sidepulse_dot",
+    "glance_light",
+    "settings_preview"
+   ],
+   "safety": "attention",
+   "energy": "high",
+   "reduce_motion_fallback": "pulse",
+   "role": "general",
+   "catalog": "general",
+   "parameters": [],
+   "version": 1,
+   "preview": {
+    "program": "#FF3A00 500ms none\noff 500ms none\nrepeat",
+    "led_count": 8
+   },
+   "cadence": {
+    "id": "deliberate",
+    "label": "Deliberate",
+    "on_ms": 500,
+    "off_ms": 500,
+    "pulses": 1,
+    "rest_ms": 0
+   }
+  },
+  {
+   "id": "notification",
+   "label": "Notification",
+   "description": "A short notification flash.",
+   "meaning": "new event",
+   "surfaces": [
+    "status_bar",
+    "screen_bar",
+    "sidepulse_pro",
+    "sidepulse_dot",
+    "glance_light",
+    "settings_preview"
+   ],
+   "safety": "attention",
+   "energy": "low",
+   "reduce_motion_fallback": "none",
+   "role": "general",
+   "catalog": "general",
+   "parameters": [],
+   "version": 1,
+   "preview": {
+    "program": "#00E5FF 300ms none\noff 300ms none\n#00E5FF 300ms none\noff 1400ms cosine",
+    "led_count": 8
+   },
+   "cadence": {
+    "id": "double",
+    "label": "Deliberate double",
+    "on_ms": 300,
+    "off_ms": 300,
+    "pulses": 2,
+    "rest_ms": 1400
+   }
+  },
+  {
+   "id": "pack:nightlab:ember",
+   "label": "Ember",
+   "description": "A low warm shimmer for late sessions.",
+   "meaning": "quiet presence",
+   "surfaces": [
+    "screen_bar",
+    "sidepulse_pro",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": "pack:nightlab:coal",
+   "version": 2,
+   "catalog": "pack:nightlab",
+   "role": "general",
+   "pack": "nightlab",
+   "parameters": [
+    {
+     "name": "color",
+     "type": "color",
+     "default": "#FF7A1A",
+     "description": "Color (pack value)."
+    },
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 3.0,
+     "description": "Duration seconds (pack value).",
+     "minimum": 0.0,
+     "maximum": 10.0
+    },
+    {
+     "name": "luminance_floor",
+     "type": "number",
+     "default": 0.25,
+     "description": "Luminance floor (pack value).",
+     "minimum": 0.0,
+     "maximum": 10.0
+    },
+    {
+     "name": "motion",
+     "type": "choice",
+     "default": "flicker",
+     "description": "Base motion the pack effect is rendered with.",
+     "choices": [
+      "aurora",
+      "auto",
+      "blink",
+      "breathe",
+      "chase",
+      "comet",
+      "converge",
+      "drift",
+      "duotone",
+      "flicker",
+      "gradient",
+      "heartbeat",
+      "kitt",
+      "marquee",
+      "scanner",
+      "stack",
+      "steady",
+      "tide",
+      "twinkle"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#85400E 375ms cosine\n#73370C 375ms cosine\n#A14D10 375ms cosine\n#75380C 375ms cosine\n#8F440F 375ms cosine\n#A04C10 375ms cosine\n#B75813 375ms cosine\n#4B2408 375ms cosine\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "pack:nightlab:coal",
+   "label": "Coal",
+   "description": "The ember at rest.",
+   "meaning": "quiet presence",
+   "surfaces": [
+    "screen_bar",
+    "sidepulse_pro",
+    "sidepulse_dot",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "low",
+   "reduce_motion_fallback": null,
+   "version": 2,
+   "catalog": "pack:nightlab",
+   "role": "general",
+   "pack": "nightlab",
+   "parameters": [
+    {
+     "name": "color",
+     "type": "color",
+     "default": "#8A2E00",
+     "description": "Color (pack value)."
+    },
+    {
+     "name": "luminance",
+     "type": "number",
+     "default": 0.6,
+     "description": "Luminance (pack value).",
+     "minimum": 0.0,
+     "maximum": 10.0
+    },
+    {
+     "name": "motion",
+     "type": "choice",
+     "default": "steady",
+     "description": "Base motion the pack effect is rendered with.",
+     "choices": [
+      "aurora",
+      "auto",
+      "blink",
+      "breathe",
+      "chase",
+      "comet",
+      "converge",
+      "drift",
+      "duotone",
+      "flicker",
+      "gradient",
+      "heartbeat",
+      "kitt",
+      "marquee",
+      "scanner",
+      "stack",
+      "steady",
+      "tide",
+      "twinkle"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#531C00",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "pack:nightlab:lighthouse",
+   "label": "Lighthouse",
+   "description": "A slow beam that sweeps past every few seconds.",
+   "meaning": "periodic activity",
+   "surfaces": [
+    "screen_bar",
+    "sidepulse_pro",
+    "settings_preview"
+   ],
+   "safety": "safe",
+   "energy": "medium",
+   "reduce_motion_fallback": "pack:nightlab:coal",
+   "version": 2,
+   "catalog": "pack:nightlab",
+   "role": "general",
+   "pack": "nightlab",
+   "parameters": [
+    {
+     "name": "beam_width",
+     "type": "integer",
+     "default": 2,
+     "description": "Beam width (pack value).",
+     "minimum": 0,
+     "maximum": 10
+    },
+    {
+     "name": "color",
+     "type": "color",
+     "default": "#FFE9B0",
+     "description": "Color (pack value)."
+    },
+    {
+     "name": "duration_seconds",
+     "type": "number",
+     "default": 4.0,
+     "description": "Duration seconds (pack value).",
+     "minimum": 0.0,
+     "maximum": 10.0
+    },
+    {
+     "name": "motion",
+     "type": "choice",
+     "default": "scanner",
+     "description": "Base motion the pack effect is rendered with.",
+     "choices": [
+      "aurora",
+      "auto",
+      "blink",
+      "breathe",
+      "chase",
+      "comet",
+      "converge",
+      "drift",
+      "duotone",
+      "flicker",
+      "gradient",
+      "heartbeat",
+      "kitt",
+      "marquee",
+      "scanner",
+      "stack",
+      "steady",
+      "tide",
+      "twinkle"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#14130E\n0:#FFE9B0 593ms pulse 0ms; 1:#FFE9B0 593ms pulse 250ms; 2:#FFE9B0 593ms pulse 500ms; 3:#FFE9B0 593ms pulse 750ms; 4:#FFE9B0 593ms pulse 1000ms; 5:#FFE9B0 593ms pulse 1250ms; 6:#FFE9B0 593ms pulse 1500ms; 7:#FFE9B0 593ms pulse 1750ms\n0:#FFE9B0 593ms pulse 1750ms; 1:#FFE9B0 593ms pulse 1500ms; 2:#FFE9B0 593ms pulse 1250ms; 3:#FFE9B0 593ms pulse 1000ms; 4:#FFE9B0 593ms pulse 750ms; 5:#FFE9B0 593ms pulse 500ms; 6:#FFE9B0 593ms pulse 250ms; 7:#FFE9B0 593ms pulse 0ms\nrepeat",
+    "led_count": 8
+   }
+  },
+  {
+   "id": "pack:nightlab:beacon",
+   "label": "Beacon",
+   "description": "A hard red beacon for things that cannot wait.",
+   "meaning": "critical alert",
+   "surfaces": [
+    "screen_bar",
+    "sidepulse_pro",
+    "sidepulse_dot",
+    "settings_preview"
+   ],
+   "safety": "critical",
+   "energy": "high",
+   "reduce_motion_fallback": "pack:nightlab:coal",
+   "version": 2,
+   "catalog": "pack:nightlab",
+   "role": "general",
+   "pack": "nightlab",
+   "parameters": [
+    {
+     "name": "cadence",
+     "type": "choice",
+     "default": "deliberate",
+     "description": "Named blink cadence.",
+     "choices": [
+      "calm",
+      "deliberate",
+      "double"
+     ]
+    },
+    {
+     "name": "color",
+     "type": "color",
+     "default": "#FF2D1A",
+     "description": "Color (pack value)."
+    },
+    {
+     "name": "motion",
+     "type": "choice",
+     "default": "blink",
+     "description": "Base motion the pack effect is rendered with.",
+     "choices": [
+      "aurora",
+      "auto",
+      "blink",
+      "breathe",
+      "chase",
+      "comet",
+      "converge",
+      "drift",
+      "duotone",
+      "flicker",
+      "gradient",
+      "heartbeat",
+      "kitt",
+      "marquee",
+      "scanner",
+      "stack",
+      "steady",
+      "tide",
+      "twinkle"
+     ]
+    }
+   ],
+   "preview": {
+    "program": "#FF2D1A 500ms none\noff 500ms none\nrepeat",
+    "led_count": 8
+   },
+   "cadence": {
+    "id": "deliberate",
+    "label": "Deliberate",
+    "on_ms": 500,
+    "off_ms": 500,
+    "pulses": 1,
+    "rest_ms": 0
+   }
+  }
+ ],
+ "packs": [
+  {
+   "id": "nightlab",
+   "name": "Night Lab",
+   "version": 2,
+   "effects": [
+    "pack:nightlab:ember",
+    "pack:nightlab:coal",
+    "pack:nightlab:lighthouse",
+    "pack:nightlab:beacon"
+   ],
+   "license": {
+    "spdx_id": "CC0-1.0",
+    "label": "Creative Commons Zero",
+    "source_url": "https://example.org/nightlab"
+   }
+  }
+ ],
+ "cadences": [
+  {
+   "id": "calm",
+   "label": "Calm",
+   "on_ms": 1100,
+   "off_ms": 1100,
+   "pulses": 1,
+   "rest_ms": 0
+  },
+  {
+   "id": "deliberate",
+   "label": "Deliberate",
+   "on_ms": 500,
+   "off_ms": 500,
+   "pulses": 1,
+   "rest_ms": 0
+  },
+  {
+   "id": "double",
+   "label": "Deliberate double",
+   "on_ms": 300,
+   "off_ms": 300,
+   "pulses": 2,
+   "rest_ms": 1400
+  }
+ ],
+ "generation": 1
+}

@@ -47,6 +47,14 @@ struct LightingPage: View {
             SettingSlider(store, "Cycle speed", subtitle: "One breath, in seconds.", path: "colors.cycle_speed_seconds", in: 0.5...8, step: 0.1, default: 2.2, format: SettingsStore.seconds)
             SettingToggle(store, "Celebrate completions", subtitle: "A twinkle-then-bloom flourish when a session settles into Done.",
                           path: "colors.done_celebration_enabled", default: true)
+            LabeledContent {
+                LEDStripPreview(program: LightingPreviewPrograms.celebration(colorHex: celebrationColor), style: .dots, dotSize: 9, spacing: 6)
+                    .frame(width: 168)
+                    .opacity((store.document.bool("colors.done_celebration_enabled") ?? true) ? 1 : 0.35)
+                    .accessibilityLabel("Done celebration preview")
+            } label: {
+                SettingLabel(title: "Celebration preview", subtitle: "The ripple, bloom and hold the strip plays; the Screen Bar blends the same frames.")
+            }
         } header: {
             Text("Blend")
         }
@@ -79,9 +87,9 @@ struct LightingPage: View {
             SettingPicker(store, "Active scene", subtitle: "A presentation policy: brightness, motion and notification admission as one choice.",
                           path: "active_scene", options: Self.scenes, default: "calm")
             LabeledContent {
-                Button("Effects…") { store.route = [.effects] }
+                Button("Effects…") { store.onOpenEffects?() }
             } label: {
-                SettingLabel(title: "Effect Studio", subtitle: "Assign looks to providers, states and devices.")
+                SettingLabel(title: "Effect Studio", subtitle: "Browse the registry and packs, tune parameters with a live preview, and assign looks to states, scenes, providers and devices.")
             }
         } header: {
             Text("Scene")
@@ -92,8 +100,19 @@ struct LightingPage: View {
         let mode = store.document.string("colors.blend_mode") ?? "round_robin"
         return Self.blendModes.first { $0.value == mode }?.detail ?? ""
     }
+
+    /// The colour the celebration plays in: the document's done colour when
+    /// it has one, else the firmware reference green.
+    private var celebrationColor: String {
+        for path in ["colors.done_celebration_color", "colors.mode_colors.done", "colors.status_colors.done", "colors.status_colors.completed"] {
+            if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
+        }
+        return "#00FF66"
+    }
 }
 
+/// A provider's colour well beside a tiny live preview of its working
+/// animation under the current blend mode and cycle speed.
 struct ProviderSwatch: View {
     @Bindable var store: SettingsStore
     let provider: String
@@ -101,17 +120,27 @@ struct ProviderSwatch: View {
     var body: some View {
         let style = ProviderStyle.style(for: provider)
         let path = "colors.agent_colors.\(provider)"
+        let hex = store.document.string(SettingsPath(path)) ?? style.accentHex
+        let blend = store.document.string("colors.blend_mode") ?? "round_robin"
+        let cycle = store.document.double(SettingsPath("colors.cycle_speed_seconds")) ?? 2.2
         HStack(spacing: 8) {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)
                 .labelsHidden()
                 .disabled(!store.isProvided(path))
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(style.name)
-                Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.tertiary)
+                HStack(spacing: 6) {
+                    LEDStripPreview(program: LightingPreviewPrograms.working(colorHex: hex, blendMode: blend, cycleSeconds: cycle),
+                                    style: .band, dotSize: 5, showsBackground: false)
+                        .frame(width: 44)
+                        .accessibilityLabel("\(style.name) working animation preview")
+                    Text(store.document.string(SettingsPath(path)) ?? (store.hasDocument ? "not provided" : style.accentHex))
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
+        .help("How \(style.name) looks while working: \(LightingPage.blendModes.first { $0.value == blend }?.label ?? blend), one cycle every \(SettingsStore.seconds(cycle))")
     }
 }
 
@@ -134,46 +163,6 @@ struct FadeRow: View {
                 }
             }
         }
-    }
-}
-
-/// Placeholder for the Effect Studio, which is a later slice.
-struct EffectsPage: View {
-    @Bindable var store: SettingsStore
-
-    var body: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Button {
-                    store.route = []
-                } label: {
-                    Label("Lighting", systemImage: "chevron.left")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
-                Spacer()
-            }
-            Spacer()
-            Image(systemName: "sparkles.rectangle.stack")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("Effect Studio is coming")
-                .font(.title3.weight(.semibold))
-            Text("Effects will let you assign a look (breathe, chase, heartbeat, scanner, gradient and your own programs) to a provider, a state, or a device, and preview it on the strip and the Screen Bar before it goes live. The core already accepts `apply_effect`; the editor arrives in a later build.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 420)
-            if let scene = store.document.string("active_scene") {
-                Text("Active scene: \(scene.capitalized)")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer()
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(20)
-        .navigationBarBackButtonHidden(false)
     }
 }
 

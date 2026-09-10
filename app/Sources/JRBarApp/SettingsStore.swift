@@ -59,14 +59,10 @@ final class SettingsStore {
         var catalogue: SettingsKey.Page { SettingsKey.Page(rawValue: rawValue)! }
     }
 
-    /// A push onto the detail column: Effects lives behind Lighting.
-    enum Route: Hashable {
-        case effects
-    }
-
     let core: CoreModel
     var page: Page = .general
-    var route: [Route] = []
+    /// Lighting › Effects… opens the Effect Studio window.
+    var onOpenEffects: (@MainActor () -> Void)?
     var calibrating: String?
     var doctorReport: JSONValue?
     var doctorRunning = false

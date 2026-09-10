@@ -1,0 +1,40 @@
+{
+ "assignments": [
+  {
+   "effect_id": "breathe",
+   "scope": "global",
+   "target_id": null,
+   "parameters": {}
+  },
+  {
+   "effect_id": "chase",
+   "scope": "semantic",
+   "target_id": "working",
+   "parameters": {
+    "duration_seconds": 1.6
+   }
+  },
+  {
+   "effect_id": "steady",
+   "scope": "scene",
+   "target_id": "night",
+   "parameters": {
+    "luminance": 0.4
+   }
+  },
+  {
+   "effect_id": "heartbeat",
+   "scope": "provider",
+   "target_id": "claude",
+   "parameters": {}
+  },
+  {
+   "effect_id": "pack:nightlab:ember",
+   "scope": "device",
+   "target_id": "sidepulse:dot:7F02C4",
+   "parameters": {}
+  }
+ ],
+ "active_scene": "calm",
+ "generation": 1
+}

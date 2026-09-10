@@ -291,13 +291,17 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     public var fidelity: String?
     public var state: String?
     public var forecast: CoreUsageForecast?
+    /// Plan, account label and fidelity when the daemon knows them
+    /// (app-proposed; `usage_history` carries the same block).
+    public var account: UsageAccount?
 
-    public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil) {
+    public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil, account: UsageAccount? = nil) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
         self.state = state
         self.forecast = forecast
+        self.account = account
     }
 
     public init(from decoder: Decoder) throws {
@@ -307,6 +311,14 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         fidelity = try c.decodeIfPresent(String.self, forKey: .fidelity)
         state = try c.decodeIfPresent(String.self, forKey: .state)
         forecast = try c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
+        account = try c.decodeIfPresent(UsageAccount.self, forKey: .account)
+    }
+
+    /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI
+    /// has to log in before the daemon can read anything.
+    public var isSignedOut: Bool {
+        guard let state = state?.lowercased() else { return false }
+        return state.contains("sign") || state.contains("auth") || state.contains("login")
     }
 
     /// Anything the daemon did not measure directly (`derived`, `estimated`, …).
