@@ -24,6 +24,14 @@ Commands are logged to stderr and answered with an ok reply; answer_ask,
 set_brightness, clear_completed / undo_clear, quiet and snooze also change
 the world so the UI round-trips.
 
+App-proposed extensions (documented in app/README.md): `usage_history`
+(deterministic daily/hourly token and cost rows per provider), `list_effects`
+(the effect registry mirrored from src/jrbar/effect_registry.py plus a sample
+data-only pack, each effect with a rendered 8-LED LEDS preview),
+`render_effect` (the preview for chosen parameters), `list_assignments` /
+`set_assignment` / `clear_assignment` (scoped effect assignments), and
+`import_effect_pack` / `export_effect_pack` (JSON v2 packs by path).
+
 Standard library only.
 
   mock-core.py                       # listen on ~/.local/state/jrbar/core.sock
@@ -69,6 +77,639 @@ CODEX_ID = "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c"
 GEMINI_ID = "gemini:session:8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a"
 PRO_ID = "sidepulse:pro:B293A1"
 DOT_ID = "sidepulse:dot:7F02C4"
+
+# --------------------------------------------------------------------------
+# Effects: the registry mirrored from src/jrbar/effect_registry.py (captured
+# 2026-09-09), a parametric LEDS renderer for previews, and data-only packs.
+# --------------------------------------------------------------------------
+
+import colorsys
+import random
+
+EFFECT_BASE_COLOR = "#00E5FF"
+MIN_CYCLE_SECONDS = 0.3
+MAX_CYCLE_SECONDS = 10.0
+DEFAULT_CYCLE_SECONDS = 2.2
+MIN_FLASH_CYCLE_MS = 500
+
+BLINK_CADENCES = [
+    {"id": "calm", "label": "Calm", "on_ms": 1100, "off_ms": 1100, "pulses": 1, "rest_ms": 0},
+    {"id": "deliberate", "label": "Deliberate", "on_ms": 500, "off_ms": 500, "pulses": 1, "rest_ms": 0},
+    {"id": "double", "label": "Deliberate double", "on_ms": 300, "off_ms": 300, "pulses": 2, "rest_ms": 1400},
+]
+
+
+def _num(name, default, description, minimum, maximum, unit=None):
+    p = {"name": name, "type": "number", "default": float(default), "description": description,
+         "minimum": float(minimum), "maximum": float(maximum)}
+    if unit:
+        p["unit"] = unit
+    return p
+
+
+def _int(name, default, description, minimum, maximum):
+    return {"name": name, "type": "integer", "default": int(default), "description": description,
+            "minimum": int(minimum), "maximum": int(maximum)}
+
+
+def _choice(name, default, description, choices):
+    return {"name": name, "type": "choice", "default": default, "description": description, "choices": list(choices)}
+
+
+def _bool(name, default, description):
+    return {"name": name, "type": "boolean", "default": bool(default), "description": description}
+
+
+def _palette(name, description, maximum_items):
+    return {"name": name, "type": "palette", "default": [], "description": description,
+            "minimum_items": 2, "maximum_items": maximum_items, "allow_empty": True}
+
+
+def _duration(minimum=None):
+    return _num("duration_seconds", DEFAULT_CYCLE_SECONDS, "Length of one complete motion cycle.",
+                MIN_CYCLE_SECONDS if minimum is None else minimum, MAX_CYCLE_SECONDS, unit="seconds")
+
+
+_DIRECTIONS = ("forward", "reverse")
+_PASS_MODES = ("continuous", "once", "twice")
+
+PROVIDER_ANIMATIONS = [
+    # id, label, description, role, energy, parameters
+    ("auto", "Automatic", "Follows the state: breathe when idle, chase while working.", "adaptive", "low", [
+        _choice("mapping_source", "state", "Choose the current state map or a Scene-specific map.", ("state", "scene")),
+        _bool("urgent_overrides", True, "Keep reserved asking and failure motion overrides visible."),
+    ]),
+    ("breathe", "Breathe", "One slow swell, every LED together.", "ambient", "low", [
+        _duration(), _num("amplitude", 1.0, "Relative distance between the luminous floor and crest.", 0.1, 1.0),
+    ]),
+    ("duotone", "Duotone", "A slow swell that alternates between two tones of the color. Cycle turns keep both tones; interleaved strips breathe.", "identity_state", "medium", [
+        _duration(),
+        _num("secondary_hue_offset_degrees", 40.0, "Hue offset used when no explicit two-color palette is supplied.", -180.0, 180.0, unit="degrees"),
+        _palette("palette", "Optional validated identity and state colors; empty derives both tones.", 2),
+    ]),
+    ("chase", "Chase", "The same swell, staggered into a travelling wave.", "directional_flow", "medium", [
+        _duration(), _choice("direction", "forward", "Direction of travel.", _DIRECTIONS),
+        _int("spacing", 1, "LED spacing between wave crests.", 1, 6),
+        _num("softness", 1.0, "Edge softness of the travelling wave.", 0.0, 1.0),
+    ]),
+    ("gradient", "Gradient", "The travelling wave, but each LED carries its own shade of the color — a gradient rolling by. Shared strips keep the flare; Cycle turns keep the shades.", "ambient", "medium", [
+        _duration(), _choice("direction", "forward", "Direction of gradient travel.", _DIRECTIONS),
+        _num("hue_span_degrees", 48.0, "Derived palette span when no explicit endpoints are supplied.", 0.0, 120.0, unit="degrees"),
+        _palette("palette", "Optional bounded gradient endpoints; empty derives them from identity color.", 2),
+        _bool("smooth_morph", True, "Morph smoothly when state colors change."),
+    ]),
+    ("heartbeat", "Heartbeat", "Two quick swells, then a long rest — a lub-dub.", "provider_identity", "medium", [
+        _duration(0.5), _num("rest_ratio", 0.5, "Fraction of the cycle reserved after the decorative lub-dub.", 0.35, 0.8),
+    ]),
+    ("scanner", "Scanner", "A bright dot sweeps end to end and bounces back. Shared strips ride it as a narrow travelling flare.", "mechanical", "medium", [
+        _duration(0.5), _int("beam_width", 1, "Width of the bright scanning beam in LEDs.", 1, 8),
+        _num("trail", 0.35, "Relative length of the fading trail.", 0.0, 1.0),
+    ]),
+    ("kitt", "Knight Rider", "The classic scanner: a wide bright eye sweeps end to end and back, overlapping as it goes. Shared strips ride it as a narrow travelling flare.", "mechanical", "medium", [
+        _duration(0.5), _int("beam_width", 3, "Width of the overlapping mechanical eye.", 2, 10),
+        _num("overlap", 0.5, "Overlap between the eye's light bands.", 0.1, 1.0),
+    ]),
+    ("comet", "Comet", "A bright head sweeps one way, trailing off behind. Shared strips ride it as a narrow travelling flare.", "transition", "medium", [
+        _duration(0.5), _int("head_width", 1, "Width of the bright comet head in LEDs.", 1, 6),
+        _int("trail_length", 3, "Length of the fading trail in LEDs.", 1, 12),
+        _choice("direction", "forward", "Direction of comet travel.", _DIRECTIONS),
+        _choice("pass_mode", "continuous", "Continuous loop or a bounded transition pass count.", _PASS_MODES),
+    ]),
+    ("flicker", "Flicker", "A warm candle-like shimmer that never quite repeats.", "ambient", "medium", [
+        _duration(0.5), _int("seed", 271, "Seed for deterministic luminance variation.", 0, 2_147_483_647),
+        _num("luminance_floor", 0.35, "Lowest relative luminance.", 0.1, 0.8),
+        _num("variation", 0.25, "Maximum deterministic luminance variation.", 0.0, 0.5),
+    ]),
+    ("stack", "Stack", "LEDs pile on one by one until full, then it all lets go. Keeps its hard pile-on in shared strips.", "progress", "medium", [
+        _duration(0.5), _choice("fill_direction", "forward", "Direction in which LEDs accumulate.", _DIRECTIONS),
+        _choice("release_behavior", "all_at_once", "How a completed stack returns to its luminous floor.", ("all_at_once", "hold", "decay")),
+        _choice("data_mapping", "none", "Optional reliable count represented by the stack.", ("none", "queue", "milestone")),
+    ]),
+    ("twinkle", "Twinkle", "A dim base with single LEDs briefly sparking, scattered.", "ambient", "medium", [
+        _duration(0.5), _num("density", 0.15, "Maximum fraction of LEDs sparkling at once.", 0.02, 0.3),
+        _int("seed", 271, "Seed for deterministic sparkle placement.", 0, 2_147_483_647),
+        _int("max_cluster", 1, "Largest allowed adjacent sparkle cluster.", 1, 2),
+    ]),
+    ("drift", "Drift", "Glacial detuned swells, like light on slow water.", "ambient", "low", [
+        _duration(1.0), _num("detune", 0.08, "Phase variation between slow luminous swells.", 0.0, 0.25),
+        _num("sample_interval_seconds", 0.25, "Minimum cadence for deterministic drift updates.", 0.1, 2.0, unit="seconds"),
+    ]),
+    ("converge", "Converge", "Two dots leave the ends and meet in the middle. In a Split block the fronts meet mid-block.", "handoff", "medium", [
+        _duration(0.5), _choice("variant", "endpoints_to_center", "Convergence geometry used for merge or handoff meaning.", ("endpoints_to_center", "source_to_destination")),
+    ]),
+    ("aurora", "Aurora", "Rolling waves of light over a luminous base.", "ambient", "high", [
+        _duration(1.0), _palette("palette", "Optional bounded aurora palette; empty derives tones from identity color.", 4),
+        _int("wave_count", 2, "Number of slow layered waves.", 1, 4),
+        _int("seed", 617, "Seed for deterministic wave phases.", 0, 2_147_483_647),
+    ]),
+    ("tide", "Tide", "The bar rises to full, then the water pulls back. Shared strips ride it as the full swell.", "capacity", "medium", [
+        _duration(0.5), _num("fill_floor", 0.15, "Minimum filled fraction before the tide rises.", 0.0, 0.8),
+        _num("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 1.0),
+    ]),
+    ("marquee", "Marquee", "A palette seeded from the color, endlessly rotating around the bar. Shared strips ride it as a narrow travelling flare.", "identity", "medium", [
+        _duration(0.5), _int("spacing", 1, "LED spacing between palette bands.", 1, 8),
+        _choice("direction", "forward", "Direction of palette rotation.", _DIRECTIONS),
+        _num("palette_rotation_degrees", 48.0, "Derived palette rotation when no explicit palette is supplied.", 0.0, 180.0, unit="degrees"),
+        _choice("pass_mode", "continuous", "Continuous loop or a bounded transition pass count.", _PASS_MODES),
+    ]),
+    ("steady", "Steady", "Holds its color. Never moves.", "persistent", "low", [
+        _num("luminance", 1.0, "Relative persistent luminance.", 0.05, 1.0),
+    ]),
+    ("blink", "Blink", "Hard-edged on/off, no easing.", "attention", "medium", [
+        _choice("cadence", "calm", "Named cadence; arbitrary flash frequency is intentionally unsupported.", tuple(c["id"] for c in BLINK_CADENCES)),
+        _bool("repeat", True, "Repeat the selected named cadence."),
+    ]),
+]
+
+ALL_SURFACES = ["status_bar", "screen_bar", "sidepulse_pro", "sidepulse_dot", "glance_light", "settings_preview"]
+
+BUILTIN_EFFECTS = [
+    {"id": "none", "label": "No effect", "description": "Hold the selected color steady.", "meaning": "steady color",
+     "surfaces": ALL_SURFACES, "safety": "safe", "energy": "low", "reduce_motion_fallback": None, "role": "general", "catalog": "general", "parameters": []},
+    {"id": "pulse", "label": "Pulse", "description": "A restrained brightness pulse.", "meaning": "periodic activity",
+     "surfaces": ALL_SURFACES, "safety": "safe", "energy": "medium", "reduce_motion_fallback": "none", "role": "general", "catalog": "general", "parameters": []},
+    {"id": "rainbow", "label": "Rainbow", "description": "Cycle through the selected palette.", "meaning": "cycling color activity",
+     "surfaces": ["status_bar", "screen_bar", "sidepulse_pro", "settings_preview"], "safety": "safe", "energy": "medium", "reduce_motion_fallback": "none", "role": "general", "catalog": "general", "parameters": []},
+    {"id": "alert", "label": "Alert", "description": "A high-visibility attention signal.", "meaning": "attention required",
+     "surfaces": ALL_SURFACES, "safety": "attention", "energy": "high", "reduce_motion_fallback": "pulse", "role": "general", "catalog": "general", "parameters": [], "cadence": "deliberate"},
+    {"id": "notification", "label": "Notification", "description": "A short notification flash.", "meaning": "new event",
+     "surfaces": ALL_SURFACES, "safety": "attention", "energy": "low", "reduce_motion_fallback": "none", "role": "general", "catalog": "general", "parameters": [], "cadence": "double"},
+]
+
+# A data-only pack (JSON v2, effect_packs.py) the mock ships loaded, so the
+# library shows pack badges and Export has something namespaced to write.
+SAMPLE_PACK = {
+    "id": "nightlab",
+    "name": "Night Lab",
+    "version": 2,
+    "safety": {"data_only": True, "network": False},
+    "accessibility": {"reduced_motion": True, "high_contrast": True},
+    "license": {"spdx_id": "CC0-1.0", "label": "Creative Commons Zero", "source_url": "https://example.org/nightlab"},
+    "effects": [
+        {"id": "ember", "label": "Ember", "description": "A low warm shimmer for late sessions.", "meaning": "quiet presence",
+         "surfaces": ["screen_bar", "sidepulse_pro", "settings_preview"], "safety": "safe", "energy": "low",
+         "reduce_motion_fallback": "coal", "motion": "flicker", "color": "#FF7A1A", "duration_seconds": 3.0, "luminance_floor": 0.25},
+        {"id": "coal", "label": "Coal", "description": "The ember at rest.", "meaning": "quiet presence",
+         "surfaces": ["screen_bar", "sidepulse_pro", "sidepulse_dot", "settings_preview"], "safety": "safe", "energy": "low",
+         "motion": "steady", "color": "#8A2E00", "luminance": 0.6},
+        {"id": "lighthouse", "label": "Lighthouse", "description": "A slow beam that sweeps past every few seconds.", "meaning": "periodic activity",
+         "surfaces": ["screen_bar", "sidepulse_pro", "settings_preview"], "safety": "safe", "energy": "medium",
+         "reduce_motion_fallback": "coal", "motion": "scanner", "color": "#FFE9B0", "duration_seconds": 4.0, "beam_width": 2},
+        {"id": "beacon", "label": "Beacon", "description": "A hard red beacon for things that cannot wait.", "meaning": "critical alert",
+         "surfaces": ["screen_bar", "sidepulse_pro", "sidepulse_dot", "settings_preview"], "safety": "critical", "energy": "high",
+         "reduce_motion_fallback": "coal", "motion": "blink", "color": "#FF2D1A", "cadence": "deliberate"},
+    ],
+}
+
+_PACK_METADATA_KEYS = {"id", "label", "description", "meaning", "surfaces", "safety", "energy", "reduce_motion_fallback"}
+_PACK_CODE_KEYS = {"callback", "code", "command", "entrypoint", "executable", "handler", "hook", "import", "module", "plugin", "script"}
+_MOTION_IDS = {row[0] for row in PROVIDER_ANIMATIONS}
+
+
+def _is_hex(value) -> bool:
+    return isinstance(value, str) and len(value) == 7 and value[0] == "#" and all(c in "0123456789abcdefABCDEF" for c in value[1:])
+
+
+def _infer_parameter(name: str, value):
+    """Pack effects carry untyped data; type them for the studio's controls."""
+    if isinstance(value, bool):
+        return _bool(name, value, f"{name.replace('_', ' ').capitalize()} (pack value).")
+    if isinstance(value, int):
+        return _int(name, value, f"{name.replace('_', ' ').capitalize()} (pack value).", 0, max(10, value * 2))
+    if isinstance(value, float):
+        return _num(name, value, f"{name.replace('_', ' ').capitalize()} (pack value).", 0.0, max(10.0, value * 2))
+    if _is_hex(value):
+        return {"name": name, "type": "color", "default": value.upper(), "description": f"{name.replace('_', ' ').capitalize()} (pack value)."}
+    if isinstance(value, list) and value and all(_is_hex(v) for v in value):
+        return {"name": name, "type": "palette", "default": [v.upper() for v in value], "description": f"{name.replace('_', ' ').capitalize()} (pack value).",
+                "minimum_items": 2, "maximum_items": max(len(value), 4), "allow_empty": False}
+    if name == "motion" and isinstance(value, str):
+        return _choice(name, value if value in _MOTION_IDS else "breathe", "Base motion the pack effect is rendered with.", sorted(_MOTION_IDS))
+    if name == "cadence" and isinstance(value, str):
+        return _choice(name, value, "Named blink cadence.", tuple(c["id"] for c in BLINK_CADENCES))
+    return _choice(name, str(value), f"{name.replace('_', ' ').capitalize()} (pack value).", (str(value),))
+
+
+def validate_pack(payload) -> dict:
+    """Mirror effect_packs.validate_pack: bounded, data-only, v1 migrated to v2."""
+    if not isinstance(payload, dict):
+        raise ValueError("pack must be an object")
+    pack = json.loads(json.dumps(payload))
+    version = pack.get("version", pack.get("schema_version", 1))
+    if version == 1:
+        pack["version"] = 2
+        pack.setdefault("safety", {"data_only": True, "network": False})
+        pack.setdefault("accessibility", {"reduced_motion": True, "high_contrast": True})
+    if pack.get("version") != 2:
+        raise ValueError("unsupported pack version")
+    if len(json.dumps(pack)) > 256_000:
+        raise ValueError("pack exceeds size limit")
+
+    def reject_code(value, path="pack"):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if not isinstance(key, str) or key.lower() in _PACK_CODE_KEYS:
+                    raise ValueError(f"{path} contains executable content")
+                reject_code(child, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                reject_code(child, f"{path}[{index}]")
+        elif isinstance(value, str):
+            lowered = value.lower()
+            if any(marker in lowered for marker in ("python", "subprocess", "/bin/", "eval(", "exec(")):
+                raise ValueError(f"{path} contains executable content")
+
+    reject_code(pack)
+    pack_id = pack.get("id", pack.get("pack_id"))
+    if not isinstance(pack_id, str) or not pack_id or not all(c.islower() or c.isdigit() or c in "._-" for c in pack_id):
+        raise ValueError("id must be a lowercase data identifier")
+    pack["id"] = pack_id
+    if not isinstance(pack.get("name"), str) or not pack["name"].strip():
+        raise ValueError("name must be a non-empty bounded string")
+    effects = pack.get("effects")
+    if not isinstance(effects, list) or len(effects) > 128:
+        raise ValueError("effects must be a bounded list")
+    seen = set()
+    for index, effect in enumerate(effects):
+        if not isinstance(effect, dict) or not isinstance(effect.get("id"), str) or not effect["id"]:
+            raise ValueError(f"effects[{index}] needs an id")
+        if effect["id"] in seen:
+            raise ValueError(f"duplicate effect identifier: {effect['id']}")
+        seen.add(effect["id"])
+        effect.setdefault("label", effect["id"])
+        fallback = effect.get("reduce_motion_fallback")
+        if fallback is not None and fallback not in {e.get("id") for e in effects if isinstance(e, dict)}:
+            raise ValueError(f"effect {effect['id']} has an unknown reduced-motion fallback")
+    safety = pack.get("safety")
+    if not isinstance(safety, dict) or safety.get("data_only") is not True or safety.get("network", False) is not False:
+        raise ValueError("safety metadata must declare data_only and no network")
+    accessibility = pack.get("accessibility")
+    if not isinstance(accessibility, dict) or any(accessibility.get(k) is not True for k in ("reduced_motion", "high_contrast")):
+        raise ValueError("accessibility metadata must support reduced motion and high contrast")
+    return pack
+
+
+def pack_effect_definitions(pack: dict) -> list[dict]:
+    definitions = []
+    for effect in pack["effects"]:
+        parameters = [_infer_parameter(key, value) for key, value in sorted(effect.items()) if key not in _PACK_METADATA_KEYS]
+        fallback = effect.get("reduce_motion_fallback")
+        definitions.append({
+            "id": f"pack:{pack['id']}:{effect['id']}",
+            "label": str(effect["label"]),
+            "description": str(effect.get("description", effect["label"])),
+            "meaning": str(effect.get("meaning", f"{pack['name']}: {effect['label']}")),
+            "surfaces": list(effect.get("surfaces", ["settings_preview"])),
+            "safety": str(effect.get("safety", "safe")),
+            "energy": str(effect.get("energy", "low")),
+            "reduce_motion_fallback": f"pack:{pack['id']}:{fallback}" if fallback else None,
+            "version": pack["version"],
+            "catalog": f"pack:{pack['id']}",
+            "role": "general",
+            "pack": pack["id"],
+            "parameters": parameters,
+        })
+    return definitions
+
+
+def registry_effects() -> list[dict]:
+    effects = []
+    for identifier, label, description, role, energy, parameters in PROVIDER_ANIMATIONS:
+        effects.append({
+            "id": identifier, "label": label, "description": description, "meaning": f"provider animation: {identifier}",
+            "surfaces": ["screen_bar", "settings_preview"], "safety": "safe", "energy": energy,
+            "reduce_motion_fallback": "steady", "version": 1, "catalog": "provider_animation", "role": role,
+            "parameters": parameters,
+        })
+    for effect in BUILTIN_EFFECTS:
+        row = dict(effect)
+        row["version"] = 1
+        effects.append(row)
+    return effects
+
+
+# -- colour helpers -----------------------------------------------------------
+
+def _rgb(hex_color: str) -> tuple[float, float, float]:
+    value = int(hex_color[1:], 16)
+    return ((value >> 16 & 255) / 255.0, (value >> 8 & 255) / 255.0, (value & 255) / 255.0)
+
+
+def _hex(rgb: tuple[float, float, float]) -> str:
+    return "#%02X%02X%02X" % tuple(max(0, min(255, int(round(c * 255)))) for c in rgb)
+
+
+def _scale(hex_color: str, factor: float) -> str:
+    r, g, b = _rgb(hex_color)
+    return _hex((r * factor, g * factor, b * factor))
+
+
+def _mix(a: str, b: str, t: float) -> str:
+    ra, ga, ba = _rgb(a)
+    rb, gb, bb = _rgb(b)
+    return _hex((ra + (rb - ra) * t, ga + (gb - ga) * t, ba + (bb - ba) * t))
+
+
+def _hue_shift(hex_color: str, degrees: float) -> str:
+    h, s, v = colorsys.rgb_to_hsv(*_rgb(hex_color))
+    return _hex(colorsys.hsv_to_rgb((h + degrees / 360.0) % 1.0, s, v))
+
+
+def _ms(seconds: float) -> int:
+    return max(17, int(round(seconds * 1000)))
+
+
+def _stagger(colors_by_led: list[str], duration_ms: int, delays_ms: list[int], easing: str = "pulse") -> str:
+    return "; ".join(f"{i}:{c} {duration_ms}ms {easing} {delays_ms[i]}ms" for i, c in enumerate(colors_by_led))
+
+
+def normalize_effect_parameters(effect: dict, values) -> dict:
+    """Defaults for anything missing, bounds and choices enforced."""
+    values = values if isinstance(values, dict) else {}
+    result = {}
+    for parameter in effect.get("parameters", []):
+        name = parameter["name"]
+        kind = parameter["type"]
+        value = values.get(name, parameter["default"])
+        try:
+            if kind == "boolean":
+                value = bool(value)
+            elif kind == "integer":
+                value = int(round(float(value)))
+                value = max(parameter.get("minimum", value), min(parameter.get("maximum", value), value))
+            elif kind == "number":
+                value = float(value)
+                value = max(parameter.get("minimum", value), min(parameter.get("maximum", value), value))
+            elif kind == "choice":
+                value = value if value in parameter["choices"] else parameter["default"]
+            elif kind == "color":
+                value = value.upper() if _is_hex(value) else parameter["default"]
+            elif kind == "palette":
+                value = [v.upper() for v in value if _is_hex(v)] if isinstance(value, list) else list(parameter["default"])
+                if len(value) < parameter.get("minimum_items", 0) and not (parameter.get("allow_empty") and not value):
+                    value = list(parameter["default"])
+                value = value[: parameter.get("maximum_items", 8)]
+        except (TypeError, ValueError, AttributeError):
+            value = parameter["default"]
+        result[name] = value
+    return result
+
+
+def render_effect_program(effect: dict, values: dict, led_count: int = 8, color: str = EFFECT_BASE_COLOR) -> str:
+    """One LEDS program (≤ 20 lines, ≤ 512 bytes) for an effect and its parameters."""
+    params = normalize_effect_parameters(effect, values)
+    identifier = effect["id"]
+    n = max(2, min(8, led_count))
+    motion = identifier
+    if effect.get("pack"):
+        motion = params.get("motion", "breathe")
+        color = params.get("color", color) if _is_hex(params.get("color", "")) else color
+    if motion == "auto":
+        motion = "breathe"
+    c = color.upper()
+    d = _ms(float(params.get("duration_seconds", DEFAULT_CYCLE_SECONDS)))
+    floor = _scale(c, 0.08)
+    forward = params.get("direction", params.get("fill_direction", "forward")) == "forward"
+
+    def order(i: int) -> int:
+        return i if forward else n - 1 - i
+
+    if motion == "steady":
+        return _scale(c, float(params.get("luminance", 1.0)))
+    if motion == "none":
+        return c
+    if motion == "pulse":
+        return f"off 160ms cosine\n{c} 1600ms pulse\nrepeat"
+    if motion == "rainbow":
+        hues = " ".join(_hue_shift("#FF0044", i * 360.0 / n) for i in range(n))
+        return f"{hues}\nroll 2s linear\nrepeat"
+    if motion == "alert":
+        return f"#FF3A00 500ms none\noff 500ms none\nrepeat"
+    if motion == "notification":
+        return f"{c} 300ms none\noff 300ms none\n{c} 300ms none\noff 1400ms cosine"
+    if motion == "breathe":
+        low = _scale(c, 1.0 - 0.92 * float(params.get("amplitude", 1.0)))
+        return f"{low}\n{c} {d}ms pulse\nrepeat"
+    if motion == "duotone":
+        palette = params.get("palette") or []
+        a = palette[0] if len(palette) > 0 else c
+        b = palette[1] if len(palette) > 1 else _hue_shift(c, float(params.get("secondary_hue_offset_degrees", 40.0)))
+        return f"{a}\n{b} {d // 2}ms cosine\n{a} {d // 2}ms cosine\nrepeat"
+    if motion == "chase":
+        spacing = int(params.get("spacing", 1))
+        soft = float(params.get("softness", 1.0))
+        step = max(40, d // n) * spacing
+        delays = [order(i) * step for i in range(n)]
+        easing = "pulse" if soft >= 0.5 else "cosine"
+        return f"{floor}\n{_stagger([c] * n, d, delays, easing)}\nrepeat"
+    if motion == "gradient":
+        palette = params.get("palette") or []
+        span = float(params.get("hue_span_degrees", 48.0))
+        if len(palette) >= 2:
+            shades = [_mix(palette[0], palette[1], i / (n - 1)) for i in range(n)]
+        else:
+            shades = [_hue_shift(c, -span / 2 + span * i / (n - 1)) for i in range(n)]
+        step = max(40, d // n)
+        delays = [order(i) * step for i in range(n)]
+        return f"{floor}\n{_stagger(shades, d, delays)}\nrepeat"
+    if motion == "heartbeat":
+        rest = float(params.get("rest_ratio", 0.5))
+        beat = max(120, int(d * (1 - rest) / 2))
+        return f"{floor}\n{c} {beat}ms pulse\n{floor} {max(40, beat // 3)}ms none\n{c} {beat}ms pulse\n{floor} {max(100, int(d * rest))}ms cosine\nrepeat"
+    if motion in ("scanner", "kitt"):
+        width = int(params.get("beam_width", 1 if motion == "scanner" else 3))
+        trail = float(params.get("trail", params.get("overlap", 0.35)))
+        hold = max(40, d // (2 * n))
+        dwell = int(hold * (1.5 + 2.5 * trail))
+        lit = _scale(c, 0.55) if motion == "kitt" else c
+        fwd = []
+        back = []
+        for i in range(n):
+            delay = i * hold
+            fwd.append(f"{i}:{c if width == 1 else lit} {dwell}ms pulse {delay}ms")
+            back.append(f"{i}:{c if width == 1 else lit} {dwell}ms pulse {(n - 1 - i) * hold}ms")
+        if width > 1:
+            # Widen the beam: neighbours light on the same delay.
+            fwd = [f"{i}:{c} {dwell}ms pulse {min(i, n - 1) * hold}ms" for i in range(n)]
+            back = [f"{i}:{c} {dwell}ms pulse {(n - 1 - i) * hold}ms" for i in range(n)]
+        return f"{floor}\n{'; '.join(fwd)}\n{'; '.join(back)}\nrepeat"
+    if motion == "comet":
+        head = int(params.get("head_width", 1))
+        trail = int(params.get("trail_length", 3))
+        hold = max(40, d // n)
+        dwell = hold * (1 + trail)
+        segments = [f"{i}:{c} {dwell}ms pulse {order(i) * hold}ms" for i in range(n)]
+        if head > 1:
+            segments = [f"{i}:{c} {dwell + hold * (head - 1)}ms pulse {order(i) * hold}ms" for i in range(n)]
+        tail = {"continuous": "repeat", "once": "", "twice": "repeat 2"}[params.get("pass_mode", "continuous")]
+        return f"{floor}\n{'; '.join(segments)}\n{tail}".rstrip()
+    if motion == "flicker":
+        rng = random.Random(int(params.get("seed", 271)))
+        low = float(params.get("luminance_floor", 0.35))
+        var = float(params.get("variation", 0.25))
+        steps = 8
+        lines = []
+        for _ in range(steps):
+            level = min(1.0, low + rng.random() * (1 - low) * (0.5 + var))
+            lines.append(f"{_scale(c, level)} {max(40, d // steps)}ms cosine")
+        return "\n".join(lines) + "\nrepeat"
+    if motion == "stack":
+        hold = max(40, d // (n + 2))
+        fill = "; ".join(f"{order(i)}:{c} {hold}ms none {i * hold}ms" for i in range(n))
+        release = params.get("release_behavior", "all_at_once")
+        if release == "hold":
+            tail = f"{c} {d // 2}ms none\n{floor} {hold}ms none"
+        elif release == "decay":
+            tail = f"{floor} {d // 2}ms cosine"
+        else:
+            tail = f"{floor} {hold}ms none"
+        return f"{floor}\n{fill}\n{tail}\nrepeat"
+    if motion == "twinkle":
+        rng = random.Random(int(params.get("seed", 271)))
+        base = _scale(c, 0.12)
+        count = max(1, int(round(float(params.get("density", 0.15)) * n * 2)))
+        lines = [base]
+        for _ in range(4):
+            picks = rng.sample(range(n), min(count, n))
+            spark = "; ".join(f"{i}:{c} 260ms pulse {k * 90}ms" for k, i in enumerate(picks))
+            lines.append(spark)
+            lines.append(f"{base} {max(60, d // 5)}ms none")
+        return "\n".join(lines) + "\nrepeat"
+    if motion == "drift":
+        rng = random.Random(97)
+        detune = float(params.get("detune", 0.08))
+        delays = [int(rng.random() * d * detune * 4) for _ in range(n)]
+        return f"{_scale(c, 0.2)}\n{_stagger([c] * n, d, delays)}\nrepeat"
+    if motion == "converge":
+        hold = max(60, d // (n // 2 + 1))
+        if params.get("variant") == "source_to_destination":
+            segs = [f"{i}:{c} {hold * 2}ms pulse {i * hold}ms" for i in range(n)]
+        else:
+            segs = []
+            for k in range(n // 2):
+                segs.append(f"{k}:{c} {hold * 2}ms pulse {k * hold}ms")
+                segs.append(f"{n - 1 - k}:{c} {hold * 2}ms pulse {k * hold}ms")
+        return f"{floor}\n{'; '.join(segs)}\nrepeat"
+    if motion == "aurora":
+        palette = params.get("palette") or [c, _hue_shift(c, 35), _hue_shift(c, -30), _hue_shift(c, 70)]
+        rng = random.Random(int(params.get("seed", 617)))
+        waves = int(params.get("wave_count", 2))
+        shades = [palette[i % len(palette)] for i in range(n)]
+        base = " ".join(_scale(s, 0.25) for s in shades)
+        lines = [base]
+        waves = max(1, min(waves, 4))
+        # Each wave owns every `waves`-th LED so the program stays under 512 bytes.
+        for w in range(waves):
+            segments = [f"{i}:{shades[(i + w) % n]} {d}ms pulse {int(rng.random() * d)}ms" for i in range(w, n, waves)]
+            lines.append("; ".join(segments))
+        return "\n".join(lines) + "\nrepeat"
+    if motion == "tide":
+        fill_floor = float(params.get("fill_floor", 0.15))
+        fill_range = float(params.get("fill_range", 0.85))
+        base_count = int(round(fill_floor * n))
+        top = min(n, base_count + int(round(fill_range * n)))
+        hold = max(40, d // (2 * max(1, top)))
+        base = "; ".join(f"{i}:{_scale(c, 0.6)}" for i in range(base_count)) or floor
+        rise = "; ".join(f"{i}:{c} {hold}ms cosine {(i - base_count) * hold}ms" for i in range(base_count, top))
+        fall = "; ".join(f"{i}:{floor} {hold}ms cosine {(top - 1 - i) * hold}ms" for i in range(base_count, top))
+        return f"{floor}\n{base}\n{rise}\n{fall}\nrepeat"
+    if motion == "marquee":
+        spacing = int(params.get("spacing", 1))
+        b = _hue_shift(c, float(params.get("palette_rotation_degrees", 48.0)))
+        bands = " ".join(c if (i // spacing) % 2 == 0 else b for i in range(n))
+        direction = "roll-right" if forward else "roll-left"
+        tail = {"continuous": "repeat", "once": "", "twice": "repeat 2"}[params.get("pass_mode", "continuous")]
+        return f"{bands}\n{direction} {d}ms linear\n{tail}".rstrip()
+    if motion == "blink":
+        cadence = next((x for x in BLINK_CADENCES if x["id"] == params.get("cadence", "calm")), BLINK_CADENCES[0])
+        lines = []
+        for _ in range(cadence["pulses"]):
+            lines.append(f"{c} {cadence['on_ms']}ms none")
+            lines.append(f"off {cadence['off_ms']}ms none")
+        if cadence["rest_ms"]:
+            lines.append(f"off {cadence['rest_ms']}ms none")
+        if params.get("repeat", True):
+            lines.append("repeat")
+        return "\n".join(lines)
+    return f"{floor}\n{c} {d}ms pulse\nrepeat"
+
+
+def effect_cadence(effect: dict, values: dict | None = None) -> dict | None:
+    """The blink cadence an attention/critical (or blink) effect uses."""
+    cadence_id = None
+    if effect["id"] == "blink" or (effect.get("pack") and "cadence" in {p["name"] for p in effect.get("parameters", [])}):
+        cadence_id = normalize_effect_parameters(effect, values or {}).get("cadence")
+    elif effect.get("cadence"):
+        cadence_id = effect["cadence"]
+    if cadence_id is None:
+        return None
+    return next((dict(x) for x in BLINK_CADENCES if x["id"] == cadence_id), None)
+
+
+# -- usage history ------------------------------------------------------------
+
+USAGE_PRICING = {
+    "claude": {"input_per_mtok": 3.0, "output_per_mtok": 15.0, "cache_read_per_mtok": 0.30, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
+    "codex": {"input_per_mtok": 2.0, "output_per_mtok": 8.0, "cache_read_per_mtok": 0.50, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
+    "gemini": {"input_per_mtok": 1.25, "output_per_mtok": 10.0, "cache_read_per_mtok": 0.31, "as_of": "2026-09-01", "approximate": True, "currency": "USD"},
+}
+USAGE_ACCOUNTS = {
+    "claude": {"plan": "Max 20×", "label": "jonathan@…", "fidelity": "official"},
+    "codex": {"plan": "Plus", "label": "ChatGPT", "fidelity": "derived"},
+    "gemini": {"plan": "AI Pro", "label": None, "fidelity": "manual"},
+    "cursor": {"plan": None, "label": None, "fidelity": None},
+}
+USAGE_SCALE = {"claude": 1.0, "codex": 0.45, "gemini": 0.12}
+
+
+def usage_history(provider: str, range_name: str, now: float) -> dict:
+    """Deterministic daily and hourly rows: a weekday rhythm, a busier
+    recent fortnight, and per-provider scale; costs from USAGE_PRICING."""
+    days_wanted = {"7d": 7, "30d": 30, "90d": 90, "365d": 365}.get(range_name, 30)
+    pricing = USAGE_PRICING.get(provider)
+    scale = USAGE_SCALE.get(provider, 0.0)
+    rng = random.Random(f"{provider}:{range_name}")
+    today = time.localtime(now)
+    midnight = time.mktime((today.tm_year, today.tm_mon, today.tm_mday, 0, 0, 0, 0, 0, -1))
+
+    def cost(tin: int, tout: int, cache: int) -> float:
+        if not pricing:
+            return 0.0
+        return round((tin * pricing["input_per_mtok"] + tout * pricing["output_per_mtok"] + cache * pricing["cache_read_per_mtok"]) / 1_000_000, 4)
+
+    days = []
+    for back in range(days_wanted - 1, -1, -1):
+        start = midnight - back * 86400
+        lt = time.localtime(start)
+        weekday = lt.tm_wday
+        rhythm = 0.25 if weekday >= 5 else 1.0
+        recent = 1.35 if back < 14 else 1.0
+        wobble = 0.6 + rng.random() * 0.8
+        base = 2_400_000 * scale * rhythm * recent * wobble
+        tin = int(base * 0.62)
+        tout = int(base * 0.11)
+        cache = int(base * 1.9 * (0.7 + rng.random() * 0.6))
+        days.append({"date": time.strftime("%Y-%m-%d", lt), "tokens_in": tin, "tokens_out": tout,
+                     "cache_read": cache, "cost_usd": cost(tin, tout, cache)})
+    hours = []
+    hour_now = int(now // 3600) * 3600
+    for back in range(7 * 24 - 1, -1, -1):
+        start = hour_now - back * 3600
+        lt = time.localtime(start)
+        active = 1.0 if 8 <= lt.tm_hour <= 23 else 0.08
+        if lt.tm_wday >= 5:
+            active *= 0.3
+        base = 110_000 * scale * active * (0.4 + rng.random() * 1.2)
+        tin = int(base * 0.62)
+        tout = int(base * 0.11)
+        cache = int(base * 1.9)
+        hours.append({"hour": time.strftime("%Y-%m-%dT%H:00", lt), "at": start, "tokens_in": tin, "tokens_out": tout,
+                      "cache_read": cache, "cost_usd": cost(tin, tout, cache)})
+    if scale == 0.0:
+        days, hours = [], []
+    return {"provider": provider, "range": range_name, "days": days, "hours": hours,
+            "pricing": pricing, "account": USAGE_ACCOUNTS.get(provider)}
+
 
 # The settings document, seeded from `AgentMonitorSettings().to_dict()` in
 # src/jrbar/_settings_legacy.py (captured 2026-09-09) plus the handful of
@@ -338,11 +979,25 @@ class World:
                      "connected": True, "brightness": 60, "linked": True, "last_write": now, "error": None},
             "screen-bar": {"id": "screen-bar", "kind": "screen_bar", "leds": 8, "enabled": True},
         }
+        # `rate` is the percent of the 5h window burned per hour; the forecast
+        # extrapolates it. Gemini starts near its limit so the Usage Center has
+        # a "runs out before the reset" card; Cursor is not signed in.
         self.usage = {
-            "claude": {"h5": 42.0, "d7": 61.0, "fidelity": "official", "pace": "ahead"},
-            "codex": {"h5": 12.0, "d7": 30.0, "fidelity": "derived", "pace": "on_pace"},
-            "gemini": {"h5": 3.0, "d7": 8.0, "fidelity": "derived", "pace": "behind"},
+            "claude": {"h5": 42.0, "d7": 61.0, "d30": 37.0, "fidelity": "official", "pace": "ahead", "rate": 12.0, "state": "ok"},
+            "codex": {"h5": 12.0, "d7": 30.0, "d30": 22.0, "fidelity": "derived", "pace": "on_pace", "rate": 6.0, "state": "ok"},
+            "gemini": {"h5": 91.0, "d7": 48.0, "d30": None, "fidelity": "derived", "pace": "ahead", "rate": 14.0, "state": "warning"},
+            "cursor": {"h5": None, "d7": None, "d30": None, "fidelity": "manual", "pace": None, "rate": 0.0, "state": "not_signed_in"},
         }
+        self.usage_refreshed_at = now - 45
+        self.effects_generation = 1
+        self.effect_packs: dict[str, dict] = {SAMPLE_PACK["id"]: validate_pack(SAMPLE_PACK)}
+        self.assignments: list[dict] = [
+            {"effect_id": "breathe", "scope": "global", "target_id": None, "parameters": {}},
+            {"effect_id": "chase", "scope": "semantic", "target_id": "working", "parameters": {"duration_seconds": 1.6}},
+            {"effect_id": "steady", "scope": "scene", "target_id": "night", "parameters": {"luminance": 0.4}},
+            {"effect_id": "heartbeat", "scope": "provider", "target_id": "claude", "parameters": {}},
+            {"effect_id": "pack:nightlab:ember", "scope": "device", "target_id": DOT_ID, "parameters": {}},
+        ]
         self.focus = {"mode": "normal", "source": "default", "until": None}
         self.escalation = {"stage": "none", "since": None}
         self.lights_semantic = "idle"
@@ -435,15 +1090,25 @@ class World:
                 s["workers"] = sum(1 for w in self.sessions.values() if w["parent"] == s["id"] and w["lifecycle"] == "active")
         providers = []
         for pid, u in self.usage.items():
+            if u["h5"] is None:
+                providers.append({"id": pid, "windows": [], "fidelity": u["fidelity"], "state": u["state"],
+                                  "account": USAGE_ACCOUNTS.get(pid)})
+                continue
+            windows = [
+                {"name": "5h", "used_pct": round(u["h5"], 1), "resets_at": now + 2 * 3600 + 840},
+                {"name": "7d", "used_pct": round(u["d7"], 1), "resets_at": now + 3 * 86400 + 5 * 3600},
+            ]
+            if u.get("d30") is not None:
+                windows.append({"name": "30d", "used_pct": round(u["d30"], 1), "resets_at": now + 19 * 86400 + 7 * 3600})
+            rate = u["rate"]
+            exhausts_at = now + (100.0 - u["h5"]) / rate * 3600 if rate > 0 and u["h5"] < 100 else None
             providers.append({
                 "id": pid,
-                "windows": [
-                    {"name": "5h", "used_pct": round(u["h5"], 1), "resets_at": now + 2 * 3600 + 840},
-                    {"name": "7d", "used_pct": round(u["d7"], 1), "resets_at": now + 3 * 86400 + 5 * 3600},
-                ],
+                "windows": windows,
                 "fidelity": u["fidelity"],
-                "state": "ok" if u["h5"] < 85 else "warning",
-                "forecast": {"exhausts_at": now + 4 * 3600, "pace": u["pace"]},
+                "state": "warning" if u["h5"] >= 85 else u["state"],
+                "forecast": {"exhausts_at": exhausts_at, "pace": u["pace"]},
+                "account": USAGE_ACCOUNTS.get(pid),
             })
         return {
             "t": "state", "v": PROTOCOL_VERSION, "generation": self.generation, "now": now,
@@ -451,7 +1116,7 @@ class World:
             "sessions": list(self.sessions.values()),
             "asks": list(self.asks),
             "devices": list(self.devices.values()),
-            "usage": {"refreshed_at": now - 45, "providers": providers},
+            "usage": {"refreshed_at": self.usage_refreshed_at, "providers": providers},
             "power": {"keep_awake": True, "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True}},
             "focus": self.focus,
             "escalation": self.escalation,
@@ -692,6 +1357,7 @@ class World:
                 reset = [pid for pid, crossed in self.quota_crossed.items() if crossed]
                 for pid in reset:
                     self.usage[pid]["h5"] = 12.0
+                    self.usage[pid]["state"] = "ok"
                     self.quota_crossed[pid] = set()
             self.record("ended", "gemini", GEMINI_ID, "docs-sweep", "Session closed")
             self.push_state()
@@ -737,9 +1403,13 @@ class World:
         with self.lock:
             thresholds = [float(t) for t in (self.document.get("quota_alert_thresholds") or [90.0, 95.0])]
             for pid, u in self.usage.items():
+                if u["h5"] is None:
+                    continue
                 before = u["h5"]
                 u["h5"] = min(99.0, u["h5"] + amount)
                 u["d7"] = min(99.0, u["d7"] + amount * 0.3)
+                if u.get("d30") is not None:
+                    u["d30"] = min(99.0, u["d30"] + amount * 0.08)
                 changed = True
                 for threshold in thresholds:
                     if before < threshold <= u["h5"] and threshold not in self.quota_crossed.setdefault(pid, set()):
@@ -750,6 +1420,50 @@ class World:
         for pid, threshold in crossed:
             self.push_event("quota_crossed", None, f"5h window at {int(threshold)}%", provider=pid,
                             detail=f"crossed {int(threshold)}%", sound="pop")
+
+    # -- effects ----------------------------------------------------------------
+
+    @staticmethod
+    def _error(cid, code: str, message: str) -> dict:
+        return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False, "error": {"code": code, "message": message}}
+
+    def all_effects(self) -> list[dict]:
+        effects = registry_effects()
+        for pack in self.effect_packs.values():
+            effects.extend(pack_effect_definitions(pack))
+        return effects
+
+    def find_effect(self, effect_id: str) -> dict | None:
+        for effect in self.all_effects():
+            if effect["id"] == effect_id:
+                return effect
+        return None
+
+    def effect_catalog(self) -> dict:
+        effects = []
+        for effect in self.all_effects():
+            row = dict(effect)
+            row.pop("cadence", None)
+            row["preview"] = {"program": render_effect_program(effect, {}, 8), "led_count": 8}
+            cadence = effect_cadence(effect)
+            if cadence:
+                row["cadence"] = cadence
+            effects.append(row)
+        packs = []
+        for pack in self.effect_packs.values():
+            entry = {"id": pack["id"], "name": pack["name"], "version": pack["version"],
+                     "effects": [f"pack:{pack['id']}:{e['id']}" for e in pack["effects"]]}
+            if pack.get("license"):
+                entry["license"] = pack["license"]
+            if pack.get("_path"):
+                entry["path"] = pack["_path"]
+            packs.append(entry)
+        return {"effects": effects, "packs": packs, "cadences": [dict(c) for c in BLINK_CADENCES],
+                "generation": self.effects_generation}
+
+    def assignment_document(self) -> dict:
+        return {"assignments": [dict(a) for a in self.assignments], "active_scene": self.document.get("active_scene", "calm"),
+                "generation": self.effects_generation}
 
     # -- commands -------------------------------------------------------------
 
@@ -907,8 +1621,131 @@ class World:
             self.push_settings()
             result = {"policy": self.document["closed_lid_awake_policy"]}
         elif name == "refresh_usage":
+            with self.lock:
+                self.usage_refreshed_at = time.time()
             self.tick_usage(0.0)
-            result = {"refreshed_at": time.time()}
+            result = {"refreshed_at": self.usage_refreshed_at}
+        elif name == "usage_history":
+            provider = str(args.get("provider", ""))
+            range_name = str(args.get("range", "30d"))
+            if provider not in self.usage:
+                return self._error(cid, "not_found", f"no usage source for {provider}")
+            if range_name not in ("7d", "30d", "90d", "365d"):
+                return self._error(cid, "invalid_range", "range must be 7d, 30d, 90d or 365d")
+            result = usage_history(provider, range_name, time.time())
+            result["state"] = self.usage[provider]["state"]
+        elif name == "list_effects":
+            with self.lock:
+                result = self.effect_catalog()
+        elif name == "render_effect":
+            effect = self.find_effect(str(args.get("effect_id", "")))
+            if effect is None:
+                return self._error(cid, "unknown_effect", "no such effect")
+            led_count = int(args.get("led_count", 8) or 8)
+            color = args.get("color") if _is_hex(args.get("color")) else EFFECT_BASE_COLOR
+            program = render_effect_program(effect, args.get("parameters") or {}, led_count, color)
+            result = {"effect_id": effect["id"], "program": program, "led_count": led_count,
+                      "parameters": normalize_effect_parameters(effect, args.get("parameters") or {}),
+                      "cadence": effect_cadence(effect, args.get("parameters") or {})}
+        elif name == "list_assignments":
+            with self.lock:
+                result = self.assignment_document()
+        elif name == "set_assignment":
+            effect = self.find_effect(str(args.get("effect_id", "")))
+            if effect is None:
+                return self._error(cid, "unknown_effect", "no such effect")
+            scope = str(args.get("scope", ""))
+            if scope not in ("global", "semantic", "scene", "provider", "provider_instance", "project", "device"):
+                return self._error(cid, "invalid_scope", "unknown assignment scope")
+            target = args.get("target_id")
+            target = str(target).strip() if target is not None else None
+            if (scope == "global") != (not target):
+                return self._error(cid, "invalid_target", "global assignments take no target; every other scope needs one")
+            if scope == "semantic" and target in ("asking", "failure"):
+                return self._error(cid, "reserved_semantic", "asking and failure keep their reserved effects")
+            if scope == "scene" and target not in ("calm", "focus", "night", "demo", "travel", "dnd"):
+                return self._error(cid, "invalid_target", "unknown scene")
+            if target is not None and len(target) > 160:
+                return self._error(cid, "invalid_target", "target too long")
+            row = {"effect_id": effect["id"], "scope": scope, "target_id": target,
+                   "parameters": normalize_effect_parameters(effect, args.get("parameters") or {})}
+            with self.lock:
+                self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target)]
+                self.assignments.append(row)
+                self.effects_generation += 1
+                result = self.assignment_document()
+                result["assignment"] = row
+            self.push_log("info", f"assignment {scope}:{target or '*'} → {effect['id']}")
+        elif name == "clear_assignment":
+            scope = str(args.get("scope", ""))
+            target = args.get("target_id")
+            target = str(target).strip() if target is not None else None
+            with self.lock:
+                before = len(self.assignments)
+                self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target or None)]
+                removed = len(self.assignments) < before
+                if removed:
+                    self.effects_generation += 1
+                result = self.assignment_document()
+                result["removed"] = removed
+        elif name == "import_effect_pack":
+            path = Path(str(args.get("path", ""))).expanduser()
+            try:
+                if path.stat().st_size > 256_000:
+                    raise ValueError("pack exceeds size limit")
+                pack = validate_pack(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                return self._error(cid, "invalid_pack", str(exc))
+            with self.lock:
+                if pack["id"] in self.effect_packs and self.effect_packs[pack["id"]].get("_path") != str(path):
+                    return self._error(cid, "conflict", f"pack {pack['id']} is already loaded")
+                pack["_path"] = str(path)
+                self.effect_packs[pack["id"]] = pack
+                self.effects_generation += 1
+                result = self.effect_catalog()
+                result["imported"] = {"id": pack["id"], "name": pack["name"], "effects": len(pack["effects"])}
+            self.push_log("info", f"imported effect pack {pack['id']} ({len(pack['effects'])} effects) from {path}")
+        elif name == "export_effect_pack":
+            ids = [str(x) for x in (args.get("ids") or [])]
+            path = Path(str(args.get("path", ""))).expanduser()
+            effects = []
+            for effect_id in ids:
+                effect = self.find_effect(effect_id)
+                if effect is None:
+                    return self._error(cid, "unknown_effect", f"no such effect: {effect_id}")
+                row = {
+                    "id": effect_id.split(":")[-1] if effect.get("pack") else effect_id,
+                    "label": effect["label"], "description": effect["description"], "meaning": effect["meaning"],
+                    "surfaces": list(effect["surfaces"]), "safety": effect["safety"], "energy": effect["energy"],
+                }
+                fallback = effect.get("reduce_motion_fallback")
+                if fallback and fallback in ids:
+                    row["reduce_motion_fallback"] = fallback.split(":")[-1] if fallback.startswith("pack:") else fallback
+                elif fallback and effect.get("pack") is None:
+                    row["reduce_motion_fallback"] = None
+                    del row["reduce_motion_fallback"]
+                row.update(normalize_effect_parameters(effect, {}))
+                if not effect.get("pack"):
+                    row["motion"] = effect_id if effect_id in _MOTION_IDS else "breathe"
+                effects.append(row)
+            if not effects:
+                return self._error(cid, "invalid_args", "ids[] is empty")
+            pack_id = "".join(c if c.isalnum() or c in "._-" else "-" for c in str(args.get("name") or path.stem).lower()) or "export"
+            payload = {
+                "id": pack_id, "name": str(args.get("name") or path.stem or "Export"), "version": 2,
+                "safety": {"data_only": True, "network": False},
+                "accessibility": {"reduced_motion": True, "high_contrast": True},
+                "effects": effects,
+            }
+            try:
+                validate_pack(payload)
+                encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(encoded + "\n", encoding="utf-8")
+            except (OSError, ValueError) as exc:
+                return self._error(cid, "export_failed", str(exc))
+            result = {"path": str(path), "effects": len(effects), "bytes": len(encoded.encode("utf-8")), "id": pack_id}
+            self.push_log("info", f"exported {len(effects)} effects to {path}")
         elif name == "quit":
             result = {"bye": True}
         elif name == "doctor":

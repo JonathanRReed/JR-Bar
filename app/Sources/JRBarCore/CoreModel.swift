@@ -33,6 +33,9 @@ public final class CoreModel {
     public private(set) var connectedAt: Date?
     /// Commands the app sent that the daemon has not answered yet.
     public private(set) var inFlightCommands = 0
+    /// Every `state`'s usage windows, kept so the Usage Center can
+    /// extrapolate a pace when the daemon sends no `forecast`.
+    public private(set) var usageSamples = UsageSampleLog()
 
     /// Called for every event before the model applies it.
     public var onEvent: (@MainActor (CoreEvent) -> Void)?
@@ -193,6 +196,80 @@ public final class CoreModel {
         try await send("reset_settings", args: ["paths": .array(paths.map(JSONValue.string))])
     }
 
+    /// Sends and decodes; a `not ok` reply becomes its `CoreReplyError`.
+    public func request<T: Decodable>(_ name: String, args: [String: JSONValue] = [:], as type: T.Type) async throws -> T {
+        let reply = try await send(name, args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "\(name) failed") }
+        return try ReplyDecoding.decode(type, from: reply.result)
+    }
+
+    // MARK: Usage Center (app-proposed extensions, see app/README.md)
+
+    /// `usage_history {provider, range}` → daily and hourly token/cost rows.
+    public func usageHistory(provider: String, range: UsageHistoryRange) async throws -> UsageHistory {
+        try await request("usage_history", args: ["provider": .string(provider), "range": .string(range.rawValue)], as: UsageHistory.self)
+    }
+
+    /// `refresh_usage {providers[]}`; an empty list means every provider.
+    @discardableResult
+    public func refreshUsage(providers: [String] = []) async throws -> CoreReply {
+        try await send("refresh_usage", args: ["providers": .array(providers.map(JSONValue.string))])
+    }
+
+    // MARK: Effect Studio (app-proposed extensions, see app/README.md)
+
+    public func listEffects() async throws -> EffectCatalog {
+        try await request("list_effects", as: EffectCatalog.self)
+    }
+
+    public func listAssignments() async throws -> EffectAssignmentDocument {
+        try await request("list_assignments", as: EffectAssignmentDocument.self)
+    }
+
+    /// `render_effect {effect_id, parameters, led_count}` → the LEDS program
+    /// the daemon would play for those parameters.
+    public func renderEffect(_ effectID: String, parameters: [String: JSONValue], ledCount: Int = 8) async throws -> EffectPreview {
+        try await request("render_effect", args: [
+            "effect_id": .string(effectID),
+            "parameters": .object(parameters),
+            "led_count": .number(Double(ledCount)),
+        ], as: EffectPreview.self)
+    }
+
+    @discardableResult
+    public func setAssignment(_ assignment: EffectAssignment) async throws -> EffectAssignmentDocument {
+        var args: [String: JSONValue] = [
+            "effect_id": .string(assignment.effectID),
+            "scope": .string(assignment.scope.rawValue),
+            "parameters": .object(assignment.parameters),
+        ]
+        if let target = assignment.targetID { args["target_id"] = .string(target) }
+        return try await request("set_assignment", args: args, as: EffectAssignmentDocument.self)
+    }
+
+    @discardableResult
+    public func clearAssignment(scope: EffectScope, targetID: String?) async throws -> EffectAssignmentDocument {
+        var args: [String: JSONValue] = ["scope": .string(scope.rawValue)]
+        if let targetID { args["target_id"] = .string(targetID) }
+        return try await request("clear_assignment", args: args, as: EffectAssignmentDocument.self)
+    }
+
+    /// `import_effect_pack {path}`: the daemon reads and validates the JSON
+    /// itself (the app never parses a pack) and replies with the new catalog.
+    public func importEffectPack(path: String) async throws -> EffectCatalog {
+        try await request("import_effect_pack", args: ["path": .string(path)], as: EffectCatalog.self)
+    }
+
+    /// `export_effect_pack {ids[], path}` writes a data-only JSON v2 pack.
+    @discardableResult
+    public func exportEffectPack(ids: [String], path: String, name: String? = nil) async throws -> CoreReply {
+        var args: [String: JSONValue] = ["ids": .array(ids.map(JSONValue.string)), "path": .string(path)]
+        if let name { args["name"] = .string(name) }
+        let reply = try await send("export_effect_pack", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "export failed") }
+        return reply
+    }
+
     // MARK: Inbound
 
     private func handle(_ event: CoreClient.Event) {
@@ -218,6 +295,7 @@ public final class CoreModel {
             self.hello = hello
         case .state(let state):
             self.state = state
+            usageSamples.record(state.usage, now: state.now ?? Date().timeIntervalSince1970)
         case .lights(let lights):
             self.lights = lights
         case .settings(let settings):

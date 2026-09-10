@@ -85,11 +85,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     /// The window title stays "JR-Bar Settings"; the page name rides in the
-    /// subtitle. (A pushed route would otherwise rename the window.)
+    /// subtitle.
     private func observePage(_ window: NSWindow) {
         withObservationTracking {
             window.title = "JR-Bar Settings"
-            window.subtitle = store.route.isEmpty ? store.page.title : "Effects"
+            window.subtitle = store.page.title
         } onChange: { [weak self, weak window] in
             Task { @MainActor [weak self, weak window] in
                 guard let self, let window else { return }

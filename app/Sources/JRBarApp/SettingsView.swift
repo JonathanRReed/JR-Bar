@@ -9,8 +9,7 @@ struct SettingsRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            // Picking a page also pops any pushed route (Effects).
-            List(selection: Binding(get: { store.page }, set: { store.page = $0; store.route = [] })) {
+            List(selection: $store.page) {
                 ForEach(SettingsStore.Page.allCases) { page in
                     Label {
                         Text(page.title)
@@ -23,13 +22,8 @@ struct SettingsRootView: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 250)
         } detail: {
-            NavigationStack(path: $store.route) {
+            NavigationStack {
                 SettingsPageContainer(store: store, page: store.page)
-                    .navigationDestination(for: SettingsStore.Route.self) { route in
-                        switch route {
-                        case .effects: EffectsPage(store: store)
-                        }
-                    }
             }
         }
         .navigationSplitViewStyle(.balanced)

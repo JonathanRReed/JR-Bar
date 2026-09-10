@@ -40,6 +40,9 @@ struct Hairline: View {
 struct SectionLabel: View {
     let text: String
     var trailing: String? = nil
+    /// An optional "Details ›" affordance on the right (the Usage Center).
+    var detailTitle: String? = nil
+    var onDetail: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -50,6 +53,18 @@ struct SectionLabel: View {
             Spacer()
             if let trailing {
                 Text(trailing).font(.system(size: 11)).foregroundStyle(.tertiary).monospacedDigit()
+            }
+            if let detailTitle, let onDetail {
+                Button(action: onDetail) {
+                    HStack(spacing: 2) {
+                        Text(detailTitle)
+                        Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("\(detailTitle) (⌘U)")
             }
         }
         .padding(.horizontal, 14)
@@ -514,7 +529,7 @@ struct UsageSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SectionLabel(text: "Usage", trailing: refreshed)
+            SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Details" : nil, onDetail: { store.openUsageCenter() })
             if store.usage.isEmpty {
                 Text(store.isLive ? "No usage reported yet." : "Usage comes from the core.")
                     .font(.system(size: 12))
@@ -750,6 +765,19 @@ struct PanelFooter: View {
             Spacer()
             FooterButton(title: "History", dimmed: !store.isLive, shortcut: "⌘Y") { store.openHistory() }
                 .help("Activity history")
+            Menu {
+                Button { store.openUsageCenter() } label: { Text("Usage Center…") }
+                    .keyboardShortcut("u", modifiers: .command)
+                Button { store.openEffects() } label: { Text("Effect Studio…") }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
+            }
+            .menuStyle(.button)
+            .buttonStyle(FooterButtonStyle(dimmed: !store.isLive))
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More: Usage Center (⌘U), Effect Studio")
+            .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))
             }

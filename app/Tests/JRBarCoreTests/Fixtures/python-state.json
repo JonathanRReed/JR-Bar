@@ -1,0 +1,298 @@
+{
+ "aggregate": {
+  "active": 1,
+  "failed": 0,
+  "mode": "needs_you",
+  "needs_you": 1,
+  "ready": 1,
+  "total": 3
+ },
+ "asks": [
+  {
+   "kind": "permission",
+   "opened_at": 1788982800.0,
+   "session": "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
+   "summary": "Run: rm -rf build"
+  }
+ ],
+ "devices": [
+  {
+   "brightness": 79,
+   "connected": true,
+   "error": null,
+   "id": "sidepulse:pro:B293A1",
+   "kind": "pro",
+   "last_write": 1788982891.3100002,
+   "leds": 8,
+   "linked": true,
+   "name": "SidePulse",
+   "path": "/Volumes/SidePulse"
+  },
+  {
+   "brightness": 60,
+   "connected": false,
+   "error": "volume unmounted",
+   "id": "sidepulse:dot:7F02C4",
+   "kind": "dot",
+   "leds": 2,
+   "linked": true,
+   "name": "PulseDot",
+   "path": "/Volumes/PulseDot"
+  },
+  {
+   "brightness": 100,
+   "enabled": true,
+   "error": null,
+   "id": "screen-bar",
+   "kind": "screen_bar",
+   "leds": 8,
+   "linked": true,
+   "name": "Screen Bar"
+  }
+ ],
+ "escalation": {
+  "since": 1788982800.0,
+  "stage": "menu_bar"
+ },
+ "focus": {
+  "audible_allowed": false,
+  "banner_allowed": true,
+  "brightness_factor": 0.15,
+  "display": "all",
+  "mode": "dim",
+  "source": "schedule",
+  "summary": "Dim until 07:00",
+  "until": 1788986492.4
+ },
+ "generation": 4812,
+ "health": {
+  "hooks": {
+   "claude": "ok",
+   "codex": "stale",
+   "pi": "missing"
+  },
+  "intake": {
+   "hook_state": "configured",
+   "silence_seconds": 1.4,
+   "source_health": "partial"
+  },
+  "sources": {
+   "claude": {
+    "fresh": true,
+    "heard_age_seconds": 1.4
+   },
+   "codex": {
+    "fresh": false,
+    "heard_age_seconds": 900.0
+   },
+   "pi": {
+    "fresh": false,
+    "heard_age_seconds": null
+   }
+  }
+ },
+ "now": 1788982892.4,
+ "peers": [],
+ "power": {
+  "closed_lid": {
+   "helper_installed": true,
+   "holding": false,
+   "policy": "agents"
+  },
+  "keep_awake": true
+ },
+ "sessions": [
+  {
+   "ask": null,
+   "cwd": "/Users/j/Downloads/JR-Bar",
+   "event": "PreToolUse",
+   "id": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "kind": "main",
+   "label": "jr-bar-b7",
+   "lifecycle": "active",
+   "message": null,
+   "mode": "tool_running",
+   "next_actor": "provider",
+   "origin": {
+    "bundle_id": "com.anthropic.claudefordesktop",
+    "kind": "claude_app",
+    "label": "Claude App"
+   },
+   "parent": null,
+   "pid": 9170,
+   "provider": "claude",
+   "since": 1788982891.0,
+   "stale": false,
+   "terminal": {
+    "app": "Ghostty",
+    "bundle_id": "com.mitchellh.ghostty",
+    "tty": "/dev/ttys004"
+   },
+   "tool": "Bash",
+   "updated_at": 1788982891.0,
+   "workers": 1
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/j/Downloads/JR-Bar",
+   "event": "PreToolUse",
+   "id": "claude:agent:fca1eb06-f6d1-413e-aa5f-dd19d8e05973-worker-1",
+   "kind": "worker",
+   "label": "worker",
+   "lifecycle": "active",
+   "message": null,
+   "mode": "working",
+   "next_actor": "provider",
+   "origin": {
+    "bundle_id": "com.anthropic.claudefordesktop",
+    "kind": "claude_app",
+    "label": "Claude App"
+   },
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": null,
+   "provider": "claude",
+   "since": 1788982890.4,
+   "stale": false,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1788982890.4,
+   "workers": 0
+  },
+  {
+   "ask": {
+    "kind": "permission",
+    "opened_at": 1788982800.0,
+    "summary": "Run: rm -rf build"
+   },
+   "cwd": "/Users/j/Downloads/JR-Bar/src",
+   "event": "PermissionRequest",
+   "id": "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
+   "kind": "main",
+   "label": "sidepulse-core",
+   "lifecycle": "active",
+   "message": "Run: rm -rf build",
+   "mode": "waiting_for_input",
+   "next_actor": "user",
+   "origin": {
+    "bundle_id": null,
+    "kind": "codex_cli",
+    "label": "Codex CLI"
+   },
+   "parent": null,
+   "pid": 9311,
+   "provider": "codex",
+   "since": 1788982800.0,
+   "stale": false,
+   "terminal": {
+    "app": "Terminal",
+    "bundle_id": "com.apple.Terminal"
+   },
+   "tool": "Bash",
+   "updated_at": 1788982800.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/j/Projects/notes",
+   "event": "Stop",
+   "id": "gemini:session:8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a",
+   "kind": "main",
+   "label": "docs-sweep",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "gemini",
+   "since": 1788982851.4,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1788982851.4,
+   "workers": 0
+  }
+ ],
+ "settings_generation": 17,
+ "t": "state",
+ "unseen_completions": [
+  "gemini:session:8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a"
+ ],
+ "usage": {
+  "next_refresh_at": 1788983150.0,
+  "providers": [
+   {
+    "account": {
+     "fidelity": "official",
+     "label": "Max",
+     "plan": null
+    },
+    "action": null,
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "claude",
+    "instance": "default",
+    "observed_at": 1788982850.0,
+    "reason": null,
+    "state": "ready",
+    "tokens": {
+     "cached_input": 800,
+     "input": 1200,
+     "output": 300
+    },
+    "windows": [
+     {
+      "id": "five_hour",
+      "model": null,
+      "name": "5h",
+      "resets_at": 1788990932.4,
+      "scope": "account",
+      "used_pct": 42.0
+     },
+     {
+      "id": "seven_day",
+      "model": null,
+      "name": "7d",
+      "resets_at": 1789260092.4,
+      "scope": "account",
+      "used_pct": 61.0
+     }
+    ]
+   },
+   {
+    "account": null,
+    "action": "Retry later",
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "stale",
+    "forecast": null,
+    "id": "codex",
+    "instance": "default",
+    "observed_at": 1788981992.4,
+    "reason": "rate_limited",
+    "state": "stale",
+    "tokens": {
+     "cached_input": 0,
+     "input": 0,
+     "output": 0
+    },
+    "windows": [
+     {
+      "id": "five_hour",
+      "model": null,
+      "name": "5h",
+      "resets_at": null,
+      "scope": "account",
+      "used_pct": 12.0
+     }
+    ]
+   }
+  ],
+  "refreshed_at": 1788982850.0,
+  "refreshing": false
+ },
+ "v": 1
+}

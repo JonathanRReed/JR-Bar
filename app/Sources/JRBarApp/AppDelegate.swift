@@ -17,6 +17,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: SettingsWindowController?
     private var historyStore: HistoryStore?
     private var historyWindow: HistoryWindowController?
+    private var usageStore: UsageCenterStore?
+    private var usageWindow: UsageCenterWindowController?
+    private var effectsStore: EffectStudioStore?
+    private var effectsWindow: EffectStudioWindowController?
     private var events: EventCoordinator?
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
@@ -86,6 +90,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
 
+        // Usage Center (⌘U) and Effect Studio windows.
+        let usageStore = UsageCenterStore(core: core)
+        let usageWindow = UsageCenterWindowController(store: usageStore)
+        self.usageStore = usageStore
+        self.usageWindow = usageWindow
+        store.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
+        statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
+        let effectsStore = EffectStudioStore(core: core)
+        let effectsWindow = EffectStudioWindowController(store: effectsStore)
+        self.effectsStore = effectsStore
+        self.effectsWindow = effectsWindow
+        store.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+        statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+        settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
+
         // Events → the Mac: sounds, banners, the HUD, the amber pulse, the chime.
         let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
         self.events = events
@@ -152,12 +171,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { historyWindow?.show() }
             }
         }
+        // `JRBAR_OPEN_USAGE=1` opens the Usage Center; `JRBAR_OPEN_EFFECTS=1`
+        // (or an effect id) opens the Effect Studio, on that effect.
+        if environment["JRBAR_OPEN_USAGE"] != nil {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak usageWindow] in
+                MainActor.assumeIsolated { usageWindow?.show() }
+            }
+        }
+        if let effect = environment["JRBAR_OPEN_EFFECTS"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak effectsWindow] in
+                MainActor.assumeIsolated { effectsWindow?.show(effect: effect == "1" ? nil : effect) }
+            }
+        }
         if let pageName = environment["JRBAR_OPEN_SETTINGS"] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak settingsWindow, weak settingsStore] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak settingsWindow, weak effectsWindow] in
                 MainActor.assumeIsolated {
-                    let page = SettingsStore.Page(rawValue: pageName)
-                    settingsWindow?.show(page: page ?? .general)
-                    if pageName == "effects" { settingsStore?.page = .lighting; settingsStore?.route = [.effects] }
+                    if pageName == "effects" { effectsWindow?.show(); return }
+                    settingsWindow?.show(page: SettingsStore.Page(rawValue: pageName) ?? .general)
                 }
             }
         }
@@ -205,6 +235,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","))
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
+        appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
+        appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
@@ -231,6 +263,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openSettings(_ sender: Any?) {
         settingsWindow?.show()
+    }
+
+    @objc private func openUsageCenter(_ sender: Any?) {
+        usageWindow?.show()
+    }
+
+    @objc private func openEffects(_ sender: Any?) {
+        effectsWindow?.show()
     }
 
     @objc private func openHistory(_ sender: Any?) {

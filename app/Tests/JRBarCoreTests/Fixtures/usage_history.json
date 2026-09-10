@@ -1,0 +1,1415 @@
+{
+ "provider": "claude",
+ "range": "7d",
+ "days": [
+  {
+   "date": "2026-09-03",
+   "tokens_in": 2401947,
+   "tokens_out": 426152,
+   "cache_read": 8852705,
+   "cost_usd": 16.2539
+  },
+  {
+   "date": "2026-09-04",
+   "tokens_in": 1671028,
+   "tokens_out": 296472,
+   "cache_read": 4782422,
+   "cost_usd": 10.8949
+  },
+  {
+   "date": "2026-09-05",
+   "tokens_in": 695619,
+   "tokens_out": 123416,
+   "cache_read": 1606162,
+   "cost_usd": 4.4199
+  },
+  {
+   "date": "2026-09-06",
+   "tokens_in": 640325,
+   "tokens_out": 113606,
+   "cache_read": 2071995,
+   "cost_usd": 4.2467
+  },
+  {
+   "date": "2026-09-07",
+   "tokens_in": 2631224,
+   "tokens_out": 466830,
+   "cache_read": 7702920,
+   "cost_usd": 17.207
+  },
+  {
+   "date": "2026-09-08",
+   "tokens_in": 1773246,
+   "tokens_out": 314608,
+   "cache_read": 4504659,
+   "cost_usd": 11.3903
+  },
+  {
+   "date": "2026-09-09",
+   "tokens_in": 2327915,
+   "tokens_out": 413017,
+   "cache_read": 5066496,
+   "cost_usd": 14.6989
+  }
+ ],
+ "hours": [
+  {
+   "hour": "2026-09-02T15:00",
+   "at": 1788379200,
+   "tokens_in": 98059,
+   "tokens_out": 17397,
+   "cache_read": 300503,
+   "cost_usd": 0.6453
+  },
+  {
+   "hour": "2026-09-02T16:00",
+   "at": 1788382800,
+   "tokens_in": 101019,
+   "tokens_out": 17922,
+   "cache_read": 309575,
+   "cost_usd": 0.6648
+  },
+  {
+   "hour": "2026-09-02T17:00",
+   "at": 1788386400,
+   "tokens_in": 80862,
+   "tokens_out": 14346,
+   "cache_read": 247803,
+   "cost_usd": 0.5321
+  },
+  {
+   "hour": "2026-09-02T18:00",
+   "at": 1788390000,
+   "tokens_in": 93137,
+   "tokens_out": 16524,
+   "cache_read": 285420,
+   "cost_usd": 0.6129
+  },
+  {
+   "hour": "2026-09-02T19:00",
+   "at": 1788393600,
+   "tokens_in": 81369,
+   "tokens_out": 14436,
+   "cache_read": 249358,
+   "cost_usd": 0.5355
+  },
+  {
+   "hour": "2026-09-02T20:00",
+   "at": 1788397200,
+   "tokens_in": 50622,
+   "tokens_out": 8981,
+   "cache_read": 155134,
+   "cost_usd": 0.3331
+  },
+  {
+   "hour": "2026-09-02T21:00",
+   "at": 1788400800,
+   "tokens_in": 53353,
+   "tokens_out": 9465,
+   "cache_read": 163503,
+   "cost_usd": 0.3511
+  },
+  {
+   "hour": "2026-09-02T22:00",
+   "at": 1788404400,
+   "tokens_in": 75103,
+   "tokens_out": 13324,
+   "cache_read": 230155,
+   "cost_usd": 0.4942
+  },
+  {
+   "hour": "2026-09-02T23:00",
+   "at": 1788408000,
+   "tokens_in": 32459,
+   "tokens_out": 5758,
+   "cache_read": 99472,
+   "cost_usd": 0.2136
+  },
+  {
+   "hour": "2026-09-03T00:00",
+   "at": 1788411600,
+   "tokens_in": 5984,
+   "tokens_out": 1061,
+   "cache_read": 18339,
+   "cost_usd": 0.0394
+  },
+  {
+   "hour": "2026-09-03T01:00",
+   "at": 1788415200,
+   "tokens_in": 8575,
+   "tokens_out": 1521,
+   "cache_read": 26279,
+   "cost_usd": 0.0564
+  },
+  {
+   "hour": "2026-09-03T02:00",
+   "at": 1788418800,
+   "tokens_in": 3601,
+   "tokens_out": 638,
+   "cache_read": 11037,
+   "cost_usd": 0.0237
+  },
+  {
+   "hour": "2026-09-03T03:00",
+   "at": 1788422400,
+   "tokens_in": 3247,
+   "tokens_out": 576,
+   "cache_read": 9953,
+   "cost_usd": 0.0214
+  },
+  {
+   "hour": "2026-09-03T04:00",
+   "at": 1788426000,
+   "tokens_in": 3033,
+   "tokens_out": 538,
+   "cache_read": 9294,
+   "cost_usd": 0.02
+  },
+  {
+   "hour": "2026-09-03T05:00",
+   "at": 1788429600,
+   "tokens_in": 5585,
+   "tokens_out": 990,
+   "cache_read": 17116,
+   "cost_usd": 0.0367
+  },
+  {
+   "hour": "2026-09-03T06:00",
+   "at": 1788433200,
+   "tokens_in": 2854,
+   "tokens_out": 506,
+   "cache_read": 8747,
+   "cost_usd": 0.0188
+  },
+  {
+   "hour": "2026-09-03T07:00",
+   "at": 1788436800,
+   "tokens_in": 3177,
+   "tokens_out": 563,
+   "cache_read": 9738,
+   "cost_usd": 0.0209
+  },
+  {
+   "hour": "2026-09-03T08:00",
+   "at": 1788440400,
+   "tokens_in": 76196,
+   "tokens_out": 13518,
+   "cache_read": 233505,
+   "cost_usd": 0.5014
+  },
+  {
+   "hour": "2026-09-03T09:00",
+   "at": 1788444000,
+   "tokens_in": 47805,
+   "tokens_out": 8481,
+   "cache_read": 146499,
+   "cost_usd": 0.3146
+  },
+  {
+   "hour": "2026-09-03T10:00",
+   "at": 1788447600,
+   "tokens_in": 37766,
+   "tokens_out": 6700,
+   "cache_read": 115735,
+   "cost_usd": 0.2485
+  },
+  {
+   "hour": "2026-09-03T11:00",
+   "at": 1788451200,
+   "tokens_in": 63335,
+   "tokens_out": 11237,
+   "cache_read": 194093,
+   "cost_usd": 0.4168
+  },
+  {
+   "hour": "2026-09-03T12:00",
+   "at": 1788454800,
+   "tokens_in": 106999,
+   "tokens_out": 18983,
+   "cache_read": 327902,
+   "cost_usd": 0.7041
+  },
+  {
+   "hour": "2026-09-03T13:00",
+   "at": 1788458400,
+   "tokens_in": 48136,
+   "tokens_out": 8540,
+   "cache_read": 147514,
+   "cost_usd": 0.3168
+  },
+  {
+   "hour": "2026-09-03T14:00",
+   "at": 1788462000,
+   "tokens_in": 66465,
+   "tokens_out": 11792,
+   "cache_read": 203683,
+   "cost_usd": 0.4374
+  },
+  {
+   "hour": "2026-09-03T15:00",
+   "at": 1788465600,
+   "tokens_in": 101490,
+   "tokens_out": 18006,
+   "cache_read": 311019,
+   "cost_usd": 0.6679
+  },
+  {
+   "hour": "2026-09-03T16:00",
+   "at": 1788469200,
+   "tokens_in": 79644,
+   "tokens_out": 14130,
+   "cache_read": 244072,
+   "cost_usd": 0.5241
+  },
+  {
+   "hour": "2026-09-03T17:00",
+   "at": 1788472800,
+   "tokens_in": 50829,
+   "tokens_out": 9018,
+   "cache_read": 155768,
+   "cost_usd": 0.3345
+  },
+  {
+   "hour": "2026-09-03T18:00",
+   "at": 1788476400,
+   "tokens_in": 44955,
+   "tokens_out": 7975,
+   "cache_read": 137766,
+   "cost_usd": 0.2958
+  },
+  {
+   "hour": "2026-09-03T19:00",
+   "at": 1788480000,
+   "tokens_in": 37128,
+   "tokens_out": 6587,
+   "cache_read": 113780,
+   "cost_usd": 0.2443
+  },
+  {
+   "hour": "2026-09-03T20:00",
+   "at": 1788483600,
+   "tokens_in": 61523,
+   "tokens_out": 10915,
+   "cache_read": 188539,
+   "cost_usd": 0.4049
+  },
+  {
+   "hour": "2026-09-03T21:00",
+   "at": 1788487200,
+   "tokens_in": 103767,
+   "tokens_out": 18410,
+   "cache_read": 317998,
+   "cost_usd": 0.6829
+  },
+  {
+   "hour": "2026-09-03T22:00",
+   "at": 1788490800,
+   "tokens_in": 35198,
+   "tokens_out": 6244,
+   "cache_read": 107866,
+   "cost_usd": 0.2316
+  },
+  {
+   "hour": "2026-09-03T23:00",
+   "at": 1788494400,
+   "tokens_in": 89486,
+   "tokens_out": 15876,
+   "cache_read": 274231,
+   "cost_usd": 0.5889
+  },
+  {
+   "hour": "2026-09-04T00:00",
+   "at": 1788498000,
+   "tokens_in": 3253,
+   "tokens_out": 577,
+   "cache_read": 9971,
+   "cost_usd": 0.0214
+  },
+  {
+   "hour": "2026-09-04T01:00",
+   "at": 1788501600,
+   "tokens_in": 6857,
+   "tokens_out": 1216,
+   "cache_read": 21015,
+   "cost_usd": 0.0451
+  },
+  {
+   "hour": "2026-09-04T02:00",
+   "at": 1788505200,
+   "tokens_in": 3535,
+   "tokens_out": 627,
+   "cache_read": 10834,
+   "cost_usd": 0.0233
+  },
+  {
+   "hour": "2026-09-04T03:00",
+   "at": 1788508800,
+   "tokens_in": 2762,
+   "tokens_out": 490,
+   "cache_read": 8465,
+   "cost_usd": 0.0182
+  },
+  {
+   "hour": "2026-09-04T04:00",
+   "at": 1788512400,
+   "tokens_in": 6705,
+   "tokens_out": 1189,
+   "cache_read": 20549,
+   "cost_usd": 0.0441
+  },
+  {
+   "hour": "2026-09-04T05:00",
+   "at": 1788516000,
+   "tokens_in": 2579,
+   "tokens_out": 457,
+   "cache_read": 7903,
+   "cost_usd": 0.017
+  },
+  {
+   "hour": "2026-09-04T06:00",
+   "at": 1788519600,
+   "tokens_in": 4405,
+   "tokens_out": 781,
+   "cache_read": 13500,
+   "cost_usd": 0.029
+  },
+  {
+   "hour": "2026-09-04T07:00",
+   "at": 1788523200,
+   "tokens_in": 2784,
+   "tokens_out": 494,
+   "cache_read": 8534,
+   "cost_usd": 0.0183
+  },
+  {
+   "hour": "2026-09-04T08:00",
+   "at": 1788526800,
+   "tokens_in": 47539,
+   "tokens_out": 8434,
+   "cache_read": 145687,
+   "cost_usd": 0.3128
+  },
+  {
+   "hour": "2026-09-04T09:00",
+   "at": 1788530400,
+   "tokens_in": 29907,
+   "tokens_out": 5306,
+   "cache_read": 91651,
+   "cost_usd": 0.1968
+  },
+  {
+   "hour": "2026-09-04T10:00",
+   "at": 1788534000,
+   "tokens_in": 68341,
+   "tokens_out": 12125,
+   "cache_read": 209432,
+   "cost_usd": 0.4497
+  },
+  {
+   "hour": "2026-09-04T11:00",
+   "at": 1788537600,
+   "tokens_in": 56214,
+   "tokens_out": 9973,
+   "cache_read": 172269,
+   "cost_usd": 0.3699
+  },
+  {
+   "hour": "2026-09-04T12:00",
+   "at": 1788541200,
+   "tokens_in": 93225,
+   "tokens_out": 16539,
+   "cache_read": 285690,
+   "cost_usd": 0.6135
+  },
+  {
+   "hour": "2026-09-04T13:00",
+   "at": 1788544800,
+   "tokens_in": 71044,
+   "tokens_out": 12604,
+   "cache_read": 217718,
+   "cost_usd": 0.4675
+  },
+  {
+   "hour": "2026-09-04T14:00",
+   "at": 1788548400,
+   "tokens_in": 41137,
+   "tokens_out": 7298,
+   "cache_read": 126067,
+   "cost_usd": 0.2707
+  },
+  {
+   "hour": "2026-09-04T15:00",
+   "at": 1788552000,
+   "tokens_in": 106252,
+   "tokens_out": 18851,
+   "cache_read": 325611,
+   "cost_usd": 0.6992
+  },
+  {
+   "hour": "2026-09-04T16:00",
+   "at": 1788555600,
+   "tokens_in": 51921,
+   "tokens_out": 9211,
+   "cache_read": 159114,
+   "cost_usd": 0.3417
+  },
+  {
+   "hour": "2026-09-04T17:00",
+   "at": 1788559200,
+   "tokens_in": 50417,
+   "tokens_out": 8945,
+   "cache_read": 154504,
+   "cost_usd": 0.3318
+  },
+  {
+   "hour": "2026-09-04T18:00",
+   "at": 1788562800,
+   "tokens_in": 84762,
+   "tokens_out": 15038,
+   "cache_read": 259755,
+   "cost_usd": 0.5578
+  },
+  {
+   "hour": "2026-09-04T19:00",
+   "at": 1788566400,
+   "tokens_in": 50951,
+   "tokens_out": 9039,
+   "cache_read": 156142,
+   "cost_usd": 0.3353
+  },
+  {
+   "hour": "2026-09-04T20:00",
+   "at": 1788570000,
+   "tokens_in": 42409,
+   "tokens_out": 7524,
+   "cache_read": 129965,
+   "cost_usd": 0.2791
+  },
+  {
+   "hour": "2026-09-04T21:00",
+   "at": 1788573600,
+   "tokens_in": 59483,
+   "tokens_out": 10553,
+   "cache_read": 182288,
+   "cost_usd": 0.3914
+  },
+  {
+   "hour": "2026-09-04T22:00",
+   "at": 1788577200,
+   "tokens_in": 69585,
+   "tokens_out": 12345,
+   "cache_read": 213244,
+   "cost_usd": 0.4579
+  },
+  {
+   "hour": "2026-09-04T23:00",
+   "at": 1788580800,
+   "tokens_in": 97163,
+   "tokens_out": 17238,
+   "cache_read": 297757,
+   "cost_usd": 0.6394
+  },
+  {
+   "hour": "2026-09-05T00:00",
+   "at": 1788584400,
+   "tokens_in": 2320,
+   "tokens_out": 411,
+   "cache_read": 7111,
+   "cost_usd": 0.0153
+  },
+  {
+   "hour": "2026-09-05T01:00",
+   "at": 1788588000,
+   "tokens_in": 1598,
+   "tokens_out": 283,
+   "cache_read": 4899,
+   "cost_usd": 0.0105
+  },
+  {
+   "hour": "2026-09-05T02:00",
+   "at": 1788591600,
+   "tokens_in": 936,
+   "tokens_out": 166,
+   "cache_read": 2869,
+   "cost_usd": 0.0062
+  },
+  {
+   "hour": "2026-09-05T03:00",
+   "at": 1788595200,
+   "tokens_in": 1414,
+   "tokens_out": 250,
+   "cache_read": 4333,
+   "cost_usd": 0.0093
+  },
+  {
+   "hour": "2026-09-05T04:00",
+   "at": 1788598800,
+   "tokens_in": 774,
+   "tokens_out": 137,
+   "cache_read": 2374,
+   "cost_usd": 0.0051
+  },
+  {
+   "hour": "2026-09-05T05:00",
+   "at": 1788602400,
+   "tokens_in": 2376,
+   "tokens_out": 421,
+   "cache_read": 7281,
+   "cost_usd": 0.0156
+  },
+  {
+   "hour": "2026-09-05T06:00",
+   "at": 1788606000,
+   "tokens_in": 1219,
+   "tokens_out": 216,
+   "cache_read": 3738,
+   "cost_usd": 0.008
+  },
+  {
+   "hour": "2026-09-05T07:00",
+   "at": 1788609600,
+   "tokens_in": 2044,
+   "tokens_out": 362,
+   "cache_read": 6263,
+   "cost_usd": 0.0134
+  },
+  {
+   "hour": "2026-09-05T08:00",
+   "at": 1788613200,
+   "tokens_in": 22351,
+   "tokens_out": 3965,
+   "cache_read": 68497,
+   "cost_usd": 0.1471
+  },
+  {
+   "hour": "2026-09-05T09:00",
+   "at": 1788616800,
+   "tokens_in": 15766,
+   "tokens_out": 2797,
+   "cache_read": 48317,
+   "cost_usd": 0.1037
+  },
+  {
+   "hour": "2026-09-05T10:00",
+   "at": 1788620400,
+   "tokens_in": 15413,
+   "tokens_out": 2734,
+   "cache_read": 47235,
+   "cost_usd": 0.1014
+  },
+  {
+   "hour": "2026-09-05T11:00",
+   "at": 1788624000,
+   "tokens_in": 15487,
+   "tokens_out": 2747,
+   "cache_read": 47462,
+   "cost_usd": 0.1019
+  },
+  {
+   "hour": "2026-09-05T12:00",
+   "at": 1788627600,
+   "tokens_in": 11013,
+   "tokens_out": 1954,
+   "cache_read": 33751,
+   "cost_usd": 0.0725
+  },
+  {
+   "hour": "2026-09-05T13:00",
+   "at": 1788631200,
+   "tokens_in": 29984,
+   "tokens_out": 5319,
+   "cache_read": 91887,
+   "cost_usd": 0.1973
+  },
+  {
+   "hour": "2026-09-05T14:00",
+   "at": 1788634800,
+   "tokens_in": 21765,
+   "tokens_out": 3861,
+   "cache_read": 66702,
+   "cost_usd": 0.1432
+  },
+  {
+   "hour": "2026-09-05T15:00",
+   "at": 1788638400,
+   "tokens_in": 11303,
+   "tokens_out": 2005,
+   "cache_read": 34639,
+   "cost_usd": 0.0744
+  },
+  {
+   "hour": "2026-09-05T16:00",
+   "at": 1788642000,
+   "tokens_in": 10822,
+   "tokens_out": 1920,
+   "cache_read": 33164,
+   "cost_usd": 0.0712
+  },
+  {
+   "hour": "2026-09-05T17:00",
+   "at": 1788645600,
+   "tokens_in": 9917,
+   "tokens_out": 1759,
+   "cache_read": 30391,
+   "cost_usd": 0.0653
+  },
+  {
+   "hour": "2026-09-05T18:00",
+   "at": 1788649200,
+   "tokens_in": 30435,
+   "tokens_out": 5399,
+   "cache_read": 93270,
+   "cost_usd": 0.2003
+  },
+  {
+   "hour": "2026-09-05T19:00",
+   "at": 1788652800,
+   "tokens_in": 14596,
+   "tokens_out": 2589,
+   "cache_read": 44731,
+   "cost_usd": 0.096
+  },
+  {
+   "hour": "2026-09-05T20:00",
+   "at": 1788656400,
+   "tokens_in": 22685,
+   "tokens_out": 4024,
+   "cache_read": 69520,
+   "cost_usd": 0.1493
+  },
+  {
+   "hour": "2026-09-05T21:00",
+   "at": 1788660000,
+   "tokens_in": 17391,
+   "tokens_out": 3085,
+   "cache_read": 53295,
+   "cost_usd": 0.1144
+  },
+  {
+   "hour": "2026-09-05T22:00",
+   "at": 1788663600,
+   "tokens_in": 24250,
+   "tokens_out": 4302,
+   "cache_read": 74315,
+   "cost_usd": 0.1596
+  },
+  {
+   "hour": "2026-09-05T23:00",
+   "at": 1788667200,
+   "tokens_in": 19120,
+   "tokens_out": 3392,
+   "cache_read": 58594,
+   "cost_usd": 0.1258
+  },
+  {
+   "hour": "2026-09-06T00:00",
+   "at": 1788670800,
+   "tokens_in": 2143,
+   "tokens_out": 380,
+   "cache_read": 6570,
+   "cost_usd": 0.0141
+  },
+  {
+   "hour": "2026-09-06T01:00",
+   "at": 1788674400,
+   "tokens_in": 2385,
+   "tokens_out": 423,
+   "cache_read": 7309,
+   "cost_usd": 0.0157
+  },
+  {
+   "hour": "2026-09-06T02:00",
+   "at": 1788678000,
+   "tokens_in": 1958,
+   "tokens_out": 347,
+   "cache_read": 6003,
+   "cost_usd": 0.0129
+  },
+  {
+   "hour": "2026-09-06T03:00",
+   "at": 1788681600,
+   "tokens_in": 1852,
+   "tokens_out": 328,
+   "cache_read": 5675,
+   "cost_usd": 0.0122
+  },
+  {
+   "hour": "2026-09-06T04:00",
+   "at": 1788685200,
+   "tokens_in": 1237,
+   "tokens_out": 219,
+   "cache_read": 3793,
+   "cost_usd": 0.0081
+  },
+  {
+   "hour": "2026-09-06T05:00",
+   "at": 1788688800,
+   "tokens_in": 1725,
+   "tokens_out": 306,
+   "cache_read": 5288,
+   "cost_usd": 0.0114
+  },
+  {
+   "hour": "2026-09-06T06:00",
+   "at": 1788692400,
+   "tokens_in": 866,
+   "tokens_out": 153,
+   "cache_read": 2656,
+   "cost_usd": 0.0057
+  },
+  {
+   "hour": "2026-09-06T07:00",
+   "at": 1788696000,
+   "tokens_in": 1336,
+   "tokens_out": 237,
+   "cache_read": 4096,
+   "cost_usd": 0.0088
+  },
+  {
+   "hour": "2026-09-06T08:00",
+   "at": 1788699600,
+   "tokens_in": 29008,
+   "tokens_out": 5146,
+   "cache_read": 88898,
+   "cost_usd": 0.1909
+  },
+  {
+   "hour": "2026-09-06T09:00",
+   "at": 1788703200,
+   "tokens_in": 20759,
+   "tokens_out": 3683,
+   "cache_read": 63616,
+   "cost_usd": 0.1366
+  },
+  {
+   "hour": "2026-09-06T10:00",
+   "at": 1788706800,
+   "tokens_in": 12936,
+   "tokens_out": 2295,
+   "cache_read": 39642,
+   "cost_usd": 0.0851
+  },
+  {
+   "hour": "2026-09-06T11:00",
+   "at": 1788710400,
+   "tokens_in": 28622,
+   "tokens_out": 5078,
+   "cache_read": 87713,
+   "cost_usd": 0.1883
+  },
+  {
+   "hour": "2026-09-06T12:00",
+   "at": 1788714000,
+   "tokens_in": 24121,
+   "tokens_out": 4279,
+   "cache_read": 73919,
+   "cost_usd": 0.1587
+  },
+  {
+   "hour": "2026-09-06T13:00",
+   "at": 1788717600,
+   "tokens_in": 29301,
+   "tokens_out": 5198,
+   "cache_read": 89794,
+   "cost_usd": 0.1928
+  },
+  {
+   "hour": "2026-09-06T14:00",
+   "at": 1788721200,
+   "tokens_in": 17953,
+   "tokens_out": 3185,
+   "cache_read": 55018,
+   "cost_usd": 0.1181
+  },
+  {
+   "hour": "2026-09-06T15:00",
+   "at": 1788724800,
+   "tokens_in": 24474,
+   "tokens_out": 4342,
+   "cache_read": 75002,
+   "cost_usd": 0.1611
+  },
+  {
+   "hour": "2026-09-06T16:00",
+   "at": 1788728400,
+   "tokens_in": 29012,
+   "tokens_out": 5147,
+   "cache_read": 88908,
+   "cost_usd": 0.1909
+  },
+  {
+   "hour": "2026-09-06T17:00",
+   "at": 1788732000,
+   "tokens_in": 28672,
+   "tokens_out": 5086,
+   "cache_read": 87866,
+   "cost_usd": 0.1887
+  },
+  {
+   "hour": "2026-09-06T18:00",
+   "at": 1788735600,
+   "tokens_in": 16464,
+   "tokens_out": 2921,
+   "cache_read": 50455,
+   "cost_usd": 0.1083
+  },
+  {
+   "hour": "2026-09-06T19:00",
+   "at": 1788739200,
+   "tokens_in": 26321,
+   "tokens_out": 4669,
+   "cache_read": 80663,
+   "cost_usd": 0.1732
+  },
+  {
+   "hour": "2026-09-06T20:00",
+   "at": 1788742800,
+   "tokens_in": 32217,
+   "tokens_out": 5716,
+   "cache_read": 98731,
+   "cost_usd": 0.212
+  },
+  {
+   "hour": "2026-09-06T21:00",
+   "at": 1788746400,
+   "tokens_in": 19658,
+   "tokens_out": 3487,
+   "cache_read": 60244,
+   "cost_usd": 0.1294
+  },
+  {
+   "hour": "2026-09-06T22:00",
+   "at": 1788750000,
+   "tokens_in": 29113,
+   "tokens_out": 5165,
+   "cache_read": 89218,
+   "cost_usd": 0.1916
+  },
+  {
+   "hour": "2026-09-06T23:00",
+   "at": 1788753600,
+   "tokens_in": 11807,
+   "tokens_out": 2094,
+   "cache_read": 36185,
+   "cost_usd": 0.0777
+  },
+  {
+   "hour": "2026-09-07T00:00",
+   "at": 1788757200,
+   "tokens_in": 4011,
+   "tokens_out": 711,
+   "cache_read": 12292,
+   "cost_usd": 0.0264
+  },
+  {
+   "hour": "2026-09-07T01:00",
+   "at": 1788760800,
+   "tokens_in": 2229,
+   "tokens_out": 395,
+   "cache_read": 6831,
+   "cost_usd": 0.0147
+  },
+  {
+   "hour": "2026-09-07T02:00",
+   "at": 1788764400,
+   "tokens_in": 7057,
+   "tokens_out": 1252,
+   "cache_read": 21627,
+   "cost_usd": 0.0464
+  },
+  {
+   "hour": "2026-09-07T03:00",
+   "at": 1788768000,
+   "tokens_in": 5943,
+   "tokens_out": 1054,
+   "cache_read": 18215,
+   "cost_usd": 0.0391
+  },
+  {
+   "hour": "2026-09-07T04:00",
+   "at": 1788771600,
+   "tokens_in": 4164,
+   "tokens_out": 738,
+   "cache_read": 12762,
+   "cost_usd": 0.0274
+  },
+  {
+   "hour": "2026-09-07T05:00",
+   "at": 1788775200,
+   "tokens_in": 2499,
+   "tokens_out": 443,
+   "cache_read": 7660,
+   "cost_usd": 0.0164
+  },
+  {
+   "hour": "2026-09-07T06:00",
+   "at": 1788778800,
+   "tokens_in": 2495,
+   "tokens_out": 442,
+   "cache_read": 7647,
+   "cost_usd": 0.0164
+  },
+  {
+   "hour": "2026-09-07T07:00",
+   "at": 1788782400,
+   "tokens_in": 2925,
+   "tokens_out": 518,
+   "cache_read": 8963,
+   "cost_usd": 0.0192
+  },
+  {
+   "hour": "2026-09-07T08:00",
+   "at": 1788786000,
+   "tokens_in": 46989,
+   "tokens_out": 8336,
+   "cache_read": 144000,
+   "cost_usd": 0.3092
+  },
+  {
+   "hour": "2026-09-07T09:00",
+   "at": 1788789600,
+   "tokens_in": 99402,
+   "tokens_out": 17635,
+   "cache_read": 304619,
+   "cost_usd": 0.6541
+  },
+  {
+   "hour": "2026-09-07T10:00",
+   "at": 1788793200,
+   "tokens_in": 40396,
+   "tokens_out": 7167,
+   "cache_read": 123796,
+   "cost_usd": 0.2658
+  },
+  {
+   "hour": "2026-09-07T11:00",
+   "at": 1788796800,
+   "tokens_in": 34132,
+   "tokens_out": 6055,
+   "cache_read": 104600,
+   "cost_usd": 0.2246
+  },
+  {
+   "hour": "2026-09-07T12:00",
+   "at": 1788800400,
+   "tokens_in": 57134,
+   "tokens_out": 10136,
+   "cache_read": 175088,
+   "cost_usd": 0.376
+  },
+  {
+   "hour": "2026-09-07T13:00",
+   "at": 1788804000,
+   "tokens_in": 85966,
+   "tokens_out": 15252,
+   "cache_read": 263446,
+   "cost_usd": 0.5657
+  },
+  {
+   "hour": "2026-09-07T14:00",
+   "at": 1788807600,
+   "tokens_in": 101782,
+   "tokens_out": 18058,
+   "cache_read": 311912,
+   "cost_usd": 0.6698
+  },
+  {
+   "hour": "2026-09-07T15:00",
+   "at": 1788811200,
+   "tokens_in": 96700,
+   "tokens_out": 17156,
+   "cache_read": 296338,
+   "cost_usd": 0.6363
+  },
+  {
+   "hour": "2026-09-07T16:00",
+   "at": 1788814800,
+   "tokens_in": 36224,
+   "tokens_out": 6426,
+   "cache_read": 111010,
+   "cost_usd": 0.2384
+  },
+  {
+   "hour": "2026-09-07T17:00",
+   "at": 1788818400,
+   "tokens_in": 105344,
+   "tokens_out": 18690,
+   "cache_read": 322830,
+   "cost_usd": 0.6932
+  },
+  {
+   "hour": "2026-09-07T18:00",
+   "at": 1788822000,
+   "tokens_in": 56736,
+   "tokens_out": 10066,
+   "cache_read": 173868,
+   "cost_usd": 0.3734
+  },
+  {
+   "hour": "2026-09-07T19:00",
+   "at": 1788825600,
+   "tokens_in": 40240,
+   "tokens_out": 7139,
+   "cache_read": 123317,
+   "cost_usd": 0.2648
+  },
+  {
+   "hour": "2026-09-07T20:00",
+   "at": 1788829200,
+   "tokens_in": 93447,
+   "tokens_out": 16579,
+   "cache_read": 286372,
+   "cost_usd": 0.6149
+  },
+  {
+   "hour": "2026-09-07T21:00",
+   "at": 1788832800,
+   "tokens_in": 40134,
+   "tokens_out": 7120,
+   "cache_read": 122991,
+   "cost_usd": 0.2641
+  },
+  {
+   "hour": "2026-09-07T22:00",
+   "at": 1788836400,
+   "tokens_in": 40717,
+   "tokens_out": 7224,
+   "cache_read": 124778,
+   "cost_usd": 0.2679
+  },
+  {
+   "hour": "2026-09-07T23:00",
+   "at": 1788840000,
+   "tokens_in": 104638,
+   "tokens_out": 18564,
+   "cache_read": 320664,
+   "cost_usd": 0.6886
+  },
+  {
+   "hour": "2026-09-08T00:00",
+   "at": 1788843600,
+   "tokens_in": 7459,
+   "tokens_out": 1323,
+   "cache_read": 22859,
+   "cost_usd": 0.0491
+  },
+  {
+   "hour": "2026-09-08T01:00",
+   "at": 1788847200,
+   "tokens_in": 2459,
+   "tokens_out": 436,
+   "cache_read": 7536,
+   "cost_usd": 0.0162
+  },
+  {
+   "hour": "2026-09-08T02:00",
+   "at": 1788850800,
+   "tokens_in": 5759,
+   "tokens_out": 1021,
+   "cache_read": 17651,
+   "cost_usd": 0.0379
+  },
+  {
+   "hour": "2026-09-08T03:00",
+   "at": 1788854400,
+   "tokens_in": 5926,
+   "tokens_out": 1051,
+   "cache_read": 18160,
+   "cost_usd": 0.039
+  },
+  {
+   "hour": "2026-09-08T04:00",
+   "at": 1788858000,
+   "tokens_in": 4241,
+   "tokens_out": 752,
+   "cache_read": 12999,
+   "cost_usd": 0.0279
+  },
+  {
+   "hour": "2026-09-08T05:00",
+   "at": 1788861600,
+   "tokens_in": 5406,
+   "tokens_out": 959,
+   "cache_read": 16569,
+   "cost_usd": 0.0356
+  },
+  {
+   "hour": "2026-09-08T06:00",
+   "at": 1788865200,
+   "tokens_in": 8118,
+   "tokens_out": 1440,
+   "cache_read": 24880,
+   "cost_usd": 0.0534
+  },
+  {
+   "hour": "2026-09-08T07:00",
+   "at": 1788868800,
+   "tokens_in": 5740,
+   "tokens_out": 1018,
+   "cache_read": 17591,
+   "cost_usd": 0.0378
+  },
+  {
+   "hour": "2026-09-08T08:00",
+   "at": 1788872400,
+   "tokens_in": 100221,
+   "tokens_out": 17781,
+   "cache_read": 307131,
+   "cost_usd": 0.6595
+  },
+  {
+   "hour": "2026-09-08T09:00",
+   "at": 1788876000,
+   "tokens_in": 54993,
+   "tokens_out": 9756,
+   "cache_read": 168529,
+   "cost_usd": 0.3619
+  },
+  {
+   "hour": "2026-09-08T10:00",
+   "at": 1788879600,
+   "tokens_in": 84916,
+   "tokens_out": 15065,
+   "cache_read": 260226,
+   "cost_usd": 0.5588
+  },
+  {
+   "hour": "2026-09-08T11:00",
+   "at": 1788883200,
+   "tokens_in": 38995,
+   "tokens_out": 6918,
+   "cache_read": 119501,
+   "cost_usd": 0.2566
+  },
+  {
+   "hour": "2026-09-08T12:00",
+   "at": 1788886800,
+   "tokens_in": 109047,
+   "tokens_out": 19347,
+   "cache_read": 334177,
+   "cost_usd": 0.7176
+  },
+  {
+   "hour": "2026-09-08T13:00",
+   "at": 1788890400,
+   "tokens_in": 42555,
+   "tokens_out": 7550,
+   "cache_read": 130413,
+   "cost_usd": 0.28
+  },
+  {
+   "hour": "2026-09-08T14:00",
+   "at": 1788894000,
+   "tokens_in": 94707,
+   "tokens_out": 16802,
+   "cache_read": 290231,
+   "cost_usd": 0.6232
+  },
+  {
+   "hour": "2026-09-08T15:00",
+   "at": 1788897600,
+   "tokens_in": 78080,
+   "tokens_out": 13853,
+   "cache_read": 239279,
+   "cost_usd": 0.5138
+  },
+  {
+   "hour": "2026-09-08T16:00",
+   "at": 1788901200,
+   "tokens_in": 32676,
+   "tokens_out": 5797,
+   "cache_read": 100137,
+   "cost_usd": 0.215
+  },
+  {
+   "hour": "2026-09-08T17:00",
+   "at": 1788904800,
+   "tokens_in": 31180,
+   "tokens_out": 5532,
+   "cache_read": 95554,
+   "cost_usd": 0.2052
+  },
+  {
+   "hour": "2026-09-08T18:00",
+   "at": 1788908400,
+   "tokens_in": 103380,
+   "tokens_out": 18341,
+   "cache_read": 316809,
+   "cost_usd": 0.6803
+  },
+  {
+   "hour": "2026-09-08T19:00",
+   "at": 1788912000,
+   "tokens_in": 105693,
+   "tokens_out": 18752,
+   "cache_read": 323900,
+   "cost_usd": 0.6955
+  },
+  {
+   "hour": "2026-09-08T20:00",
+   "at": 1788915600,
+   "tokens_in": 61037,
+   "tokens_out": 10829,
+   "cache_read": 187051,
+   "cost_usd": 0.4017
+  },
+  {
+   "hour": "2026-09-08T21:00",
+   "at": 1788919200,
+   "tokens_in": 43183,
+   "tokens_out": 7661,
+   "cache_read": 132335,
+   "cost_usd": 0.2842
+  },
+  {
+   "hour": "2026-09-08T22:00",
+   "at": 1788922800,
+   "tokens_in": 68563,
+   "tokens_out": 12164,
+   "cache_read": 210113,
+   "cost_usd": 0.4512
+  },
+  {
+   "hour": "2026-09-08T23:00",
+   "at": 1788926400,
+   "tokens_in": 99617,
+   "tokens_out": 17674,
+   "cache_read": 305278,
+   "cost_usd": 0.6555
+  },
+  {
+   "hour": "2026-09-09T00:00",
+   "at": 1788930000,
+   "tokens_in": 4827,
+   "tokens_out": 856,
+   "cache_read": 14794,
+   "cost_usd": 0.0318
+  },
+  {
+   "hour": "2026-09-09T01:00",
+   "at": 1788933600,
+   "tokens_in": 3199,
+   "tokens_out": 567,
+   "cache_read": 9804,
+   "cost_usd": 0.021
+  },
+  {
+   "hour": "2026-09-09T02:00",
+   "at": 1788937200,
+   "tokens_in": 5156,
+   "tokens_out": 914,
+   "cache_read": 15801,
+   "cost_usd": 0.0339
+  },
+  {
+   "hour": "2026-09-09T03:00",
+   "at": 1788940800,
+   "tokens_in": 8012,
+   "tokens_out": 1421,
+   "cache_read": 24553,
+   "cost_usd": 0.0527
+  },
+  {
+   "hour": "2026-09-09T04:00",
+   "at": 1788944400,
+   "tokens_in": 5927,
+   "tokens_out": 1051,
+   "cache_read": 18163,
+   "cost_usd": 0.039
+  },
+  {
+   "hour": "2026-09-09T05:00",
+   "at": 1788948000,
+   "tokens_in": 8454,
+   "tokens_out": 1499,
+   "cache_read": 25907,
+   "cost_usd": 0.0556
+  },
+  {
+   "hour": "2026-09-09T06:00",
+   "at": 1788951600,
+   "tokens_in": 8684,
+   "tokens_out": 1540,
+   "cache_read": 26612,
+   "cost_usd": 0.0571
+  },
+  {
+   "hour": "2026-09-09T07:00",
+   "at": 1788955200,
+   "tokens_in": 6587,
+   "tokens_out": 1168,
+   "cache_read": 20185,
+   "cost_usd": 0.0433
+  },
+  {
+   "hour": "2026-09-09T08:00",
+   "at": 1788958800,
+   "tokens_in": 90974,
+   "tokens_out": 16140,
+   "cache_read": 278792,
+   "cost_usd": 0.5987
+  },
+  {
+   "hour": "2026-09-09T09:00",
+   "at": 1788962400,
+   "tokens_in": 98580,
+   "tokens_out": 17490,
+   "cache_read": 302100,
+   "cost_usd": 0.6487
+  },
+  {
+   "hour": "2026-09-09T10:00",
+   "at": 1788966000,
+   "tokens_in": 61463,
+   "tokens_out": 10904,
+   "cache_read": 188356,
+   "cost_usd": 0.4045
+  },
+  {
+   "hour": "2026-09-09T11:00",
+   "at": 1788969600,
+   "tokens_in": 43058,
+   "tokens_out": 7639,
+   "cache_read": 131954,
+   "cost_usd": 0.2833
+  },
+  {
+   "hour": "2026-09-09T12:00",
+   "at": 1788973200,
+   "tokens_in": 96329,
+   "tokens_out": 17090,
+   "cache_read": 295202,
+   "cost_usd": 0.6339
+  },
+  {
+   "hour": "2026-09-09T13:00",
+   "at": 1788976800,
+   "tokens_in": 105449,
+   "tokens_out": 18708,
+   "cache_read": 323150,
+   "cost_usd": 0.6939
+  },
+  {
+   "hour": "2026-09-09T14:00",
+   "at": 1788980400,
+   "tokens_in": 44273,
+   "tokens_out": 7855,
+   "cache_read": 135677,
+   "cost_usd": 0.2913
+  }
+ ],
+ "pricing": {
+  "input_per_mtok": 3.0,
+  "output_per_mtok": 15.0,
+  "cache_read_per_mtok": 0.3,
+  "as_of": "2026-09-01",
+  "approximate": true,
+  "currency": "USD"
+ },
+ "account": {
+  "plan": "Max 20\u00d7",
+  "label": "jonathan@\u2026",
+  "fidelity": "official"
+ },
+ "state": "ok"
+}
