@@ -317,7 +317,7 @@ public enum LightExplainer {
             if let seconds = detail.secondsInState, let text = elapsed(seconds: seconds) { result.append(.init(label: "In this state", value: text)) }
             if !detail.dimming.isEmpty {
                 let factor = detail.brightnessFactor.map { " · \(percent($0))" } ?? ""
-                result.append(.init(label: "Dimming", value: detail.dimming.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: ", ") + factor))
+                result.append(.init(label: "Dimming", value: detail.dimming.map { dimmingWord($0, lights: lights) }.joined(separator: ", ") + factor))
             }
         }
         if let settings = context.settings {
@@ -329,6 +329,12 @@ public enum LightExplainer {
                 result.append(.init(label: "Idle dim", value: "to \(fraction)% after \(after) min"))
             } else {
                 result.append(.init(label: "Idle dim", value: "off"))
+            }
+            if AutoDimSettings.isProvided(in: settings) {
+                let autoDim = AutoDimSettings(document: settings)
+                var value = autoDim.summary
+                if autoDim.mode != .off, let line = AutoDimReadout.line(lights.autoDim, settings: autoDim) { value += " · \(line)" }
+                result.append(.init(label: "Auto-dim", value: value))
             }
             if settings.bool("dnd_schedule_enabled") == true {
                 let start = settings.double("dnd_schedule_start_minutes") ?? 1320
@@ -346,6 +352,16 @@ public enum LightExplainer {
             result.append(.init(label: "Focus", value: value))
         }
         return result
+    }
+
+    /// The `why_detail.dimming` words as the popover shows them: `idle_dim`
+    /// → "idle dim", `quiet` → "quiet", `sleep` → "sleep", `auto_dim` →
+    /// "Auto-dim (schedule)" from `lights.auto_dim`.
+    static func dimmingWord(_ word: String, lights: CoreLights) -> String {
+        switch word {
+        case "auto_dim", "night_dim": return AutoDimReadout.dimmingWord(lights.autoDim)
+        default: return word.replacingOccurrences(of: "_", with: " ")
+        }
     }
 
     // MARK: Formatting

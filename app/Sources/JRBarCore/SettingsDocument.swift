@@ -141,7 +141,8 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
     }
 
     public static let providers = ["claude", "codex", "gemini", "pi", "grok", "devin", "opencode", "openclaw", "antigravity", "cursor", "hermes", "kiro"]
-    public static let transcriptProviders = ["claude", "codex"]
+    /// `transcript_monitoring.*` (schema 3 added gemini and pi).
+    public static let transcriptProviders = ["claude", "codex", "gemini", "pi"]
     public static let fadeModes = ["working", "ask", "idle"]
 
     public static let all: [SettingsKey] = {
@@ -195,6 +196,14 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.lighting, "idle_auto_off_enabled", .bool),
             SettingsKey(.lighting, "idle_auto_off_after_minutes", .number),
             SettingsKey(.lighting, "active_scene", .string),
+            SettingsKey(.lighting, "auto_dim.mode", .string),
+            SettingsKey(.lighting, "auto_dim.schedule.start_minutes", .number),
+            SettingsKey(.lighting, "auto_dim.schedule.end_minutes", .number),
+            SettingsKey(.lighting, "auto_dim.schedule.fraction", .number),
+            SettingsKey(.lighting, "auto_dim.display.min_fraction", .number),
+            SettingsKey(.lighting, "auto_dim.ambient.min_fraction", .number),
+            SettingsKey(.lighting, "auto_dim.ambient.lux_floor", .number),
+            SettingsKey(.lighting, "auto_dim.ambient.lux_ceiling", .number),
             // Notifications & Focus
             SettingsKey(.notifications, "completion_notification_enabled", .bool),
             SettingsKey(.notifications, "completion_sweep_enabled", .bool),

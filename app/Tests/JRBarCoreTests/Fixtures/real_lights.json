@@ -1,0 +1,63 @@
+{
+ "auto_dim": {
+  "available": true,
+  "factor": 1.0,
+  "mode": "off",
+  "reading": null,
+  "source": "off"
+ },
+ "devices_linked": true,
+ "linked": true,
+ "linked_skew_ms": 14.2,
+ "surfaces": {
+  "dot": {
+   "anchor": 1789049894.4128294,
+   "brightness": 1.0,
+   "led_count": 2,
+   "program": "0:#001B22 1:#14732D",
+   "why": "working",
+   "why_detail": {
+    "brightness_factor": 1.0,
+    "dimming": [],
+    "label": "jr-bar-67",
+    "provider": "claude",
+    "seconds_in_state": 12.7,
+    "session": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
+   }
+  },
+  "hardware": {
+   "anchor": 1789049894.4128294,
+   "brightness": 1.0,
+   "led_count": 8,
+   "program": "off\n0:#0057FF 300ms none\n0:#000000 4:#0057FF 300ms none\n4:#000000 7:#0057FF 300ms none\noff",
+   "why": "working",
+   "why_detail": {
+    "brightness_factor": 1.0,
+    "dimming": [],
+    "label": "jr-bar-67",
+    "provider": "claude",
+    "seconds_in_state": 12.7,
+    "session": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
+   }
+  },
+  "screen_bar": {
+   "anchor": 1789049894.4128294,
+   "brightness": 0.36,
+   "led_count": 8,
+   "motion": "finite",
+   "program": "brightness 91\noff\n0:#00E5FF 300ms none\n0:#000000 4:#00E5FF 300ms none\n4:#000000 7:#00E5FF 300ms none\noff",
+   "static_fallback": "brightness 91\n#000000 #000000 #000000 #000000 #000000 #000000 #000000 #00E5FF",
+   "why": "working",
+   "why_detail": {
+    "brightness_factor": 1.0,
+    "dimming": [],
+    "label": "jr-bar-67",
+    "provider": "claude",
+    "seconds_in_state": 12.8,
+    "session": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
+   }
+  }
+ },
+ "t": "lights",
+ "v": 1
+}

@@ -816,6 +816,12 @@ def default_settings_document() -> dict:
         "active_scene": "calm",
         "agent_keep_awake_enabled": True,
         "alert_burst": 3,
+        "auto_dim": {
+            "mode": "off",
+            "schedule": {"start_minutes": 1320, "end_minutes": 420, "fraction": 0.3},
+            "display": {"min_fraction": 0.15},
+            "ambient": {"min_fraction": 0.1, "lux_floor": 5.0, "lux_ceiling": 400.0},
+        },
         "battery_monitoring": {
             "charging_idle_enabled": True, "full_charge_watts": None, "low_battery_alert_enabled": True,
             "low_battery_threshold_percent": 5.0, "power_change_preview_seconds": 7.0, "show_on_power_change": True,
@@ -938,7 +944,7 @@ def default_settings_document() -> dict:
         "studio_program": "",
         "subagent_asks_alert": False,
         "tips_enabled": True,
-        "transcript_monitoring": {"claude": False, "codex": False},
+        "transcript_monitoring": {"claude": False, "codex": False, "gemini": False, "pi": False},
         "usage_display_mode": "tokens",
         "usage_event_hook_path": "",
         "usage_graph_days": 7,
@@ -1456,6 +1462,37 @@ class World:
         mapping = self.deck_aux_mappings.get(index) if index < DECK_SLOTS + len(DECK_AUX_LABELS) else None
         return mapping, None, None
 
+    def auto_dim(self) -> dict:
+        """The daemon's `AutoDimResult.to_dict()` for the seeded `auto_dim`
+        document: schedule against the wall clock; display follows a fixed
+        62 % (this Mac's display is not read); ambient has no sensor here,
+        so it falls back to display and says `available: false`, exactly as
+        the daemon does without an ambient light sensor."""
+        doc = self.document.get("auto_dim") if isinstance(self.document.get("auto_dim"), dict) else {}
+        mode = doc.get("mode") if doc.get("mode") in ("off", "schedule", "display", "ambient") else "off"
+        if mode == "off":
+            return {"mode": "off", "source": "off", "factor": 1.0, "available": True, "reading": None}
+        schedule = doc.get("schedule") if isinstance(doc.get("schedule"), dict) else {}
+        display = doc.get("display") if isinstance(doc.get("display"), dict) else {}
+        if mode == "schedule":
+            now = time.localtime()
+            minutes = now.tm_hour * 60 + now.tm_min
+            start = int(schedule.get("start_minutes", 1320))
+            end = int(schedule.get("end_minutes", 420))
+            if start == end:
+                active = False
+            elif start < end:
+                active = start <= minutes < end
+            else:
+                active = minutes >= start or minutes < end
+            fraction = float(schedule.get("fraction", 0.3)) if active else 1.0
+            return {"mode": "schedule", "source": "schedule", "factor": round(fraction, 4), "available": True,
+                    "reading": float(minutes)}
+        reading = 0.62
+        floor = float(display.get("min_fraction", 0.15))
+        return {"mode": mode, "source": "display", "factor": round(max(floor, reading), 4),
+                "available": mode == "display", "reading": reading}
+
     def lights(self) -> dict:
         programs = {
             "working": (WORKING_RELAY, DOT_WORKING, "working"),
@@ -1479,6 +1516,9 @@ class World:
                         "why_detail": self.why_detail(why)},
             },
             "linked": True,
+            "devices_linked": bool(self.document.get("devices_linked", True)),
+            "linked_skew_ms": 11.0,
+            "auto_dim": self.auto_dim(),
         }
 
     def why_detail(self, why: str) -> dict:
@@ -1487,9 +1527,11 @@ class World:
                   "completed_unseen": ("completed",)}.get(why, ())
         session = next((s for s in self.sessions.values() if s.get("kind") == "main" and s.get("mode") in wanted), None)
         seconds = round(time.time() - self.anchor, 1) if self.anchor else 0.0
+        auto_dim = self.auto_dim()
+        dimming = ["auto_dim"] if auto_dim["factor"] < 1.0 else []
         return {"session": session["id"] if session else None, "label": session["label"] if session else None,
                 "provider": session["provider"] if session else None, "seconds_in_state": max(0.0, seconds),
-                "brightness_factor": 1.0, "dimming": []}
+                "brightness_factor": auto_dim["factor"], "dimming": dimming}
 
     def settings(self) -> dict:
         return {
@@ -1931,6 +1973,8 @@ class World:
                 return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
                         "error": {"code": "invalid_path", "message": f"cannot write {path!r}"}}
             self.push_settings()
+            if path == "auto_dim" or path.startswith("auto_dim."):
+                self.push_lights(self.lights_semantic)
             self.push_log("info", f"setting {path} changed")
             result = {"generation": self.settings_generation, "path": path}
         elif name == "reset_settings":

@@ -77,3 +77,21 @@ struct HistoryTests {
         #expect(CoreHistoryRow(at: 0, kind: "asked").kindWord == "Needed you")
     }
 }
+
+@Suite("History labels")
+struct HistoryLabelTests {
+    @Test("the daemon's 'Provider <uuid>' labels read as the panel's session labels")
+    func displayLabel() {
+        let real = CoreHistoryRow(at: 1, kind: "completed", provider: "claude", session: "claude:session:8870963f-850a-424b-aec2-8351d1a4ee8a",
+                                  label: "Claude 8870963f-850a-424b-aec2-8351d1a4ee8a")
+        #expect(real.displayLabel == "8870963f")
+        let named = CoreHistoryRow(at: 1, kind: "asked", provider: "codex", session: "codex:session:x", label: "Codex sidepulse-core")
+        #expect(named.displayLabel == "sidepulse-core")
+        let plain = CoreHistoryRow(at: 1, kind: "failed", provider: "gemini", session: "gemini:session:d", label: "docs-sweep")
+        #expect(plain.displayLabel == "docs-sweep")
+        let bare = CoreHistoryRow(at: 1, kind: "started", provider: nil, session: "pi:session:01a08b62-aaaa-bbbb-cccc-ddddeeeeffff", label: nil)
+        #expect(bare.displayLabel == "01a08b62")
+        let nothing = CoreHistoryRow(at: 1, kind: "ended", provider: "grok", session: nil, label: nil)
+        #expect(nothing.displayLabel == "Grok")
+    }
+}

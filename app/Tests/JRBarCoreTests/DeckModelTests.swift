@@ -69,6 +69,45 @@ struct DeckModelTests {
         #expect(!aux.contains { $0.label == "not an aux control" }, "index 3 is a key, not an auxiliary control")
     }
 
+    @Test("the owner's daemon frame: pad off, nothing approved, nulls for transport / layer / receipt, seven banks, stock keymap with three layers")
+    func realShape() throws {
+        guard case .state(let state) = try CoreFixtures.message("real_state.json") else {
+            Issue.record("not a state"); return
+        }
+        let deck = try #require(state.deck)
+        let device = try #require(deck.device, "a remembered serial is a device even while the pad is off")
+        #expect(device.serial == "D0CF130481EC" && device.name == "Creator Micro 2")
+        #expect(device.transport == nil && device.firmware == nil && device.layer == nil && device.profile == nil)
+        #expect(!device.connected && !device.approved && !device.hasConflict && !device.isUsable)
+        #expect(device.receipt == nil)
+        #expect(!deck.hasDevice)
+        #expect(deck.banks == DeckBanks(index: 0, count: 7) && deck.banks.hasMultiple && deck.banks.title == "Bank 1 of 7")
+        #expect(deck.rail.edge == .off && !deck.railShown)
+        #expect(deck.keymap.state == .stock && !deck.keymap.isApplied && !deck.keymap.needsRecovery)
+        #expect(deck.keymap.generation == 0 && deck.keymap.backupAt != nil)
+        #expect(deck.keymap.layers.map(\.id) == ["0/0", "0/1", "0/2"])
+        #expect(deck.keymap.layers.map(\.label) == ["Profile 1 / Layer 1: Layer 1", "Profile 1 / Layer 2: Layer 2", "Profile 1 / Layer 3: Layer 3"])
+        #expect(!deck.inputCheck && deck.lastInput == nil)
+        #expect(deck.settings == DeckSettings(enabled: true, sessionMode: false, analogEnabled: false))
+        // Thirteen remembered identities, none observed: every key is Reserved and dark.
+        let keys = deck.keySlots
+        #expect(keys.count == 13 && deck.slots.count == 13)
+        #expect(keys.allSatisfy { $0.isReserved && !$0.isEmpty && $0.session == nil && $0.label == nil && $0.provider == nil })
+        #expect(keys.allSatisfy { $0.state == .unavailable && !$0.pinned && !$0.navigable && !$0.isLit && $0.color == "#000000" })
+        #expect(keys[0].title == "Reserved" && keys[0].subtitle == "Session not observed" && keys[0].shortSubtitle == "Not observed")
+        #expect(deck.boundSessions.isEmpty)
+        #expect(deck.absentSlots.count == 13, "Clear absent would take every one of them")
+        // Seven auxiliary controls, none mapped, with the daemon's labels.
+        let aux = deck.auxControls
+        #expect(aux.map(\.index) == Array(13...19))
+        #expect(aux.allSatisfy { $0.mapping == nil && $0.mappingLabel == nil })
+        #expect(aux[0].label == "Encoder 1 input 1" && aux[0].isEncoder && aux[3].label == "Joystick sector 1" && aux[3].isJoystick)
+        // The rest of the real frame decodes around it.
+        #expect(state.sessions.count == 21)
+        #expect(state.sessions.allSatisfy { $0.shortId != nil })
+        #expect(state.aggregate.mode == "working")
+    }
+
     @Test("a state without a deck, or with a malformed one, still decodes")
     func absent() throws {
         let plain = try CoreCodec.decode(frame: Data(#"{"t":"state","v":1,"generation":1,"aggregate":{"mode":"idle"}}"#.utf8))

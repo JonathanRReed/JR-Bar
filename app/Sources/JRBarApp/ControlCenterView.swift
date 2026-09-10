@@ -209,7 +209,11 @@ struct DeckDeviceChip: View {
     }
 
     private var statusWord: String {
-        guard let device, device.connected else { return "Not connected" }
+        guard let device, device.connected else {
+            // The daemon remembers a serial it has not been told to drive:
+            // say so, since Enable (approval) is the step that is missing.
+            return device.map { $0.approved ? "Not connected" : "Off, not yet approved" } ?? "Not connected"
+        }
         if device.hasConflict { return "Conflict" }
         if !device.approved { return "Needs approval" }
         return "Connected"
@@ -259,7 +263,9 @@ struct DeckDeviceChip: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
                         .help("Bind JR-Bar to serial \(device?.serial ?? "?"). Only this pad will ever be driven.")
-                } else if store.hasDevice {
+                } else if device != nil {
+                    // A remembered pad that is off still has a keymap on record
+                    // (the backup, or the stock state), so the badge stays.
                     KeymapBadge(keymap: store.keymap)
                 }
             }

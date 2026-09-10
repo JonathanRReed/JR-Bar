@@ -16,6 +16,16 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
 
     public var id: String { "\(at)|\(kind)|\(session ?? "")|\(label ?? "")" }
 
+    /// The label as the panel shows sessions (`SessionLabel`): the daemon's
+    /// "Claude 8870963f-850a-…" row reads "8870963f", never the provider
+    /// twice; with no label at all, the provider's name.
+    public var displayLabel: String {
+        let providerID = provider ?? session?.split(separator: ":").first.map(String.init) ?? ""
+        let text = SessionLabel.display(label: label, shortId: nil, id: session ?? "", provider: providerID)
+        if text.isEmpty { return SessionLabel.providerName(providerID) }
+        return text
+    }
+
     public init(at: Double, kind: String, provider: String? = nil, session: String? = nil, label: String? = nil,
                 detail: String? = nil, duration: Double? = nil, unseen: Bool = false) {
         self.at = at
