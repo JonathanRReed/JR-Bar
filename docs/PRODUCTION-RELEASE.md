@@ -193,6 +193,13 @@ administrator password and no `sudo` prompt can stall the run. Use
 `JRBAR_INSTALL_SCOPE=system` when you want to exercise the `/Applications`
 path and the root-only uninstaller.
 
+It quits a running JR-Bar for the install phase and relaunches it afterwards.
+That is deliberate: a running app rewrites its own settings as devices and
+sessions come and go, so a field that moved on its own could not be told apart
+from an installer that damaged it — and replacing a bundle underneath a live
+process is not what an upgrade looks like. `--skip-install` leaves the installed
+app alone entirely.
+
 ## 3. Check it by hand
 
 ```sh
