@@ -156,43 +156,28 @@ def _program_for_effect(
     led_count: int,
     semantic: str,
 ) -> tuple[str, bool]:
-    identifier = effect.identifier
-    if identifier == "none":
-        return color, False
-    if identifier == "pulse":
-        return f"off 400ms cosine\n{color} 1600ms pulse\nrepeat", True
-    if identifier == "rainbow":
-        return (
-            "#FF3B30 600ms cosine\n"
-            "#FF9500 600ms cosine\n"
-            "#34C759 600ms cosine\n"
-            "#0A84FF 600ms cosine\n"
-            "#AF52DE 600ms cosine\nrepeat",
-            True,
-        )
-    if identifier == "alert":
-        return f"{color} 500ms none\noff 500ms none\nrepeat", True
-    if identifier == "notification":
-        return f"off 300ms cosine\n{color} 900ms pulse\n{color}", True
+    """The program the DAEMON would play for this effect, not a stand-in.
 
-    # Data-only community effects intentionally cannot introduce executable
-    # renderers. Preserve their declared semantic with one registered, safe
-    # primitive while keeping the pack identifier visible in the receipt.
-    semantic_primitive = {
-        "working": "pulse",
-        "asking": "alert",
-        "failure": "alert",
-        "completion": "notification",
-        "recovery": "notification",
-        "notification": "notification",
-        "transition": "pulse",
-    }.get(semantic, "none")
-    return _program_for_effect(
-        EFFECT_REGISTRY.require(semantic_primitive),
-        color,
-        led_count,
-        semantic,
+    This used to keep its own copy of the builtin shapes and route everything
+    else through a semantic primitive, which is how a Studio preview and the
+    live render could disagree about what an effect looks like -- in the one
+    place where seeing it is the whole point. ``core_effects.render_effect``
+    is the renderer behind the socket's ``render_effect`` and ``list_effects``
+    previews; asking it here means the strip shows what the catalogue
+    promised, pack effects and their data-only safety included.
+    """
+    from .core_effects import render_effect
+
+    program = render_effect(
+        effect,
+        {},
+        led_count=led_count,
+        color=color,
+        semantic=semantic,
     )
+    lines = [line for line in program.splitlines() if line.strip()]
+    animated = len(lines) > 1 or any(line.strip() == "repeat" for line in lines)
+    return program, animated
 
 
 def compile_effect_studio_physical_preview(
