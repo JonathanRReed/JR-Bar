@@ -60,15 +60,31 @@ def creator_micro_light_frame(
     idle_off: bool = True,
 ) -> CreatorMicroLightFrame:
     colors = colors if colors is not None else ColorSettings()
+    # Every state that is not plainly "working", "done" or "idle" used to
+    # land on "ask", so a key for a crashed session and a key for a session
+    # holding a permission prompt were the same colour under your fingers.
+    # The three that moved, and why:
+    #
+    #   failure          -> error. It broke. Nothing you type answers it.
+    #   quota_exhausted  -> error. Work has STOPPED and no answer restarts
+    #                       it; only time or a different plan does. That is
+    #                       the "this is not going anywhere" family, not the
+    #                       "press a key" one -- an Ask key you cannot
+    #                       actually answer is the same lie as before.
+    #   quota_warning    -> ask. Still running, still yours to steer: slow
+    #                       down, switch model, or spend the rest knowingly.
+    #                       A decision is wanted, which is what Ask means.
     modes = {
-        "input_required": "ask", "failure": "ask", "quota_exhausted": "ask",
+        "input_required": "ask", "failure": "error", "quota_exhausted": "error",
         "quota_warning": "ask", "reset": "done", "completed": "done",
         "active": "working", "idle": "idle",
     }
     if state not in modes or not math.isfinite(brightness) or not 0 <= brightness <= 1:
         raise ValueError("invalid Creator Micro light state")
     dark = (state == "idle" and idle_off) or brightness == 0
-    color = int(colors.mode_color(modes[state]).lstrip("#"), 16)
+    key = modes[state]
+    hex_value = colors.rendered_error_color() if key == "error" else colors.mode_color(key)
+    color = int(hex_value.lstrip("#"), 16)
     return CreatorMicroLightFrame(color, 0 if dark else brightness, 0 if dark else 1)
 
 

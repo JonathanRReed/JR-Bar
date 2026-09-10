@@ -7292,7 +7292,12 @@ class ColorSettingsTests(unittest.TestCase):
         state, program = program_for_snapshot((), led_count=8, colors=settings)
         self.assertEqual(state, LedDisplayState.IDLE)
 
-        state, program = program_for_snapshot((), led_count=8, colors=settings, fallback_mode=AgentMode.BLOCKED_ERROR)
+        # WAITING_FOR_INPUT, not BLOCKED_ERROR: blocked/error is a FAILURE and
+        # falls through to LedDisplayState.FAILED now (see below), which is the
+        # whole point -- this half is about the ask.
+        state, program = program_for_snapshot(
+            (), led_count=8, colors=settings, fallback_mode=AgentMode.WAITING_FOR_INPUT
+        )
         self.assertEqual(state, LedDisplayState.ASK)
         # The default fade ceiling (50%) scales the configured Ask color down
         # for the pulse's peak, so the raw configured hex won't appear
@@ -7301,6 +7306,13 @@ class ColorSettingsTests(unittest.TestCase):
         self.assertEqual(ceiling, colors_module.DEFAULT_FADE_CEILING)
         peak = colors_module.scale_hex_brightness(settings.mode_color(colors_module.MODE_ASK), ceiling)
         self.assertIn(peak, program)
+
+        state, program = program_for_snapshot(
+            (), led_count=8, colors=settings, fallback_mode=AgentMode.BLOCKED_ERROR
+        )
+        self.assertEqual(state, LedDisplayState.FAILED)
+        self.assertIn(settings.rendered_error_color(), program)
+        self.assertNotIn(settings.mode_color(colors_module.MODE_ASK), program)
 
     def test_classic_blend_mode_matches_program_for_display_state_exactly(self) -> None:
         settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CLASSIC).with_round_robin_urgency_alert(False)
@@ -7314,7 +7326,8 @@ class ColorSettingsTests(unittest.TestCase):
         }
         for mode, expected_state in (
             (AgentMode.WORKING, LedDisplayState.WORKING),
-            (AgentMode.BLOCKED_ERROR, LedDisplayState.ASK),
+            (AgentMode.WAITING_FOR_INPUT, LedDisplayState.ASK),
+            (AgentMode.BLOCKED_ERROR, LedDisplayState.FAILED),
             (AgentMode.COMPLETED, LedDisplayState.DONE),
             (AgentMode.IDLE_READY, LedDisplayState.IDLE),
         ):
@@ -7341,7 +7354,8 @@ class ColorSettingsTests(unittest.TestCase):
 
         for mode, expected_state in (
             (AgentMode.WORKING, LedDisplayState.WORKING),
-            (AgentMode.BLOCKED_ERROR, LedDisplayState.ASK),
+            (AgentMode.WAITING_FOR_INPUT, LedDisplayState.ASK),
+            (AgentMode.BLOCKED_ERROR, LedDisplayState.FAILED),
             (AgentMode.IDLE_READY, LedDisplayState.IDLE),
         ):
             state, program = program_for_snapshot((_status("codex", mode),), led_count=8, colors=settings)
@@ -7367,7 +7381,7 @@ class ColorSettingsTests(unittest.TestCase):
     def test_spatial_split_falls_back_to_color_blend_when_agents_exceed_leds(self) -> None:
         settings = ColorSettings.defaults()
         statuses = (
-            _status("codex", AgentMode.BLOCKED_ERROR),
+            _status("codex", AgentMode.WAITING_FOR_INPUT),
             _status("claude", AgentMode.WORKING),
             _status("devin", AgentMode.IDLE_READY),
         )
@@ -7496,7 +7510,9 @@ class ColorSettingsTests(unittest.TestCase):
             .with_fade_floor(colors_module.MODE_ASK, 0.0)
             .with_fade_floor(colors_module.MODE_WORKING, 0.2)
         )
-        statuses = (_status("devin", AgentMode.BLOCKED_ERROR), _status("codex", AgentMode.WORKING))
+        # WAITING_FOR_INPUT: this is about the ASK floor. BLOCKED_ERROR now
+        # renders FAILED, which is a static state with no reset segment.
+        statuses = (_status("devin", AgentMode.WAITING_FOR_INPUT), _status("codex", AgentMode.WORKING))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         reset_line = _program_body(program)[0]
         # Devin (Ask, floor 0) resets to #000000 -- NEVER "N:off", which
@@ -8102,9 +8118,12 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
     def test_urgency_alert_enabled_by_default(self) -> None:
         self.assertTrue(ColorSettings.defaults().round_robin_urgency_alert)
 
-    def test_urgency_alert_swaps_blocked_agent_to_ask_mode_color(self) -> None:
+    def test_urgency_alert_swaps_waiting_agent_to_ask_mode_color(self) -> None:
+        # WAITING_FOR_INPUT, not BLOCKED_ERROR: the takeover is scoped to the
+        # ask. A blocked/error agent is a FAILURE now and keeps its identity
+        # colour -- see test_a_failed_agent_keeps_its_identity_and_its_blink.
         settings = ColorSettings.defaults()
-        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.BLOCKED_ERROR))
+        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WAITING_FOR_INPUT))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         _floor, ask_ceiling = settings.fade_range(colors_module.MODE_ASK)
         expected_alert_color = colors_module.scale_hex_brightness(
@@ -8117,7 +8136,7 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
 
     def test_urgency_alert_disabled_keeps_agents_own_color(self) -> None:
         settings = ColorSettings.defaults().with_round_robin_urgency_alert(False)
-        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.BLOCKED_ERROR))
+        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WAITING_FOR_INPUT))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         _floor, ask_ceiling = settings.fade_range(colors_module.MODE_ASK)
         claude_own_color = colors_module.scale_hex_brightness(_identity_color(statuses, "claude"), ask_ceiling)
@@ -8126,7 +8145,7 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
     def test_urgency_alert_adds_finite_arrival_then_static_spatial_anchor(self) -> None:
         settings_on = ColorSettings.defaults().with_blend_mode(BLEND_MODE_SPATIAL)
         settings_off = settings_on.with_round_robin_urgency_alert(False)
-        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.BLOCKED_ERROR))
+        statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WAITING_FOR_INPUT))
         _, base = program_for_snapshot(statuses, led_count=8, colors=settings_on)
         _, arrival = program_for_snapshot(
             statuses,
@@ -8329,8 +8348,11 @@ class AgentLedControllerSnapshotTests(unittest.TestCase):
             controller = AgentLedController(device_path=device_dir)
             settings = ColorSettings.defaults()
 
-            result = controller.sync_snapshot((), settings, fallback_mode=AgentMode.BLOCKED_ERROR)
+            result = controller.sync_snapshot((), settings, fallback_mode=AgentMode.WAITING_FOR_INPUT)
             self.assertEqual(result.state, LedDisplayState.ASK)
+
+            failed = controller.sync_snapshot((), settings, fallback_mode=AgentMode.BLOCKED_ERROR)
+            self.assertEqual(failed.state, LedDisplayState.FAILED)
 
     def test_unchanged_program_is_periodically_reasserted_after_firmware_timeout(
         self,
@@ -15107,11 +15129,17 @@ class FailureSignalProjectionContractTests(unittest.TestCase):
         timed_lines = [line for line in program.splitlines() if line.endswith("cosine")]
         timed_duration_ms = sum(int(line.split()[-2].removesuffix("ms")) for line in timed_lines)
         self.assertEqual(timed_duration_ms, 1800)
-        self.assertEqual(program.splitlines()[-1], self.controller.settings.colors.mode_color("ask"))
+        # The failure cue plays in the ERROR colour, not the Ask one. It was
+        # ask_color until 2026-09-10, which is exactly why a failed strip and
+        # a strip waiting on you were the same light.
+        error = self.controller.settings.colors.rendered_error_color()
+        self.assertNotEqual(error, self.controller.settings.colors.mode_color("ask"))
+        self.assertEqual(program.splitlines()[-1], error)
         self.assertEqual(
-            sum(self.controller.settings.colors.mode_color("ask") in line for line in program.splitlines()),
+            sum(error in line for line in program.splitlines()),
             3,
         )
+        self.assertNotIn(self.controller.settings.colors.mode_color("ask"), program)
 
     def test_live_permission_projection_contract_preempts_failure_and_routes_click_and_escalation(self) -> None:
         self.controller.update_attention_projection(self._snapshot(), now=10.0)

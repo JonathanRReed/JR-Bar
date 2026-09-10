@@ -138,7 +138,10 @@ def test_keymap_facts_read_the_backup_and_the_recovery_journal(tmp_path: Path) -
 
 def test_slot_colours_follow_the_lighting_layer() -> None:
     assert slot_color("input_required") == "#FF3A00"
-    assert slot_color("failure") == "#FF3A00"
+    # A failed key is not an ask key. These were the same hex until
+    # 2026-09-10; if they ever match again the pad has lost the distinction.
+    assert slot_color("failure") == "#B00020"
+    assert slot_color("failure") != slot_color("input_required")
     assert slot_color("active") == "#00E5FF"
     assert slot_color("completed") == "#00FF66"
     for state in ("idle", "stale", "unavailable", "unknown", "ended_unconfirmed"):

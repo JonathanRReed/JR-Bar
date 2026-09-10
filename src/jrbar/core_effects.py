@@ -38,6 +38,7 @@ from .effect_registry import (
     EffectRegistry,
     blink_cadence,
 )
+from .led_status import ERROR_RED
 from .presentation_compiler import compile_presentation_program
 from .state_paths import default_state_dir
 
@@ -48,7 +49,10 @@ SEMANTIC_COLORS: Final = {
     "working": "#00E5FF",
     "asking": "#FF3A00",
     "completion": "#00FF66",
-    "failure": "#FF3A00",
+    # Not "#FF3A00": an effect assigned to failure used to preview and
+    # play in the Ask colour, so "it broke" and "it needs you" were one
+    # light here too. colors.MODE_ERROR's shipped default.
+    "failure": ERROR_RED,
     "recovery": "#12E3B0",
     "notification": "#A45CFF",
     "quota": "#36C5F0",

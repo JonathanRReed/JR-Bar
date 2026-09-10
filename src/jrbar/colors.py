@@ -31,6 +31,7 @@ from .led_status import (
     ANIMATION_STYLE_SOLID,
     ASK_AMBER,
     DONE_GREEN,
+    ERROR_RED,
     IDLE_DIM,
     WORKING_CYAN,
     LedDisplayState,
@@ -55,15 +56,36 @@ MODE_IDLE = "idle"
 MODE_WORKING = "working"
 MODE_DONE = "done"
 MODE_ASK = "ask"
-MODE_COLOR_KEYS: tuple[str, ...] = (MODE_IDLE, MODE_WORKING, MODE_DONE, MODE_ASK)
+#: "Something broke." Its own colour since 2026-09-10 -- FAILED used to
+#: render in the Ask slot with a comment claiming it kept failure "distinct
+#: from actionable Ask semantics", which it did not: it was literally the
+#: same hex, on the strip, on the Dot, on the pad and in the app.
+MODE_ERROR = "error"
+MODE_COLOR_KEYS: tuple[str, ...] = (
+    MODE_IDLE,
+    MODE_WORKING,
+    MODE_DONE,
+    MODE_ASK,
+    MODE_ERROR,
+)
 
+#: Which mode colour a rendered state WEARS.
 _STATE_TO_MODE_KEY: dict[LedDisplayState, str] = {
     LedDisplayState.IDLE: MODE_IDLE,
     LedDisplayState.WORKING: MODE_WORKING,
     LedDisplayState.DONE: MODE_DONE,
     LedDisplayState.ASK: MODE_ASK,
-    # Reuse the existing configurable blocked/error color slot while
-    # keeping failure distinct from actionable Ask semantics.
+    LedDisplayState.FAILED: MODE_ERROR,
+}
+
+#: Which mode's fade sliders and animation style a state RIDES. Identical to
+#: _STATE_TO_MODE_KEY apart from FAILED, which keeps the Ask envelope: the
+#: two urgent states share one "how loud is urgent" control (a failure must
+#: never rest fully dark between blinks either -- see _floor_for_state), and
+#: splitting the colour was the fix, not splitting the sliders. Error
+#: therefore stays out of FADE_MODE_KEYS/ANIMATION_MODE_KEYS: no new knobs.
+_STATE_TO_FADE_MODE_KEY: dict[LedDisplayState, str] = {
+    **_STATE_TO_MODE_KEY,
     LedDisplayState.FAILED: MODE_ASK,
 }
 
@@ -72,6 +94,7 @@ _MODE_KEY_TO_COLOR_KWARG: dict[str, str] = {
     MODE_WORKING: "working_color",
     MODE_DONE: "done_color",
     MODE_ASK: "ask_color",
+    MODE_ERROR: "error_color",
 }
 
 # Done is a solid, non-pulsing color -- there's nothing to fade between, so
@@ -324,6 +347,90 @@ def readable_identity_hex(hex_color: str) -> str:
     if relative_luminance(hex_color) >= IDENTITY_LUMINANCE_FLOOR:
         return normalize_hex(hex_color, "#000000")
     return luminance_matched_hex(hex_color, IDENTITY_LUMINANCE_FLOOR)
+
+
+# --- Ask and Error must never be the same light -----------------------------
+#
+# Both mode colours are user-configurable, so no default -- however carefully
+# measured -- can guarantee the pair stays apart: someone will set Ask to a
+# deep red, or Error to their Ask's exact hex, and the whole point of the
+# fifth colour is gone. This is the render-time backstop.
+#
+# The metric is plain OKLab distance, which is normal-vision only. That is
+# deliberate: the DICHROMACY guarantee for the shipped defaults is enforced
+# by tests/test_provider_colour_dichromacy.py, which now covers the Error
+# seed alongside the other four; this guard exists to rescue a live
+# configuration, and it has to be cheap enough to run on every render.
+#
+# 0.12 is calibrated against measured pairs: pure red beside the shipped ask
+# (the collision this whole change is about) sits at 0.037, and the Dot's
+# amber-vs-red pair -- the separation the product already accepts on two
+# LEDs -- sits at 0.187.
+ERROR_ASK_MIN_SEPARATION = 0.12
+
+#: Lightness offsets tried, in order, when the pair does collapse. Lightness
+#: first because it is the channel that survives dichromacy; darker first
+#: because a failure reading as a deeper version of the ask is the smaller
+#: lie than one reading as a brighter version.
+_ERROR_SEPARATION_OFFSETS: tuple[float, ...] = (-0.28, 0.28, -0.45, 0.45)
+
+
+def _oklab(hex_value: str) -> tuple[float, float, float]:
+    import math
+
+    lightness, chroma, hue = hex_to_oklch(hex_value)
+    radians = math.radians(hue)
+    return (lightness, chroma * math.cos(radians), chroma * math.sin(radians))
+
+
+def perceptual_gap(left: str, right: str) -> float:
+    """OKLab distance between two hexes -- 0.0 is the same colour."""
+    import math
+
+    return math.dist(_oklab(left), _oklab(right))
+
+
+def separated_error_color(ask_hex: str, error_hex: str) -> str:
+    """``error_hex``, moved only as far as it must be to stay readable
+    beside ``ask_hex``.
+
+    Returns the colour untouched in the overwhelmingly common case. When the
+    two collapse the ladder is: the shipped crimson, then the configured
+    error stepped away in lightness (keeping its hue, and staying bright
+    enough to be a light), then whichever step lands furthest. The result is
+    never byte-equal to the ask, whatever was configured.
+    """
+    ask = normalize_hex(ask_hex, ASK_AMBER)
+    error = normalize_hex(error_hex, ERROR_RED)
+    if perceptual_gap(ask, error) >= ERROR_ASK_MIN_SEPARATION:
+        return error
+    # The shipped crimson first, before any derived colour: it is the one
+    # value in this whole path that was actually measured to read as
+    # "broken", and the common collapse is a user moving ASK onto red and
+    # leaving Error alone -- which this answers by moving nothing at all.
+    if perceptual_gap(ask, ERROR_RED) >= ERROR_ASK_MIN_SEPARATION:
+        return ERROR_RED
+    # A nudged error still has to be a LIGHT. shade_of clamps lightness at
+    # 0.16, and stepping a mid-dark crimson down lands there at Y 0.006 --
+    # separated from the ask, and invisible on the strip, which trades one
+    # unreadable failure for another. IDENTITY_LUMINANCE_FLOOR is this
+    # module's existing answer to "dim enough to not be lit".
+    candidates = [shade_of(error, offset) for offset in _ERROR_SEPARATION_OFFSETS]
+    lit = [
+        candidate
+        for candidate in candidates
+        if relative_luminance(candidate) >= IDENTITY_LUMINANCE_FLOOR
+    ]
+    for candidate in lit:
+        if perceptual_gap(ask, candidate) >= ERROR_ASK_MIN_SEPARATION:
+            return candidate
+    # Nothing cleared both bars (an ask sitting on top of a colour with
+    # almost no lightness headroom). Take the furthest of them anyway: worse
+    # than the bar, but never the identical light, which is the actual
+    # defect. It cannot BE the ask -- shade_of clamps to [0.16, 0.97] and the
+    # offsets run in both directions, so one candidate always lands away from
+    # whatever lightness the ask has.
+    return max(lit or candidates, key=lambda candidate: perceptual_gap(ask, candidate))
 
 
 # --- Curated palette ---------------------------------------------------
@@ -799,6 +906,7 @@ def _default_mode_colors() -> dict[str, str]:
         MODE_WORKING: WORKING_CYAN,
         MODE_DONE: DONE_GREEN,
         MODE_ASK: ASK_AMBER,
+        MODE_ERROR: ERROR_RED,
     }
 
 
@@ -1050,6 +1158,17 @@ class ColorSettings:
     def mode_color(self, key: str) -> str:
         fallback = _default_mode_colors().get(key, IDLE_DIM)
         return normalize_hex(self.mode_colors.get(key), fallback)
+
+    def rendered_error_color(self) -> str:
+        """The Error colour as the LIGHTS should show it.
+
+        ``mode_color(MODE_ERROR)`` is the literal setting -- what the swatch
+        draws and what round-trips through the settings file. This is that
+        colour after separated_error_color(), i.e. what a device is allowed
+        to paint, so a configuration where Ask and Error collapsed still
+        tells a broken session apart from one waiting on you.
+        """
+        return separated_error_color(self.mode_color(MODE_ASK), self.mode_color(MODE_ERROR))
 
     def agent_color(self, provider: str) -> str:
         fallback = default_agent_color(provider)
@@ -1584,7 +1703,7 @@ def _color_kwargs_for_state(state: LedDisplayState, color: str) -> dict[str, str
 
 
 def _fade_kwargs_for_state(state: LedDisplayState, settings: ColorSettings) -> dict[str, float | str]:
-    mode_key = _STATE_TO_MODE_KEY[state]
+    mode_key = _STATE_TO_FADE_MODE_KEY[state]
     if mode_key not in FADE_MODE_KEYS:
         return {}
     floor, ceiling = settings.fade_range(mode_key)
@@ -1878,6 +1997,15 @@ def _display_color_for_agent(agent: _ActiveAgent, settings: ColorSettings) -> st
     the way block-size does the job in Spatial Split. Scoped to Round-Robin
     and Cycle only, since Spatial Split/Color Blend/Classic already
     communicate urgency some other way.
+
+    FAILED deliberately does NOT take the same takeover, even though it is
+    the other urgent state. In these modes a failed agent keeps its identity
+    colour, which is already not the Ask colour, so the collision this file's
+    Error key exists to fix is not present here -- and what a person needs
+    from a multi-agent strip is WHICH session broke. Its hard blink
+    (STATE_MOTION) is what tells it from an ask's beat. Swapping it to the
+    Error colour would buy nothing and cost the identity; see
+    test_failed_rows_do_not_crash_multi_agent_projection_blend_modes.
     """
     if settings.round_robin_urgency_alert and agent.state == LedDisplayState.ASK:
         return settings.mode_color(MODE_ASK)
@@ -1986,7 +2114,7 @@ def _peak_for_state(color: str, state: LedDisplayState, settings: ColorSettings)
     """
     if state in URGENT_STATES:
         return color
-    mode_key = _STATE_TO_MODE_KEY[state]
+    mode_key = _STATE_TO_FADE_MODE_KEY[state]
     _floor, ceiling = settings.fade_range(mode_key)
     return color if ceiling >= 1.0 else scale_hex_brightness(color, ceiling)
 
@@ -2001,7 +2129,7 @@ def _floor_for_state(color: str, state: LedDisplayState, settings: ColorSettings
     from there -- it is lit at every instant of the cycle, not only at the top
     of a swell an ambient breathe was already brighter than.
     """
-    mode_key = _STATE_TO_MODE_KEY[state]
+    mode_key = _STATE_TO_FADE_MODE_KEY[state]
     floor, ceiling = settings.fade_range(mode_key)
     if state in URGENT_STATES and floor > 0.0:
         # A floor of exactly zero is the user saying "go all the way dark".
@@ -2826,6 +2954,7 @@ def program_for_snapshot(
             working_color=settings.mode_color(MODE_WORKING),
             done_color=settings.mode_color(MODE_DONE),
             ask_color=settings.mode_color(MODE_ASK),
+            error_color=settings.rendered_error_color(),
             done_celebrate=settings.done_celebration_enabled,
             **_fade_kwargs_for_all_modes(settings),
         )
@@ -2844,6 +2973,7 @@ def program_for_snapshot(
             working_color=settings.mode_color(MODE_WORKING),
             done_color=settings.mode_color(MODE_DONE),
             ask_color=settings.mode_color(MODE_ASK),
+            error_color=settings.rendered_error_color(),
             done_celebrate=settings.done_celebration_enabled,
             **_fade_kwargs_for_all_modes(settings),
         )
@@ -3003,8 +3133,11 @@ def program_for_projection(
     brightness = normalize_brightness(brightness)
     state = display_state_for_projection(projection, active_signal)
     if active_signal is not None:
+        # The active signal that reaches here is a SignalKind.FAILURE (see
+        # display_state_for_projection), so the finite double-blink is the
+        # failure cue -- it plays in the Error colour, not the Ask one.
         return state, failure_signal_program(
-            settings.mode_color(MODE_ASK),
+            settings.rendered_error_color(),
             active_signal,
             brightness=brightness,
             led_count=led_count,
@@ -3025,6 +3158,7 @@ def program_for_projection(
             working_color=settings.mode_color(MODE_WORKING),
             done_color=settings.mode_color(MODE_DONE),
             ask_color=settings.mode_color(MODE_ASK),
+            error_color=settings.rendered_error_color(),
             done_celebrate=settings.done_celebration_enabled,
             **_fade_kwargs_for_all_modes(settings),
         )
@@ -3103,6 +3237,7 @@ def program_for_projection(
                 working_color=settings.mode_color(MODE_WORKING),
                 done_color=settings.mode_color(MODE_DONE),
                 ask_color=settings.mode_color(MODE_ASK),
+                error_color=settings.rendered_error_color(),
                 done_celebrate=settings.done_celebration_enabled,
                 **_fade_kwargs_for_all_modes(settings),
             )
@@ -3157,6 +3292,7 @@ def program_for_projection(
             working_color=settings.mode_color(MODE_WORKING),
             done_color=settings.mode_color(MODE_DONE),
             ask_color=settings.mode_color(MODE_ASK),
+            error_color=settings.rendered_error_color(),
             done_celebrate=settings.done_celebration_enabled,
             **_fade_kwargs_for_all_modes(settings),
         )
@@ -3355,7 +3491,7 @@ def _ambient_level_for_agent(agent: _ActiveAgent, settings: ColorSettings) -> st
     color = _display_color_for_agent(agent, settings)
     if _is_static_agent_state(agent.state):
         return color
-    _floor, ceiling = settings.fade_range(_STATE_TO_MODE_KEY[agent.state])
+    _floor, ceiling = settings.fade_range(_STATE_TO_FADE_MODE_KEY[agent.state])
     return color if ceiling >= 1.0 else scale_hex_brightness(color, ceiling)
 
 
@@ -3739,7 +3875,14 @@ def derive_palette(accent_hex: str) -> dict[str, dict[str, str]]:
     accent hue at a vivid weight, done sits opposite-ish so "finished"
     can never be confused with "busy", ask leans warm (attention), and
     idle is the accent at whisper chroma. Agents fan out around the
-    wheel from the accent so a crowd stays tellable-apart."""
+    wheel from the accent so a crowd stays tellable-apart.
+
+    A palette deliberately does NOT own MODE_ERROR. Every other mode
+    colour is decoration -- which cyan means "busy" is a taste question --
+    but "this broke" is the one light that has to mean the same thing in
+    every look, and a derived error would also have to be re-checked
+    against every derived ask. It stays the shipped crimson unless
+    someone changes it by hand, one row at a time."""
     hue = _hex_to_hls_hue(normalize_hex(accent_hex, "#00E5FF"))
     return {
         "modes": {
@@ -3827,6 +3970,7 @@ STATE_SEED_COLORS: tuple[tuple[str, str], ...] = (
     ("Working", WORKING_CYAN),
     ("Done", DONE_GREEN),
     ("Ask", ASK_AMBER),
+    ("Error", ERROR_RED),
     ("Idle", IDLE_DIM),
 )
 
@@ -4151,7 +4295,8 @@ MODE_ROW_LABELS: dict[str, str] = {
     MODE_IDLE: "Idle",
     MODE_WORKING: "Working",
     MODE_DONE: "Done",
-    MODE_ASK: "Ask (waiting / blocked)",
+    MODE_ASK: "Ask (waiting on you)",
+    MODE_ERROR: "Error (something broke)",
 }
 
 

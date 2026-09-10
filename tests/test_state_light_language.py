@@ -1,6 +1,6 @@
 """One light language: every state owns a loudness AND a rhythm.
 
-Two defects are pinned here.
+Three defects are pinned here.
 
 LOUDNESS. Red-orange is the dimmest saturated colour there is, so putting Ask
 on the same "gentle" fade ceiling as Working made the one state that means "a
@@ -15,6 +15,12 @@ agent going Ask changed by about dE 8, which is not a signal. About 1 man in 12
 is red/green colourblind, so a light language that leans on hue alone is a
 light language that does not work for them.
 
+COLLISION. "It needs you" and "it broke" were the SAME HEX -- FAILED rendered
+in the Ask mode colour on every surface, so the two states a person most needs
+to tell apart were one light. MODE_ERROR split them; the exemption failure
+takes from the loudness ladder in exchange, and what it pays for that
+exemption, are written down below.
+
 The colourblind simulation below is Vienot, Brettel & Mollon (1999) with
 CIEDE2000 in CIELAB/D65 -- the same method used to audit this palette, kept
 here so the assertion is a measurement rather than an opinion.
@@ -28,11 +34,13 @@ import math
 import pytest
 
 from jrbar.colors import (
+    IDENTITY_LUMINANCE_FLOOR,
     MIN_BEAT_MS,
     MIN_CYCLE_SPEED_SECONDS,
     MIN_FLASH_CYCLE_MS,
     MODE_ASK,
     MODE_DONE,
+    MODE_ERROR,
     MODE_IDLE,
     MODE_WORKING,
     MOTION_BEAT,
@@ -56,7 +64,9 @@ STATE_MODE_KEY = {
     LedDisplayState.WORKING: MODE_WORKING,
     LedDisplayState.DONE: MODE_DONE,
     LedDisplayState.ASK: MODE_ASK,
-    LedDisplayState.FAILED: MODE_ASK,
+    # Not MODE_ASK. Failure has owned its own colour since 2026-09-10; this
+    # table mirrored the renderer's mapping, so it moves with it.
+    LedDisplayState.FAILED: MODE_ERROR,
 }
 
 
@@ -183,16 +193,91 @@ CONFUSABLE_DELTA_E = 20.0
 # --- loudness --------------------------------------------------------------
 
 
-def test_blocked_reads_louder_than_working() -> None:
+def test_ask_reads_louder_than_working() -> None:
     """The locked priority, in luminance. Before this it was inverted."""
     settings = ColorSettings.defaults()
     peaks = _peaks(settings)
     working = relative_luminance(peaks[LedDisplayState.WORKING])
-    for urgent in (LedDisplayState.ASK, LedDisplayState.FAILED):
-        assert relative_luminance(peaks[urgent]) > working * 1.5
+    assert relative_luminance(peaks[LedDisplayState.ASK]) > working * 1.5
     # The exact numbers, so a future palette tweak has to face them.
     assert relative_luminance(peaks[LedDisplayState.ASK]) == pytest.approx(0.2429, abs=1e-3)
     assert working == pytest.approx(0.1359, abs=1e-3)
+
+
+def test_failure_buys_its_separation_in_hue_and_contrast_not_luminance() -> None:
+    """FAILED is deliberately exempt from the loudness ladder, and this is
+    the price it pays for the exemption.
+
+    The ladder was written and measured about ASK versus WORKING; FAILED
+    only ever satisfied it by accident, because it rendered in the Ask
+    colour. Once failure got its own colour that stopped being free, and it
+    cannot be bought back: a red deep enough to read as "broken" rather than
+    as a second shade of the ask CANNOT clear working cyan's luminance --
+    the red primary carries 21 % of the luminance and cyan 85 %, so every
+    red bright enough to win the ladder is a washed salmon that lands back
+    inside the ask's own hue neighbourhood (measured: nothing in the whole
+    gamut clears both at once by more than dE 18, and everything that came
+    close was a terracotta a hair from Claude's brand colour).
+
+    So failure is allowed to be quieter, and has to earn attention the two
+    other ways the light language offers:
+
+      1. HUE. As far from the ask as anything that is still a lit light can
+         get -- measured, not asserted; see the numbers below.
+      2. CONTRAST. It is the only hard blink: a square edge between a lifted
+         floor and full, no easing. Its swing is the largest of any state,
+         and a hard edge is a stronger peripheral cue than steady light.
+
+    Plus, in practice, the arrival is loud even though the hold is not:
+    failure_signal_program plays a finite double blink at full intensity
+    before the strip settles into this. Loud arrival, quiet persistence --
+    which is right for a state you cannot act on in the next second.
+    """
+    settings = ColorSettings.defaults()
+    peaks = _peaks(settings)
+    failed = peaks[LedDisplayState.FAILED]
+    ask = peaks[LedDisplayState.ASK]
+
+    # 1. HUE. It was dE 0.0 -- the identical hex -- until 2026-09-10.
+    #
+    # 19.7 is a hair under CONFUSABLE_DELTA_E, and that is the measured
+    # ceiling rather than a compromise nobody checked: sweeping the whole
+    # OKLCH gamut for a colour that (a) separates further from this ask,
+    # (b) keeps dE 13 from every provider colour and (c) is still above
+    # IDENTITY_LUMINANCE_FLOOR -- i.e. is still a LIGHT -- tops out at 21.6,
+    # and every colour that beats that is darker than the visibility floor.
+    # Which is why the pair also has to differ in motion, below, and does:
+    # that is this file's actual contract (see
+    # test_no_two_states_share_a_confusable_hue_and_the_same_motion).
+    assert worst_case_separation(failed, ask) == pytest.approx(19.7, abs=0.2)
+    assert worst_case_separation(failed, ask) > CONFUSABLE_DELTA_E * 0.9
+
+    # It is a LIT light, not a dark one that happens to differ.
+    assert relative_luminance(failed) > IDENTITY_LUMINANCE_FLOOR
+
+    # 2. EDGE. Failure rides the same urgent envelope as the ask on purpose
+    # -- both rest at the gentleness ceiling and swing to full, so a failure
+    # is never dark between blinks either (_STATE_TO_FADE_MODE_KEY). What
+    # differs is the shape of the edge: the ask eases, the failure does not.
+    # A hard square is the loudest thing this DSL can do without going
+    # faster, which is how a quieter colour still gets looked at.
+    def segments(state: LedDisplayState) -> str:
+        return "".join(
+            _motion_segments(
+                0,
+                settings.mode_color(STATE_MODE_KEY[state]),
+                state,
+                settings,
+                cycle_ms=1600,
+                settle_ms=160,
+                chase_delay_ms=192,
+            )
+        )
+
+    assert "cosine" in segments(LedDisplayState.ASK)
+    assert "cosine" not in segments(LedDisplayState.FAILED)
+    assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_BLINK
+    assert STATE_MOTION[LedDisplayState.ASK] != STATE_MOTION[LedDisplayState.FAILED]
 
 
 def test_loudness_follows_intent_rather_than_hue_accident() -> None:
@@ -201,7 +286,10 @@ def test_loudness_follows_intent_rather_than_hue_accident() -> None:
     order = sorted(peaks, key=lambda state: relative_luminance(peaks[state]))
     assert order.index(LedDisplayState.IDLE) == 0
     assert order.index(LedDisplayState.WORKING) < order.index(LedDisplayState.ASK)
-    assert order.index(LedDisplayState.WORKING) < order.index(LedDisplayState.FAILED)
+    # FAILED is not in this ladder -- see
+    # test_failure_buys_its_separation_in_hue_and_contrast_not_luminance.
+    # It is still above IDLE, which is the floor everything lit clears.
+    assert order.index(LedDisplayState.IDLE) < order.index(LedDisplayState.FAILED)
 
 
 def test_an_urgent_light_rests_where_an_ambient_one_peaks() -> None:
@@ -361,7 +449,7 @@ def test_the_light_language_never_flashes_faster_than_two_hertz() -> None:
 # --- end to end ------------------------------------------------------------
 
 
-def test_a_blocked_agent_beats_while_a_working_one_chases() -> None:
+def test_a_waiting_agent_beats_while_a_working_one_chases() -> None:
     from datetime import datetime, timezone
 
     from jrbar.colors import program_for_snapshot
@@ -378,7 +466,7 @@ def test_a_blocked_agent_beats_while_a_working_one_chases() -> None:
         )
 
     settings = ColorSettings.defaults().with_round_robin_urgency_alert(False)
-    statuses = (status("codex", AgentMode.WORKING), status("claude", AgentMode.BLOCKED_ERROR))
+    statuses = (status("codex", AgentMode.WORKING), status("claude", AgentMode.WAITING_FOR_INPUT))
     _state, program = program_for_snapshot(statuses, led_count=4, colors=settings)
     motion_line = [line for line in program.splitlines() if line.startswith("0:")][-1]
     segments = motion_line.split("; ")
