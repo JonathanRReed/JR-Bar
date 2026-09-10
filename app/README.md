@@ -15,11 +15,11 @@ Everything lives under `app/`. Nothing here touches `src/`, `tests/`, `docs/`,
 | --- | --- |
 | `Package.swift` | SwiftPM package `JRBar` (tools 6.2, macOS 26). |
 | `Sources/JRBarLEDS/` | Pure Swift LEDS DSL: model, parser, sampler, presentation-safety compiler. No AppKit. |
-| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the history model, the Creator Micro 2 deck model and rail geometry, and the child-process supervisor. Foundation only. |
+| `Sources/JRBarCore/` | The core daemon protocol: NDJSON Unix-socket client, Codable models, `@Observable` `CoreModel`, the event-delivery policy, the "why this light" table, the panel's layout math and label rules, the history model, the Creator Micro 2 deck model and rail geometry, and the child-process supervisor. Foundation only. |
 | `Sources/JRBarUI/` | AppKit pieces small enough to test on their own: the status item icon renderer. |
 | `Sources/JRBarApp/` | The AppKit + SwiftUI agent app: status item, panel, Screen Bar, Settings, History, Usage Center, Effect Studio and Control Center windows, the deck rail, notifications, sounds, HUD, file-feed fallback. |
 | `Tests/JRBarLEDSTests/` | Swift Testing suites plus the firmware fixtures they check against. |
-| `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, the explanation table, the event policy, history filtering, the deck model and rail geometry, supervisor restart/backoff, and mock-daemon integration tests (every app-proposed command round-tripped). |
+| `Tests/JRBarCoreTests/` | Protocol codec tests over fixture frames, settings-document tests, the explanation table and the documented `why` vocabulary, the panel layout math, usage window and session label rules, the event policy, history filtering, the deck model and rail geometry, supervisor restart/backoff, and mock-daemon integration tests (every app-proposed command round-tripped). |
 | `Tests/JRBarUITests/` | The icon renderer: every style draws, styles differ, warning colours, caching. |
 | `scripts/gen_leds_fixtures.py` | Regenerates the fixtures from the Python/firmware reference. |
 | `scripts/mock-core.py` | A stdlib-only mock `jrbar-core` that plays a scripted timeline over a socket (`$TMPDIR/jrbar-mock.sock`; it refuses the installed daemon's). |
@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 104 tests / 18 suites; the parity test fans out over 29 programs
+swift test                  # 131 tests / 22 suites; the parity test fans out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -117,6 +117,12 @@ Developer switches (environment variables read at launch):
   `usage`, `devices`, `lighting`, `notifications`, `remote`, `advanced` or
   `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
 * `JRBAR_PLAIN_MATERIAL=1` uses an `NSVisualEffectView` instead of `NSGlassEffectView`.
+* `JRBAR_APPEARANCE=light|dark` pins every window to one appearance
+  (screenshots of both looks without touching the system setting).
+* Every panel open prints two lines to stdout, `panel frame t=0 (target):
+  x= y= w= h= top=` and the same `t=1s` later, so a run can prove the
+  frame never moved after opening (`top` is the distance from the top of
+  the primary display, for `screencapture -R`).
 * `JRBAR_PROGRAM_FILE=/path/file.led` feeds the Screen Bar from any file
   (watched like the device file) without writing to the strip.
 * `JRBAR_NO_HALO=1` disables the blurred halo layer.
@@ -433,32 +439,71 @@ shows "Core not connected"-style empties until `state.deck` exists):
   non-activating `NSPanel` at `.popUpMenu` level, 360 pt wide, anchored under
   the status item and clamped to the screen, hosting SwiftUI inside an
   `NSGlassEffectView` (14 pt continuous corners). It becomes key without
-  activating the app so the keyboard works: Up/Down move the selection,
-  Return sends `open_session` for it, Esc closes, Cmd-Q quits; Cmd-Return /
-  Cmd-D approve or deny the focused ask. It closes on Esc, on a click anywhere
-  outside it, and when it resigns key. Sections: header (aggregate word,
-  counts, connection dot with a tooltip), Sessions (asks pinned first with
-  Approve/Deny sending `answer_ask`; then waiting, failed, working, done,
-  idle rows with the provider tile, label, cwd tail, state word and
-  activity mark, elapsed time, worker badge; click sends `open_session`),
-  Usage (per provider: 5h and 7d bars in the provider accent turning amber
-  at 80 % and red at 95 %, percent with `~` when the fidelity is not
-  `official`, reset countdowns, pace hint), Devices (Pro / Dot / Screen Bar
-  chips; the Screen Bar chip toggles the band; a brightness slider sends
-  `set_brightness` for `all`, throttled while dragging), and a footer
-  (Clear done → `clear_completed all`, Quiet… → `quiet` for 30 min /
-  1 h / 4 h / 12 h, History (⌘Y), a gear for Settings…, Quit). Empty
-  states: "No agents right now" when live and quiet; "Core is starting" /
-  "Core not connected" with the file-feed summary when not. With a
-  supervised core that gave up, the header shows "Core crashed 10× in
-  2 min" with a Restart button and a red dot.
+  activating the app so the keyboard works: Up/Down move the selection
+  (nothing is selected until an arrow key says so), Return sends
+  `open_session` for it, Esc closes, Cmd-Q quits; Cmd-Return / Cmd-D
+  approve or deny the focused ask. It closes on Esc, on a click anywhere
+  outside it, and when it resigns key. Its size is computed, never
+  measured: `PanelLayout` (in `JRBarCore`, pure and tested) adds up fixed
+  row heights (session 44 pt, ask 92 pt, usage 50 pt, why row 30 pt, header
+  40 pt, devices 82 pt, footer 34 pt) for the content the store is about
+  to show, caps the Sessions list at 7½ rows and Usage at 3½ (a cut list
+  scrolls, ends half a row in and fades out over its last 16 pt), and
+  keeps the whole panel under 70 % of the screen by taking rows from
+  whichever list is closer to its own cap, down to floors of 2½ and 1½.
+  The window is set to that frame once, before it is shown; every label is
+  one line (`lineLimit(1)` with truncation: session label, cwd tail, state
+  word, window names, device names) and the state/elapsed column and the
+  percent column have fixed widths, so nothing inside can change the size.
+  Nothing animates until the unfold has finished (`PanelStore.animationsArmed`);
+  after that rows coming and going resize the window with the contents
+  spring. Rows are buttons: a hover tint only under the pointer while the
+  panel is open, a pressed tint only while the mouse is down, and the
+  selection tint only for the keyboard's row. Sections: header (aggregate
+  word, counts, connection dot with a tooltip), Sessions (asks pinned first
+  with Approve/Deny sending `answer_ask`; then waiting, failed, working,
+  done, idle rows with the provider tile, the label (`SessionLabel`: the
+  daemon's label with a leading provider name dropped and UUIDs shortened,
+  else `short_id`, so "Claude Claude fca1eb06-…" can never appear), cwd
+  tail, state word and activity mark, elapsed time, worker badge; click
+  sends `open_session`), Usage (per provider: the 5h and 7d bars, or the
+  first two windows, labelled by `UsageWindowLabel` (`five-hour`/`5h` →
+  5h, `weekly`/`7d` → 7d, `daily`, `monthly`, `credits`, else the first
+  six characters of the name) in the provider accent turning amber at
+  80 % and red at 95 %, the percent right-aligned in its own column with
+  `~` when the fidelity is not `official`, one line of reset countdowns,
+  pace hint), Devices (Pro / Dot / Screen Bar chips; the Screen Bar chip
+  toggles the band; a brightness slider sends `set_brightness` for `all`,
+  throttled to one command per 120 ms while dragging and flushed on
+  release), and a footer (Clear done → `clear_completed all`, Quiet… →
+  `quiet` for 30 min / 1 h / 4 h / 12 h, History (⌘Y), an overflow menu
+  (Usage Center ⌘U, Effect Studio, Control Center ⌘K), a gear for
+  Settings…, Quit). Empty states: "No agents right now" when live and
+  quiet; "Core is starting" / "Core not connected" with the file-feed
+  summary when not. With a supervised core that gave up, the header shows
+  "Core crashed 10× in 2 min" with a Restart button and a red dot.
 * "Why this light": the last row of the Sessions section is the
   `LightExplanation` headline ("Amber pulse: Codex sidepulse-core is
-  waiting on you (permission, 45 s)"). Hovering it for 0.35 s opens a
-  detail popover (a glass child window that never becomes key, so the
-  panel keeps the keyboard) with the hardware / Screen Bar / Dot programs
-  and the settings that shape brightness; it follows the row when rows
-  above come and go. Clicking it opens the session the light is about. The
+  waiting on you (permission, 45 s)", "Breathing orange: Claude jr-bar-67
+  is working"). `LightExplainer` reads `lights.surfaces.screen_bar.why`
+  as the documented vocabulary (`LightWhy`: idle, working, waiting,
+  completed, failed, capacity, quiet, sleep_dim, idle_dim, battery,
+  calendar, reminder, escalation, preview, studio, unknown; the older
+  spellings `needs_you`, `completed_unseen`, `quota_crossed`, `dnd`,
+  `escalation_*` map onto them) and `why_detail` (`session`, `label`,
+  `provider`, `seconds_in_state`, `brightness_factor`, `dimming[]`) for
+  the subject and the dimming factors; the motion word comes from the
+  surface's `motion` (`static` / `finite` / `continuous`, or the older
+  `breathe` / `chase` / `beat` / `sweep`) and the brightest colour in its
+  `static_fallback` (a bare hex or a whole static program). A `why` the
+  table does not know falls back to the motion word plus the top session
+  ("Breathing orange: Claude fca1eb06 is working (moon phase)"); provider
+  names are never doubled and UUIDs never printed. Hovering the row for
+  0.35 s opens a detail popover (a glass child window that never becomes
+  key, so the panel keeps the keyboard) with the hardware / Screen Bar /
+  Dot programs, how long the state has held, the dimming in effect and
+  the settings that shape brightness; it follows the row when rows above
+  come and go. Clicking it opens the session the light is about. The
   Screen Bar tooltip carries the same headline as its second line.
 * History (`HistoryWindowController`, `HistoryStore`, `HistoryView`): a
   titled 680×520 window (⌘Y from the panel, the footer's History item, the

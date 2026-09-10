@@ -38,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let defaults = UserDefaults.standard
         defaults.register(defaults: [Self.showScreenBarKey: true])
 
+        // `JRBAR_APPEARANCE=light|dark` pins every window to one appearance
+        // (screenshots of both looks without touching the system setting).
+        switch ProcessInfo.processInfo.environment["JRBAR_APPEARANCE"]?.lowercased() {
+        case "light", "aqua": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark", "darkaqua": NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: break
+        }
+
         // `pkill JR-Bar` (or a logout) must still stop the supervised core:
         // turn SIGTERM into an orderly quit so applicationWillTerminate runs.
         signal(SIGTERM, SIG_IGN)

@@ -47,7 +47,7 @@ struct SessionRow: Identifiable, Equatable {
     init(session: CoreSession, pinnedAsk: CoreAsk?) {
         id = session.id
         style = ProviderStyle.style(for: session.provider)
-        label = session.label?.isEmpty == false ? session.label! : style.name
+        label = session.displayLabel
         cwdTail = session.cwd.map { Self.tail(of: $0) }
         activity = SessionActivity.reduce(session)
         since = session.since.map { Date(timeIntervalSince1970: $0) }
@@ -100,9 +100,13 @@ final class PanelStore {
     var localBrightness: Double?
     var toast: String?
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-    var contentSize: CGSize = .zero {
-        didSet { if contentSize != oldValue { onContentSizeChange?(contentSize) } }
-    }
+    /// False from the moment the panel opens until it has finished
+    /// arriving: nothing inside animates before then (the first frame is
+    /// the final frame). The controller arms it.
+    var animationsArmed = false
+    /// The visible height of the screen the panel opens on; the layout caps
+    /// the panel at a fraction of it.
+    var screenHeight: Double = 900
 
     // Wiring back to AppKit.
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
@@ -114,7 +118,9 @@ final class PanelStore {
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
-    var onContentSizeChange: (@MainActor (CGSize) -> Void)?
+    /// The content changed shape while open (rows came or went); the
+    /// controller resizes the window to `layout`.
+    var onLayoutChange: (@MainActor (PanelLayout) -> Void)?
     /// The "Why this light" row is hovered (with its frame in the hosting
     /// view's coordinates) or not; the controller shows the detail popover.
     var onWhyHover: (@MainActor (Bool, CGRect) -> Void)?
@@ -127,6 +133,7 @@ final class PanelStore {
 
     @ObservationIgnored private var clock: Timer?
     @ObservationIgnored private var brightnessFlush: DispatchWorkItem?
+    @ObservationIgnored private var brightnessSentAt = Date.distantPast
     @ObservationIgnored private var toastClear: DispatchWorkItem?
 
     init(core: CoreModel) {
@@ -144,6 +151,9 @@ final class PanelStore {
 
     func panelDidOpen() {
         isOpen = true
+        animationsArmed = false
+        // Nothing is selected until an arrow key says so.
+        selectedID = nil
         now = Date()
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -151,15 +161,32 @@ final class PanelStore {
         }
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
-        if selectedID == nil || !rows.contains(where: { $0.id == selectedID }) {
-            selectedID = rows.first?.id
-        }
     }
 
     func panelDidClose() {
         isOpen = false
+        animationsArmed = false
+        selectedID = nil
         clock?.invalidate()
         clock = nil
+    }
+
+    // MARK: Derived: layout
+
+    /// What the panel shows, counted for `PanelLayout`.
+    var layoutContent: PanelLayout.Content {
+        PanelLayout.Content(asks: askRows.count, sessions: plainRows.count, hasWhyRow: lightExplanation != nil, usageProviders: usage.count)
+    }
+
+    /// The panel's geometry for the current content and screen, computed
+    /// (never measured) so the window can be sized before it is shown.
+    var layout: PanelLayout {
+        PanelLayout.compute(content: layoutContent, screenHeight: screenHeight)
+    }
+
+    func layoutDidChange(_ layout: PanelLayout) {
+        guard isOpen else { return }
+        onLayoutChange?(layout)
     }
 
     // MARK: Derived: header
@@ -302,6 +329,15 @@ final class PanelStore {
     var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !$0.windows.isEmpty } : [] }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
 
+    /// The two windows a usage row draws: the 5 h window (else the first)
+    /// and the 7 d window (else the next one).
+    static func windows(of usage: CoreProviderUsage) -> (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) {
+        let primary = usage.windows.first { $0.shortName == "5h" } ?? usage.windows.first
+        let secondary = usage.windows.first { $0.shortName == "7d" && $0.id != primary?.id }
+            ?? usage.windows.first { $0.id != primary?.id }
+        return (primary, secondary)
+    }
+
     /// The slider's value: a local drag wins, else the Pro's brightness, else the lights document's.
     var brightness: Double {
         if let localBrightness { return localBrightness }
@@ -343,23 +379,43 @@ final class PanelStore {
         show(toast: minutes >= 60 ? "Quiet for \(minutes / 60) h" : "Quiet for \(minutes) min")
     }
 
+    /// The slider's stream of values, throttled to one `set_brightness`
+    /// per `brightnessInterval` while dragging (the first change goes out
+    /// at once, the latest value follows on the next tick), and flushed
+    /// immediately when the drag ends.
+    static let brightnessInterval: TimeInterval = 0.12
+
     func setBrightness(_ value: Double, final: Bool) {
         localBrightness = value
-        brightnessFlush?.cancel()
+        let now = Date()
+        if final || now.timeIntervalSince(brightnessSentAt) >= Self.brightnessInterval {
+            brightnessFlush?.cancel()
+            brightnessFlush = nil
+            sendBrightness(value, final: final)
+            return
+        }
+        guard brightnessFlush == nil else { return }   // a trailing send is already scheduled; it reads the latest value
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.core.setBrightness(device: "all", value: value)
-                if final {
-                    // Let the daemon's next state carry the value from here.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-                        MainActor.assumeIsolated { self?.localBrightness = nil }
-                    }
-                }
+                self.brightnessFlush = nil
+                if let latest = self.localBrightness { self.sendBrightness(latest, final: false) }
             }
         }
         brightnessFlush = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + (final ? 0 : 0.12), execute: work)
+        let wait = max(0, Self.brightnessInterval - now.timeIntervalSince(brightnessSentAt))
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: work)
+    }
+
+    private func sendBrightness(_ value: Double, final: Bool) {
+        brightnessSentAt = Date()
+        core.setBrightness(device: "all", value: value)
+        if final {
+            // Let the daemon's next state carry the value from here.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                MainActor.assumeIsolated { self?.localBrightness = nil }
+            }
+        }
     }
 
     func toggleScreenBar() {

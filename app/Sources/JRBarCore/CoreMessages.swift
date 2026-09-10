@@ -119,6 +119,9 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var kind: String
     public var parent: String?
     public var label: String?
+    /// The daemon's 8-character handle for the session (`short_id`), shown
+    /// when the label is missing or is itself a UUID.
+    public var shortId: String?
     public var cwd: String?
     public var mode: String?
     public var lifecycle: String?
@@ -133,7 +136,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var workers: Int
 
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
-                cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
+                shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0) {
         self.id = id
@@ -141,6 +144,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.kind = kind
         self.parent = parent
         self.label = label
+        self.shortId = shortId
         self.cwd = cwd
         self.mode = mode
         self.lifecycle = lifecycle
@@ -157,6 +161,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers
+        case shortId = "short_id"
         case nextActor = "next_actor"
         case updatedAt = "updated_at"
     }
@@ -168,6 +173,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "main"
         parent = try c.decodeIfPresent(String.self, forKey: .parent)
         label = try c.decodeIfPresent(String.self, forKey: .label)
+        shortId = try c.decodeIfPresent(String.self, forKey: .shortId)
         cwd = try c.decodeIfPresent(String.self, forKey: .cwd)
         mode = try c.decodeIfPresent(String.self, forKey: .mode)
         lifecycle = try c.decodeIfPresent(String.self, forKey: .lifecycle)
@@ -244,13 +250,19 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
 }
 
 public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
+    /// The daemon's window key (`five-hour`, `weekly`, `daily`, `credits`, …) when it sends one.
+    public var key: String?
     public var name: String
     public var usedPct: Double
     public var resetsAt: Double?
 
-    public var id: String { name }
+    public var id: String { key ?? name }
 
-    public init(name: String, usedPct: Double, resetsAt: Double? = nil) {
+    /// The panel's short label for the window: `5h`, `7d`, `Daily`, `Monthly`, `Credits`.
+    public var shortName: String { UsageWindowLabel.short(id: key, name: name) }
+
+    public init(key: String? = nil, name: String, usedPct: Double, resetsAt: Double? = nil) {
+        self.key = key
         self.name = name
         self.usedPct = usedPct
         self.resetsAt = resetsAt
@@ -258,13 +270,15 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case name
+        case key = "id"
         case usedPct = "used_pct"
         case resetsAt = "resets_at"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "?"
+        key = try c.decodeIfPresent(String.self, forKey: .key)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? key ?? "?"
         usedPct = try c.decodeIfPresent(Double.self, forKey: .usedPct) ?? 0
         resetsAt = try c.decodeIfPresent(Double.self, forKey: .resetsAt)
     }
@@ -468,6 +482,57 @@ public struct CoreState: Codable, Hashable, Sendable {
 
 // MARK: - lights
 
+/// What the daemon says about the `why` it chose: the session the light
+/// is about, its label and provider, how long it has been in that state,
+/// and the dimming applied on top (`why_detail`, every field optional).
+public struct CoreWhyDetail: Codable, Hashable, Sendable {
+    public var session: String?
+    public var label: String?
+    public var provider: String?
+    public var secondsInState: Double?
+    public var brightnessFactor: Double?
+    /// Names of the dimming sources in effect (`idle_dim`, `battery`, …).
+    public var dimming: [String]
+
+    public init(session: String? = nil, label: String? = nil, provider: String? = nil, secondsInState: Double? = nil,
+                brightnessFactor: Double? = nil, dimming: [String] = []) {
+        self.session = session
+        self.label = label
+        self.provider = provider
+        self.secondsInState = secondsInState
+        self.brightnessFactor = brightnessFactor
+        self.dimming = dimming
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case session, label, provider, dimming
+        case secondsInState = "seconds_in_state"
+        case brightnessFactor = "brightness_factor"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        session = try c.decodeIfPresent(String.self, forKey: .session)
+        label = try c.decodeIfPresent(String.self, forKey: .label)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        secondsInState = try c.decodeIfPresent(Double.self, forKey: .secondsInState)
+        brightnessFactor = try c.decodeIfPresent(Double.self, forKey: .brightnessFactor)
+        // Strings today; objects with a name/kind/reason are read for their word.
+        let raw = (try? c.decodeIfPresent([JSONValue].self, forKey: .dimming)) ?? []
+        dimming = raw.compactMap { value -> String? in
+            switch value {
+            case .string(let text): return text
+            case .object(let object):
+                for key in ["name", "kind", "reason", "id"] {
+                    if case .string(let text)? = object[key] { return text }
+                }
+                return nil
+            default: return nil
+            }
+        }
+    }
+}
+
 public struct CoreLightSurface: Codable, Hashable, Sendable {
     public var program: String
     public var ledCount: Int?
@@ -477,9 +542,10 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
     public var staticFallback: String?
     public var brightness: Double?
     public var why: String?
+    public var whyDetail: CoreWhyDetail?
 
     public init(program: String, ledCount: Int? = nil, anchor: Double? = nil, motion: String? = nil,
-                staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil) {
+                staticFallback: String? = nil, brightness: Double? = nil, why: String? = nil, whyDetail: CoreWhyDetail? = nil) {
         self.program = program
         self.ledCount = ledCount
         self.anchor = anchor
@@ -487,12 +553,14 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         self.staticFallback = staticFallback
         self.brightness = brightness
         self.why = why
+        self.whyDetail = whyDetail
     }
 
     enum CodingKeys: String, CodingKey {
         case program, anchor, motion, brightness, why
         case ledCount = "led_count"
         case staticFallback = "static_fallback"
+        case whyDetail = "why_detail"
     }
 
     public init(from decoder: Decoder) throws {
@@ -504,6 +572,7 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
         staticFallback = try c.decodeIfPresent(String.self, forKey: .staticFallback)
         brightness = try c.decodeIfPresent(Double.self, forKey: .brightness)
         why = try c.decodeIfPresent(String.self, forKey: .why)
+        whyDetail = try? c.decodeIfPresent(CoreWhyDetail.self, forKey: .whyDetail)
     }
 }
 

@@ -1,10 +1,10 @@
 import Foundation
 
 /// "Why is the light doing that": one line built from `lights.surfaces.*.why`
-/// with the session that explains it, plus the detail lines the hover
-/// popover shows (each surface's program and the settings that shape
-/// brightness). Pure and testable; the panel and the Screen Bar tooltip
-/// both read it.
+/// and `why_detail`, with the session that explains it, plus the detail
+/// lines the hover popover shows (each surface's program and the settings
+/// that shape brightness). Pure and testable; the panel and the Screen Bar
+/// tooltip both read it.
 public struct LightExplanation: Hashable, Sendable {
     public struct Detail: Hashable, Sendable, Identifiable {
         public var label: String
@@ -17,9 +17,11 @@ public struct LightExplanation: Hashable, Sendable {
         }
     }
 
-    /// The daemon's `why`, normalised (`completed_unseen`).
+    /// The daemon's `why`, normalised (`completed_unseen` → `completed`).
     public var why: String
-    /// "Amber pulse", "Breathing blue", "Dim ember".
+    /// The documented case the `why` maps to; `.unknown` for anything else.
+    public var kind: LightWhy
+    /// "Amber pulse", "Breathing orange", "Dim ember".
     public var motion: String
     /// "Codex sidepulse-core is waiting on you (permission, 45 s)".
     public var reason: String
@@ -27,8 +29,9 @@ public struct LightExplanation: Hashable, Sendable {
     public var session: String?
     public var details: [Detail]
 
-    public init(why: String, motion: String, reason: String, session: String? = nil, details: [Detail] = []) {
+    public init(why: String, kind: LightWhy = .unknown, motion: String, reason: String, session: String? = nil, details: [Detail] = []) {
         self.why = why
+        self.kind = kind
         self.motion = motion
         self.reason = reason
         self.session = session
@@ -39,14 +42,37 @@ public struct LightExplanation: Hashable, Sendable {
     public var headline: String { "\(motion): \(reason)" }
 }
 
-public enum LightExplainer {
-    /// One row of the table: how a `why` reads. `motion` nil means "derive
-    /// it from the surface's motion word and colour".
-    struct Entry: Sendable {
-        var motion: String?
-        var reason: @Sendable (Context) -> String
-    }
+/// The documented `why` vocabulary (`docs/CORE-PROTOCOL.md`, lights).
+public enum LightWhy: String, CaseIterable, Sendable {
+    case idle, working, waiting, completed, failed, capacity, quiet
+    case sleepDim = "sleep_dim"
+    case idleDim = "idle_dim"
+    case battery, calendar, reminder, escalation, preview, studio, unknown
 
+    /// The documented word, or the older spellings the daemon and the
+    /// Python attention model used for the same thing; nil for anything else.
+    public static func parse(_ raw: String?) -> LightWhy? {
+        guard let raw else { return nil }
+        let key = LightExplainer.normalise(raw)
+        if let exact = LightWhy(rawValue: key) { return exact }
+        switch key {
+        case "needs_you", "ask", "permission", "waiting_for_input", "input_required": return .waiting
+        case "completed_unseen", "done", "completed_recently", "ready": return .completed
+        case "error", "failure": return .failed
+        case "quota", "quota_crossed", "quota_ember", "quota_warning", "limited": return .capacity
+        case "dnd", "dim", "dark", "schedule", "focus", "pause", "quiet_hours": return .quiet
+        case "sleep", "display_sleep", "asleep": return .sleepDim
+        case "low_battery", "on_battery": return .battery
+        case "meeting", "event": return .calendar
+        case "effect", "effect_studio": return .studio
+        default:
+            if key.hasPrefix("escalation") { return .escalation }
+            return nil
+        }
+    }
+}
+
+public enum LightExplainer {
     /// Everything a reason line may mention.
     public struct Context: Sendable {
         public var state: CoreState?
@@ -60,100 +86,8 @@ public enum LightExplainer {
             self.surface = surface
             self.now = now
         }
-    }
 
-    /// The `why` values the daemon uses today (and the older names the
-    /// Python attention model produced), each with a hand-written line.
-    static let table: [String: Entry] = [
-        "working": Entry(motion: nil) { context in
-            let working = context.workingSessions
-            guard let first = working.first else { return "An agent is working" }
-            let more = working.count > 1 ? " and \(working.count - 1) more" : ""
-            return "\(first.providerName) \(first.shortLabel) is working\(more)"
-        },
-        "needs_you": askEntry, "ask": askEntry, "waiting": askEntry, "waiting_for_input": askEntry, "permission": askEntry,
-        "completed_unseen": doneEntry, "completed": doneEntry, "done": doneEntry, "completed_recently": doneEntry,
-        "failed": Entry(motion: "Red flash") { context in
-            guard let session = context.failedSession else { return "An agent failed" }
-            let ago = Self.ago(session.updatedAt ?? session.since, now: context.now)
-            return "\(session.providerName) \(session.shortLabel) failed\(ago.map { " \($0)" } ?? "")"
-        },
-        "idle": Entry(motion: "Idle breath") { context in
-            let count = context.state?.mainSessions.count ?? 0
-            return count == 0 ? "Nothing is running" : (count == 1 ? "1 session, nothing to do" : "\(count) sessions, nothing to do")
-        },
-        "quiet": quietEntry, "dnd": quietEntry, "dim": quietEntry, "dark": quietEntry, "schedule": quietEntry, "focus": quietEntry, "pause": quietEntry,
-        "idle_dim": Entry(motion: "Dimmed") { context in
-            let after = context.settings?.double("idle_dim_after_minutes").map { Int($0) } ?? 10
-            let fraction = context.settings?.double("idle_dim_fraction") ?? 0.3
-            return "Idle for \(after) min, dimmed to \(Int((fraction * 100).rounded()))%"
-        },
-        "sleep_dim": Entry(motion: "Dimmed") { _ in "Display asleep, keeping a faint glow" },
-        "auto_off": Entry(motion: "Off") { context in
-            let after = context.settings?.double("idle_auto_off_after_minutes").map { Int($0) } ?? 60
-            return "Auto-off after \(after) min idle"
-        },
-        "off": Entry(motion: "Off") { _ in "Lights are off" },
-        "quota": quotaEntry, "quota_crossed": quotaEntry, "quota_ember": quotaEntry, "quota_warning": quotaEntry,
-        "escalation": escalationEntry, "escalation_ramp": escalationEntry, "escalation_menu_bar": escalationEntry, "escalation_final": escalationEntry,
-        "preview": Entry(motion: "Preview") { _ in "Previewing a program from Settings" },
-        "effect": Entry(motion: nil) { _ in "An Effect Studio program is assigned" },
-        "first_light": Entry(motion: "Hello sweep") { _ in "The core just started" },
-        "hello": Entry(motion: "Hello sweep") { _ in "The core just started" },
-        "device_error": Entry(motion: "Red blink") { context in
-            let broken = context.state?.devices.first { ($0.error ?? "").isEmpty == false }
-            return broken.map { "\($0.name ?? $0.kind): \($0.error ?? "device error")" } ?? "A device reported an error"
-        },
-        "lid_closed": Entry(motion: "Amber sweep") { _ in "The lid closed while agents are running" },
-        "lid_open": Entry(motion: "Green sweep") { _ in "Welcome back" },
-    ]
-
-    static let askEntry = Entry(motion: "Amber pulse") { context in
-        guard let (session, ask) = context.openAsk else { return "An agent is waiting on you" }
-        var qualifiers: [String] = []
-        if let kind = ask.kind, !kind.isEmpty { qualifiers.append(kind.replacingOccurrences(of: "_", with: " ")) }
-        if let opened = ask.openedAt, let elapsed = Self.elapsed(seconds: context.now.timeIntervalSince1970 - opened) {
-            qualifiers.append(elapsed)
-        }
-        let suffix = qualifiers.isEmpty ? "" : " (\(qualifiers.joined(separator: ", ")))"
-        return "\(session.providerName) \(session.shortLabel) is waiting on you\(suffix)"
-    }
-
-    static let doneEntry = Entry(motion: "Green sweep") { context in
-        guard let session = context.completedSession else { return "An agent finished" }
-        let ago = Self.ago(session.updatedAt ?? session.since, now: context.now)
-        return "\(session.shortLabel) finished\(ago.map { " \($0)" } ?? "")"
-    }
-
-    static let quietEntry = Entry(motion: "Dim ember") { context in
-        let focus = context.state?.focus
-        let mode = focus?.mode ?? "quiet"
-        let source = focus?.source ?? ""
-        let word: String
-        switch source {
-        case "schedule": word = "quiet hours"
-        case "manual", "override": word = "quiet (\(mode))"
-        case "focus": word = "Focus is on"
-        default: word = mode == "dnd" ? "Do Not Disturb" : "quiet mode (\(mode))"
-        }
-        if let until = focus?.until, until > context.now.timeIntervalSince1970 {
-            return "\(word.prefix(1).uppercased() + word.dropFirst()) until \(Self.clock(until))"
-        }
-        return word.prefix(1).uppercased() + word.dropFirst()
-    }
-
-    static let quotaEntry = Entry(motion: "Amber ember") { context in
-        guard let usage = context.state?.usage?.providers.max(by: { ($0.windows.first?.usedPct ?? 0) < ($1.windows.first?.usedPct ?? 0) }),
-              let window = usage.windows.first else { return "A usage window is nearly spent" }
-        return "\(Self.providerName(usage.id)) \(window.name) window at \(Int(window.usedPct.rounded()))%"
-    }
-
-    static let escalationEntry = Entry(motion: "Bright amber pulse") { context in
-        let stage = context.state?.escalation?.stageNumber ?? 0
-        let since = context.state?.escalation?.since ?? context.openAsk?.1.openedAt
-        let waited = since.flatMap { Self.elapsed(seconds: context.now.timeIntervalSince1970 - $0) }
-        let who = context.openAsk.map { "\($0.0.providerName) \($0.0.shortLabel)" } ?? "An ask"
-        return "\(who) has waited\(waited.map { " \($0)" } ?? "") · escalation stage \(stage)"
+        var detail: CoreWhyDetail? { surface?.whyDetail }
     }
 
     // MARK: Entry point
@@ -164,20 +98,11 @@ public enum LightExplainer {
         let surface = lights.screenBar ?? lights.hardware ?? lights.surfaces.values.first
         let rawWhy = surface?.why ?? lights.hardware?.why ?? lights.surfaces.values.compactMap(\.why).first ?? "unknown"
         let why = normalise(rawWhy)
+        let kind = LightWhy.parse(rawWhy) ?? .unknown
         let context = Context(state: state, settings: settings, surface: surface, now: now)
-        let entry = table[why]
-        let motion = entry?.motion ?? derivedMotion(surface: surface, why: why)
-        let reason = entry?.reason(context) ?? "Core says \(rawWhy.replacingOccurrences(of: "_", with: " "))"
-        var session: String?
-        switch why {
-        case "needs_you", "ask", "waiting", "waiting_for_input", "permission", "escalation", "escalation_ramp", "escalation_menu_bar", "escalation_final":
-            session = context.openAsk?.0.id
-        case "working": session = context.workingSessions.first?.id
-        case "completed_unseen", "completed", "done", "completed_recently": session = context.completedSession?.id
-        case "failed": session = context.failedSession?.id
-        default: session = nil
-        }
-        return LightExplanation(why: why, motion: motion, reason: reason, session: session, details: details(lights: lights, context: context))
+        let (motion, reason, session) = line(kind: kind, raw: rawWhy, context: context)
+        return LightExplanation(why: why, kind: kind, motion: motion, reason: reason, session: session,
+                                details: details(lights: lights, context: context))
     }
 
     public static func normalise(_ why: String) -> String {
@@ -185,23 +110,157 @@ public enum LightExplainer {
             .replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: " ", with: "_")
     }
 
+    // MARK: The sentence
+
+    /// Motion word, reason and the session for one `why`.
+    static func line(kind: LightWhy, raw: String, context: Context) -> (String, String, String?) {
+        let derived = derivedMotion(surface: context.surface, kind: kind)
+        let subject = context.subject(for: kind)
+        switch kind {
+        case .working:
+            let working = context.workingSessions
+            let who = subject ?? working.first.map(context.who)
+            guard let who else { return (derived, "An agent is working", nil) }
+            let others = working.filter { $0.id != (context.detail?.session ?? working.first?.id) }.count
+            let more = others > 0 ? " and \(others) more" : ""
+            return (derived, "\(who.name) is working\(more)", who.id)
+        case .waiting:
+            guard let who = subject ?? context.openAsk.map({ context.who($0.0) }) else { return ("Amber pulse", "An agent is waiting on you", nil) }
+            var qualifiers: [String] = []
+            let ask = context.openAsk?.1 ?? context.state?.session(withID: who.id ?? "")?.ask
+            if let kind = ask?.kind, !kind.isEmpty { qualifiers.append(kind.replacingOccurrences(of: "_", with: " ")) }
+            let waited = ask?.openedAt.map { context.now.timeIntervalSince1970 - $0 } ?? context.detail?.secondsInState
+            if let waited, let elapsed = elapsed(seconds: waited) { qualifiers.append(elapsed) }
+            let suffix = qualifiers.isEmpty ? "" : " (\(qualifiers.joined(separator: ", ")))"
+            return ("Amber pulse", "\(who.name) is waiting on you\(suffix)", who.id)
+        case .completed:
+            guard let who = subject ?? context.completedSession.map(context.who) else { return ("Green sweep", "An agent finished", nil) }
+            let ago = context.agoText(for: who.id, fallback: context.detail?.secondsInState)
+            return ("Green sweep", "\(who.name) finished\(ago.map { " \($0)" } ?? "")", who.id)
+        case .failed:
+            guard let who = subject ?? context.failedSession.map(context.who) else { return ("Red flash", "An agent failed", nil) }
+            let ago = context.agoText(for: who.id, fallback: context.detail?.secondsInState)
+            return ("Red flash", "\(who.name) failed\(ago.map { " \($0)" } ?? "")", who.id)
+        case .idle:
+            let count = context.state?.mainSessions.count ?? 0
+            let reason = count == 0 ? "Nothing is running" : (count == 1 ? "1 session, nothing to do" : "\(count) sessions, nothing to do")
+            let colour = context.surface?.staticFallback.flatMap(dominantColourName)
+            return (colour == nil || colour == "dim" ? "Idle breath" : derived, reason, nil)
+        case .capacity:
+            guard let usage = context.state?.usage?.providers.max(by: { ($0.windows.first?.usedPct ?? 0) < ($1.windows.first?.usedPct ?? 0) }),
+                  let window = usage.windows.max(by: { $0.usedPct < $1.usedPct }) else { return ("Amber ember", "A usage window is nearly spent", nil) }
+            return ("Amber ember", "\(SessionLabel.providerName(usage.id)) \(window.shortName) window at \(Int(window.usedPct.rounded()))%", nil)
+        case .quiet:
+            return ("Dim ember", quietReason(context), nil)
+        case .sleepDim:
+            return ("Dimmed", "Display asleep, keeping a faint glow", nil)
+        case .idleDim:
+            let after = context.settings?.double("idle_dim_after_minutes").map { Int($0) } ?? 10
+            let fraction = context.detail?.brightnessFactor ?? context.settings?.double("idle_dim_fraction") ?? 0.3
+            return ("Dimmed", "Idle for \(after) min, dimmed to \(percent(fraction))", nil)
+        case .battery:
+            let dimmed = context.detail?.brightnessFactor.map { ", dimmed to \(percent($0))" } ?? ""
+            return ("Dimmed", "On battery\(dimmed)", nil)
+        case .calendar:
+            let dimmed = context.detail?.brightnessFactor.map { $0 < 0.999 ? ", dimmed to \(percent($0))" : "" } ?? ""
+            return (derived, "In a calendar event\(dimmed)", nil)
+        case .reminder:
+            return (derived, "A reminder is due", nil)
+        case .escalation:
+            let stage = context.state?.escalation?.stageNumber ?? 0
+            let since = context.state?.escalation?.since ?? context.openAsk?.1.openedAt
+            let waited = since.map { context.now.timeIntervalSince1970 - $0 } ?? context.detail?.secondsInState
+            let who = subject ?? context.openAsk.map { context.who($0.0) }
+            let name = who?.name ?? "An ask"
+            let waitedText = waited.flatMap { elapsed(seconds: $0) }.map { " \($0)" } ?? ""
+            let stageText = stage > 0 ? " · escalation stage \(stage)" : " · escalating"
+            return ("Bright amber pulse", "\(name) has waited\(waitedText)\(stageText)", who?.id)
+        case .preview:
+            return ("Preview", "Previewing a program", nil)
+        case .studio:
+            return ("Preview", "Effect Studio is previewing", nil)
+        case .unknown:
+            // Today's daemon may send a word the table has no line for: say
+            // what the light looks like and who is on top, never a UUID.
+            let who = subject ?? context.topSession.map(context.who)
+            let humanised = raw.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "_", with: " ")
+            let unexplained = normalise(raw) == "unknown" || humanised.isEmpty
+            if let who {
+                let verb = context.activityWord(for: who.id)
+                let suffix = unexplained ? "" : " (\(humanised))"
+                return (derived, "\(who.name) \(verb)\(suffix)", who.id)
+            }
+            return (derived, unexplained ? "Core gave no reason" : "Core says \(humanised)", nil)
+        }
+    }
+
+    static func quietReason(_ context: Context) -> String {
+        let focus = context.state?.focus
+        let mode = focus?.mode ?? "quiet"
+        let source = focus?.source ?? ""
+        let word: String
+        switch source {
+        case "schedule": word = "quiet hours"
+        case "manual", "override": word = "quiet (\(mode))"
+        case "focus": word = "Focus is on"
+        default: word = mode == "dnd" ? "Do Not Disturb" : "quiet mode (\(mode))"
+        }
+        let capitalised = word.prefix(1).uppercased() + word.dropFirst()
+        if let until = focus?.until, until > context.now.timeIntervalSince1970 {
+            return "\(capitalised) until \(clock(until))"
+        }
+        return capitalised
+    }
+
     // MARK: Motion words
 
-    /// "Breathing blue" / "Blue relay" / "Cyan pulse" / "Steady green" from
-    /// the surface's motion word and fallback colour.
-    static func derivedMotion(surface: CoreLightSurface?, why: String) -> String {
-        let colour = surface?.staticFallback.flatMap(colourName) ?? "soft"
-        let cap = colour.prefix(1).uppercased() + colour.dropFirst()
+    /// "Breathing orange" / "Orange sweep" / "Steady green" from the
+    /// surface's motion word (`static`, `finite`, `continuous`, or the
+    /// older `breathe` / `chase` / `beat` / `sweep`) and its fallback colour.
+    static func derivedMotion(surface: CoreLightSurface?, kind: LightWhy) -> String {
+        let colour = surface?.staticFallback.flatMap(dominantColourName)
+        let cap = colour.map { $0.prefix(1).uppercased() + $0.dropFirst() }
+        if colour == "off" { return "Off" }
         switch surface?.motion?.lowercased() {
-        case "breathe", "breathing": return "Breathing \(colour)"
-        case "chase", "relay", "roll": return "\(cap) relay"
-        case "beat", "pulse", "blink": return "\(cap) pulse"
-        case "sweep": return "\(cap) sweep"
-        case "static", "steady", "solid", "hold": return "Steady \(colour)"
-        case "off": return "Off"
-        case nil, "": return why == "working" ? "Breathing \(colour)" : "\(cap) light"
-        case let other?: return "\(cap) \(other)"
+        case "breathe", "breathing", "continuous", "loop":
+            return colour.map { "Breathing \($0)" } ?? "Breathing"
+        case "chase", "relay", "roll":
+            return cap.map { "\($0) relay" } ?? "Relay"
+        case "beat", "pulse", "blink":
+            return cap.map { "\($0) pulse" } ?? "Pulse"
+        case "sweep", "finite":
+            return cap.map { "\($0) sweep" } ?? "Sweep"
+        case "static", "steady", "solid", "hold":
+            return colour.map { "Steady \($0)" } ?? "Steady light"
+        case "off":
+            return "Off"
+        case nil, "":
+            if kind == .working { return colour.map { "Breathing \($0)" } ?? "Breathing" }
+            return cap.map { "\($0) light" } ?? "Light"
+        case let other?:
+            return cap.map { "\($0) \(other)" } ?? other.prefix(1).uppercased() + other.dropFirst()
         }
+    }
+
+    /// The brightest colour named in a fallback: a bare `#RRGGBB`, or the
+    /// brightest hex code in a whole static program (`0:#0B0604; 3:#8D4D39; …`).
+    public static func dominantColourName(_ fallback: String) -> String? {
+        let trimmed = fallback.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let single = colourName(trimmed) { return single }
+        var best: (value: UInt32, brightness: Int)?
+        var index = trimmed.startIndex
+        while let hash = trimmed[index...].firstIndex(of: "#") {
+            let start = trimmed.index(after: hash)
+            let end = trimmed.index(start, offsetBy: 6, limitedBy: trimmed.endIndex) ?? trimmed.endIndex
+            if let value = UInt32(trimmed[start..<end], radix: 16), trimmed.distance(from: start, to: end) == 6 {
+                let r = Int((value >> 16) & 0xFF), g = Int((value >> 8) & 0xFF), b = Int(value & 0xFF)
+                let brightness = max(r, g, b)
+                if best == nil || brightness > best!.brightness { best = (value, brightness) }
+            }
+            index = end
+        }
+        guard let best else { return nil }
+        return colourName(String(format: "#%06X", best.value))
     }
 
     /// A plain-English colour for a `#RRGGBB` (the eight words a person
@@ -223,9 +282,12 @@ public enum LightExplainer {
         else { hue = 4 + (r - g) / delta }
         hue *= 60
         if hue < 0 { hue += 360 }
+        // A fully saturated red-orange (#FF3A00) reads red; the same hue at
+        // lower saturation (terracotta, #D97757) reads orange.
+        let redEnd: Double = delta / maxC > 0.85 ? 15 : 10
         switch hue {
-        case ..<15, 345...: return "red"
-        case 15..<40: return "orange"
+        case ..<redEnd, 345...: return "red"
+        case redEnd..<40: return "orange"
         case 40..<65: return "amber"
         case 65..<160: return "green"
         case 160..<200: return "cyan"
@@ -244,13 +306,20 @@ public enum LightExplainer {
             var parts: [String] = []
             if let leds = surface.ledCount { parts.append("\(leds) LEDs") }
             if let motion = surface.motion, !motion.isEmpty { parts.append(motion) }
-            if let colour = surface.staticFallback.flatMap(colourName) { parts.append(colour) }
+            if let colour = surface.staticFallback.flatMap(dominantColourName) { parts.append(colour) }
             if let brightness = surface.brightness { parts.append("\(Int((brightness * 100).rounded()))% bright") }
             if let anchor = surface.anchor, let ago = elapsed(seconds: context.now.timeIntervalSince1970 - anchor) { parts.append("started \(ago) ago") }
             if parts.isEmpty { parts.append(surface.program.isEmpty ? "no program" : "\(surface.program.split(separator: "\n").count) lines") }
             result.append(.init(label: label, value: parts.joined(separator: " · ")))
         }
         if lights.linked == true, lights.surfaces.count > 1 { result.append(.init(label: "Linked", value: "hardware and Screen Bar share one program")) }
+        if let detail = context.detail {
+            if let seconds = detail.secondsInState, let text = elapsed(seconds: seconds) { result.append(.init(label: "In this state", value: text)) }
+            if !detail.dimming.isEmpty {
+                let factor = detail.brightnessFactor.map { " · \(percent($0))" } ?? ""
+                result.append(.init(label: "Dimming", value: detail.dimming.map { $0.replacingOccurrences(of: "_", with: " ") }.joined(separator: ", ") + factor))
+            }
+        }
         if let settings = context.settings {
             let global = settings.double("global_brightness_scale") ?? 1
             result.append(.init(label: "Global brightness", value: "\(Int((global * 100).rounded()))%"))
@@ -297,6 +366,10 @@ public enum LightExplainer {
         return "\(text) ago"
     }
 
+    static func percent(_ fraction: Double) -> String {
+        "\(Int((fraction * 100).rounded()))%"
+    }
+
     static func clock(_ epoch: Double) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -308,22 +381,34 @@ public enum LightExplainer {
         return String(format: "%02d:%02d", value / 60, value % 60)
     }
 
-    static func providerName(_ id: String) -> String {
-        switch id.lowercased() {
-        case "claude": return "Claude"
-        case "codex": return "Codex"
-        case "gemini": return "Gemini"
-        case "opencode": return "OpenCode"
-        case "openclaw": return "OpenClaw"
-        case "pi": return "Pi"
-        case "": return "Agent"
-        default: return id.prefix(1).uppercased() + id.dropFirst()
-        }
-    }
+    static func providerName(_ id: String) -> String { SessionLabel.providerName(id) }
 }
 
 extension LightExplainer.Context {
+    /// "Claude jr-bar-67" and the session id it names.
+    struct Subject {
+        var name: String
+        var id: String?
+    }
+
     var mains: [CoreSession] { state?.mainSessions ?? [] }
+
+    func who(_ session: CoreSession) -> Subject {
+        Subject(name: "\(session.providerName) \(session.displayLabel)", id: session.id)
+    }
+
+    /// The subject `why_detail` names, when the daemon sent one: its
+    /// session (looked up for the full record), else its label and provider.
+    func subject(for kind: LightWhy) -> Subject? {
+        guard let detail else { return nil }
+        if let id = detail.session, let session = state?.session(withID: id) { return who(session) }
+        let provider = detail.provider ?? state?.session(withID: detail.session ?? "")?.provider ?? ""
+        let hasName = (detail.label?.isEmpty == false) || (detail.session?.isEmpty == false)
+        guard hasName else { return nil }
+        let label = SessionLabel.display(label: detail.label, shortId: nil, id: detail.session ?? "", provider: provider)
+        let name = provider.isEmpty ? label : "\(SessionLabel.providerName(provider)) \(label)"
+        return Subject(name: name, id: detail.session)
+    }
 
     var workingSessions: [CoreSession] {
         mains.filter { ["working", "tool_running", "thinking", "running"].contains(($0.mode ?? "").lowercased()) && ($0.lifecycle ?? "active") == "active" }
@@ -352,16 +437,65 @@ extension LightExplainer.Context {
         mains.filter { ($0.lifecycle ?? "").lowercased() == "failed" || ["failed", "error"].contains(($0.mode ?? "").lowercased()) }
             .max { ($0.updatedAt ?? $0.since ?? 0) < ($1.updatedAt ?? $1.since ?? 0) }
     }
+
+    /// The session the panel lists first: an ask, then waiting, failed,
+    /// working, done, idle; ties by the most recent change.
+    /// An ask embedded in the session or pinned in `state.asks`.
+    func hasAsk(_ session: CoreSession) -> Bool {
+        session.ask != nil || (state?.asks ?? []).contains { $0.session == session.id }
+    }
+
+    var topSession: CoreSession? {
+        func rank(_ session: CoreSession) -> Int {
+            if hasAsk(session) { return 0 }
+            let mode = (session.mode ?? "").lowercased()
+            let lifecycle = (session.lifecycle ?? "active").lowercased()
+            if lifecycle == "failed" || mode == "failed" || mode == "error" { return 2 }
+            if lifecycle == "completed" || lifecycle == "done" || mode == "completed" { return 4 }
+            if mode == "waiting" || mode == "ask" || session.nextActor == "user" { return 1 }
+            if ["working", "tool_running", "thinking", "running", "active"].contains(mode) { return 3 }
+            return 5
+        }
+        return mains.min { a, b in
+            let ra = rank(a), rb = rank(b)
+            if ra != rb { return ra < rb }
+            return (a.since ?? 0) > (b.since ?? 0)
+        }
+    }
+
+    /// "is working" / "is waiting on you" / "finished" / "failed" / "is idle" for a session id.
+    func activityWord(for id: String?) -> String {
+        guard let id, let session = state?.session(withID: id) else { return "is on top" }
+        let mode = (session.mode ?? "").lowercased()
+        let lifecycle = (session.lifecycle ?? "active").lowercased()
+        if lifecycle == "failed" || mode == "failed" || mode == "error" { return "failed" }
+        if lifecycle == "completed" || lifecycle == "done" || mode == "completed" { return "finished" }
+        if hasAsk(session) || mode == "waiting" || mode == "ask" || session.nextActor == "user" { return "is waiting on you" }
+        if ["working", "tool_running", "thinking", "running", "active"].contains(mode) { return "is working" }
+        return "is idle"
+    }
+
+    /// "12 s ago" from the session's last change, else from `seconds_in_state`.
+    func agoText(for id: String?, fallback seconds: Double?) -> String? {
+        if let id, let session = state?.session(withID: id), let text = LightExplainer.ago(session.updatedAt ?? session.since, now: now) { return text }
+        if let seconds, let text = LightExplainer.elapsed(seconds: seconds) { return "\(text) ago" }
+        return nil
+    }
 }
 
 extension CoreSession {
+    /// The label the panel shows: no provider prefix, no UUID (see `SessionLabel`).
+    public var displayLabel: String {
+        SessionLabel.display(label: label, shortId: shortId, id: id, provider: provider)
+    }
+
     /// The label, or the provider's name when the session has none.
     public var shortLabel: String {
         if let label, !label.isEmpty { return label }
         return providerName
     }
 
-    public var providerName: String { LightExplainer.providerName(provider) }
+    public var providerName: String { SessionLabel.providerName(provider) }
 
     /// A worker or sub-agent rather than a main session.
     public var isSubagent: Bool { kind != "main" || parent != nil }

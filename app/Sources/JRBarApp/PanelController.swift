@@ -23,13 +23,16 @@ final class PanelController {
     private var anchorProvider: (@MainActor () -> NSRect?)?
     private var whyPopover: WhyDetailPanel?
     private var whyHide: DispatchWorkItem?
+    private var openedAt = Date.distantPast
     var onOpenStateChange: (@MainActor (Bool) -> Void)?
     private(set) var isOpen = false { didSet { if isOpen != oldValue { onOpenStateChange?(isOpen) } } }
 
     init(store: PanelStore) {
         self.store = store
         hosting = NSHostingView(rootView: PanelView(store: store))
-        hosting.sizingOptions = [.intrinsicContentSize]
+        // The window is sized from `PanelLayout`, never from the view: the
+        // hosting view just fills whatever frame the window has.
+        hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = false
 
         let plain = ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil
@@ -63,7 +66,7 @@ final class PanelController {
         panel.onResignKey = { [weak self] in self?.close() }
 
         store.onClose = { [weak self] in self?.close() }
-        store.onContentSizeChange = { [weak self] size in self?.fit(to: size) }
+        store.onLayoutChange = { [weak self] layout in self?.fit(to: layout) }
         store.onWhyHover = { [weak self] hovering, frame in self?.whyHover(hovering, frame: frame) }
     }
 
@@ -116,26 +119,55 @@ final class PanelController {
         guard !isOpen else { return }
         isOpen = true
         store.panelDidOpen()
-        hosting.layoutSubtreeIfNeeded()
-        let size = hosting.fittingSize.width > 0 ? hosting.fittingSize : NSSize(width: PanelView.width, height: 320)
-        let frame = frameFor(size: size)
+        // Size once, from the content, before anything is on screen.
+        let screen = screenForAnchor()
+        store.screenHeight = Double(screen?.visibleFrame.height ?? 900)
+        let layout = store.layout
+        let frame = frameFor(height: CGFloat(layout.totalHeight), screen: screen)
         panel.setFrame(frame, display: false)
+        hosting.layoutSubtreeIfNeeded()
         panel.alphaValue = 0
         panel.makeKeyAndOrderFront(nil)
         installMonitors()
+        openedAt = Date()
+        logFrame("t=0 (target)", frame)
 
         let reduced = store.reduceMotion
         let rise: CGFloat = reduced ? 0 : 6
         if rise > 0 {
             panel.setFrameOrigin(NSPoint(x: frame.origin.x, y: frame.origin.y + rise))
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? PanelMotion.reducedDuration : PanelMotion.unfoldDuration
+        let duration = reduced ? PanelMotion.reducedDuration : PanelMotion.unfoldDuration
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
-            context.allowsImplicitAnimation = true
             panel.animator().alphaValue = 1
-            if rise > 0 { panel.animator().setFrameOrigin(frame.origin) }
+            // NSWindow's animator animates `setFrame(_:display:)`, not `setFrameOrigin`.
+            if rise > 0 { panel.animator().setFrame(frame, display: true) }
+        }, completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.isOpen else { return }
+                // The rise ends exactly on the computed frame, whatever the animator did.
+                if self.panel.frame != frame { self.panel.setFrame(frame, display: true) }
+                // From here on, data changes may animate.
+                self.store.animationsArmed = true
+            }
+        })
+        let opened = openedAt
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.isOpen, self.openedAt == opened else { return }
+                self.logFrame("t=1s", self.panel.frame)
+            }
         }
+    }
+
+    /// One line per open on stdout ("panel frame t=0 (target): …", then
+    /// "t=1s"), so a run can prove the frame never moved after opening.
+    private func logFrame(_ label: String, _ frame: NSRect) {
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        let f = String(format: "x=%.0f y=%.0f w=%.0f h=%.0f top=%.0f", frame.origin.x, frame.origin.y, frame.width, frame.height, primaryHeight - frame.maxY)
+        print("panel frame \(label): \(f) rows=\(store.rows.count) usage=\(store.usage.count) window=\(panel.windowNumber)")
     }
 
     func close() {
@@ -162,13 +194,17 @@ final class PanelController {
 
     // MARK: Geometry
 
-    private func frameFor(size: NSSize) -> NSRect {
+    private func screenForAnchor() -> NSScreen? {
         let anchor = anchorProvider?()
-        let screen = anchor.flatMap { rect in NSScreen.screens.first { $0.frame.intersects(rect) } }
+        return anchor.flatMap { rect in NSScreen.screens.first { $0.frame.intersects(rect) } }
             ?? NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func frameFor(height: CGFloat, screen: NSScreen?) -> NSRect {
+        let anchor = anchorProvider?()
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let width = PanelView.width
-        let height = min(size.height, visible.height - 12)
+        let height = min(height, visible.height - 12)
         var x = (anchor?.midX ?? visible.midX) - width / 2
         x = min(visible.maxX - width - 6, max(visible.minX + 6, x))
         let top = (anchor?.minY ?? visible.maxY) - Self.gapBelowStatusItem
@@ -176,13 +212,18 @@ final class PanelController {
         return NSRect(x: x.rounded(), y: y.rounded(), width: width, height: height.rounded())
     }
 
-    private func fit(to size: CGSize) {
-        guard isOpen, size.height > 0 else { return }
-        let frame = frameFor(size: size)
+    /// The content changed shape while open: resize to the new layout,
+    /// animated only once the panel has finished arriving.
+    private func fit(to layout: PanelLayout) {
+        guard isOpen else { return }
+        let frame = frameFor(height: CGFloat(layout.totalHeight), screen: screenForAnchor())
         if abs(panel.frame.height - frame.height) < 0.5, abs(panel.frame.origin.x - frame.origin.x) < 0.5 { return }
-        let reduced = store.reduceMotion
+        guard store.animationsArmed, !store.reduceMotion else {
+            panel.setFrame(frame, display: true)
+            return
+        }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduced ? 0.0 : 0.18
+            context.duration = 0.18
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
             panel.animator().setFrame(frame, display: true)
         }
