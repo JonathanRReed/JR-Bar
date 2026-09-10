@@ -804,7 +804,13 @@ def _send_wire_payload(socket_path: Path, payload: bytes) -> None:
     try:
         client.connect(str(socket_path))
         client.sendall(payload)
-        client.shutdown(socket.SHUT_WR)
+        try:
+            client.shutdown(socket.SHUT_WR)
+        except OSError:
+            # The ingress refused this payload and closed first, which is
+            # the point of the drill: there is no half to shut down, and
+            # under load that race is the common outcome.
+            return
         try:
             while client.recv(64):
                 pass
