@@ -3225,7 +3225,9 @@ class VirtualStatusDevice(NSObject):
             self._publish_presentation_schedule()
 
     def set_enabled(self, enabled: bool) -> None:
-        self._enabled = bool(enabled) and not self._terminating
+        self._enabled = (
+            bool(enabled) and not self._terminating and not getattr(self, "headless", False)
+        )
         if not self._enabled:
             self.hide()
         else:
@@ -3465,6 +3467,10 @@ class VirtualStatusDevice(NSObject):
         self._request_profile_sample()
 
     def show(self):
+        # The core daemon never draws: the native app owns the Screen Bar.
+        if getattr(self, "headless", False):
+            self._enabled = False
+            return
         if self._terminating or not self._enabled:
             return
         was_visible = self._is_surface_visible()

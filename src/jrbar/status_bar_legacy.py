@@ -8641,7 +8641,8 @@ class StatusBarController(NSObject):
             # so an ordinary Focus never reaches it, and even "silent"
             # only takes the sound.
             grant = self.interrupt_grant(signals_module.INTERRUPT_ESCALATION)
-            if grant.audible:
+            # Headless: the app plays the chime from the escalation_stage event.
+            if grant.audible and not getattr(self, "headless", False):
                 try:
                     from AppKit import NSSound
 

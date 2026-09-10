@@ -1,0 +1,692 @@
+"""Pure builders for the core daemon's ``state``, ``lights``, ``settings``
+and ``list_history`` documents (docs/CORE-PROTOCOL.md, protocol 1).
+
+Nothing here imports AppKit or touches the controller. The runtime
+(``core_runtime``) gathers the facts from the live controller into the
+small dataclasses below and hands them here; tests build the same
+dataclasses from fixtures. Every function returns plain JSON-ready dicts.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Final
+
+from .models import AgentMode
+
+PROTOCOL_VERSION: Final = 1
+SETTINGS_SCHEMA: Final = 3
+
+# The provider's own bundle ids, by the origin kinds ``origin.py`` emits.
+ORIGIN_BUNDLE_IDS: Final = {
+    "claude_app": "com.anthropic.claudefordesktop",
+    "codex_app": "com.openai.codex",
+    "grok_app": "com.x.grok",
+    "claude_vscode": "com.microsoft.VSCode",
+    "codex_vscode": "com.microsoft.VSCode",
+    "devin_vscode": "com.microsoft.VSCode",
+    "grok_vscode": "com.microsoft.VSCode",
+    "claude_cursor": "com.todesktop.230313mzl4w4u92",
+    "codex_cursor": "com.todesktop.230313mzl4w4u92",
+    "devin_cursor": "com.todesktop.230313mzl4w4u92",
+    "grok_cursor": "com.todesktop.230313mzl4w4u92",
+    "claude_windsurf": "com.exafunction.windsurf",
+    "codex_windsurf": "com.exafunction.windsurf",
+    "devin_windsurf": "com.exafunction.windsurf",
+    "grok_windsurf": "com.exafunction.windsurf",
+}
+
+# Terminal emulators, by the executable name ``ps`` reports, so a CLI
+# session can say which app hosts it.
+TERMINAL_APPS: Final = {
+    "terminal": ("Terminal", "com.apple.Terminal"),
+    "iterm2": ("iTerm", "com.googlecode.iterm2"),
+    "iterm": ("iTerm", "com.googlecode.iterm2"),
+    "ghostty": ("Ghostty", "com.mitchellh.ghostty"),
+    "kitty": ("kitty", "net.kovidgoyal.kitty"),
+    "alacritty": ("Alacritty", "org.alacritty"),
+    "wezterm-gui": ("WezTerm", "com.github.wez.wezterm"),
+    "wezterm": ("WezTerm", "com.github.wez.wezterm"),
+    "warp": ("Warp", "dev.warp.Warp-Stable"),
+    "hyper": ("Hyper", "co.zeit.hyper"),
+    "tabby": ("Tabby", "org.tabby"),
+    "rio": ("Rio", "com.raphaelamorim.rio"),
+    "code": ("Visual Studio Code", "com.microsoft.VSCode"),
+    "code helper": ("Visual Studio Code", "com.microsoft.VSCode"),
+    "code helper (plugin)": ("Visual Studio Code", "com.microsoft.VSCode"),
+    "cursor": ("Cursor", "com.todesktop.230313mzl4w4u92"),
+    "cursor helper": ("Cursor", "com.todesktop.230313mzl4w4u92"),
+    "cursor helper (plugin)": ("Cursor", "com.todesktop.230313mzl4w4u92"),
+    "windsurf": ("Windsurf", "com.exafunction.windsurf"),
+    "claude": ("Claude", "com.anthropic.claudefordesktop"),
+    "codex": ("Codex", "com.openai.codex"),
+}
+TERMINAL_BUNDLE_IDS: Final = frozenset(bundle for _name, bundle in TERMINAL_APPS.values())
+
+_WORKING_MODES: Final = frozenset(
+    {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
+)
+_ESCALATION_STAGE_NAMES: Final = {0: "none", 1: "ramp", 2: "menu_bar", 3: "final"}
+_GLANCE_WHY: Final = {
+    "attention": "needs_you",
+    "fresh_completion": "completed_unseen",
+    "active": "working",
+    "rest": "idle",
+    "fresh_failure": "failed",
+    "unresolved_failure": "failed",
+    "capacity": "capacity",
+}
+_LEDGER_KINDS: Final = {
+    "completed": "completed",
+    "asked": "asked",
+    "blocked": "failed",
+    "threshold_crossed": "quota_crossed",
+}
+
+
+# --- facts the runtime gathers ---------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceFacts:
+    """One row of ``state.devices``: a strip, a Dot, or the Screen Bar."""
+
+    id: str
+    kind: str
+    name: str | None = None
+    path: str | None = None
+    leds: int | None = None
+    connected: bool | None = None
+    enabled: bool | None = None
+    brightness: int | None = None
+    linked: bool | None = None
+    last_write: float | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceFacts:
+    """One ``lights.surfaces`` entry."""
+
+    program: str
+    led_count: int | None = None
+    anchor: float | None = None
+    motion: str | None = None
+    static_fallback: str | None = None
+    brightness: float | None = None
+    why: str | None = None
+    override: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SessionExtras:
+    """What the process registry and the hook origin know about a session."""
+
+    pid: int | None = None
+    origin: dict[str, Any] | None = None
+    terminal: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PowerFacts:
+    keep_awake: bool
+    closed_lid_policy: str
+    closed_lid_holding: bool
+    helper_installed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EscalationFacts:
+    stage: int = 0
+    since: float | None = None
+
+
+# --- small pure helpers -------------------------------------------------------
+
+
+def epoch(value: object) -> float | None:
+    """A datetime, an epoch number or None as an epoch float (or None)."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        try:
+            return float(value.timestamp())
+        except (OverflowError, ValueError):
+            return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and math.isfinite(float(value)):
+        return float(value)
+    return None
+
+
+def strip_session_short_id(display_name: str, session_id: str | None) -> str:
+    """The menu's own title rule: the display name without its short id."""
+    text = str(display_name or "").strip()
+    if session_id:
+        suffix = f" ({str(session_id)[:8]})"
+        if text.endswith(suffix):
+            return text[: -len(suffix)].strip()
+    if text.endswith(")") and " (" in text:
+        prefix, suffix = text.rsplit(" (", 1)
+        token = suffix[:-1]
+        if 6 <= len(token) <= 12 and all(char.isalnum() or char == "-" for char in token):
+            return prefix.strip()
+    return text
+
+
+def origin_kind(label: str | None) -> str | None:
+    if not label:
+        return None
+    normalized = re.sub(r"[^a-z0-9]+", "_", label.strip().lower()).strip("_")
+    return normalized or None
+
+
+def origin_document(label: str | None, kind: str | None = None) -> dict[str, Any] | None:
+    """``{"kind", "label", "bundle_id"}`` from the hook's origin annotation."""
+    if not label:
+        return None
+    resolved_kind = kind or origin_kind(label)
+    return {
+        "kind": resolved_kind,
+        "label": label,
+        "bundle_id": ORIGIN_BUNDLE_IDS.get(resolved_kind or ""),
+    }
+
+
+def terminal_from_command(command: str | None) -> tuple[str, str] | None:
+    """(app name, bundle id) when ``command`` is a known terminal or IDE."""
+    if not command:
+        return None
+    base = command.rsplit("/", 1)[-1].strip().lower()
+    for key, value in TERMINAL_APPS.items():
+        if base == key:
+            return value
+    lowered = command.lower()
+    for token, value in (
+        ("terminal.app", ("Terminal", "com.apple.Terminal")),
+        ("iterm.app", ("iTerm", "com.googlecode.iterm2")),
+        ("ghostty.app", ("Ghostty", "com.mitchellh.ghostty")),
+        ("kitty.app", ("kitty", "net.kovidgoyal.kitty")),
+        ("alacritty.app", ("Alacritty", "org.alacritty")),
+        ("wezterm.app", ("WezTerm", "com.github.wez.wezterm")),
+        ("warp.app", ("Warp", "dev.warp.Warp-Stable")),
+        ("visual studio code.app", ("Visual Studio Code", "com.microsoft.VSCode")),
+        ("cursor.app", ("Cursor", "com.todesktop.230313mzl4w4u92")),
+        ("windsurf.app", ("Windsurf", "com.exafunction.windsurf")),
+        ("claude.app", ("Claude", "com.anthropic.claudefordesktop")),
+        ("codex.app", ("Codex", "com.openai.codex")),
+    ):
+        if token in lowered:
+            return value
+    return None
+
+
+def lifecycle_for_mode(mode: AgentMode, *, stale: bool) -> str:
+    if mode is AgentMode.COMPLETED:
+        return "completed"
+    if mode is AgentMode.BLOCKED_ERROR:
+        return "failed"
+    if mode is AgentMode.ENDED_UNCONFIRMED:
+        return "ended"
+    if stale:
+        return "stale"
+    return "active"
+
+
+def aggregate_mode(mode: AgentMode | None, *, asks: int, failed: int, working: int, ready: int) -> str:
+    if asks or mode is AgentMode.WAITING_FOR_INPUT:
+        return "needs_you"
+    if failed or mode is AgentMode.BLOCKED_ERROR:
+        return "failed"
+    if working or (mode in _WORKING_MODES):
+        return "working"
+    if ready or mode is AgentMode.COMPLETED:
+        return "done"
+    return "idle"
+
+
+def why_for_glance(glance: object) -> tuple[str | None, str | None]:
+    """``(why, override)`` from a ResolvedGlance-shaped object."""
+    if glance is None:
+        return None, None
+    semantic = getattr(getattr(glance, "semantic", None), "value", None)
+    override = getattr(getattr(glance, "override_reason", None), "value", None)
+    why = _GLANCE_WHY.get(str(semantic)) if semantic is not None else None
+    if override in (None, "none"):
+        override = None
+    return why, override
+
+
+def escalation_stage_name(stage: int) -> str:
+    return _ESCALATION_STAGE_NAMES.get(int(stage), "none")
+
+
+def hook_health(intake_report: object) -> dict[str, str]:
+    """``state.health.hooks``: ok / missing / stale per provider."""
+    result: dict[str, str] = {}
+    providers = getattr(intake_report, "providers", ()) or ()
+    for intake in providers:
+        provider = getattr(intake, "provider", None)
+        if not isinstance(provider, str):
+            continue
+        if not getattr(intake, "installed", False):
+            result[provider] = "missing"
+        elif getattr(intake, "stuck", False):
+            result[provider] = "stale"
+        else:
+            result[provider] = "ok"
+    return result
+
+
+# --- documents ----------------------------------------------------------------
+
+
+def _request_for_status(operator_state: object, status: object):
+    work_key = getattr(status, "work_key", None)
+    if operator_state is None or work_key is None:
+        return None
+    for request in getattr(operator_state, "requests", ()) or ():
+        key = getattr(request, "key", None)
+        if getattr(key, "work_key", None) != work_key:
+            continue
+        phase = getattr(getattr(request, "phase", None), "value", "")
+        if phase.startswith("live"):
+            return request
+    return None
+
+
+def _work_for_status(operator_state: object, status: object):
+    work_key = getattr(status, "work_key", None)
+    if operator_state is None or work_key is None:
+        return None
+    for work in getattr(operator_state, "works", ()) or ():
+        if getattr(work, "key", None) == work_key:
+            return work
+    return None
+
+
+def ask_document(status: object, operator_state: object, *, with_session: bool) -> dict[str, Any]:
+    request = _request_for_status(operator_state, status)
+    kind = getattr(getattr(request, "request_kind", None), "value", None)
+    if kind in (None, "unknown"):
+        event_name = getattr(status, "event_name", "")
+        if event_name == "PermissionRequest":
+            kind = "permission"
+        elif getattr(status, "tool_name", None) == "ExitPlanMode":
+            kind = "approval"
+        else:
+            kind = "input"
+    opened_at = epoch(getattr(request, "opened_at_epoch", None)) or epoch(
+        getattr(status, "updated_at", None)
+    )
+    summary = getattr(status, "message", None) or getattr(status, "tool_name", None)
+    document: dict[str, Any] = {
+        "kind": kind,
+        "opened_at": opened_at,
+        "summary": summary if isinstance(summary, str) else None,
+    }
+    if with_session:
+        document = {"session": getattr(status, "agent_id", None), **document}
+    return document
+
+
+def session_document(
+    status: object,
+    *,
+    operator_state: object,
+    ask_ids: frozenset[str],
+    extras: SessionExtras | None,
+    workers: int,
+) -> dict[str, Any]:
+    mode = getattr(status, "mode", AgentMode.UNKNOWN)
+    if not isinstance(mode, AgentMode):
+        mode = AgentMode.UNKNOWN
+    agent_id = str(getattr(status, "agent_id", ""))
+    stale = bool(getattr(status, "stale", False))
+    is_subagent = bool(getattr(status, "is_subagent", False))
+    work = _work_for_status(operator_state, status)
+    next_actor = getattr(getattr(work, "next_actor", None), "value", None)
+    if next_actor in (None, "unknown", "none"):
+        next_actor = (
+            "user"
+            if mode in (AgentMode.WAITING_FOR_INPUT, AgentMode.COMPLETED, AgentMode.BLOCKED_ERROR)
+            else "provider"
+        )
+    updated_at = epoch(getattr(status, "updated_at", None))
+    origin_label = getattr(status, "origin", None)
+    origin = (extras.origin if extras is not None and extras.origin else None) or origin_document(
+        origin_label if isinstance(origin_label, str) else None
+    )
+    return {
+        "id": agent_id,
+        "provider": str(getattr(status, "provider", "unknown")),
+        "kind": "worker" if is_subagent else "main",
+        "parent": getattr(status, "parent_agent_id", None) if is_subagent else None,
+        "label": strip_session_short_id(
+            getattr(status, "display_name", agent_id), getattr(status, "session_id", None)
+        )
+        or agent_id,
+        "cwd": getattr(status, "cwd", None),
+        "mode": mode.value,
+        "lifecycle": lifecycle_for_mode(mode, stale=stale),
+        "next_actor": next_actor,
+        "since": updated_at,
+        "updated_at": updated_at,
+        "stale": stale,
+        "pid": extras.pid if extras is not None else None,
+        "origin": origin,
+        "ask": ask_document(status, operator_state, with_session=False) if agent_id in ask_ids else None,
+        "terminal": extras.terminal if extras is not None else None,
+        "workers": workers,
+        "event": getattr(status, "event_name", None),
+        "tool": getattr(status, "tool_name", None),
+        "message": getattr(status, "message", None),
+    }
+
+
+def usage_document(usage_state: object) -> dict[str, Any] | None:
+    if usage_state is None:
+        return None
+    providers = []
+    for snapshot in getattr(usage_state, "snapshots", ()) or ():
+        windows = []
+        for lane in getattr(snapshot, "lanes", ()) or ():
+            remaining = getattr(lane, "remaining_percent", None)
+            windows.append(
+                {
+                    "name": getattr(lane, "label", None) or getattr(lane, "lane_id", "?"),
+                    "id": getattr(lane, "lane_id", None),
+                    "used_pct": (
+                        round(100.0 - float(remaining), 1) if remaining is not None else None
+                    ),
+                    "resets_at": epoch(getattr(lane, "reset_at", None)),
+                    "scope": getattr(lane, "scope", None),
+                    "model": getattr(lane, "model", None),
+                }
+            )
+        state = getattr(getattr(snapshot, "state", None), "value", None)
+        account_label = getattr(snapshot, "account_label", None)
+        providers.append(
+            {
+                "id": getattr(snapshot, "provider_id", "unknown"),
+                "instance": getattr(snapshot, "source_instance_id", "default"),
+                # The app's UsageAccount block: {plan, label, fidelity}.
+                "account": (
+                    {"plan": None, "label": account_label, "fidelity": "stale" if state == "stale" else "official"}
+                    if isinstance(account_label, str) and account_label
+                    else None
+                ),
+                "windows": windows,
+                "fidelity": "stale" if state == "stale" else "official",
+                "state": state,
+                "reason": getattr(snapshot, "reason_code", None),
+                "action": getattr(snapshot, "action_label", None),
+                "observed_at": epoch(getattr(snapshot, "observed_at", None)),
+                "tokens": {
+                    "input": getattr(snapshot, "input_tokens", 0),
+                    "cached_input": getattr(snapshot, "cached_input_tokens", 0),
+                    "output": getattr(snapshot, "output_tokens", 0),
+                },
+                "estimated_cost_usd": getattr(snapshot, "estimated_cost_usd", None),
+                "credits_remaining": getattr(snapshot, "credits_remaining", None),
+                "forecast": None,
+            }
+        )
+    return {
+        "refreshed_at": epoch(getattr(usage_state, "refreshed_at", None)),
+        "next_refresh_at": epoch(getattr(usage_state, "next_refresh_at", None)),
+        "refreshing": bool(getattr(usage_state, "refreshing", False)),
+        "providers": providers,
+    }
+
+
+def focus_document(dnd_projection: object) -> dict[str, Any]:
+    contributions = getattr(dnd_projection, "contributions", ()) or ()
+    mode = "normal"
+    source = "default"
+    for contribution in contributions:
+        contribution_mode = getattr(getattr(contribution, "mode", None), "value", None)
+        if contribution_mode:
+            mode = contribution_mode
+            source = getattr(getattr(contribution, "source", None), "value", source)
+            break
+    else:
+        sources = getattr(dnd_projection, "active_sources", ()) or ()
+        if sources:
+            source = getattr(sources[0], "value", source)
+    return {
+        "mode": mode,
+        "source": source,
+        "until": epoch(getattr(dnd_projection, "next_transition_epoch", None)),
+        "display": getattr(getattr(dnd_projection, "display_admission", None), "value", None),
+        "brightness_factor": getattr(dnd_projection, "brightness_factor", None),
+        "banner_allowed": getattr(dnd_projection, "banner_allowed", None),
+        "audible_allowed": getattr(dnd_projection, "audible_allowed", None),
+        "summary": getattr(dnd_projection, "summary", None),
+    }
+
+
+def device_document(device: DeviceFacts) -> dict[str, Any]:
+    document: dict[str, Any] = {"id": device.id, "kind": device.kind}
+    for key in ("name", "path", "leds", "connected", "enabled", "brightness", "linked", "last_write", "error"):
+        value = getattr(device, key)
+        if value is not None or key in ("error",):
+            document[key] = value
+    return document
+
+
+def build_state_document(
+    *,
+    now: float,
+    generation: int,
+    snapshot: object,
+    ask_statuses: tuple[object, ...] | list[object],
+    unseen_completion_ids: frozenset[str] | set[str] | tuple[str, ...],
+    operator_state: object = None,
+    devices: tuple[DeviceFacts, ...] | list[DeviceFacts] = (),
+    usage_state: object = None,
+    power: PowerFacts | None = None,
+    dnd_projection: object = None,
+    escalation: EscalationFacts | None = None,
+    intake_report: object = None,
+    settings_generation: int = 0,
+    extras_by_id: dict[str, SessionExtras] | None = None,
+    peers: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
+) -> dict[str, Any]:
+    """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped object."""
+    extras_by_id = extras_by_id or {}
+    statuses: list[object] = []
+    seen: set[str] = set()
+    for status in list(getattr(snapshot, "statuses", ()) or ()) + list(
+        getattr(snapshot, "stale_statuses", ()) or ()
+    ):
+        agent_id = str(getattr(status, "agent_id", ""))
+        if not agent_id or agent_id in seen:
+            continue
+        seen.add(agent_id)
+        statuses.append(status)
+    ask_ids = frozenset(str(getattr(status, "agent_id", "")) for status in ask_statuses)
+    workers_by_parent: dict[str, int] = {}
+    for status in statuses:
+        if getattr(status, "is_subagent", False) and not getattr(status, "stale", False):
+            mode = getattr(status, "mode", None)
+            if mode in _WORKING_MODES or mode is AgentMode.WAITING_FOR_INPUT:
+                parent = getattr(status, "parent_agent_id", None)
+                if parent:
+                    workers_by_parent[parent] = workers_by_parent.get(parent, 0) + 1
+    sessions = [
+        session_document(
+            status,
+            operator_state=operator_state,
+            ask_ids=ask_ids,
+            extras=extras_by_id.get(str(getattr(status, "agent_id", ""))),
+            workers=workers_by_parent.get(str(getattr(status, "agent_id", "")), 0),
+        )
+        for status in statuses
+    ]
+    asks = [
+        ask_document(status, operator_state, with_session=True)
+        for status in ask_statuses
+    ]
+    mains = [session for session in sessions if session["kind"] == "main"]
+    working = sum(1 for session in mains if session["mode"] in {mode.value for mode in _WORKING_MODES} and not session["stale"])
+    failed = sum(1 for session in mains if session["lifecycle"] == "failed" and not session["stale"])
+    ready = len(set(unseen_completion_ids))
+    aggregate_source = getattr(getattr(snapshot, "aggregate", None), "mode", None)
+    power = power or PowerFacts(False, "never", False, False)
+    escalation = escalation or EscalationFacts()
+    return {
+        "t": "state",
+        "v": PROTOCOL_VERSION,
+        "generation": int(generation),
+        "now": float(now),
+        "aggregate": {
+            "mode": aggregate_mode(
+                aggregate_source if isinstance(aggregate_source, AgentMode) else None,
+                asks=len(asks),
+                failed=failed,
+                working=working,
+                ready=ready,
+            ),
+            "needs_you": len(asks),
+            "active": working,
+            "ready": ready,
+            "failed": failed,
+            "total": len(mains),
+        },
+        "sessions": sessions,
+        "asks": asks,
+        "devices": [device_document(device) for device in devices],
+        "usage": usage_document(usage_state),
+        "power": {
+            "keep_awake": bool(power.keep_awake),
+            "closed_lid": {
+                "policy": power.closed_lid_policy,
+                "holding": bool(power.closed_lid_holding),
+                "helper_installed": bool(power.helper_installed),
+            },
+        },
+        "focus": focus_document(dnd_projection),
+        "escalation": {
+            "stage": escalation_stage_name(escalation.stage),
+            "since": epoch(escalation.since),
+        },
+        "health": {
+            "hooks": hook_health(intake_report),
+            "sources": {
+                str(getattr(intake, "provider", "")): {
+                    "fresh": bool(getattr(intake, "delivering", False)),
+                    "heard_age_seconds": getattr(intake, "heard_age_seconds", None),
+                }
+                for intake in (getattr(intake_report, "providers", ()) or ())
+            },
+            "intake": (
+                {
+                    "hook_state": getattr(
+                        getattr(getattr(intake_report, "hook_state", None), "code", None), "value", None
+                    ),
+                    "source_health": getattr(
+                        getattr(getattr(intake_report, "source_health", None), "code", None), "value", None
+                    ),
+                    "silence_seconds": getattr(intake_report, "silence_seconds", None),
+                }
+                if intake_report is not None
+                else None
+            ),
+        },
+        "peers": list(peers),
+        "unseen_completions": sorted(set(unseen_completion_ids)),
+        "settings_generation": int(settings_generation),
+    }
+
+
+def build_lights_document(
+    surfaces: dict[str, SurfaceFacts],
+    *,
+    linked: bool,
+) -> dict[str, Any]:
+    document: dict[str, Any] = {"t": "lights", "v": PROTOCOL_VERSION, "surfaces": {}, "linked": bool(linked)}
+    for name, facts in surfaces.items():
+        entry: dict[str, Any] = {"program": facts.program}
+        for key in ("led_count", "anchor", "motion", "static_fallback", "brightness", "why", "override"):
+            value = getattr(facts, key)
+            if value is not None:
+                entry[key] = value
+        document["surfaces"][name] = entry
+    return document
+
+
+def build_settings_document(
+    settings_dict: dict[str, Any],
+    *,
+    generation: int,
+    schema: int = SETTINGS_SCHEMA,
+) -> dict[str, Any]:
+    return {
+        "t": "settings",
+        "v": PROTOCOL_VERSION,
+        "generation": int(generation),
+        "schema": int(schema),
+        "document": dict(settings_dict),
+    }
+
+
+def history_rows(ledger: object, *, since: float | None = None, limit: int = 500) -> list[dict[str, Any]]:
+    """``list_history`` rows from an ActivityLedger-shaped object, newest first."""
+    last_seen = float(getattr(ledger, "last_seen_epoch", 0.0) or 0.0)
+    rows: list[dict[str, Any]] = []
+    for entry in getattr(ledger, "entries", ()) or ():
+        at = epoch(getattr(entry, "occurred_at_epoch", None))
+        if at is None or (since is not None and at < float(since)):
+            continue
+        kind_value = getattr(getattr(entry, "kind", None), "value", None) or str(getattr(entry, "kind", ""))
+        rows.append(
+            {
+                "at": at,
+                "kind": _LEDGER_KINDS.get(kind_value, kind_value),
+                "provider": getattr(entry, "provider", None),
+                "session": getattr(entry, "subject_id", None),
+                "label": getattr(entry, "label", None),
+                "detail": getattr(entry, "detail", None),
+                "duration": None,
+                "unseen": at > last_seen,
+            }
+        )
+    rows.sort(key=lambda row: row["at"], reverse=True)
+    return rows[: max(0, int(limit))]
+
+
+__all__ = [
+    "ORIGIN_BUNDLE_IDS",
+    "PROTOCOL_VERSION",
+    "SETTINGS_SCHEMA",
+    "TERMINAL_APPS",
+    "TERMINAL_BUNDLE_IDS",
+    "DeviceFacts",
+    "EscalationFacts",
+    "PowerFacts",
+    "SessionExtras",
+    "SurfaceFacts",
+    "aggregate_mode",
+    "ask_document",
+    "build_lights_document",
+    "build_settings_document",
+    "build_state_document",
+    "epoch",
+    "escalation_stage_name",
+    "focus_document",
+    "history_rows",
+    "hook_health",
+    "lifecycle_for_mode",
+    "origin_document",
+    "origin_kind",
+    "session_document",
+    "strip_session_short_id",
+    "terminal_from_command",
+    "usage_document",
+    "why_for_glance",
+]

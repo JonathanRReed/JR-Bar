@@ -240,6 +240,7 @@ LEGACY_OPENCLAW_HANDLER_MARKER = "sidepulse-openclaw-handler-v2"
 # Module entry points that mark a hook command as ours. The first two are
 # what the installer writes today; the rest were written before the rename
 # and stay recognised so installs replace them instead of duplicating.
+HOOK_SHIM_NAME = "jrbar-hook"
 HOOK_CLIENT_MODULES = (
     "jrbar.hook_client",
     "jrbar.hook_entry",
@@ -262,6 +263,9 @@ def _is_jrbar_hook_invocation(parts) -> bool:
     """
     parts = list(parts)
     if any(Path(part).name == "hook_entry.py" for part in parts):
+        return True
+    # The compiled shim (hook/jrbar-hook.c): `jrbar-hook --provider <id>`.
+    if parts and Path(parts[0]).name == HOOK_SHIM_NAME:
         return True
     if "-m" in parts and any(module in parts for module in HOOK_CLIENT_MODULES):
         return True
