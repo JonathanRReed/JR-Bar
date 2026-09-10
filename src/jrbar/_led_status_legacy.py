@@ -63,6 +63,12 @@ class LedStatusWrite:
     program: str
     changed: bool
     error: str | None = None
+    #: The same program BEFORE the strip transfer (nominal sRGB colours, a
+    #: nominal ``brightness N``). Anything that re-renders this program for
+    #: another device -- a linked Dot extending the strip -- must start from
+    #: this, never from ``program``: transferring an already-transferred
+    #: program decodes it twice and drives the second device nearly black.
+    nominal_program: str = ""
 
     @property
     def label(self) -> str:
@@ -183,6 +189,34 @@ STRIP_HUE_HOLDING_DRIVE = 3
 # the fix for the green-glow arc stays intact.
 STRIP_HUE_READABLE_DRIVE = 14
 STRIP_CHROMA_INTENT_CODE = 24
+# --- the `brightness N` command, which is NOT a colour ----------------------
+# The firmware multiplies every drive byte by N/255. Decoding N through the
+# sRGB curve like a colour code is right about the PHYSICS and wrong about the
+# CONTROL: a perceptual half really is a fifth of the light, but it means the
+# bottom third of a 0-100% slider lands in drive codes 1-18 out of 255, and
+# below about drive 8 the strip is either black or visibly unstable. Measured
+# on the owner's Dot, 2026-09-10 (before this constant existed):
+#
+#     5% -> 1    10% -> 3    20% -> 8    30% -> 18    50% -> 55
+#
+# and after (measured the same way on the same Dot):
+#
+#     5% -> 5    10% -> 7    20% -> 12   30% -> 22   50% -> 58
+#
+# which is the whole of "if you take it below 90% it just breaks". So the
+# perceptual curve stays -- it is what makes a step near the top feel like the
+# same step near the bottom -- but it is COMPRESSED into [floor, 255] instead
+# of [0, 255]. Every nonzero percentage is then a distinct, lit drive code,
+# and the curve is still monotonic and still gamma-shaped.
+#
+# The floor is the drive at which a colour whose peak channel is full scale
+# still emits real light: 255 * 4/255 = 4 drive codes, above
+# STRIP_HUE_HOLDING_DRIVE, where the firmware's own rounding stops deciding
+# what the LED shows. It is deliberately the SMALLEST floor that clears that
+# line -- the strip now reads a touch brighter than the Screen Bar at the
+# very bottom of the range (at most 4/255 of full light), and a whisper that
+# is slightly too bright is a far smaller error than a whisper that is black.
+STRIP_MIN_LIT_BRIGHTNESS_DRIVE = 4
 
 MIN_CHANNEL_GAIN = 0.3
 MAX_CHANNEL_GAIN = 1.5
@@ -222,6 +256,119 @@ def strip_drive_code(code: int, gain: float = 1.0) -> int:
         return 0
     drive = 255.0 * (light ** (1.0 / STRIP_CODE_TO_LIGHT_EXPONENT))
     return max(STRIP_MIN_LIT_DRIVE, min(255, round(drive)))
+
+
+def brightness_drive_code(code: int) -> int:
+    """A nominal ``brightness N`` -> the byte the firmware should scale by.
+
+    The one function that decides what a brightness percentage MEANS on a
+    strip, so nothing else has to guess and nothing can apply it twice.
+
+    ``0`` is off and stays off. Every other level is the sRGB decode of ``N``
+    compressed into ``[STRIP_MIN_LIT_BRIGHTNESS_DRIVE, 255]``, so the curve is
+    still perceptual, still strictly increasing, and never lands a lit program
+    on a drive the firmware renders as black.
+    """
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        return 0
+    code = max(0, min(255, code))
+    if code <= 0:
+        return 0
+    if code >= 255:
+        return 255
+    floor = STRIP_MIN_LIT_BRIGHTNESS_DRIVE
+    light = srgb_to_linear(code / 255.0)
+    return max(floor, min(255, round(floor + (255.0 - floor) * light)))
+
+
+def finite_cue_duration_ms(program: str) -> int | None:
+    """How long a program moves for, or ``None`` when it loops forever.
+
+    A cue that ends -- ``repeat 8``, or no repeat at all -- stops on whatever
+    its last line painted and holds it until something writes again. On the
+    strip that reads as "the Pro was left dark"; on a two-LED Dot it reads as
+    one LED stuck on a colour nobody can explain. Both need the live status
+    program put back, and this is the number that says when.
+    """
+    from .animation import (
+        RepeatStep,
+        errors_only,
+        loop_duration_ms,
+        read_program,
+        step_duration_ms,
+    )
+
+    if not isinstance(program, str) or not program.strip():
+        return None
+    try:
+        animation, problems = read_program(program)
+    except Exception:
+        return None
+    if errors_only(problems):
+        return None
+    repeat_at = next(
+        (index for index, step in enumerate(animation.steps) if type(step) is RepeatStep),
+        None,
+    )
+    if repeat_at is not None and animation.steps[repeat_at].count is None:
+        return None  # an unbounded repeat: it never stops on its own
+    if repeat_at is None:
+        # A single static paint is not a cue -- it IS the resting state, and
+        # nothing has to put anything back after it.
+        painted = [step for step in animation.steps if step_duration_ms(step)]
+        if len(painted) < 2:
+            return None
+        total = sum(step_duration_ms(step) for step in animation.steps)
+    else:
+        loop = loop_duration_ms(animation) or 0
+        tail = sum(step_duration_ms(step) for step in animation.steps[repeat_at + 1 :])
+        total = loop * int(animation.steps[repeat_at].count) + tail
+    return int(total) if total else None
+
+
+def delivered_brightness(program: str) -> float:
+    """What a WRITTEN program actually drives the device at, 0.0-1.0.
+
+    Reads the ``brightness N`` the firmware will obey (the last one wins) out
+    of the exact bytes on the device, so ``lights.surfaces.*.brightness``
+    reports the hardware rather than the policy that aimed at it. No line at
+    all means the firmware's own default, full scale.
+    """
+    value = 255
+    for match in _BRIGHTNESS_RE.finditer(program or ""):
+        value = max(0, min(255, int(match.group(1))))
+    return value / 255.0
+
+
+def scale_nominal_brightness(code: int, fraction: float) -> int:
+    """A nominal brightness scaled by ``fraction`` of LIGHT, still nominal.
+
+    ``linked_dot_scale`` and every other "this surface runs at a fraction of
+    that one" ratio belongs here. Multiplying the CODE looks like the same
+    thing and is not: the write boundary decodes the result through sRGB, so
+    a 0.3 code multiply arrived at the hardware as 0.067 of the light. This
+    scales the light and re-encodes, so the single decode at the write
+    boundary lands on exactly the fraction that was asked for.
+    """
+    code = normalize_brightness(code)
+    fraction = max(0.0, min(1.0, float(fraction)))
+    if code <= 0 or fraction <= 0.0:
+        return 0
+    if fraction >= 1.0:
+        return code
+    light = srgb_to_linear(code / 255.0) * fraction
+    return normalize_brightness(round(255.0 * linear_to_srgb(light)))
+
+
+def brightness_light_fraction(code: int) -> float:
+    """What ``brightness N`` actually delivers, 0.0-1.0 of full drive.
+
+    ``lights.surfaces.*.brightness`` reports this rather than the policy's own
+    percentage: the app was showing 51% beside a device being driven at 23%.
+    """
+    return brightness_drive_code(code) / 255.0
 
 
 def _strip_drive_float(code: int, gain: float) -> float:
@@ -299,7 +446,7 @@ def apply_strip_transfer_to_program(
         lambda match: apply_strip_transfer_to_hex(match.group(0), gains), program
     )
     return _BRIGHTNESS_RE.sub(
-        lambda match: f"brightness {strip_drive_code(int(match.group(1)))}", program
+        lambda match: f"brightness {brightness_drive_code(int(match.group(1)))}", program
     )
 
 
@@ -1118,6 +1265,7 @@ class AgentLedController:
         self.last_brightness: int | None = None
         self.last_channel_gains: tuple[float, float, float] | None = None
         self.last_program: str | None = None
+        self.last_nominal_program: str | None = None
         self.last_program_identity: object | None = None
         self.last_error: str | None = None
         self.last_target: Path | None = None
@@ -1131,6 +1279,7 @@ class AgentLedController:
         self.last_brightness = None
         self.last_channel_gains = None
         self.last_program = None
+        self.last_nominal_program = None
         self.last_program_identity = None
         self.last_error = None
         self.last_target = None
@@ -1280,6 +1429,7 @@ class AgentLedController:
         # written -- a gain change alone (with statuses/colors unchanged)
         # still produces a different string here and correctly triggers a
         # rewrite, with no separate "did gains change" tracking needed.
+        nominal = program
         program = self._for_strip(program)
         # Dedupe on the INPUTS, never the rendered text. Relay bakes a
         # wall-clock phase into the program, so a text compare differs on
@@ -1301,6 +1451,7 @@ class AgentLedController:
             state,
             program,
             dedupe_token=("snapshot", identity) if identity is not None else None,
+            nominal=nominal,
         )
 
     def sync_projection(
@@ -1326,6 +1477,7 @@ class AgentLedController:
             relay_elapsed_seconds=relay_elapsed_seconds,
             include_attention_arrival=arrival_fresh,
         )
+        nominal = program
         program = self._for_strip(program)
         identity = self._phase_free_identity(
             lambda phase: program_for_projection(
@@ -1342,6 +1494,7 @@ class AgentLedController:
             state,
             program,
             dedupe_token=("projection", identity) if identity is not None else None,
+            nominal=nominal,
         )
 
     def sync_program(
@@ -1354,11 +1507,13 @@ class AgentLedController:
         """Writes a pre-rendered program through the same gain/dedup/retry
         path sync_snapshot uses -- for displays that aren't derived from
         agent statuses at all (e.g. the low-battery reminder)."""
+        nominal = program
         program = self._for_strip(program)
         return self._write_deduped_program(
             state,
             program,
             dedupe_token=dedupe_token,
+            nominal=nominal,
         )
 
     UPTIME_CHECK_SECONDS = 60.0
@@ -1418,8 +1573,10 @@ class AgentLedController:
         program: str,
         *,
         dedupe_token: object | None = None,
+        nominal: str | None = None,
     ) -> LedStatusWrite:
         now = time.monotonic()
+        nominal = program if nominal is None else nominal
         identity = (
             ("token", dedupe_token)
             if dedupe_token is not None
@@ -1484,7 +1641,14 @@ class AgentLedController:
 
         self.last_state = state
         self.last_program = program
+        self.last_nominal_program = nominal
         self.last_program_identity = identity
         self.last_error = None
         self.last_target = written_target
-        return LedStatusWrite(state=state, target=written_target, program=program, changed=True)
+        return LedStatusWrite(
+            state=state,
+            target=written_target,
+            program=program,
+            changed=True,
+            nominal_program=nominal,
+        )

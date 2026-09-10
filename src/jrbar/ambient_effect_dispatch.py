@@ -804,17 +804,31 @@ def _dot_candidates(
     cadence = plan.primary.cadence
     animated = plan.primary.mode is DotLedMode.PULSE and cadence is not None
     if animated and cadence is not None:
-        initial = f"0:{primary_color} 1:{secondary_color} {cadence.on_ms}ms none"
-        lines = [initial, f"0:{_BLACK} {cadence.off_ms}ms none"]
+        # BOTH LEDs on EVERY line. LED 2 is a steady marker, and the
+        # firmware's "unmentioned LEDs hold" rule made it tempting to paint
+        # it once on line one. That is how the live Dot ended up holding a
+        # green from a finished cue indefinitely (2026-09-10): the phrase is
+        # a bounded `repeat N`, so when it ends, whatever the last line left
+        # lit stays lit, and a line that never mentions LED 2 leaves it
+        # showing whatever the PREVIOUS program put there. Repainting the
+        # marker every line costs a few bytes and makes the program a
+        # complete statement of the surface at every instant.
+        def _phrase_line(primary: str, duration_ms: int) -> str:
+            return f"0:{primary} 1:{secondary_color} {duration_ms}ms none"
+
+        lines = [
+            _phrase_line(primary_color, cadence.on_ms),
+            _phrase_line(_BLACK, cadence.off_ms),
+        ]
         for _index in range(1, cadence.pulses):
             lines.extend(
                 (
-                    f"0:{primary_color} {cadence.on_ms}ms none",
-                    f"0:{_BLACK} {cadence.off_ms}ms none",
+                    _phrase_line(primary_color, cadence.on_ms),
+                    _phrase_line(_BLACK, cadence.off_ms),
                 )
             )
         if cadence.rest_ms:
-            lines.append(f"0:{_BLACK} {cadence.rest_ms}ms none")
+            lines.append(_phrase_line(_BLACK, cadence.rest_ms))
         repeats = max(1, min(8, MAX_AMBIENT_OUTPUT_DURATION_MS // cadence.phrase_duration_ms))
         lines.append(f"repeat {repeats}")
         program = "\n".join(lines)

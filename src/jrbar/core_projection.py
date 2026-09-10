@@ -206,6 +206,11 @@ class SurfaceFacts:
     #: own display.
     role: str | None = None
     why_detail: dict[str, Any] | None = None
+    #: What the brightness policy ASKED for, when that differs from what the
+    #: device is actually driven at. ``brightness`` is the hardware's own
+    #: number -- the one the owner is looking at. Last in the field order on
+    #: purpose: every existing positional caller keeps its meaning.
+    brightness_policy: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1030,7 +1035,18 @@ def build_lights_document(
         document["auto_dim"] = dict(auto_dim)
     for name, facts in surfaces.items():
         entry: dict[str, Any] = {"program": facts.program}
-        for key in ("led_count", "anchor", "motion", "static_fallback", "brightness", "why", "override", "role", "why_detail"):
+        for key in (
+            "led_count",
+            "anchor",
+            "motion",
+            "static_fallback",
+            "brightness",
+            "brightness_policy",
+            "why",
+            "override",
+            "role",
+            "why_detail",
+        ):
             value = getattr(facts, key)
             if value is not None:
                 entry[key] = value

@@ -284,6 +284,13 @@ end) and with every refresh.
   connected the Screen Bar carries the strip's anchor, because the strip
   loops from its write and never re-anchors on a Screen Bar re-sync
   (`core_runtime.screen_bar_anchor`).
+- `brightness` is what the DEVICE is driven at: the `brightness N` in the
+  bytes on the device, over 255. `brightness_policy`, present only when it
+  differs, is the percentage the brightness policy asked for. The two are
+  not the same number and never were -- the firmware scales drive bytes, so
+  a perceptual 51% is 23% of full drive -- and reporting the policy figure
+  as if it were the hardware's is how "the Dot says 100% and looks dead"
+  went unexplained (2026-09-10).
 - `motion` is `static`, `finite` or `continuous`; `static_fallback` is the
   reduced-motion program.
 - `why` is a stable enum the app maps to words and colours
@@ -639,9 +646,17 @@ Dot now carries a **role** — `dot_role` in the settings document, and
 
 | `role` | what the Dot plays |
 | --- | --- |
-| `extend` (default) | The strip's own program, phase-locked, **rendered for two LEDs**. The strip's eight indices are downsampled into two bands (0–3 and 4–7), each band showing its brightest lit colour, so a chase still sweeps and a solid colour stays solid. |
+| `extend` (default) | The strip's own program, phase-locked, **rendered for two LEDs**. The strip's eight indices are downsampled into two bands (0–3 and 4–7), each band showing its brightest lit colour, so a chase still sweeps and a solid colour stays solid. Every line the conversion emits addresses **both** LEDs (or paints the whole strip), and the conversion is a pure function of the strip's program: an LED painted once and then left unmentioned holds that colour until something writes again, which on 2026-09-10 was a green from a finished program sitting on the Dot indefinitely. |
 | `asks` | A designated attention beacon: dark while everything is fine, lit only when a session needs the person. A glance at the Dot alone answers "do they need me?". |
 | `status` | The Dot renders its own two-LED semantic display (`dot_binary_heartbeat` through the ambient dispatch), exactly as an unlinked Dot always has. `role` is then absent from the frame: nothing is driving the Dot but the Dot. |
+
+`extend` also carries the strip's brightness, once. The strip's own
+`brightness` line caps the Dot, `linked_dot_scale` (default 0.3) then takes
+a fraction of the **light** that means, and the write boundary does the one
+sRGB decode. Scaling the code instead and letting the boundary decode the
+result is the same arithmetic in the wrong domain: 0.3 arrived at the
+hardware as 6.7% of the strip's light. `asks` is not scaled at all -- a
+beacon dimmed to a third is a beacon nobody notices.
 
 `role` appears on the `dot` surface only, and only while a role is
 actually driving it (never on a `preview`). It is `jrbar.dot_role`'s

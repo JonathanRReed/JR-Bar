@@ -1539,12 +1539,17 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
+            # device_id -> monotonic time a bounded cue stops moving. A cue
+            # that ends holds whatever its last line painted until something
+            # writes again; these deadlines are what puts the live status
+            # program back (coreHousekeepingTick_).
+            self._core_finite_cue_end: dict[str, float] = {}
             # Usage window samples behind ``usage.providers[].forecast``.
             self._core_usage_samples = UsageSampleBuffer.load(default_state_dir() / SAMPLES_FILE_NAME)
             # The Creator Micro 2 deck.
             self._core_deck_last_input: tuple[int, str, float] | None = None
             self._core_deck_receipt: dict[str, Any] | None = None
-            self._core_deck_last_output_reason: str | None = None
+            self._core_deck_last_output_reason: tuple[str, str] | None = None
             self._core_deck_inspection: tuple[float, Any] | None = None
             self._core_deck_keymap_generation = 0
             self._core_deck_setup_done = threading.Event()
@@ -1692,11 +1697,36 @@ def build_headless_controller_class() -> type:
             expired = [name for name, preview in self._core_previews.items() if preview.until_monotonic <= now]
             for name in expired:
                 self._core_previews.pop(name, None)
+            if self._core_repaint_finished_cues(now):
+                expired.append("finite-cue")
             if expired:
                 self.refresh_(None)
                 self._core_publish_lights()
             if now - self._core_deck_probe_at >= DECK_PROBE_SECONDS:
                 self._core_deck_probe_now()
+
+        def _core_repaint_finished_cues(self, now: float) -> bool:
+            """True when a bounded cue just ended and the device needs the
+            live status program back.
+
+            The write path dedupes on what it last wrote, so a device that
+            has finished a cue and is sitting on its last frame looks
+            up-to-date to the deduper -- the identity has to be cleared or the
+            refresh below writes nothing at all.
+            """
+            done = [
+                device_id
+                for device_id, deadline in self._core_finite_cue_end.items()
+                if deadline <= now
+            ]
+            for device_id in done:
+                self._core_finite_cue_end.pop(device_id, None)
+                controller = self.agent_led_controllers_by_device.get(device_id)
+                if controller is None:
+                    continue
+                controller.last_program_identity = None
+                controller.last_attempt_monotonic = 0.0
+            return bool(done)
 
         @objc.IBAction
         def corePublishState_(self, _payload):
@@ -1839,7 +1869,24 @@ def build_headless_controller_class() -> type:
                     if anchor is not None:
                         self._core_hardware_anchor[request.device.device_id] = anchor
                 if request is not None and write is not None and write.error is None:
-                    from ._led_status_legacy import led_count_for_target
+                    from ._led_status_legacy import (
+                        finite_cue_duration_ms,
+                        led_count_for_target,
+                    )
+
+                    if write.changed and write.program:
+                        # A bounded cue on EITHER device: note when it stops.
+                        # The Pro was found dark after a `repeat 8` completion
+                        # flourish, and the Dot holding one lit LED after the
+                        # same cue, because nothing re-armed the live program
+                        # (2026-09-10).
+                        span = finite_cue_duration_ms(write.program)
+                        if span:
+                            self._core_finite_cue_end[request.device.device_id] = (
+                                time.monotonic() + span / 1000.0
+                            )
+                        else:
+                            self._core_finite_cue_end.pop(request.device.device_id, None)
 
                     if led_count_for_target(request.device.target) != 2 and write.program:
                         # The strip's latest program is what a linked Dot
@@ -1847,7 +1894,17 @@ def build_headless_controller_class() -> type:
                         # Its LED COUNT rides along: a program means nothing
                         # without the device it was rendered for, and the Dot
                         # has to narrow it before it can play it.
-                        self._core_linked_pro_program = (write.program, write.state)
+                        #
+                        # NOMINAL, not the written bytes. The written program
+                        # has already been through the strip transfer, and
+                        # handing that to the Dot's own controller transfers
+                        # it a SECOND time: #D187F5 arrived as #3103FF and
+                        # `brightness 131` arrived as `brightness 1`, which
+                        # is a Dot the owner reads as broken (2026-09-10).
+                        self._core_linked_pro_program = (
+                            write.nominal_program or write.program,
+                            write.state,
+                        )
                         self._core_linked_pro_leds = led_count_for_target(request.device.target)
             except Exception:
                 pass
@@ -1896,20 +1953,25 @@ def build_headless_controller_class() -> type:
             ``controller`` is optional because the ``lights`` frame wants the
             role and the ``why`` without wanting a brightness line.
             """
-            from ._led_status_legacy import normalize_brightness
-            from .dot_role import plan_dot_surface
+            from ._led_status_legacy import (
+                normalize_brightness,
+                scale_nominal_brightness,
+            )
+            from .dot_role import DotRole, normalize_dot_role, plan_dot_surface
 
             if not bool(getattr(self.settings, "devices_linked", True)):
                 return None
+            role = normalize_dot_role(getattr(self.settings, "dot_role", None))
             strip = getattr(self, "_core_linked_pro_program", None)
             body = program if program is not None else (strip[0] if strip else None)
             brightness = None
             if controller is not None:
-                scale = float(getattr(self.settings, "linked_dot_scale", 0.3))
                 device = normalize_brightness(getattr(controller, "brightness", 255))
                 # The strip's own brightness line still caps the Dot: the
                 # linked scale is a ratio between two devices, not a licence
-                # to outshine.
+                # to outshine. ``body`` is NOMINAL here, so this reads a
+                # nominal brightness -- reading the written bytes made the cap
+                # an already-decoded drive code and dimmed the Dot twice.
                 existing = min(
                     (
                         int(parts[1])
@@ -1918,7 +1980,19 @@ def build_headless_controller_class() -> type:
                     ),
                     default=255,
                 )
-                brightness = round(min(existing, device) * scale)
+                brightness = min(existing, device)
+                if role == DotRole.EXTEND.value:
+                    # Exactly one place applies ``linked_dot_scale``, and it
+                    # applies it to LIGHT. A code-domain multiply looks like a
+                    # ratio and is not one: the write boundary then decodes
+                    # the scaled code through sRGB, so 0.3 landed as 6.7% of
+                    # the strip's light instead of 30%. ``asks`` is not a
+                    # continuation of anything and is not scaled at all -- an
+                    # attention beacon dimmed to a third is a beacon nobody
+                    # notices.
+                    brightness = scale_nominal_brightness(
+                        brightness, float(getattr(self.settings, "linked_dot_scale", 0.3))
+                    )
             return plan_dot_surface(
                 role=getattr(self.settings, "dot_role", None),
                 semantic=getattr(getattr(self, "_current_resolved_glance", None), "semantic", None),
@@ -2041,7 +2115,12 @@ def build_headless_controller_class() -> type:
             but 0 or 1 arrived at the Dot as two black LEDs.
             """
             write = getattr(pro_result, "write", None)
-            program = getattr(write, "program", None)
+            # The NOMINAL program, never the written bytes: the Dot's own
+            # controller runs the strip transfer again on whatever it is
+            # handed, so passing already-transferred text decodes the colours
+            # and the brightness twice (2026-09-10: `brightness 131` reached
+            # the hardware as `brightness 1`).
+            program = getattr(write, "nominal_program", "") or getattr(write, "program", None)
             if not program or getattr(write, "error", None) is not None:
                 return self._sync_hardware_device(dot_request)
             controller = self.agent_controller_for_device(dot_request.device)
@@ -2125,17 +2204,27 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"core: deck frame not published: {exc.__class__.__name__}")
             self._core_publish_state()
 
-        def _core_deck_note_receipt(self, code: str, message: str) -> None:
+        def _core_deck_note_receipt(self, code: str, message: str, detail: str = "") -> None:
+            """The receipt the app shows. ``detail`` is the device's or the
+            OS's own words: the sentence says what to do, the detail says
+            what actually happened, which is all a first-contact failure on
+            real hardware leaves behind."""
             self._core_deck_receipt = {"code": code, "message": message, "at": time.time()}
-            self._core_publish_event("deck_receipt", label=core_deck.DECK_NAME, code=code, message=message)
+            if detail:
+                self._core_deck_receipt["detail"] = detail[:256]
+            self._core_publish_event(
+                "deck_receipt", label=core_deck.DECK_NAME, code=code, message=message,
+                **({"detail": detail[:256]} if detail else {}),
+            )
 
         def applyCreatorMicroOutputReceipt_(self, receipt) -> None:
             self._creator_micro_output_receipt = receipt
             reason = str(getattr(receipt, "reason", "") or "")
-            if reason and reason != self._core_deck_last_output_reason:
-                self._core_deck_last_output_reason = reason
-                legacy.log_status_bar(f"deck: {reason}")
-                self._core_deck_note_receipt(reason, core_deck.receipt_message(reason, source="output"))
+            detail = str(getattr(receipt, "detail", "") or "")
+            if reason and (reason, detail) != self._core_deck_last_output_reason:
+                self._core_deck_last_output_reason = (reason, detail)
+                legacy.log_status_bar(f"deck: {reason}" + (f" ({detail})" if detail else ""))
+                self._core_deck_note_receipt(reason, core_deck.receipt_message(reason, source="output"), detail)
             self._core_publish_state()
 
         def applyCreatorMicroSettings_(self, result) -> None:
@@ -2357,7 +2446,11 @@ def build_headless_controller_class() -> type:
             preview = getattr(result, "preview", None)
             if result.code != "inspection_ready" or type(preview) is not SetupPreview:
                 code = result.code if result.code != "inspection_ready" else "setup_failed"
-                raise CommandError(code, core_deck.receipt_message(code))
+                # The setup thread's detail is the only account of a refused
+                # open; without it every hardware failure reads the same.
+                detail = str(getattr(result, "detail", "") or "")
+                message = core_deck.receipt_message(code)
+                raise CommandError(code, f"{message} ({detail[:160]})" if detail else message)
             return preview
 
         def _core_deck_integration(self) -> tuple[bool, str | None]:
@@ -3025,7 +3118,7 @@ def build_headless_controller_class() -> type:
             )
 
         def _core_build_lights(self) -> dict[str, Any]:
-            from ._led_status_legacy import led_count_for_target
+            from ._led_status_legacy import delivered_brightness, led_count_for_target
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)
@@ -3063,7 +3156,13 @@ def build_headless_controller_class() -> type:
                     anchor=anchor,
                     motion=None,
                     static_fallback=None,
-                    brightness=(self._core_brightness_percent(device) or 0) / 100.0,
+                    # What the DEVICE receives, not what the policy asked
+                    # for. The two had drifted by 2.2x on the Dot -- the
+                    # document said 0.51 beside a strip being driven at 0.23
+                    # -- and the surface with the drift is the one the owner
+                    # was told was broken.
+                    brightness=delivered_brightness(program),
+                    brightness_policy=(self._core_brightness_percent(device) or 0) / 100.0,
                     why=surface_why,
                     override=override,
                     why_detail=self._core_why_detail(surface_why, facts, glance),
@@ -3090,6 +3189,7 @@ def build_headless_controller_class() -> type:
                     led_count=dot.led_count,
                     anchor=anchor,
                     brightness=dot.brightness,
+                    brightness_policy=dot.brightness_policy,
                     why=why,
                     override=dot.override,
                     role=dot_plan.role if dot_plan is not None else None,

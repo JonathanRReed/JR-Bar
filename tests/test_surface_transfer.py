@@ -41,6 +41,7 @@ from jrbar.led_status import (
     apply_channel_gain_to_hex,
     apply_strip_transfer_to_hex,
     apply_strip_transfer_to_program,
+    brightness_drive_code,
     linear_to_srgb,
     scale_hex_brightness,
     srgb_to_linear,
@@ -161,12 +162,16 @@ def test_device_brightness_dims_both_surfaces_by_the_same_amount() -> None:
     program = apply_brightness("#00E5FF 1600ms pulse", 128)
     assert "brightness 128" in program
     transferred = apply_strip_transfer_to_program(program)
-    strip_scale = strip_drive_code(128) / 255.0
+    strip_scale = brightness_drive_code(128) / 255.0
 
     # Screen: the engine multiplies the code, then the panel decodes.
     screen_scale = srgb_to_linear(round(255 * (128 / 255.0)) / 255.0)
     assert f"brightness {round(strip_scale * 255)}" in transferred
-    assert strip_scale == pytest.approx(screen_scale, abs=0.01)
+    # The strip's curve is the same sRGB decode lifted off a non-zero floor
+    # (STRIP_MIN_LIT_BRIGHTNESS_DRIVE), so it runs at most 4/255 of full
+    # light hotter than the screen -- deliberately, so the bottom of the
+    # slider is dim rather than black. Everything above that must still match.
+    assert strip_scale == pytest.approx(screen_scale, abs=0.02)
 
 
 def test_screen_core_does_not_apply_semantic_intensity_twice() -> None:
@@ -324,7 +329,9 @@ def test_ambient_visibility_floor_survives_the_strip_transfer() -> None:
     transferred = apply_strip_transfer_to_program(
         f"brightness {planned.brightness}\n#FFFFFF"
     )
-    assert transferred.startswith("brightness 12\n")
+    # Lifted off the brightness floor: 12 before that existed, and the floor
+    # only ever moves this number up.
+    assert transferred.startswith("brightness 16\n")
 
 
 def test_neutral_gains_still_change_the_program_because_the_surface_differs() -> None:
@@ -433,3 +440,91 @@ def test_bright_colors_are_untouched_by_the_floor() -> None:
     from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert max(_codes(apply_strip_transfer_to_hex("#10A37F", _FIDELITY_GAINS))) >= 14
+
+
+# --- the 0-100% slider, end to end -----------------------------------------
+# "if you take it below 90%, it just breaks in terms of brightness -- make
+# sure it works for the full brightness scale" (2026-09-10). Three things had
+# to be true and none of them were.
+
+
+def test_every_percentage_of_the_slider_is_a_distinct_lit_drive() -> None:
+    """The whole range has to be usable, not just the top tenth."""
+    from jrbar.led_status import STRIP_MIN_LIT_BRIGHTNESS_DRIVE, brightness_drive_code
+
+    drives = [brightness_drive_code(round(percent / 100 * 255)) for percent in range(5, 101, 5)]
+    assert drives == sorted(drives)
+    assert len(set(drives)) == len(drives), f"flat spots in the slider: {drives}"
+    assert min(drives) >= STRIP_MIN_LIT_BRIGHTNESS_DRIVE
+    # Before the floor existed: 5% -> 1, 10% -> 3, 20% -> 8 out of 255.
+    assert brightness_drive_code(round(0.05 * 255)) >= STRIP_MIN_LIT_BRIGHTNESS_DRIVE
+
+
+def test_zero_is_still_off_and_full_is_still_full() -> None:
+    from jrbar.led_status import brightness_drive_code
+
+    assert brightness_drive_code(0) == 0
+    assert brightness_drive_code(255) == 255
+    assert brightness_drive_code(-10) == 0
+    assert brightness_drive_code(9999) == 255
+
+
+def test_the_curve_is_perceptual_not_linear() -> None:
+    """A gamma mapping is the point -- the floor lifts it, it does not
+    straighten it. Half the slider is a fifth of the light, as on screen."""
+    from jrbar.led_status import brightness_drive_code
+
+    assert 0.19 < brightness_drive_code(128) / 255.0 < 0.25
+
+
+def test_a_linked_scale_is_a_fraction_of_LIGHT_and_is_applied_once() -> None:
+    """``linked_dot_scale`` 0.3 must mean 30% of the strip's light.
+
+    Multiplying the CODE by 0.3 and letting the write boundary decode the
+    result gave 6.7%, which is what put the Dot at `brightness 1`.
+    """
+    from jrbar.led_status import (
+        apply_strip_transfer_to_program,
+        brightness_drive_code,
+        scale_nominal_brightness,
+    )
+
+    full = brightness_drive_code(255) / 255.0
+    scaled = brightness_drive_code(scale_nominal_brightness(255, 0.3)) / 255.0
+    assert scaled == pytest.approx(0.3 * full, abs=0.02)
+    # And the code-domain multiply everyone reaches for first does not.
+    assert brightness_drive_code(round(255 * 0.3)) / 255.0 < 0.12
+    # Applied twice is a different number, so the test can see a double.
+    twice = scale_nominal_brightness(scale_nominal_brightness(255, 0.3), 0.3)
+    assert twice != scale_nominal_brightness(255, 0.3)
+    # And the transfer itself is idempotent-hostile on purpose: transferring
+    # an already-transferred program is exactly the bug, so it must be visible.
+    once = apply_strip_transfer_to_program("brightness 131\n#D187F5")
+    assert apply_strip_transfer_to_program(once) != once
+
+
+def test_the_document_reports_what_the_device_receives() -> None:
+    from jrbar.led_status import delivered_brightness
+
+    assert delivered_brightness("brightness 58\n#791BFF") == pytest.approx(58 / 255)
+    assert delivered_brightness("#791BFF") == 1.0
+    # Last one wins, exactly as the firmware reads it.
+    assert delivered_brightness("brightness 200\nbrightness 12\n#FFFFFF") == pytest.approx(12 / 255)
+    assert delivered_brightness("") == 1.0
+
+
+def test_a_finite_cue_knows_when_it_stops_and_a_loop_does_not() -> None:
+    """The Pro was left dark because its `repeat 8` completion cue ended and
+    nothing re-armed the live program."""
+    from jrbar.led_status import finite_cue_duration_ms
+
+    live_pro_cue = (
+        "brightness 59\n#791BFF 180ms none\noff 120ms none\n"
+        "#791BFF 180ms none\noff 520ms none\nrepeat 8"
+    )
+    assert finite_cue_duration_ms(live_pro_cue) == 8000
+    assert finite_cue_duration_ms("#00E5FF 600ms pulse\noff 600ms cosine\nrepeat") is None
+    # A single static paint is the resting state, not a cue to recover from.
+    assert finite_cue_duration_ms("#FF0000") is None
+    assert finite_cue_duration_ms("") is None
+    assert finite_cue_duration_ms("not a program at all !!") is None
