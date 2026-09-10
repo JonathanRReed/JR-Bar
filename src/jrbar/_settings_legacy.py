@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from .auto_dim import AutoDimSettings
 from .battery import DEFAULT_POWER_CHANGE_PREVIEW_SECONDS
 from .colors import ColorSettings
 from .dnd_policy import (
@@ -334,6 +335,10 @@ class AgentMonitorSettings:
     # Auto-off remains a separate long-idle choice below.
     sleep_dim_enabled: bool = True
     sleep_dim_fraction: float = DEFAULT_SLEEP_DIM_FRACTION
+    # Auto-dim (replaces night warmth): off, a daily schedule, the display's
+    # own brightness, or the ambient light sensor. Feeds brightness_policy's
+    # night_dim stage; off keeps the factor at 1.0.
+    auto_dim: AutoDimSettings = field(default_factory=AutoDimSettings)
     idle_auto_off_enabled: bool = False
     idle_auto_off_after_minutes: float = DEFAULT_IDLE_AUTO_OFF_AFTER_MINUTES
     # Dims/quiets the LEDs while a macOS Focus (Do Not Disturb, Work,
@@ -856,6 +861,11 @@ class AgentMonitorSettings:
 
     def with_sleep_dim_fraction(self, fraction: float) -> AgentMonitorSettings:
         return replace(self, sleep_dim_fraction=normalize_sleep_dim_fraction(fraction))
+
+    def with_auto_dim(self, auto_dim: AutoDimSettings) -> AgentMonitorSettings:
+        if type(auto_dim) is not AutoDimSettings:
+            raise TypeError("auto_dim must be AutoDimSettings")
+        return replace(self, auto_dim=auto_dim)
 
     def with_idle_auto_off_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, idle_auto_off_enabled=bool(enabled))
@@ -1480,6 +1490,7 @@ class AgentMonitorSettings:
             "idle_dim_fraction": self.idle_dim_fraction,
             "sleep_dim_enabled": self.sleep_dim_enabled,
             "sleep_dim_fraction": self.sleep_dim_fraction,
+            "auto_dim": self.auto_dim.to_dict(),
             "idle_auto_off_enabled": self.idle_auto_off_enabled,
             "idle_auto_off_after_minutes": self.idle_auto_off_after_minutes,
             "focus_sync_enabled": self.focus_sync_enabled,
@@ -1796,6 +1807,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             data.get("idle_dim_fraction"), default=DEFAULT_IDLE_DIM_FRACTION
         ),
         sleep_dim_enabled=_bool_setting(data.get("sleep_dim_enabled"), True),
+        auto_dim=AutoDimSettings.from_dict(data.get("auto_dim")),
         sleep_dim_fraction=normalize_sleep_dim_fraction(
             data.get("sleep_dim_fraction"), default=DEFAULT_SLEEP_DIM_FRACTION
         ),
