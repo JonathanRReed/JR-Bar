@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 
 /// Constants from `screen_bar_design.py`, the reviewed Screen Bar design.
 enum ScreenBarDesign {
@@ -66,17 +67,13 @@ enum ScreenBarGeometry {
     }
 
     /// The panel's frame in screen coordinates (`virtual_window_frame_for_screen`).
-    static func windowFrame(for screen: NSScreen, wrapMenuBar: Bool) -> NSRect {
-        let frame = screen.frame
-        var notchWidth = slotWidth(of: screen)
-        var wing = wrapMenuBar ? wingWidth(of: screen, notchWidth: notchWidth) : 0
-        notchWidth = min(notchWidth, frame.width - 8.0)
-        wing = min(wing, max(0, (frame.width - notchWidth) / 2.0 - 4.0))
-        let width = notchWidth + 2.0 * wing
-        let height = windowHeight(notchDepth: notchDepth(of: screen))
-        var centerX = frame.midX
-        centerX = min(frame.maxX - width / 2.0, max(frame.minX + width / 2.0, centerX))
-        return NSRect(x: centerX - width / 2.0, y: frame.maxY - height, width: width, height: height)
+    /// With a `capsule` the band follows Alcove instead of the notch
+    /// (`AlcoveGeometry.windowFrame`).
+    static func windowFrame(for screen: NSScreen, wrapMenuBar: Bool, capsule: AlcoveCapsule? = nil) -> NSRect {
+        let notchWidth = slotWidth(of: screen)
+        let wing = wrapMenuBar ? wingWidth(of: screen, notchWidth: notchWidth) : 0
+        return AlcoveGeometry.windowFrame(screenFrame: screen.frame, notchWidth: notchWidth, wing: wing,
+                                          notchDepth: notchDepth(of: screen), capsule: capsule, windowHeight: windowHeight(notchDepth:))
     }
 
     /// `screen_bar_design.rounded_band_bounds`: a centered, bounded band that
