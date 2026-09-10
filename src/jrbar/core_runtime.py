@@ -1828,9 +1828,13 @@ def build_headless_controller_class() -> type:
             if snapshot is not None:
                 statuses = [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())]
                 now = time.monotonic()
+                # Live sessions first; a stale row still deserves its registry
+                # cwd and title (one file read: its process is gone, so no ps).
+                ordered = [status.agent_id for status in statuses if not status.stale]
+                ordered += [status.agent_id for status in statuses if status.stale]
                 planned = set(
                     plan_extra_lookups(
-                        [status.agent_id for status in statuses if not status.stale],
+                        ordered,
                         self._core_extras,
                         now=now,
                         ttl=EXTRAS_TTL_SECONDS,
