@@ -1690,8 +1690,49 @@ def build_headless_controller_class() -> type:
                     anchor = mono_to_epoch(getattr(result, "completed_at", None))
                     if anchor is not None:
                         self._core_hardware_anchor[request.device.device_id] = anchor
+                if request is not None and write is not None and write.error is None:
+                    from ._led_status_legacy import led_count_for_target
+
+                    if led_count_for_target(request.device.target) != 2 and write.program:
+                        # The strip's latest program is what a linked Dot
+                        # replays, whichever path asks to write the Dot next.
+                        self._core_linked_pro_program = (write.program, write.state)
             except Exception:
                 pass
+
+        def _core_linked_dot_follows(self, request) -> bool:
+            """True when this request targets the Dot and linked mode says it
+            must replay the strip rather than render its own program."""
+            from ._led_status_legacy import led_count_for_target
+
+            if not bool(getattr(self.settings, "devices_linked", True)):
+                return False
+            if getattr(self, "_core_linked_pro_program", None) is None:
+                return False
+            try:
+                if led_count_for_target(request.device.target) != 2:
+                    return False
+            except Exception:
+                return False
+            identity = str(getattr(request, "coalesce_identity", "") or "")
+            # Previews the operator asked for (calibration, Effect Studio)
+            # still reach the Dot; ambient candidates and ordinary renders
+            # do not: the Dot is the strip's continuation.
+            return identity in ("", "latest") or identity.startswith("ambient-")
+
+        def _sync_hardware_device(self, request):
+            if self._core_linked_dot_follows(request):
+                program, state = self._core_linked_pro_program
+                controller = self.agent_controller_for_device(request.device)
+                write = controller.sync_program(program, state)
+                return legacy.HardwareWriteResult(
+                    request=request,
+                    write=write,
+                    label=f"{request.device.name} linked",
+                    agent_display_rendered=True,
+                    completed_at=self._runtime_worker_monotonic(),
+                )
+            return objc.super(JRCoreHeadlessController, self)._sync_hardware_device(request)
 
         # -- linked Pro + Dot writes -------------------------------------------
 
