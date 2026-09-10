@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 149 tests / 27 suites; the parity test fans out over 29 programs
+swift test                  # 167 tests / 29 suites; the parity and keyframe tests fan out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
