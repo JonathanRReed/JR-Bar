@@ -150,6 +150,31 @@ struct StatusMetersTests {
         #expect(StatusIconSpec(style: .meters, meters: [Self.meter("a", 0.5)]).meterWarning == .none)
     }
 
+    @Test("a window with no reading is marked as unread, not drawn as empty")
+    func unknownWindow() {
+        // `used_pct: null` is the daemon saying "this window exists and
+        // nobody measured it". An empty column would read as a window
+        // barely touched -- the same confident lie a 0 % bar told.
+        let unknown = StatusMeter(id: "codex", name: "Codex", glyph: .symbol("circle"), fraction: nil)
+        #expect(unknown.isUnknown)
+        #expect(unknown.warning == .none, "unread is not a warning, and not a promise either")
+        #expect(unknown.readout == "Codex no reading")
+        #expect(StatusIconRenderer.percentText(unknown) == StatusIconRenderer.unknownPercentText)
+        #expect(StatusIconRenderer.percentText(unknown) != "0")
+
+        let renderer = StatusIconRenderer()
+        let unread = renderer.image(for: StatusIconSpec(style: .meters, meters: [unknown]))
+        let empty = renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("codex", 0)]))
+        let low = renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("codex", 0.04)]))
+        #expect(Self.pixels(unread) != Self.pixels(empty), "no reading must not look like nothing used")
+        #expect(Self.pixels(unread) != Self.pixels(low))
+        #expect(unread.size == empty.size, "the column keeps its place in the strip")
+        // The strip stays a template: an unread window is not a warning.
+        #expect(unread.isTemplate)
+        // And it says so out loud.
+        #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .meters, meters: [unknown])).contains("no reading"))
+    }
+
     @Test("a live state dot colours the strip; a quiet one leaves it a template")
     func stateDot() {
         let renderer = StatusIconRenderer()

@@ -35,4 +35,20 @@ public enum UsageWindowLabel {
             return nil
         }
     }
+
+    /// The two characters every surface uses for a window nobody measured.
+    /// It is not "0", and it is not blank: a blank column reads as calm.
+    public static let unknownPercent = "—"
+
+    /// `42%`, or `—` when the provider stated no number.
+    public static func percent(_ usedPct: Double?) -> String {
+        guard let usedPct else { return unknownPercent }
+        return "\(Int(usedPct.rounded()))%"
+    }
+
+    /// "42 percent used" / "no reading", for VoiceOver and tooltips.
+    public static func spoken(_ usedPct: Double?) -> String {
+        guard let usedPct else { return "no reading" }
+        return "\(Int(usedPct.rounded())) percent used"
+    }
 }

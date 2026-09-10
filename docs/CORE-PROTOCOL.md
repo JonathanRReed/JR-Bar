@@ -829,10 +829,15 @@ Absence is something providers state explicitly, and it must be read as a
 statement rather than as a zero. Codex writes `"secondary": null`; Claude
 writes `"seven_day_opus": null`. Neither is "0 % remaining".
 
-`used_pct: null` must never render as a full bar. A consumer that needs a
-number for layout should treat `null` as "no reading" and draw the window
-and its `resets_at` without a balance — the same thing the capacity plane
-calls `ObservationState.NULL`.
+`used_pct: null` must never render as a full bar — nor as an empty one. A
+consumer that needs a number for layout should treat `null` as "no reading"
+and draw the window and its `resets_at` without a balance — the same thing
+the capacity plane calls `ObservationState.NULL`. The app decodes it as
+`CoreUsageWindow.usedPct == nil` and prints `—` (never `0%`, never blank):
+the panel bar and the Usage Center ring are drawn dashed rather than filled,
+the forecast reads "No reading for the 7d window" instead of promising room,
+the menu-bar meter marks that column with a dash across its track, and no
+sample from an unmeasured window enters any pace.
 
 A percentage key holding a **malformed** value (`NaN`, a bool, a string) is
 dropped rather than read as unknown: it is not the provider saying "no

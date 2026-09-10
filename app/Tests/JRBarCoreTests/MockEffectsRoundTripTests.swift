@@ -90,7 +90,17 @@ struct MockEffectsRoundTripTests {
         let devin = try await Self.fullHistory(model, provider: "devin", range: .month)
         #expect(devin.records == 0)
         #expect(devin.hasNoLocalRecords)
-        #expect(try #require(model.usage.first { $0.id == "devin" }).windows.count == 2)
+        let devinUsage = try #require(model.usage.first { $0.id == "devin" })
+        #expect(devinUsage.windows.count == 2)
+        // The third state end to end: the daemon reports Devin's weekly
+        // window with `used_pct: null`, and it must arrive as unknown, not
+        // as a window at zero with plenty left.
+        let weekly = try #require(devinUsage.windows.first { $0.name == "7d" })
+        #expect(weekly.usedPct == nil)
+        #expect(weekly.isUnknown)
+        #expect(weekly.resetsAt != nil, "unread is not absent: the reset is still known")
+        #expect(weekly.percentText == "—")
+        #expect(try #require(devinUsage.windows.first { $0.name == "5h" }).usedPct == 4.0)
         await #expect(throws: CoreReplyError.self) {
             _ = try await model.usageHistory(provider: "nobody", range: .month)
         }

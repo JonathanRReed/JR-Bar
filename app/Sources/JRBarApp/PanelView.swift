@@ -749,14 +749,16 @@ struct UsageRow: View {
                         Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    Text(primary.map { (usage.isDerived ? "~" : "") + "\(Int($0.usedPct.rounded()))%" } ?? "")
+                    Text(primary.map { (usage.isDerived && !$0.isUnknown ? "~" : "") + $0.percentText } ?? "")
                         .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
                         .lineLimit(1)
-                        .foregroundStyle(barColor(primary?.usedPct ?? 0))
+                        .foregroundStyle(barColor(primary?.usedPct))
                         .contentTransition(.numericText())
                         .frame(width: Self.percentWidth, alignment: .trailing)
-                        .help(usage.isDerived ? "Derived estimate (\(usage.fidelity ?? "derived"))" : "Official figure")
+                        .help(primary?.isUnknown == true
+                              ? "\(style.name) reports this window without a number"
+                              : (usage.isDerived ? "Derived estimate (\(usage.fidelity ?? "derived"))" : "Official figure"))
                 }
                 HStack(spacing: 8) {
                     if let primary { QuotaBar(window: primary, accent: style.accent, reduced: store.reduceMotion, armed: store.animationsArmed) }
@@ -795,7 +797,9 @@ struct UsageRow: View {
         return parts.joined(separator: " · ")
     }
 
-    private func barColor(_ pct: Double) -> Color {
+    /// A window with no reading is grey: not calm, not spent -- unread.
+    private func barColor(_ pct: Double?) -> Color {
+        guard let pct else { return .secondary }
         if pct >= 95 { return .red }
         if pct >= 80 { return .orange }
         return .primary
@@ -870,21 +874,31 @@ struct QuotaBar: View {
             GeometryReader { proxy in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.primary.opacity(0.08))
-                    Capsule()
-                        .fill(fill)
-                        .frame(width: max(3, proxy.size.width * CGFloat(min(100, max(0, window.usedPct)) / 100)))
-                        .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: window.usedPct)
+                    if let used = window.usedPct {
+                        Capsule()
+                            .fill(fill)
+                            .frame(width: max(3, proxy.size.width * CGFloat(min(100, max(0, used)) / 100)))
+                            .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: window.usedPct)
+                    } else {
+                        // No reading: a dashed outline over the whole track.
+                        // An empty bar would read as a window barely used.
+                        Capsule()
+                            .strokeBorder(Color.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                    }
                 }
             }
             .frame(height: 4)
         }
-        .help("\(window.name): \(Int(window.usedPct.rounded()))% used")
-        .accessibilityLabel("\(window.name) \(Int(window.usedPct.rounded())) percent used")
+        .help(window.isUnknown
+              ? "\(window.name): the provider reports this window without a number"
+              : "\(window.name): \(window.spokenPercent)")
+        .accessibilityLabel("\(window.name) \(window.spokenPercent)")
     }
 
     private var fill: Color {
-        if window.usedPct >= 95 { return .red }
-        if window.usedPct >= 80 { return .orange }
+        guard let used = window.usedPct else { return .secondary }
+        if used >= 95 { return .red }
+        if used >= 80 { return .orange }
         return accent
     }
 }

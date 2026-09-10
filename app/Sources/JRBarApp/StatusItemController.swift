@@ -407,7 +407,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     /// A provider's panel style as a menu-bar meter.
-    static func meter(for provider: String, fraction: Double, approximate: Bool) -> StatusMeter {
+    /// `fraction` is nil when the provider reports its primary window
+    /// without a number; the strip marks that column as unread.
+    static func meter(for provider: String, fraction: Double?, approximate: Bool) -> StatusMeter {
         let style = ProviderStyle.style(for: provider)
         let glyph: StatusMeter.Glyph
         switch style.glyph {

@@ -147,9 +147,15 @@ public enum LightExplainer {
             let colour = context.surface?.staticFallback.flatMap(dominantColourName)
             return (colour == nil || colour == "dim" ? "Idle breath" : derived, reason, nil)
         case .capacity:
-            guard let usage = context.state?.usage?.providers.max(by: { ($0.windows.first?.usedPct ?? 0) < ($1.windows.first?.usedPct ?? 0) }),
-                  let window = usage.windows.max(by: { $0.usedPct < $1.usedPct }) else { return ("Amber ember", "A usage window is nearly spent", nil) }
-            return ("Amber ember", "\(SessionLabel.providerName(usage.id)) \(window.shortName) window at \(Int(window.usedPct.rounded()))%", nil)
+            // Only a window with a reading can be named as nearly spent. A
+            // window the provider stated no number for has nothing to put
+            // in the sentence, and must not be read as an empty one.
+            let measured = (context.state?.usage?.providers ?? []).compactMap { provider -> (provider: CoreProviderUsage, window: CoreUsageWindow, pct: Double)? in
+                guard let fullest = provider.windows.compactMap({ window in window.usedPct.map { (window, $0) } }).max(by: { $0.1 < $1.1 }) else { return nil }
+                return (provider, fullest.0, fullest.1)
+            }
+            guard let top = measured.max(by: { $0.pct < $1.pct }) else { return ("Amber ember", "A usage window is nearly spent", nil) }
+            return ("Amber ember", "\(SessionLabel.providerName(top.provider.id)) \(top.window.shortName) window at \(Int(top.pct.rounded()))%", nil)
         case .quiet:
             return ("Dim ember", quietReason(context), nil)
         case .sleepDim:

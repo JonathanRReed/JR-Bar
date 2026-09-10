@@ -198,11 +198,12 @@ struct ProviderUsageCard: View {
             Spacer()
             if let primary {
                 VStack(alignment: .trailing, spacing: 1) {
-                    Text((provider.isDerived ? "~" : "") + "\(Int(primary.usedPct.rounded()))%")
+                    Text((provider.isDerived && !primary.isUnknown ? "~" : "") + primary.percentText)
                         .font(.system(size: 26, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(UsageColors.level(primary.usedPct, accent: style.accent))
                         .contentTransition(.numericText())
+                        .help(primary.isUnknown ? "\(style.name) reports this window without a number" : "")
                     Text("\(primary.name) window · \(PanelStore.countdown(to: primary.resetsAt, now: store.now) ?? "no reset time")")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
@@ -261,7 +262,7 @@ struct ProviderUsageCard: View {
         let window = primary ?? provider.windows[0]
         let forecast = store.forecast(for: provider, window: window)
         return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: forecast.isCritical ? "exclamationmark.triangle.fill" : (forecast.verdict == .unknown ? "questionmark.circle" : "checkmark.circle"))
+            Image(systemName: forecast.isCritical ? "exclamationmark.triangle.fill" : (forecast.verdict == .unknown || forecast.verdict == .unmeasured ? "questionmark.circle" : "checkmark.circle"))
                 .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
@@ -280,6 +281,11 @@ struct ProviderUsageCard: View {
 
     private func forecastSource(_ forecast: UsageForecast) -> String {
         var parts: [String] = []
+        if forecast.verdict == .unmeasured {
+            // Nothing to pace: the window is real and its balance was never
+            // stated, which is a fact about the provider, not a wait.
+            return "\(ProviderStyle.style(for: provider.id).name) reports this window without a number"
+        }
         switch forecast.source {
         case .daemon: parts.append("Core forecast")
         case .local: parts.append("Estimated from the last 45 minutes")
@@ -412,21 +418,30 @@ struct QuotaRing: View {
     let now: Date
     let reduced: Bool
 
-    private var fraction: Double { min(1, max(0, window.usedPct / 100)) }
+    /// Nil when the window has no reading: the ring is drawn as an open
+    /// track with a dashed edge, never as an arc of zero.
+    private var fraction: Double? { window.usedPct.map { min(1, max(0, $0 / 100)) } }
     private var color: Color { UsageColors.level(window.usedPct, accent: accent) }
 
     var body: some View {
         VStack(spacing: 6) {
             ZStack {
                 Circle().stroke(Color.primary.opacity(0.08), lineWidth: 7)
-                Circle()
-                    .trim(from: 0, to: fraction)
-                    .stroke(color, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .animation(reduced ? .easeOut(duration: 0.15) : .spring(response: 0.6, dampingFraction: 0.8), value: fraction)
-                Text("\(Int(window.usedPct.rounded()))%")
+                if let fraction {
+                    Circle()
+                        .trim(from: 0, to: fraction)
+                        .stroke(color, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                        .animation(reduced ? .easeOut(duration: 0.15) : .spring(response: 0.6, dampingFraction: 0.8), value: fraction)
+                } else {
+                    // A dashed ring: unmistakably not an empty one.
+                    Circle()
+                        .stroke(Color.secondary.opacity(0.55), style: StrokeStyle(lineWidth: 7, dash: [3, 5]))
+                }
+                Text(window.percentText)
                     .font(.system(size: 14, weight: .semibold, design: .rounded))
                     .monospacedDigit()
+                    .foregroundStyle(window.isUnknown ? Color.secondary : Color.primary)
                     .contentTransition(.numericText())
             }
             .frame(width: 66, height: 66)
@@ -436,7 +451,9 @@ struct QuotaRing: View {
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .monospacedDigit()
-            if let rate = forecast.rateText {
+            if window.isUnknown {
+                Text("no reading").font(.caption2).foregroundStyle(.secondary)
+            } else if let rate = forecast.rateText {
                 Text(rate)
                     .font(.caption2)
                     .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
@@ -446,13 +463,18 @@ struct QuotaRing: View {
             }
         }
         .frame(width: 96)
+        .help(window.isUnknown ? "\(window.name): the provider reports this window without a number" : "\(window.name): \(window.spokenPercent)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.name) window \(Int(window.usedPct.rounded())) percent used, \(PanelStore.countdown(to: window.resetsAt, now: now) ?? "")")
+        .accessibilityLabel("\(window.name) window \(window.spokenPercent), \(PanelStore.countdown(to: window.resetsAt, now: now) ?? "")")
     }
 }
 
 enum UsageColors {
-    static func level(_ pct: Double, accent: Color) -> Color {
+    /// The level colour, or the secondary ink for a window with no
+    /// reading — an unmeasured window is not a calm one, and painting it
+    /// the accent would say it is fine.
+    static func level(_ pct: Double?, accent: Color) -> Color {
+        guard let pct else { return .secondary }
         if pct >= 95 { return .red }
         if pct >= 80 { return .orange }
         return accent

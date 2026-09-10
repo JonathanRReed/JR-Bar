@@ -18,7 +18,7 @@
             {"id":"sidepulse:dot:7F02","kind":"dot","leds":2,"connected":true},
             {"id":"screen-bar","kind":"screen_bar","leds":8,"enabled":true}],
  "usage":{"refreshed_at":1788982850.0,"providers":[{"id":"claude","windows":[{"name":"5h","used_pct":42.0,"resets_at":1788990000.0},{"name":"7d","used_pct":61.0,"resets_at":1789300000.0}],"fidelity":"official","state":"ok","forecast":{"exhausts_at":1788999000.0,"pace":"ahead"}},
-                                                   {"id":"codex","windows":[{"name":"5h","used_pct":12.5}],"fidelity":"derived","state":"ok"}]},
+                                                   {"id":"codex","windows":[{"name":"5h","used_pct":12.5},{"name":"7d","used_pct":null,"resets_at":1789300000.0}],"fidelity":"derived","state":"ok"}]},
  "power":{"keep_awake":true,"closed_lid":{"policy":"agents","holding":false,"helper_installed":true}},
  "focus":{"mode":"dim","source":"schedule","until":1788990000.0},
  "escalation":{"stage":"none","since":null},

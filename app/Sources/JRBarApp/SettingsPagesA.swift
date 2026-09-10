@@ -78,7 +78,7 @@ struct MenuBarStylePicker: View {
         guard !shown.isEmpty else { return StatusItemController.sampleMeters }
         return shown.prefix(StatusIconRenderer.maxMeters).map { provider in
             StatusItemController.meter(for: provider.id,
-                                       fraction: (UsageCenterStore.primaryWindow(of: provider)?.usedPct ?? 0) / 100,
+                                       fraction: UsageCenterStore.primaryWindow(of: provider).flatMap { $0.usedPct }.map { $0 / 100 },
                                        approximate: provider.isDerived)
         }
     }

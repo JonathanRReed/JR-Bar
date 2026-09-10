@@ -249,11 +249,21 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// One usage window of one provider.
+///
+/// A window the account does not have is **absent** — no entry at all. A
+/// window that exists but whose provider stated no number is **unknown**:
+/// it arrives with `used_pct: null`, and `usedPct` is nil. Reading that as
+/// zero drew a full green bar and said "plenty left" about a window nobody
+/// had measured, which is a confident lie; every consumer has to render it
+/// as unknown (CORE-PROTOCOL, "Three states, never two").
 public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// The daemon's window key (`five-hour`, `weekly`, `daily`, `credits`, …) when it sends one.
     public var key: String?
     public var name: String
-    public var usedPct: Double
+    /// How much of the window is spent, 0…100 — nil when the provider
+    /// stated no number. Never substitute a number for nil.
+    public var usedPct: Double?
     public var resetsAt: Double?
 
     public var id: String { key ?? name }
@@ -261,7 +271,18 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// The panel's short label for the window: `5h`, `7d`, `Daily`, `Monthly`, `Credits`.
     public var shortName: String { UsageWindowLabel.short(id: key, name: name) }
 
-    public init(key: String? = nil, name: String, usedPct: Double, resetsAt: Double? = nil) {
+    /// The window exists and nobody said how full it is.
+    public var isUnknown: Bool { usedPct == nil }
+
+    /// The percent column: `42%`, or an em dash when there is no reading.
+    /// Every surface uses the same two characters for "unknown".
+    public var percentText: String { UsageWindowLabel.percent(usedPct) }
+
+    /// What VoiceOver and the tooltips say: "42 percent used", or
+    /// "no reading" — never "0 percent used".
+    public var spokenPercent: String { UsageWindowLabel.spoken(usedPct) }
+
+    public init(key: String? = nil, name: String, usedPct: Double?, resetsAt: Double? = nil) {
         self.key = key
         self.name = name
         self.usedPct = usedPct
@@ -279,7 +300,11 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         key = try c.decodeIfPresent(String.self, forKey: .key)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? key ?? "?"
-        usedPct = try c.decodeIfPresent(Double.self, forKey: .usedPct) ?? 0
+        // `null` is the daemon saying "the window exists, nobody measured
+        // it". A malformed value is no better a reading than a missing one,
+        // and neither may become a number.
+        let raw = (try? c.decodeIfPresent(Double.self, forKey: .usedPct)) ?? nil
+        usedPct = raw.flatMap { $0.isFinite ? $0 : nil }
         resetsAt = try c.decodeIfPresent(Double.self, forKey: .resetsAt)
     }
 }

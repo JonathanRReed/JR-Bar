@@ -29,7 +29,10 @@ public struct UsageSampleLog: Hashable, Sendable {
         guard let usage else { return }
         for provider in usage.providers {
             for window in provider.windows {
-                record(provider: provider.id, window: window.name, usedPct: window.usedPct, at: now)
+                // A window with no reading is not a window at zero: a
+                // sample of 0 would drag every pace this log computes.
+                guard let usedPct = window.usedPct else { continue }
+                record(provider: provider.id, window: window.name, usedPct: usedPct, at: now)
             }
         }
     }
@@ -64,6 +67,10 @@ public struct UsageForecast: Hashable, Sendable {
         case comfortable
         /// Too little information for a pace.
         case unknown
+        /// The window exists and the provider stated no number at all, so
+        /// there is nothing to have a pace about. Distinct from `unknown`,
+        /// which is a known percentage with too few samples.
+        case unmeasured
     }
 
     public enum Source: String, Hashable, Sendable {
@@ -71,7 +78,8 @@ public struct UsageForecast: Hashable, Sendable {
     }
 
     public var window: String
-    public var usedPct: Double
+    /// Nil when the provider stated no number for this window.
+    public var usedPct: Double?
     public var resetsAt: Double?
     public var verdict: Verdict
     /// Percent of the window burned per hour, when known.
@@ -80,7 +88,7 @@ public struct UsageForecast: Hashable, Sendable {
     /// The daemon's own word (`ahead`, `on`, `under`, `exhausted`), passed through.
     public var pace: String?
 
-    public init(window: String, usedPct: Double, resetsAt: Double?, verdict: Verdict, ratePctPerHour: Double?, source: Source, pace: String? = nil) {
+    public init(window: String, usedPct: Double?, resetsAt: Double?, verdict: Verdict, ratePctPerHour: Double?, source: Source, pace: String? = nil) {
         self.window = window
         self.usedPct = usedPct
         self.resetsAt = resetsAt
@@ -90,7 +98,9 @@ public struct UsageForecast: Hashable, Sendable {
         self.pace = pace
     }
 
-    public var remainingPct: Double { max(0, min(100, 100 - usedPct)) }
+    /// How much of the window is left — nil when nobody measured it. A
+    /// window with no reading has no "left", and 100 would be a promise.
+    public var remainingPct: Double? { usedPct.map { max(0, min(100, 100 - $0)) } }
 
     public var isCritical: Bool {
         switch verdict {
@@ -103,6 +113,14 @@ public struct UsageForecast: Hashable, Sendable {
     /// 16:42 (in 1h 12m)" or "Comfortable: 61 % left, resets before you'd
     /// hit it".
     public func headline(now: Date, timeZone: TimeZone = .current) -> String {
+        guard let remainingPct else {
+            // Nothing was measured: say so, and say the one thing that IS
+            // known -- when the window turns over.
+            if let resetsAt {
+                return "No reading for the \(window) window · resets \(Self.relative(to: resetsAt, now: now))"
+            }
+            return "No reading for the \(window) window"
+        }
         let left = Int(remainingPct.rounded())
         switch verdict {
         case .exhausted:
@@ -122,6 +140,9 @@ public struct UsageForecast: Hashable, Sendable {
             return "Comfortable: \(left) % left at this pace"
         case .unknown:
             return "\(left) % left · no pace yet"
+        case .unmeasured:
+            // Unreachable: a window with no reading has no `remainingPct`.
+            return "No reading for the \(window) window"
         }
     }
 
@@ -183,8 +204,14 @@ public enum UsageForecaster {
     }
 
     public static func forecast(window: CoreUsageWindow, daemon: CoreUsageForecast?, samples: [UsageSample], now: Double) -> UsageForecast {
-        let used = window.usedPct
         let resetsAt = window.resetsAt
+        // The window exists and nobody said how full it is. There is no
+        // pace to compute and no comfort to promise: reading nil as 0 is
+        // what made an unmeasured window say "plenty left".
+        guard let used = window.usedPct else {
+            return UsageForecast(window: window.name, usedPct: nil, resetsAt: resetsAt, verdict: .unmeasured,
+                                 ratePctPerHour: nil, source: .none, pace: daemon?.pace)
+        }
         if used >= 99.95 {
             return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: .exhausted, ratePctPerHour: nil, source: daemon != nil ? .daemon : .local, pace: daemon?.pace)
         }
