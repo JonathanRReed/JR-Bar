@@ -446,9 +446,12 @@ def test_a_retryable_connect_failure_keeps_its_reason_instead_of_a_bare_reconnec
     class Adapter:
         conflict = SimpleNamespace(active=False)
 
+        attempts = 0
+
         def connect(self):
+            Adapter.attempts += 1
             return SimpleNamespace(
-                code="transport_unavailable",
+                code="input_monitoring_denied",
                 detail="macOS Input Monitoring is denied for this process",
             )
 
@@ -464,10 +467,14 @@ def test_a_retryable_connect_failure_keeps_its_reason_instead_of_a_bare_reconnec
     service = CreatorMicroOutputService(adapter_factory=Adapter, callback=record)
     service.start()
     assert published.wait(5), "the worker published nothing about a device it cannot open"
-    service.close()
-    assert receipts[0].reason == "transport_unavailable"
+    assert receipts[0].reason == "input_monitoring_denied"
     assert "Input Monitoring" in receipts[0].detail
     assert receipts[0].available is False
+    # The owner can lift this one while the daemon runs, so the worker must
+    # still be trying rather than having given up on the pad.
+    assert Adapter.attempts >= 1
+    assert service._thread is not None and service._thread.is_alive()
+    service.close()
 
 
 def test_a_missing_pad_still_reads_as_reconnecting_with_the_reason_kept():

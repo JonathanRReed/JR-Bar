@@ -171,7 +171,13 @@ class CreatorMicroOutputService:
                         connected = candidate.connect()
                         if connected.code != "connected":
                             candidate.close()
-                            if connected.code not in {"no_device", "transport_unavailable", "backoff"}:
+                            # input_monitoring_denied retries with the rest:
+                            # it is the one refusal the owner can lift while
+                            # the daemon is running, and the receipt goes on
+                            # naming the setting until he does.
+                            if connected.code not in {
+                                "no_device", "transport_unavailable", "backoff", "input_monitoring_denied",
+                            }:
                                 self._publish(False, connected.code, connected.detail)
                                 return
                             transient = (connected.code, connected.detail)
