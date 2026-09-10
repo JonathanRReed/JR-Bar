@@ -89,10 +89,15 @@ def _load_focus_status_center(
             bridge = objc
         else:
             bridge = objc_loader()
+        # scan_classes=False is load-bearing: the default scan wraps every
+        # Objective-C class in the process (thousands once AppKit and
+        # Intents are in) in Python proxies that are never released,
+        # ~166 MB in the daemon. lookUpClass finds the one class we use.
         bridge.loadBundle(
             "Intents",
             {},
             bundle_path=_INTENTS_FRAMEWORK,
+            scan_classes=False,
         )
         bridge.registerMetaDataForSelector(
             b"INFocusStatusCenter",

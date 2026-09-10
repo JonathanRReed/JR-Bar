@@ -117,10 +117,13 @@ def _load_user_notifications_bridge() -> _NotificationBridge | None:
     try:
         import objc
 
+        # scan_classes=False: do not wrap every Objective-C class in the
+        # process in Python proxies (tens of MB retained for one center).
         objc.loadBundle(
             "UserNotifications",
             {},
             bundle_path=_USER_NOTIFICATIONS_FRAMEWORK,
+            scan_classes=False,
         )
         objc.registerMetaDataForSelector(
             b"UNUserNotificationCenter",
