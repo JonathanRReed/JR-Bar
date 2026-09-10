@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from jrbar import usage_stats
@@ -483,4 +484,57 @@ def test_old_codex_semantics_cache_forces_a_cold_rebuild(tmp_path: Path) -> None
 
     assert rebuilt.codex_tokens == 10
     assert rebuilt.source_coverage["codex"].files_read == 1
-    assert json.loads(provider_cache.read_text())["codex_semantics_version"] == 4
+    assert json.loads(provider_cache.read_text())["codex_semantics_version"] == usage_stats.CODEX_CACHE_SEMANTICS_VERSION
+
+
+def _turn_context(model: str, timestamp: str = "2026-08-13T10:00:31Z") -> dict:
+    return {"type": "turn_context", "timestamp": timestamp, "payload": {"model": model}}
+
+
+def test_records_carry_the_turn_context_model(tmp_path: Path) -> None:
+    """Token rows never name a model; the preceding turn_context does."""
+    root = tmp_path / "codex"
+    _write(
+        root / "rollout.jsonl",
+        [
+            _meta("session"),
+            _tokens(10, 10, "2026-08-13T10:00:00Z"),
+            _turn_context("gpt-5.6-sol"),
+            _tokens(25, 15, "2026-08-13T10:01:00Z"),
+            _turn_context("gpt-6-astra", "2026-08-13T10:01:30Z"),
+            _tokens(30, 5, "2026-08-13T10:02:00Z"),
+        ],
+    )
+
+    totals = _scan(tmp_path, root)
+
+    assert [(record[2], record[4]) for record in sorted(totals.records, key=lambda r: r[3])] == [
+        ("codex", 10),
+        ("gpt-5.6-sol", 15),
+        ("gpt-6-astra", 5),
+    ]
+
+
+def test_inventory_overflow_keeps_the_newest_rollouts(tmp_path: Path) -> None:
+    """A date-partitioned tree walked in path order must not drop today."""
+    root = tmp_path / "codex"
+    stamps = {
+        "2025/12/01/rollout.jsonl": ("2025-12-01T10:00:00Z", 1),
+        "2026/08/12/rollout.jsonl": ("2026-08-12T10:00:00Z", 2),
+        "2026/09/09/rollout.jsonl": ("2026-09-09T10:00:00Z", 4),
+        "2026/09/10/rollout.jsonl": ("2026-09-10T10:00:00Z", 8),
+    }
+    for relative, (stamp, tokens) in stamps.items():
+        path = root / relative
+        _write(path, [_meta(relative), _tokens(tokens, tokens, stamp)])
+        epoch = int(stamp[:4]) * 10_000_000 + int(stamp[5:7]) * 100_000 + int(stamp[8:10]) * 1000
+        os.utime(path, (epoch, epoch))
+
+    inventory = usage_stats.build_usage_inventory(
+        tmp_path / "claude", codex_root=root, max_files_per_source=2
+    )
+    (tmp_path / "claude").mkdir(exist_ok=True)
+    totals = usage_stats.scan_usage(tmp_path / "claude", codex_root=root, inventory=inventory)
+
+    assert totals.codex_tokens == 12
+    assert totals.source_coverage["codex"].truncated_files == 2
