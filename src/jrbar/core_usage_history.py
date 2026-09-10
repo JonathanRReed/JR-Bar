@@ -307,6 +307,10 @@ class UsageHistoryService:
         self._scan_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._entries: dict[tuple[str, int], _Entry] = {}
+        #: Set when the daemon is going down: no new scan starts, and the
+        #: warm-up's wait ends at once instead of holding a thread through
+        #: interpreter shutdown.
+        self.stopping = threading.Event()
 
     # -- public ---------------------------------------------------------------
     def document(
@@ -362,10 +366,17 @@ class UsageHistoryService:
             return any(entry.inflight is not None for entry in self._entries.values())
 
     # -- internals -------------------------------------------------------------
+    def close(self) -> None:
+        """Start nothing further; a scan already running finishes on its own."""
+        self.stopping.set()
+
     def _start_locked(self, key: tuple[str, int], entry: _Entry, _now: float) -> threading.Event:
         if entry.inflight is not None:
             return entry.inflight
         event = threading.Event()
+        if self.stopping.is_set():
+            event.set()
+            return event
         entry.inflight = event
         entry.owed = False
         # Resolved here, not captured as a default at import time: which
