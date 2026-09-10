@@ -1,63 +1,22 @@
 #!/bin/sh
+# JR-Bar component postinstall. The package owns its payload and nothing
+# else: no LaunchAgents, no /usr/local links, no hooks, no receipts. The app
+# registers itself as a login item and installs provider hooks on its first
+# launch of a new version; a home-directory install ($2 under ~/Applications)
+# is the same payload for one user.
 set -eu
 
-APP_BINARY="/Applications/JR-Bar.app/Contents/MacOS/JR-Bar"
-CLI_DIR="/usr/local/bin"
-CLI_LINK="$CLI_DIR/jrbar"
-RECEIPT_DIR="/var/db/jrbar"
-PENDING_RECEIPT="$RECEIPT_DIR/setup-pending"
-COMPLETE_RECEIPT="$RECEIPT_DIR/setup-complete"
-LAUNCH_AGENT_NAME="com.jonathanreed.jrbar.app.plist"
-# Pre-rename LaunchAgent: its presence also means an explicit setup exists,
-# and the app replaces it with the current one on first launch.
-LEGACY_LAUNCH_AGENT_NAME="io.sidepulse.agentstatus.plist"
+INSTALL_LOCATION="${2:-/Applications}"
+APP_BINARY="$INSTALL_LOCATION/JR-Bar.app/Contents/MacOS/JR-Bar"
+CORE_BINARY="$INSTALL_LOCATION/JR-Bar.app/Contents/Helpers/jrbar-core/jrbar-core"
+HOOK_SHIM="$INSTALL_LOCATION/JR-Bar.app/Contents/Helpers/jrbar-hook"
 
-log() {
-    /bin/echo "JR-Bar postinstall: $*"
-}
+for required in "$APP_BINARY" "$CORE_BINARY" "$HOOK_SHIM"; do
+    if [ ! -x "$required" ]; then
+        /bin/echo "JR-Bar postinstall: missing or not executable: $required" >&2
+        exit 1
+    fi
+done
 
-fail() {
-    /bin/echo "JR-Bar postinstall: $*" >&2
-    exit 1
-}
-
-if [ ! -x "$APP_BINARY" ]; then
-    fail "installed application executable is missing or not executable"
-fi
-
-/bin/mkdir -p "$CLI_DIR" "$RECEIPT_DIR"
-/bin/chmod 755 "$CLI_DIR" "$RECEIPT_DIR"
-
-# Never replace an unrelated user-managed command. We own the link only when
-# it is absent or already points at the packaged JR-Bar executable.
-if [ ! -e "$CLI_LINK" ] && [ ! -L "$CLI_LINK" ]; then
-    /bin/ln -s "$APP_BINARY" "$CLI_LINK"
-elif [ -L "$CLI_LINK" ] && [ "$(/usr/bin/readlink "$CLI_LINK")" = "$APP_BINARY" ]; then
-    /bin/ln -sfn "$APP_BINARY" "$CLI_LINK"
-else
-    log "left existing $CLI_LINK unchanged because JR-Bar does not own it"
-fi
-
-# A package install owns only package payload. Provider hooks, LaunchAgents,
-# the sleep helper, and the eject guard are external mutable state and require
-# an explicit user action. Running those changes from postinstall made a later
-# failure impossible to roll back safely without removing pre-existing setup.
-CONSOLE_USER="$(/usr/bin/stat -f '%Su' /dev/console)"
-CONSOLE_HOME=""
-if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ] && [ "$CONSOLE_USER" != "loginwindow" ]; then
-    CONSOLE_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | /usr/bin/awk '{print $2}')"
-fi
-
-if [ -n "$CONSOLE_HOME" ] && { [ -f "$CONSOLE_HOME/Library/LaunchAgents/$LAUNCH_AGENT_NAME" ] || [ -f "$CONSOLE_HOME/Library/LaunchAgents/$LEGACY_LAUNCH_AGENT_NAME" ]; }; then
-    /bin/date -u '+%Y-%m-%dT%H:%M:%SZ' > "$COMPLETE_RECEIPT"
-    /bin/chmod 644 "$COMPLETE_RECEIPT"
-    /bin/rm -f "$PENDING_RECEIPT"
-    log "application upgraded; existing explicit JR-Bar setup remains in place"
-else
-    /bin/date -u '+%Y-%m-%dT%H:%M:%SZ' > "$PENDING_RECEIPT"
-    /bin/chmod 644 "$PENDING_RECEIPT"
-    /bin/rm -f "$COMPLETE_RECEIPT"
-    log "application installed; open JR-Bar and complete the reviewed first-run setup"
-fi
-
+/bin/echo "JR-Bar postinstall: installed $INSTALL_LOCATION/JR-Bar.app; open it to finish (login item, provider hooks)"
 exit 0

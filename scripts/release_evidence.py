@@ -343,7 +343,7 @@ def create_candidate(
         raise EvidenceError("candidate PKG must be a regular .pkg file")
     if app_record["kind"] != "tree" or not str(app_record["path"]).endswith(".app"):
         raise EvidenceError("candidate app must be an .app tree")
-    expected_archive_name = f"JR-Bar-{version}-{architecture}.zip"
+    expected_archive_name = f"JR-Bar-{version}.zip"
     if (
         update_archive_record["kind"] != "file"
         or Path(str(update_archive_record["path"])).name != expected_archive_name

@@ -21,7 +21,7 @@ OBSERVED_AT = "2026-08-29T12:00:00Z"
 
 
 def _fixture(tmp_path: Path) -> dict[str, object]:
-    pkg = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.pkg"
+    pkg = tmp_path / "dist" / "JR-Bar-0.5.0.pkg"
     pkg.parent.mkdir(parents=True)
     pkg.write_bytes(b"signed-and-stapled-pkg")
     app = tmp_path / "build" / "JR-Bar.app"
@@ -33,7 +33,7 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
     sbom.write_text('{"bomFormat":"CycloneDX"}\n', encoding="utf-8")
     performance = tmp_path / "dist" / "performance.json"
     performance.write_text('{"warm_launch_ms":450}\n', encoding="utf-8")
-    update_archive = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.zip"
+    update_archive = tmp_path / "dist" / "JR-Bar-0.5.0.zip"
     update_archive.write_bytes(b"signed-notarized-update-archive")
     candidate = release_evidence.create_candidate(
         root=tmp_path,
@@ -60,11 +60,11 @@ def _fixture(tmp_path: Path) -> dict[str, object]:
                 "build": "5",
                 "architecture": "arm64",
                 "feed_url": "https://github.com/JonathanRReed/JR-Bar/releases/download/updates/appcast.xml",
-                "download_url": "https://github.com/JonathanRReed/JR-Bar/releases/download/v0.5.0/JR-Bar-0.5.0-arm64.zip",
+                "download_url": "https://github.com/JonathanRReed/JR-Bar/releases/download/v0.5.0/JR-Bar-0.5.0.zip",
                 "phased_rollout_interval_seconds": 86400,
                 "public_key_fingerprint_sha256": "7" * 64,
                 "archive": {
-                    "name": "JR-Bar-0.5.0-arm64.zip",
+                    "name": "JR-Bar-0.5.0.zip",
                     "bytes": update_archive.stat().st_size,
                     "sha256": release_evidence.sha256_file(update_archive),
                     "ed_signature": "signed-archive",
@@ -254,8 +254,8 @@ def test_manifest_contains_candidate_bound_receipts_without_asserted_booleans(
 
     assert document["document"] == "jr-bar-release-evidence"
     assert document["schema_version"] == release_evidence.SCHEMA_VERSION
-    assert document["candidate"]["pkg"]["path"] == ("dist/JR-Bar-0.5.0-arm64.pkg")
-    assert document["candidate"]["update_archive"]["path"] == ("dist/JR-Bar-0.5.0-arm64.zip")
+    assert document["candidate"]["pkg"]["path"] == ("dist/JR-Bar-0.5.0.pkg")
+    assert document["candidate"]["update_archive"]["path"] == ("dist/JR-Bar-0.5.0.zip")
     assert {item["kind"] for item in document["receipts"]} == release_evidence.SOFTWARE_RECEIPT_KINDS
     assert "true" not in json.dumps(document).casefold()
 
@@ -730,7 +730,7 @@ def test_notarization_details_bind_submission_log_and_submitted_pkg() -> None:
         "status": "Accepted",
         "statusSummary": "Ready for distribution",
         "statusCode": 0,
-        "archiveFilename": "JR-Bar-0.5.0-arm64.pkg",
+        "archiveFilename": "JR-Bar-0.5.0.pkg",
         "sha256": submitted_sha,
         "issues": [],
     }
@@ -739,7 +739,7 @@ def test_notarization_details_bind_submission_log_and_submitted_pkg() -> None:
         response=response,
         log=log,
         submitted_sha256=submitted_sha,
-        pkg_name="JR-Bar-0.5.0-arm64.pkg",
+        pkg_name="JR-Bar-0.5.0.pkg",
         log_sha256="c" * 64,
     )
 
@@ -767,7 +767,7 @@ def test_notarization_details_reject_cross_candidate_log_fields(
     log = {
         "jobId": submission_id,
         "status": "Accepted",
-        "archiveFilename": "JR-Bar-0.5.0-arm64.pkg",
+        "archiveFilename": "JR-Bar-0.5.0.pkg",
         "sha256": submitted_sha,
         "issues": [],
     }
@@ -778,7 +778,7 @@ def test_notarization_details_reject_cross_candidate_log_fields(
             response={"id": submission_id, "status": "Accepted"},
             log=log,
             submitted_sha256=submitted_sha,
-            pkg_name="JR-Bar-0.5.0-arm64.pkg",
+            pkg_name="JR-Bar-0.5.0.pkg",
             log_sha256="c" * 64,
         )
 

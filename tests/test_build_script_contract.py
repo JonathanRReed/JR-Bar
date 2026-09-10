@@ -56,10 +56,53 @@ def test_package_builder_sets_display_name_without_changing_bundle_identity() ->
     assert 'PRODUCT_DISPLAY_NAME="JR-Bar"' in text
     assert ":CFBundleDisplayName string $PRODUCT_DISPLAY_NAME" in text
     assert ":CFBundleName string $PRODUCT_DISPLAY_NAME" in text
-    assert 'MINIMUM_SUPPORTED_MACOS="11.0"' in text
+    assert 'MINIMUM_SUPPORTED_MACOS="26.0"' in text
     assert ":LSMinimumSystemVersion string $MINIMUM_SUPPORTED_MACOS" in text
-    assert "--name JR-Bar" in text
+    assert "--name jrbar-core" in text
     assert 'APP_ID="com.jonathanreed.jrbar"' in text
+    assert 'CORE_ID="com.jonathanreed.jrbar.core"' in text
+
+
+def test_package_builder_assembles_the_swift_app_daemon_and_shim() -> None:
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    # The Swift app is the bundle; the frozen daemon and the shim ride under Helpers.
+    assert 'APP_BUILD_SCRIPT="${APP_BUILD_SCRIPT:-$ROOT_DIR/app/scripts/build-app.sh}"' in text
+    assert 'HOOK_BUILD_SCRIPT="${HOOK_BUILD_SCRIPT:-$ROOT_DIR/hook/build.sh}"' in text
+    assert 'JRBAR_BUNDLE="$SWIFT_APP" JRBAR_VERSION="$VERSION" JRBAR_SKIP_SIGN=1 "$APP_BUILD_SCRIPT"' in text
+    assert 'JRBAR_HOOK_BUILD_DIR="$HOOK_DIR" "$HOOK_BUILD_SCRIPT"' in text
+    assert "--onedir --windowed" in text
+    assert '--osx-bundle-identifier "$CORE_ID"' in text
+    assert "--collect-submodules jrbar" in text
+    assert '/usr/bin/ditto "$CORE_APP" "$HELPERS/jrbar-core.app"' in text
+    assert '/usr/bin/install -m 755 "$HOOK_DIR/jrbar-hook" "$HELPERS/jrbar-hook"' in text
+    assert "packaging/jrbar_entry.py" in text
+    # The daemon bundle is headless and the app hands the daemon its commit.
+    assert 'Add :LSUIElement bool true" "$CORE_PLIST"' in text
+    assert ":JRBarCommit string $COMMIT" in text
+    # Everything the old PyInstaller UI bundle needed is gone.
+    assert "--collect-submodules Cocoa" in text
+    assert "status-bar" not in text
+
+
+def test_package_builder_picks_the_best_keychain_identity_and_notarizes_when_it_can() -> None:
+    text = BUILD_SCRIPT.read_text(encoding="utf-8")
+
+    selector = text[text.index("select_app_identity() {"):text.index("select_installer_identity() {")]
+    developer = selector.index('"Developer ID Application: ')
+    local = selector.index('"Nautilus Local Dev"')
+    adhoc = selector.index("printf -- '-\\n'", local)
+    assert developer < local < adhoc
+    assert 'NOTARY_PROFILE="${NOTARY_PROFILE:-jrbar-notary}"' in text
+    assert 'notarytool history --keychain-profile "$NOTARY_PROFILE"' in text
+    assert "not notarized" in text
+    assert 'Developer ID Installer: ' in text
+    # A local identity has no Team ID: it cannot pass library validation, so
+    # the hardened runtime and the timestamp are Developer ID only.
+    assert "sign_args+=(--no-runtime)" in text
+    assert "sign_args+=(--no-timestamp)" in text
+    # The keychain is never consulted in the local-only mode the tests run.
+    assert 'if [ "$ALLOW_UNSIGNED" = "1" ]; then' in text
 
 
 def test_package_builder_verifies_delivered_signature_identity() -> None:
@@ -134,7 +177,7 @@ def test_production_builder_notarizes_app_before_final_zip_and_pkg() -> None:
     assert "app-notary-submission.json" in text
     assert "app-notary-log.json" in text
     assert "app-notary-submitted-zip.sha256" in text
-    assert "--format updater-path" in text
+    assert 'OUTPUT_ZIP="$(contract updater-path)"' in text
     assert text.index(app_submit) < text.index(app_staple) < text.index(app_validate)
     assert text.index(app_validate) < text.index(updater_zip) < text.index(package)
     assert text.index(package) < text.index(pkg_submit)
@@ -144,7 +187,13 @@ def test_unsigned_builder_explicitly_refuses_updater_evidence_claims() -> None:
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "ALLOW_UNSIGNED is local-only" in text
-    assert "No updater archive or updater evidence was produced" in text
+    assert "This package is not a production update candidate" in text
+    # The appcast is signed only with the committed key's private half in
+    # the keychain; every other outcome says so instead of shipping a feed.
+    assert "appcast not signed" in text
+    assert 'generate_keys" --account "$account" -p' in text
+    assert "generate_sparkle_channel.py" in text
+    assert "SPARKLE_PRIVATE_KEY" not in text
 
 
 def test_clean_install_verifies_t3_integration_artifacts_and_commands() -> None:

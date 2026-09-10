@@ -12,6 +12,8 @@ from pathlib import Path
 PRODUCT_DISPLAY_NAME = "JR-Bar"
 COMPATIBILITY_APP_BUNDLE = "JR-Bar.app"
 AUTHORITATIVE_ARTIFACT_KIND = "pkg"
+# Optional overrides for packaging/build_macos_pkg.sh; the builder finds the
+# Developer ID identities, the notary profile and the Sparkle key itself.
 REQUIRED_SIGNING_INPUTS = (
     "APP_SIGN_IDENTITY",
     "INSTALLER_SIGN_IDENTITY",
@@ -31,6 +33,7 @@ SPARKLE_FEED_URL = (
     "https://github.com/JonathanRReed/JR-Bar/"
     "releases/download/updates/appcast.xml"
 )
+MINIMUM_SUPPORTED_MACOS = "26.0"
 STABLE_CHANNEL = "stable"
 BETA_CHANNEL = "beta"
 STABLE_PHASED_ROLLOUT_INTERVAL = 86400
@@ -48,17 +51,19 @@ def _safe_component(value: str, *, label: str, pattern: re.Pattern[str]) -> str:
 
 
 def artifact_name(*, version: str, architecture: str) -> str:
+    """``JR-Bar-<version>.pkg``. The build is arm64-only; the architecture
+    is validated and recorded in the contract document, not in the name."""
     safe_version = _safe_component(
         version,
         label="version",
         pattern=_VERSION_PATTERN,
     )
-    safe_architecture = _safe_component(
+    _safe_component(
         architecture,
         label="architecture",
         pattern=_ARCHITECTURE_PATTERN,
     )
-    return f"JR-Bar-{safe_version}-{safe_architecture}.pkg"
+    return f"JR-Bar-{safe_version}.pkg"
 
 
 def artifact_path(
@@ -74,17 +79,18 @@ def artifact_path(
 
 
 def updater_archive_name(*, version: str, architecture: str) -> str:
+    """``JR-Bar-<version>.zip``, the Sparkle archive of the same app."""
     safe_version = _safe_component(
         version,
         label="version",
         pattern=_VERSION_PATTERN,
     )
-    safe_architecture = _safe_component(
+    _safe_component(
         architecture,
         label="architecture",
         pattern=_ARCHITECTURE_PATTERN,
     )
-    return f"JR-Bar-{safe_version}-{safe_architecture}.zip"
+    return f"JR-Bar-{safe_version}.zip"
 
 
 def updater_archive_path(
@@ -137,9 +143,12 @@ def developer_artifact_paths(
 
 
 def contract_document(*, version: str, architecture: str) -> dict[str, object]:
+    _safe_component(architecture, label="architecture", pattern=_ARCHITECTURE_PATTERN)
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "product_display_name": PRODUCT_DISPLAY_NAME,
+        "architecture": architecture,
+        "minimum_macos": MINIMUM_SUPPORTED_MACOS,
         "compatibility_app_bundle": COMPATIBILITY_APP_BUNDLE,
         "authoritative_macos_artifact": {
             "kind": AUTHORITATIVE_ARTIFACT_KIND,

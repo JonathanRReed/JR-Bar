@@ -43,7 +43,7 @@ def test_package_archive_contains_only_sidepulse_app_and_preserves_bundle_tree(
 ) -> None:
     package_sparkle_archive = _module()
     app = _app_bundle(tmp_path)
-    output = tmp_path / "dist" / "JR-Bar-0.5.0-arm64.zip"
+    output = tmp_path / "dist" / "JR-Bar-0.5.0.zip"
     output.parent.mkdir(parents=True)
 
     result = package_sparkle_archive.package_archive(app=app, output=output)
@@ -73,8 +73,8 @@ def test_package_archive_contains_only_sidepulse_app_and_preserves_bundle_tree(
 @pytest.mark.parametrize(
     ("app_name", "output_name", "message"),
     (
-        ("Other.app", "JR-Bar-0.5.0-arm64.zip", "JR-Bar.app"),
-        ("JR-Bar.app", "JR-Bar-9.9.9-arm64.zip", "bundle version"),
+        ("Other.app", "JR-Bar-0.5.0.zip", "JR-Bar.app"),
+        ("JR-Bar.app", "JR-Bar-9.9.9.zip", "bundle version"),
         ("JR-Bar.app", "JR-Bar-0.5.0-../escape.zip", "archive name"),
         ("JR-Bar.app", "latest.zip", "archive name"),
     ),
@@ -106,7 +106,7 @@ def test_package_archive_rejects_symlinked_inputs_outputs_and_output_inside_bund
     app = _app_bundle(tmp_path)
     linked_app = tmp_path / "JR-Bar.app"
     linked_app.symlink_to(app, target_is_directory=True)
-    output = tmp_path / "JR-Bar-0.5.0-arm64.zip"
+    output = tmp_path / "JR-Bar-0.5.0.zip"
 
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match="symlink"):
         package_sparkle_archive.package_archive(app=linked_app, output=output)
@@ -115,7 +115,7 @@ def test_package_archive_rejects_symlinked_inputs_outputs_and_output_inside_bund
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match=r"output.*symlink"):
         package_sparkle_archive.package_archive(app=app, output=output)
 
-    nested_output = app / "JR-Bar-0.5.0-arm64.zip"
+    nested_output = app / "JR-Bar-0.5.0.zip"
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match="inside"):
         package_sparkle_archive.package_archive(app=app, output=nested_output)
 
@@ -125,7 +125,7 @@ def test_package_archive_surfaces_missing_tool_failure_and_missing_output(
 ) -> None:
     package_sparkle_archive = _module()
     app = _app_bundle(tmp_path)
-    output = tmp_path / "JR-Bar-0.5.0-arm64.zip"
+    output = tmp_path / "JR-Bar-0.5.0.zip"
 
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match=r"ditto.*missing"):
         package_sparkle_archive.package_archive(
@@ -151,7 +151,7 @@ def test_package_archive_surfaces_missing_tool_failure_and_missing_output(
 
 def test_package_archive_cli_accepts_exact_builder_contract(tmp_path: Path) -> None:
     app = _app_bundle(tmp_path)
-    output = tmp_path / "dist" / "JR-Bar-0.5.0-x86_64.zip"
+    output = tmp_path / "dist" / "JR-Bar-0.5.0.zip"
     output.parent.mkdir()
 
     result = subprocess.run(
@@ -175,7 +175,7 @@ def test_package_archive_cli_accepts_exact_builder_contract(tmp_path: Path) -> N
 
 def test_validate_archive_rejects_an_escaping_symlink_target(tmp_path: Path) -> None:
     package_sparkle_archive = _module()
-    archive = tmp_path / "JR-Bar-0.5.0-arm64.zip"
+    archive = tmp_path / "JR-Bar-0.5.0.zip"
     with zipfile.ZipFile(archive, mode="w") as bundle_zip:
         root = zipfile.ZipInfo("JR-Bar.app/")
         root.create_system = 3

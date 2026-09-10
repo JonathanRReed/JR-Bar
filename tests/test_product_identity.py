@@ -39,7 +39,7 @@ def test_macos_package_uses_jr_bar_bundle_identity() -> None:
     assert ":CFBundleDisplayName string $PRODUCT_DISPLAY_NAME" in script
     assert ":CFBundleName string $PRODUCT_DISPLAY_NAME" in script
     assert "PRODUCT_DISPLAY_NAME=\"JR-Bar\"" in script
-    assert "--name JR-Bar" in script
+    assert "--name jrbar-core" in script
     assert 'APP_ID="com.jonathanreed.jrbar"' in script
     assert "io.sidepulse" not in script
 

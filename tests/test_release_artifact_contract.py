@@ -19,12 +19,14 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
     )
 
     assert document == {
-        "schema_version": 3,
+        "schema_version": 4,
+        "architecture": "arm64",
+        "minimum_macos": "26.0",
         "product_display_name": "JR-Bar",
         "compatibility_app_bundle": "JR-Bar.app",
         "authoritative_macos_artifact": {
             "kind": "pkg",
-            "name": "JR-Bar-0.5.0-arm64.pkg",
+            "name": "JR-Bar-0.5.0.pkg",
             "primary": True,
             "required": True,
         },
@@ -51,7 +53,7 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
         "supplemental_macos_artifacts": [
             {
                 "kind": "sparkle_update_archive",
-                "name": "JR-Bar-0.5.0-arm64.zip",
+                "name": "JR-Bar-0.5.0.zip",
                 "authoritative_macos_product": False,
                 "primary": False,
                 "required_for_github_release": True,
@@ -126,7 +128,7 @@ def test_authoritative_artifact_path_is_exact_and_not_a_glob(tmp_path: Path) -> 
             version="0.5.0",
             architecture="x86_64",
         )
-        == tmp_path / "JR-Bar-0.5.0-x86_64.pkg"
+        == tmp_path / "JR-Bar-0.5.0.pkg"
     )
 
     assert release_artifact_contract.developer_artifact_paths(
@@ -139,12 +141,12 @@ def test_authoritative_artifact_path_is_exact_and_not_a_glob(tmp_path: Path) -> 
     assert release_artifact_contract.updater_archive_name(
         version="0.5.0",
         architecture="x86_64",
-    ) == "JR-Bar-0.5.0-x86_64.zip"
+    ) == "JR-Bar-0.5.0.zip"
     assert release_artifact_contract.updater_archive_path(
         tmp_path,
         version="0.5.0",
         architecture="x86_64",
-    ) == (tmp_path / "JR-Bar-0.5.0-x86_64.zip")
+    ) == (tmp_path / "JR-Bar-0.5.0.zip")
     assert release_artifact_contract.appcast_name() == "appcast.xml"
     assert release_artifact_contract.appcast_path(tmp_path) == tmp_path / "appcast.xml"
     assert release_artifact_contract.channel_metadata_name() == "jr-bar-update-channel.json"
@@ -237,7 +239,7 @@ def test_contract_cli_outputs_the_exact_path_and_machine_readable_policy(
         timeout=30,
     )
 
-    assert path_result.stdout.strip() == str(tmp_path / "JR-Bar-0.5.0-arm64.pkg")
+    assert path_result.stdout.strip() == str(tmp_path / "JR-Bar-0.5.0.pkg")
     assert json.loads(json_result.stdout) == release_artifact_contract.contract_document(
         version="0.5.0",
         architecture="arm64",
@@ -246,7 +248,7 @@ def test_contract_cli_outputs_the_exact_path_and_machine_readable_policy(
         str(tmp_path / "jrbar-0.5.0-py3-none-any.whl"),
         str(tmp_path / "jrbar-0.5.0.tar.gz"),
     ]
-    assert updater_result.stdout.strip() == str(tmp_path / "JR-Bar-0.5.0-arm64.zip")
+    assert updater_result.stdout.strip() == str(tmp_path / "JR-Bar-0.5.0.zip")
     assert appcast_result.stdout.strip() == str(tmp_path / "appcast.xml")
     assert channel_metadata_result.stdout.strip() == str(
         tmp_path / "jr-bar-update-channel.json"
