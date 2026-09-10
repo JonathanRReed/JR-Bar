@@ -57,13 +57,25 @@ ANSWER_REFUSAL_CODES: Final = (
 
 #: Where the owner turns Accessibility on. Quoted verbatim in the refusal so
 #: the message is actionable without a second lookup.
+ACCESSIBILITY_SETTINGS_PANE: Final = "System Settings > Privacy & Security > Accessibility"
+#: The row to turn on when the running process cannot name itself.
+DEFAULT_ACCESSIBILITY_APP_NAME: Final = "JR-Bar"
 ACCESSIBILITY_SETTINGS_PATH: Final = (
-    "System Settings > Privacy & Security > Accessibility > JR-Bar"
+    f"{ACCESSIBILITY_SETTINGS_PANE} > {DEFAULT_ACCESSIBILITY_APP_NAME}"
 )
-ACCESSIBILITY_REFUSAL_MESSAGE: Final = (
-    "JR-Bar cannot answer this ask until macOS lets it send the keystroke. "
-    f"Turn on {ACCESSIBILITY_SETTINGS_PATH}."
-)
+
+
+def accessibility_refusal_message(app_name: str | None = None) -> str:
+    """The refusal, naming the exact row the owner has to switch on."""
+    name = app_name if type(app_name) is str and app_name.strip() else None
+    row = (name or DEFAULT_ACCESSIBILITY_APP_NAME).strip()
+    return (
+        "JR-Bar cannot answer this ask until macOS lets it send the keystroke. "
+        f"Turn on {ACCESSIBILITY_SETTINGS_PANE} > {row}."
+    )
+
+
+ACCESSIBILITY_REFUSAL_MESSAGE: Final = accessibility_refusal_message()
 
 #: How long a delivery may take from preflight to posted key. A keystroke that
 #: has waited longer than this is stale by definition: the prompt it was aimed
@@ -206,6 +218,12 @@ class AnswerHostFacts:
     frontmost_ancestor_of_session: bool | None
     focused_tab_tty: str | None
     accessibility_trusted: bool
+    #: What System Settings will call the process that must be trusted. The
+    #: keystroke is posted by the daemon, which on an installed deployment is
+    #: the ``jrbar-core`` helper inside JR-Bar.app and NOT JR-Bar itself, so
+    #: naming the wrong row would send the owner to a switch that changes
+    #: nothing.
+    accessibility_app_name: str | None = None
 
     def __post_init__(self) -> None:
         if not (
@@ -224,6 +242,10 @@ class AnswerHostFacts:
             )
             and (self.focused_tab_tty is None or type(self.focused_tab_tty) is str)
             and type(self.accessibility_trusted) is bool
+            and (
+                self.accessibility_app_name is None
+                or type(self.accessibility_app_name) is str
+            )
         ):
             raise ValueError("invalid answer host facts")
 
@@ -364,7 +386,7 @@ def plan_local_answer(
     if not facts.accessibility_trusted:
         raise AnswerRefusal(
             "accessibility_required",
-            ACCESSIBILITY_REFUSAL_MESSAGE,
+            accessibility_refusal_message(facts.accessibility_app_name),
             "ax_not_trusted",
         )
 
@@ -400,6 +422,30 @@ def accessibility_trusted() -> bool:
         return bool(trust_check())
     except Exception:
         return False
+
+
+def running_app_name() -> str | None:
+    """What System Settings calls THIS process, for the Accessibility row.
+
+    On an installed deployment the daemon is the ``jrbar-core`` helper app
+    inside JR-Bar.app, so its own bundle name is the row to turn on.
+    """
+    try:
+        from Foundation import NSBundle
+
+        bundle = NSBundle.mainBundle()
+        if bundle is None:
+            return None
+        for key in ("CFBundleDisplayName", "CFBundleName"):
+            value = bundle.objectForInfoDictionaryKey_(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        path = bundle.bundlePath()
+        if isinstance(path, str) and path.endswith(".app"):
+            return os.path.basename(path)[: -len(".app")] or None
+    except Exception:
+        return None
+    return None
 
 
 def frontmost_application() -> tuple[str | None, int | None]:
@@ -620,6 +666,7 @@ def observe_host_facts(
         frontmost_ancestor_of_session=ancestry_verdict,
         focused_tab_tty=focused_tty,
         accessibility_trusted=accessibility_trusted(),
+        accessibility_app_name=running_app_name(),
     )
 
 
@@ -666,7 +713,12 @@ def session_host(
             table = list_processes()
         except Exception:
             table = {}
-        current: int | None = pid
+        # Start at the PARENT, never at the session process itself. The CLI's
+        # own executable is named after its provider ("claude", "codex"), which
+        # ``terminal_from_command`` reads as that provider's DESKTOP app -- so a
+        # walk that starts at the session would decide every Claude Code
+        # session is hosted by Claude.app and refuse the real terminal.
+        current: int | None = getattr(table.get(pid), "ppid", None)
         for _ in range(MAX_ANCESTRY_DEPTH):
             entry = table.get(current) if current else None
             if entry is None or current is None or current <= 1:
@@ -935,10 +987,12 @@ def _decision_for(answer_kind: object) -> str | None:
 
 __all__ = [
     "ACCESSIBILITY_REFUSAL_MESSAGE",
+    "ACCESSIBILITY_SETTINGS_PANE",
     "ACCESSIBILITY_SETTINGS_PATH",
     "ANSWERABLE_PROVIDERS",
     "ANSWER_KEYS",
     "ANSWER_REFUSAL_CODES",
+    "DEFAULT_ACCESSIBILITY_APP_NAME",
     "DELIVERY_BUDGET_SECONDS",
     "AnswerDeliveryOutcome",
     "AnswerHostFacts",
@@ -950,6 +1004,7 @@ __all__ = [
     "LocalAnswerTarget",
     "ProviderAnswerKeys",
     "SessionHost",
+    "accessibility_refusal_message",
     "accessibility_trusted",
     "answer_keys_for_provider",
     "focused_tab_tty",
@@ -960,6 +1015,7 @@ __all__ = [
     "process_alive",
     "process_ancestry",
     "raise_application",
+    "running_app_name",
     "session_host",
     "tty_for_pid",
 ]

@@ -411,3 +411,58 @@ def test_an_unknown_refusal_code_is_not_expressible():
         AnswerDeliveryOutcome(delivered=False, code="stale_ask", message="x", plan=None),
         AnswerDeliveryOutcome,
     )
+
+
+# --- resolving the host -------------------------------------------------------
+
+
+class _Entry:
+    def __init__(self, ppid: int, command: str) -> None:
+        self.ppid = ppid
+        self.command = command
+
+
+def test_the_host_walk_starts_at_the_parent_not_the_cli_itself(monkeypatch):
+    # The CLI's own executable is named after its provider, and
+    # terminal_from_command reads "claude" as the Claude DESKTOP app. Walking
+    # from the session itself would therefore decide every Claude Code session
+    # is hosted by Claude.app and refuse the terminal that really owns it.
+    import jrbar.answer_local as module
+
+    table = {
+        900: _Entry(800, "/Users/x/.local/bin/claude"),
+        800: _Entry(700, "/bin/zsh"),
+        700: _Entry(1, "/Applications/Ghostty.app/Contents/MacOS/ghostty"),
+    }
+    monkeypatch.setattr("jrbar.process_registry.list_processes", lambda: table)
+    monkeypatch.setattr("jrbar.process_registry.load_record", lambda p, s: None)
+    monkeypatch.setattr(module, "process_alive", lambda pid: True)
+    monkeypatch.setattr(module, "tty_for_pid", lambda pid: "/dev/ttys008")
+
+    class _Record:
+        pid = 900
+        ended_at_epoch = None
+        cwd = None
+
+    monkeypatch.setattr("jrbar.process_registry.load_record", lambda p, s: _Record())
+    host = module.session_host("claude", "session-1")
+    assert host.pid == 900
+    assert host.bundle_ids == frozenset({"com.mitchellh.ghostty"})
+    assert host.app_name == "Ghostty"
+
+
+def test_the_accessibility_row_named_is_the_process_that_posts_the_key():
+    from jrbar.answer_local import accessibility_refusal_message
+
+    # On an installed deployment the daemon is the jrbar-core helper, not
+    # JR-Bar.app, and that is the row System Settings shows.
+    assert "Accessibility > jrbar-core." in accessibility_refusal_message("jrbar-core")
+    assert "Accessibility > JR-Bar." in accessibility_refusal_message(None)
+    with pytest.raises(AnswerRefusal) as raised:
+        plan_local_answer(
+            provider="codex",
+            decision="approve",
+            ask_live=True,
+            facts=facts(accessibility_trusted=False, accessibility_app_name="jrbar-core"),
+        )
+    assert "jrbar-core" in raised.value.message
