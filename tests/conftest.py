@@ -81,6 +81,35 @@ def isolate_live_settings_file(tmp_path, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def isolate_integration_settings_file(tmp_path, monkeypatch):
+    """One per-test integrations.json (and its deck sidecar files).
+
+    `default_integration_settings_path()` is read at call time from
+    XDG_CONFIG_HOME, which the sandbox above shares across the whole run:
+    a test that saves creator_micro settings without a path (the
+    `deck_live` fixture) otherwise leaks its pad serial into every later
+    `load_integration_settings()` (test_integration_settings'
+    default-off tests failed only in the full run, 2026-09-10).
+    """
+    import sys
+
+    isolated = tmp_path / "pytest-jrbar-config" / "integrations.json"
+    isolated.parent.mkdir(parents=True, exist_ok=True)
+
+    def _isolated_path():
+        return isolated
+
+    # The facade forwards attribute writes to the legacy module; modules that
+    # bound the name at import time are patched where already loaded.
+    monkeypatch.setattr("jrbar.integration_settings.default_integration_settings_path", _isolated_path)
+    monkeypatch.setattr("jrbar._integration_settings_legacy.default_integration_settings_path", _isolated_path)
+    for module_name in ("jrbar.deck_board_store", "jrbar.deck_control_settings", "jrbar.integration_cli"):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, "default_integration_settings_path"):
+            monkeypatch.setattr(module, "default_integration_settings_path", _isolated_path)
+
+
 def _is_live_volume_path(path: object) -> bool:
     candidate = Path(path)
     try:
