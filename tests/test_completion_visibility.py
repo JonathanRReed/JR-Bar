@@ -538,3 +538,53 @@ def test_clearing_every_listed_row_leaves_only_live_sessions() -> None:
 
     assert listed == [live]
     assert hidden == 3 and completions == ()
+
+
+def test_an_open_ask_pins_its_session_into_the_list() -> None:
+    """Visibility may not evict a session the daemon is still asking about.
+
+    Live, ``state.asks`` carried an ask for a session ``state.sessions``
+    had already dropped: the header counted it and the strip pulsed amber
+    while the panel had no row to show.
+    """
+
+    ancient = _row("claude:session:5facd783", lifecycle="stale", stale=True, updated_at=NOW - 54 * 60.0)
+    aged_completion = _row("claude:session:done", lifecycle="completed", stale=True, updated_at=NOW - 41 * 60.0)
+
+    assert session_visibility(ancient, now=NOW) == HIDDEN
+    assert session_visibility(ancient, now=NOW, pinned_ids=("claude:session:5facd783",)) == VISIBLE_LIVE
+    # Age is not the only eviction: a receipt is one too, and an ask still wins.
+    assert (
+        session_visibility(
+            aged_completion,
+            now=NOW,
+            acknowledged_at_by_id={"claude:session:done": NOW},
+            pinned_ids=("claude:session:done",),
+        )
+        == VISIBLE_LIVE
+    )
+    # Pinning is exact: another session's ask does not rescue this row.
+    assert session_visibility(ancient, now=NOW, pinned_ids=("claude:session:other",)) == HIDDEN
+
+
+def test_pinning_carries_a_worker_and_its_parent_together() -> None:
+    parent = _row("claude:session:parent", lifecycle="stale", stale=True, updated_at=NOW - 40 * 60.0)
+    worker = _row(
+        "claude:agent:asking",
+        kind="worker",
+        parent="claude:session:parent",
+        lifecycle="stale",
+        stale=True,
+        updated_at=NOW - 40 * 60.0,
+    )
+
+    listed, hidden, completions = filter_visible_sessions(
+        [parent, worker], now=NOW, pinned_ids=("claude:agent:asking",)
+    )
+
+    assert listed == [parent, worker]
+    assert hidden == 0 and completions == ()
+
+    # With no ask, both are history, and the worker is not counted twice.
+    dropped, hidden_without, _ = filter_visible_sessions([parent, worker], now=NOW)
+    assert dropped == [] and hidden_without == 1

@@ -148,10 +148,24 @@ Vocabulary:
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
   walking the pid's ancestry for a known terminal or IDE, plus `ps`'s tty.
-- `aggregate.mode`: `needs_you` > `failed` > `working` > `done` > `idle`.
+- `aggregate` is a pure function of the rows this document carries, and
+  nothing else. The counts are read off `sessions` and `asks` as the app
+  receives them -- never off sessions the daemon remembers but did not
+  list -- and `mode` is derived from the counts:
+  `needs_you` > `failed` > `working` > `done` > `idle`. So the header word
+  can never contradict the panel: `working` implies `active > 0`,
+  `needs_you` implies an ask with a row to open.
   `ready` counts unseen main-session completions -- unacknowledged, and
   still listed in `sessions`, so a completion that aged out or was cleared
   stops counting; `unseen_completions` lists them.
+- Every ask in `asks` names a session listed in `sessions`, and the two
+  cannot drift apart. Visibility never evicts a session with an open ask,
+  however stale or acknowledged it is (`completion_visibility`'s
+  `pinned_ids`), and the parent of a pinned worker is pinned with it. An
+  ask whose session the collector no longer carries at all is dropped
+  rather than left dangling -- a header that counts an ask and a strip
+  that pulses amber for a row the panel cannot show is worse than an ask
+  that quietly went away.
 - Device ids are the Python device ids; the Screen Bar row is `screen-bar`
   with `enabled` (the Python `virtual_status_device_enabled` setting).
   Hardware `brightness` is the effective percent after idle/DND dimming.
@@ -324,11 +338,22 @@ end) and with every refresh.
   seconds_in_state, brightness_factor, dimming}`: the session the light is
   about (the oldest open ask for `waiting` / `escalation`, the newest
   working main for `working`, the newest unseen completion, the newest
-  failure; null otherwise), how long it has been in that state (the ask's
-  age, else the session's `since`, else the glance's relay epoch), the
+  failure; null otherwise), how long it has been in that state, the
   product of the dimming factors that applied to the device's brightness,
   and the dimming words in the order applied: `idle_dim`, `quiet` (DND),
   `sleep` (display asleep), `auto_dim` (the `auto_dim` setting below).
+  `seconds_in_state` is always a **duration in seconds**, never a clock
+  reading, and never more than a year: the ask's age, else the session's
+  `since` measured against `now`, else -- when no session is behind the
+  light -- the glance's relay epoch measured against the *monotonic*
+  clock it came from. It is `null` when no honest number exists. Both
+  clocks meet in this one field and they are not interchangeable: a
+  monotonic reading subtracted from a wall-clock `now` is what made a
+  surface report 1.79e9 seconds, which the app rendered as "20704 d".
+  Every duration-shaped field in `state` and `lights` carries the same
+  bound (`core_projection.MAX_DURATION_SECONDS`), `health.sources.*.heard_age_seconds`
+  included; `health.intake.silence_seconds` is the policy window, not an
+  elapsed time.
   `override` still names the glance override (`focus`, `provider_pin`, …)
   when one applies.
 - `auto_dim` (top level, beside `linked`): the decision behind the
@@ -475,9 +500,9 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `unseen` is newer than the last visit; the daemon marks everything seen when the last client disconnects, so what happens while the app is away stays flagged until it looks again. `{rows, total, last_seen}`. |
 | `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}]}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). |
 | `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records}`. `tokens_in` counts input plus cache writes. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
-| `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is the assignment cache's. |
+| `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is derived from the catalog's own content -- every effect id and version, every installed pack's id, version and effect list, plus the assignment cache's save counter -- so it changes when the registry, the installed packs or the assignments change, and does not otherwise (`core_effects.catalog_generation`). It is stable across daemon restarts and never 0. |
 | `render_effect` | effect_id, parameters, led_count, color? | `{effect_id, program, led_count, parameters, cadence}`: the LEDS program the daemon would play for those parameters (unknown parameters dropped, bounds enforced), through the presentation safety compiler. Builtins use their registered shapes, provider animations the live solo renderer (`duration_seconds` sets the cycle), pack effects their `motion`/`color`/`cadence` data or a primitive for their meaning. |
-| `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). |
+| `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). `generation` is derived from the assignments and the active scene (`core_effects.assignments_generation`). |
 | `set_assignment` | effect_id, scope, target_id?, parameters? | Validates through `effect_studio.plan_assignment` (global takes no target, `asking`/`failure` keep `alert`, scenes and semantic families are checked), saves the assignment document and the parameters sidecar, refreshes. Replies the assignment document plus `assignment`. |
 | `clear_assignment` | scope, target_id? | Removes that assignment; the document plus `removed`. |
 | `import_effect_pack` | path | `EffectPackStore.install` of a data-only JSON v2 pack (`invalid_pack` on anything the validator refuses, `conflict` when that pack id is installed), the registry rebuilt with every installed pack; replies the catalog plus `imported {id, name, effects}`. |

@@ -19,6 +19,7 @@ import pytest
 
 from jrbar.core_deck import DeckSlotFacts, build_deck_document, device_document
 from jrbar.core_projection import (
+    MAX_DURATION_SECONDS,
     WHY_VALUES,
     DeviceFacts,
     EscalationFacts,
@@ -26,10 +27,13 @@ from jrbar.core_projection import (
     PowerFacts,
     SessionExtras,
     SurfaceFacts,
+    aggregate_counts,
     aggregate_mode,
+    bounded_duration,
     build_lights_document,
     build_settings_document,
     build_state_document,
+    duration_since,
     history_rows,
     hook_health,
     lifecycle_for_mode,
@@ -415,8 +419,9 @@ def test_small_helpers() -> None:
     assert strip_session_short_id("plain", None) == "plain"
     assert lifecycle_for_mode(AgentMode.BLOCKED_ERROR, stale=False) == "failed"
     assert lifecycle_for_mode(AgentMode.IDLE_READY, stale=True) == "stale"
-    assert aggregate_mode(None, asks=0, failed=0, working=0, ready=2) == "done"
-    assert aggregate_mode(AgentMode.WORKING, asks=0, failed=0, working=0, ready=0) == "working"
+    assert aggregate_mode({"needs_you": 0, "failed": 0, "active": 0, "ready": 2}) == "done"
+    assert aggregate_mode({"needs_you": 0, "failed": 0, "active": 0, "ready": 0}) == "idle"
+    assert aggregate_mode({}) == "idle"
     assert why_for_glance(SimpleNamespace(semantic=SimpleNamespace(value="attention"), override_reason=SimpleNamespace(value="none"))) == ("waiting", None)
     assert why_for_glance(None) == (None, None)
     assert terminal_from_command("/Applications/Ghostty.app/Contents/MacOS/ghostty") == ("Ghostty", "com.mitchellh.ghostty")
@@ -434,11 +439,18 @@ def test_swift_fixture_matches_the_projection() -> None:
     assert json.loads(SWIFT_FIXTURE.read_text(encoding="utf-8")) == json.loads(encoded)
 
 
-def _glance(semantic: str, override: str = "none"):
+#: A glance's ``relay_epoch`` is a ``time.monotonic()`` reading, not a
+#: wall clock: on this Mac it is the machine's uptime, five orders of
+#: magnitude smaller than ``NOW``. Fixtures that made it look like an
+#: epoch are what let the mixed-clock subtraction pass review.
+MONOTONIC_NOW = 200_000.0
+
+
+def _glance(semantic: str, override: str = "none", relay_epoch: float = MONOTONIC_NOW - 30.0):
     return SimpleNamespace(
         semantic=SimpleNamespace(value=semantic),
         override_reason=SimpleNamespace(value=override),
-        relay_epoch=NOW - 30.0,
+        relay_epoch=relay_epoch,
     )
 
 
@@ -553,7 +565,14 @@ def test_why_detail_names_the_session_behind_the_light() -> None:
         "completed", sessions=document["sessions"], asks=(), unseen_completion_ids=(GEMINI_ID,), now=NOW
     )
     assert completed["session"] == GEMINI_ID and completed["seconds_in_state"] == 41.0
-    idle = why_detail("idle", sessions=document["sessions"], asks=(), now=NOW, glance=_glance("rest"))
+    idle = why_detail(
+        "idle",
+        sessions=document["sessions"],
+        asks=(),
+        now=NOW,
+        monotonic_now=MONOTONIC_NOW,
+        glance=_glance("rest"),
+    )
     assert idle["session"] is None and idle["seconds_in_state"] == 30.0
     assert set(idle) == {"session", "label", "provider", "seconds_in_state", "brightness_factor", "dimming"}
     lights = build_lights_document(
@@ -771,3 +790,342 @@ def test_a_quiet_session_leaves_the_list_ten_minutes_after_its_last_event() -> N
 
     gone = build_state_document(now=NOW + 11 * 60.0, **common)
     assert gone["sessions"] == [] and gone["hidden_count"] == 1
+
+
+# --- the four live defects ----------------------------------------------------
+#
+# Every test below was written from what the daemon on this Mac actually put
+# on the wire, read over ``~/.local/state/jrbar/core.sock``.
+
+
+def test_seconds_in_state_is_a_duration_never_a_clock_reading() -> None:
+    """``lights.surfaces.*.why_detail.seconds_in_state`` read 1788869798.0.
+
+    A light with no session behind it (a preview, an idle strip) fell back
+    to the glance's ``relay_epoch``, which is a ``time.monotonic()``
+    reading, and subtracted it from a wall-clock ``now``. The app rendered
+    the difference as "20704 d".
+    """
+
+    document = build_state_document(**fixture_inputs())
+    glance = _glance("rest")
+
+    # The live shape: a monotonic relay epoch, a wall-clock now, no session.
+    with_monotonic = why_detail(
+        "preview", sessions=document["sessions"], asks=(), now=NOW, monotonic_now=MONOTONIC_NOW, glance=glance
+    )
+    assert with_monotonic["session"] is None
+    assert with_monotonic["seconds_in_state"] == 30.0
+
+    # Without a monotonic reading there is no honest answer, and a wrong
+    # one is worse than none: the field says nothing rather than 56 years.
+    without_monotonic = why_detail(
+        "preview", sessions=document["sessions"], asks=(), now=NOW, glance=glance
+    )
+    assert without_monotonic["seconds_in_state"] is None
+
+    # Even handed both clocks the wrong way round, nothing absurd escapes.
+    crossed = why_detail(
+        "preview",
+        sessions=document["sessions"],
+        asks=(),
+        now=NOW,
+        monotonic_now=NOW,
+        glance=_glance("rest", relay_epoch=MONOTONIC_NOW),
+    )
+    assert crossed["seconds_in_state"] is None
+
+    # A session-backed light still measures wall clock against wall clock.
+    working = why_detail(
+        "working", sessions=document["sessions"], asks=(), now=NOW, monotonic_now=MONOTONIC_NOW
+    )
+    assert working["session"] == CLAUDE_ID and working["seconds_in_state"] == 1.4
+
+
+def test_duration_helpers_refuse_a_mixed_clock_subtraction() -> None:
+    assert duration_since(NOW, NOW - 90.0) == 90.0
+    # A timestamp a hair in the future is clock skew, not a negative wait.
+    assert duration_since(NOW, NOW + 5.0) == 0.0
+    assert duration_since(NOW, None) is None and duration_since(None, NOW) is None
+    # The live defect: a monotonic reading against a wall clock.
+    assert duration_since(NOW, MONOTONIC_NOW) is None
+    assert duration_since(NOW, 0.0) is None
+    assert duration_since(NOW, NOW - MAX_DURATION_SECONDS + 10.0) is not None
+
+    assert bounded_duration(42.34) == 42.3
+    assert bounded_duration(-3.0) == 0.0
+    assert bounded_duration(MAX_DURATION_SECONDS + 1.0) is None
+    assert bounded_duration(float("inf")) is None
+    assert bounded_duration(None) is None
+    assert bounded_duration(1.23456, digits=None) == 1.23456
+
+
+def test_no_duration_shaped_field_in_state_can_claim_a_lifetime() -> None:
+    """The sweep the first defect earned: every seconds-shaped field."""
+
+    inputs = fixture_inputs()
+    # An intake report whose age came off the wrong clock.
+    inputs["intake_report"] = SimpleNamespace(
+        providers=(
+            SimpleNamespace(provider="claude", installed=True, stuck=False, delivering=True, heard_age_seconds=1.4),
+            SimpleNamespace(provider="codex", installed=True, stuck=False, delivering=True, heard_age_seconds=NOW),
+        ),
+        hook_state=SimpleNamespace(code=SimpleNamespace(value="configured")),
+        source_health=SimpleNamespace(code=SimpleNamespace(value="ok")),
+        silence_seconds=1.4,
+    )
+    document = build_state_document(**inputs)
+    sources = document["health"]["sources"]
+    assert sources["claude"]["heard_age_seconds"] == 1.4
+    assert sources["codex"]["heard_age_seconds"] is None
+
+    def durations(node, path=""):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                yield from durations(value, f"{path}.{key}")
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                yield from durations(value, f"{path}[{index}]")
+        elif isinstance(node, (int, float)) and not isinstance(node, bool):
+            if path.endswith("_seconds") or path.endswith("seconds_in_state"):
+                yield path, float(node)
+
+    for path, value in durations(document):
+        if path.endswith("silence_seconds"):
+            continue  # A policy window, not an elapsed time.
+        assert 0.0 <= value <= MAX_DURATION_SECONDS, f"{path} is not a duration: {value}"
+
+
+def test_an_ask_always_names_a_session_the_document_lists() -> None:
+    """Live: an ask for ``claude:session:5facd783…`` whose session had
+    already been dropped from ``state.sessions``. The header counted it and
+    the strip pulsed amber with no row to show for it."""
+
+    # The session went quiet 40 minutes ago -- far past every window -- and
+    # is still the one the daemon is asking the owner about.
+    asking = _status(
+        provider="claude",
+        agent_id="claude:session:5facd783",
+        session_id="5facd783",
+        display_name="jr-bar-b7",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        event_name="PermissionRequest",
+        updated_at=_at(40 * 60.0),
+        tool_name="Bash",
+        message="Run: rm -rf build",
+        stale=True,
+        work_key="wk-asking",
+    )
+    snapshot = SimpleNamespace(
+        aggregate=SimpleNamespace(mode=AgentMode.WAITING_FOR_INPUT),
+        statuses=(),
+        stale_statuses=(asking,),
+        collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+    )
+    pinned = build_state_document(
+        now=NOW,
+        generation=1,
+        snapshot=snapshot,
+        ask_statuses=[asking],
+        unseen_completion_ids=frozenset(),
+    )
+    assert [session["id"] for session in pinned["sessions"]] == ["claude:session:5facd783"]
+    assert pinned["hidden_count"] == 0
+    assert [ask["session"] for ask in pinned["asks"]] == ["claude:session:5facd783"]
+    assert pinned["aggregate"]["mode"] == "needs_you" and pinned["aggregate"]["needs_you"] == 1
+
+    # Without the ask the same row is forty minutes of history.
+    unpinned = build_state_document(
+        now=NOW,
+        generation=1,
+        snapshot=snapshot,
+        ask_statuses=[],
+        unseen_completion_ids=frozenset(),
+    )
+    assert unpinned["sessions"] == [] and unpinned["hidden_count"] == 1
+    assert unpinned["aggregate"]["mode"] == "idle"
+
+    # An ask whose session the snapshot no longer carries at all cannot be
+    # pinned, so it is dropped rather than left dangling.
+    gone = build_state_document(
+        now=NOW,
+        generation=1,
+        snapshot=SimpleNamespace(
+            aggregate=SimpleNamespace(mode=AgentMode.WAITING_FOR_INPUT),
+            statuses=(),
+            stale_statuses=(),
+            collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+        ),
+        ask_statuses=[asking],
+        unseen_completion_ids=frozenset(),
+    )
+    assert gone["asks"] == [] and gone["sessions"] == []
+    assert gone["aggregate"]["needs_you"] == 0 and gone["aggregate"]["mode"] == "idle"
+
+
+def test_an_ask_outranks_a_clear_receipt() -> None:
+    """A widened ``clear_completed`` hid stale rows, an open ask included."""
+    from jrbar.capacity_types import SourceKey
+    from jrbar.clear_agents import CompletionPresentationKey
+
+    asking = _status(
+        provider="codex",
+        agent_id=CODEX_ID,
+        session_id="0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        event_name="PermissionRequest",
+        updated_at=_at(30.0),
+        message="Run: rm -rf build",
+        work_key="wk-codex",
+    )
+    snapshot = SimpleNamespace(
+        aggregate=SimpleNamespace(mode=AgentMode.WAITING_FOR_INPUT),
+        statuses=(asking,),
+        stale_statuses=(),
+        collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+    )
+    source = SourceKey("codex", "hooks", "local", "agent_events")
+    document = build_state_document(
+        now=NOW,
+        generation=1,
+        snapshot=snapshot,
+        ask_statuses=[asking],
+        unseen_completion_ids=frozenset(),
+        acknowledged_keys=(CompletionPresentationKey(source, CODEX_ID, "Stop", NOW),),
+    )
+    assert [session["id"] for session in document["sessions"]] == [CODEX_ID]
+    assert [ask["session"] for ask in document["asks"]] == [CODEX_ID]
+
+
+def test_a_pinned_worker_keeps_its_parent_listed() -> None:
+    """An orphan ask one level down is the same defect."""
+    parent = _status(
+        agent_id=CLAUDE_ID,
+        mode=AgentMode.IDLE_READY,
+        event_name="SessionStart",
+        updated_at=_at(45 * 60.0),
+        stale=True,
+        work_key="wk-claude",
+    )
+    worker = _status(
+        agent_id=CLAUDE_WORKER_ID,
+        display_name="worker",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        event_name="PermissionRequest",
+        updated_at=_at(45 * 60.0),
+        message="Run: rm -rf build",
+        stale=True,
+        work_key="wk-claude-worker",
+    )
+    document = build_state_document(
+        now=NOW,
+        generation=1,
+        snapshot=SimpleNamespace(
+            aggregate=SimpleNamespace(mode=AgentMode.WAITING_FOR_INPUT),
+            statuses=(),
+            stale_statuses=(parent, worker),
+            collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+        ),
+        ask_statuses=[worker],
+        unseen_completion_ids=frozenset(),
+    )
+    listed = [session["id"] for session in document["sessions"]]
+    assert listed == [CLAUDE_ID, CLAUDE_WORKER_ID]
+    assert [ask["session"] for ask in document["asks"]] == [CLAUDE_WORKER_ID]
+
+
+def _random_statuses(rng, count: int) -> tuple[list, list, list]:
+    """A pseudo-random world: live, stale and finished rows of every mode."""
+    modes = list(AgentMode)
+    live, stale, asks = [], [], []
+    for index in range(count):
+        mode = rng.choice(modes)
+        is_stale = rng.random() < 0.4
+        provider = rng.choice(("claude", "codex", "gemini", "devin"))
+        status = _status(
+            provider=provider,
+            agent_id=f"{provider}:session:{index:04d}",
+            session_id=f"{index:04d}",
+            display_name=f"row-{index}",
+            mode=mode,
+            event_name=rng.choice(("Stop", "PreToolUse", "PermissionRequest", "SessionEnd", "Notification")),
+            updated_at=_at(rng.choice((0.5, 30.0, 4 * 60.0, 12 * 60.0, 25 * 60.0, 90 * 60.0))),
+            tool_name=None,
+            message=None,
+            stale=is_stale,
+            work_key=f"wk-{index}",
+        )
+        (stale if is_stale else live).append(status)
+        if mode is AgentMode.WAITING_FOR_INPUT and rng.random() < 0.7:
+            asks.append(status)
+    return live, stale, asks
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_the_aggregate_is_always_derivable_from_the_rows(seed: int) -> None:
+    """Live: ``"working"`` with ``active: 0``, and ``"needs_you"`` while no
+    listed session had an ask. The header word came from the collector's
+    aggregate over sessions the panel could not see.
+
+    The property, over generated session sets: the counts are a function of
+    the rows the document carries, and the mode is a function of the counts.
+    """
+
+    import random
+
+    rng = random.Random(seed)
+    live, stale, asks = _random_statuses(rng, rng.randint(0, 14))
+    document = build_state_document(
+        now=NOW,
+        generation=1,
+        snapshot=SimpleNamespace(
+            # Deliberately unrelated to the rows: it must get no vote.
+            aggregate=SimpleNamespace(mode=rng.choice(list(AgentMode))),
+            statuses=tuple(live),
+            stale_statuses=tuple(stale),
+            collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+        ),
+        ask_statuses=asks,
+        unseen_completion_ids=frozenset(
+            status.agent_id for status in (*live, *stale) if rng.random() < 0.5
+        ),
+    )
+    aggregate = document["aggregate"]
+    sessions = document["sessions"]
+    listed_ids = {session["id"] for session in sessions}
+
+    # The counts come from the rows.
+    recomputed = aggregate_counts(
+        sessions, asks=document["asks"], ready_ids=document["unseen_completions"]
+    )
+    assert {key: aggregate[key] for key in recomputed} == recomputed
+    # ... and the mode comes from the counts.
+    assert aggregate["mode"] == aggregate_mode(recomputed)
+
+    # The invariant the counts rest on: no ask without its row.
+    assert all(ask["session"] in listed_ids for ask in document["asks"])
+    assert all(identifier in listed_ids for identifier in document["unseen_completions"])
+
+    # Each count says what it claims about the rows the app receives.
+    mains = [session for session in sessions if session["kind"] == "main"]
+    assert aggregate["total"] == len(mains)
+    assert aggregate["needs_you"] == len(document["asks"])
+    assert aggregate["active"] == sum(
+        1 for row in mains if row["mode"] in {"working", "tool_running", "long_task_progress"} and not row["stale"]
+    )
+    assert aggregate["failed"] == sum(
+        1 for row in mains if row["lifecycle"] == "failed" and not row["stale"]
+    )
+    assert aggregate["ready"] == len(document["unseen_completions"])
+
+    # And the word never contradicts them.
+    if aggregate["mode"] == "needs_you":
+        assert aggregate["needs_you"] > 0
+    if aggregate["mode"] == "working":
+        assert aggregate["active"] > 0 and aggregate["needs_you"] == 0 and aggregate["failed"] == 0
+    if aggregate["mode"] == "failed":
+        assert aggregate["failed"] > 0 and aggregate["needs_you"] == 0
+    if aggregate["mode"] == "done":
+        assert aggregate["ready"] > 0 and aggregate["active"] == 0
+    if aggregate["mode"] == "idle":
+        assert not any(aggregate[key] for key in ("needs_you", "active", "ready", "failed"))
