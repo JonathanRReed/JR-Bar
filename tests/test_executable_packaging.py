@@ -506,7 +506,7 @@ def test_packaging_contract_requires_exact_sparkle_release_assets(
 
     assert result.returncode == 0, result.stderr
     contract = json.loads(result.stdout)
-    assert contract["schema_version"] == 4
+    assert contract["schema_version"] == 5
     assert contract["authoritative_macos_artifact"] == {
         "kind": "pkg",
         "name": "JR-Bar-0.5.0.pkg",

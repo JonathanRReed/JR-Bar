@@ -19,7 +19,7 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
     )
 
     assert document == {
-        "schema_version": 4,
+        "schema_version": 5,
         "architecture": "arm64",
         "minimum_macos": "26.0",
         "product_display_name": "JR-Bar",
@@ -30,7 +30,7 @@ def test_pkg_is_the_only_authoritative_macos_release_artifact() -> None:
             "primary": True,
             "required": True,
         },
-        "required_signing_inputs": [
+        "signing_identity_overrides": [
             "APP_SIGN_IDENTITY",
             "INSTALLER_SIGN_IDENTITY",
             "NOTARY_PROFILE",
@@ -272,3 +272,34 @@ def test_release_shell_surfaces_delegate_to_the_contract() -> None:
     assert "developer-paths" in gate
     assert "developer-paths" in publisher
     assert "python_release_artifacts.py" in gate
+
+
+def test_signing_identities_are_overrides_that_nothing_has_to_set() -> None:
+    """0.8 discovers signing material; these names only redirect it.
+
+    The contract used to call them `required_signing_inputs`, and the release
+    gate really did refuse to start without all four. That is why nobody could
+    run the gate on a Mac that has a Developer ID Application certificate but
+    no Developer ID Installer certificate and no notary profile.
+    """
+    builder = (ROOT / "packaging" / "build_macos_pkg.sh").read_text(encoding="utf-8")
+    gate = (ROOT / "scripts" / "verify_macos_release.sh").read_text(encoding="utf-8")
+
+    assert release_artifact_contract.SIGNING_IDENTITY_OVERRIDES == (
+        "APP_SIGN_IDENTITY",
+        "INSTALLER_SIGN_IDENTITY",
+        "NOTARY_PROFILE",
+        "SPARKLE_KEY_ACCOUNT",
+    )
+    for name in release_artifact_contract.SIGNING_IDENTITY_OVERRIDES:
+        # Every one of them reads with a default, in both scripts.
+        assert f'"${{{name}:-' in builder or f'{name}="${{{name}:-' in builder
+        assert f"${{{name}:-" in gate
+        # Neither script may abort merely because one is unset.
+        assert f': "${{{name}:?' not in builder
+        assert f': "${{{name}:?' not in gate
+
+    # And both find the identities themselves.
+    for source in (builder, gate):
+        assert "find-identity" in source
+        assert "notarytool history" in source

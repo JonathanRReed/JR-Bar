@@ -35,6 +35,7 @@ from jrbar.core_projection import (
     lifecycle_for_mode,
     light_why,
     origin_document,
+    session_document,
     session_label,
     short_session_id,
     strip_session_short_id,
@@ -576,3 +577,197 @@ def test_install_probe_sessions_are_not_sessions() -> None:
     document = build_state_document(**inputs)
     assert all(not row["id"].endswith("-install-probe") for row in document["sessions"])
     assert document["aggregate"]["total"] == 3
+
+
+# --- session visibility in the state document -------------------------------
+
+
+def test_only_a_real_end_event_on_a_living_session_reads_completed() -> None:
+    """`completed` is the green check, and it is a claim about the provider.
+
+    A dead process, or a completion the collector merely inferred, reads
+    `ended`: grey, no check. `stale` says the source stopped delivering.
+    """
+    assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="Stop") == "completed"
+    assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="SessionEnd") == "completed"
+    assert lifecycle_for_mode(AgentMode.COMPLETED, stale=False, event_name="Stop", process_alive=True) == "completed"
+    # The process went away: whatever the last event said, this is over.
+    assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="Stop", process_alive=False) == "ended"
+    # An inferred completion (a notification that read as done) never claims it.
+    assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="Notification") == "ended"
+    assert lifecycle_for_mode(AgentMode.ENDED_UNCONFIRMED, stale=True, event_name="PostToolUse") == "ended"
+    assert lifecycle_for_mode(AgentMode.BLOCKED_ERROR, stale=True, event_name="StopFailure") == "failed"
+    assert lifecycle_for_mode(AgentMode.WORKING, stale=True, event_name="PostToolUse") == "stale"
+    assert lifecycle_for_mode(AgentMode.WORKING, stale=False, event_name="PostToolUse") == "active"
+
+
+def test_a_dead_process_is_ended_and_stale_in_the_document_not_done() -> None:
+    status = _status(
+        agent_id=GEMINI_ID,
+        provider="gemini",
+        mode=AgentMode.COMPLETED,
+        event_name="Notification",
+        session_id="8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a",
+        updated_at=_at(60.0),
+    )
+    row = session_document(
+        status,
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False),
+        workers=0,
+    )
+    assert row["lifecycle"] == "ended" and row["stale"] is True
+    # The app reads `mode` too, and `completed` there would still paint the
+    # green check; a demoted row must not carry the word.
+    assert row["mode"] == "ended_unconfirmed"
+    assert row["pid"] is None
+    # Nothing looked at the registry: the older, looser reading stands.
+    unknown = session_document(
+        _status(mode=AgentMode.COMPLETED, event_name="Stop", updated_at=_at(60.0)),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=None,
+        workers=0,
+    )
+    assert unknown["lifecycle"] == "completed" and unknown["mode"] == "completed"
+
+
+def _visibility_inputs(**overrides) -> dict:
+    """The owner's screenshot as a snapshot: live work, plus rows long over."""
+    live = _status(updated_at=_at(20.0))
+    worker = _status(
+        agent_id=CLAUDE_WORKER_ID,
+        display_name="worker",
+        mode=AgentMode.WORKING,
+        updated_at=_at(25.0),
+        work_key="wk-claude-worker",
+    )
+    fresh_completion = _status(
+        provider="gemini",
+        agent_id=GEMINI_ID,
+        session_id="8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a",
+        mode=AgentMode.COMPLETED,
+        event_name="Stop",
+        updated_at=_at(3.5 * 60.0),
+        stale=True,
+        work_key="wk-gemini",
+    )
+    aged_completion = _status(
+        provider="codex",
+        agent_id=CODEX_ID,
+        session_id="0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
+        mode=AgentMode.COMPLETED,
+        event_name="Stop",
+        updated_at=_at(41.0 * 60.0),
+        stale=True,
+        work_key="wk-codex",
+    )
+    ancient_idle = _status(
+        provider="devin",
+        agent_id="devin:session:metal-cl",
+        session_id="metal-cl",
+        mode=AgentMode.IDLE_READY,
+        event_name="SessionStart",
+        updated_at=_at(54.4 * 60.0),
+        stale=True,
+        work_key="wk-devin",
+    )
+    snapshot = SimpleNamespace(
+        aggregate=SimpleNamespace(mode=AgentMode.WORKING),
+        statuses=(live, worker),
+        stale_statuses=(fresh_completion, aged_completion, ancient_idle),
+        collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+    )
+    inputs = dict(
+        now=NOW,
+        generation=1,
+        snapshot=snapshot,
+        ask_statuses=[],
+        unseen_completion_ids=frozenset({GEMINI_ID, CODEX_ID}),
+    )
+    inputs.update(overrides)
+    return inputs
+
+
+def test_state_sessions_hold_only_live_rows_and_fresh_completions() -> None:
+    document = build_state_document(**_visibility_inputs())
+
+    assert [session["id"] for session in document["sessions"]] == [
+        CLAUDE_ID,
+        CLAUDE_WORKER_ID,
+        GEMINI_ID,
+    ]
+    # Two main rows are older than their windows; History has them.
+    assert document["hidden_count"] == 2
+    # Only the completion still on screen counts as news.
+    assert document["unseen_completions"] == [GEMINI_ID]
+    assert document["aggregate"]["ready"] == 1
+    assert document["aggregate"]["total"] == 2
+
+
+def test_acknowledged_rows_leave_the_list_and_come_back_on_undo() -> None:
+    from jrbar.capacity_types import SourceKey
+    from jrbar.clear_agents import CompletionPresentationKey
+
+    source = SourceKey("gemini", "hooks", "local", "agent_events")
+    acknowledged = (CompletionPresentationKey(source, GEMINI_ID, "Stop", NOW - 3.5 * 60.0),)
+
+    cleared = build_state_document(**_visibility_inputs(acknowledged_keys=acknowledged))
+    assert [session["id"] for session in cleared["sessions"]] == [CLAUDE_ID, CLAUDE_WORKER_ID]
+    assert cleared["hidden_count"] == 3
+    assert cleared["unseen_completions"] == [] and cleared["aggregate"]["ready"] == 0
+
+    # `undo_clear` drops the receipt; visibility is recomputed from it.
+    restored = build_state_document(**_visibility_inputs(acknowledged_keys=()))
+    assert [session["id"] for session in restored["sessions"]] == [
+        CLAUDE_ID,
+        CLAUDE_WORKER_ID,
+        GEMINI_ID,
+    ]
+
+
+def test_a_completion_drops_out_when_the_clock_passes_twenty_minutes() -> None:
+    """A test clock, not twenty minutes of waiting."""
+    listed = build_state_document(**_visibility_inputs(now=NOW + 16 * 60.0))
+    assert GEMINI_ID in {session["id"] for session in listed["sessions"]}
+
+    gone = build_state_document(**_visibility_inputs(now=NOW + 17.5 * 60.0))
+    assert GEMINI_ID not in {session["id"] for session in gone["sessions"]}
+    assert gone["unseen_completions"] == [] and gone["aggregate"]["ready"] == 0
+    # Three main rows are now only in History; the live pair, which the
+    # collector still says is delivering, is untouched by the clock.
+    assert [session["id"] for session in gone["sessions"]] == [CLAUDE_ID, CLAUDE_WORKER_ID]
+    assert gone["hidden_count"] == 3
+
+
+def test_a_quiet_session_leaves_the_list_ten_minutes_after_its_last_event() -> None:
+    """A row the source stopped delivering: ten minutes, then History.
+
+    A row still being delivered is not on this clock -- a long tool call
+    goes quiet for a while and is still work in progress.
+    """
+    quiet = _status(
+        provider="devin",
+        agent_id="devin:session:lapis-fl",
+        session_id="lapis-fl",
+        mode=AgentMode.WORKING,
+        event_name="PostToolUse",
+        updated_at=_at(0.0),
+        stale=True,
+        work_key="wk-devin",
+    )
+    snapshot = SimpleNamespace(
+        aggregate=SimpleNamespace(mode=AgentMode.WORKING),
+        statuses=(),
+        stale_statuses=(quiet,),
+        collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+    )
+    common = dict(generation=1, snapshot=snapshot, ask_statuses=[], unseen_completion_ids=frozenset())
+
+    listed = build_state_document(now=NOW + 9 * 60.0, **common)
+    assert [session["id"] for session in listed["sessions"]] == ["devin:session:lapis-fl"]
+    assert listed["sessions"][0]["lifecycle"] == "stale" and listed["hidden_count"] == 0
+
+    gone = build_state_document(now=NOW + 11 * 60.0, **common)
+    assert gone["sessions"] == [] and gone["hidden_count"] == 1

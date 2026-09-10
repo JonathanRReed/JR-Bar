@@ -68,6 +68,7 @@ protocol 1. Timestamps are Unix epoch seconds.
     "ask":null,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
     "workers":1,"event":"PreToolUse","tool":"Bash","message":null}
  ],
+ "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build"}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
@@ -108,9 +109,38 @@ Vocabulary:
 - `mode` is the Python `AgentMode` value (`idle_ready`, `working`,
   `tool_running`, `waiting_for_input`, `long_task_progress`,
   `blocked_error`, `completed`, `ended_unconfirmed`, `unknown`).
-  `lifecycle` reduces it: `active`, `completed`, `failed`, `ended`,
-  `stale`. `next_actor` comes from canonical operator state (`user`,
-  `provider`) with a mode-based fallback.
+  `lifecycle` reduces it to the five words the app renders, and the two
+  that mean "over" are not interchangeable:
+  - `active` -- working, waiting, or idle-ready, and still being delivered.
+  - `completed` -- a run the provider itself said was finished: the last
+    event was `Stop`, `SessionEnd` or `SubagentStop`, and the session's
+    process (when the registry knows it) is still alive. This is the green
+    check, so it is only ever a report, never a guess.
+  - `ended` -- over, but nobody confirmed a success: the process died, or
+    the mode is `ended_unconfirmed` (a working session whose hooks went
+    silent), or the collector *inferred* a completion from something that
+    was not an end event. Grey, no check. A row demoted this way also
+    carries `mode: "ended_unconfirmed"`, so neither field claims Done.
+  - `failed` -- `blocked_error`.
+  - `stale` -- a live-shaped session whose source stopped delivering.
+    `stale: true` says the same thing on any row, `completed` and `ended`
+    included, and is also set when a session's process died without an end
+    event.
+
+  `next_actor` comes from canonical operator state (`user`, `provider`)
+  with a mode-based fallback.
+- `sessions` is what the panel should be looking at, not everything the
+  daemon remembers (`completion_visibility`): live sessions -- working,
+  tool running, waiting, blocked, idle-ready -- while they are still being
+  delivered or for ten minutes (`LIVE_VISIBLE_SECONDS`) after their last
+  event; plus finished sessions (`completed` or `ended`) that no
+  `clear_completed` has acknowledged, for twenty minutes
+  (`COMPLETED_VISIBLE_SECONDS`) after they ended. Nothing stale older than
+  ten minutes is listed. A worker is listed only while its parent is.
+  `hidden_count` is how many *main* sessions the policy kept out, which the
+  app shows as "n earlier in History"; `list_history` has them all.
+  An acknowledgement is bound to the event it acknowledged, so a cleared
+  session that starts working again is listed again straight away.
 - `ask.kind` is the canonical request kind (`permission`, `input`,
   `approval`, `review`) with a fallback from the hook event; `summary` is
   the hook's message or tool name; `opened_at` the request's opening epoch.
@@ -119,8 +149,9 @@ Vocabulary:
   bundle id when the kind names an app or IDE; `terminal` is found by
   walking the pid's ancestry for a known terminal or IDE, plus `ps`'s tty.
 - `aggregate.mode`: `needs_you` > `failed` > `working` > `done` > `idle`.
-  `ready` counts unseen main-session completions (the same set the menu
-  badge used); `unseen_completions` lists them.
+  `ready` counts unseen main-session completions -- unacknowledged, and
+  still listed in `sessions`, so a completion that aged out or was cleared
+  stops counting; `unseen_completions` lists them.
 - Device ids are the Python device ids; the Screen Bar row is `screen-bar`
   with `enabled` (the Python `virtual_status_device_enabled` setting).
   Hardware `brightness` is the effective percent after idle/DND dimming.
@@ -418,8 +449,8 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `open_session` | session, action? | The controller's `open_session` (terminal launch or provider URL, honouring the session-open preference). `{session, activated, origin}`. |
 | `answer_ask` | session, decision (`approve`/`deny`), only_if_frontmost (default true) | The Agent Browser's answer path (`AnswerController.perform_browser_answer`) for the session's live request. With `only_if_frontmost`, refused with `not_frontmost` unless the frontmost app is the session's terminal or origin app (or, when neither is known, any known terminal). `unsupported` when the provider has no answer handler. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
-| `clear_completed` | sessions[] or `all` | Clear Agents commit for every clearable completion (a list is accepted but the batch is always the full preview in protocol 1). `{batch, cleared}`. |
-| `undo_clear` | batch | Undo that batch within its 300 s window; `expired` after. |
+| `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
+| `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
 | `set_setting` | path, value | Dot-path write (`colors.agent_colors.claude`, `devices.0.brightness`) into `to_dict()`, re-validated through the real settings loader, saved, side effects applied (closed-lid, cloud ingest, transcript monitoring, remote peers), then a refresh. `{generation, path, value}` with the value as normalised. A read-only key (`cloud_ingest_token_path`) replies `read_only`. |
 | `reset_settings` | paths[] | Each path back to `AgentMonitorSettings()`'s default. `{generation, reset}`. |
 | `set_brightness` | device or `all`, value 0..1 | `set_device_brightness` (turns auto-brightness off, as the slider does). |
@@ -431,9 +462,9 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider (with the compiled shim when available and the Codex trust hash recomputed). `{providers, results{provider: {ok, changed, config_path, codex_trust, warning}}}`. |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
-| `list_history` | since, limit | Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `unseen` is newer than the last visit; the daemon marks everything seen when the last client disconnects, so what happens while the app is away stays flagged until it looks again. `{rows, total, last_seen}`. |
+| `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `unseen` is newer than the last visit; the daemon marks everything seen when the last client disconnects, so what happens while the app is away stays flagged until it looks again. `{rows, total, last_seen}`. |
 | `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}]}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). |
-| `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records}`. `tokens_in` counts input plus cache writes. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. Runs on the socket thread; a cold scan over a month of transcripts takes tens of seconds, a warm one about a second. |
+| `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records}`. `tokens_in` counts input plus cache writes. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
 | `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is the assignment cache's. |
 | `render_effect` | effect_id, parameters, led_count, color? | `{effect_id, program, led_count, parameters, cadence}`: the LEDS program the daemon would play for those parameters (unknown parameters dropped, bounds enforced), through the presentation safety compiler. Builtins use their registered shapes, provider animations the live solo renderer (`duration_seconds` sets the cycle), pack effects their `motion`/`color`/`cadence` data or a primitive for their meaning. |
 | `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, timedelta, timezone
 
@@ -15,6 +16,7 @@ from jrbar.clear_agents import (
     ClearAgentsState,
     CompletionPresentationKey,
     CompletionPresentationReceipt,
+    clearable_presentation_key,
     completion_presentation_key,
     plan_clear_agents_commit,
     plan_clear_agents_undo,
@@ -563,3 +565,67 @@ def test_projection_never_mutates_mailbox_receipts_or_unrelated_state() -> None:
     assert repr(state) == before
     assert not hasattr(state, "mailbox_retained_order")
     assert not hasattr(state, "mailbox_seen_completion_ids")
+
+
+# --- widened eligibility ----------------------------------------------------
+#
+# "Clear done" has to empty the list, so it acknowledges every row the panel
+# shows as over -- not only the completions that were fresh enough to badge.
+
+
+def test_a_widened_clear_keys_every_finished_or_stale_row() -> None:
+    completed = _status("codex:session:done")
+    closed = _status("codex:session:closed", event_name="SessionEnd")
+    unconfirmed = _status("codex:session:crashed", mode=AgentMode.ENDED_UNCONFIRMED, event_name="PostToolUse")
+    quiet = dataclasses.replace(_status("codex:session:quiet", mode=AgentMode.WORKING), stale=True)
+
+    for status in (completed, closed, unconfirmed, quiet):
+        assert clearable_presentation_key(status) is not None, status.agent_id
+    # The narrow question is unchanged: only a fresh completion is news.
+    assert completion_presentation_key(closed) is None
+    assert completion_presentation_key(unconfirmed) is None
+    assert completion_presentation_key(quiet) is None
+
+
+def test_a_widened_clear_still_refuses_live_rows() -> None:
+    for mode in (AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.WAITING_FOR_INPUT, AgentMode.BLOCKED_ERROR, AgentMode.IDLE_READY):
+        status = _status(f"codex:session:{mode.value}", mode=mode, event_name="PreToolUse")
+        assert clearable_presentation_key(status) is None, mode
+    # ... and rows whose identity is not exact.
+    assert clearable_presentation_key(_status("codex:session:unkeyed", keyed=False)) is None
+
+
+def test_the_widened_preview_clears_the_rows_the_narrow_one_refused() -> None:
+    closed = _status("codex:session:closed", event_name="SessionEnd")
+    quiet = dataclasses.replace(_status("codex:session:quiet", mode=AgentMode.IDLE_READY, event_name="SessionStart"), stale=True)
+    working = _status("codex:session:working", mode=AgentMode.WORKING, event_name="PostToolUse")
+    rows = (closed, quiet, working)
+
+    narrow = project_clear_agents_preview(rows, state=ClearAgentsState(), now_epoch=NOW_EPOCH)
+    widened = project_clear_agents_preview(rows, state=ClearAgentsState(), now_epoch=NOW_EPOCH, widened=True)
+
+    assert narrow.clearable_count == 0
+    assert {key.agent_id for key in widened.clearable_keys} == {"codex:session:closed", "codex:session:quiet"}
+    # The live row is fenced, not cleared.
+    assert [signature.agent_id for signature in widened.fence.protected_signatures] == ["codex:session:working"]
+
+
+def test_a_widened_batch_commits_and_undoes_like_any_other() -> None:
+    closed = _status("codex:session:closed", event_name="SessionEnd")
+    quiet = dataclasses.replace(_status("codex:session:quiet", mode=AgentMode.IDLE_READY, event_name="SessionStart"), stale=True)
+    state = ClearAgentsState()
+    preview = project_clear_agents_preview((closed, quiet), state=state, now_epoch=NOW_EPOCH, widened=True)
+
+    plan = plan_clear_agents_commit(preview, preview, state, batch_id="batch-widened", committed_at_epoch=NOW_EPOCH)
+    assert plan.cleared_count == 2
+    assert {key.agent_id for key in plan.next_state.acknowledged_keys} == {
+        "codex:session:closed",
+        "codex:session:quiet",
+    }
+
+    undo = plan_clear_agents_undo(plan.next_state, batch_id="batch-widened", now_epoch=NOW_EPOCH + 120.0)
+    assert undo.restored_count == 2 and undo.next_state.acknowledged_keys == frozenset()
+    # Still 300 s, and not a second more.
+    with pytest.raises(ClearAgentsPlanError) as expired:
+        plan_clear_agents_undo(plan.next_state, batch_id="batch-widened", now_epoch=NOW_EPOCH + 301.0)
+    assert expired.value.reason is ClearAgentsRefusal.EXPIRED
