@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+from jrbar.core_deck import DeckSlotFacts, build_deck_document, device_document
 from jrbar.core_projection import (
     WHY_VALUES,
     DeviceFacts,
@@ -211,6 +212,30 @@ def fixture_inputs() -> dict:
         ),
         CODEX_ID: SessionExtras(pid=9311, origin=None, terminal={"app": "Terminal", "bundle_id": "com.apple.Terminal"}),
     }
+    deck = build_deck_document(
+        device=device_document(
+            serial="D0CF130481EC", transport="bluetooth", connected=True, approved=True, layer=0, profile=0,
+            receipt={"code": "ready", "message": "Creator Micro 2 ready.", "at": NOW - 30.0},
+        ),
+        slots=[
+            DeckSlotFacts(0, "a" * 64, CODEX_ID, "sidepulse-core", "codex", "input_required", pinned=True, navigable=True),
+            DeckSlotFacts(1, "b" * 64, CLAUDE_ID, "jr-bar-b7", "claude", "active", navigable=True),
+            DeckSlotFacts(2, "c" * 64, None, None, None, "unavailable"),
+            *(DeckSlotFacts(index) for index in range(3, 13)),
+        ],
+        bank=0,
+        bank_count=1,
+        rail_edge="left",
+        keymap_state="applied",
+        backup_at=NOW - 86400.0,
+        keymap_generation=3,
+        layers=[{"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Base"}],
+        input_check=False,
+        last_input={"index": 1, "kind": "press", "at": NOW - 4.0},
+        settings={"enabled": True, "session_mode": True, "analog_enabled": False},
+        bindings={14: "next_bank", 13: "previous_bank"},
+        driven=True,
+    )
     return dict(
         now=NOW,
         generation=4812,
@@ -226,7 +251,21 @@ def fixture_inputs() -> dict:
         intake_report=intake,
         settings_generation=17,
         extras_by_id=extras,
+        deck=deck,
     )
+
+
+def test_state_document_carries_the_deck_when_given() -> None:
+    document = build_state_document(**fixture_inputs())
+    deck = document["deck"]
+    assert deck["device"]["serial"] == "D0CF130481EC" and deck["device"]["transport"] == "bluetooth"
+    assert len(deck["slots"]) == 13 and deck["slots"][0]["color"] == "#FF3A00" and deck["slots"][1]["color"] == "#00E5FF"
+    assert deck["slots"][2]["state"] == "unavailable" and deck["slots"][2]["color"] == "#020204"
+    assert [row["mapping"] for row in deck["aux"]][:2] == ["previous_bank", "next_bank"]
+    assert deck["keymap"]["state"] == "applied" and deck["rail"] == {"edge": "left"}
+    inputs = fixture_inputs()
+    inputs.pop("deck")
+    assert "deck" not in build_state_document(**inputs)
 
 
 def test_state_document_projects_sessions_asks_and_aggregate() -> None:

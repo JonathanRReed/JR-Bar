@@ -42,7 +42,7 @@ regenerates it).
 ### hello
 ```json
 {"t":"hello","v":1,"core_version":"0.8.0","pid":123,
- "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest"]}
+ "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest","deck"]}
 ```
 
 ### state (full)
@@ -83,7 +83,8 @@ protocol 1. Timestamps are Unix epoch seconds.
            "intake":{"hook_state":"configured","source_health":"partial","silence_seconds":1.4}},
  "peers":[],
  "unseen_completions":["gemini:session:…"],
- "settings_generation":17}
+ "settings_generation":17,
+ "deck":{…}}
 ```
 
 Vocabulary:
@@ -135,6 +136,73 @@ Vocabulary:
   `since` is when the oldest unanswered ask started blocking.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
+
+#### The Creator Micro 2 deck (`state.deck`)
+
+The pad as the daemon drives it, built by `core_deck.build_deck_document`
+from the session board (`deck_session_board.py`), `deck-controls.json`,
+`integrations.json`, a background HID enumerate every 10 s, the output
+service's receipts and the private keymap backup. Always present; every
+field is one the Control Center and the Rail decode.
+
+```json
+"deck":{
+ "device":{"serial":"D0CF130481EC","name":"Creator Micro 2","transport":"bluetooth","connected":true,"approved":true,
+           "firmware":null,"layer":0,"profile":0,"conflict":null,
+           "receipt":{"code":"ready","message":"Creator Micro 2 ready.","at":1788982862.4}},
+ "slots":[{"index":0,"identity":"<sha256 of the work key>","session":"codex:session:…","label":"sidepulse-core","provider":"codex",
+           "state":"input_required","pinned":true,"navigable":true,"color":"#FF3A00"}, …13 rows…],
+ "aux":[{"index":13,"label":"Encoder 1 input 1","mapping":"previous_bank"}, …AG13..AG19…],
+ "banks":{"index":0,"count":1},
+ "rail":{"edge":"left"},
+ "keymap":{"state":"applied","backup_at":1788896492.4,"generation":3,
+           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base"}]},
+ "input_check":false,
+ "last_input":{"index":1,"kind":"press","at":1788982888.4},
+ "settings":{"enabled":true,"session_mode":true,"analog_enabled":false}}
+```
+
+- `device` is `null` when no pad is known (nothing approved, nothing
+  enumerated). `serial` is the approved serial (`integrations.json`), else
+  the first pad the HID probe sees; `transport` is `usb` or `bluetooth`
+  from the probe (USB preferred when both); `connected` when the probe
+  lists it or the output service holds it; `approved` when
+  `creator_micro_enabled` names this serial; `profile` / `layer` are the
+  device's active position from the last inspection (0-based, as the
+  keymap indexes them; the firmware reports the layer 1-based); `firmware`
+  is not read yet; `conflict` is `foreign_responses` while the output
+  service's last receipt is `device_conflict` (another app answered on the
+  report stream; the daemon stopped writing); `receipt` is the last
+  `deck_receipt`.
+- `slots[]` are the current bank's 13 keys (`SLOTS_PER_BANK`), in the
+  board's stable positions: `identity` is the board's digest of the work
+  key (null when unassigned), `session` the live agent id (null when the
+  identity is remembered but not observed: "Reserved"), `label` the
+  `sessions[].label`, `state` the board word (`input_required`, `failure`,
+  `active`, `completed`, `idle`, `stale`, `unavailable`, `unknown`,
+  `ended_unconfirmed`), `navigable` whether the navigation resolver has a
+  verified target, `color` the solid per-key colour the lighting layer
+  writes (`creator_micro_lighting`: ask `#FF3A00`, working `#00E5FF`, done
+  `#00FF66`, dark `#020204`) or `#000000` while the pad is not driven (no
+  output service ready, or session mode off).
+- `aux[]` are AG13..AG19 (one encoder, three inputs; four joystick
+  sectors) with the explicit `deck-controls.json` mapping kind bound to
+  each (`next_bank`, `open_usage`, …) or null; labels come from the
+  inspected keymap when there is one.
+- `keymap.state`: `stock` (no private backup, or the recovery journal
+  says the original is back), `applied` (a verified JR-Bar write),
+  `recovering` (an interrupted transfer: Restore is the way forward),
+  `unknown` (files that do not parse); `backup_at` is the backup file's
+  mtime; `generation` counts setup results since the daemon started;
+  `layers` lists the editable profile/layer pairs of the inspected (or
+  backed-up) keymap.
+- `input_check`: inputs are shown as `deck_input` events and every
+  bound action is paused (also turned on by a verified keymap write, as
+  the Python app did). `last_input` is the last observed control
+  (`kind`: `press` for a key, `dial` for AG13..15, `joystick` for
+  AG16..19, `analog` for the calibrated sectors 20..23).
+- `settings` mirrors `deck-controls.json` (`enabled`, `session_mode`,
+  `analog_enabled`; the Python defaults are all off).
 
 ### lights
 The presentation program for each surface, exactly the LEDS DSL text the
@@ -202,8 +270,18 @@ end) and with every refresh.
   age, else the session's `since`, else the glance's relay epoch), the
   product of the dimming factors that applied to the device's brightness,
   and the dimming words in the order applied: `idle_dim`, `quiet` (DND),
-  `sleep` (display asleep), `night`. `override` still names the glance
-  override (`focus`, `provider_pin`, …) when one applies.
+  `sleep` (display asleep), `auto_dim` (the `auto_dim` setting below).
+  `override` still names the glance override (`focus`, `provider_pin`, …)
+  when one applies.
+- `auto_dim` (top level, beside `linked`): the decision behind the
+  `auto_dim` word, `{mode, source, factor, available, reading}`. `mode` is
+  the setting (`off`, `schedule`, `display`, `ambient`); `source` which
+  reader produced the factor (`off`, `schedule`, `display`, `ambient`:
+  ambient mode without a readable sensor falls back to `display`);
+  `factor` the multiplier that went into the `night_dim` stage; `available`
+  false when the mode's own source could not be read (no ambient light
+  sensor, an external or sleeping display); `reading` the raw reading (lux
+  for ambient, the display fraction, minutes since midnight for schedule).
 - `devices_linked` (the `devices_linked` setting, default on) is present
   when both a Pro and a Dot are connected: their programs were written
   back to back in one hardware worker command from the same presentation,
@@ -227,8 +305,14 @@ between refreshes; `detail` carries the summary), `escalation_stage`
 (`stage` 0…3), `device_connected`, `device_disconnected` (`label` is the
 device name, `detail` its id; keyed by name, so a device whose id moves
 from its mount path to its firmware serial is not a disconnect/connect
-pair). Reserved, not emitted yet: `quota_reset`, `peer_arrived`,
-`peer_departed`.
+pair), `deck_input` (`input: {index, kind, at}`, nested because the
+envelope's `kind` is the event kind; `label` is the control's name; one
+per observed control, whether or not input check is on) and
+`deck_receipt` (`code`, `message`: every keymap setup result and every
+change of the output service's reason, `ready`, `reconnecting`,
+`device_conflict`, …, with the Python app's sentence; the same receipt
+sits on `state.deck.device.receipt`). Reserved, not emitted yet:
+`quota_reset`, `peer_arrived`, `peer_departed`.
 
 ### settings
 Full settings document, sent on connect and after every change from any
@@ -236,9 +320,22 @@ writer: the controller's `settings` attribute is a property whose setter
 bumps `generation` and republishes, so a save from a menu action, a DND
 schedule tick, a device being remembered, or a command all reach the app.
 `document` is `AgentMonitorSettings.to_dict()`; `schema` is 3 for this
-shape (`devices_linked` and `transcript_monitoring.pi` /
-`transcript_monitoring.gemini` are additive). The app renders Settings
-from this and never keeps its own copy.
+shape (`devices_linked`, `transcript_monitoring.pi` /
+`transcript_monitoring.gemini` and `auto_dim` are additive). The app
+renders Settings from this and never keeps its own copy.
+
+`auto_dim` replaces night warmth: `{mode: off|schedule|display|ambient,
+schedule: {start_minutes, end_minutes, fraction}, display: {min_fraction},
+ambient: {min_fraction, lux_floor, lux_ceiling}}`, default `off` (today's
+behaviour). It feeds `brightness_policy`'s `night_dim` stage: `schedule`
+applies `fraction` inside the daily window (which may wrap midnight),
+`display` follows the built-in display's brightness through the same
+reader the per-device auto-brightness uses (never below `min_fraction`;
+an unreadable display leaves 1.0), `ambient` reads the light sensor
+through IOKit's HID event system (`min_fraction` at `lux_floor`, 1.0 at
+`lux_ceiling`, linear between) and falls back to `display` when there is
+no sensor. `set_setting` writes it by dot path (`auto_dim.mode`,
+`auto_dim.schedule.fraction`); an unknown mode falls back to `off`.
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```
@@ -253,8 +350,14 @@ Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
 `invalid_value`, `refused`, `expired`, `busy`, `unsupported`; the Effect
 Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
-`reserved_semantic`, `invalid_pack`, `conflict`, `export_failed`, and
-`usage_history` adds `invalid_range`.
+`reserved_semantic`, `invalid_pack`, `conflict`, `export_failed`,
+`usage_history` adds `invalid_range`, and the deck commands add
+`input_check`, `invalid_plan`, `no_device` and the keymap receipt codes
+(`connection_required`, `device_conflict`, `recovery_required`,
+`keymap_changed`, `readback_mismatch`, `backup_failed`, `backup_invalid`,
+`backup_conflict`, `approved_device_changed`, `previous_owner_stopping`,
+`unsupported_file_protocol`, `setup_failed`, …) whose `message` is the
+Python app's sentence for that receipt.
 
 ### log
 Content-free diagnostics for the app's log view: every `log_status_bar`
@@ -303,6 +406,17 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `import_effect_pack` | path | `EffectPackStore.install` of a data-only JSON v2 pack (`invalid_pack` on anything the validator refuses, `conflict` when that pack id is installed), the registry rebuilt with every installed pack; replies the catalog plus `imported {id, name, effects}`. |
 | `export_effect_pack` | ids[], path, name? | Writes a data-only JSON v2 pack of those effects (pack effects keep their data, builtins become their motion plus parameter defaults, fallbacks kept only when exported too) through `write_private_export`; `{path, effects, bytes, id}`. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
+| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this auxiliary control in Settings > Devices."; `input_check` while input check is on. |
+| `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
+| `deck_bank` | delta | Steps the bank, wrapping. `{index, count}`. |
+| `deck_rail` | edge (`off`, `left`, `right`, `top`, `bottom`) | The compact rail's edge, persisted with the board. `{edge}`. |
+| `deck_clear_absent` | | Unpinned identities with no observed session leave the board; later keys move up. `{removed, banks}`. |
+| `deck_plan_keymap` | profile, layer, include_auxiliary | `creator_micro_keymap.plan_keymap` for that layer over the inspected keymap: `{profile, layer, include_auxiliary, changes[], preview, controls[{index, label}]}`, `preview` being the Python review alert's text. The first call (and any call after 120 s, or after a write) inspects the device: the output service is stopped, the keymap read, the pad handed back. `invalid_plan` with the ValueError message; otherwise the receipt code (`connection_required` when the pad is not approved, `busy` while another setup runs). Socket thread. |
+| `deck_apply_keymap` | profile, layer, include_auxiliary | `CreatorMicroSetup.apply` of that plan (private backup first, verified write, readback): `{code: keymap_verified\|already_configured, message, changes, state, backup_at, generation}`; input check turns on after a verified write. Refusals are error replies whose code is the receipt (`keymap_changed`, `recovery_required`, `readback_mismatch`, …). No alert is shown; the confirmation is the app's. |
+| `deck_restore_keymap` | | `CreatorMicroSetup.restore` from the first private backup: `{code: keymap_restored\|already_restored, message, state, backup_at, generation}`, same refusals (`backup_invalid` with no backup, `keymap_changed` for later device edits). |
+| `deck_approve_device` | | The Devices pane's Enable: the sole stable serial the HID probe sees becomes `creator_micro_device_serial` with `creator_micro_enabled`, and the output service is reconfigured. `{serial, approved}`; `no_device` ("No Creator Micro 2 is connected."), `ambiguous_device_identity`, `device_identity_unavailable`. |
+| `deck_check_input` | enabled | Input check on or off (queued input is revoked). `{enabled}`. |
+| `deck_set_settings` | enabled?, session_mode?, analog_enabled? | Writes `deck-controls.json` (bindings untouched), reconfigures the deck runtime. The three settings; `invalid_args` for anything but bools. |
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
 

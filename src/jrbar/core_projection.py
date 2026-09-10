@@ -783,8 +783,10 @@ def build_state_document(
     settings_generation: int = 0,
     extras_by_id: dict[str, SessionExtras] | None = None,
     peers: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
+    deck: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped object."""
+    """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
+    object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``."""
     extras_by_id = extras_by_id or {}
     statuses: list[object] = []
     seen: set[str] = set()
@@ -837,7 +839,7 @@ def build_state_document(
     aggregate_source = getattr(getattr(snapshot, "aggregate", None), "mode", None)
     power = power or PowerFacts(False, "never", False, False)
     escalation = escalation or EscalationFacts()
-    return {
+    document = {
         "t": "state",
         "v": PROTOCOL_VERSION,
         "generation": int(generation),
@@ -900,6 +902,9 @@ def build_state_document(
         "unseen_completions": sorted(set(unseen_completion_ids)),
         "settings_generation": int(settings_generation),
     }
+    if deck is not None:
+        document["deck"] = dict(deck)
+    return document
 
 
 def build_lights_document(

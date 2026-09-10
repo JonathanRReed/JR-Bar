@@ -44,6 +44,7 @@ DEFAULT_CAPABILITIES: Final = (
     "history",
     "peers",
     "ingest",
+    "deck",
 )
 _COALESCED_KINDS: Final = ("state", "lights", "settings")
 

@@ -249,16 +249,10 @@ def begin_creator_micro_restore(
 
 
 def _preview_text(plan: KeymapPlan) -> str:
-    changed = "\n".join(plan.changes) if plan.changes else "No device keys need to change."
-    return (
-        f"Selected profile {plan.profile_index + 1}, layer {plan.layer_index + 1}:\n\n"
-        f"{changed}\n\n"
-        "The listed keys will replace their normal keystrokes with JR-Bar device inputs. "
-        + ("Supported dial/joystick mappings listed above also change. " if plan.include_auxiliary
-           else "Dial and joystick mappings stay unchanged. ")
-        + "Thread colors are device-wide, not layer-specific. Stored mappings may require reconnecting to activate. "
-        "JR-Bar does not switch the device profile or layer through an undocumented RPC."
-    )
+    # One text for the review alert here and the daemon's deck_plan_keymap.
+    from .core_deck import preview_text
+
+    return preview_text(plan)
 
 
 def apply_creator_micro_setup_result(
@@ -280,24 +274,7 @@ def apply_creator_micro_setup_result(
 
     pane = getattr(target, "deck_settings_pane", None)
     code = result.code
-    messages = {
-        "keymap_verified": "Creator Micro 2 stored keymap verified. Reconnect if needed, then check inputs.",
-        "recovery_required": "A transfer was interrupted. Backup retained. Choose Restore device keymap, not Apply again.",
-        "unsupported_file_protocol": "This firmware does not support the verified file-transfer protocol. No keymap was written.",
-        "connection_changed": "The device connection changed. Inspect again; pending input was discarded.",
-        "device_conflict": "Close Input and other hardware controllers, then inspect again.",
-        "already_configured": "Creator Micro 2 keymap is already configured.",
-        "keymap_restored": "Creator Micro 2 keymap restored and verified.",
-        "already_restored": "Creator Micro 2 keymap is already restored.",
-        "connection_required": "Connect and approve Creator Micro 2 before setup.",
-        "approved_device_changed": "The approved Creator Micro 2 changed. Inspect it again.",
-        "previous_owner_stopping": "Creator Micro 2 is still stopping. Try again in a moment.",
-        "keymap_changed": "The device keymap changed. Inspect it again before applying.",
-        "backup_failed": "The private backup could not be verified. No keymap was written.",
-        "backup_invalid": "No valid private backup is available. No keymap was written.",
-        "readback_mismatch": "The device did not verify the keymap write. The backup was kept.",
-        "cancelled": "Creator Micro 2 setup was cancelled.",
-    }
+    from .core_deck import SETUP_RECEIPT_MESSAGES as messages
     if code != "inspection_ready":
         if getattr(result, "runtime_was_stopped", False) or getattr(
             target, "_creator_micro_setup_runtime_needs_restart", False
