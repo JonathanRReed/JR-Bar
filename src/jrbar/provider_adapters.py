@@ -369,11 +369,14 @@ _STOP_INCOMPLETE = _rule(
     request_state=ProviderRequestState.RESOLVED,
     request_kind=RequestKind.UNKNOWN,
 )
+# 95: the highest rank of the family. Ranks only break exact-stamp ties, but
+# whole-second legacy stamps tie a whole burst, and SessionEnd at 82 lost to
+# Interrupt at 83: a Ctrl-C'd Codex stayed "idle" after its process was gone.
 _SESSION_END = _rule(
     ProviderEventName.SESSION_END,
     WorkLifecycle.COMPLETED,
     NextActor.NONE,
-    82,
+    95,
     request_state=ProviderRequestState.RESOLVED,
     request_kind=RequestKind.UNKNOWN,
 )
@@ -857,7 +860,10 @@ def _derived_event_token(
         source_key.source_instance_id,
         source_key.capability_id,
         event_name.value,
-        format(occurred_at_epoch, ".6f"),
+        # The whole second only: the token is the dedupe key for one event
+        # delivered twice (a hook registered at two config levels), and
+        # those copies arrive milliseconds apart with different stamps.
+        format(math.floor(occurred_at_epoch), ".6f"),
         "" if work_id is None else work_id.value,
         "" if request_id is None else request_id.value,
         "" if sequence is None else str(sequence),
