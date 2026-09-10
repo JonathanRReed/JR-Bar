@@ -41,6 +41,45 @@ class DeviceIdentityError(PermissionError):
         self.code = code
 
 
+class DeviceAccessError(PermissionError):
+    """macOS refuses this process HID access to the pad."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+#: ``IOHIDRequestType``/``IOHIDAccessType`` from ``IOKit/hid/IOHIDLib.h``.
+_LISTEN_EVENT_REQUEST = 1
+_ACCESS_DENIED = 1
+
+
+def macos_input_monitoring_denied() -> bool:
+    """Whether macOS has explicitly denied this process Input Monitoring.
+
+    Over Bluetooth the pad's four HID collections share one ``IOHIDDevice``
+    (they enumerate on a single ``DevSrvsID:`` path), so opening the vendor
+    collection opens the keyboard one with it and TCC gates the open. A
+    denial makes every open fail with an unexplained I/O error, which the
+    output worker can only read as a device that keeps going away.
+
+    ``IOHIDCheckAccess`` answers without prompting. Only an explicit denial
+    refuses the open: ``unknown`` means nobody has been asked yet, and the
+    open itself is what raises the prompt.
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        io = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
+        check = io.IOHIDCheckAccess
+        check.argtypes = [ctypes.c_uint32]
+        check.restype = ctypes.c_uint32
+        return check(_LISTEN_EVENT_REQUEST) == _ACCESS_DENIED
+    except (AttributeError, TypeError, OSError, ValueError):
+        # An OS without the getter is not evidence of a denial.
+        return False
+
+
 def select_unique_stable_serial(devices: list[dict[str, Any]]) -> str:
     """Return the sole stable serial that an explicit enable action can approve."""
 
@@ -139,6 +178,11 @@ class HidApiTransport(DeviceTransport):
             raise NoDeviceError("Creator Micro 2 not found")
         if len(devices) != 1:
             raise PermissionError("Creator Micro device identity is ambiguous")
+        if macos_input_monitoring_denied():
+            raise DeviceAccessError(
+                "input_monitoring_denied",
+                "macOS Input Monitoring is denied for this process",
+            )
         with _OPEN_LOCK:
             device = self._module().device()
             try:

@@ -435,3 +435,58 @@ def test_creator_output_uses_the_same_user_colors_and_brightness_policy_as_other
     assert brightness_targets == ["creator-micro"]
     assert frames[0].color == 0x123456
     assert frames[0].brightness == 0.2
+
+
+def test_a_retryable_connect_failure_keeps_its_reason_instead_of_a_bare_reconnecting():
+    """A pad the OS will not let us open never stops being retryable, so
+    "reconnecting" is the only thing the owner would ever see. The receipt
+    has to keep saying which refusal it is."""
+    receipts = []
+
+    class Adapter:
+        conflict = SimpleNamespace(active=False)
+
+        def connect(self):
+            return SimpleNamespace(
+                code="transport_unavailable",
+                detail="macOS Input Monitoring is denied for this process",
+            )
+
+        def close(self):
+            pass
+
+    published = threading.Event()
+
+    def record(receipt):
+        receipts.append(receipt)
+        published.set()
+
+    service = CreatorMicroOutputService(adapter_factory=Adapter, callback=record)
+    service.start()
+    assert published.wait(5), "the worker published nothing about a device it cannot open"
+    service.close()
+    assert receipts[0].reason == "transport_unavailable"
+    assert "Input Monitoring" in receipts[0].detail
+    assert receipts[0].available is False
+
+
+def test_a_missing_pad_still_reads_as_reconnecting_with_the_reason_kept():
+    """Nothing to connect to is the case "reconnecting" was written for; the
+    exception's own words still travel, so the log is not silent."""
+    receipts = []
+
+    def factory():
+        raise OSError("Creator Micro 2 not found")
+
+    published = threading.Event()
+
+    def record(receipt):
+        receipts.append(receipt)
+        published.set()
+
+    service = CreatorMicroOutputService(adapter_factory=factory, callback=record)
+    service.start()
+    assert published.wait(5)
+    service.close()
+    assert receipts[0].reason == "reconnecting"
+    assert receipts[0].detail == "Creator Micro 2 not found"

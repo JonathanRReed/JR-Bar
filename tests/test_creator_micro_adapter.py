@@ -409,3 +409,16 @@ def test_conflict_only_accepts_integer_ids_issued_by_this_adapter():
     conflict = DeviceConflict({42})
     assert conflict.observe(42) is None
     assert conflict.observe("42") == "foreign_response_id"
+
+
+def test_a_refused_open_reports_its_code_and_its_own_words():
+    """The caller only ever sees the receipt, so a refusal that does not
+    carry its reason is indistinguishable from a pad that is not there."""
+    from jrbar.creator_micro_hidapi import DeviceAccessError
+
+    denied = DeviceAccessError("input_monitoring_denied", "macOS Input Monitoring is denied for this process")
+    receipt = CreatorMicro2Adapter(FakeTransport(open_error=denied), INFO).connect()
+    assert receipt.code == "input_monitoring_denied"
+    assert receipt.detail == "macOS Input Monitoring is denied for this process"
+    # A refusal with nothing to say still gets a sentence.
+    assert CreatorMicro2Adapter(FakeTransport(open_error=PermissionError()), INFO).connect().detail

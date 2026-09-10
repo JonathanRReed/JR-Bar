@@ -583,3 +583,19 @@ def test_approve_device_and_set_settings_persist_and_reconfigure(deck_live, monk
     assert controller._deck_control_settings == saved
     assert controller._core_build_state()["deck"]["settings"] == reply
     assert controller._core_dispatch("deck_set_settings", {"analog_enabled": True})["analog_enabled"] is True
+
+
+def test_device_access_receipts_say_what_to_do_whichever_operation_hit_them():
+    """Lighting and keymap setup open the pad the same way, so one refusal
+    keeps one sentence. The Bluetooth pad shares its macOS HID device with
+    its own keyboard collection, which is why this refusal exists at all."""
+    grant = "Allow JR-Bar in macOS Input Monitoring settings to use Creator Micro 2."
+    assert receipt_message("input_monitoring_denied", source="output") == grant
+    assert receipt_message("input_monitoring_denied") == grant
+    assert receipt_message("no_device", source="output") == "No Creator Micro 2 is connected."
+    assert receipt_message("transport_unavailable", source="output") == "Creator Micro 2 could not be opened."
+    assert receipt_message("aggregate_preview", source="output") == (
+        "Creator Micro 2 lights the whole pad, not one key per session."
+    )
+    # A source-specific sentence still wins over the shared fallback.
+    assert receipt_message("device_conflict") == "Close Input and other hardware controllers, then inspect again."

@@ -12,7 +12,8 @@ from jrbar.creator_micro_hidapi import HidApiTransport
 @pytest.fixture
 def backend(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
-    state = SimpleNamespace(exclusive=1, opened=[], closed=0, setter_works=True)
+    # ``access`` is IOHIDCheckAccess's answer: 0 granted, 1 denied, 2 unknown.
+    state = SimpleNamespace(exclusive=1, opened=[], closed=0, setter_works=True, access=0, checked=[])
 
     class Function:
         def __init__(self, callback):
@@ -52,7 +53,15 @@ def backend(monkeypatch):
                      "usage_page": 0xFF00, "usage": 1,
                      "serial_number": "fixture-device", "path": b"vendor-collection"}]
 
+    def check_access(request):
+        state.checked.append(request)
+        return state.access
+
+    iokit = SimpleNamespace(IOHIDCheckAccess=Function(check_access))
+
     def load(path):
+        if path.endswith("IOKit"):
+            return iokit
         assert path == Hid.__file__
         return native
 
@@ -91,3 +100,35 @@ def test_macos_reconnect_reapplies_nonexclusive_policy(backend):
     transport.open()
     assert state.opened == [b"vendor-collection", b"vendor-collection"]
     transport.close()
+
+
+def test_macos_refuses_the_open_when_input_monitoring_is_denied(backend):
+    """Bluetooth puts the keyboard and vendor collections on one macOS HID
+    device, so a denial makes every open fail with an unexplained I/O error.
+    Naming it is the difference between "grant this" and "the pad is gone"."""
+    state, _native, transport = backend
+    state.access = 1
+    with pytest.raises(PermissionError) as refused:
+        transport.open()
+    assert refused.value.code == "input_monitoring_denied"
+    assert state.opened == []
+    assert state.checked == [1]  # kIOHIDRequestTypeListenEvent
+
+
+def test_macos_opens_when_access_was_never_decided(backend):
+    """``unknown`` is nobody having been asked yet: the open itself is what
+    raises the prompt, so refusing here would never let it be granted."""
+    state, _native, transport = backend
+    state.access = 2
+    transport.open()
+    assert state.opened == [b"vendor-collection"]
+    transport.close()
+
+
+def test_input_monitoring_check_treats_a_missing_getter_as_no_evidence(monkeypatch):
+    """An OS without ``IOHIDCheckAccess`` has not denied anything."""
+    from jrbar.creator_micro_hidapi import macos_input_monitoring_denied
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(ctypes, "CDLL", lambda path: SimpleNamespace())
+    assert macos_input_monitoring_denied() is False

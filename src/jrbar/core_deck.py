@@ -73,6 +73,14 @@ OUTPUT_RECEIPT_MESSAGES: Final = {
     "ready": "Creator Micro 2 ready.",
     "unsupported_firmware": "Creator Micro 2 firmware does not expose agent-status output.",
     "device_conflict": "Creator Micro 2 stopped after detecting conflicting device traffic.",
+    # Over Bluetooth the pad's keyboard and vendor collections share one macOS
+    # HID device, so opening it needs Input Monitoring. Without this sentence
+    # the refusal reads as a pad that keeps disconnecting.
+    "input_monitoring_denied": "Allow JR-Bar in macOS Input Monitoring settings to use Creator Micro 2.",
+    "transport_unavailable": "Creator Micro 2 could not be opened.",
+    "no_device": "No Creator Micro 2 is connected.",
+    "per_key_output_unsupported": "Creator Micro 2 firmware does not light single keys.",
+    "aggregate_preview": "Creator Micro 2 lights the whole pad, not one key per session.",
 }
 # Device-action receipts as deck_controller.py words them.
 ACTION_RECEIPT_MESSAGES: Final = {
@@ -95,7 +103,10 @@ def receipt_message(code: str, *, source: str = "setup") -> str:
     table = {"setup": SETUP_RECEIPT_MESSAGES, "output": OUTPUT_RECEIPT_MESSAGES, "action": ACTION_RECEIPT_MESSAGES}.get(
         source, SETUP_RECEIPT_MESSAGES
     )
-    text = table.get(code) or SETUP_RECEIPT_MESSAGES.get(code)
+    # Opening the pad can be refused the same way during keymap setup as
+    # during lighting, so a device-access code keeps its sentence whichever
+    # operation ran into it.
+    text = table.get(code) or SETUP_RECEIPT_MESSAGES.get(code) or OUTPUT_RECEIPT_MESSAGES.get(code)
     if text is not None:
         return text
     if source == "action":
