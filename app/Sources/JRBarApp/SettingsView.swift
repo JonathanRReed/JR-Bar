@@ -446,7 +446,7 @@ struct SettingNumberField: View {
                     .multilineTextAlignment(.trailing)
                     .monospacedDigit()
                     .frame(width: 64)
-                    ValueText(text: unit, width: 16)
+                    ValueText(text: unit, width: max(16, CGFloat(unit.count) * 9))
                 }
             } label: {
                 SettingLabel(title: title, subtitle: subtitle)

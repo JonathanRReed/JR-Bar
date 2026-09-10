@@ -100,3 +100,20 @@ struct UsageHistoryTests {
         #expect(ok.account?.plan == "Max")
     }
 }
+
+@Suite("Usage provider hints")
+struct UsageProviderHintTests {
+    @Test("action and reason decode from the daemon's state and are optional")
+    func actionReason() throws {
+        guard case .state(let state) = try CoreFixtures.message("real_state.json") else { Issue.record("not a state"); return }
+        let providers = try #require(state.usage?.providers)
+        let claude = try #require(providers.first { $0.id == "claude" })
+        #expect(claude.state == "stale" && claude.action == "Reconnect Claude" && claude.reason == "authentication_required")
+        #expect(claude.account == nil && claude.windows.count == 3)
+        let codex = try #require(providers.first { $0.id == "codex" })
+        #expect(codex.action == nil && codex.reason == nil && codex.state == "ready")
+        #expect(codex.windows.first?.usedPct == 100)
+        let cursor = try #require(providers.first { $0.id == "cursor" })
+        #expect(cursor.state == "source_not_found" && cursor.action == "Import Cursor browser session" && cursor.windows.isEmpty)
+    }
+}

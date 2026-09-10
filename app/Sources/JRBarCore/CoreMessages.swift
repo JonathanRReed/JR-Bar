@@ -308,14 +308,22 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// Plan, account label and fidelity when the daemon knows them
     /// (app-proposed; `usage_history` carries the same block).
     public var account: UsageAccount?
+    /// The daemon's fix-it hint when the source is not `ready` ("Reconnect
+    /// Claude", "Run grok login") and the reason word behind it
+    /// (`authentication_required`, `browser_session_not_imported`).
+    public var action: String?
+    public var reason: String?
 
-    public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil, account: UsageAccount? = nil) {
+    public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
+                account: UsageAccount? = nil, action: String? = nil, reason: String? = nil) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
         self.state = state
         self.forecast = forecast
         self.account = account
+        self.action = action
+        self.reason = reason
     }
 
     public init(from decoder: Decoder) throws {
@@ -326,6 +334,8 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         state = try c.decodeIfPresent(String.self, forKey: .state)
         forecast = try c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
         account = try c.decodeIfPresent(UsageAccount.self, forKey: .account)
+        action = try? c.decodeIfPresent(String.self, forKey: .action)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
     }
 
     /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI
@@ -576,19 +586,74 @@ public struct CoreLightSurface: Codable, Hashable, Sendable {
     }
 }
 
+/// `lights.auto_dim`: the decision behind the `auto_dim` dimming word.
+/// `mode` is the setting, `source` the reader that produced `factor`
+/// (ambient without a sensor falls back to `display`), `available` false
+/// when the mode's own source could not be read, `reading` the raw value
+/// (lux, the display fraction, or minutes since midnight).
+public struct CoreAutoDim: Codable, Hashable, Sendable {
+    public var mode: String
+    public var source: String
+    public var factor: Double?
+    public var available: Bool
+    public var reading: Double?
+
+    public init(mode: String = "off", source: String = "off", factor: Double? = nil, available: Bool = true, reading: Double? = nil) {
+        self.mode = mode
+        self.source = source
+        self.factor = factor
+        self.available = available
+        self.reading = reading
+    }
+
+    enum CodingKeys: String, CodingKey { case mode, source, factor, available, reading }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try c.decodeIfPresent(String.self, forKey: .mode) ?? "off"
+        source = try c.decodeIfPresent(String.self, forKey: .source) ?? mode
+        factor = try? c.decodeIfPresent(Double.self, forKey: .factor)
+        available = try c.decodeIfPresent(Bool.self, forKey: .available) ?? true
+        reading = try? c.decodeIfPresent(Double.self, forKey: .reading)
+    }
+
+    /// The setting is doing something.
+    public var isActive: Bool { mode != "off" }
+}
+
 public struct CoreLights: Codable, Hashable, Sendable {
     public var surfaces: [String: CoreLightSurface]
     public var linked: Bool?
+    /// Additive (protocol 1, schema 3): the `devices_linked` setting in
+    /// effect with both a Pro and a Dot connected, the measured gap between
+    /// their write completions, and the auto-dim decision.
+    public var devicesLinked: Bool?
+    public var linkedSkewMs: Double?
+    public var autoDim: CoreAutoDim?
 
-    public init(surfaces: [String: CoreLightSurface] = [:], linked: Bool? = nil) {
+    public init(surfaces: [String: CoreLightSurface] = [:], linked: Bool? = nil, devicesLinked: Bool? = nil,
+                linkedSkewMs: Double? = nil, autoDim: CoreAutoDim? = nil) {
         self.surfaces = surfaces
         self.linked = linked
+        self.devicesLinked = devicesLinked
+        self.linkedSkewMs = linkedSkewMs
+        self.autoDim = autoDim
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case surfaces, linked
+        case devicesLinked = "devices_linked"
+        case linkedSkewMs = "linked_skew_ms"
+        case autoDim = "auto_dim"
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         surfaces = try c.decodeIfPresent([String: CoreLightSurface].self, forKey: .surfaces) ?? [:]
         linked = try c.decodeIfPresent(Bool.self, forKey: .linked)
+        devicesLinked = try? c.decodeIfPresent(Bool.self, forKey: .devicesLinked)
+        linkedSkewMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewMs)
+        autoDim = try? c.decodeIfPresent(CoreAutoDim.self, forKey: .autoDim)
     }
 
     public var screenBar: CoreLightSurface? { surfaces["screen_bar"] }

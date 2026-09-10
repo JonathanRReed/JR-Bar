@@ -83,6 +83,8 @@ struct LightingPage: View {
                 .disabled(!(store.document.bool("idle_auto_off_enabled") ?? false))
         }
 
+        AutoDimSection(store: store)
+
         Section {
             SettingPicker(store, "Active scene", subtitle: "A presentation policy: brightness, motion and notification admission as one choice.",
                           path: "active_scene", options: Self.scenes, default: "calm")
@@ -108,6 +110,111 @@ struct LightingPage: View {
             if let hex = store.document.string(SettingsPath(path)), NSColor(hex: hex) != nil { return hex }
         }
         return "#00FF66"
+    }
+}
+
+/// Settings › Lighting › Auto-dim: the `auto_dim` document (`mode`, and the
+/// rows of whichever mode is chosen) plus the live line from
+/// `lights.auto_dim`, what the daemon read and the factor it applied.
+struct AutoDimSection: View {
+    @Bindable var store: SettingsStore
+
+    private var settings: AutoDimSettings { AutoDimSettings(document: store.document) }
+    private var mode: AutoDimSettings.Mode { settings.mode }
+    private var provided: Bool { store.hasDocument && AutoDimSettings.isProvided(in: store.document) }
+
+    var body: some View {
+        Section {
+            Provided(store, AutoDimSettings.modePath.description) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Picker("Auto-dim", selection: store.string(AutoDimSettings.modePath.description, default: "off")) {
+                        ForEach(AutoDimSettings.Mode.allCases, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .accessibilityLabel("Auto-dim mode")
+                    Text(mode.detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            switch mode {
+            case .off:
+                EmptyView()
+            case .schedule:
+                Provided(store, AutoDimSettings.scheduleStartPath.description, AutoDimSettings.scheduleEndPath.description) {
+                    LabeledContent {
+                        HStack(spacing: 8) {
+                            DatePicker("", selection: store.minutesOfDay(AutoDimSettings.scheduleStartPath.description, default: AutoDimSettings.defaults.scheduleStartMinutes),
+                                       displayedComponents: .hourAndMinute).labelsHidden()
+                            Text("to").foregroundStyle(.secondary)
+                            DatePicker("", selection: store.minutesOfDay(AutoDimSettings.scheduleEndPath.description, default: AutoDimSettings.defaults.scheduleEndMinutes),
+                                       displayedComponents: .hourAndMinute).labelsHidden()
+                        }
+                    } label: {
+                        SettingLabel(title: "Between", subtitle: "Minutes of the day; a start after the end wraps midnight.")
+                    }
+                }
+                SettingSlider(store, "Dim to", path: AutoDimSettings.scheduleFractionPath.description, in: AutoDimSettings.minFraction...1,
+                              default: AutoDimSettings.defaults.scheduleFraction, format: SettingsStore.percent)
+            case .display:
+                SettingSlider(store, "Never below", subtitle: "The floor under the display's brightness.", path: AutoDimSettings.displayMinFractionPath.description,
+                              in: AutoDimSettings.minFraction...1, default: AutoDimSettings.defaults.displayMinFraction, format: SettingsStore.percent)
+            case .ambient:
+                SettingSlider(store, "Never below", subtitle: "The brightness at the low lux mark.", path: AutoDimSettings.ambientMinFractionPath.description,
+                              in: AutoDimSettings.minFraction...1, default: AutoDimSettings.defaults.ambientMinFraction, format: SettingsStore.percent)
+                SettingNumberField(store, "Dark below", subtitle: "Full floor at this reading.", path: AutoDimSettings.ambientLuxFloorPath.description,
+                                   in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxFloor, unit: "lux")
+                SettingNumberField(store, "Bright above", subtitle: "Full brightness at this reading; must be above the dark mark.", path: AutoDimSettings.ambientLuxCeilingPath.description,
+                                   in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxCeiling, unit: "lux")
+            }
+            if provided, mode != .off {
+                AutoDimReadoutRow(result: store.core.lights?.autoDim, settings: settings)
+            }
+        } header: {
+            Text("Auto-dim")
+        } footer: {
+            SectionNote("Multiplies every light's brightness on top of idle and sleep dimming; the why popover names it when it is in effect.")
+        }
+    }
+}
+
+/// "Ambient: 12 lux → 45 %", "Sensor unavailable, following display: 62 % → 62 %".
+struct AutoDimReadoutRow: View {
+    let result: CoreAutoDim?
+    let settings: AutoDimSettings
+
+    private var line: String { AutoDimReadout.line(result, settings: settings) ?? "Waiting for the core's reading" }
+    private var unavailable: Bool { result.map { !$0.available } ?? false }
+
+    var body: some View {
+        LabeledContent {
+            HStack(spacing: 6) {
+                Image(systemName: unavailable ? "exclamationmark.triangle.fill" : symbol)
+                    .foregroundStyle(unavailable ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .font(.callout)
+                Text(line)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .contentTransition(.numericText())
+            .animation(.easeInOut(duration: 0.2), value: line)
+        } label: {
+            SettingLabel(title: "Right now")
+        }
+        .accessibilityLabel("Auto-dim right now: \(line)")
+    }
+
+    private var symbol: String {
+        switch result?.source {
+        case "ambient": return "sun.max"
+        case "display": return "display"
+        case "schedule": return "clock"
+        default: return "moon"
+        }
     }
 }
 

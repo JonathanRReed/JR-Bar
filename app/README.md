@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 131 tests / 22 suites; the parity test fans out over 29 programs
+swift test                  # 143 tests / 26 suites; the parity test fans out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -200,9 +200,11 @@ compiler ports reproduce exactly.
   `.disconnected` when the socket drops).
 * `CoreCodec` / `CoreMessages`: `hello`, `state` (aggregate, sessions with
   origin/terminal/ask, asks, devices, usage windows and forecast, power,
-  focus, escalation, health as `JSONValue`, settings generation), `lights`
+  focus, escalation, health as `JSONValue`, settings generation, usage
+  providers with the daemon's `action` / `reason` fix-it hints), `lights`
   (surfaces by name with program, led count, anchor, motion, static
-  fallback, brightness, why), `event`, `settings` (document as `JSONValue`),
+  fallback, brightness, why; `linked`, `devices_linked`, `linked_skew_ms`
+  and the `auto_dim` decision as `CoreAutoDim`), `event`, `settings` (document as `JSONValue`),
   `reply`, `log`, and `command` encoding. Unknown keys are ignored, unknown
   types and future `v` values decode to `.unknown` instead of failing, and
   every field the daemon might omit is optional.
@@ -276,7 +278,11 @@ connected, and a seeded batch from yesterday and earlier today, are
 `unseen: true`. `clear_completed` replies with a `batch` that `undo_clear`
 restores for 300 s. When supervised it exits once its parent is gone. Its
 settings document is seeded from the real Python defaults
-(`default_settings_document()`); `set_setting` writes by dot path and
+(`default_settings_document()`, `auto_dim` included; a write under
+`auto_dim.*` republishes `lights` with the mock's `auto_dim` decision:
+schedule against the wall clock, display a fixed 62 %, ambient falling
+back to display with `available: false` since there is no sensor);
+`set_setting` writes by dot path and
 echoes a new `settings` (an index past the end of an array is refused with
 `invalid_path`), `reset_settings` (`paths[]`, a protocol-1 extension)
 restores from the defaults, `install_hooks` / `uninstall_hooks` flip
@@ -335,11 +341,15 @@ The daemon adopted them on 2026-09-09 (`usage_history`, `list_effects`,
 * `quota_reset` is emitted (the doc reserves it) with `provider` and
   `detail` when the idle step puts a window back.
 
-The Creator Micro 2 deck (proposed 2026-09-10, mirroring
+The Creator Micro 2 deck (proposed and adopted 2026-09-10, mirroring
 `deck_session_board.py`, `creator_micro_keymap.py`,
 `creator_micro_lighting.py` and `deck_control_center_window.py`; the
-daemon has not adopted it yet, so against the real core the Control Center
-shows "Core not connected"-style empties until `state.deck` exists):
+daemon's shapes are in `docs/CORE-PROTOCOL.md`, and
+`Tests/JRBarCoreTests/Fixtures/real_state.json` is one of its frames with
+the pad off: `device` present but `connected` / `approved` false and
+`transport` / `layer` / `profile` / `firmware` / `receipt` null, thirteen
+remembered identities with null labels, seven banks, a stock keymap with
+three layers):
 
 * `state.deck = {device, slots[13], aux[7], banks, rail, keymap, input_check,
   last_input, settings}`.
@@ -589,7 +599,14 @@ shows "Core not connected"-style empties until `state.deck` exists):
   length (null = automatic), bracket style, minimum glow), Lighting
   (provider colour pickers, blend mode with descriptions, cycle speed, done
   celebration, pulse floor/ceiling per mode, idle/sleep dim, auto-off,
-  scene, and an Effects… page that is an empty state), Notifications &
+  Auto-dim (`AutoDimSettings` in `JRBarCore`: a segmented Off / Schedule /
+  Follow display / Ambient light picker on `auto_dim.mode`, then only the
+  chosen mode's rows: start/end time pickers and a fraction slider,
+  the display floor, or the ambient floor with lux floor/ceiling fields;
+  under them a "Right now" line from `lights.auto_dim` via
+  `AutoDimReadout`: "Ambient: 12 lux → 45 %", "Sensor unavailable,
+  following display: 62 % → 62 %", "Schedule: 23:10, inside the window →
+  30 %", "Display unreadable → 100 %"), scene, and Effects…), Notifications &
   Focus (completion banner/sweep, escalation tier and timings, alert burst,
   quiet schedule with time pickers, focus sync with per-Focus dim rules,
   DND mode, keep-awake, closed-lid policy with the helper's status from
@@ -742,19 +759,20 @@ shows "Core not connected"-style empties until `state.deck` exists):
   which only works from a bundled, signed app. `reset_settings` and
   `undo_clear`'s `batch` shape are app-proposed details the mock answers;
   the real daemon has to adopt them. `subscribe` is not surfaced.
-* Usage Center and Effect Studio run on app-proposed protocol extensions
-  (below) that only the mock answers today; against the real daemon the
-  cards show their quota rings and forecast from `state` and the history
-  section reports the `unknown_command` error with a Retry, and the studio
-  stays on its "Loading effects…" state until `list_effects` exists.
-  `apply_effect`'s `parameters` argument is an extension too: the daemon's
-  `EffectAssignmentRecord` has no parameters yet, so tuned values only
-  survive on the mock.
-* The Control Center and the Rail run on the app-proposed `state.deck`
-  extension that only the mock answers; the real daemon has no deck yet,
-  so against it the window shows the "Core not connected" empty state
-  (there is no `deck` in `state`) and the Devices card reads "Not provided
-  by core". The 0.8 intent that a key on a live ask may approve it when
+* The daemon serves `usage_history`, `list_effects`, `list_assignments`
+  and friends since 2026-09-09 and `state.deck` since 2026-09-10; the
+  history section still shows an error row with Retry, and the studio its
+  "Loading effects…" state, against any core that lacks them. The
+  daemon reports no price table, so the Usage Center's cost lines read
+  "≈ $0.00 · Approximate: the core reported no price table for this
+  provider". `apply_effect`'s `parameters` argument is an extension: the
+  daemon's `EffectAssignmentRecord` has no parameters yet, so tuned values
+  only survive on the mock.
+* The Control Center against a remembered pad that is off (the owner's
+  case: `connected` and `approved` both false) says "Off, not yet
+  approved", keeps the keymap badge from the backup and disables Apply /
+  Restore, since the daemon refuses them with `connection_required`;
+  Approve appears only once the pad is seen. The 0.8 intent that a key on a live ask may approve it when
   the terminal is frontmost is the daemon's `deck_press` to implement; the
   app only sends the press. Explicit per-control mappings (open_app,
   shortcut, …) are not edited here: the Dial and Joystick show what the
@@ -764,8 +782,16 @@ shows "Core not connected"-style empties until `state.deck` exists):
 * The Lighting page's tiny previews are built locally
   (`LightingPreviewPrograms`): a reading of each blend mode and the
   celebration, not the daemon's compiler output. The strip is the truth.
-* History rows are whatever `list_history` returns; the app does not
-  persist its own copy, so nothing is shown while the core is away.
+* History rows are whatever `list_history` returns (labels through
+  `SessionLabel`, so the daemon's "Claude 8870963f-850a-…" reads
+  "8870963f" over the Claude tile); the app does not persist its own copy,
+  so nothing is shown while the core is away.
+* Settings keys the daemon does not serve show "Not provided by core"
+  rather than a blank: today `menu_bar_icon_style`,
+  `quota_alert_thresholds` and `cloud_ingest_token_path` (the
+  `SettingsKey.appIntroduced` set). macOS notification permission for the
+  bundle id is the user's: a denied permission logs "notification skipped:
+  permission denied" in the Advanced log and the sound still plays.
 * The aggregate fallback is a simple reduction of `latest.json` (needs input >
   failed > working > done-within-90 s > idle); the Python attention model with
   its signals, quotas and presentation hints is not ported. Live, the

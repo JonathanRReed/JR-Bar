@@ -230,6 +230,14 @@ final class UsageCenterStore {
         var parts: [String] = []
         if let plan = account?.plan, !plan.isEmpty { parts.append(plan) }
         if let label = account?.label, !label.isEmpty { parts.append(label) }
+        // A source that is not ready carries the daemon's fix-it hint
+        // ("Reconnect Claude · authentication required"); that says more
+        // than repeating the badge's word.
+        if let action = provider.action, !action.isEmpty {
+            parts.append(action)
+            if let reason = provider.reason, !reason.isEmpty { parts.append(reason.replacingOccurrences(of: "_", with: " ")) }
+            return parts.joined(separator: " · ")
+        }
         parts.append(fidelityLabel(provider.fidelity ?? account?.fidelity))
         return parts.joined(separator: " · ")
     }

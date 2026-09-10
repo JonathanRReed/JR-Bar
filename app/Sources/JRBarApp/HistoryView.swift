@@ -254,7 +254,7 @@ struct HistoryRowView: View {
                 ProviderTile(style: style, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(row.label ?? style.name).fontWeight(.medium).lineLimit(1)
+                        Text(row.displayLabel).fontWeight(.medium).lineLimit(1)
                         KindBadge(kind: row.kind)
                         if row.unseen {
                             Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Happened while you were away")
@@ -290,7 +290,7 @@ struct HistoryRowView: View {
         .onHover { hovering = $0 }
         .onTapGesture { store.open(row) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.label ?? style.name) \(row.kindWord) at \(HistoryStore.clock(row.date))")
+        .accessibilityLabel("\(row.displayLabel) \(row.kindWord) at \(HistoryStore.clock(row.date))")
     }
 }
 

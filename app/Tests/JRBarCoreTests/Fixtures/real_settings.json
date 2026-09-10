@@ -1,0 +1,259 @@
+{
+ "document": {
+  "active_scene": "calm",
+  "agent_keep_awake_enabled": true,
+  "alert_burst": 3,
+  "auto_dim": {
+   "ambient": {
+    "lux_ceiling": 400.0,
+    "lux_floor": 5.0,
+    "min_fraction": 0.1
+   },
+   "display": {
+    "min_fraction": 0.15
+   },
+   "mode": "off",
+   "schedule": {
+    "end_minutes": 420,
+    "fraction": 0.3,
+    "start_minutes": 1320
+   }
+  },
+  "battery_monitoring": {
+   "charging_idle_enabled": true,
+   "full_charge_watts": null,
+   "low_battery_alert_enabled": true,
+   "low_battery_threshold_percent": 5.0,
+   "power_change_preview_seconds": 7.0,
+   "show_on_power_change": true
+  },
+  "calendar_alerts_enabled": true,
+  "calendar_lead_minutes": 5.0,
+  "calibration_profiles": {},
+  "capacity_history_enabled": true,
+  "capacity_history_retention_days": 7,
+  "claude_plan_limits_consent_version": 1,
+  "claude_plan_limits_enabled": true,
+  "closed_lid_awake_policy": "agents",
+  "closed_lid_grace_minutes": 5.0,
+  "cloud_ingest_enabled": false,
+  "codex_percent_enabled": true,
+  "colors": {
+   "agent_colors": {
+    "antigravity": "#ABE17E",
+    "claude": "#D97757",
+    "codex": "#2B8FFF",
+    "cursor": "#FFCC00",
+    "devin": "#5C84B0",
+    "gemini": "#34BAB9",
+    "grok": "#636366",
+    "hermes": "#FF9500",
+    "kiro": "#A00848",
+    "openclaw": "#B23400",
+    "opencode": "#AF52DE",
+    "pi": "#914130"
+   },
+   "blend_mode": "round_robin",
+   "color_by_project": false,
+   "cycle_speed_seconds": 1.6,
+   "done_celebration_enabled": true,
+   "fade_ceiling": {
+    "ask": 0.5,
+    "idle": 0.5,
+    "working": 0.5
+   },
+   "fade_floor": {
+    "ask": 0.01,
+    "idle": 0.01,
+    "working": 0.01
+   },
+   "mode_animation": {
+    "ask": "blink",
+    "idle": "pulse",
+    "working": "roll"
+   },
+   "mode_colors": {
+    "ask": "#D187F5",
+    "done": "#5DD38A",
+    "idle": "#856A6B",
+    "working": "#00E5FF"
+   },
+   "provider_animation": {
+    "claude": "comet",
+    "codex": "comet"
+   },
+   "round_robin_urgency_alert": true,
+   "session_colors": {},
+   "speed_overrides": {}
+  },
+  "completion_notification_enabled": true,
+  "completion_sweep_enabled": true,
+  "devices": [
+   {
+    "auto_brightness_enabled": true,
+    "blend_mode": null,
+    "blue_gain": 1.0,
+    "brightness": 255,
+    "green_gain": 1.0,
+    "id": "virtual:status-bar",
+    "led_display": "agent",
+    "name": "Screen Bar",
+    "path": "virtual:status-bar",
+    "provider_pin": null,
+    "red_gain": 1.0,
+    "resting_glow": 0.0,
+    "signal_policy": null
+   },
+   {
+    "auto_brightness_enabled": false,
+    "blend_mode": null,
+    "blue_gain": 1.5,
+    "brightness": 255,
+    "green_gain": 0.43380208333333337,
+    "id": "sidepulse:pro:serial:d92e7f73b2794c5dec91cf90",
+    "led_display": "agent",
+    "name": "SidePulse",
+    "path": "/Volumes/SidePulse",
+    "provider_pin": null,
+    "red_gain": 0.7465625,
+    "resting_glow": 0.0,
+    "signal_policy": null
+   },
+   {
+    "auto_brightness_enabled": false,
+    "blend_mode": null,
+    "blue_gain": 1.0,
+    "brightness": 255,
+    "green_gain": 1.0,
+    "id": "sidepulse:dot:serial:9744730147adfb147499e00f",
+    "led_display": "agent",
+    "name": "SidePulse Dot",
+    "path": "/Volumes/PulseDot",
+    "provider_pin": null,
+    "red_gain": 1.0,
+    "resting_glow": 0.0,
+    "signal_policy": null
+   }
+  ],
+  "devices_linked": true,
+  "dismissed_tips": [],
+  "dnd_dim_fraction": 0.15,
+  "dnd_focus_mode": "dim",
+  "dnd_override_created_epoch": null,
+  "dnd_override_mode": null,
+  "dnd_override_until_epoch": null,
+  "dnd_schedule_enabled": false,
+  "dnd_schedule_end_minutes": 420,
+  "dnd_schedule_mode": "dark",
+  "dnd_schedule_start_minutes": 1320,
+  "escalation_final_seconds": 300.0,
+  "escalation_menu_bar_seconds": 120.0,
+  "escalation_ramp_seconds": 45.0,
+  "escalation_tier": "menu_bar",
+  "escalation_webhook_url": "",
+  "focus_dim_rules": {},
+  "focus_profile_rules": {},
+  "focus_signal_policy": {},
+  "focus_sync_enabled": true,
+  "global_action_shortcuts": {},
+  "global_brightness_scale": 1.0,
+  "idle_auto_off_after_minutes": 60.0,
+  "idle_auto_off_enabled": false,
+  "idle_dim_after_minutes": 10.0,
+  "idle_dim_enabled": true,
+  "idle_dim_fraction": 0.3,
+  "keep_awake_on_battery": true,
+  "keep_display_awake": false,
+  "led_display": "agent",
+  "lid_closed_active_animation": {
+   "duration_seconds": 1.5,
+   "program": "#FF9F0A 300ms pulse\n#FF9F0A 250ms cosine\n#5A3A00 350ms cosine\n#1A1200 600ms cosine"
+  },
+  "lid_closed_animation": {
+   "duration_seconds": 1.4,
+   "program": "#00E5FF 350ms pulse\n#0044AA 450ms cosine\noff 600ms cosine"
+  },
+  "lid_open_active_animation": {
+   "duration_seconds": 1.2,
+   "program": "#12E3B0 200ms pulse\n#00E5FF 300ms cosine\n#00E5FF 700ms pulse"
+  },
+  "lid_open_animation": {
+   "duration_seconds": 1.4,
+   "program": "#12E3B0 300ms pulse\n#0FA07C 300ms cosine\n#12E3B0 800ms pulse"
+  },
+  "link_screen_bar_to_hardware": true,
+  "menu_bar_label_enabled": false,
+  "notification_policy_version": 1,
+  "operator_history_retention_days": 7,
+  "quota_alerts_enabled": true,
+  "reminder_alerts_enabled": true,
+  "remote_peers": {
+   "enabled": true,
+   "include_messages": false,
+   "max_peers": 8,
+   "muted_machines": [],
+   "per_peer_timeout_seconds": 4.0,
+   "publish_enabled": false,
+   "refresh_deadline_seconds": 8.0,
+   "remote_interrupts_muted": true,
+   "remote_ledger_path": "~/.local/state/sidepulse/agent-monitor/remote-ledger.json",
+   "unmuted_machines": [
+    "mac-b"
+   ]
+  },
+  "screen_bar_bracket_style": "auto",
+  "screen_bar_follow_alcove": true,
+  "screen_bar_gap_width": null,
+  "screen_bar_gauges_enabled": false,
+  "screen_bar_min_glow": 0.24644959058341862,
+  "screen_bar_show_in_full_screen": true,
+  "screen_bar_wing_length": null,
+  "session_open_preferences": {
+   "claude": "app"
+  },
+  "settings_schema_version": 2,
+  "setup_screen_completed": true,
+  "signal_styles": {
+   "calendar": {
+    "color": "#A45CFF",
+    "intensity": 1.0,
+    "pattern": "breathe",
+    "speed_seconds": 4.2
+   },
+   "low_battery": {
+    "color": "#E01010",
+    "intensity": 1.0,
+    "pattern": "heartbeat",
+    "speed_seconds": 3.6
+   }
+  },
+  "sleep_dim_enabled": true,
+  "sleep_dim_fraction": 0.2,
+  "studio_library": [],
+  "studio_program": "",
+  "subagent_asks_alert": false,
+  "tips_enabled": true,
+  "transcript_monitoring": {
+   "claude": false,
+   "codex": false,
+   "gemini": false,
+   "pi": false
+  },
+  "usage_display_mode": "tokens",
+  "usage_event_hook_path": "",
+  "usage_graph_days": 365,
+  "usage_graph_providers": [
+   "claude",
+   "codex",
+   "devin",
+   "grok"
+  ],
+  "virtual_status_device_enabled": true,
+  "virtual_status_device_wraps_menu_bar": true,
+  "webhook_events": []
+ },
+ "generation": 3,
+ "schema": 3,
+ "t": "settings",
+ "v": 1
+}

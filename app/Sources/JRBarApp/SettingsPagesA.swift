@@ -179,7 +179,7 @@ struct UsagePage: View {
             ], default: "tokens", segmented: true)
                 .fixedSize()
             SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
-                (1, "Today"), (7, "7 days"), (30, "30 days"),
+                (1, "Today"), (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
         }
 

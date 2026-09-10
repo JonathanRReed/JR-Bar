@@ -1,0 +1,1157 @@
+{
+ "aggregate": {
+  "active": 1,
+  "failed": 0,
+  "mode": "working",
+  "needs_you": 0,
+  "ready": 0,
+  "total": 10
+ },
+ "asks": [],
+ "deck": {
+  "aux": [
+   {
+    "index": 13,
+    "label": "Encoder 1 input 1",
+    "mapping": null
+   },
+   {
+    "index": 14,
+    "label": "Encoder 1 input 2",
+    "mapping": null
+   },
+   {
+    "index": 15,
+    "label": "Encoder 1 input 3",
+    "mapping": null
+   },
+   {
+    "index": 16,
+    "label": "Joystick sector 1",
+    "mapping": null
+   },
+   {
+    "index": 17,
+    "label": "Joystick sector 2",
+    "mapping": null
+   },
+   {
+    "index": 18,
+    "label": "Joystick sector 3",
+    "mapping": null
+   },
+   {
+    "index": 19,
+    "label": "Joystick sector 4",
+    "mapping": null
+   }
+  ],
+  "banks": {
+   "count": 7,
+   "index": 0
+  },
+  "device": {
+   "approved": false,
+   "conflict": null,
+   "connected": false,
+   "firmware": null,
+   "layer": null,
+   "name": "Creator Micro 2",
+   "profile": null,
+   "receipt": null,
+   "serial": "D0CF130481EC",
+   "transport": null
+  },
+  "input_check": false,
+  "keymap": {
+   "backup_at": 1788622263.3549955,
+   "generation": 0,
+   "layers": [
+    {
+     "label": "Profile 1 / Layer 1: Layer 1",
+     "layer": 0,
+     "profile": 0
+    },
+    {
+     "label": "Profile 1 / Layer 2: Layer 2",
+     "layer": 1,
+     "profile": 0
+    },
+    {
+     "label": "Profile 1 / Layer 3: Layer 3",
+     "layer": 2,
+     "profile": 0
+    }
+   ],
+   "state": "stock"
+  },
+  "last_input": null,
+  "rail": {
+   "edge": "off"
+  },
+  "settings": {
+   "analog_enabled": false,
+   "enabled": true,
+   "session_mode": false
+  },
+  "slots": [
+   {
+    "color": "#000000",
+    "identity": "0b88dc9a41301daa91df6b4185dcb830fee90f269610c821b2fd14f2e4821f20",
+    "index": 0,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "1d7ecc2041e1a2640cdaf02eece3624ce01acfd932eb483b8e1351cb689b9abf",
+    "index": 1,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "3e540c502fbf23f5b82c33203aa0f40935fc2ea225a9e8dee1fe40a365170e91",
+    "index": 2,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "49a013024795fad3c8e283fe62ed347fa88be95bee88e2af751ead195e086fb6",
+    "index": 3,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "583445b6d75b4ab6c24df170d502da4c8da04650fb8bd12e5f6550989a5c23a0",
+    "index": 4,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "60e7480e62e36c669cae9293b824f71f04bb1b0f502ae965688288e0211cca26",
+    "index": 5,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "9079948c4615660ecb4cb01535b3f579fa321a4364fe881d59dc30cac71b9149",
+    "index": 6,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "aa64aff5637bef3635051022d6e3f17929a9e65a7a3ca5c4fc7926b2a55b5cf2",
+    "index": 7,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "c7e45b569ccece280febb4e421f007c61c516ed8ebbb55378597e1e07b04604f",
+    "index": 8,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "cb2edbb72129c6aaaa47b2c23d23344d874bc268997db0b774d9135ac02a7d8c",
+    "index": 9,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "e1a0b011fb08677c477f2bfc0f27692fa243838aac0f79cb13b847d0f342d567",
+    "index": 10,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "f49e13260d0a162ed37624c01e16a8c1f61e26d9faa5a7a057e96cc838e4769d",
+    "index": 11,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#000000",
+    "identity": "f69b12550e6fa5f69b7e7987230d9fca2029d6e676aa01438d66dc4a845b3ba4",
+    "index": 12,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   }
+  ]
+ },
+ "devices": [
+  {
+   "brightness": 36,
+   "enabled": true,
+   "error": null,
+   "id": "screen-bar",
+   "kind": "screen_bar",
+   "leds": 8,
+   "linked": true,
+   "name": "Screen Bar"
+  },
+  {
+   "brightness": 100,
+   "connected": true,
+   "error": null,
+   "id": "sidepulse:pro:serial:d92e7f73b2794c5dec91cf90",
+   "kind": "pro",
+   "last_write": 1789049894.4128294,
+   "leds": 8,
+   "linked": true,
+   "name": "SidePulse",
+   "path": "/Volumes/SidePulse"
+  },
+  {
+   "brightness": 100,
+   "connected": true,
+   "error": null,
+   "id": "sidepulse:dot:serial:9744730147adfb147499e00f",
+   "kind": "dot",
+   "last_write": 1789049894.7652621,
+   "leds": 2,
+   "linked": true,
+   "name": "SidePulse Dot",
+   "path": "/Volumes/PulseDot"
+  }
+ ],
+ "escalation": {
+  "since": null,
+  "stage": "none"
+ },
+ "focus": {
+  "audible_allowed": true,
+  "banner_allowed": true,
+  "brightness_factor": 1.0,
+  "display": "all",
+  "mode": "normal",
+  "source": "default",
+  "summary": "DND: Off",
+  "until": null
+ },
+ "generation": 101,
+ "health": {
+  "hooks": {
+   "antigravity": "ok",
+   "claude": "ok",
+   "codex": "ok",
+   "cursor": "ok",
+   "devin": "ok",
+   "gemini": "ok",
+   "grok": "ok",
+   "hermes": "ok",
+   "kiro": "ok",
+   "openclaw": "ok",
+   "opencode": "ok",
+   "pi": "ok"
+  },
+  "intake": {
+   "hook_state": "configured",
+   "silence_seconds": 86400.0,
+   "source_health": "healthy"
+  },
+  "sources": {
+   "antigravity": {
+    "fresh": true,
+    "heard_age_seconds": 163.228499
+   },
+   "claude": {
+    "fresh": true,
+    "heard_age_seconds": 22.228499
+   },
+   "codex": {
+    "fresh": true,
+    "heard_age_seconds": 163.228499
+   },
+   "cursor": {
+    "fresh": true,
+    "heard_age_seconds": 163.228499
+   },
+   "devin": {
+    "fresh": true,
+    "heard_age_seconds": 163.228499
+   },
+   "gemini": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   },
+   "grok": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   },
+   "hermes": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   },
+   "kiro": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   },
+   "openclaw": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   },
+   "opencode": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   },
+   "pi": {
+    "fresh": true,
+    "heard_age_seconds": 162.228499
+   }
+  }
+ },
+ "now": 1789049916.228639,
+ "peers": [],
+ "power": {
+  "closed_lid": {
+   "helper_installed": true,
+   "holding": true,
+   "policy": "agents"
+  },
+  "keep_awake": true
+ },
+ "sessions": [
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "PreToolUse",
+   "id": "claude:agent:ae7b7f236de6a25ed",
+   "kind": "worker",
+   "label": "jr-bar-67 worker ae7b7f23",
+   "lifecycle": "active",
+   "message": null,
+   "mode": "tool_running",
+   "next_actor": "provider",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "ae7b7f23",
+   "since": 1789049742.0,
+   "stale": false,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789049742.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "UserPromptSubmit",
+   "id": "claude:agent:a38364bc4ee50c79c",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a38364bc",
+   "lifecycle": "active",
+   "message": null,
+   "mode": "working",
+   "next_actor": "provider",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a38364bc",
+   "since": 1789049894.0,
+   "stale": false,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789049894.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "Stop",
+   "id": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "kind": "main",
+   "label": "jr-bar-67",
+   "lifecycle": "active",
+   "message": null,
+   "mode": "working",
+   "next_actor": "provider",
+   "origin": null,
+   "parent": null,
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "fca1eb06",
+   "since": 1789049894.0,
+   "stale": false,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789049894.0,
+   "workers": 3
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "UserPromptSubmit",
+   "id": "claude:agent:a86bd4c9785918576",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a86bd4c9",
+   "lifecycle": "active",
+   "message": null,
+   "mode": "working",
+   "next_actor": "provider",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a86bd4c9",
+   "since": 1789049887.0,
+   "stale": false,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789049887.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "Stop",
+   "id": "claude:agent:ae729888d93d00f34",
+   "kind": "worker",
+   "label": "jr-bar-67 worker ae729888",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "ae729888",
+   "since": 1789049876.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789049876.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "SubagentStop",
+   "id": "claude:agent:a547b9e6958443f24",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a547b9e6",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a547b9e6",
+   "since": 1789048987.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789048987.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "SubagentStop",
+   "id": "claude:agent:add5c3d2aa3d0f255",
+   "kind": "worker",
+   "label": "jr-bar-67 worker add5c3d2",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "add5c3d2",
+   "since": 1789048769.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789048769.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "SubagentStop",
+   "id": "claude:agent:acdf7b058890d5dde",
+   "kind": "worker",
+   "label": "jr-bar-67 worker acdf7b05",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "acdf7b05",
+   "since": 1789048663.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789048663.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "Stop",
+   "id": "claude:agent:a16a72039def57d7b",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a16a7203",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a16a7203",
+   "since": 1789048027.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789048027.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "Stop",
+   "id": "claude:agent:a764be9bccedce76b",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a764be9b",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a764be9b",
+   "since": 1789047963.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789047963.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "event": "SessionEnd",
+   "id": "pi:session:01a08b8f-b494-7260-80fa-b5d440465624",
+   "kind": "main",
+   "label": "pi-work",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "pi",
+   "short_id": "01a08b8f",
+   "since": 1789047853.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047853.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "event": "SessionEnd",
+   "id": "pi:session:01a08b8f-4378-7429-b901-509b6139f913",
+   "kind": "main",
+   "label": "pi-work",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "pi",
+   "short_id": "01a08b8f",
+   "since": 1789047823.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047823.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "event": "SessionEnd",
+   "id": "pi:session:01a08b8d-d193-75b8-96b6-5ae7b2b79f3e",
+   "kind": "main",
+   "label": "pi-work",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "pi",
+   "short_id": "01a08b8d",
+   "since": 1789047728.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047728.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/gemini-work",
+   "event": "SessionEnd",
+   "id": "gemini:session:6c26a25f-43f9-436a-939a-7deaad64f473",
+   "kind": "main",
+   "label": "gemini-work",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "gemini",
+   "short_id": "6c26a25f",
+   "since": 1789047415.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047415.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/private/tmp/claude-501/-Users-jonathanreed-Downloads-JR-Bar/fca1eb06-f6d1-413e-aa5f-dd19d8e05973/scratchpad/pi-work",
+   "event": "SessionEnd",
+   "id": "pi:session:01a08b87-f9ab-7004-a801-173bdd2db01c",
+   "kind": "main",
+   "label": "pi-work",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "pi",
+   "short_id": "01a08b87",
+   "since": 1789047347.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047347.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": null,
+   "event": "SessionEnd",
+   "id": "pi:session:01a08b87-4f4e-701b-b80e-b4e3f3467fc5",
+   "kind": "main",
+   "label": "Pi 01a08b87",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "pi",
+   "short_id": "01a08b87",
+   "since": 1789047295.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047295.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": null,
+   "event": "SessionEnd",
+   "id": "pi:session:01a08b85-0a3d-7314-af60-8694dcad34a8",
+   "kind": "main",
+   "label": "Pi 01a08b85",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "pi",
+   "short_id": "01a08b85",
+   "since": 1789047147.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047147.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": null,
+   "event": "SessionEnd",
+   "id": "codex:session:01a08279-ead9-7123-8973-1a38610edd9a",
+   "kind": "main",
+   "label": "Build personal game library site",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "codex",
+   "short_id": "01a08279",
+   "since": 1789047088.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789047088.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "SubagentStop",
+   "id": "claude:agent:a85562a0fb2dfeff1",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a85562a0",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a85562a0",
+   "since": 1789046838.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789046838.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/Users/jonathanreed/Downloads/JR-Bar",
+   "event": "SubagentStop",
+   "id": "claude:agent:a80df2f40632d3c0c",
+   "kind": "worker",
+   "label": "jr-bar-67 worker a80df2f4",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+   "pid": 50453,
+   "provider": "claude",
+   "short_id": "a80df2f4",
+   "since": 1789046788.0,
+   "stale": true,
+   "terminal": {
+    "app": "Claude",
+    "bundle_id": "com.anthropic.claudefordesktop"
+   },
+   "tool": null,
+   "updated_at": 1789046788.0,
+   "workers": 0
+  },
+  {
+   "ask": null,
+   "cwd": "/",
+   "event": "SessionEnd",
+   "id": "codex:session:01a08b62-8dbd-7410-babc-ab603738f9d8",
+   "kind": "main",
+   "label": "Codex 01a08b62",
+   "lifecycle": "completed",
+   "message": null,
+   "mode": "completed",
+   "next_actor": "user",
+   "origin": null,
+   "parent": null,
+   "pid": null,
+   "provider": "codex",
+   "short_id": "01a08b62",
+   "since": 1789046691.0,
+   "stale": true,
+   "terminal": null,
+   "tool": null,
+   "updated_at": 1789046691.0,
+   "workers": 0
+  }
+ ],
+ "settings_generation": 3,
+ "t": "state",
+ "unseen_completions": [],
+ "usage": {
+  "next_refresh_at": 1789049978.1829472,
+  "providers": [
+   {
+    "account": {
+     "fidelity": "official",
+     "label": "d3a51c1c-2b9a-4371-b335-3928397be5cd",
+     "plan": null
+    },
+    "action": null,
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "codex",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": null,
+    "state": "ready",
+    "tokens": {
+     "cached_input": 3670882688,
+     "input": 204798005,
+     "output": 20160655
+    },
+    "windows": [
+     {
+      "id": "weekly",
+      "model": null,
+      "name": "7d",
+      "resets_at": 1789440279.0,
+      "scope": "all",
+      "used_pct": 100.0
+     }
+    ]
+   },
+   {
+    "account": null,
+    "action": "Reconnect Claude",
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "stale",
+    "forecast": null,
+    "id": "claude",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": "authentication_required",
+    "state": "stale",
+    "tokens": {
+     "cached_input": 19810713709,
+     "input": 228460,
+     "output": 39962514
+    },
+    "windows": [
+     {
+      "id": "five-hour",
+      "model": null,
+      "name": "5h",
+      "resets_at": 1789014600.3676,
+      "scope": "all",
+      "used_pct": 44.0
+     },
+     {
+      "id": "weekly",
+      "model": null,
+      "name": "7d",
+      "resets_at": 1789488000.367623,
+      "scope": "all",
+      "used_pct": 29.0
+     },
+     {
+      "id": "fable-only",
+      "model": "fable",
+      "name": "7d Fable",
+      "resets_at": 1789488000.367819,
+      "scope": "all",
+      "used_pct": 55.0
+     }
+    ]
+   },
+   {
+    "account": null,
+    "action": "Import Cursor browser session",
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "cursor",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": "browser_session_not_imported",
+    "state": "source_not_found",
+    "tokens": {
+     "cached_input": 0,
+     "input": 0,
+     "output": 0
+    },
+    "windows": []
+   },
+   {
+    "account": {
+     "fidelity": "official",
+     "label": "your-organization-7535461b",
+     "plan": null
+    },
+    "action": null,
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "devin",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": null,
+    "state": "ready",
+    "tokens": {
+     "cached_input": 0,
+     "input": 0,
+     "output": 0
+    },
+    "windows": [
+     {
+      "id": "daily",
+      "model": null,
+      "name": "Daily",
+      "resets_at": 1789113600.0,
+      "scope": "all",
+      "used_pct": 0.0
+     },
+     {
+      "id": "weekly",
+      "model": null,
+      "name": "7d",
+      "resets_at": 1789286400.0,
+      "scope": "all",
+      "used_pct": 0.0
+     }
+    ]
+   },
+   {
+    "account": {
+     "fidelity": "stale",
+     "label": "user@example.com",
+     "plan": null
+    },
+    "action": "Run grok login",
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "stale",
+    "forecast": null,
+    "id": "grok",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": "authentication_required",
+    "state": "stale",
+    "tokens": {
+     "cached_input": 0,
+     "input": 0,
+     "output": 0
+    },
+    "windows": [
+     {
+      "id": "credits",
+      "model": null,
+      "name": "Credits",
+      "resets_at": 1788995574.898663,
+      "scope": "all",
+      "used_pct": 6.0
+     }
+    ]
+   },
+   {
+    "account": {
+     "fidelity": "official",
+     "label": "user@example.com",
+     "plan": null
+    },
+    "action": null,
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "antigravity",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": null,
+    "state": "ready",
+    "tokens": {
+     "cached_input": 0,
+     "input": 10864700,
+     "output": 0
+    },
+    "windows": [
+     {
+      "id": "cli",
+      "model": "Gemini 3.8 Flash",
+      "name": "Antigravity CLI",
+      "resets_at": null,
+      "scope": "session",
+      "used_pct": 0.0
+     }
+    ]
+   },
+   {
+    "account": {
+     "fidelity": "official",
+     "label": "github-copilot",
+     "plan": null
+    },
+    "action": null,
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "opencode",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": null,
+    "state": "ready",
+    "tokens": {
+     "cached_input": 0,
+     "input": 56019992,
+     "output": 548814
+    },
+    "windows": [
+     {
+      "id": "free-tier",
+      "model": null,
+      "name": "Github-Copilot Quota",
+      "resets_at": null,
+      "scope": "session",
+      "used_pct": 0.0
+     }
+    ]
+   },
+   {
+    "account": null,
+    "action": null,
+    "credits_remaining": null,
+    "estimated_cost_usd": null,
+    "fidelity": "official",
+    "forecast": null,
+    "id": "openai-api",
+    "instance": "default",
+    "observed_at": 1789049858.1829472,
+    "reason": null,
+    "state": "disabled",
+    "tokens": {
+     "cached_input": 0,
+     "input": 0,
+     "output": 0
+    },
+    "windows": []
+   }
+  ],
+  "refreshed_at": 1789049858.1829472,
+  "refreshing": false
+ },
+ "v": 1
+}
