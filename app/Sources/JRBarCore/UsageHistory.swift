@@ -254,7 +254,21 @@ public enum UsageFormat {
     public static func cost(_ usd: Double, currency: String = "USD") -> String {
         let symbol = currency == "USD" ? "$" : (currency == "EUR" ? "€" : (currency == "GBP" ? "£" : currency + " "))
         if usd < 0.01, usd > 0 { return "<\(symbol)0.01" }
-        if usd >= 1000 { return String(format: "%@%.0f", symbol, usd) }
+        // Past a thousand the cents are noise and the digits run together:
+        // "$253,305" reads, "$253305" does not.
+        if usd >= 1000 { return symbol + grouped(usd.rounded()) }
         return String(format: "%@%.2f", symbol, usd)
+    }
+
+    /// 253305 → "253,305", in the reader's own locale.
+    static let groupingFormatter: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+
+    public static func grouped(_ value: Double) -> String {
+        groupingFormatter.string(from: NSNumber(value: value)) ?? String(format: "%.0f", value)
     }
 }

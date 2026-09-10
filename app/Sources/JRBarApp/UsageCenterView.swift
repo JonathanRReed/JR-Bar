@@ -129,7 +129,7 @@ struct ProviderUsageCard: View {
             if provider.isSignedOut {
                 SignedOutRow(provider: style.name)
             } else if provider.windows.isEmpty {
-                Text("No quota window reported yet.").font(.callout).foregroundStyle(.secondary)
+                Text(noWindowsLine).font(.callout).foregroundStyle(.secondary)
             } else {
                 // Rings on the left, the reading on the right, so the card
                 // does not leave half its width empty.
@@ -219,13 +219,38 @@ struct ProviderUsageCard: View {
         case "warning": return ("Near limit", .orange)
         case "exhausted", "blocked", "limited": return ("Limited", .red)
         case "stale": return ("Stale", .secondary)
+        case "disabled", "off": return ("Off", .secondary)
+        case "source_not_found", "error", "unavailable": return ("Needs setup", .orange)
         default: return nil
         }
     }
 
+    /// What stands in for the rings when the daemon reports no window: the
+    /// state word's own sentence, not a flat "nothing here".
+    private var noWindowsLine: String {
+        switch provider.state?.lowercased() {
+        case "disabled", "off":
+            return "Turned off: the core is not collecting \(style.name) usage."
+        case "source_not_found", "error", "unavailable":
+            return provider.action.map { "\($0) to see quota windows here." }
+                ?? "The core could not read \(style.name)'s usage source."
+        default:
+            return "No quota window reported yet."
+        }
+    }
+
+    /// The primary window leads, so the ring under the headline percent is
+    /// the one the headline is about; the rest keep the daemon's order.
+    private var orderedWindows: [CoreUsageWindow] {
+        guard let primary, let index = provider.windows.firstIndex(of: primary), index != 0 else { return provider.windows }
+        var windows = provider.windows
+        windows.remove(at: index)
+        return [primary] + windows
+    }
+
     private var windows: some View {
         HStack(alignment: .top, spacing: 14) {
-            ForEach(provider.windows) { window in
+            ForEach(orderedWindows) { window in
                 QuotaRing(window: window, forecast: store.forecast(for: provider, window: window), accent: style.accent,
                           now: store.now, reduced: store.reduceMotion)
             }

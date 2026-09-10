@@ -231,7 +231,7 @@ struct EffectInspectorPane: View {
                 Text(effect.id).font(.caption.monospaced()).foregroundStyle(.tertiary).textSelection(.enabled)
             }
             Text(effect.description).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text("Means: \(effect.meaning)").font(.caption).foregroundStyle(.tertiary)
+            Text(effect.familyLine).font(.caption).foregroundStyle(.tertiary)
         }
     }
 
@@ -274,7 +274,10 @@ struct EffectInspectorPane: View {
     }
 
     private func facts(_ effect: EffectDefinition) -> some View {
-        HStack(spacing: 6) {
+        // The chips are as long as the daemon's words; on a narrower window
+        // they wrap onto a second line instead of truncating "menu bar,
+        // Screen Bar, Pro" into "menu bar, Screen B…".
+        WrapRow(spacing: 6, lineSpacing: 6) {
             FactChip(symbol: "shield", text: effect.safety.label, tint: effect.safety == .safe ? .secondary : (effect.safety == .critical ? .red : .orange))
             FactChip(symbol: "bolt", text: "\(effect.energy.label) energy", tint: .secondary)
             FactChip(symbol: "rectangle.3.group", text: effect.surfaces.map(Self.surfaceName).joined(separator: ", "), tint: .secondary)
@@ -746,5 +749,58 @@ struct AssignSheet: View {
         case .missingTarget: return "This scope needs a target."
         case .urgentSemantic: return "Needs-you and Failed keep their reserved effects."
         }
+    }
+}
+
+/// A row that wraps: the daemon writes the chips' words, so their total
+/// width is not something the app can promise. Used for the Effect Studio's
+/// fact chips, where truncation would hide which surfaces an effect reaches.
+struct WrapRow: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        let rows = lines(subviews: subviews, width: width)
+        let height = rows.reduce(0) { $0 + $1.height } + lineSpacing * CGFloat(max(0, rows.count - 1))
+        let widest = rows.map(\.width).max() ?? 0
+        return CGSize(width: min(width, widest), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in lines(subviews: subviews, width: bounds.width) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += row.height + lineSpacing
+        }
+    }
+
+    private struct Line {
+        var indices: [Int] = []
+        var width: CGFloat = 0
+        var height: CGFloat = 0
+    }
+
+    private func lines(subviews: Subviews, width: CGFloat) -> [Line] {
+        var rows: [Line] = []
+        var current = Line()
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            let advance = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            if !current.indices.isEmpty, advance > width {
+                rows.append(current)
+                current = Line()
+            }
+            current.width = current.indices.isEmpty ? size.width : current.width + spacing + size.width
+            current.height = max(current.height, size.height)
+            current.indices.append(index)
+        }
+        if !current.indices.isEmpty { rows.append(current) }
+        return rows
     }
 }

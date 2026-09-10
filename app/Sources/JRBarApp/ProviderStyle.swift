@@ -35,6 +35,10 @@ struct ProviderStyle: Hashable, Sendable {
         ProviderStyle(id: "cursor", name: "Cursor", accentHex: "#FFCC00", glyph: .symbol("cursorarrow")),
         ProviderStyle(id: "hermes", name: "Hermes Agent", accentHex: "#FF9500", glyph: .symbol("paperplane.fill")),
         ProviderStyle(id: "kiro", name: "Kiro", accentHex: "#A00848", glyph: .text("K")),
+        // A usage source rather than an agent: the daemon reports it in
+        // `state.usage.providers` (`provider_usage_cli.py`), so the Usage
+        // Center needs a name for it that is not "Openai-api".
+        ProviderStyle(id: "openai-api", name: "OpenAI API", accentHex: "#10A37F", glyph: .symbol("key.horizontal.fill")),
     ].map { ($0.id, $0) })
 
     static func style(for provider: String) -> ProviderStyle {

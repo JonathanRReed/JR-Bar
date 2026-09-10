@@ -332,6 +332,38 @@ public struct EffectDefinition: Codable, Hashable, Sendable, Identifiable {
         return String(first).uppercased() + trimmed.dropFirst()
     }
 
+    /// The grey line under the description: the family this effect is in
+    /// and what it is for. The daemon's `meaning` for a provider animation
+    /// is "provider animation: chase" — the catalog and the id over again —
+    /// so it is only added when it says something new ("attention
+    /// required", "new event").
+    public var familyLine: String {
+        var parts = [Self.humanised(catalog)]
+        let roleWord = role.replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespaces)
+        if !roleWord.isEmpty, roleWord.caseInsensitiveCompare("general") != .orderedSame,
+           roleWord.caseInsensitiveCompare(parts[0]) != .orderedSame {
+            parts.append(roleWord)
+        }
+        let text = meaning.trimmingCharacters(in: .whitespaces)
+        if !text.isEmpty, !restates(text) { parts.append(text) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// True when `meaning` is just "<catalog>: <id>" or "<catalog>: <label>".
+    private func restates(_ meaning: String) -> Bool {
+        let family = Self.humanised(catalog).lowercased()
+        let text = meaning.lowercased().replacingOccurrences(of: "_", with: " ")
+        for tail in [id.lowercased(), label.lowercased()] where text == "\(family): \(tail)" { return true }
+        return text == family
+    }
+
+    /// `provider_animation` → "Provider animation", `identity_state` → "identity state".
+    static func humanised(_ raw: String) -> String {
+        let words = raw.replacingOccurrences(of: "_", with: " ").trimmingCharacters(in: .whitespaces)
+        guard let first = words.first else { return "" }
+        return String(first).uppercased() + words.dropFirst()
+    }
+
     public func parameter(named name: String) -> EffectParameter? { parameters.first { $0.name == name } }
 
     /// The complete parameter map with defaults for anything missing and

@@ -51,3 +51,41 @@ struct SessionActivityTests {
         #expect(SessionActivity.reduce(lifecycle: "failed", mode: nil, hasAsk: true, nextActor: "user") == .failed)
     }
 }
+
+@Suite("Asks with no session left")
+struct OrphanAskTests {
+    private func state(sessions: [String], asks: [String?]) -> CoreState {
+        var state = CoreState()
+        state.sessions = sessions.map { id in
+            CoreSession(id: id, provider: String(id.split(separator: ":").first ?? ""), kind: "main")
+        }
+        state.asks = asks.map { CoreAsk(session: $0, kind: "permission", openedAt: 1789067042) }
+        return state
+    }
+
+    @Test("an ask whose session is still listed is not an orphan")
+    func matched() {
+        let live = state(sessions: ["claude:session:a"], asks: ["claude:session:a"])
+        #expect(live.orphanAsks.isEmpty)
+    }
+
+    @Test("an ask the daemon kept after clearing its session still needs a row")
+    func orphaned() {
+        // The shape the real daemon served on 2026-09-10: aggregate
+        // needs_you 1, one ask, and no session with that id.
+        let cleared = state(sessions: ["devin:session:b"], asks: ["claude:session:5facd783-99c0-4263-80ec-c33f31712bd2"])
+        #expect(cleared.orphanAsks.count == 1)
+        #expect(cleared.orphanAsks.first?.session == "claude:session:5facd783-99c0-4263-80ec-c33f31712bd2")
+    }
+
+    @Test("an ask with no session at all is still an ask")
+    func sessionless() {
+        #expect(state(sessions: ["claude:session:a"], asks: [nil]).orphanAsks.count == 1)
+        #expect(state(sessions: ["claude:session:a"], asks: [""]).orphanAsks.count == 1)
+    }
+
+    @Test("no asks, no work")
+    func none() {
+        #expect(state(sessions: ["claude:session:a"], asks: []).orphanAsks.isEmpty)
+    }
+}
