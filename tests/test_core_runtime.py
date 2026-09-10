@@ -975,15 +975,22 @@ def test_undo_clear_expires_after_its_window(cleared, monkeypatch: pytest.Monkey
     assert unknown.value.code == "not_found"
 
 
-def test_a_dead_process_reads_ended_not_done(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The green check is a claim about the provider, and a session whose
-    process is gone has nobody left to make it."""
+def _dead_process_row(cleared, monkeypatch: pytest.MonkeyPatch, end_reason: str | None) -> dict:
+    """The `devin:session:troubled` row (mode completed, last event `Stop`)
+    with its process gone and the registry closing the record for
+    ``end_reason``."""
+
     from jrbar import process_registry
 
     monkeypatch.setattr(
         process_registry,
         "load_record",
-        lambda provider, session_id: SimpleNamespace(pid=999_999, cwd="/tmp/x", ended_at_epoch=None),
+        lambda provider, session_id: SimpleNamespace(
+            pid=999_999,
+            cwd="/tmp/x",
+            ended_at_epoch=None if end_reason is None else 1000.0,
+            end_reason=end_reason,
+        ),
     )
     monkeypatch.setattr(process_registry, "pid_exists", lambda pid: False)
     controller = cleared
@@ -991,9 +998,32 @@ def test_a_dead_process_reads_ended_not_done(cleared, monkeypatch: pytest.Monkey
     controller._core_publish_state()
     with controller._core_lock:
         rows = {row["id"]: row for row in controller._core_documents["state"]["sessions"]}
-    done = rows["devin:session:troubled"]
-    assert done["lifecycle"] == "ended" and done["mode"] == "ended_unconfirmed"
-    assert done["stale"] is True and done["pid"] is None
+    return rows["devin:session:troubled"]
+
+
+def test_a_finished_one_shot_run_reads_done_though_its_process_is_gone(
+    cleared, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A one-shot CLI run sends a real end event and then exits -- that is
+    its whole normal life. The registry closed the record with
+    `end_reason="hook"`, which is the provider's own `SessionEnd`, so the
+    row keeps the green check."""
+
+    done = _dead_process_row(cleared, monkeypatch, "hook")
+    assert done["lifecycle"] == "completed" and done["mode"] == "completed"
+    assert done["pid"] is None
+
+
+def test_a_process_killed_without_an_end_event_reads_ended_not_done(
+    cleared, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The liveness sweep closed this record (`process_exited`) and wrote the
+    synthetic `SessionEnd` itself. Nobody claimed success, so nobody gets
+    the check."""
+
+    ended = _dead_process_row(cleared, monkeypatch, "process_exited")
+    assert ended["lifecycle"] == "ended" and ended["mode"] == "ended_unconfirmed"
+    assert ended["stale"] is True and ended["pid"] is None
 
 
 def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:

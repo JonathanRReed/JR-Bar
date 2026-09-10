@@ -604,20 +604,121 @@ def test_install_probe_sessions_are_not_sessions() -> None:
 def test_only_a_real_end_event_on_a_living_session_reads_completed() -> None:
     """`completed` is the green check, and it is a claim about the provider.
 
-    A dead process, or a completion the collector merely inferred, reads
-    `ended`: grey, no check. `stale` says the source stopped delivering.
+    A completion the collector merely inferred, or a process that died
+    without ever sending an end event, reads `ended`: grey, no check.
+    `stale` says the source stopped delivering.
     """
     assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="Stop") == "completed"
     assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="SessionEnd") == "completed"
     assert lifecycle_for_mode(AgentMode.COMPLETED, stale=False, event_name="Stop", process_alive=True) == "completed"
-    # The process went away: whatever the last event said, this is over.
-    assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="Stop", process_alive=False) == "ended"
     # An inferred completion (a notification that read as done) never claims it.
     assert lifecycle_for_mode(AgentMode.COMPLETED, stale=True, event_name="Notification") == "ended"
     assert lifecycle_for_mode(AgentMode.ENDED_UNCONFIRMED, stale=True, event_name="PostToolUse") == "ended"
     assert lifecycle_for_mode(AgentMode.BLOCKED_ERROR, stale=True, event_name="StopFailure") == "failed"
     assert lifecycle_for_mode(AgentMode.WORKING, stale=True, event_name="PostToolUse") == "stale"
     assert lifecycle_for_mode(AgentMode.WORKING, stale=False, event_name="PostToolUse") == "active"
+
+
+def test_a_finished_one_shot_run_earns_done_even_though_it_has_exited() -> None:
+    """`codex exec`, `claude -p` and `pi -p` send a real Stop and SessionEnd
+    and then exit. That is the whole life of a one-shot run, and it is
+    `completed`; demoting on a dead process meant no such run could ever
+    earn the check."""
+
+    for event in ("Stop", "SessionEnd", "SubagentStop"):
+        assert (
+            lifecycle_for_mode(
+                AgentMode.COMPLETED,
+                stale=True,
+                event_name=event,
+                process_alive=False,
+                provider_ended=True,
+            )
+            == "completed"
+        ), event
+        # The registry may have nothing to say (record pruned, never
+        # written); the provider's own event still wins.
+        assert (
+            lifecycle_for_mode(
+                AgentMode.COMPLETED, stale=True, event_name=event, process_alive=False
+            )
+            == "completed"
+        ), event
+
+
+def test_a_process_that_died_without_an_end_event_is_ended_not_done() -> None:
+    """The liveness sweep's synthetic `SessionEnd` looks exactly like a real
+    one on the wire; `provider_ended=False` is what tells them apart."""
+
+    assert (
+        lifecycle_for_mode(
+            AgentMode.COMPLETED,
+            stale=True,
+            event_name="SessionEnd",
+            process_alive=False,
+            provider_ended=False,
+        )
+        == "ended"
+    )
+    assert (
+        lifecycle_for_mode(
+            AgentMode.COMPLETED,
+            stale=True,
+            event_name="SubagentStop",
+            process_alive=False,
+            provider_ended=False,
+        )
+        == "ended"
+    )
+    # Nothing to judge by at all: a dead process is still over, not Done.
+    assert (
+        lifecycle_for_mode(AgentMode.COMPLETED, stale=True, process_alive=False) == "ended"
+    )
+    # An inference does not become a claim just because the registry saw a
+    # real SessionEnd for the session.
+    assert (
+        lifecycle_for_mode(
+            AgentMode.COMPLETED,
+            stale=True,
+            event_name="Notification",
+            provider_ended=True,
+        )
+        == "ended"
+    )
+
+
+def test_a_one_shot_run_that_exited_reads_done_in_the_document() -> None:
+    row = session_document(
+        _status(
+            mode=AgentMode.COMPLETED,
+            event_name="SessionEnd",
+            updated_at=_at(30.0),
+        ),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False, provider_ended=True),
+        workers=0,
+    )
+    assert row["lifecycle"] == "completed"
+    # `mode` paints the check too: a Done row must keep the word.
+    assert row["mode"] == "completed"
+    assert row["stale"] is False
+
+
+def test_a_killed_session_reads_ended_in_the_document() -> None:
+    row = session_document(
+        _status(
+            mode=AgentMode.COMPLETED,
+            event_name="SessionEnd",
+            updated_at=_at(30.0),
+        ),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False, provider_ended=False),
+        workers=0,
+    )
+    assert row["lifecycle"] == "ended"
+    assert row["mode"] == "ended_unconfirmed"
 
 
 def test_a_dead_process_is_ended_and_stale_in_the_document_not_done() -> None:

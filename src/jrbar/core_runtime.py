@@ -2918,6 +2918,11 @@ def build_headless_controller_class() -> type:
             # None until the process registry actually answers: "no record"
             # must not read as "the process died".
             process_alive: bool | None = None
+            # None until the record says how the session closed: ``hook`` is
+            # the provider's own SessionEnd, anything else (``process_exited``,
+            # ``pid_reused``) is the liveness sweep closing a session that
+            # never said it was done.
+            provider_ended: bool | None = None
             session_id = getattr(status, "session_id", None)
             if session_id:
                 try:
@@ -2928,6 +2933,8 @@ def build_headless_controller_class() -> type:
                     cwd = record.cwd or None
                     alive = record.ended_at_epoch is None and pid_exists(record.pid)
                     process_alive = bool(alive)
+                    if record.ended_at_epoch is not None:
+                        provider_ended = record.end_reason == "hook"
                     if alive:
                         pid = record.pid
                 name, cwd = self._core_session_title(status.provider, session_id, pid or (record.pid if record else None), cwd)
@@ -2948,6 +2955,7 @@ def build_headless_controller_class() -> type:
                 process_alive=process_alive,
                 cwd=cwd,
                 name=name,
+                provider_ended=provider_ended,
             )
 
         def _core_session_title(self, provider: str, session_id: str, pid: int | None, cwd: str | None):

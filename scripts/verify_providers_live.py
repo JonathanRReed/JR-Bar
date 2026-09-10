@@ -10,9 +10,12 @@ and asserts the hook records the daemon wrote to ``~/.local/state/jrbar/
 
     session_start, user_prompt_submit, pre_tool_use, post_tool_use, stop, session_end
 
-Then it asks the daemon over ``core.sock`` for the session's row (completed)
-and, for Codex, runs the Interrupt drill (SIGINT mid-tool: interrupt then
-session_end, row completed) and checks ``usage_history codex 7d`` has
+Then it asks the daemon over ``core.sock`` for the session's row, which must
+read ``lifecycle: "completed"`` -- a finished one-shot run has also exited,
+and exiting must not cost it the green check. For Codex it also runs the
+Interrupt drill (SIGINT mid-tool: interrupt then session_end) and the Kill
+drill (SIGKILL mid-tool, no end event at all: that row must read ``ended``),
+and checks ``usage_history codex 7d`` has
 records when ``~/.codex/sessions`` has rollouts. ``--asks`` adds the
 approval drill: an interactive Codex under ``-a on-request`` in a pty, the
 mock asking to leave the sandbox, ``state.asks`` naming it, and
@@ -51,6 +54,10 @@ FULL_TURN = ("session_start", "user_prompt_submit", "pre_tool_use", "post_tool_u
 INTERRUPTED_TURN = ("session_start", "user_prompt_submit", "pre_tool_use", "interrupt", "session_end")
 #: The two lifecycle words that mean the run is over.
 FINISHED_LIFECYCLES = frozenset({"completed", "ended"})
+#: The one word that means the provider said so: the green check.
+DONE_LIFECYCLES = frozenset({"completed"})
+#: Over without a provider's end event: the liveness sweep's synthetic one.
+UNCONFIRMED_LIFECYCLES = frozenset({"ended"})
 PI_PROVIDER = "mock"
 PI_MODEL = "mock-model"
 #: The key the scratch agents present to the mock; its value never matters.
@@ -125,13 +132,20 @@ def core_state() -> dict:
     return core_command("ping")[1] or {}
 
 
-def session_row(provider: str, session_id: str, *, wait: float = 20.0, finished: bool = True) -> dict | None:
+def session_row(
+    provider: str,
+    session_id: str,
+    *,
+    wait: float = 20.0,
+    lifecycles: frozenset[str] | None = FINISHED_LIFECYCLES,
+) -> dict | None:
     """The daemon's row for one session; waits for it to read as over.
 
     The projection catches up a beat behind the last hook record, so a row
-    fetched the instant the CLI exits can still say `active`. Waiting for a
-    finished lifecycle (and falling back to whatever the last row was) is
+    fetched the instant the CLI exits can still say `active`. Waiting for
+    one of ``lifecycles`` (and falling back to whatever the last row was) is
     what makes this drill about the daemon's reading rather than its clock.
+    ``lifecycles=None`` takes the first row it sees.
     """
     deadline = time.time() + wait
     last: dict | None = None
@@ -139,7 +153,7 @@ def session_row(provider: str, session_id: str, *, wait: float = 20.0, finished:
         for row in core_state().get("sessions", []):
             if row.get("provider") == provider and session_id in str(row.get("id")):
                 last = row
-                if not finished or row.get("lifecycle") in FINISHED_LIFECYCLES:
+                if lifecycles is None or row.get("lifecycle") in lifecycles:
                     return row
         if time.time() > deadline:
             return last
@@ -335,16 +349,16 @@ def check_turn(check: Check, provider: str, label: str, since: int, session: str
     else:
         check.fail(f"{label} events", f"session={session} got {names}")
         return session
-    row = session_row(provider, session)
+    row = session_row(provider, session, lifecycles=DONE_LIFECYCLES)
     if row is None:
         check.fail(f"{label} state row", "no session row in state within 20s")
         return session
     detail = f"lifecycle={row.get('lifecycle')} mode={row.get('mode')} event={row.get('event')}"
-    # A CLI run that finishes has also exited, and the daemon reads a dead
-    # process as `ended` rather than `completed` (CORE-PROTOCOL, sessions[]).
-    # Both words mean over; what this drill proves is that the daemon saw
-    # the run end at all.
-    if row.get("lifecycle") in FINISHED_LIFECYCLES:
+    # A one-shot CLI run sends a real Stop and SessionEnd and then exits.
+    # That is the whole life of the run, and it has to read `completed` --
+    # the green check, "Done". `ended` here is the defect: a finished run
+    # demoted for having exited (CORE-PROTOCOL, sessions[]).
+    if row.get("lifecycle") in DONE_LIFECYCLES and row.get("mode") == "completed":
         check.ok(f"{label} state row", detail)
     else:
         check.fail(f"{label} state row", detail)
@@ -411,8 +425,67 @@ def codex_drills(check: Check, scratch: Path, work: Path, shim: Path, *, asks: b
     finally:
         mock.stop()
 
+    codex_kill_drill(check, scratch, work, home, base)
+
     if asks:
         codex_ask_drill(check, scratch, work, home)
+
+
+def codex_kill_drill(check: Check, scratch: Path, work: Path, home: Path, base: list[str]) -> None:
+    """The other half of the rule: a session nobody ended reads `ended`.
+
+    SIGKILL mid-tool, so the CLI never gets to send `Stop` or `SessionEnd`.
+    The daemon's liveness sweep notices the dead process within
+    `LIVENESS_POLL_SECONDS` and writes a synthetic end; that row must stay
+    grey. If this one ever reads `completed`, the green check has stopped
+    meaning "the provider said so".
+    """
+
+    mock = Mock(scratch, "--tool-command", "sleep 90; echo hi")
+    process = None
+    try:
+        retarget(home, mock.base)
+        env = clean_env({"MOCK_API_KEY": "mock", "CODEX_HOME": str(home)})
+        since = log_length("codex")
+        process = subprocess.Popen(
+            [*base, "run the command"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=env,
+            cwd=str(work),
+            start_new_session=True,
+        )
+        names, thread = wait_for_events("codex", since, None, ("pre_tool_use",), timeout=40)
+        if "pre_tool_use" not in names or not thread:
+            check.fail("codex kill", f"no pre_tool_use before SIGKILL: {names}")
+            return
+        time.sleep(1.0)
+        os.killpg(process.pid, signal.SIGKILL)
+        try:
+            process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            pass
+        check.ok("codex kill", f"SIGKILL to {thread[:8]} mid-tool")
+        # The sweep runs every five seconds; give it several turns.
+        row = session_row("codex", thread, wait=45.0, lifecycles=UNCONFIRMED_LIFECYCLES)
+        detail = (
+            "no session row in state within 45s"
+            if row is None
+            else f"lifecycle={row.get('lifecycle')} mode={row.get('mode')} event={row.get('event')} stale={row.get('stale')}"
+        )
+        if row is not None and row.get("lifecycle") in UNCONFIRMED_LIFECYCLES:
+            check.ok("codex kill state row", detail)
+        else:
+            check.fail("codex kill state row", detail)
+    finally:
+        if process is not None and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        mock.stop()
 
 
 def codex_ask_drill(check: Check, scratch: Path, work: Path, home: Path) -> None:

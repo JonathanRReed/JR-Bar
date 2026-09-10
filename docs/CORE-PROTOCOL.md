@@ -113,10 +113,16 @@ Vocabulary:
   that mean "over" are not interchangeable:
   - `active` -- working, waiting, or idle-ready, and still being delivered.
   - `completed` -- a run the provider itself said was finished: the last
-    event was `Stop`, `SessionEnd` or `SubagentStop`, and the session's
-    process (when the registry knows it) is still alive. This is the green
-    check, so it is only ever a report, never a guess.
-  - `ended` -- over, but nobody confirmed a success: the process died, or
+    event was `Stop`, `SessionEnd` or `SubagentStop`. This is the green
+    check, so it is only ever a report, never a guess. **A real terminal
+    event wins over a dead process**: `codex exec`, `claude -p` and `pi -p`
+    each send a real `Stop` and `SessionEnd` and then exit, and that is the
+    normal, expected life of a one-shot run -- it reads `completed`, not
+    `ended`.
+  - `ended` -- over, but nobody confirmed a success: the session's process
+    is gone and it never sent a terminal event (the liveness sweep's
+    synthetic `SessionEnd`, which the process registry records with
+    `end_reason` `process_exited` / `pid_reused` rather than `hook`), or
     the mode is `ended_unconfirmed` (a working session whose hooks went
     silent), or the collector *inferred* a completion from something that
     was not an end event. Grey, no check. A row demoted this way also
