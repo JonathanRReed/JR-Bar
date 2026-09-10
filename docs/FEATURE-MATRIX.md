@@ -1,172 +1,124 @@
-# JR-Bar feature and readiness matrix
+# JR-Bar feature matrix (0.8.0)
 
-Updated 2026-08-31.
+Updated 2026-09-10 from what is installed and running on the owner's Mac
+from `main`. Labels:
 
-A local 0.6.0 app candidate is signed, notarized, stapled, Gatekeeper-accepted,
-installed as matching app-tree bytes, and physically smoke-tested on one
-connected SidePulse device. That does not make the release verified. The outer
-PKG is unsigned and has no receipt, and installed UI, accessibility, Screen Bar
-Instruments, Dot, two-candidate updater, and publication gates remain open.
+- **Ships**: reachable in the installed `JR-Bar.app`, exercised on the
+  owner's Mac, covered by tests at its seam.
+- **Ships, unverified live**: the code path is complete and tested, but the
+  real device, account or tier has not yet been exercised (the reason is in
+  the row).
+- **Daemon only**: the daemon does it and reports it; the Swift app has no
+  control for it yet (the legacy PyObjC window still can, through
+  `open_legacy_window`).
 
-Real-hardware Screen Bar profiling has a source-complete evidence contract for
-static, working, asking, multi-agent, DND, low-power, and hidden scenarios. A
-completed performance matrix still requires separately observed raw Instruments
-traces for every scenario.
+Anything not in this file is not a feature. The removed planes are listed
+at the end so nobody claims them.
 
-The single existing JavaScriptCore batch path is command-scoped and
-finite-horizon-aware. It does not reuse prefetched frames across generation,
-program, or cadence changes, and it reports invalidated and shortened work
-separately from renderer fallbacks. This is source-verified behavior, not a
-claim that the 24-frame ceiling is hardware-optimal.
+## Sessions and intake
 
-JR-Bar is the product name. As of 0.8 the bundle identifier
-(`com.jonathanreed.jrbar`), the file paths (`~/.config/jrbar`,
-`~/.local/state/jrbar`) and the `jrbar` CLI carry it too; `sidepulse` remains a
-one-release command alias and SidePulse installs migrate automatically.
-This document is the status authority for product claims, rewritten today from
-the live source rather than patched. A feature is **shipped** only when it is
-reachable from the installed application and covered at its source-to-effect
-seam. A feature is **release-verified** only after the signed macOS release
-gate has passed for that exact commit.
-
-## Agents and intake
-
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Lifecycle intake for Codex, Claude, Devin, Grok, Cursor, Hermes, OpenClaw, OpenCode, Antigravity, and Kiro (`PROVIDER_SPECS`, `providers.py`) | Shipped | Provider-specific setup |
-| Hook installation probe-runs the hook command before writing any provider config, and refuses with a clear error if it cannot run (`install.py`) | Shipped (2026-08-26) | Always |
-| Ordered hook admission: standard-library client, private same-user socket, one bounded FIFO worker, explicit content-free refusal receipts, synchronous no-listener fallback, and drain-on-normal-shutdown | Implemented, release-gated (Unreleased) | Automatic while app is running |
-| Canonical operator state: requests, workers, acknowledgements, freshness, precedence | Shipped | On |
-| Triage acknowledgements prune only on established terminal canonical request truth (`local_triage.py`) | Shipped (2026-08-26) | On |
-| Snooze quiets every surface — LEDs, notifications, menu — while a genuine ask still breaks through; the Agent Browser deliberately keeps showing everything | Shipped (0.4.0) | Per-session action |
-| "Snooze Until Tomorrow Morning" resolves to 9 AM local through the store resolver (`mailbox_preference_store.py`) | Shipped (2026-08-26) | Per-session action |
-| Agent Browser window answers Return (open), Escape (close), Cmd-F (search), and arrow keys | Shipped (2026-08-26) | On |
+| Hook intake through the compiled `jrbar-hook` shim (3 ms; queues to `<provider>.pending.jsonl` when no daemon listens; drained at start and every 30 s) | Ships | Always |
+| Providers: Claude Code, Codex (CLI and desktop), Gemini CLI, Pi, Grok, Devin, OpenCode, OpenClaw, Antigravity | Ships | Hooks installed on first launch for every provider with a config |
+| Providers: Cursor, Hermes Agent, Kiro | Ships, unverified live (none installed on the owner's Mac) | Same |
+| Session liveness: process registry from the hook's `ppid` and start time, 5 s sweep, Claude `~/.claude/sessions/<pid>.json`, Codex SessionEnd/interrupt hooks and rollout tailing, pi and Gemini transcript tails | Ships (kill-to-ended measured at 2 s) | Always |
+| Main sessions vs sub-agent workers; seen vs unseen completions; real asks (permission, input, approval, review) vs turns that merely end with a question | Ships | Always |
+| Human session labels: the provider's own title, else project/prompt, else the working directory | Ships | Always |
+| Hook doctor (`jrbar hooks doctor`; Settings › Advanced › Run Doctor) | Ships | Manual |
+| First-launch hook installation and reinstall/remove per provider (Settings › Agents) | Ships | On |
+| Codex trust hash computed locally for the exact command written | Ships | Always |
+| T3 Code read-only session projection (`jrbar integrations`) | Ships, opt-in | Off |
 
-## Menu bar and windows
+## The app
 
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Menu-bar status and session navigation (remembered per-provider openers) | Shipped | On |
-| Menus rebuild only on content change (`menu_tracking.py` plans no-change / patch-in-place / defer-rebuild; the old 30-second rebuild valve is gone) | Shipped (2026-08-26) | On |
-| Hidden main menu makes Cmd-C/V/W/Z/Q work in every app window (`main_menu.py`) | Shipped (2026-08-26) | On |
-| Background polls and settings previews defer past scroll gestures (default-run-loop-mode timers) | Shipped (2026-08-26) | On |
-| Settings: seven-category navigation, per-element usage-menu curation, per-provider visibility | Shipped (0.3.0) | All on |
-| Configurable global Reveal Current Ask action; visible menu command, Overview shortcut recorder, local conflict and refusal status, transactional persistence, and Agent Browser fallback | Implemented and source-verified (Unreleased) | Unassigned until the user records a shortcut |
-| Manual and scheduled DND; separate Mute, Dim, Pause, Asks Only, and Fully Dark presentation policy; one daily local-time schedule; temporary Resume; public coarse macOS Focus following; exact return time; native Settings card and compact menu | Implemented and source-verified (Unreleased) | Schedule and Follow macOS Focus off |
-| Debug pane shows the settings-file path; safe diagnostic export lives in the History pane (the status-audit CSV/HTML export plane was deleted 2026-08-26) | Shipped | On |
+| Status item with three icon styles (glyph, glyph + usage ring, glyph + label), tinted by the aggregate, amber pulse during escalation | Ships | Glyph |
+| Glass panel: asks pinned with Approve / Deny, sessions, usage bars, device chips, brightness, Quiet…, Clear done, keyboard navigation (↑↓ ↩ ⌘↩ ⌘D ⌘Y ⌘U ⌘K ⌘, ⌘Q) | Ships | Click the icon |
+| "Why this light" row with a hover popover (programs per surface, time in state, dimming, brightness settings) | Ships | On |
+| Settings window: General, Agents, Usage, Devices & Screen Bar, Lighting, Notifications & Focus, Remote, Advanced; every control writes through `set_setting`, refused writes shown | Ships | ⌘, |
+| History window: rows by day, away banner, filters, Clear completed with 5-minute Undo | Ships | ⌘Y |
+| Usage Center: rings per window, forecast, tokens/cost graph by day or hour, cache savings, pricing disclosure | Ships | ⌘U |
+| Effect Studio: library, inspector with parameters and live preview, preview on hardware, assignments by scope, scenes, pack import/export | Ships | Settings › Lighting › Effects… |
+| Control Center and the Rail for the Creator Micro 2 | Ships, unverified live (pad verified powered off only) | ⌘K |
+| Notifications: ask banners with Approve / Deny, completion banners, quota banners; system sounds; notch HUD for device and peer events | Ships | Permission asked on first banner |
+| Sparkle updates: manual check, opt-in automatic checks, stable/beta channel, feed on this repository's releases | Ships (no release published yet, so nothing to update to) | Automatic checks off |
+| Login item (`SMAppService`) | Ships | On, registered on first launch |
+| Daemon supervision: restart with backoff, "Core crashed" with Restart, orderly quit | Ships | Always |
+| Legacy PyObjC windows on demand (`open_legacy_window`) | Daemon only, being retired | Manual |
 
 ## Light surfaces
 
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Physical SidePulse Pro and Dot output (atomic `LEDS.LED` writes through the safety compiler and firmware parser) | Shipped | On when connected |
-| Priority-aware physical write queue: obsolete frames coalesce while asks, failures, finite cues, explicit calibration previews, and final trailing state retain separate bounded slots | Implemented, release-gated (Unreleased) | Automatic |
-| Screen Bar; contained classic mode paints only inside the measured notch silhouette (draw bodies live in `screen_bar_runtime.py` since 2026-08-26) | Shipped | Off until enabled |
-| Alcove following confidence ladder; typed seven-state Settings, Doctor, Screen Bar geometry, accessibility, and bounded recovery motion | Implemented and source-verified (Unreleased) | Off until enabled |
-| Multi-alert Screen Bar announcer stack; passive single-ask collapsed pill, truthful multi-ask count, stable first-seen order, expanded native keyboard traversal, and Screen-Bar-local Mark Seen receipts | Implemented and source-verified (Unreleased) | Automatic when actionable asks exist |
-| Answer-in-place controls; capability-gated reply, send, retry, cancel, timeout, and Jump fallback in the expanded Screen Bar and Agent Browser | Implemented and source-verified (Unreleased) | Automatic only when a reviewed answering surface is declared |
-| Screen Bar quota ember (left tip brightens below provider threshold) | Shipped (0.3.0) | Off (gauges switch) |
-| Color palettes, blend modes, provider identity, per-device brightness and calibration | Shipped | Reviewed defaults |
-| 18-motion vocabulary (`PROVIDER_ANIMATION_CHOICES`), including the 2026-08-26 sourced KITT, Gradient, Marquee, and Duotone; previews route through the real solo renderer | Shipped (0.4.0) | Automatic |
-| Charging trickle while idle (wattage-paced, yields to any agent claim and pinned displays) | Shipped (0.4.0) | On |
-| Lid animations (preset Lid Closed / Lid Open programs, brightness-composed) | Shipped | Presets |
-| Studio: hand-written LED programs, saved library, `INIT.LED` power-up burn | Shipped | Off |
-| Signal engine for asks, failures, completions, low battery, reminders, calendar | Shipped, per-feature opt-ins | Mixed |
-| Ask escalation: menu-bar emphasis, optional sound, notification, HTTPS webhook | Shipped | Conservative |
+| SidePulse Pro and Dot output: atomic `LEDS.LED` writes through the presentation compiler and firmware parser; priority-aware write queue | Ships | On when mounted |
+| Pro + Dot linked: both written in one command, the Dot replays the strip at `linked_dot_scale` (0.3) | Ships | On |
+| `PulseDot` (first-batch Dot firmware) recognised as a 2-LED Dot | Ships | Automatic |
+| Screen Bar: one band under the notch, the strip's program phase-locked, raised-cosine blend, 60 Hz display link that pauses when static; hover pill; click opens the session; Alcove capsule following; over full screen | Ships | On |
+| Per-device display mode (agent, battery, studio, quota runway), brightness, auto-brightness, provider pin, asks-only | Ships | Agent status |
+| Colour calibration per device: RGB gains and resting glow, live preview, applied through the daemon | Ships | Uncalibrated |
+| Global brightness; idle dim; sleep dim; auto-off | Ships | 100 %, on |
+| Auto-dim: off / schedule / follow display / ambient light (IOKit HID sensor, falls back to the display) with the current reading shown | Ships | Off |
+| Provider colours (dichromacy-safe defaults), blend modes, cycle speed, pulse floor and ceiling, done celebration | Ships | Reviewed defaults |
+| Effects: builtins and provider animations, data-only packs, assignments by device / project / provider instance / provider / scene / state / default, reserved Needs-you and Failed effects, 2 Hz clamp (1 Hz saturated red), Reduce Motion fallback | Ships | Provider animations |
+| Signals: asks, failures, completions, low battery, calendar, reminders, quota crossed, quota reset sunrise | Ships, per-feature opt-ins | Mixed |
+| Escalation: light ramp → menu-bar pulse → chime every 30 s; webhook | Ships | Conservative timings |
+| Studio: hand-written LEDS programs, `INIT.LED` burn | Daemon only | Off |
 
-## Power
+## Quiet, Focus and power
 
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Ordinary agent hold prevents automatic system sleep only while agents work plus one release delay (`caffeinate -ims`) | Implemented, release-gated (Unreleased) | On |
-| Optional display assertion during ordinary or closed-lid holds (`caffeinate -d`) | Implemented, release-gated (Unreleased) | Off |
-| Independent battery policy with low-battery release | Shipped | Continue on battery |
-| Independent closed-lid policy through the narrow `pmset` sudoers sleep helper | Shipped | Never |
+| Quiet…: Mute, Dim, Pause, Asks-only, Dark for 30 min / 1 h / 4 h / 12 h; daily quiet schedule | Ships | Off |
+| macOS Focus following with a dim rule per Focus (Full Disk Access) | Ships | Off |
+| Keep awake while agents work (`caffeinate -ims`), released with a grace period when they finish; optional display assertion; battery threshold | Ships | On |
+| Closed-lid policy `never` / `agents` / `always` through the `pmset` helper (one sudoers rule) | Ships | Never |
+| Release the hold after repeated authoritative zero-quota evidence (`quota_power_hold`) | Ships | On |
 
 ## Usage and quota
 
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Claude subscription usage via Claude Code OAuth (5-hour / weekly / model-scoped lanes; parser reads the endpoint's `utilization` field) | Shipped (0.3.0) | On once connected |
-| Usage lane meters, pace verdicts, and reset countdowns in the menu and Usage Center | Shipped (0.3.0) | On |
-| Tightest-limit percent beside the menu-bar icon, active-provider aware, pace-colored | Shipped (0.3.0) | On |
-| Native accounting for ChatGPT/Codex, Claude, Cursor, Devin, Grok, Antigravity, and optional OpenAI API org usage | Shipped | Provider-specific setup |
-| Browser-session import for provider auth, behind per-provider consent, secrets in Keychain | Shipped | Off |
-| Reconnect truth model: signed-out providers watch their own credential file, transient failures ride an exponential ladder, reconnect buttons probe before claiming success | Shipped (0.4.0) | On |
-| Quota alerts switch (reset blink, pace notifications, threshold effects, connection cues) | Shipped (0.4.0) | Off (switch in Extras) |
-| Reset celebrations: finite confetti sweep plus one notification per refill, courtesy-budget gated (deliberately not behind the alerts switch) | Shipped (0.4.0) | On |
-| Quota Runway LED display, fed from the usage plane's own gated lanes (worst remaining lane, provider-colored) | Shipped (0.4.0) | Selectable per device |
-| Local usage and cost summaries with priced-coverage disclosure ("NN% of tokens priced") | Shipped | Transcript-scan opt-ins apply |
-| Codex capacity windows through the capacity authority | Shipped | On where evidence exists |
-| Claude subscription capacity windows behind explicit credential consent | Shipped | Off |
-| Capacity history behind explicit retention consent | Shipped | Off |
-| Operator history behind explicit retention consent | Shipped | Off |
-| Serial, bounded history and reset-state persistence with content-free receipts, retryable failed usage appends, consent fencing, and drain-on-normal-shutdown | Shipped (Unreleased) | Automatic |
+| Windows (5 h, 7 d, daily, weekly, monthly, credits) with reset times for Claude, Codex, Gemini, Devin, Grok, Antigravity, OpenCode, Cursor and an optional OpenAI API org, where the provider exposes them | Ships (Codex real turns pending the quota reset; Gemini on the derived tier) | Providers shown: all with data |
+| Claude official usage endpoint via Claude Code's OAuth | Ships | Off (consent in Settings › Usage) |
+| Forecast: one sample per window when the percentage moves or five minutes pass, least-squares over the last 90 minutes, `pace` and `exhausts_at`; the app extrapolates locally until the daemon has enough spread | Ships | On |
+| Tokens and cost by day or hour from local transcripts (7d–365d), cache savings, list-price disclosure | Ships (the daemon reports no price table yet, so the cost lines read as approximate) | On |
+| Quota alerts: threshold effects, pace notifications, reset sunrise sweep and banner | Ships | Off |
+| Quota Runway device display | Ships | Selectable per device |
+| Capacity history and operator history behind retention consent | Ships | Off |
+| Browser-session import for provider auth, secrets in Keychain | Daemon only | Off |
 
-## Multi-Mac and integrations
+## Remote and integrations
 
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Tailscale/SFTP multi-Mac ledger, read-only | Shipped | Off |
-| Cross-Mac usage sync: HMAC-SHA256-signed JSON over SSH (not encrypted; transport privacy comes from SSH), bounded replay window, totals render in the Usage Center | Shipped (0.4.0) | Off |
-| Memory-only steady-state Usage Center, menu, and settings-summary projection; settings, Keychain, and cached sync documents refresh on the provider worker | Shipped (Unreleased) | Automatic |
-| Loopback cloud-agent ingest | Shipped | Off |
-| `jrbar serve` - schema-v2 redacted agent aggregates and provider quota summaries on loopback (Stream Deck, scripts) | Shipped | Manual |
-| Calendar and Reminders glows | Shipped | Off |
-| T3 Code local-state compatibility (query-only SQLite projection, no mutation, no credentials) | Shipped, opt-in | Off |
+| Remote peers: read-only ledger of another Mac over Tailscale + SFTP, bounded and stale-aware | Ships | Off |
+| Cross-Mac usage sync: HMAC-SHA256-signed JSON over SSH | Ships | Off |
+| Cloud ingest: loopback listener with a 256-bit bearer token in the state dir | Ships | Off |
+| Webhook: JSON moments to one HTTPS URL, event list chosen in Settings › Remote | Ships | Off |
+| `jrbar serve`: `GET /status.json` on loopback with redacted aggregates and quota summaries (Stream Deck, scripts) | Ships | Manual |
+| Calendar and Reminders glows | Ships | Off |
 
 ## Packaging and diagnostics
 
-| Capability | Implementation status | Default |
+| Capability | Status | Default |
 | --- | --- | --- |
-| Signed `.pkg` via `packaging/build_macos_pkg.sh`: payload-only installation, explicit first-run setup, LaunchAgent, helper setup, uninstall, notarization, stapling | Implemented, release-gated | N/A |
-| Executable PKG and supplemental Sparkle ZIP assembly: exact commands, missing-tool and certificate failures, deterministic manifest, candidate-bound hashes, and unsigned-build non-output | Implemented (Unreleased) | Automatic through `make fast` |
-| Pinned Sparkle 2.9.6 updater: signed appcast, stable and beta channels, one-day stable rollout, manual check, and consent-owned automatic checks | Implemented and release-gated (Unreleased) | Consent prompt, stable channel |
-| Built-in timing diagnostics and typed refresh admission | Shipped | On |
-| Nine fixed local-health aggregates in the explanation panel, current-run and memory-only, with explicit unavailable states, bounded DND mode/source/return-time facts, and no cloud transmission | Implemented, release-gated (Unreleased) | On |
-| Deep Why this light context: selected semantic and P1-P7 priority, oldest visible source age, bounded current finite-cue suppressions, Scene availability, global surface role, Focus/DND decision plus DND mode/source/return time, Reduce Motion substitution, source-labeled active-output timing, and position-preserving refresh | Implemented, release-gated (Unreleased) | On |
-| Fast ordinary-change gate: Ruff, real imports, lightweight contracts, tracked-file secret scan, literal fixture validation, focused contract, fixture, and semantic tests, compilation, dependency/version policy, and diff hygiene | Implemented (Unreleased) | Manual through `make fast` |
+| `make package`: one signed bundle (app, frozen daemon as a nested helper app, shim, pinned Sparkle 2.9.6), PKG for `/` or `~`, Sparkle ZIP, signed appcast when the key is in the keychain | Ships (Developer ID signed; not notarized until the `jrbar-notary` profile exists) | Manual |
+| `make clean-install`: home-directory install without a password | Ships | Manual |
+| Doctor: `jrbar doctor` and Settings › Advanced (commit the daemon was built from, memory, sockets, hooks, devices, checks) | Ships | Manual |
+| SidePulse → JR-Bar migration of config, state, data, hooks, LaunchAgents, Keychain items | Ships | Automatic, once |
+| `make fast`, the full pytest suite, `swift test`, and CI on hosted macOS 26 | Ships | Every push |
 
-## Removed planes (deleted 2026-08-26, the 0.5.0 coalescence)
+## Removed in 0.8
 
-These are not features and must not be claimed anywhere: the
-delivery-planning plane (`plan_interruptions`, the quiet plane, the delivery
-ledger), `runtime_truth`, the runtime-install transaction in `install.py`, the
-quota-forecast plane (`capacity_forecast`, `capacity_calibration`, the
-forecast release authority), the in-view Screen Bar draw bodies (replaced by
-`screen_bar_runtime`), the status-audit event log and its CSV/HTML exporters,
-`AgentLayoutStabilizer`, `DeferredMenuPublication`, the `app_bundle`
-development-wrapper builder, `LID_ANIMATION_CHOICES`, and the
-`closed_lid_system_override` / `local_activity_history_enabled` settings
-dials. The CodexBar dashboard bridge was already removed in 0.3.0; CodexBar
-remains an engineering reference only.
-
-## Readiness labels
-
-- **Shipped:** reachable in the installed application and covered at the production seam.
-- **Implemented, release-gated:** code and automated checks exist, but the exact commit still requires the signed Mac, hardware, installation, and performance gate.
-- **Release-verified:** a GitHub Release includes the signed package,
-  checksums, measured performance evidence, SBOM, resolved environment, and a
-  validated receipt manifest whose commit, app tree, package contents,
-  signatures, notarization, Gatekeeper, upgrade, uninstall, and clean-install
-  checks all belong to the exact PKG.
-
-## Current release status
-
-Everything above marked Shipped is on `main`. Nothing may be published as a
-production release until the owner's release Mac completes:
-
-```bash
-./scripts/verify_macos_release.sh
-```
-
-The package installs only the signed application payload and an owned CLI
-link. It deliberately does not mutate provider hooks, LaunchAgents, privileged
-helpers, eject-guard services, or T3 Code state from `postinstall`. Those
-integrations are applied through the reviewed first-run setup or explicit CLI
-commands.
-
-That release gate is intentionally separate from merge readiness because
-ordinary review environments cannot provide the owner's SidePulse hardware,
-Developer ID identities, notarization profile, installed settings history,
-TCC database, or Instruments trace.
+Not features; do not claim them anywhere: the iOS companion app and its
+Mac half (`glance`, `serve --phone-glance`), the external Agent Deck
+snapshot bridge, the Waybar client, severe-weather alerts, the
+timebox/timer and its Shortcuts handshake, the operator history export,
+night warmth and the fixed 7 PM–7 AM dim (replaced by auto-dim), the PyObjC
+status bar as a UI (`jrbar status-bar` refuses to run beside the daemon),
+the architecture-policing meta-tests, and the old multi-receipt release
+gate (`verify_macos_release.sh`, `publish_release.sh`) as the way releases
+happen. Earlier removals (the delivery-planning plane, `runtime_truth`,
+the quota-forecast authority, the status-audit exporters) stay removed.

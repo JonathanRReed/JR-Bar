@@ -1,61 +1,51 @@
-# JR Bar support policy
+# JR-Bar support
 
-JR Bar is a macOS menu-bar application and command-line tool. It reads local
-agent/provider state and can drive SidePulse Pro, SidePulse Dot, and the
-on-screen Screen Bar. Support is evidence-based and applies to a specific
-release artifact, host, provider, and hardware setup.
+JR-Bar is a native macOS menu-bar app with a bundled daemon that reads
+local agent state and drives the SidePulse Pro, the SidePulse Dot, the
+Creator Micro 2 and the on-screen Screen Bar. It is a personal project
+made public: support is best effort, through the issue tracker, with no
+response-time or compatibility guarantee.
 
 ## What is supported
 
-The supported product is the newest signed and notarized GitHub Release that
-has passed `scripts/verify_macos_release.sh` on the reviewed release Mac. The
-release page is the source of truth for the version, checksums, SBOM, release
-environment, and candidate-bound verification evidence. A source checkout,
-editable install, unsigned package, development wrapper, or arbitrary commit
-is not a production support target.
+The current release is `JR-Bar-<version>.pkg` from
+[GitHub releases](https://github.com/JonathanRReed/JR-Bar/releases), or
+the same package built from `main` with `make package`. It needs an Apple
+silicon Mac on macOS 26 or newer. Until a notarized release is published,
+a package built on one Mac will be refused by Gatekeeper on another; build
+it locally.
 
-If no GitHub Release meets those conditions, there is no production-supported
-artifact to claim. The release gate and publication process remain separate
-from source-level implementation or beta testing.
+Providers are listed in the [README](README.md#providers). A provider
+being listed means JR-Bar knows its hook shape and, where it exists, its
+usage source; it does not mean the service, plan, credentials or endpoint
+are available on your machine, and the panel says `~` or "Sign in via the
+CLI" rather than inventing a number. T3 Code is a read-only integration
+with a reviewed version window in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-The application and CLI declare Python 3.10 through 3.13. macOS-specific
-behavior requires macOS and PyObjC. Physical-device behavior is specific to
-the SidePulse Pro and SidePulse Dot hardware covered by the release's hardware
-matrix. A release may narrow these claims when its evidence says so.
+Out of scope: provider outages and policy changes, macOS defects,
+third-party apps, Tailscale or SSH setup, modified bundles, disabled macOS
+protections, and unsupported hardware.
 
-Provider accounting is native and provider-specific. A provider being listed
-in the documentation does not mean that its service, credentials, plan,
-quota endpoint, browser session, or local data is available on every machine.
-T3 Code is opt-in and read-only. Its reviewed compatibility window is recorded
-in [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
+## Before filing
 
-## Getting help
+```sh
+alias jrbar='~/Applications/JR-Bar.app/Contents/Helpers/jrbar-core.app/Contents/MacOS/jrbar-core'
+jrbar doctor          # the daemon's commit, memory, sockets, hooks, devices, checks
+jrbar hooks doctor    # what each provider's config runs today; every line should say runs=shim
+```
 
-Use the repository's [GitHub issue tracker](https://github.com/JonathanRReed/JR-Bar/issues)
-for reproducible product bugs, documentation corrections, and feature
-discussion. Include the JR Bar version, installation artifact, macOS version,
-architecture, relevant provider or hardware, exact command or action, and the
-observed result. Attach only sanitized logs and synthetic fixtures.
+Settings › Advanced has the same Doctor as a checklist plus the daemon's
+log tail. If a session looks wrong, the panel's "Why this light" row and
+its popover say which session and which rules produced the light.
 
-Issues are a public collaboration mechanism, not a guaranteed support desk.
-There is no response-time, compatibility, feature, or repair guarantee.
+## Filing an issue
 
-## Boundaries
+Use the [issue tracker](https://github.com/JonathanRReed/JR-Bar/issues)
+with the template that fits. Include the JR-Bar version (Settings ›
+General), how it was installed, the macOS version, the provider or
+hardware involved, what you did and what you saw. Attach only sanitised
+output: no passwords, tokens, cookies, prompts, transcripts, account
+identifiers or personal paths.
 
-The project does not provide support for upstream provider outages or policy
-changes, macOS defects, third-party applications, Tailscale/SSH/SFTP setup,
-modified binaries, disabled macOS protections, unsupported hardware, or data
-recovery after a user bypasses the documented installer and migration paths.
-Those systems may still be relevant to diagnosis, but their behavior is not a
-JR Bar support commitment.
-
-Do not put passwords, access tokens, refresh tokens, cookies, private prompts,
-full transcripts, account identifiers, or personal paths in an issue. For a
-suspected vulnerability or privacy leak, do not open a public issue. Send the
-private report required by [SECURITY.md](SECURITY.md) to
-`Contact@JonathanRReed.com`.
-
-Before reporting an installed-release problem, `jrbar doctor` and
-`jrbar integrations status --json` can provide bounded local facts. They
-do not replace the release evidence or prove a third-party service is
-compatible.
+For a suspected vulnerability or privacy leak, do not open a public issue;
+follow [SECURITY.md](SECURITY.md) (`Contact@JonathanRReed.com`).

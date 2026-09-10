@@ -5,6 +5,18 @@ t3code (`b73232bd`) plus research into the notch-utility landscape, the
 notification-LED tradition, calm-technology principles, and the current
 agent-management market. Opinionated on purpose.
 
+> **Where this stands after 0.8 (2026-09-10).** The open decisions in
+> section 7 were settled by building: the shell is Swift over a headless
+> Python daemon behind a documented JSON contract
+> ([CORE-PROTOCOL.md](CORE-PROTOCOL.md)), which is option (c) followed by
+> the Swift port it was meant to enable; weather was cut; the fork
+> diverged hard. One call went the other way from the recommendation
+> below: the Screen Bar deliberately mirrors the strip as one unsegmented
+> band, phase-locked, and carries its words in the hover pill and the
+> panel rather than as a segmented announcer. The status paragraphs dated
+> 2026-08-30 describe the PyObjC app that 0.8 replaced; what ships is
+> [FEATURE-MATRIX.md](FEATURE-MATRIX.md).
+
 ## 1. Thesis
 
 JR-Bar is the ambient nervous system for developers who run more than one AI coding agent at a time. It is not an orchestrator — it never drives your agents, never touches your repo, never asks for GitHub write access. It watches every harness you already use (Claude Code, Codex, Cursor, Gemini, Devin, Grok, OpenCode, Hermes, Antigravity) and answers one question continuously, without you asking: **which one needs you right now?** The sentence that sells it: *"Stop keeping five agents in your head. The light tells you when one wants you, and only then."* The documented pain is not missing features — it is cognitive overload ("you need to keep the state of every agent in your head... the constant context-switching is brutal"; "my brain starts falling apart within minutes"). We sell the end of that, not a dashboard.
