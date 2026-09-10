@@ -12,7 +12,12 @@ Both sides are tested against it: `tests/test_core_server.py`,
 Python side; `app/Tests/JRBarCoreTests` on the Swift side, including
 `Fixtures/python-state.json`, a `state` frame produced by the Python
 projection (`JRBAR_UPDATE_FIXTURES=1 pytest tests/test_core_projection.py`
-regenerates it).
+regenerates it) and decoded back by
+`app/Tests/JRBarCoreTests/PythonProjectionFixtureTests.swift`. Every shape
+the two sides could disagree about belongs in that fixture -- a usage
+window with no reading (`used_pct: null`) is there for exactly that reason
+-- so the agreement is by construction rather than by two independently
+hand-written examples.
 
 ## Transport
 
@@ -120,18 +125,36 @@ Vocabulary:
     normal, expected life of a one-shot run -- it reads `completed`, not
     `ended`.
   - `ended` -- over, but nobody confirmed a success: the session's process
-    is gone and it never sent a terminal event (the liveness sweep's
+    is **gone** and it never sent a terminal event (the liveness sweep's
     synthetic `SessionEnd`, which the process registry records with
     `end_reason` `process_exited` / `pid_reused` rather than `hook`), or
-    the mode is `ended_unconfirmed` (a working session whose hooks went
-    silent), or the collector *inferred* a completion from something that
-    was not an end event. Grey, no check. A row demoted this way also
-    carries `mode: "ended_unconfirmed"`, so neither field claims Done.
+    the collector *inferred* a completion from something that was not an
+    end event. Grey, no check. A row demoted this way also carries
+    `mode: "ended_unconfirmed"`, so neither field claims Done.
   - `failed` -- `blocked_error`.
   - `stale` -- a live-shaped session whose source stopped delivering.
     `stale: true` says the same thing on any row, `completed` and `ended`
     included, and is also set when a session's process died without an end
     event.
+
+  **Liveness beats silence: a session whose process is alive never reads
+  `ended`.** `ended_unconfirmed` is what the collector says when a working
+  session stops sending hooks past its window (`WORKING_SILENCE_SECONDS`,
+  four minutes; `POST_TOOL_WORKING_VISIBLE_SECONDS`, two, after a
+  `PostToolUse`) -- "probably over, nobody said so", which was the best
+  guess available when a silence timer was the only evidence there was. It
+  is not any more: the liveness sweep reads the process table every five
+  seconds, and when it can point at the agent's own process the session is
+  not over. A long tool run legitimately says nothing for many minutes, and
+  such a row reads exactly what it is -- `mode: "working"`,
+  `lifecycle: "active"` (or `"stale"` once its information is old enough
+  for the collector to say so), never `ended` and never `completed`, since
+  being alive is not a finish. `since` carries how long it has been quiet.
+  The aggregate counts it in `active`, so the header, the strip and the Dot
+  keep showing work that is still happening. The evidence is affirmative
+  only: no registry record, no readable process table, or a reused pid all
+  leave the silence rule exactly as it was, so a session whose process is
+  gone and which never sent a terminal event still reads `ended`.
 
   `next_actor` comes from canonical operator state (`user`, `provider`)
   with a mode-based fallback.

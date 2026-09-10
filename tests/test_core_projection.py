@@ -182,6 +182,15 @@ def fixture_inputs() -> dict:
                 credits_remaining=None,
                 lanes=(
                     SimpleNamespace(lane_id="five_hour", label="5h", remaining_percent=88.0, reset_at=None, scope="account", model=None),
+                    # A window the provider HAS but has not stated a
+                    # reading for: ``remaining_percent`` of None, which the
+                    # projection writes as ``used_pct: null``. It is here so
+                    # the Swift decoder's optional handling is exercised
+                    # against a document the Python side actually produced,
+                    # not only against a hand-written mock -- the shape is
+                    # agreed by construction. Unread is not absent: the
+                    # reset the provider did state survives.
+                    SimpleNamespace(lane_id="seven_day", label="7d", remaining_percent=None, reset_at=NOW + 320400.0, scope="account", model=None),
                 ),
             ),
         ),
@@ -751,6 +760,104 @@ def test_a_dead_process_is_ended_and_stale_in_the_document_not_done() -> None:
         workers=0,
     )
     assert unknown["lifecycle"] == "completed" and unknown["mode"] == "completed"
+
+
+def test_a_session_whose_process_is_alive_is_never_ended() -> None:
+    """Liveness beats silence.
+
+    ``ended_unconfirmed`` is what the collector says when a working session
+    stops sending hooks past its window -- "probably over, nobody said so",
+    which was the best guess available when a silence timer was the only
+    evidence. The process registry knows better: it can see the agent's own
+    process. A long tool run that says nothing for twenty minutes is not a
+    dead session, and the panel must not call it one.
+    """
+
+    for event in (None, "PreToolUse", "PostToolUse"):
+        assert (
+            lifecycle_for_mode(
+                AgentMode.ENDED_UNCONFIRMED, stale=False, event_name=event, process_alive=True
+            )
+            == "active"
+        ), event
+        # Old information about a live process is stale, never ended.
+        assert (
+            lifecycle_for_mode(
+                AgentMode.ENDED_UNCONFIRMED, stale=True, event_name=event, process_alive=True
+            )
+            == "stale"
+        ), event
+    # Being alive is not a finish either: a live process never wins the check.
+    assert (
+        lifecycle_for_mode(
+            AgentMode.COMPLETED, stale=False, event_name="Notification", process_alive=True
+        )
+        == "active"
+    )
+
+
+def test_the_ended_rule_still_holds_for_a_process_that_is_gone() -> None:
+    """The fix the liveness rule must not undo: only ``process_alive is
+    True`` outvotes the silence timer. "Nobody looked" and "the process is
+    gone" both still read ``ended``."""
+
+    for alive in (None, False):
+        assert (
+            lifecycle_for_mode(
+                AgentMode.ENDED_UNCONFIRMED, stale=True, event_name="PostToolUse", process_alive=alive
+            )
+            == "ended"
+        ), alive
+    # The sweep's synthetic end on a dead process is still not a completion.
+    assert (
+        lifecycle_for_mode(
+            AgentMode.COMPLETED,
+            stale=True,
+            event_name="SessionEnd",
+            process_alive=False,
+            provider_ended=False,
+        )
+        == "ended"
+    )
+
+
+def test_a_live_but_silent_session_reads_working_in_the_document() -> None:
+    """What the panel says: Working, with ``since`` carrying how long it has
+    been quiet. The mode travels beside the lifecycle and the app reads
+    whichever is more definite, so a row that is not over must not still say
+    ``ended_unconfirmed`` -- `SessionActivity.reduce` would print "Idle" and
+    the aggregate would drop it from ``active``."""
+
+    row = session_document(
+        _status(mode=AgentMode.ENDED_UNCONFIRMED, event_name="PreToolUse", updated_at=_at(20 * 60.0)),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=4242, process_alive=True),
+        workers=0,
+    )
+    assert row["lifecycle"] == "active"
+    assert row["mode"] == "working"
+    assert row["stale"] is False
+    assert row["pid"] == 4242
+    # The header counts it, so the strip and the Dot keep showing work.
+    counts = aggregate_counts([row])
+    assert counts["active"] == 1 and counts["total"] == 1
+    assert aggregate_mode(counts) == "working"
+
+
+def test_a_killed_session_still_reads_ended_in_the_document() -> None:
+    """The same row with the process gone: unchanged."""
+
+    row = session_document(
+        _status(mode=AgentMode.ENDED_UNCONFIRMED, event_name="PreToolUse", updated_at=_at(20 * 60.0)),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False),
+        workers=0,
+    )
+    assert row["lifecycle"] == "ended"
+    assert row["mode"] == "ended_unconfirmed"
+    assert aggregate_counts([row])["active"] == 0
 
 
 def _visibility_inputs(**overrides) -> dict:

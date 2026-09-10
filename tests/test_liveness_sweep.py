@@ -81,3 +81,48 @@ def test_reap_swallows_pipeline_errors(tmp_path: Path):
         log_path_for=lambda p: Path("/x"),
     )
     assert result.synthesized_events == 0 and len(result.ended_sessions) == 1
+
+
+def test_reap_reports_the_sessions_it_found_alive(tmp_path: Path):
+    """The other half of the sweep. ``status_for_snapshot`` needs it: without
+    it the silence timer is the only evidence there is, and a long tool run
+    that goes quiet gets called dead while its process is right there."""
+
+    alive = pr.ProcessEntry(300, 1, 5.0, "/opt/homebrew/bin/codex")
+    pr.record_agent_process("codex", "alive", alive, state_dir=tmp_path)
+    pr.record_agent_process("codex", "dead", pr.ProcessEntry(301, 1, 6.0, "codex"), state_dir=tmp_path)
+    table = {300: alive, 1: pr.ProcessEntry(1, 0, 0.0, "launchd")}
+    sweeper = pr.ProcessSweeper(
+        state_dir=tmp_path, table_loader=lambda: table, claude_index_loader=dict, clock=lambda: 900.0
+    )
+    result = reap_dead_agents(
+        [
+            _status("codex", "codex:session:alive", "alive"),
+            _status("codex", "codex:session:dead", "dead"),
+        ],
+        sweeper=sweeper,
+        refresh_hint_handler=None,
+        process_payload=lambda *a, **k: None,
+        log_path_for=lambda p: Path("/x"),
+    )
+    assert result.live_sessions == frozenset({("codex", "alive")})
+    assert [d.record.session_id for d in result.ended_sessions] == ["dead"]
+
+
+def test_reap_still_works_with_a_sweeper_that_only_knows_sweep(tmp_path: Path):
+    """A double from before the live half existed vouches for nothing, which
+    leaves the silence rule exactly as it was."""
+
+    class OldSweeper:
+        def sweep(self, sessions):
+            return []
+
+    result = reap_dead_agents(
+        [_status("codex", "codex:session:s", "s")],
+        sweeper=OldSweeper(),
+        refresh_hint_handler=None,
+        process_payload=lambda *a, **k: None,
+        log_path_for=lambda p: Path("/x"),
+    )
+    assert result.live_sessions == frozenset()
+    assert result.ended_sessions == ()
