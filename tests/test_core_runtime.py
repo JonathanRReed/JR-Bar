@@ -455,8 +455,6 @@ def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: p
 def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     from jrbar import core_usage_history
 
-    # The scan runs off the socket thread, so this command needs real ones.
-    monkeypatch.setattr(threading, "Thread", REAL_THREAD)
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     calls: list[tuple[str, int]] = []
@@ -466,6 +464,16 @@ def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monke
         return [("claude", "s", "fable", time.time(), 10, 0, 0, 5, "d")]
 
     monkeypatch.setattr(core_usage_history, "scan_provider_records", fake_scan)
+    # The scan runs off the socket thread, so this command needs a real one.
+    # Only this one: the fixture's inert Thread stands in for every other
+    # daemon thread, and turning them all on would start the HID probe and
+    # the start-up warm-up as a side effect of a usage test.
+    controller._core_usage_history_service = core_usage_history.UsageHistoryService(
+        lambda provider, days: core_usage_history.scan_provider_records(provider, days=days),
+        controller._core_publish_event,
+        log=controller._core_log,
+        thread_factory=REAL_THREAD,
+    )
     document = controller._core_dispatch("usage_history", {"provider": "claude", "range": "7d"})
     assert calls == [("claude", 7)]
     assert document["days"][-1]["tokens_in"] == 10 and len(document["days"]) == 7
