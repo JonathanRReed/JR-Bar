@@ -1891,7 +1891,7 @@ def build_headless_controller_class() -> type:
             if plan is not None:
                 product = 1.0
                 for step in getattr(plan, "trace", ()) or ():
-                    word = {"idle_dim": "idle_dim", "sleep_dim": "sleep", "dnd_dim": "quiet", "night_dim": "night"}.get(
+                    word = {"idle_dim": "idle_dim", "sleep_dim": "sleep", "dnd_dim": "quiet", "night_dim": "auto_dim"}.get(
                         getattr(step, "name", "")
                     )
                     step_factor = getattr(step, "factor", None)
@@ -2040,10 +2040,15 @@ def build_headless_controller_class() -> type:
                     override=override,
                     why_detail=hardware.why_detail,
                 )
+            try:
+                auto_dim = self.auto_dim_result().to_dict()
+            except Exception:
+                auto_dim = None
             document = build_lights_document(
                 surfaces,
                 linked=linked,
                 devices_linked=devices_linked and "dot" in surfaces and "hardware" in surfaces,
+                auto_dim=auto_dim,
             )
             if document.get("devices_linked") and self._core_linked_skew_ms is not None:
                 document["linked_skew_ms"] = self._core_linked_skew_ms

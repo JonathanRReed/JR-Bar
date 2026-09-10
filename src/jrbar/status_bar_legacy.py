@@ -93,6 +93,7 @@ except ImportError as exc:  # pragma: no cover - only exercised on non-macOS set
     ) from exc
 
 from . import (
+    auto_dim as auto_dim_module,
     calendar_watch,
     claude_quota,
     display_brightness,
@@ -12549,13 +12550,38 @@ class StatusBarController(NSObject):
                 now_monotonic=time.monotonic(),
             ),
             focus_factor=1.0,
-            night_factor=1.0,
+            night_factor=self.auto_dim_result().factor,
             global_factor=float(self.settings.global_brightness_scale),
             escalation_boost=boost,
             is_screen_bar=device.device_id == VIRTUAL_DEVICE_ID,
             screen_bar_min_glow=float(self.settings.screen_bar_min_glow),
             dnd_factor=self.current_dnd_projection().brightness_factor,
         )
+
+    AUTO_DIM_CACHE_SECONDS = 1.0
+
+    def auto_dim_result(self):
+        """The auto-dim decision (``auto_dim.AutoDimResult``) behind the
+        ``night_dim`` stage, evaluated at most once a second: one brightness
+        plan per device per refresh must not read the display or the
+        ambient light sensor that many times."""
+        settings = getattr(self.settings, "auto_dim", None)
+        if settings is None or settings.mode == "off":
+            self._auto_dim_cache = None
+            return auto_dim_module.OFF_RESULT
+        cached = getattr(self, "_auto_dim_cache", None)
+        now = time.monotonic()
+        if cached is not None and cached[1] == settings and now - cached[0] < self.AUTO_DIM_CACHE_SECONDS:
+            return cached[2]
+        local = time.localtime()
+        result = auto_dim_module.evaluate_auto_dim(
+            settings,
+            now_minutes=local.tm_hour * 60 + local.tm_min,
+            display_reader=auto_dim_module.display_brightness_fraction,
+            ambient_reader=auto_dim_module.ambient_light_lux,
+        )
+        self._auto_dim_cache = (now, settings, result)
+        return result
 
     def idle_dim_scale_factor(self) -> float:
         """1.0 normally; idle_dim_fraction once idle_dim_after_minutes of
