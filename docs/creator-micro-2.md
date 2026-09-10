@@ -109,9 +109,47 @@ readback checks. That firmware returns `id`, `method`, and `result` in replies
 and can acknowledge `fs.write` with a null result. JR-Bar accepts those exact
 forms without treating the acknowledgement as proof of persistence.
 
-Real-device key presses, visible lighting, broader write-limit coverage, and
-sole-controller recovery remain unverified. Bluetooth LE was the observed
-transport for the successful keymap roundtrip.
+Real-device key presses and visible lighting remain unverified by eye.
+Bluetooth LE was the observed transport for the successful keymap roundtrip.
+
+## What the pad did on 2026-09-10, over Bluetooth
+
+The owner's pad (serial `D0CF130481EC`, product `0x8298`, firmware `v0.6.1`,
+battery 95%) enumerated with its vendor collection visible directly — usage
+page `0xFF00`, usage `1` — so the native `DeviceUsagePairs` fallback was not
+needed. Capability negotiation recorded **both** `v.oai.thstatus` and
+`lights.preview`. A per-key `v.oai.thstatus` frame with twenty explicit `id`
+entries and a whole-board `lights.preview` frame were each acknowledged
+`applied`. Twenty-five seconds of continuous input polling produced no
+disconnect, no malformed report and no conflict. Nothing else was connected
+to the pad; no `device_conflict` was provoked by a foreign controller.
+
+**macOS gates the open behind Input Monitoring.** All four of the pad's HID
+collections enumerate on one `DevSrvsID:` path, so hidapi's open of the
+vendor collection opens the keyboard collection with it and TCC applies.
+Enumeration needs no permission, which is why the daemon reads the pad as
+connected right up to the first open. The core helper
+(`com.jonathanreed.jrbar.core`) is a separate signed bundle from the app and
+needs its own grant; without it every open fails and, before this was named,
+the only symptom was an output receipt reading `reconnecting` forever.
+`IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)` now answers that question
+without prompting, and an explicit denial refuses the open with
+`input_monitoring_denied`. `unknown` still opens: the open is what raises the
+prompt.
+
+**The pad answers twice.** A second keymap inspection on one connection
+failed intermittently with `device_conflict` at `fs.chksm` with nothing else
+driving the pad. `issued_ids` held only outstanding ids, so the pad
+re-answering a completed request was indistinguishable from a foreign
+controller — and that verdict is not recoverable, so one duplicate frame
+stopped output for good. Completed ids are now remembered for the
+connection's recent history and our own echo is skipped.
+
+**The device outranks the journal.** The pad's active layer was already
+`KV_OAI_AG00..AG12` from the September keymap trial, while
+`state.deck.keymap.state` read `stock`: `keymap_facts` treats a missing
+recovery journal as proof that nothing reached the device. A fresh
+inspection now decides that word instead.
 
 `hidapi==0.14.0.post4` is BSD-3-Clause licensed. JR-Bar preserves that attribution
 and links to the [upstream license](https://github.com/libusb/hidapi/blob/master/LICENSE.txt).
@@ -120,7 +158,9 @@ hash-bound binary-only dependency lock. The module still imports it lazily, so
 source installs on other platforms do not load the native backend unless they
 use this adapter.
 
-The adapter is deterministic under an injected transport, but actual LED output,
-Input Monitoring behavior, Bluetooth framing, and coexistence with Work Louder
-Input still require testing on real hardware before the integration can be
-called hardware-validated.
+The adapter is deterministic under an injected transport. Bluetooth framing,
+Input Monitoring behaviour and both lighting methods have now been exercised
+against the real pad (above). What remains unverified is what a person sees
+and does: whether the acknowledged colours are actually visible on the keys,
+what a physical press delivers end to end, and coexistence with Work Louder
+Input while it holds the device.
