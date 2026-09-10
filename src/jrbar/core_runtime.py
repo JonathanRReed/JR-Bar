@@ -1000,7 +1000,12 @@ def _cmd_usage_history(self, args):
             self._core_log(f"core: usage history scan failed: {error.__class__.__name__}")
             records = []
     return core_usage_history.usage_history_document(
-        records, provider=provider, range_name=range_name, account=account, state=source_state
+        records,
+        provider=provider,
+        range_name=range_name,
+        account=account,
+        state=source_state,
+        codex_default_model=core_usage_history.default_codex_model(),
     )
 
 
