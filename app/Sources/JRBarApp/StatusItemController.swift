@@ -348,6 +348,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             ("meters_idle", StatusIconSpec(style: .meters, meters: sample, dot: .idle), nil),
             ("meters_working", StatusIconSpec(style: .meters, tintHex: "#00E5FF", meters: sample, dot: .working, phase: 0.5), nil),
             ("meters_ask", StatusIconSpec(style: .meters, meters: sample, dot: .ask, phase: 0.4), nil),
+            ("meters_error", StatusIconSpec(style: .meters, meters: sample, dot: .error, phase: 0.2), nil),
             ("meters_done", StatusIconSpec(style: .meters, meters: sample, dot: .done), nil),
             ("meters_overflow", StatusIconSpec(style: .meters, meters: sample, overflow: 2, dot: .working, phase: 0.5), nil),
             ("meters_percent", StatusIconSpec(style: .metersPercent, meters: sample, dot: .working, phase: 0.5), nil),

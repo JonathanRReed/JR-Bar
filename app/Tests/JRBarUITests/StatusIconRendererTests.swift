@@ -158,13 +158,25 @@ struct StatusMetersTests {
         let working = renderer.image(for: StatusIconSpec(style: .meters, tintHex: "#00E5FF", meters: meters, dot: .working, phase: 0.5))
         let ask = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .ask, phase: 0.5))
         let done = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .done))
+        // A failure had no dot at all before 2026-09-10: a crashed run showed
+        // the working dot if anything else was running, and the quiet hollow
+        // one if nothing was.
+        let error = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .error, phase: 0.2))
         #expect(idle.isTemplate)
-        #expect(!working.isTemplate && !ask.isTemplate && !done.isTemplate)
+        #expect(!working.isTemplate && !ask.isTemplate && !done.isTemplate && !error.isTemplate)
         #expect(Self.pixels(working) != Self.pixels(ask))
         #expect(Self.pixels(ask) != Self.pixels(done))
-        #expect(idle.size == working.size, "the dot never changes the width")
-        #expect(StatusDotState.working.animates && StatusDotState.ask.animates)
+        #expect(Self.pixels(error) != Self.pixels(ask), "a failure is not an ask")
+        #expect(Self.pixels(error) != Self.pixels(done))
+        #expect(idle.size == working.size && idle.size == error.size, "the dot never changes the width")
+        #expect(StatusDotState.working.animates && StatusDotState.ask.animates && StatusDotState.error.animates)
         #expect(!StatusDotState.idle.animates && !StatusDotState.done.animates)
+        #expect(StatusDotState.error.meaning == "Red dot: something failed.")
+        // A hard square, not the ask's eased halo: the two ends of the
+        // blink differ, and neither matches the ask at the same phase.
+        let lit = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .error, phase: 0.2))
+        let dark = renderer.image(for: StatusIconSpec(style: .meters, meters: meters, dot: .error, phase: 0.75))
+        #expect(Self.pixels(lit) != Self.pixels(dark))
     }
 
     @Test("the breathing phase moves the picture but is bucketed, so 2 Hz costs three images")

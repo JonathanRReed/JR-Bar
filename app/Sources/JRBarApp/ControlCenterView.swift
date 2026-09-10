@@ -723,7 +723,9 @@ struct SessionDragRow: View {
                     .truncationMode(.tail)
                 Text(activity.word)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    // Not .secondary: a broken session read exactly like an
+                    // idle one here, and a waiting one like both.
+                    .foregroundStyle(activity.wordColor)
             }
             Spacer()
             if pinned {

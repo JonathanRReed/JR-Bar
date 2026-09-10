@@ -692,14 +692,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return result
     }
 
-    /// The dot at the left of the strip: an open ask beats work, work
-    /// beats a fresh completion, and a completion holds for
-    /// `completionDotWindow` before the dot goes quiet again.
+    /// The dot at the left of the strip: an open ask beats a failure,
+    /// a failure beats work, work beats a fresh completion, and a
+    /// completion holds for `completionDotWindow` before the dot goes quiet
+    /// again.
+    ///
+    /// A failure ranks BELOW an open ask deliberately: an unanswered ask is
+    /// costing you time right now and one keystroke ends it, where a
+    /// failure has already stopped and will wait. It ranks above work for
+    /// the same reason in reverse. Before this there was no failed state at
+    /// all here -- a run that crashed showed the working dot if anything
+    /// else was running, and the quiet hollow dot if nothing was.
     static let completionDotWindow: TimeInterval = 6
 
     private func dotState() -> StatusDotState {
         guard let core, core.isLive, let state = core.state else { return .idle }
         if !state.asks.isEmpty || state.mainSessions.contains(where: { $0.ask != nil }) { return .ask }
+        if core.sessions.contains(where: { SessionActivity.reduce($0) == .failed }) { return .error }
         if state.aggregate.active > 0 || core.sessions.contains(where: { SessionActivity.reduce($0) == .working }) { return .working }
         if let at = lastCompletionAt, Date().timeIntervalSince(at) < Self.completionDotWindow { return .done }
         return .idle

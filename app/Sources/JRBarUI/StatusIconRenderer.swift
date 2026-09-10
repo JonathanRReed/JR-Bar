@@ -93,11 +93,15 @@ public enum StatusDotState: String, Hashable, Sendable, CaseIterable {
     case working
     /// An ask is open: the dot pulses amber.
     case ask
+    /// Something failed: the dot blinks red. Its own state since
+    /// 2026-09-10 -- a failed session used to show as whatever else was
+    /// running, or as nothing at all.
+    case error
     /// A run finished in the last few seconds: the dot holds green.
     case done
 
-    /// Only these two move, so only these two run the redraw timer.
-    public var animates: Bool { self == .working || self == .ask }
+    /// Only these three move, so only these three run the redraw timer.
+    public var animates: Bool { self == .working || self == .ask || self == .error }
 
     /// What the dot at the left is saying, in one line, so its meaning is
     /// somewhere other than this file. The tooltip's second line.
@@ -106,6 +110,7 @@ public enum StatusDotState: String, Hashable, Sendable, CaseIterable {
         case .idle: return "Hollow dot: nothing is running."
         case .working: return "Breathing dot: something is running."
         case .ask: return "Amber dot: something needs you."
+        case .error: return "Red dot: something failed."
         case .done: return "Green dot: a run just finished."
         }
     }
@@ -382,6 +387,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         case .idle: return nil
         case .working: return spec.tintHex.flatMap(NSColor.init(statusHex:)) ?? .systemTeal
         case .ask: return .systemOrange
+        case .error: return .systemRed
         case .done: return .systemGreen
         }
     }
@@ -403,6 +409,12 @@ public final class StatusIconRenderer: @unchecked Sendable {
             (color ?? ink).withAlphaComponent(0.30 * (1 - breath)).setFill()
             NSBezierPath(ovalIn: halo).fill()
             (color ?? ink).setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        case .error:
+            // A hard square, like the strip's: on for half the cycle, off
+            // for half, no easing. The ask's halo swells; this one snaps,
+            // so the two are told apart by rhythm as well as by colour.
+            (color ?? ink).withAlphaComponent(spec.phase < 0.5 ? 1.0 : 0.30).setFill()
             NSBezierPath(ovalIn: rect).fill()
         case .done:
             (color ?? ink).setFill()
@@ -479,6 +491,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         case .idle: break
         case .working: parts.append("working")
         case .ask: parts.append("needs you")
+        case .error: parts.append("failed")
         case .done: parts.append("finished")
         }
         if !spec.meters.isEmpty { parts.append(spec.meters.map(\.readout).joined(separator: ", ")) }

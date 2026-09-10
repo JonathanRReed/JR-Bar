@@ -156,7 +156,11 @@ struct DeckModelTests {
         #expect(DeckSlotState.inputRequired.railMark == "!" && DeckSlotState.failure.railMark == "!")
         #expect(DeckSlotState.active.railMark == "·")
         #expect(DeckSlotState.completed.railMark == "" && DeckSlotState.idle.railMark == "")
-        #expect(DeckSlotState.inputRequired.lightingHex == "#FF3A00" && DeckSlotState.failure.lightingHex == "#FF3A00")
+        // Not the same hex. A key for a session that broke and a key for one
+        // holding a permission prompt read identically until 2026-09-10.
+        #expect(DeckSlotState.inputRequired.lightingHex == "#FF3A00")
+        #expect(DeckSlotState.failure.lightingHex == "#B00020")
+        #expect(DeckSlotState.failure.lightingHex != DeckSlotState.inputRequired.lightingHex)
         #expect(DeckSlotState.active.lightingHex == "#00E5FF")
         #expect(DeckSlotState.completed.lightingHex == "#00FF66")
         #expect(DeckSlotState.idle.lightingHex == "#020204" && DeckSlotState.unavailable.lightingHex == "#020204")
