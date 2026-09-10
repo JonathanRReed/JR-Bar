@@ -31,10 +31,17 @@ struct GeneralPage: View {
 
         Section {
             LabeledContent {
-                Button("Check for Updates…") { store.report(error: "Software update is not wired up yet") }
+                Button("Check for Updates…") { store.checkForUpdates() }
+                    .disabled(!store.updaterAvailable)
+                    .help(store.updaterHint ?? "Look for a newer JR-Bar now")
             } label: {
-                SettingLabel(title: "Software Update", subtitle: "JR-Bar \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev")")
+                SettingLabel(title: "Software Update", subtitle: softwareUpdateSubtitle)
             }
+            Toggle(isOn: Binding(get: { store.automaticUpdateChecks }, set: { store.setAutomaticUpdateChecks($0) })) {
+                SettingLabel(title: "Automatically check for updates",
+                             subtitle: store.updaterHint ?? "Sparkle looks for a newer JR-Bar in the background and asks before installing.")
+            }
+            .disabled(!store.updaterAvailable)
             Picker("Update channel", selection: $store.updateChannel) {
                 Text("Stable").tag("stable")
                 Text("Beta").tag("beta")
@@ -44,6 +51,14 @@ struct GeneralPage: View {
         } footer: {
             SectionNote("Updates are checked by the app, not the core. The channel is remembered on this Mac.")
         }
+        .onAppear { store.refreshUpdater() }
+    }
+
+    private var softwareUpdateSubtitle: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        guard store.updaterAvailable else { return "JR-Bar \(version)" }
+        guard let checked = store.lastUpdateCheck else { return "JR-Bar \(version) · never checked" }
+        return "JR-Bar \(version) · last checked \(checked.formatted(.relative(presentation: .named)))"
     }
 }
 

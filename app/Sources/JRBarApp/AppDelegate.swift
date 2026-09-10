@@ -33,17 +33,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
+    /// The app's remembered facts (hooks stamp, login item, Screen Bar) in
+    /// `~/.local/state/jrbar/app-state.json`; user defaults are Sparkle's.
+    private let appStateFile = AppStateFile()
+    private var appState = AppState()
+    /// The user-defaults keys the same facts lived under before the JSON
+    /// file; read once to seed the file on a Mac where they did persist.
     private static let showScreenBarKey = "showScreenBar"
-    /// The packaged build whose `agent-monitor install all` last succeeded.
     private static let hooksInstalledForKey = "bundledHooksInstalledFor"
-    /// Set once the first packaged launch has registered the login item.
     private static let loginItemRegisteredKey = "loginItemRegisteredOnFirstRun"
 
     private var terminationSignal: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let defaults = UserDefaults.standard
-        defaults.register(defaults: [Self.showScreenBarKey: true])
+        loadAppState()
 
         // `JRBAR_LOGIN_ITEM=on|off|status` only touches the login item and
         // exits: scripts/install-agents.sh uses it to hand the Mac between
@@ -94,6 +97,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
+        settingsStore.refreshUpdater()
+        NotificationCenter.default.addObserver(forName: SparkleUpdater.automaticChecksDidChange, object: nil, queue: .main) { [weak settingsStore] _ in
+            MainActor.assumeIsolated { settingsStore?.refreshUpdater() }
+        }
+        store.onCheckForUpdates = { [weak self] in self?.checkForUpdates(nil) }
         installMainMenu()
         self.statusItem = statusItem
         self.screenBar = screenBar
@@ -194,7 +202,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             completeFirstRun(with: bundled, core: core)
         }
 
-        let shown = defaults.bool(forKey: Self.showScreenBarKey)
+        let shown = appState.showScreenBar
         statusItem.isScreenBarShown = shown
         store.screenBarShown = shown
         if shown { screenBar.show(); interaction.start() }
@@ -206,8 +214,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // after launch (screenshots, design passes) without a click;
         // `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on that page
         // (general, agents, usage, devices, lighting, notifications, remote,
-        // advanced, or effects).
+        // advanced, or effects); `JRBAR_SCREEN_BAR=on|off` flips the Screen
+        // Bar the way the status item's toggle does (screenshots without the
+        // band, and a persistence check for the remembered value).
         let environment = ProcessInfo.processInfo.environment
+        switch environment["JRBAR_SCREEN_BAR"]?.lowercased() {
+        case "on", "1": setScreenBar(shown: true)
+        case "off", "0": setScreenBar(shown: false)
+        default: break
+        }
         if let openPanel = environment["JRBAR_OPEN_PANEL"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak panel] in
                 MainActor.assumeIsolated { panel?.open() }
@@ -319,18 +334,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// item. Personal app: launch at login is on by default and Settings ›
     /// General turns it off.
     private func completeFirstRun(with bundled: CoreSupervisor.BundledCore, core: CoreModel) {
-        let defaults = UserDefaults.standard
         let stamp = bundled.buildStamp
-        if defaults.string(forKey: Self.hooksInstalledForKey) != stamp {
+        if appState.bundledHooksInstalledFor != stamp {
             core.appendLocalLog(level: "supervisor", "first launch of \(stamp): installing provider hooks for \(bundled.hookShim)")
             DispatchQueue.global(qos: .utility).async {
                 let result = bundled.run(["agent-monitor", "install", "all"])
-                Task { @MainActor [weak core] in
+                Task { @MainActor [weak self, weak core] in
                     for line in result.output.split(separator: "\n") where !line.isEmpty {
                         core?.appendLocalLog(level: "hooks", String(line))
                     }
                     if result.status == 0 {
-                        UserDefaults.standard.set(stamp, forKey: Self.hooksInstalledForKey)
+                        self?.appState.bundledHooksInstalledFor = stamp
+                        self?.persistAppState()
                         core?.appendLocalLog(level: "supervisor", "provider hooks installed for \(stamp)")
                     } else {
                         core?.appendLocalLog(level: "supervisor", "provider hook install exited \(result.status); will retry next launch")
@@ -339,16 +354,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 }
             }
         }
-        if !defaults.bool(forKey: Self.loginItemRegisteredKey) {
+        if !appState.loginItemRegistered {
             do {
                 try SMAppService.mainApp.register()
                 core.appendLocalLog(level: "supervisor", "launch at login: registered (Settings › General turns it off)")
             } catch {
                 core.appendLocalLog(level: "supervisor", "launch at login: \(error.localizedDescription)")
             }
-            defaults.set(true, forKey: Self.loginItemRegisteredKey)
+            appState.loginItemRegistered = true
+            persistAppState()
         }
         NSLog("JR-Bar login item: %@", Self.describe(SMAppService.mainApp.status))
+    }
+
+    // MARK: App state
+
+    /// Reads `app-state.json`, seeding it from the user-defaults keys the
+    /// facts used to live under when the file does not exist yet, and logs
+    /// what came back so a relaunch can be checked from the console.
+    private func loadAppState() {
+        let defaults = UserDefaults.standard
+        appState = appStateFile.load()
+        if !appStateFile.exists {
+            var seeded = false
+            if let stamp = defaults.string(forKey: Self.hooksInstalledForKey) {
+                appState.bundledHooksInstalledFor = stamp; seeded = true
+            }
+            if defaults.object(forKey: Self.showScreenBarKey) != nil {
+                appState.showScreenBar = defaults.bool(forKey: Self.showScreenBarKey); seeded = true
+            }
+            if defaults.bool(forKey: Self.loginItemRegisteredKey) {
+                appState.loginItemRegistered = true; seeded = true
+            }
+            if seeded { persistAppState() }
+        }
+        NSLog("JR-Bar app state (%@): hooksInstalledFor=%@ showScreenBar=%d loginItemRegistered=%d; defaults: %@=%@",
+              appStateFile.url.path, appState.bundledHooksInstalledFor ?? "nil",
+              appState.showScreenBar ? 1 : 0, appState.loginItemRegistered ? 1 : 0,
+              SparkleUpdater.automaticChecksDefaultsKey,
+              defaults.object(forKey: SparkleUpdater.automaticChecksDefaultsKey).map { "\($0)" } ?? "nil")
+    }
+
+    private func persistAppState() {
+        do {
+            try appStateFile.save(appState)
+        } catch {
+            core?.appendLocalLog(level: "supervisor", "app state: could not write \(appStateFile.url.path): \(error.localizedDescription)")
+            NSLog("JR-Bar app state: could not write %@: %@", appStateFile.url.path, error.localizedDescription)
+        }
     }
 
     private static func describe(_ status: SMAppService.Status) -> String {
@@ -413,7 +466,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// reaches this through the responder chain). Sparkle shows its own UI.
     @objc func checkForUpdates(_ sender: Any?) {
         guard let updater, updater.isAvailable else {
-            settingsStore?.report(error: "Software update: \(updater?.availability.description ?? "unavailable")")
+            let why = "Software update: \(updater?.availability.description ?? "unavailable")"
+            settingsStore?.report(error: why)
+            store?.show(toast: why)
             return
         }
         updater.checkForUpdates(sender)
@@ -445,7 +500,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: Screen Bar visibility
 
     private func setScreenBar(shown: Bool) {
-        UserDefaults.standard.set(shown, forKey: Self.showScreenBarKey)
+        appState.showScreenBar = shown
+        persistAppState()
         statusItem?.isScreenBarShown = shown
         store?.screenBarShown = shown
         if shown { screenBar?.show(); interaction?.start() } else { interaction?.stop(); screenBar?.hide() }

@@ -117,6 +117,8 @@ final class PanelStore {
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
+    /// The overflow menu's "Check for Updates…" (Sparkle, through the delegate).
+    var onCheckForUpdates: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
     /// The content changed shape while open (rows came or went); the
     /// controller resizes the window to `layout`.
@@ -446,6 +448,11 @@ final class PanelStore {
     func openControlCenter() {
         onClose?()
         onOpenControlCenter?()
+    }
+
+    func checkForUpdates() {
+        onClose?()
+        onCheckForUpdates?()
     }
 
     func restartCore() {
