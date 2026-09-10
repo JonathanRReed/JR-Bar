@@ -707,7 +707,8 @@ struct UsageRow: View {
     private func paceColor(_ pace: String?) -> Color {
         switch pace?.lowercased() {
         case "ahead": return .orange
-        case "behind": return .secondary
+        case "exhausted": return .red
+        case "behind", "under": return .secondary
         default: return Color.secondary.opacity(0.7)
         }
     }

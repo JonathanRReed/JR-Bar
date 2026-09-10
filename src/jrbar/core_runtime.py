@@ -1753,6 +1753,30 @@ def build_headless_controller_class() -> type:
             except Exception:
                 pass
 
+        def _core_linked_dot_program(self, program: str, controller) -> str:
+            """The strip's program at the Dot's brightness times the linked
+            scale. Any ``brightness`` line the strip's render carried is
+            folded in; the firmware takes the last brightness line, so one
+            combined line goes first and no other remains."""
+            from ._led_status_legacy import apply_brightness, normalize_brightness
+
+            lines = program.splitlines()
+            existing = 255
+            kept: list[str] = []
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[0] == "brightness":
+                    try:
+                        existing = min(existing, int(parts[1]))
+                    except ValueError:
+                        pass
+                    continue
+                kept.append(line)
+            scale = float(getattr(self.settings, "linked_dot_scale", 0.3))
+            device = normalize_brightness(getattr(controller, "brightness", 255))
+            combined = min(existing, device) * scale
+            return apply_brightness("\n".join(kept), combined)
+
         def _core_linked_dot_follows(self, request) -> bool:
             """True when this request targets the Dot and linked mode says it
             must replay the strip rather than render its own program."""
@@ -1777,7 +1801,7 @@ def build_headless_controller_class() -> type:
             if self._core_linked_dot_follows(request):
                 program, state = self._core_linked_pro_program
                 controller = self.agent_controller_for_device(request.device)
-                write = controller.sync_program(program, state)
+                write = controller.sync_program(self._core_linked_dot_program(program, controller), state)
                 return legacy.HardwareWriteResult(
                     request=request,
                     write=write,
@@ -1850,7 +1874,7 @@ def build_headless_controller_class() -> type:
             if not program or getattr(write, "error", None) is not None:
                 return self._sync_hardware_device(dot_request)
             controller = self.agent_controller_for_device(dot_request.device)
-            dot_write = controller.sync_program(program, write.state)
+            dot_write = controller.sync_program(self._core_linked_dot_program(program, controller), write.state)
             return legacy.HardwareWriteResult(
                 request=dot_request,
                 write=dot_write,

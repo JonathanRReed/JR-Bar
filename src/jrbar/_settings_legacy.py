@@ -218,6 +218,16 @@ class DeviceDisplaySetting:
         return (self.red_gain, self.green_gain, self.blue_gain)
 
 
+def _clamp_linked_dot_scale(value: object) -> float:
+    try:
+        scale = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.3
+    if scale != scale:
+        return 0.3
+    return min(1.0, max(0.05, scale))
+
+
 @dataclass(frozen=True)
 class AgentMonitorSettings:
     codex_transcripts_enabled: bool = False
@@ -391,6 +401,10 @@ class AgentMonitorSettings:
     # Pro + Dot as one unit: when both are mounted their programs are
     # written back to back from the same presentation and anchor.
     devices_linked: bool = True
+    # Fraction of the strip's brightness a linked Dot plays at. Its LEDs
+    # are physically much brighter than the strip's, so equal numbers read
+    # as a Dot that outshines the Pro.
+    linked_dot_scale: float = 0.3
     screen_bar_gauges_enabled: bool = False
     # Follow Alcove's visible capsule width (alpha-measured) so an
     # expanded live activity never outgrows the bracket. On by default;
@@ -1038,6 +1052,9 @@ class AgentMonitorSettings:
     def with_devices_linked(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, devices_linked=bool(enabled))
 
+    def with_linked_dot_scale(self, scale: float) -> AgentMonitorSettings:
+        return replace(self, linked_dot_scale=_clamp_linked_dot_scale(scale))
+
     def with_screen_bar_gauges_enabled(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, screen_bar_gauges_enabled=bool(enabled))
 
@@ -1518,6 +1535,7 @@ class AgentMonitorSettings:
             "screen_bar_min_glow": self.screen_bar_min_glow,
             "link_screen_bar_to_hardware": self.link_screen_bar_to_hardware,
             "devices_linked": self.devices_linked,
+            "linked_dot_scale": self.linked_dot_scale,
             "screen_bar_gauges_enabled": self.screen_bar_gauges_enabled,
             "screen_bar_follow_alcove": self.screen_bar_follow_alcove,
             "screen_bar_show_in_full_screen": self.screen_bar_show_in_full_screen,
@@ -1868,6 +1886,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             data.get("link_screen_bar_to_hardware"), True
         ),
         devices_linked=_bool_setting(data.get("devices_linked"), True),
+        linked_dot_scale=_clamp_linked_dot_scale(data.get("linked_dot_scale")),
         screen_bar_gauges_enabled=_bool_setting(data.get("screen_bar_gauges_enabled"), False),
         screen_bar_follow_alcove=_bool_setting(data.get("screen_bar_follow_alcove"), True),
         screen_bar_show_in_full_screen=_bool_setting(
