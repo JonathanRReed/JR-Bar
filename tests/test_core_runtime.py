@@ -4,6 +4,7 @@ through the core server, and answers commands on the main thread."""
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
@@ -27,6 +28,9 @@ REQUIRED_COMMANDS = {
     "reset_settings", "set_brightness", "set_device_display", "apply_calibration", "preview_program",
     "apply_effect", "refresh_usage", "install_hooks", "uninstall_hooks", "set_closed_lid_policy",
     "quiet", "list_history", "doctor", "quit", "open_legacy_window",
+    # app-proposed extensions (app/README.md): Effect Studio and Usage Center
+    "list_effects", "render_effect", "list_assignments", "set_assignment", "clear_assignment",
+    "import_effect_pack", "export_effect_pack", "usage_history",
 }
 
 
@@ -279,3 +283,85 @@ def test_terminate_stops_the_server_and_drainer(headless) -> None:
     assert server.stopped is True
     assert controller._core is None
     assert not _FakeDrainer.instances[0].started
+
+
+def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import json
+
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: tmp_path / "packs")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+
+    catalog = controller._core_dispatch("list_effects", {})
+    assert {"none", "pulse", "alert", "aurora"} <= {effect["id"] for effect in catalog["effects"]}
+    assert catalog["packs"] == [] and catalog["generation"] == 0
+    render = controller._core_dispatch("render_effect", {"effect_id": "blink", "parameters": {"cadence": "double"}, "led_count": 2})
+    assert render["led_count"] == 2 and render["cadence"]["id"] == "double" and "300ms" in render["program"]
+    with pytest.raises(CommandError) as unknown:
+        controller._core_dispatch("render_effect", {"effect_id": "nope"})
+    assert unknown.value.code == "unknown_effect"
+
+    assert controller._core_dispatch("list_assignments", {})["assignments"] == []
+    reply = controller._core_dispatch(
+        "set_assignment", {"effect_id": "aurora", "scope": "provider", "target_id": "codex", "parameters": {"wave_count": 3}}
+    )
+    assert reply["assignment"] == {"effect_id": "aurora", "scope": "provider", "target_id": "codex", "parameters": reply["assignment"]["parameters"]}
+    assert reply["assignment"]["parameters"]["wave_count"] == 3
+    assert reply["assignments"][0]["parameters"]["wave_count"] == 3
+    assert reply["generation"] == 1
+    saved = json.loads((tmp_path / "assignments.json").read_text())
+    assert saved["assignments"][0]["effect_id"] == "aurora"
+    for scope, target, code in (("semantic", "asking", "reserved_semantic"), ("global", "x", "invalid_target"), ("bogus", None, "invalid_scope")):
+        with pytest.raises(CommandError) as refused:
+            controller._core_dispatch("set_assignment", {"effect_id": "pulse", "scope": scope, "target_id": target})
+        assert refused.value.code == code
+    cleared = controller._core_dispatch("clear_assignment", {"scope": "provider", "target_id": "codex"})
+    assert cleared["removed"] is True and cleared["assignments"] == []
+    assert controller._core_dispatch("clear_assignment", {"scope": "provider", "target_id": "codex"})["removed"] is False
+
+    exported = controller._core_dispatch(
+        "export_effect_pack", {"ids": ["pulse", "aurora"], "path": str(tmp_path / "out" / "my pack.json"), "name": "Night Lab"}
+    )
+    assert exported["effects"] == 2 and exported["id"] == "night-lab"
+    imported = controller._core_dispatch("import_effect_pack", {"path": exported["path"]})
+    assert imported["imported"] == {"id": "night-lab", "name": "Night Lab", "effects": 2}
+    assert "pack:night-lab:aurora" in {effect["id"] for effect in imported["effects"]}
+    assert imported["packs"][0]["path"] == exported["path"]
+    with pytest.raises(CommandError) as again:
+        controller._core_dispatch("import_effect_pack", {"path": exported["path"]})
+    assert again.value.code == "conflict"
+    with pytest.raises(CommandError) as bad:
+        controller._core_dispatch("import_effect_pack", {"path": str(tmp_path / "missing.json")})
+    assert bad.value.code == "invalid_pack"
+    packed = controller._core_dispatch("render_effect", {"effect_id": "pack:night-lab:aurora", "parameters": {"duration_seconds": 1.0}})
+    assert packed["parameters"]["motion"] == "aurora" and packed["program"]
+
+
+def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    from jrbar import core_usage_history
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    calls: list[tuple[str, int]] = []
+
+    def fake_scan(provider, *, days, home=None):
+        calls.append((provider, days))
+        return [("claude", "s", "fable", time.time(), 10, 0, 0, 5, "d")]
+
+    monkeypatch.setattr(core_usage_history, "scan_provider_records", fake_scan)
+    document = controller._core_dispatch("usage_history", {"provider": "claude", "range": "7d"})
+    assert calls == [("claude", 7)]
+    assert document["days"][-1]["tokens_in"] == 10 and len(document["days"]) == 7
+    with pytest.raises(CommandError) as bad_range:
+        controller._core_dispatch("usage_history", {"provider": "claude", "range": "2d"})
+    assert bad_range.value.code == "invalid_range"
+    with pytest.raises(CommandError) as unknown:
+        controller._core_dispatch("usage_history", {"provider": "grok", "range": "7d"})
+    assert unknown.value.code == "not_found"
