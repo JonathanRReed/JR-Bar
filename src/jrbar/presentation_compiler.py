@@ -1,10 +1,40 @@
-"""Mandatory temporal-safety compiler for every JR-Bar light surface."""
+"""Mandatory temporal-safety compiler for every JR-Bar light surface.
+
+The rule this enforces is the accessibility one, not a typographic one. A
+*flash* is a reversal of the field's luminance -- most of the strip getting
+brighter and then darker again -- and what is limited is how many of those
+happen per second. Motion is not flashing: a head sliding along the strip
+changes any given LED constantly while the field it occupies barely moves, so
+``flash_analysis`` renders the program and measures the reversal rate instead
+of inferring one from step durations.
+
+What that means for an author, in order:
+
+* A per-LED (``0:#RRGGBB``) paint keeps whatever phase it was written with.
+  Staggered indexed segments are how every travelling shape is built, and a
+  floor on their phase is a floor on how fast light may move -- which is not
+  a hazard and was making sweeps look like blinks.
+* A field-wide paint (a whole-bar colour or a colour list) inside a loop still
+  gets a phase floor when it was written without one, because an untimed
+  field-wide paint is a strobe frame.
+* Whatever the text says, the compiled loop is rendered and its measured flash
+  rate must sit at or under ``MAX_PRESENTATION_HZ`` -- ``MAX_SATURATED_RED_HZ``
+  when saturated red is on screen. A loop that flashes faster is slowed by a
+  whole-number factor until it does not, which preserves its shape exactly.
+* The loop is never shorter than ``MIN_PRESENTATION_CYCLE_MS``.
+
+Nothing is ever refused for being too lively; it is slowed. A refusal would
+leave the strip frozen on whatever it was showing, which is worse than a
+slower version of what the author asked for.
+"""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from functools import lru_cache
 
+from . import flash_analysis
 from .animation import (
     Animation,
     AnimationValidationError,
@@ -121,6 +151,14 @@ def _safe_segment(
     saturated_red: bool,
     force_timed: bool,
 ):
+    if type(segment) is IndexedPaint:
+        # A named-LED paint is spatial motion, not a field flash: it moves a
+        # few LEDs and leaves the rest holding, so a phase floor on it caps
+        # how fast light may TRAVEL rather than how fast the strip may
+        # reverse. That floor is what turned every sweep in this product into
+        # a row of separate blinks. The measured flash gate below is what
+        # keeps staggered paints honest instead.
+        return segment, False
     timing, changed = _safe_timing(
         segment.timing,
         saturated_red=saturated_red,
@@ -129,7 +167,43 @@ def _safe_segment(
     return replace(segment, timing=timing), changed
 
 
-def _safe_animation(animation: Animation) -> tuple[Animation, tuple[str, ...]]:
+def _slowdown_factor(
+    animation: Animation,
+    *,
+    loop_ms: int | None,
+    required_cycle_ms: int,
+    led_count: int,
+    saturated_red: bool,
+) -> int:
+    """By how much this loop has to be stretched, as a whole number.
+
+    Two independent floors, and the stricter one wins. The cycle floor is a
+    product rule -- nothing on this hardware repeats faster than twice a
+    second. The flash floor is the accessibility one, and it is measured:
+    ``flash_analysis`` renders the loop and counts how often the FIELD
+    reverses, so a travelling head contributes nothing to it however fast it
+    travels, while a bar that blinks contributes all of it.
+
+    A whole-number factor is deliberate. Scaling every duration and delay by
+    the same integer divides the flash rate by exactly that integer and leaves
+    the shape -- every overlap, every stagger, every phase relationship --
+    untouched. Rounding phases individually is what collapses a stagger into
+    unison, and a strip flashing in unison is the thing being prevented.
+    """
+    if loop_ms is None or loop_ms <= 0:
+        return 1
+    cycle_factor = (
+        math.ceil(required_cycle_ms / loop_ms) if loop_ms < required_cycle_ms else 1
+    )
+    limit = MAX_SATURATED_RED_HZ if saturated_red else MAX_PRESENTATION_HZ
+    measured = flash_analysis.analyse(animation, led_count=led_count).hertz
+    flash_factor = math.ceil(measured / limit) if measured > limit else 1
+    return max(1, cycle_factor, flash_factor)
+
+
+def _safe_animation(
+    animation: Animation, *, led_count: int
+) -> tuple[Animation, tuple[str, ...]]:
     reasons: list[str] = []
     transformed_steps = []
     saw_red = False
@@ -177,8 +251,14 @@ def _safe_animation(animation: Animation) -> tuple[Animation, tuple[str, ...]]:
         required = (
             MIN_SATURATED_RED_CYCLE_MS if saw_red else MIN_PRESENTATION_CYCLE_MS
         )
-        if loop_ms is not None and 0 < loop_ms < required:
-            factor = math.ceil(required / loop_ms)
+        factor = _slowdown_factor(
+            transformed,
+            loop_ms=loop_ms,
+            required_cycle_ms=required,
+            led_count=led_count,
+            saturated_red=saw_red,
+        )
+        if factor > 1:
             scaled = []
             for index, step in enumerate(transformed.steps):
                 if index >= repeat_index:
@@ -236,6 +316,21 @@ def compile_presentation_program(
     led_count: int = 8,
     fallback: str = SAFE_FALLBACK_PROGRAM,
 ) -> PresentationCompileResult:
+    """The one gate every visible program passes through.
+
+    Cached: this runs on every device write and every Screen Bar frame source,
+    it is a pure function of its three arguments, and the flash analysis it
+    now performs renders the loop.
+    """
+    return _compiled(str(program), int(led_count), str(fallback))
+
+
+@lru_cache(maxsize=512)
+def _compiled(
+    program: str,
+    led_count: int,
+    fallback: str,
+) -> PresentationCompileResult:
     animation, problems = read_program(program, led_count=led_count)
     if errors_only(problems):
         return PresentationCompileResult(
@@ -245,7 +340,7 @@ def compile_presentation_program(
             ("invalid_program",),
         )
     try:
-        safe_animation, reasons = _safe_animation(animation)
+        safe_animation, reasons = _safe_animation(animation, led_count=led_count)
     except (PresentationSafetyError, AnimationValidationError, ValueError):
         return PresentationCompileResult(
             fallback,
