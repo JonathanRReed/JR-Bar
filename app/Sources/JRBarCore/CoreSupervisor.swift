@@ -271,3 +271,103 @@ public final class CoreSupervisor: @unchecked Sendable {
         for line in lines where !line.isEmpty { onOutput?(stream, line) }
     }
 }
+
+// MARK: - The bundled daemon
+
+extension CoreSupervisor {
+    /// What a packaged `JR-Bar.app` carries under `Contents/Helpers`: the
+    /// frozen daemon (`jrbar-core.app/Contents/MacOS/jrbar-core`, one binary
+    /// that serves `core`, `agent-monitor install all`, `hooks doctor` and
+    /// `doctor`) and the compiled hook shim (`jrbar-hook`). `commit` is the
+    /// `JRBarCommit` Info.plist key the packager writes; the daemon reports
+    /// it in its doctor reply.
+    public struct BundledCore: Equatable, Sendable {
+        public var executable: String
+        public var hookShim: String
+        public var version: String?
+        public var commit: String?
+
+        public init(executable: String, hookShim: String, version: String? = nil, commit: String? = nil) {
+            self.executable = executable
+            self.hookShim = hookShim
+            self.version = version
+            self.commit = commit
+        }
+
+        /// The environment every invocation of the bundled binary gets: the
+        /// shim every provider hook must run, and the commit for `doctor`.
+        public var environment: [String: String] {
+            var environment = ["JRBAR_HOOK_EXEC": hookShim, "PYTHONUNBUFFERED": "1"]
+            if let commit { environment["JRBAR_COMMIT"] = commit }
+            return environment
+        }
+
+        /// A stamp that changes with every packaged build: the app installs
+        /// provider hooks once per stamp.
+        public var buildStamp: String {
+            "\(version ?? "?")@\(commit ?? "?")"
+        }
+
+        /// Runs the bundled binary once (`agent-monitor install all`, `hooks
+        /// doctor`) and hands back its exit status and combined output.
+        /// Blocks the calling thread; call it off the main thread.
+        public func run(_ arguments: [String], timeout: TimeInterval = 60) -> (status: Int32, output: String) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            var childEnvironment = ProcessInfo.processInfo.environment
+            childEnvironment.merge(environment) { _, new in new }
+            process.environment = childEnvironment
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            process.standardInput = FileHandle.nullDevice
+            do {
+                try process.run()
+            } catch {
+                return (-1, "cannot launch \(executable): \(error)")
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let deadline = Date(timeIntervalSinceNow: timeout)
+            while process.isRunning, Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+                return (-2, "timed out after \(Int(timeout)) s")
+            }
+            return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        }
+    }
+
+    /// The daemon and shim inside `bundlePath` (an app bundle), or nil when
+    /// the bundle does not carry them (a `swift run`, the dev bundle).
+    public static func bundledCore(bundlePath: String, info: [String: Any]? = nil,
+                                   fileManager: FileManager = .default) -> BundledCore? {
+        let helpers = (bundlePath as NSString).appendingPathComponent("Contents/Helpers")
+        let executable = (helpers as NSString).appendingPathComponent("jrbar-core.app/Contents/MacOS/jrbar-core")
+        let shim = (helpers as NSString).appendingPathComponent("jrbar-hook")
+        guard fileManager.isExecutableFile(atPath: executable), fileManager.isExecutableFile(atPath: shim) else {
+            return nil
+        }
+        return BundledCore(
+            executable: executable,
+            hookShim: shim,
+            version: info?["CFBundleShortVersionString"] as? String,
+            commit: info?["JRBarCommit"] as? String
+        )
+    }
+
+    /// The bundled daemon of the running app, if this is a packaged bundle.
+    public static func bundledCore(in bundle: Bundle) -> BundledCore? {
+        bundledCore(bundlePath: bundle.bundlePath, info: bundle.infoDictionary)
+    }
+
+    /// Supervises the bundled daemon: `jrbar-core core` with the shim and
+    /// commit in its environment (plus `JRBAR_SUPERVISED=1` from `spawn`).
+    public convenience init(bundled: BundledCore, backoffScale: Double = 1.0) {
+        self.init(executable: bundled.executable, arguments: ["core"], environment: bundled.environment,
+                  backoffScale: backoffScale)
+    }
+}
