@@ -265,9 +265,13 @@ public struct DeckSlot: Codable, Hashable, Sendable, Identifiable {
     /// An identity the board keeps whose session is not observed.
     public var isReserved: Bool { identity != nil && session == nil }
 
-    /// "Unassigned" / "Reserved" / the label, as the Python board titles it.
+    /// "Unassigned" / "Reserved" / the label, as the Python board titles
+    /// it — through `SessionLabel`, so a key never reads "Claude Claude
+    /// fca1eb06-f6d1-…" where every other surface says "fca1eb06".
     public var title: String {
-        if let label, !label.isEmpty { return label }
+        if let label, !label.isEmpty {
+            return SessionLabel.display(label: label, shortId: nil, id: session ?? identity ?? "", provider: provider ?? "")
+        }
         return isEmpty ? "Unassigned" : "Reserved"
     }
 

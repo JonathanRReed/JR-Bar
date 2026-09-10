@@ -274,7 +274,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // `JRBAR_RENDER_ICONS=/dir` writes the status item styles as PNGs
         // (8×) for design review, then carries on.
         if let directory = environment["JRBAR_RENDER_ICONS"], !directory.isEmpty {
+            // Once at launch (so a run with no daemon still produces the
+            // sheet) and again once the core has answered, with the
+            // reader's own providers in the columns.
             StatusItemController.renderStyles(to: directory)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak statusItem] in
+                MainActor.assumeIsolated {
+                    guard let meters = statusItem?.meters, !meters.isEmpty else { return }
+                    StatusItemController.renderStyles(to: directory, live: meters)
+                    print("status icons: re-rendered with \(meters.count) live meters (\(meters.map(\.readout).joined(separator: ", ")))")
+                }
+            }
         }
         if environment["JRBAR_OPEN_HISTORY"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak historyWindow] in

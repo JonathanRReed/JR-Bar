@@ -98,6 +98,17 @@ public enum StatusDotState: String, Hashable, Sendable, CaseIterable {
 
     /// Only these two move, so only these two run the redraw timer.
     public var animates: Bool { self == .working || self == .ask }
+
+    /// What the dot at the left is saying, in one line, so its meaning is
+    /// somewhere other than this file. The tooltip's second line.
+    public var meaning: String {
+        switch self {
+        case .idle: return "Hollow dot: nothing is running."
+        case .working: return "Breathing dot: something is running."
+        case .ask: return "Amber dot: something needs you."
+        case .done: return "Green dot: a run just finished."
+        }
+    }
 }
 
 /// Everything that changes the picture. Equatable so the status item only
@@ -409,14 +420,26 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// reported" rather than "nothing used".
     static func drawMeter(_ meter: StatusMeter, in rect: NSRect, ink: NSColor, template: Bool) {
         let radius = rect.width / 2
+        let track = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         ink.withAlphaComponent(0.22).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+        track.fill()
         guard meter.fraction > 0.001 else { return }
-        let height = max(rect.width, rect.height * CGFloat(meter.fraction))
+        // The fill is the track's own shape cut off at the level, not a
+        // capsule of its own. A capsule cannot be shorter than it is wide,
+        // so every figure under 29 % used to draw the same 3.5 pt blob and
+        // 1 % was indistinguishable from 36 % on the real menu bar.
+        let height = max(minimumFill, rect.height * CGFloat(meter.fraction))
+        NSGraphicsContext.saveGraphicsState()
+        track.addClip()
         meterColor(meter, ink: ink, template: template).setFill()
-        let filled = NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: height)
-        NSBezierPath(roundedRect: filled, xRadius: radius, yRadius: radius).fill()
+        NSRect(x: rect.minX, y: rect.minY, width: rect.width, height: height).fill()
+        NSGraphicsContext.restoreGraphicsState()
     }
+
+    /// The thinnest visible foot: a provider that has barely started still
+    /// shows something, so an empty column always means "nothing reported"
+    /// rather than "nothing used".
+    static let minimumFill: CGFloat = 1.5
 
     /// An SF Symbol scaled into the box, or one or two characters centred
     /// in it; both in `color`.
@@ -457,6 +480,23 @@ public final class StatusIconRenderer: @unchecked Sendable {
         if !spec.meters.isEmpty { parts.append(spec.meters.map(\.readout).joined(separator: ", ")) }
         if spec.overflow > 0 { parts.append("\(spec.overflow) more") }
         return parts.joined(separator: " · ")
+    }
+
+    /// The status item's tooltip: what state the app is in and what the
+    /// counts are, then what the dot means, then every provider's figure.
+    /// `headline` is the caller's "JR-Bar · Needs input · 1 working · 1
+    /// needs you"; the meters and the dot's line come from the spec.
+    public static func tooltip(_ spec: StatusIconSpec, headline: String) -> String {
+        guard spec.style.isMeters else { return headline }
+        var lines = [headline, spec.dot.meaning]
+        if !spec.meters.isEmpty {
+            var readout = spec.meters.map(\.readout).joined(separator: " · ")
+            if spec.overflow > 0 { readout += " · \(spec.overflow) more" }
+            lines.append(readout)
+        } else if spec.overflow > 0 {
+            lines.append("\(spec.overflow) more")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// A rounded bar tucked under a small notch cap, as in the original glyph.

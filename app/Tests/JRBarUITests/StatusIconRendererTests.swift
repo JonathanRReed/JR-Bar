@@ -201,4 +201,59 @@ struct StatusMetersTests {
         #expect(label.contains("2 more"))
         #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .glyph)) == "JR-Bar")
     }
+
+    @Test("the tooltip names the counts, what the dot means and every figure")
+    func tooltip() {
+        let spec = StatusIconSpec(style: .meters, meters: [Self.meter("claude", 0.42), Self.meter("codex", 1.0)],
+                                  overflow: 2, dot: .ask)
+        let lines = StatusIconRenderer.tooltip(spec, headline: "JR-Bar · Needs input · 2 working · 1 needs you")
+            .split(separator: "\n").map(String.init)
+        #expect(lines.count == 3)
+        #expect(lines[0] == "JR-Bar · Needs input · 2 working · 1 needs you")
+        #expect(lines[1] == "Amber dot: something needs you.")
+        #expect(lines[2] == "Claude 42 % · Codex 100 % · 2 more")
+        // Every dot state says what it means, and none of them repeats another.
+        let meanings = StatusDotState.allCases.map(\.meaning)
+        #expect(Set(meanings).count == StatusDotState.allCases.count)
+        #expect(meanings.allSatisfy { $0.hasSuffix(".") })
+        // Nothing to meter: the dot still explains itself.
+        let quiet = StatusIconSpec(style: .meters, meters: [], dot: .idle)
+        #expect(StatusIconRenderer.tooltip(quiet, headline: "JR-Bar · Idle")
+            == "JR-Bar · Idle\nHollow dot: nothing is running.")
+        // A glyph style has no dot to explain.
+        #expect(StatusIconRenderer.tooltip(StatusIconSpec(style: .glyph), headline: "JR-Bar · Idle") == "JR-Bar · Idle")
+    }
+
+    /// How much ink a strip carries: the fill is opaque, the track is not,
+    /// so a taller fill is a bigger number. Enough to tell two levels apart
+    /// without asserting pixels.
+    static func ink(_ image: NSImage) -> Int {
+        let width = Int(image.size.width.rounded(.up)), height = Int(image.size.height.rounded(.up))
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        image.draw(in: NSRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+        NSGraphicsContext.restoreGraphicsState()
+        let bytes = UnsafeBufferPointer(start: rep.bitmapData, count: rep.bytesPerRow * height)
+        return stride(from: 3, to: bytes.count, by: 4).reduce(0) { $0 + Int(bytes[$1]) }
+    }
+
+    @Test("a column's level is readable: 1 %, 36 % and 100 % all look different")
+    func meterLevelsDiffer() {
+        // The fill used to be a capsule of its own, and a capsule cannot be
+        // shorter than it is wide: every figure under 29 % drew the same
+        // 3.5 pt blob, so Claude at 36 % and Grok at 1 % were the same
+        // picture on the real menu bar.
+        let renderer = StatusIconRenderer()
+        func strip(_ fraction: Double) -> NSImage {
+            renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("claude", fraction)]))
+        }
+        let empty = Self.ink(strip(0)), sliver = Self.ink(strip(0.01))
+        let third = Self.ink(strip(0.36)), full = Self.ink(strip(1))
+        #expect(empty < sliver, "1 % is not nothing")
+        #expect(Double(third) > Double(sliver) * 1.10, "36 % is visibly more than 1 %")
+        #expect(full > third, "100 % is visibly more than 36 %")
+        #expect(Self.pixels(strip(0.01)) != Self.pixels(strip(0.36)))
+    }
 }

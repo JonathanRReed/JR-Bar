@@ -65,6 +65,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     override init() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        // Where the item sits is the person's to choose (Command-drag);
+        // macOS gives no API to ask for a slot. A stable autosave name is
+        // the one thing the app can do: it is the key macOS remembers that
+        // choice under, so a rebuild does not send the item back to the
+        // middle of a busy menu bar.
+        statusItem.autosaveName = "com.jonathanreed.jrbar.status-item"
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
 
@@ -180,9 +186,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             }
         }
         if iconStyle.isMeters {
-            let readout = StatusIconRenderer.accessibilityLabel(spec)
-            button.toolTip = stateSummary + (spec.meters.isEmpty ? "" : "\n" + spec.meters.map(\.readout).joined(separator: " · "))
-            button.setAccessibilityLabel(readout)
+            button.toolTip = StatusIconRenderer.tooltip(spec, headline: stateSummary)
+            button.setAccessibilityLabel(StatusIconRenderer.accessibilityLabel(spec))
         }
         if label != currentLabel || (iconStyle.isMeters && button.imagePosition != .imageOnly) {
             currentLabel = label
@@ -332,10 +337,13 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     /// Writes every style at 8× into `directory` (a menu-bar mock-up: dark
     /// bar, the icon, the label beside it where the style has one).
-    static func renderStyles(to directory: String) {
+    /// `live` is the item's own meters when the core has answered, so a
+    /// design review is of the reader's real providers rather than of a
+    /// sample nobody has; empty falls back to the sample.
+    static func renderStyles(to directory: String, live: [StatusMeter] = []) {
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let scale: CGFloat = 8
-        let sample = StatusItemController.sampleMeters
+        let sample = live.isEmpty ? StatusItemController.sampleMeters : live
         let samples: [(String, StatusIconSpec, String?)] = [
             ("meters_idle", StatusIconSpec(style: .meters, meters: sample, dot: .idle), nil),
             ("meters_working", StatusIconSpec(style: .meters, tintHex: "#00E5FF", meters: sample, dot: .working, phase: 0.5), nil),
