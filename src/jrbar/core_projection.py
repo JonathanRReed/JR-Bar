@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
@@ -280,6 +281,47 @@ def epoch(value: object) -> float | None:
     return None
 
 
+#: The longest elapsed time any duration-shaped field in ``state`` or
+#: ``lights`` is allowed to claim: one year. Every such field measures how
+#: long something has been going on *right now*, and nothing the daemon
+#: watches -- a session, an ask, a light -- survives a year. A bigger
+#: number is never a long wait, it is two clocks that were subtracted from
+#: each other by mistake (a ``time.monotonic()`` reading against a
+#: wall-clock ``now`` reads as ~56 years), and a renderer that prints it
+#: says "20704 d". Refusing it is how that bug stays fixed.
+MAX_DURATION_SECONDS: Final = 366 * 24 * 60 * 60.0
+
+
+def bounded_duration(value: object, *, digits: int | None = 1) -> float | None:
+    """An elapsed-seconds number the daemon is willing to publish, or None.
+
+    A negative reading clamps to zero (clock skew, a timestamp a hair in
+    the future). Anything past ``MAX_DURATION_SECONDS`` is refused: it is
+    not a long wait, it is two different clocks subtracted from each other.
+    """
+
+    seconds = epoch(value)
+    if seconds is None or seconds > MAX_DURATION_SECONDS:
+        return None
+    seconds = max(0.0, float(seconds))
+    return round(seconds, digits) if digits is not None else seconds
+
+
+def duration_since(now: object, since: object) -> float | None:
+    """``now - since`` in seconds, or ``None`` when that is not a duration.
+
+    Both arguments must be finite readings of the *same* clock; the
+    ``MAX_DURATION_SECONDS`` bound is what catches the case where they are
+    not.
+    """
+
+    start = epoch(since)
+    end = epoch(now)
+    if start is None or end is None:
+        return None
+    return bounded_duration(float(end) - float(start))
+
+
 def strip_session_short_id(display_name: str, session_id: str | None) -> str:
     """The menu's own title rule: the display name without its short id."""
     text = str(display_name or "").strip()
@@ -455,14 +497,53 @@ def lifecycle_for_mode(
     return "active"
 
 
-def aggregate_mode(mode: AgentMode | None, *, asks: int, failed: int, working: int, ready: int) -> str:
-    if asks or mode is AgentMode.WAITING_FOR_INPUT:
+def aggregate_counts(
+    sessions: Iterable[Mapping[str, Any]],
+    *,
+    asks: Iterable[Mapping[str, Any]] = (),
+    ready_ids: Iterable[str] = (),
+) -> dict[str, int]:
+    """``state.aggregate``'s counts, read off the rows the document carries.
+
+    Every number here is a fact about ``sessions`` and ``asks`` as the app
+    will receive them -- never about sessions the daemon remembers but did
+    not list. The header word the app prints comes from these counts and
+    from nothing else, so a count that disagrees with the rows is a header
+    that disagrees with the panel.
+    """
+
+    mains = [row for row in sessions if str(row.get("kind") or "main") == "main"]
+    listed_ids = {str(row.get("id") or "") for row in mains}
+    working_values = {mode.value for mode in _WORKING_MODES}
+    return {
+        "needs_you": sum(1 for ask in asks if str(ask.get("session") or "") in listed_ids),
+        "active": sum(
+            1 for row in mains if row.get("mode") in working_values and not row.get("stale")
+        ),
+        "ready": sum(1 for identifier in set(ready_ids) if identifier in listed_ids),
+        "failed": sum(
+            1 for row in mains if row.get("lifecycle") == "failed" and not row.get("stale")
+        ),
+        "total": len(mains),
+    }
+
+
+def aggregate_mode(counts: Mapping[str, int]) -> str:
+    """The header word, derived from ``aggregate_counts`` and nothing else.
+
+    Pure and total: the same counts always give the same word, and no
+    out-of-band mode (the collector's aggregate over sessions the panel
+    cannot see) gets a vote. That is what made the header say "working"
+    with ``active: 0``.
+    """
+
+    if int(counts.get("needs_you", 0)) > 0:
         return "needs_you"
-    if failed or mode is AgentMode.BLOCKED_ERROR:
+    if int(counts.get("failed", 0)) > 0:
         return "failed"
-    if working or (mode in _WORKING_MODES):
+    if int(counts.get("active", 0)) > 0:
         return "working"
-    if ready or mode is AgentMode.COMPLETED:
+    if int(counts.get("ready", 0)) > 0:
         return "done"
     return "idle"
 
@@ -520,12 +601,24 @@ def why_detail(
     asks: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     unseen_completion_ids: frozenset[str] | set[str] | tuple[str, ...] = (),
     now: float,
+    monotonic_now: float | None = None,
     facts: LightFacts | None = None,
     glance: object = None,
 ) -> dict[str, Any]:
     """``why_detail`` for a surface: the session the light is about (when
     there is one), how long it has been in that state, and the dimming
-    that shaped its brightness."""
+    that shaped its brightness.
+
+    ``seconds_in_state`` is a **duration**, never a clock reading. Two
+    clocks meet here and they are not interchangeable: session ``since``
+    and ask ``opened_at`` are wall-clock epochs measured against ``now``,
+    while a glance's ``relay_epoch`` is a ``time.monotonic()`` reading
+    (``presentation_policy``) that only means anything against
+    ``monotonic_now``. Subtracting a monotonic reading from a wall clock
+    is what made a light say it had been idle for 20704 days; without a
+    ``monotonic_now`` the glance fallback yields ``None`` rather than a
+    number that renders as nonsense.
+    """
     facts = facts or LightFacts()
     session: dict[str, Any] | None = None
     mains = [row for row in sessions if row.get("kind") == "main"]
@@ -544,12 +637,14 @@ def why_detail(
         session = max(failed, key=lambda row: row.get("updated_at") or 0.0, default=None)
     since = None
     if session is not None:
-        since = session.get("since")
+        since = epoch(session.get("since"))
         if why in ("waiting", "escalation") and session.get("ask"):
-            since = session["ask"].get("opened_at") or since
-    if since is None and glance is not None:
-        since = epoch(getattr(glance, "relay_epoch", None))
-    seconds = max(0.0, round(float(now) - float(since), 1)) if since is not None else None
+            since = epoch(session["ask"].get("opened_at")) or since
+    seconds = duration_since(now, since)
+    if seconds is None and glance is not None:
+        # ``relay_epoch`` lives on the monotonic clock, so it can only be
+        # measured against a monotonic reading of "now".
+        seconds = duration_since(monotonic_now, epoch(getattr(glance, "relay_epoch", None)))
     return {
         "session": session.get("id") if session is not None else None,
         "label": session.get("label") if session is not None else None,
@@ -929,44 +1024,41 @@ def build_state_document(
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
     projected = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
+    # An ask is the loudest thing the panel can show, so visibility never
+    # gets to evict the row that carries one: a session with a live ask
+    # stays listed however stale or acknowledged it is. Without this the
+    # header counted an ask and the strip pulsed amber for a session the
+    # panel had no row for.
     sessions, hidden_count, visible_completion_ids = filter_visible_sessions(
         projected,
         now=now,
         acknowledged_at_by_id=acknowledged_epoch_by_session(acknowledged_keys or ()),
+        pinned_ids=ask_ids,
     )
+    listed_ids = {str(session.get("id") or "") for session in sessions}
+    # The other half of the invariant. ``ask_statuses`` comes from the
+    # attention projection and ``snapshot`` from the collector: two
+    # captures that drift, so an ask can name a session the snapshot no
+    # longer carries at all. Pinning cannot save a row that was never
+    # projected, and a dangling ask is worse than a dropped one -- it is a
+    # amber light with nothing behind it.
     asks = [
         ask_document(status, operator_state, with_session=True)
         for status in ask_statuses
+        if str(getattr(status, "agent_id", "") or "") in listed_ids
     ]
-    mains = [session for session in sessions if session["kind"] == "main"]
-    working = sum(1 for session in mains if session["mode"] in {mode.value for mode in _WORKING_MODES} and not session["stale"])
-    failed = sum(1 for session in mains if session["lifecycle"] == "failed" and not session["stale"])
     # News is only news while the row that carries it is on screen: a
     # completion that aged out or was cleared stops counting here too.
     unseen = sorted(set(unseen_completion_ids) & set(visible_completion_ids))
-    ready = len(unseen)
-    aggregate_source = getattr(getattr(snapshot, "aggregate", None), "mode", None)
     power = power or PowerFacts(False, "never", False, False)
     escalation = escalation or EscalationFacts()
+    counts = aggregate_counts(sessions, asks=asks, ready_ids=unseen)
     document = {
         "t": "state",
         "v": PROTOCOL_VERSION,
         "generation": int(generation),
         "now": float(now),
-        "aggregate": {
-            "mode": aggregate_mode(
-                aggregate_source if isinstance(aggregate_source, AgentMode) else None,
-                asks=len(asks),
-                failed=failed,
-                working=working,
-                ready=ready,
-            ),
-            "needs_you": len(asks),
-            "active": working,
-            "ready": ready,
-            "failed": failed,
-            "total": len(mains),
-        },
+        "aggregate": {"mode": aggregate_mode(counts), **counts},
         "sessions": sessions,
         "hidden_count": int(hidden_count),
         "asks": asks,
@@ -990,7 +1082,11 @@ def build_state_document(
             "sources": {
                 str(getattr(intake, "provider", "")): {
                     "fresh": bool(getattr(intake, "delivering", False)),
-                    "heard_age_seconds": getattr(intake, "heard_age_seconds", None),
+                    # Duration-shaped, so it goes through the same bound as
+                    # ``seconds_in_state``: no field says "56 years".
+                    "heard_age_seconds": bounded_duration(
+                        getattr(intake, "heard_age_seconds", None), digits=None
+                    ),
                 }
                 for intake in (getattr(intake_report, "providers", ()) or ())
             },

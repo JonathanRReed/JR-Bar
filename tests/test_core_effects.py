@@ -175,3 +175,58 @@ def test_export_pack_round_trips_through_the_pack_validator(registry, pack, tmp_
 def test_builtin_registry_renders_without_packs() -> None:
     document = core_effects.catalog_document(EFFECT_REGISTRY, (), generation=0)
     assert document["packs"] == [] and len(document["effects"]) == len(EFFECT_REGISTRY.as_mapping())
+
+
+def test_the_catalog_generation_describes_the_catalog_not_a_save_counter(registry, pack) -> None:
+    """Live, ``list_effects.generation`` was 0 on a daemon serving 24
+    effects, so the Effect Studio badge read "gen 0".
+
+    The number came from the assignment cache's counter, which starts at
+    zero and only moves when something calls ``replace()``: a daemon that
+    had never saved an assignment published 0 for ever, and installing a
+    pack did not move it either.
+    """
+
+    builtins = core_effects.catalog_generation(EFFECT_REGISTRY, ())
+    assert builtins > 0
+
+    # Same content, same number -- across calls and across processes.
+    assert core_effects.catalog_generation(EFFECT_REGISTRY, ()) == builtins
+
+    # An installed pack is a different catalog.
+    with_pack = core_effects.catalog_generation(registry, (pack,))
+    assert with_pack != builtins
+
+    # The registry moving without the pack list is a change too.
+    assert core_effects.catalog_generation(registry, ()) not in (builtins, with_pack)
+
+    # And an assignment save still moves it: the cache's counter is folded in.
+    assert core_effects.catalog_generation(registry, (pack,), revision=1) != with_pack
+
+    # The document derives it when the caller does not supply one.
+    document = core_effects.catalog_document(registry, (pack,))
+    assert document["generation"] == with_pack
+    assert core_effects.catalog_document(registry, (pack,), generation=7)["generation"] == 7
+
+
+def test_the_assignments_generation_follows_the_assignments() -> None:
+    empty = EffectAssignmentDocument(())
+    one = EffectAssignmentDocument((EffectAssignmentRecord("pulse", AssignmentScope.GLOBAL, None),))
+    two = EffectAssignmentDocument(
+        (
+            EffectAssignmentRecord("pulse", AssignmentScope.GLOBAL, None),
+            EffectAssignmentRecord("aurora", AssignmentScope.PROVIDER, "codex"),
+        )
+    )
+
+    generations = {
+        core_effects.assignments_generation(empty),
+        core_effects.assignments_generation(one),
+        core_effects.assignments_generation(two),
+        core_effects.assignments_generation(two, active_scene="calm"),
+    }
+    assert len(generations) == 4 and all(value > 0 for value in generations)
+    assert core_effects.assignments_generation(one) == core_effects.assignments_generation(one)
+
+    document = core_effects.assignment_document(two, active_scene="calm")
+    assert document["generation"] == core_effects.assignments_generation(two, active_scene="calm")

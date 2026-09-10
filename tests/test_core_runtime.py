@@ -409,21 +409,29 @@ def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: p
 
     catalog = controller._core_dispatch("list_effects", {})
     assert {"none", "pulse", "alert", "aurora"} <= {effect["id"] for effect in catalog["effects"]}
-    assert catalog["packs"] == [] and catalog["generation"] == 0
+    # The generation describes the catalog, not how often something saved:
+    # a daemon that has never written an assignment used to publish 0 here
+    # and the Studio badge read "gen 0".
+    assert catalog["packs"] == []
+    assert catalog["generation"] == core_effects.catalog_generation(EFFECT_REGISTRY, ())
+    assert catalog["generation"] > 0
     render = controller._core_dispatch("render_effect", {"effect_id": "blink", "parameters": {"cadence": "double"}, "led_count": 2})
     assert render["led_count"] == 2 and render["cadence"]["id"] == "double" and "300ms" in render["program"]
     with pytest.raises(CommandError) as unknown:
         controller._core_dispatch("render_effect", {"effect_id": "nope"})
     assert unknown.value.code == "unknown_effect"
 
-    assert controller._core_dispatch("list_assignments", {})["assignments"] == []
+    empty_assignments = controller._core_dispatch("list_assignments", {})
+    assert empty_assignments["assignments"] == []
     reply = controller._core_dispatch(
         "set_assignment", {"effect_id": "aurora", "scope": "provider", "target_id": "codex", "parameters": {"wave_count": 3}}
     )
     assert reply["assignment"] == {"effect_id": "aurora", "scope": "provider", "target_id": "codex", "parameters": reply["assignment"]["parameters"]}
     assert reply["assignment"]["parameters"]["wave_count"] == 3
     assert reply["assignments"][0]["parameters"]["wave_count"] == 3
-    assert reply["generation"] == 1
+    # Saving an assignment moves both generations off what they were.
+    assert reply["generation"] != empty_assignments["generation"]
+    assert controller._core_dispatch("list_effects", {})["generation"] != catalog["generation"]
     saved = json.loads((tmp_path / "assignments.json").read_text())
     assert saved["assignments"][0]["effect_id"] == "aurora"
     for scope, target, code in (("semantic", "asking", "reserved_semantic"), ("global", "x", "invalid_target"), ("bogus", None, "invalid_scope")):

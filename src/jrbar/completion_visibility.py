@@ -109,6 +109,7 @@ def session_visibility(
     acknowledged_at_by_id: Mapping[str, float] | None = None,
     live_visible_seconds: float = LIVE_VISIBLE_SECONDS,
     completed_visible_seconds: float = COMPLETED_VISIBLE_SECONDS,
+    pinned_ids: Collection[str] = (),
 ) -> str:
     """``live``, ``completion`` or ``hidden`` for one ``state.sessions`` row.
 
@@ -117,9 +118,18 @@ def session_visibility(
     * completion -- finished (``completed`` or ``ended``), not acknowledged,
       and younger than ``completed_visible_seconds``;
     * hidden -- everything else. ``list_history`` has it.
+
+    A row whose id is in ``pinned_ids`` is always ``live``. That is how
+    ``state.asks`` keeps its promise: a session the daemon is still asking
+    the owner about cannot be aged out, cleared away or dropped for going
+    quiet, because the header counts its ask and the strip pulses for it.
+    Nothing else may pin a row -- the point is an invariant, not an escape
+    hatch.
     """
 
     acknowledged_at_by_id = acknowledged_at_by_id or {}
+    if str(row.get("id") or "") in set(pinned_ids):
+        return VISIBLE_LIVE
     updated_at = row.get("updated_at")
     age = (
         float(now) - float(updated_at)
@@ -149,6 +159,7 @@ def filter_visible_sessions(
     acknowledged_at_by_id: Mapping[str, float] | None = None,
     live_visible_seconds: float = LIVE_VISIBLE_SECONDS,
     completed_visible_seconds: float = COMPLETED_VISIBLE_SECONDS,
+    pinned_ids: Collection[str] = (),
 ) -> tuple[list[Mapping[str, Any]], int, tuple[str, ...]]:
     """``(visible rows, hidden main count, visible completion ids)``.
 
@@ -156,9 +167,21 @@ def filter_visible_sessions(
     listed the worker is not either, so the panel never shows an orphan.
     ``hidden main count`` is what the app renders as "n earlier in History";
     workers dropped with their parent are not counted twice.
+
+    ``pinned_ids`` are the sessions with an open ask: they are listed
+    whatever their age or acknowledgement says, and so is the parent of a
+    pinned worker -- an orphan ask would be the same defect one level down.
     """
 
     rows = list(sessions)
+    pinned = {str(identifier) for identifier in pinned_ids}
+    if pinned:
+        parents_of_pinned = {
+            str(row.get("parent") or "")
+            for row in rows
+            if str(row.get("id") or "") in pinned and row.get("parent")
+        }
+        pinned |= parents_of_pinned - {""}
     verdicts = {
         str(row.get("id") or ""): session_visibility(
             row,
@@ -166,6 +189,7 @@ def filter_visible_sessions(
             acknowledged_at_by_id=acknowledged_at_by_id,
             live_visible_seconds=live_visible_seconds,
             completed_visible_seconds=completed_visible_seconds,
+            pinned_ids=pinned,
         )
         for row in rows
     }

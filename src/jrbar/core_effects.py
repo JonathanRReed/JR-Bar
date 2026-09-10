@@ -13,6 +13,7 @@ of the Python assignment document, so they live in a sidecar
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -402,14 +403,81 @@ def _semantic_of(effect: EffectDefinition) -> str:
     return "idle"
 
 
+def _fingerprint(parts: Iterable[Any]) -> int:
+    """A stable positive int for a canonical description of some content.
+
+    ``blake2b`` because it is stable across processes and interpreter runs
+    -- ``hash()`` is not, and a generation that changed on every daemon
+    restart would be as useless as one that never changed. Folded to 31
+    bits so it fits every consumer's plain signed ``Int``; ``0`` is
+    reserved for "nothing here", so real content never lands on it.
+    """
+
+    encoded = json.dumps(list(parts), sort_keys=True, separators=(",", ":"), default=str)
+    digest = hashlib.blake2b(encoded.encode("utf-8"), digest_size=8).digest()
+    return (int.from_bytes(digest, "big") % 0x7FFFFFFE) + 1
+
+
+def catalog_generation(
+    registry: EffectRegistry,
+    packs: Iterable[EffectPack],
+    *,
+    revision: int = 0,
+) -> int:
+    """``list_effects.generation``: what this catalog IS, not how often it
+    was replaced.
+
+    The assignment cache's counter starts at 0 and only moves when
+    something calls ``replace()``, so a daemon that had never saved an
+    assignment published ``generation: 0`` for ever and the Effect Studio
+    badge read "gen 0". This is derived from the catalog's own content:
+    every effect id and version in the registry, every installed pack's id
+    and version and effect list, plus ``revision`` (the cache's counter) so
+    an assignment save moves it too. Change any of those and the number
+    changes; change none of them and it does not.
+    """
+
+    packs = tuple(packs)
+    effects = sorted(
+        (effect.identifier, str(effect.version), effect.role, effect.catalog)
+        for effect in registry.as_mapping().values()
+    )
+    installed = sorted(
+        (
+            pack.pack_id,
+            str(pack.version),
+            sorted(str(entry.get("id", "")) for entry in pack.effects),
+        )
+        for pack in packs
+    )
+    return _fingerprint(["effects", effects, "packs", installed, "revision", int(revision)])
+
+
+def assignments_generation(document: Any, *, active_scene: str | None = None) -> int:
+    """``list_assignments.generation``, derived from the assignments the
+    document actually carries (and the scene they run under)."""
+
+    rows = sorted(
+        (
+            str(getattr(record, "effect_id", "")),
+            str(getattr(getattr(record, "scope", None), "value", getattr(record, "scope", ""))),
+            str(getattr(record, "target_id", "") or ""),
+        )
+        for record in getattr(document, "assignments", ()) or ()
+    )
+    return _fingerprint(["assignments", rows, "scene", active_scene or ""])
+
+
 def catalog_document(
     registry: EffectRegistry,
     packs: Iterable[EffectPack],
     *,
-    generation: int,
+    generation: int | None = None,
     pack_paths: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     packs = tuple(packs)
+    if generation is None:
+        generation = catalog_generation(registry, packs)
     effects: list[dict[str, Any]] = []
     for effect in registry.as_mapping().values():
         pack_effect = pack_effect_for(packs, effect.identifier)
@@ -481,8 +549,10 @@ def assignment_document(
     *,
     parameters: Mapping[str, Mapping[str, Any]] | None = None,
     active_scene: str | None,
-    generation: int,
+    generation: int | None = None,
 ) -> dict[str, Any]:
+    if generation is None:
+        generation = assignments_generation(document, active_scene=active_scene)
     rows = []
     for record in getattr(document, "assignments", ()):
         scope = getattr(record.scope, "value", str(record.scope))
@@ -570,9 +640,11 @@ __all__ = [
     "SEMANTIC_COLORS",
     "assignment_document",
     "assignment_key",
+    "assignments_generation",
     "build_export_pack",
     "cadence_document",
     "catalog_document",
+    "catalog_generation",
     "effect_cadence",
     "effect_document",
     "export_pack_id",
