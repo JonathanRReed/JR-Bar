@@ -769,6 +769,8 @@ struct PanelFooter: View {
                 Button { store.openUsageCenter() } label: { Text("Usage Center…") }
                     .keyboardShortcut("u", modifiers: .command)
                 Button { store.openEffects() } label: { Text("Effect Studio…") }
+                Button { store.openControlCenter() } label: { Text("Control Center…") }
+                    .keyboardShortcut("k", modifiers: .command)
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 12, weight: .medium))
             }
@@ -776,7 +778,7 @@ struct PanelFooter: View {
             .buttonStyle(FooterButtonStyle(dimmed: !store.isLive))
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("More: Usage Center (⌘U), Effect Studio")
+            .help("More: Usage Center (⌘U), Effect Studio, Control Center (⌘K)")
             .accessibilityLabel("More")
             Button { store.openSettings() } label: {
                 Image(systemName: "gearshape").font(.system(size: 12, weight: .medium))

@@ -165,6 +165,13 @@ public enum EventPolicy {
             return EventDelivery(toast: "\(event.label ?? event.detail ?? "Device") connected")
         case "device_disconnected":
             return EventDelivery(toast: "\(event.label ?? event.detail ?? "Device") disconnected")
+        case "deck_receipt":
+            // A keymap or device receipt. The Control Center shows every
+            // one; the HUD only carries the ones that mean the pad cannot
+            // be written (a conflict, an interrupted transfer, a change of
+            // connection), as a quiet toast.
+            guard let receipt = event.receipt, receipt.isProblem else { return .nothing }
+            return EventDelivery(toast: receipt.code == "device_conflict" ? DeckDevice.conflictText : receipt.text)
         case "peer_arrived":
             return EventDelivery(toast: "\(event.label ?? "A peer") joined")
         case "peer_departed":

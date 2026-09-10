@@ -6,17 +6,22 @@ sends hello, a full state, lights and settings, then plays a scripted
 timeline so every panel section has something to show:
 
   0. a Claude session starts working              (working relay on the lights)
-  1. a Codex permission ask opens                  (amber ask pulse, ask_opened)
-  2. the ask escalates to stage 2                  (escalation_stage 2: menu-bar pulse)
-  3. ...and to stage 3                             (escalation_stage 3: chime)
-  4. the ask resolves (or you Approve/Deny it)     (ask_resolved)
-  5. Codex completes                               (completed, done light)
-  6. the SidePulse Pro disconnects                 (device_disconnected)
-  7. ...and reconnects                             (device_connected)
-  8. Gemini fails                                  (failed)
-  9. Claude completes, then everything goes idle   (idle breath)
+  1. two key presses and a dial turn on the deck   (deck_input)
+  2. a Codex permission ask opens                  (amber ask pulse, ask_opened)
+  3. the ask escalates to stage 2                  (escalation_stage 2: menu-bar pulse)
+  4. ...and to stage 3                             (escalation_stage 3: chime)
+  5. the ask resolves (or you Approve/Deny it)     (ask_resolved)
+  6. Codex completes                               (completed, done light)
+  7. the SidePulse Pro disconnects                 (device_disconnected)
+  8. ...and reconnects                             (device_connected)
+  9. another app answers on the deck's stream      (device.conflict, deck_receipt device_conflict)
+ 10. ...and the deck reconnects                    (deck_receipt connection_changed)
+ 11. Gemini fails                                  (failed)
+ 12. Claude completes                              (completed)
+ 13. everything goes idle                          (idle breath)
 
-and loops. Usage numbers tick up every step (and cross the quota
+then stops (`--loop` replays it forever; the timeline plays sounds, so a
+dev run should not loop by accident). Usage numbers tick up every step (and cross the quota
 thresholds, `quota_crossed`; the idle step resets them, `quota_reset`).
 Every step is recorded in the history (`list_history`); rows seeded at
 startup are marked `unseen` so the History window's away banner shows.
@@ -35,9 +40,12 @@ Assignments are written through the protocol's own `apply_effect`
 (`{effect, scope, target}`, effect null to remove) with an app-proposed
 `parameters` argument.
 
+The Creator Micro 2 deck (`state.deck`, `deck_*` commands, `deck_input` and
+`deck_receipt` events) is an app-proposed extension too; see app/README.md.
+
 Standard library only.
 
-  mock-core.py                       # listen on ~/.local/state/jrbar/core.sock
+  mock-core.py                       # listen on $TMPDIR/jrbar-mock.sock (never the installed daemon's socket)
   mock-core.py --socket /tmp/x.sock  # elsewhere
   mock-core.py --step 1.5            # seconds between timeline steps
   mock-core.py --once                # hello/state/lights/settings, then exit
@@ -46,6 +54,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -56,7 +65,11 @@ import time
 from pathlib import Path
 
 PROTOCOL_VERSION = 1
-DEFAULT_SOCKET = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "jrbar" / "core.sock"
+# The installed daemon's socket. The mock never binds it unless told so in
+# so many words: the owner's app (a LaunchAgent) connects there, and a mock
+# on that path drives the real menu bar, sounds and notifications.
+REAL_SOCKET = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "jrbar" / "core.sock"
+DEFAULT_SOCKET = Path(os.environ.get("TMPDIR") or "/tmp") / "jrbar-mock.sock"
 
 WORKING_RELAY = (
     "off 160ms cosine\n"
@@ -80,6 +93,76 @@ CODEX_ID = "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c"
 GEMINI_ID = "gemini:session:8a1c2e3f-5b6d-4c7e-9f0a-1b2c3d4e5f6a"
 PRO_ID = "sidepulse:pro:B293A1"
 DOT_ID = "sidepulse:dot:7F02C4"
+
+# The Creator Micro 2 deck, mirrored from src/jrbar/deck_session_board.py,
+# creator_micro_keymap.py and creator_micro_lighting.py (captured
+# 2026-09-10): 13 session slots per bank on a key matrix of rows [2, 4, 4, 3]
+# (vendor keycodes KV_OAI_AG00..AG12), seven auxiliary controls AG13..AG19
+# (one encoder with three inputs, four joystick sectors), four calibrated
+# analog sectors (indices 20..23), a compact edge rail of 14 cells, and a
+# keymap the daemon applies to one profile/layer and restores from a backup.
+DECK_SERIAL = "WL2-7C41-0F9E"
+DECK_SLOTS = 13
+DECK_ROWS = (2, 4, 4, 3)
+DECK_AUX_LABELS = {13: "Encoder 1 input 1", 14: "Encoder 1 input 2", 15: "Encoder 1 input 3",
+                   16: "Joystick sector 1", 17: "Joystick sector 2", 18: "Joystick sector 3", 19: "Joystick sector 4"}
+DECK_ANALOG = 4
+DECK_RAIL_EDGES = ("off", "left", "right", "top", "bottom")
+DECK_STATES = ("input_required", "failure", "active", "completed", "idle", "stale", "unavailable", "unknown",
+               "ended_unconfirmed")
+# Per-key lighting is a solid colour: ask, working, done, else dark.
+DECK_STATE_COLORS = {"input_required": "#FF3A00", "failure": "#FF3A00", "active": "#00E5FF", "completed": "#00FF66"}
+DECK_DARK = "#020204"
+# The stock keymap of the mock's pad: one profile with two layers.
+DECK_STOCK_LAYERS = [
+    {"profile": 0, "layer": 0, "name": "Base",
+     "keys": [["KC_1", "KC_2"], ["KC_Q", "KC_W", "KC_E", "KC_R"], ["KC_A", "KC_S", "KC_D", "KC_F"], ["KC_Z", "KC_X", "KC_C"]],
+     "encoders": [["KC_VOLD", "KC_VOLU", "KC_MUTE"]],
+     "joystick": ["KC_UP", "KC_RIGHT", "KC_DOWN", "KC_LEFT"]},
+    {"profile": 0, "layer": 1, "name": "Fn",
+     "keys": [["KC_F1", "KC_F2"], ["KC_F3", "KC_F4", "KC_F5", "KC_F6"], ["KC_F7", "KC_F8", "KC_F9", "KC_F10"],
+              ["KC_F11", "KC_F12", "KC_NO"]],
+     "encoders": [["KC_BRID", "KC_BRIU", "KC_NO"]],
+     "joystick": ["KC_NO", "KC_NO", "KC_NO", "KC_NO"]},
+]
+# User-facing receipt strings, verbatim from creator_micro_setup_controller.py.
+DECK_RECEIPT_MESSAGES = {
+    "keymap_verified": "Creator Micro 2 stored keymap verified. Reconnect if needed, then check inputs.",
+    "recovery_required": "A transfer was interrupted. Backup retained. Choose Restore device keymap, not Apply again.",
+    "unsupported_file_protocol": "This firmware does not support the verified file-transfer protocol. No keymap was written.",
+    "connection_changed": "The device connection changed. Inspect again; pending input was discarded.",
+    "device_conflict": "Close Input and other hardware controllers, then inspect again.",
+    "already_configured": "Creator Micro 2 keymap is already configured.",
+    "keymap_restored": "Creator Micro 2 keymap restored and verified.",
+    "already_restored": "Creator Micro 2 keymap is already restored.",
+    "connection_required": "Connect and approve Creator Micro 2 before setup.",
+    "approved_device_changed": "The approved Creator Micro 2 changed. Inspect it again.",
+    "previous_owner_stopping": "Creator Micro 2 is still stopping. Try again in a moment.",
+    "keymap_changed": "The device keymap changed. Inspect it again before applying.",
+    "backup_failed": "The private backup could not be verified. No keymap was written.",
+    "backup_invalid": "No valid private backup is available. No keymap was written.",
+    "readback_mismatch": "The device did not verify the keymap write. The backup was kept.",
+    "cancelled": "Creator Micro 2 setup was cancelled.",
+}
+
+
+def deck_receipt_message(code: str) -> str:
+    return DECK_RECEIPT_MESSAGES.get(code, f"Creator Micro 2: {code.replace('_', ' ')}.")
+
+
+def deck_identity(session_id: str) -> str:
+    """The board keys slots by a digest of the work key, never the raw id."""
+    return hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:24]
+
+
+def deck_control_label(index: int) -> str:
+    if 0 <= index < DECK_SLOTS:
+        return f"Key {index + 1}"
+    if index in DECK_AUX_LABELS:
+        return DECK_AUX_LABELS[index]
+    if 20 <= index < 20 + DECK_ANALOG:
+        return f"Analog sector {index - 19}"
+    return f"AG{index:02d}"
 
 # --------------------------------------------------------------------------
 # Effects: the registry mirrored from src/jrbar/effect_registry.py (captured
@@ -1015,6 +1098,39 @@ class World:
                       "devin": "missing", "opencode": "stale", "openclaw": "missing", "antigravity": "missing",
                       "cursor": "ok", "hermes": "missing", "kiro": "missing"}
         self.previews: dict[str, float] = {}
+        # Deck: the board's ordered identities (a digest per session; new ones
+        # are appended, positions are stable, absent ones keep their slot as
+        # "Reserved" until cleared), pins by identity, the bank, the rail
+        # edge, the keymap, and the deck-controls settings.
+        self.deck_present = True
+        self.deck_transport = "bluetooth"
+        self.deck_approved = True
+        self.deck_conflict: str | None = None
+        self.deck_receipt: dict | None = None
+        # identity -> (session id or None, provider, label)
+        self.deck_identities: dict[str, tuple[str | None, str, str]] = {}
+        self.deck_order: list[str] = []
+        for sid in (CLAUDE_ID, CODEX_ID, GEMINI_ID):
+            self.deck_remember(sid)
+        for provider, label in (("claude", "notes-refactor"), ("codex", "hook-shim"), ("gemini", "screenshots"),
+                                ("cursor", "landing-page"), ("claude", "usage-center"), ("codex", "effect-studio"),
+                                ("pi", "sweep-tests"), ("claude", "protocol-docs"), ("codex", "rail-geometry"),
+                                ("gemini", "release-notes"), ("cursor", "icon-styles"), ("claude", "history-window"),
+                                ("codex", "hook-doctor"), ("claude", "screen-bar"), ("gemini", "readme")):
+            identity = deck_identity(f"{provider}:archived:{label}")
+            self.deck_identities[identity] = (None, provider, label)
+            self.deck_order.append(identity)
+        self.deck_pinned: set[str] = {deck_identity(CODEX_ID)}
+        self.deck_bank = 0
+        self.deck_rail_edge = "off"
+        self.deck_keymap = {"state": "stock", "backup_at": None, "generation": 3}
+        self.deck_layers = json.loads(json.dumps(DECK_STOCK_LAYERS))
+        self.deck_input_check = False
+        self.deck_last_input: dict | None = None
+        self.deck_settings = {"enabled": True, "session_mode": True, "analog_enabled": False}
+        # Explicit mappings for the auxiliary controls (deck-controls.json bindings).
+        self.deck_aux_mappings = {13: "previous_bank", 14: "next_bank", 15: "open_control_center", 16: "reveal_current_ask",
+                                  17: "open_usage", 18: None, 19: None}
         self.history: list[dict] = []
         self.clear_batches: dict[str, dict] = {}
         self.batch_counter = 0
@@ -1128,9 +1244,216 @@ class World:
             "escalation": self.escalation,
             "health": {"hooks": dict(self.hooks), "sources": {"codex": {"fresh": True}}},
             "settings_generation": self.settings_generation,
+            "deck": self.deck_state(),
             # Forward-compatibility bait: the app must ignore this.
             "x_mock_extra": {"note": "unknown keys are fine"},
         }
+
+    # -- deck ------------------------------------------------------------------
+
+    def deck_remember(self, sid: str) -> str:
+        """A session seen for the first time is appended to the board (positions are stable)."""
+        s = self.sessions[sid]
+        identity = deck_identity(sid)
+        if identity not in self.deck_identities:
+            self.deck_order.append(identity)
+        self.deck_identities[identity] = (sid, s["provider"], s["label"])
+        return identity
+
+    def deck_slot_state(self, identity: str) -> str:
+        """The board's state word for an identity (deck_session_board.py vocabulary)."""
+        sid, _provider, _label = self.deck_identities[identity]
+        s = self.sessions.get(sid) if sid else None
+        if s is None:
+            return "unavailable"
+        if s.get("stale"):
+            return "stale"
+        if s["lifecycle"] == "failed":
+            return "failure"
+        if s["lifecycle"] == "completed":
+            return "completed"
+        if s["lifecycle"] == "ended":
+            return "ended_unconfirmed"
+        if s.get("ask") is not None or s["mode"] in ("waiting", "ask"):
+            return "input_required"
+        if s["mode"] in ("tool_running", "thinking", "working", "running", "long_task"):
+            return "active"
+        return "idle"
+
+    def deck_driven(self) -> bool:
+        """The daemon writes per-key colours only with an approved, unconflicted pad in session mode."""
+        return (self.deck_present and self.deck_approved and not self.deck_conflict
+                and self.deck_settings["enabled"] and self.deck_settings["session_mode"])
+
+    def deck_bank_count(self) -> int:
+        return max(1, (len(self.deck_order) + DECK_SLOTS - 1) // DECK_SLOTS)
+
+    def deck_slots(self) -> list[dict]:
+        driven = self.deck_driven()
+        slots = []
+        for index in range(DECK_SLOTS):
+            offset = self.deck_bank * DECK_SLOTS + index
+            identity = self.deck_order[offset] if offset < len(self.deck_order) else None
+            if identity is None:
+                slots.append({"index": index, "identity": None, "session": None, "label": None, "provider": None,
+                              "state": "unavailable", "pinned": False, "navigable": False,
+                              "color": DECK_DARK if driven else "#000000"})
+                continue
+            sid, provider, label = self.deck_identities[identity]
+            state = self.deck_slot_state(identity)
+            live = sid is not None and sid in self.sessions
+            slots.append({"index": index, "identity": identity, "session": sid if live else None,
+                          "label": label, "provider": provider, "state": state,
+                          "pinned": identity in self.deck_pinned, "navigable": live,
+                          "color": (DECK_STATE_COLORS.get(state, DECK_DARK) if driven else "#000000")})
+        return slots
+
+    def deck_aux(self) -> list[dict]:
+        return [{"index": index, "label": label, "mapping": self.deck_aux_mappings.get(index)}
+                for index, label in DECK_AUX_LABELS.items()]
+
+    def deck_layer_rows(self) -> list[dict]:
+        return [{"profile": layer["profile"], "layer": layer["layer"],
+                 "label": f"Profile {layer['profile'] + 1} / Layer {layer['layer'] + 1}: {layer['name']}"}
+                for layer in self.deck_layers]
+
+    def deck_state(self) -> dict:
+        with self.lock:
+            device = None
+            if self.deck_present:
+                device = {"serial": DECK_SERIAL, "name": "Creator Micro 2", "transport": self.deck_transport,
+                          "connected": True, "approved": self.deck_approved, "firmware": "v0.6.1",
+                          "layer": 0, "profile": 0, "conflict": self.deck_conflict,
+                          "receipt": dict(self.deck_receipt) if self.deck_receipt else None}
+            return {
+                "device": device,
+                "slots": self.deck_slots(),
+                "aux": self.deck_aux(),
+                "banks": {"index": self.deck_bank, "count": self.deck_bank_count()},
+                "rail": {"edge": self.deck_rail_edge},
+                "keymap": dict(self.deck_keymap) | {"layers": self.deck_layer_rows()},
+                "input_check": self.deck_input_check,
+                "last_input": dict(self.deck_last_input) if self.deck_last_input else None,
+                "settings": dict(self.deck_settings),
+            }
+
+    def deck_error(self, cid, code: str, message: str | None = None) -> dict:
+        return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                "error": {"code": code, "message": message or deck_receipt_message(code)}}
+
+    def deck_set_receipt(self, code: str) -> dict:
+        receipt = {"code": code, "message": deck_receipt_message(code), "at": time.time()}
+        with self.lock:
+            self.deck_receipt = receipt
+        return receipt
+
+    def deck_push_receipt(self, code: str) -> dict:
+        """Records a receipt on the device and tells every client about it."""
+        receipt = self.deck_set_receipt(code)
+        self.push_state()
+        self.push_event("deck_receipt", None, "Creator Micro 2", code=code, message=receipt["message"], notify=False)
+        return receipt
+
+    def deck_input(self, index: int, kind: str) -> None:
+        """A physical input observed on the pad: remembered on the state, sent as an event."""
+        with self.lock:
+            self.deck_last_input = {"index": index, "kind": kind, "at": time.time()}
+        self.push_event("deck_input", None, deck_control_label(index), input=dict(self.deck_last_input), notify=False)
+
+    def deck_input_burst(self) -> None:
+        """Input check: pretend the user tries the first keys, the dial and the joystick."""
+        def run():
+            for index, kind in ((0, "press"), (1, "press"), (2, "press"), (13, "dial"), (16, "joystick")):
+                if not self.deck_input_check or not self.deck_present:
+                    return
+                self.deck_input(index, kind)
+                time.sleep(0.4)
+        threading.Thread(target=run, name="deck-input", daemon=True).start()
+
+    def deck_find_layer(self, profile: int, layer: int) -> dict | None:
+        return next((row for row in self.deck_layers if row["profile"] == profile and row["layer"] == layer), None)
+
+    def deck_plan(self, args: dict) -> dict | str:
+        """The apply plan (creator_micro_keymap.plan_keymap) or an error message."""
+        profile = args.get("profile", 0)
+        layer = args.get("layer", 0)
+        include_auxiliary = args.get("include_auxiliary", False)
+        if type(profile) is not int or type(layer) is not int:
+            return "invalid selected profile" if type(profile) is not int else "invalid selected layer"
+        if type(include_auxiliary) is not bool:
+            return "include_auxiliary must be a bool"
+        row = self.deck_find_layer(profile, layer)
+        if row is None:
+            return "invalid selected layer"
+        changes: list[str] = []
+        key_index = 0
+        for keys in row["keys"]:
+            for old in keys:
+                new = f"KV_OAI_AG{key_index:02d}"
+                if old != new:
+                    changes.append(f"Key {key_index}: {old} -> {new}; "
+                                   "replaces its normal keystroke with a JR-Bar device input.")
+                key_index += 1
+        controls = [{"index": index, "label": f"Key {index + 1}"} for index in range(DECK_SLOTS)]
+        if include_auxiliary:
+            auxiliary: list[tuple[str, str]] = []
+            for encoder, inputs in enumerate(row["encoders"]):
+                for position, old in enumerate(inputs):
+                    auxiliary.append((old, f"Encoder {encoder + 1} input {position + 1}"))
+            for index, old in enumerate(row["joystick"]):
+                auxiliary.append((old, f"Joystick sector {index + 1}"))
+            for index, (old, label) in enumerate(auxiliary, DECK_SLOTS):
+                code = f"KV_OAI_AG{index:02d}"
+                controls.append({"index": index, "label": label})
+                if old != code:
+                    changes.append(f"{label}: {old} -> {code}; replaces its normal firmware action.")
+        changed = "\n".join(changes) if changes else "No device keys need to change."
+        preview = (
+            f"Selected profile {profile + 1}, layer {layer + 1}:\n\n"
+            f"{changed}\n\n"
+            "The listed keys will replace their normal keystrokes with JR-Bar device inputs. "
+            + ("Supported dial/joystick mappings listed above also change. " if include_auxiliary
+               else "Dial and joystick mappings stay unchanged. ")
+            + "Thread colors are device-wide, not layer-specific. Stored mappings may require reconnecting to activate. "
+            "JR-Bar does not switch the device profile or layer through an undocumented RPC."
+        )
+        return {"profile": profile, "layer": layer, "include_auxiliary": include_auxiliary,
+                "changes": changes, "preview": preview, "controls": controls}
+
+    def deck_write_layer(self, profile: int, layer: int, include_auxiliary: bool, restore: bool) -> None:
+        """Rewrites (or restores) the mock pad's layer so the next plan reads 'already configured'."""
+        row = self.deck_find_layer(profile, layer)
+        stock = next(r for r in DECK_STOCK_LAYERS if r["profile"] == profile and r["layer"] == layer)
+        if row is None:
+            return
+        if restore:
+            row["keys"] = json.loads(json.dumps(stock["keys"]))
+            row["encoders"] = json.loads(json.dumps(stock["encoders"]))
+            row["joystick"] = list(stock["joystick"])
+            return
+        index = 0
+        for keys in row["keys"]:
+            for column in range(len(keys)):
+                keys[column] = f"KV_OAI_AG{index:02d}"
+                index += 1
+        if include_auxiliary:
+            for inputs in row["encoders"]:
+                for position in range(len(inputs)):
+                    inputs[position] = f"KV_OAI_AG{index:02d}"
+                    index += 1
+            for sector in range(len(row["joystick"])):
+                row["joystick"][sector] = f"KV_OAI_AG{index:02d}"
+                index += 1
+
+    def deck_press_action(self, index: int) -> tuple[str | None, str | None, str | None]:
+        """(action, identity, session) for a control index; action None means nothing bound."""
+        if 0 <= index < DECK_SLOTS:
+            row = self.deck_slots()[index]
+            if row["session"] is None:
+                return None, row["identity"], None
+            return "reveal_session", row["identity"], row["session"]
+        mapping = self.deck_aux_mappings.get(index) if index < DECK_SLOTS + len(DECK_AUX_LABELS) else None
+        return mapping, None, None
 
     def lights(self) -> dict:
         programs = {
@@ -1269,6 +1592,7 @@ class World:
         """(name, pause multiplier) for every step; `--start-at N` begins at index N."""
         return [
             ("claude_working", 1.5),
+            ("deck_keys", 1.0),
             ("codex_ask", 2.5),
             ("codex_ask_stage2", 1.5),
             ("codex_ask_stage3", 1.5),
@@ -1276,6 +1600,8 @@ class World:
             ("codex_completed", 1.5),
             ("pro_disconnected", 1.0),
             ("pro_reconnected", 1.0),
+            ("deck_conflict", 1.5),
+            ("deck_conflict_cleared", 1.0),
             ("gemini_failed", 1.0),
             ("claude_completed", 1.5),
             ("idle", 2.0),
@@ -1292,6 +1618,26 @@ class World:
             self.record("started", "codex", CODEX_ID, "sidepulse-core", "Terminal · ~/Downloads/JR-Bar/src")
             self.push_state()
             self.push_lights("working")
+        elif name == "deck_keys":
+            if self.deck_present:
+                log("timeline: two presses and a dial turn on the deck")
+                self.deck_input(0, "press")
+                self.deck_input(1, "press")
+                self.deck_input(14, "dial")
+        elif name == "deck_conflict":
+            if self.deck_present and self.deck_conflict is None:
+                log("timeline: another app answers on the deck's stream")
+                with self.lock:
+                    self.deck_conflict = "foreign_responses"
+                self.deck_push_receipt("device_conflict")
+        elif name == "deck_conflict_cleared":
+            if self.deck_present and self.deck_conflict is not None:
+                log("timeline: the deck reconnects, conflict cleared")
+                with self.lock:
+                    self.deck_conflict = None
+                    self.deck_keymap["generation"] += 1
+                self.deck_push_receipt("connection_changed")
+                self.push_event("device_connected", None, "Creator Micro 2", notify=False)
         elif name == "codex_ask":
             log("timeline: codex ask opens")
             self.open_ask(CODEX_ID, "Run: rm -rf build")
@@ -1760,6 +2106,154 @@ class World:
                 return self._error(cid, "export_failed", str(exc))
             result = {"path": str(path), "effects": len(effects), "bytes": len(encoded.encode("utf-8")), "id": pack_id}
             self.push_log("info", f"exported {len(effects)} effects to {path}")
+        elif name == "deck_press":
+            # What a physical press of that control does, from the screen: a
+            # session key reveals its session (no approval is emulated), an
+            # auxiliary control runs its explicit mapping.
+            index = args.get("index")
+            if type(index) is not int or not 0 <= index < 20 + DECK_ANALOG:
+                return self.deck_error(cid, "invalid_args", "index must be 0..23")
+            if self.deck_input_check:
+                return self.deck_error(cid, "input_check", "Input check is on: device actions are paused.")
+            with self.lock:
+                action, identity, sid = self.deck_press_action(index)
+            if action is None:
+                if index < DECK_SLOTS:
+                    return self.deck_error(cid, "not_found", "Reserved: session not observed." if identity else "No session assigned.")
+                return self.deck_error(cid, "not_found", "Configure this auxiliary control in Settings > Devices.")
+            result = {"index": index, "action": action, "identity": identity, "session": sid}
+            if action == "reveal_session":
+                s = self.sessions[sid]
+                result["activated"] = s.get("terminal", {}).get("app")
+                self.push_log("info", f"deck: key {index + 1} reveals {s['label']}")
+            elif action in ("next_bank", "previous_bank"):
+                with self.lock:
+                    count = self.deck_bank_count()
+                    self.deck_bank = (self.deck_bank + (1 if action == "next_bank" else -1)) % count
+                    result["bank"] = {"index": self.deck_bank, "count": count}
+                self.push_state()
+            else:
+                self.push_log("info", f"deck: {deck_control_label(index)} runs {action}")
+        elif name == "deck_pin":
+            # Pins are per identity, so they survive clear_absent and bank changes.
+            index = args.get("index")
+            if type(index) is not int or not 0 <= index < DECK_SLOTS:
+                return self.deck_error(cid, "invalid_args", "index must be 0..12")
+            with self.lock:
+                offset = self.deck_bank * DECK_SLOTS + index
+                identity = self.deck_order[offset] if offset < len(self.deck_order) else None
+                if identity is None:
+                    return self.deck_error(cid, "not_found", "No session assigned.")
+                if identity in self.deck_pinned:
+                    self.deck_pinned.discard(identity)
+                else:
+                    self.deck_pinned.add(identity)
+                result = {"index": index, "identity": identity, "pinned": identity in self.deck_pinned}
+            self.push_state()
+        elif name == "deck_bank":
+            delta = args.get("delta", 1)
+            if type(delta) is not int:
+                return self.deck_error(cid, "invalid_args", "delta must be an integer")
+            with self.lock:
+                count = self.deck_bank_count()
+                self.deck_bank = (self.deck_bank + delta) % count
+                result = {"index": self.deck_bank, "count": count}
+            self.push_state()
+        elif name == "deck_rail":
+            edge = args.get("edge")
+            if edge not in DECK_RAIL_EDGES:
+                return self.deck_error(cid, "invalid_args", "edge must be off, left, right, top or bottom")
+            with self.lock:
+                self.deck_rail_edge = edge
+                result = {"edge": edge}
+            self.push_state()
+        elif name == "deck_clear_absent":
+            # Unpinned identities with no live session leave the board; later
+            # keys may move, so the bank is clamped.
+            with self.lock:
+                before = len(self.deck_order)
+                self.deck_order = [identity for identity in self.deck_order
+                                   if identity in self.deck_pinned
+                                   or (self.deck_identities[identity][0] in self.sessions)]
+                removed = before - len(self.deck_order)
+                self.deck_bank = min(self.deck_bank, self.deck_bank_count() - 1)
+                result = {"removed": removed, "banks": {"index": self.deck_bank, "count": self.deck_bank_count()}}
+            self.push_state()
+            self.push_log("info", f"deck: cleared {removed} absent slots")
+        elif name == "deck_plan_keymap":
+            plan = self.deck_plan(args)
+            if isinstance(plan, str):
+                return self.deck_error(cid, "invalid_plan", plan)
+            result = plan
+        elif name == "deck_apply_keymap":
+            if not self.deck_present or not self.deck_approved:
+                return self.deck_error(cid, "connection_required")
+            if self.deck_conflict:
+                self.deck_set_receipt("device_conflict")
+                return self.deck_error(cid, "device_conflict")
+            if self.deck_keymap["state"] == "recovering":
+                self.deck_set_receipt("recovery_required")
+                return self.deck_error(cid, "recovery_required")
+            plan = self.deck_plan(args)
+            if isinstance(plan, str):
+                self.deck_set_receipt("invalid_plan")
+                return self.deck_error(cid, "invalid_plan", plan)
+            if not plan["changes"]:
+                receipt = self.deck_push_receipt("already_configured")
+                result = {"code": "already_configured", "message": receipt["message"]} | dict(self.deck_keymap)
+            else:
+                with self.lock:
+                    self.deck_write_layer(plan["profile"], plan["layer"], plan["include_auxiliary"], restore=False)
+                    self.deck_keymap = {"state": "applied", "backup_at": self.deck_keymap.get("backup_at") or time.time(),
+                                        "generation": self.deck_keymap["generation"] + 1}
+                    self.deck_input_check = True
+                receipt = self.deck_push_receipt("keymap_verified")
+                result = {"code": "keymap_verified", "message": receipt["message"], "changes": plan["changes"]} | dict(self.deck_keymap)
+                self.push_log("info", "deck: keymap applied, original backed up; input check on")
+                self.deck_input_burst()
+        elif name == "deck_restore_keymap":
+            if not self.deck_present or not self.deck_approved:
+                return self.deck_error(cid, "connection_required")
+            if self.deck_conflict:
+                self.deck_set_receipt("device_conflict")
+                return self.deck_error(cid, "device_conflict")
+            if self.deck_keymap["state"] == "stock":
+                receipt = self.deck_push_receipt("already_restored")
+                result = {"code": "already_restored", "message": receipt["message"]} | dict(self.deck_keymap)
+            else:
+                with self.lock:
+                    for row in self.deck_layers:
+                        self.deck_write_layer(row["profile"], row["layer"], True, restore=True)
+                    self.deck_keymap = {"state": "stock", "backup_at": None, "generation": self.deck_keymap["generation"] + 1}
+                receipt = self.deck_push_receipt("keymap_restored")
+                result = {"code": "keymap_restored", "message": receipt["message"]} | dict(self.deck_keymap)
+                self.push_log("info", "deck: original keymap restored and verified")
+        elif name == "deck_approve_device":
+            if not self.deck_present:
+                return self.deck_error(cid, "no_device", "No Creator Micro 2 is connected.")
+            with self.lock:
+                self.deck_approved = True
+                result = {"serial": DECK_SERIAL, "approved": True}
+            self.push_state()
+            self.push_event("device_connected", None, "Creator Micro 2", notify=False)
+        elif name == "deck_check_input":
+            enabled = args.get("enabled")
+            if type(enabled) is not bool:
+                return self.deck_error(cid, "invalid_args", "enabled must be a bool")
+            with self.lock:
+                self.deck_input_check = enabled
+                result = {"enabled": enabled}
+            self.push_state()
+            if enabled and self.deck_present:
+                self.deck_input_burst()
+        elif name == "deck_set_settings":
+            updates = {key: args[key] for key in ("enabled", "session_mode", "analog_enabled") if key in args}
+            if not updates or any(type(value) is not bool for value in updates.values()):
+                return self.deck_error(cid, "invalid_args", "enabled, session_mode and analog_enabled must be bools")
+            with self.lock:
+                self.deck_settings.update(updates)
+                result = dict(self.deck_settings)
+            self.push_state()
         elif name == "quit":
             result = {"bye": True}
         elif name == "doctor":
@@ -1865,18 +2359,34 @@ class Client:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--socket", default=str(DEFAULT_SOCKET), help="socket path (default: the real one)")
+    parser.add_argument("--socket", default=str(DEFAULT_SOCKET),
+                        help=f"socket path (default: {DEFAULT_SOCKET}; the installed daemon's socket is refused)")
+    parser.add_argument("--i-know-this-is-the-real-socket", action="store_true",
+                        help=f"allow binding {REAL_SOCKET}, which the installed JR-Bar.app connects to")
     parser.add_argument("--step", type=float, default=2.0, help="seconds between timeline steps")
     parser.add_argument("--once", action="store_true", help="send hello/state/lights/settings to the first client, then exit")
-    parser.add_argument("--no-loop", action="store_true", help="play the timeline once instead of looping")
+    parser.add_argument("--loop", action="store_true",
+                        help="replay the timeline forever (default: once, so its sounds and banners stop)")
+    parser.add_argument("--no-loop", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--start-at", type=int, default=0, metavar="N",
-                        help="begin the timeline at step N (0 claude working, 1 codex ask, 2 ask stage 2, "
-                             "3 ask stage 3, 4 ask resolved, 5 codex completed, 6 pro disconnected, "
-                             "7 pro reconnected, 8 gemini failed, 9 claude completed, 10 idle)")
+                        help="begin the timeline at step N (0 claude working, 1 deck keys, 2 codex ask, "
+                             "3 ask stage 2, 4 ask stage 3, 5 ask resolved, 6 codex completed, 7 pro disconnected, "
+                             "8 pro reconnected, 9 deck conflict, 10 conflict cleared, 11 gemini failed, "
+                             "12 claude completed, 13 idle)")
     parser.add_argument("--mode", default="0600", help="socket file mode (octal)")
+    parser.add_argument("--deck", choices=("approved", "unapproved", "absent", "usb", "recovering"), default="approved",
+                        help="how the Creator Micro 2 starts: approved over Bluetooth (default), connected but "
+                             "not yet approved, not connected, approved over USB, or with an interrupted keymap "
+                             "write that needs Restore")
     args = parser.parse_args()
 
     path = Path(args.socket).expanduser()
+    if not args.i_know_this_is_the_real_socket and (
+            path == REAL_SOCKET or path.resolve() == REAL_SOCKET.resolve()):
+        log(f"refusing to bind {path}: that is the installed daemon's socket and the installed JR-Bar.app "
+            f"would take this mock for the real core. Use the default ({DEFAULT_SOCKET}) or pass "
+            "--i-know-this-is-the-real-socket.")
+        return 2
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1892,7 +2402,13 @@ def main() -> int:
             probe.close()
 
     stop = threading.Event()
-    world = World(step_seconds=args.step, loop=not args.no_loop)
+    world = World(step_seconds=args.step, loop=args.loop and not args.no_loop)
+    world.deck_present = args.deck != "absent"
+    world.deck_approved = args.deck in ("approved", "usb", "recovering")
+    world.deck_transport = "usb" if args.deck == "usb" else "bluetooth"
+    if args.deck == "recovering":
+        world.deck_keymap = {"state": "recovering", "backup_at": time.time() - 900, "generation": 3}
+        world.deck_set_receipt("recovery_required")
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(str(path))

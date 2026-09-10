@@ -415,11 +415,13 @@ public struct CoreState: Codable, Hashable, Sendable {
     public var escalation: CoreEscalation?
     public var health: JSONValue?
     public var settingsGeneration: Int?
+    /// The Creator Micro 2 deck (app-proposed extension, see app/README.md).
+    public var deck: DeckState?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
-                health: JSONValue? = nil, settingsGeneration: Int? = nil) {
+                health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -432,10 +434,11 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.escalation = escalation
         self.health = health
         self.settingsGeneration = settingsGeneration
+        self.deck = deck
     }
 
     enum CodingKeys: String, CodingKey {
-        case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health
+        case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck
         case settingsGeneration = "settings_generation"
     }
 
@@ -453,6 +456,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         escalation = try c.decodeIfPresent(CoreEscalation.self, forKey: .escalation)
         health = try c.decodeIfPresent(JSONValue.self, forKey: .health)
         settingsGeneration = try c.decodeIfPresent(Int.self, forKey: .settingsGeneration)
+        // A malformed deck must not take the whole state down with it.
+        deck = try? c.decodeIfPresent(DeckState.self, forKey: .deck)
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -538,9 +543,16 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     public var provider: String?
     public var detail: String?
     public var stage: Int?
+    /// `deck_input`: the observed control (`{index, kind, at}`, nested
+    /// because the envelope's `kind` is the event kind). `deck_receipt`:
+    /// the receipt `code` and its `message`.
+    public var input: DeckInput?
+    public var code: String?
+    public var message: String?
 
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
-                notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil) {
+                notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
+                input: DeckInput? = nil, code: String? = nil, message: String? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -551,9 +563,12 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.provider = provider
         self.detail = detail
         self.stage = stage
+        self.input = input
+        self.code = code
+        self.message = message
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage }
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -573,6 +588,15 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         } else {
             stage = nil
         }
+        input = try? c.decodeIfPresent(DeckInput.self, forKey: .input)
+        code = try? c.decodeIfPresent(String.self, forKey: .code)
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+    }
+
+    /// `deck_receipt` as a receipt value.
+    public var receipt: DeckReceipt? {
+        guard kind == "deck_receipt", let code else { return nil }
+        return DeckReceipt(code: code, message: message, at: at)
     }
 }
 

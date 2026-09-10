@@ -112,6 +112,7 @@ final class PanelStore {
     var onOpenHistory: (@MainActor () -> Void)?
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
+    var onOpenControlCenter: (@MainActor () -> Void)?
     var onRestartCore: (@MainActor () -> Void)?
     var onContentSizeChange: (@MainActor (CGSize) -> Void)?
     /// The "Why this light" row is hovered (with its frame in the hosting
@@ -384,6 +385,11 @@ final class PanelStore {
     func openEffects() {
         onClose?()
         onOpenEffects?()
+    }
+
+    func openControlCenter() {
+        onClose?()
+        onOpenControlCenter?()
     }
 
     func restartCore() {

@@ -287,6 +287,8 @@ struct DevicesPage: View {
             Text("Pro + Dot")
         }
 
+        CreatorMicroCard(store: store)
+
         Section {
             ScreenBarCard(store: store)
         } header: {
@@ -363,6 +365,112 @@ struct DeviceCard: View {
         let glow = doc.double(SettingsPath("\(device.prefix).resting_glow")) ?? 0
         if r == 1, g == 1, b == 1, glow == 0 { return "Uncalibrated" }
         return String(format: "R %.2f · G %.2f · B %.2f · glow %d %%", r, g, b, Int((glow * 100).rounded()))
+    }
+}
+
+/// The Creator Micro 2: the three switches of `deck-controls.json`, what
+/// the core says about the pad, and the door to the Control Center, where
+/// everything else about it is done.
+struct CreatorMicroCard: View {
+    @Bindable var store: SettingsStore
+
+    private var deck: DeckState? { store.deck }
+    private var device: DeckDevice? { deck?.device }
+    private var settings: DeckSettings { deck?.settings ?? DeckSettings() }
+    private var live: Bool { store.core.isLive && deck != nil }
+
+    private var statusColor: Color {
+        guard let device, device.connected else { return .secondary }
+        if device.hasConflict { return .red }
+        return device.approved ? .green : .orange
+    }
+
+    private var statusText: String {
+        guard store.core.isLive else { return "Core not connected" }
+        guard deck != nil else { return "Not provided by core" }
+        guard let device, device.connected else { return "Not connected" }
+        var parts: [String] = []
+        if device.hasConflict { parts.append(DeckDevice.conflictText) }
+        else if !device.approved { parts.append("Connected, needs approval") }
+        else { parts.append("Connected") }
+        if let transport = device.transport { parts.append(transport.label) }
+        if let serial = device.serial { parts.append(serial) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func set(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil) {
+        let core = store.core
+        Task { _ = try? await core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled) }
+    }
+
+    var body: some View {
+        Section {
+            Toggle(isOn: Binding(get: { settings.enabled }, set: { set(enabled: $0) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Enable Creator Micro 2")
+                    Text("The core drives the approved pad's per-key colours and listens to its inputs.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!live)
+            Toggle(isOn: Binding(get: { settings.sessionMode }, set: { set(sessionMode: $0) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Session keys")
+                    Text("The thirteen keys follow the session board: a key lights with its session's state and reveals it when pressed. Explicit mappings still win.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!live || !settings.enabled)
+            Toggle(isOn: Binding(get: { settings.analogEnabled }, set: { set(analogEnabled: $0) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Analog joystick sectors")
+                    Text("Calibrated sectors 1–4 (AG20–AG23) count as inputs and can carry mappings.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(!live || !settings.enabled)
+            LabeledContent {
+                HStack(spacing: 6) {
+                    Circle().fill(statusColor).frame(width: 7, height: 7)
+                    Text(statusText).foregroundStyle(.secondary).lineLimit(2)
+                }
+            } label: {
+                Text("Status")
+            }
+            if let deck {
+                LabeledContent("Keymap") {
+                    Text(deck.keymap.label).foregroundStyle(deck.keymap.needsRecovery ? .orange : .secondary)
+                }
+                LabeledContent("Compact rail") {
+                    Text(deck.rail.edge.label).foregroundStyle(.secondary)
+                }
+                LabeledContent("Sessions") {
+                    Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
+                        .foregroundStyle(.secondary)
+                }
+                if let receipt = deck.device?.receipt {
+                    LabeledContent("Last receipt") {
+                        Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+            HStack {
+                Text("Control Center")
+                Spacer()
+                Button("Open Control Center…") { store.onOpenControlCenter?() }
+                    .keyboardShortcut("k", modifiers: .command)
+            }
+        } header: {
+            HStack(spacing: 8) {
+                Text("Creator Micro 2")
+                if device?.approved == false, device?.connected == true {
+                    Text("Approve it in the Control Center").foregroundStyle(.secondary).font(.callout)
+                }
+            }
+        } footer: {
+            SectionNote("Thirteen session keys per bank with solid per-key colour, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the core owns the device.")
+        }
     }
 }
 

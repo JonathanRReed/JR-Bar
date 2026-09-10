@@ -6,7 +6,9 @@ set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$APP_DIR/build"
-BUNDLE="$BUILD_DIR/JR-Bar.app"
+# JRBAR_BUNDLE overrides the output path (run-dev.sh builds JR-Bar-dev.app so
+# the development copy never replaces the one install-agents.sh copies).
+BUNDLE="${JRBAR_BUNDLE:-$BUILD_DIR/JR-Bar.app}"
 IDENTITY="${JRBAR_SIGN_IDENTITY:-Nautilus Local Dev}"
 
 cd "$APP_DIR"

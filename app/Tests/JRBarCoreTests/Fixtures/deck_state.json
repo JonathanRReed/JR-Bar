@@ -1,0 +1,44 @@
+{
+  "t": "state", "v": 1, "generation": 5100, "now": 1789000000.0,
+  "aggregate": {"mode": "working", "needs_you": 1, "active": 2, "ready": 0},
+  "sessions": [
+    {"id": "claude:session:a", "provider": "claude", "kind": "main", "label": "jr-bar-b7", "mode": "tool_running", "lifecycle": "active"},
+    {"id": "codex:session:b", "provider": "codex", "kind": "main", "label": "sidepulse-core", "mode": "waiting", "lifecycle": "active",
+     "ask": {"session": "codex:session:b", "kind": "permission", "summary": "Run: rm -rf build"}}
+  ],
+  "asks": [], "devices": [],
+  "deck": {
+    "device": {"serial": "WL2-7C41-0F9E", "name": "Creator Micro 2", "transport": "usb", "connected": true,
+               "approved": true, "firmware": "v0.6.1", "layer": 1, "profile": 0, "conflict": null,
+               "receipt": {"code": "keymap_verified", "at": 1788999000.0}},
+    "slots": [
+      {"index": 0, "identity": "id-a", "session": "claude:session:a", "label": "jr-bar-b7", "provider": "claude", "state": "active", "pinned": false, "navigable": true, "color": "#00E5FF"},
+      {"index": 1, "identity": "id-b", "session": "codex:session:b", "label": "sidepulse-core", "provider": "codex", "state": "input_required", "pinned": true, "navigable": true, "color": "#FF3A00"},
+      {"index": 2, "identity": "id-c", "session": null, "label": "notes-refactor", "provider": "claude", "state": "unavailable", "pinned": false, "navigable": false, "color": "#020204"},
+      {"index": 3, "identity": "id-d", "session": "gemini:session:d", "label": "docs-sweep", "provider": "gemini", "state": "completed", "pinned": false, "navigable": true, "color": "#00FF66"},
+      {"index": 4, "identity": "id-e", "session": "pi:session:e", "label": "sweep", "provider": "pi", "state": "failure", "pinned": false, "navigable": true, "color": "#FF3A00"},
+      {"index": 5, "identity": "id-f", "session": "codex:session:f", "label": "old-run", "provider": "codex", "state": "stale", "pinned": false, "navigable": true, "color": "#020204"},
+      {"index": 6, "identity": "id-g", "session": "codex:session:g", "label": "ended", "provider": "codex", "state": "ended_unconfirmed", "pinned": false, "navigable": true, "color": "#020204"},
+      {"index": 7, "identity": "id-h", "session": "claude:session:h", "label": "odd", "provider": "claude", "state": "something_new", "pinned": false, "navigable": true, "color": "#020204"},
+      {"index": 8, "identity": "id-i", "session": null, "label": "reserved-pinned", "provider": "cursor", "state": "unavailable", "pinned": true, "navigable": false, "color": "#020204"},
+      {"index": 12, "identity": null, "session": null, "label": null, "provider": null, "state": "unavailable", "pinned": false, "navigable": false, "color": "#020204"},
+      {"index": 13, "identity": "ghost", "session": "ghost", "label": "out of range", "provider": "codex", "state": "active", "pinned": false, "navigable": true, "color": "#FFFFFF"}
+    ],
+    "aux": [
+      {"index": 13, "label": "Encoder 1 input 1", "mapping": "previous_bank"},
+      {"index": 14, "label": "Encoder 1 input 2", "mapping": "next_bank"},
+      {"index": 15, "label": "Encoder 1 input 3", "mapping": "open_control_center"},
+      {"index": 16, "label": "Joystick sector 1", "mapping": "reveal_current_ask"},
+      {"index": 17, "label": "Joystick sector 2", "mapping": null},
+      {"index": 3, "label": "not an aux control", "mapping": null}
+    ],
+    "banks": {"index": 1, "count": 3},
+    "rail": {"edge": "right"},
+    "keymap": {"state": "applied", "backup_at": 1788990000.0, "generation": 4,
+               "layers": [{"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Base"}, {"profile": 0, "layer": 1, "label": "Profile 1 / Layer 2: Fn"}]},
+    "input_check": true,
+    "last_input": {"index": 14, "kind": "dial", "at": 1788999900.0},
+    "settings": {"enabled": true, "session_mode": true, "analog_enabled": false},
+    "x_future": {"ignored": true}
+  }
+}
