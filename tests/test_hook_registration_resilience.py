@@ -20,12 +20,33 @@ from jrbar.install import hook_command_arguments, verify_hook_command
 from jrbar.providers import _is_jrbar_hook_invocation
 
 
-def test_hook_command_does_not_bake_a_package_file_path() -> None:
+def test_hook_command_does_not_bake_a_package_file_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An empty JRBAR_HOOK_EXEC disables the compiled shim: this is the
+    # python fallback every install gets when no shim is built.
+    monkeypatch.setenv("JRBAR_HOOK_EXEC", "")
     arguments = hook_command_arguments("claude", Path("/tmp/claude.jsonl"))
     assert arguments[1:3] == ["-m", "jrbar.hook_client"]
     # No argument may be a filesystem path INTO the package: that is the
     # assumption that broke when the install layout changed.
     assert not any(argument.endswith("hook_entry.py") for argument in arguments)
+
+
+def test_hook_command_uses_the_compiled_shim_when_one_is_named(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    shim = tmp_path / "jrbar-hook"
+    shim.write_text("#!/bin/sh\nexit 0\n")
+    shim.chmod(0o755)
+    monkeypatch.setenv("JRBAR_HOOK_EXEC", str(shim))
+    arguments = hook_command_arguments("codex", Path("/tmp/codex.jsonl"))
+    assert arguments == [str(shim), "--provider", "codex", "--log", "/tmp/codex.jsonl"]
+    assert _is_jrbar_hook_invocation(arguments) is True
+    # An explicit interpreter still means the python client.
+    explicit = hook_command_arguments("codex", Path("/tmp/codex.jsonl"), python_executable=sys.executable)
+    assert explicit[1:3] == ["-m", "jrbar.hook_client"]
+    # A shim that does not exist falls back rather than registering a dead command.
+    monkeypatch.setenv("JRBAR_HOOK_EXEC", str(tmp_path / "missing"))
+    assert hook_command_arguments("codex", Path("/tmp/codex.jsonl"))[1:3] == ["-m", "jrbar.hook_client"]
 
 
 def test_registered_command_actually_runs() -> None:

@@ -178,7 +178,47 @@ def build_jrbar_parser() -> argparse.ArgumentParser:
     add_jrbar_status_bar_parser(subparsers)
     add_jrbar_sdejectguard_parser(subparsers)
     add_jrbar_battery_parser(subparsers)
+    add_jrbar_core_parser(subparsers)
+    add_jrbar_hooks_parser(subparsers)
     return parser
+
+
+def add_jrbar_core_parser(subparsers: argparse._SubParsersAction) -> None:
+    core = subparsers.add_parser(
+        "core",
+        help=f"Run the headless {PRODUCT_DISPLAY_NAME} core daemon (protocol 1 on core.sock).",
+    )
+    core.add_argument("--socket", default=None, help="Core socket path (default: ~/.local/state/jrbar/core.sock).")
+    core.set_defaults(func=cmd_jrbar_core)
+
+
+def add_jrbar_hooks_parser(subparsers: argparse._SubParsersAction) -> None:
+    hooks = subparsers.add_parser("hooks", help="Inspect the provider hook commands on this Mac.")
+    hooks_subparsers = hooks.add_subparsers(dest="hooks_command", required=True)
+    doctor = hooks_subparsers.add_parser(
+        "doctor",
+        help="Show which command each provider's hook runs, the shim, sockets and queued payloads.",
+    )
+    doctor.add_argument("--json", action="store_true", help="Print the report as JSON.")
+    doctor.set_defaults(func=cmd_jrbar_hooks_doctor)
+
+
+def cmd_jrbar_core(args: argparse.Namespace) -> int:
+    from .core_runtime import run_core
+
+    argv = ["--socket", args.socket] if args.socket else []
+    return run_core(argv)
+
+
+def cmd_jrbar_hooks_doctor(args: argparse.Namespace) -> int:
+    from .hook_doctor import hook_doctor_report, render_hook_doctor
+
+    report = hook_doctor_report()
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print(render_hook_doctor(report))
+    return 0
 
 
 def add_jrbar_status_bar_parser(subparsers: argparse._SubParsersAction) -> None:

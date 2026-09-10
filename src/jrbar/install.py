@@ -46,6 +46,7 @@ from .providers import (
     GROK_EVENTS,
     HERMES_EVENTS,
     HOOK_CLIENT_MODULES,
+    HOOK_SHIM_NAME,
     KIRO_EVENTS,
     KIRO_MANAGED_DESCRIPTION,
     KIRO_NATIVE_EVENT_NAMES,
@@ -1182,14 +1183,45 @@ def uninstall_openclaw_hooks(
     return InstallResult("openclaw", config, target_log, changed, backup, dry_run)
 
 
+def hook_shim_path() -> Path | None:
+    """The compiled hook shim (hook/jrbar-hook.c), when one is available.
+
+    ``JRBAR_HOOK_EXEC`` names it explicitly (an empty value disables the
+    shim); a bundled app carries it beside the executable; a source
+    checkout has ``hook/build/jrbar-hook`` after ``hook/build.sh``.
+    """
+    explicit = os.environ.get("JRBAR_HOOK_EXEC")
+    if explicit is not None:
+        candidate = Path(explicit).expanduser()
+        return candidate if explicit and candidate.is_file() and os.access(candidate, os.X_OK) else None
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).resolve().parent / HOOK_SHIM_NAME)
+        candidates.append(Path(sys.executable).resolve().parent.parent / "Helpers" / HOOK_SHIM_NAME)
+    candidates.append(Path(__file__).resolve().parents[2] / "hook" / "build" / HOOK_SHIM_NAME)
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def hook_command_arguments(
     provider: str,
     log_path: Path,
     python_executable: str | None = None,
 ) -> list[str]:
-    """Return the thin hook client as an argument array, never a shell string."""
+    """Return the hook command as an argument array, never a shell string.
+
+    The compiled shim wins when one is available and no interpreter was
+    named explicitly: it hands the payload to the daemon in a few
+    milliseconds and never imports Python inside an agent's hook.
+    """
     executable = python_executable or sys.executable or "python3"
     target_log = str(log_path.expanduser())
+    if python_executable is None:
+        shim = hook_shim_path()
+        if shim is not None:
+            return [str(shim), "--provider", provider, "--log", target_log]
     if getattr(sys, "frozen", False) and python_executable is None:
         return [
             executable,
@@ -2151,11 +2183,12 @@ def is_jrbar_json_hook_command(
         "-m" in arguments
         and any(module in arguments for module in HOOK_CLIENT_MODULES)
     )
+    shim_entrypoint = bool(arguments) and Path(arguments[0]).name == HOOK_SHIM_NAME
     packaged_entrypoint = (
         any(Path(argument).name == "agent-monitor" for argument in arguments)
         and any(command in arguments for command in ("hook-log", "hook-client"))
     )
-    return source_entrypoint or packaged_entrypoint
+    return source_entrypoint or packaged_entrypoint or shim_entrypoint
 
 
 def _command_option(arguments: list[str], option: str) -> str | None:
