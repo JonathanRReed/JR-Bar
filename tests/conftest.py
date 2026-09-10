@@ -82,7 +82,7 @@ def isolate_live_settings_file(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def isolate_integration_settings_file(tmp_path, monkeypatch):
+def isolate_integration_settings_file(tmp_path_factory, monkeypatch):
     """One per-test integrations.json (and its deck sidecar files).
 
     `default_integration_settings_path()` is read at call time from
@@ -94,8 +94,8 @@ def isolate_integration_settings_file(tmp_path, monkeypatch):
     """
     import sys
 
-    isolated = tmp_path / "pytest-jrbar-config" / "integrations.json"
-    isolated.parent.mkdir(parents=True, exist_ok=True)
+    # A sibling of tmp_path, not inside it: tests assert on tmp_path's contents.
+    isolated = tmp_path_factory.mktemp("jrbar-config") / "integrations.json"
 
     def _isolated_path():
         return isolated
