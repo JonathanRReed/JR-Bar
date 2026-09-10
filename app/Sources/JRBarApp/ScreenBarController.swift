@@ -1,21 +1,28 @@
 import AppKit
+import JRBarCore
 import JRBarLEDS
 import QuartzCore
 
-/// Owns the Screen Bar panel, the program currently on it, and the frame clock.
+/// Owns the Screen Bar panel, the program currently on it, and how it moves.
 ///
-/// The sampler is evaluated only on display-link ticks (capped at 60 Hz, the
-/// Python pipeline's `MAX_SAMPLE_RATE_HZ`), and the link pauses whenever the
-/// program has gone still, the bar is hidden, or the display is asleep, so a
-/// static program costs nothing.
+/// A program is rendered once into keyframe tracks (`LEDSKeyframePlan`) and
+/// handed to Core Animation, phase-locked to the daemon's anchor, so the
+/// render server does every frame and this process idles. A program whose
+/// cycle is too long to keyframe keeps the older frame clock: a
+/// `CADisplayLink` (capped at 60 Hz, the Python pipeline's
+/// `MAX_SAMPLE_RATE_HZ`) that runs the sampler on ticks and pauses whenever
+/// the program has gone still, the bar is hidden, or the display is asleep.
 @MainActor
 final class ScreenBarController {
     static let wrapMenuBar = true
+    /// `JRBAR_LOG_MOTION=1` logs which path each program takes.
+    private static let logsMotion = ProcessInfo.processInfo.environment["JRBAR_LOG_MOTION"] != nil
 
     private let panel: ScreenBarPanel
     private let view: ScreenBarView
     private var displayLink: CADisplayLink?
     private var sampler: LEDSSampler?
+    private var plan: LEDSKeyframePlan?
     private var anchor: CFTimeInterval = 0
     private var lastCodes: [RGB8] = []
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
@@ -25,9 +32,14 @@ final class ScreenBarController {
     private var lastRawText = ""
     private(set) var lastRejection: String?
 
+    /// Alcove's capsule when the band follows it; nil hugs the notch.
+    var capsule: AlcoveCapsule? {
+        didSet { if capsule != oldValue { reposition() } }
+    }
+
     init() {
         let screen = ScreenBarGeometry.preferredScreen()
-        let frame = screen.map { ScreenBarGeometry.windowFrame(for: $0, wrapMenuBar: Self.wrapMenuBar) }
+        let frame = screen.map { ScreenBarGeometry.windowFrame(for: $0, wrapMenuBar: Self.wrapMenuBar, capsule: nil) }
             ?? NSRect(x: 0, y: 0, width: ScreenBarDesign.windowWidth, height: ScreenBarGeometry.windowHeight(notchDepth: 0))
         panel = ScreenBarPanel(frame: frame)
         view = ScreenBarView(frame: NSRect(origin: .zero, size: frame.size))
@@ -49,13 +61,23 @@ final class ScreenBarController {
 
     var onGeometryChange: (@MainActor () -> Void)?
 
+    /// "keyframes (12 + 61 frames)" or "frame clock", for the status menu.
+    var motionDescription: String {
+        guard sampler != nil else { return "nothing" }
+        if let plan {
+            if plan.isStatic { return "static" }
+            return "keyframes (\(plan.lead?.count ?? 0) + \(plan.loop?.count ?? 0) frames)"
+        }
+        return "frame clock"
+    }
+
     // MARK: Visibility
 
     func show() {
         isShown = true
         reposition()
         panel.orderFrontRegardless()
-        updateClock()
+        present()
     }
 
     func hide() {
@@ -66,17 +88,17 @@ final class ScreenBarController {
 
     @objc private func screensChanged(_ note: Notification) { reposition() }
     @objc private func screensDidSleep(_ note: Notification) { displayAsleep = true; updateClock() }
-    @objc private func screensDidWake(_ note: Notification) { displayAsleep = false; updateClock() }
+    @objc private func screensDidWake(_ note: Notification) { displayAsleep = false; present() }
 
     private func reposition() {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
-        let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: Self.wrapMenuBar)
+        let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: Self.wrapMenuBar, capsule: capsule)
         if panel.frame != frame {
             panel.setFrame(frame, display: false)
             view.frame = NSRect(origin: .zero, size: frame.size)
             view.relayout()
             lastCodes = []
-            renderCurrentFrame()
+            present()
             onGeometryChange?()
         }
     }
@@ -123,7 +145,9 @@ final class ScreenBarController {
             lastRaw = sampler.rawCodes(atMilliseconds: milliseconds(now))
         }
         programText = compiled.program
-        sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
+        let sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
+        self.sampler = sampler
+        plan = LEDSKeyframePlan.render(sampler: sampler)
         anchor = now
         if let anchorEpoch {
             let locked = Self.mediaTime(forEpoch: anchorEpoch)
@@ -132,8 +156,7 @@ final class ScreenBarController {
             if locked <= now + 0.05, now - locked < 6 * 3600 { anchor = locked }
         }
         lastCodes = []
-        renderCurrentFrame()
-        updateClock()
+        present()
     }
 
     /// Converts a Unix timestamp into the display link's `CACurrentMediaTime` clock.
@@ -148,10 +171,34 @@ final class ScreenBarController {
         Int(((time - anchor) * 1000.0).rounded(.down))
     }
 
-    // MARK: Frame clock
+    /// The codes the band shows right now (tests and the why popover).
+    var currentCodes: [RGB8] {
+        let ms = max(0, milliseconds(CACurrentMediaTime()))
+        if let plan { return plan.codes(atMilliseconds: ms) }
+        return sampler?.codes(atMilliseconds: ms) ?? []
+    }
+
+    // MARK: Presentation
+
+    /// Puts the current program on the layers: keyframes when the plan fits,
+    /// else the frame clock.
+    private func present() {
+        guard sampler != nil else { updateClock(); return }
+        if Self.logsMotion { NSLog("JR-Bar: screen bar %@, anchor %.1f s ago", motionDescription, programAge) }
+        if let plan {
+            displayLink?.isPaused = true
+            if isShown { view.play(plan: plan, anchor: anchor) }
+        } else {
+            view.stopKeyframes()
+            renderCurrentFrame()
+            updateClock()
+        }
+    }
+
+    // MARK: Frame clock (fallback)
 
     private func updateClock() {
-        guard let sampler else { displayLink?.isPaused = true; return }
+        guard let sampler, plan == nil else { displayLink?.isPaused = true; return }
         let stillMoving: Bool
         if let end = sampler.motionEndsAt {
             stillMoving = CACurrentMediaTime() - anchor < end + 0.1
@@ -173,6 +220,7 @@ final class ScreenBarController {
     }
 
     @objc private func tick(_ link: CADisplayLink) {
+        guard plan == nil else { link.isPaused = true; return }
         renderCurrentFrame(at: link.targetTimestamp)
         if let sampler, let end = sampler.motionEndsAt, link.targetTimestamp - anchor >= end + 0.1 {
             // Final frame is on screen; stop asking for more.

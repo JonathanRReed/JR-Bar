@@ -92,6 +92,41 @@ enum ScreenBarBlend {
         return runs
     }
 
+    // MARK: Fixed columns (the keyframe path)
+
+    /// Column pitch for the animated gradient. Wider than the 2 pt paint
+    /// columns: the raised-cosine blend is smooth enough that a straight line
+    /// between 4 pt samples is within a thousandth of it, and Core Animation
+    /// interpolates every stop of every keyframe on the render server.
+    static let keyframeColumnWidth: CGFloat = 4.0
+
+    /// Stop locations that never move: one per column centre across the band.
+    static func columnLocations(bandWidth: CGFloat) -> [CGFloat] {
+        guard bandWidth > 0 else { return [] }
+        let count = max(2, Int((bandWidth / keyframeColumnWidth).rounded(.up)))
+        return (0..<count).map { index in
+            let x = (CGFloat(index) + 0.5) * bandWidth / CGFloat(count)
+            return x / bandWidth
+        }
+    }
+
+    /// The tone-mapped blend at every column centre, in the same order as
+    /// `columnLocations`. Unlit columns are fully transparent.
+    static func columnSamples(colors: [RGB], bandWidth: CGFloat, alphaScale: CGFloat) -> [Sample] {
+        let locations = columnLocations(bandWidth: bandWidth)
+        let ledWidth = bandWidth / CGFloat(max(1, colors.count))
+        return locations.map { location in
+            let sample = blended(colors, x: location * bandWidth, ledWidth: ledWidth)
+            let quantized = Sample(
+                r: (sample.r * 1024).rounded() / 1024,
+                g: (sample.g * 1024).rounded() / 1024,
+                b: (sample.b * 1024).rounded() / 1024,
+                a: (sample.a * 1024).rounded() / 1024
+            )
+            return toneMapped(quantized, alphaScale: alphaScale)
+        }
+    }
+
     /// `draw_horizontal_gradient`'s stop construction for one layer.
     static func stops(colors: [RGB], bandWidth: CGFloat, alphaScale: CGFloat) -> [BandStop] {
         guard bandWidth > 0 else { return [] }
