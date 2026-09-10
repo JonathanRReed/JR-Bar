@@ -512,8 +512,9 @@ final class PanelStore {
     static func paceHint(_ pace: String?) -> String? {
         switch pace?.lowercased() {
         case "ahead": return "ahead of pace"
-        case "behind": return "under pace"
-        case "on_pace", "on-pace", "onpace", "steady": return "on pace"
+        case "behind", "under": return "under pace"
+        case "on", "on_pace", "on-pace", "onpace", "steady": return "on pace"
+        case "exhausted": return "used up"
         case nil, "": return nil
         case let other?: return other.replacingOccurrences(of: "_", with: " ")
         }

@@ -77,7 +77,7 @@ public struct UsageForecast: Hashable, Sendable {
     /// Percent of the window burned per hour, when known.
     public var ratePctPerHour: Double?
     public var source: Source
-    /// The daemon's own word (`ahead`, `on_pace`, `behind`), passed through.
+    /// The daemon's own word (`ahead`, `on`, `under`, `exhausted`), passed through.
     public var pace: String?
 
     public init(window: String, usedPct: Double, resetsAt: Double?, verdict: Verdict, ratePctPerHour: Double?, source: Source, pace: String? = nil) {

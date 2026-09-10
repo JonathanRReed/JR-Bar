@@ -528,8 +528,8 @@ def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
     assert result.request is pro
     dot_command, dot_result = controller._core_linked_results[submitted[0].key]
     assert dot_command.payload is dot and dot_result.request is dot
-    assert handed == [(result.write.program, result.write.state)]
-    assert dot_result.write.program == result.write.program
+    assert handed == [(f"brightness 76\n{result.write.program}", result.write.state)]
+    assert dot_result.write.program.endswith(result.write.program)
     assert dot_result.label.endswith(f"linked to {pro.device.name}")
 
     controller._apply_hardware_write_result(submitted[0], result)
@@ -634,8 +634,9 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
         coalesce_identity="ambient-dot-heartbeat",
     )
     result = controller._sync_hardware_device(ambient)
-    assert handed == [(pro_write.program, pro_write.state)]
-    assert result.write.program == pro_write.program and result.label == "SidePulse Dot linked"
+    # Default linked scale 0.3 of the Dot's full brightness: 255 * 0.3 = 76.
+    assert handed == [(f"brightness 76\n{pro_write.program}", pro_write.state)]
+    assert result.write.program.endswith(pro_write.program) and result.label == "SidePulse Dot linked"
 
     plain = HardwareWriteRequest(dot_device, AgentMode.WORKING, None, (), None, 0.5)
     controller._sync_hardware_device(plain)
@@ -650,3 +651,13 @@ def test_linked_dot_replays_the_strip_for_ambient_and_plain_writes(headless) -> 
 
     controller.settings = controller.settings.with_devices_linked(False)
     assert controller._core_linked_dot_follows(plain) is False
+
+
+def test_linked_dot_program_folds_brightness_lines(headless) -> None:
+    controller = headless
+    controller.settings = controller.settings.with_linked_dot_scale(0.5)
+    dot = SimpleNamespace(brightness=200)
+    out = controller._core_linked_dot_program("brightness 100\n#112233 500ms\nrepeat", dot)
+    # min(strip 100, dot 200) * 0.5 = 50; the strip's own line is folded in.
+    assert out == "brightness 50\n#112233 500ms\nrepeat"
+    assert controller._core_linked_dot_program("#FFFFFF", SimpleNamespace(brightness=255)) == "brightness 128\n#FFFFFF"
