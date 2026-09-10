@@ -4,6 +4,27 @@ All notable changes to JR-Bar are documented here.
 
 ## Unreleased
 
+- Core protocol: the Creator Micro 2 lives in the daemon. `state.deck`
+  (device, 13 slots, 7 auxiliary controls, banks, rail, keymap,
+  input check, last input, settings) is projected from the session board,
+  `deck-controls.json`, `integrations.json`, a background HID probe and
+  the keymap backup; the `deck_press`, `deck_pin`, `deck_bank`,
+  `deck_rail`, `deck_clear_absent`, `deck_plan_keymap`, `deck_apply_keymap`,
+  `deck_restore_keymap`, `deck_approve_device`, `deck_check_input` and
+  `deck_set_settings` commands run the existing board, dispatch and
+  keymap setup code (no NSAlert headless: the plan text goes to the app);
+  `deck_input` and `deck_receipt` events carry the Python app's receipt
+  sentences. New 0.8 rule: a session key whose session has a live ask
+  answers it through `answer_ask` when the daemon confirms the session's
+  terminal is frontmost, else reveals the session. The daemon now starts
+  the optional integration runtime (Creator Micro output and deck input)
+  as the menu-bar app did; `hello` advertises `deck`.
+- Auto-dim replaces night warmth: the `auto_dim` setting (`off` by
+  default, `schedule`, `display`, `ambient`) feeds `brightness_policy`'s
+  `night_dim` stage; ambient mode reads the light sensor through IOKit's
+  HID event system and falls back to the display when there is none.
+  `lights.auto_dim` reports `{mode, source, factor, available, reading}`
+  and `why_detail.dimming` says `auto_dim`.
 - Core protocol: `state.sessions[].label` is human (the provider's own
   session title, else the derived project/prompt name, else the working
   directory, else provider + short id; workers hang off their parent),

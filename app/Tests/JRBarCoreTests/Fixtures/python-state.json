@@ -15,6 +15,236 @@
    "summary": "Run: rm -rf build"
   }
  ],
+ "deck": {
+  "aux": [
+   {
+    "index": 13,
+    "label": "Encoder 1 input 1",
+    "mapping": "previous_bank"
+   },
+   {
+    "index": 14,
+    "label": "Encoder 1 input 2",
+    "mapping": "next_bank"
+   },
+   {
+    "index": 15,
+    "label": "Encoder 1 input 3",
+    "mapping": null
+   },
+   {
+    "index": 16,
+    "label": "Joystick sector 1",
+    "mapping": null
+   },
+   {
+    "index": 17,
+    "label": "Joystick sector 2",
+    "mapping": null
+   },
+   {
+    "index": 18,
+    "label": "Joystick sector 3",
+    "mapping": null
+   },
+   {
+    "index": 19,
+    "label": "Joystick sector 4",
+    "mapping": null
+   }
+  ],
+  "banks": {
+   "count": 1,
+   "index": 0
+  },
+  "device": {
+   "approved": true,
+   "conflict": null,
+   "connected": true,
+   "firmware": null,
+   "layer": 0,
+   "name": "Creator Micro 2",
+   "profile": 0,
+   "receipt": {
+    "at": 1788982862.4,
+    "code": "ready",
+    "message": "Creator Micro 2 ready."
+   },
+   "serial": "D0CF130481EC",
+   "transport": "bluetooth"
+  },
+  "input_check": false,
+  "keymap": {
+   "backup_at": 1788896492.4,
+   "generation": 3,
+   "layers": [
+    {
+     "label": "Profile 1 / Layer 1: Base",
+     "layer": 0,
+     "profile": 0
+    }
+   ],
+   "state": "applied"
+  },
+  "last_input": {
+   "at": 1788982888.4,
+   "index": 1,
+   "kind": "press"
+  },
+  "rail": {
+   "edge": "left"
+  },
+  "settings": {
+   "analog_enabled": false,
+   "enabled": true,
+   "session_mode": true
+  },
+  "slots": [
+   {
+    "color": "#FF3A00",
+    "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "index": 0,
+    "label": "sidepulse-core",
+    "navigable": true,
+    "pinned": true,
+    "provider": "codex",
+    "session": "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
+    "state": "input_required"
+   },
+   {
+    "color": "#00E5FF",
+    "identity": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "index": 1,
+    "label": "jr-bar-b7",
+    "navigable": true,
+    "pinned": false,
+    "provider": "claude",
+    "session": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
+    "state": "active"
+   },
+   {
+    "color": "#020204",
+    "identity": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "index": 2,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 3,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 4,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 5,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 6,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 7,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 8,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 9,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 10,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 11,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   },
+   {
+    "color": "#020204",
+    "identity": null,
+    "index": 12,
+    "label": null,
+    "navigable": false,
+    "pinned": false,
+    "provider": null,
+    "session": null,
+    "state": "unavailable"
+   }
+  ]
+ },
  "devices": [
   {
    "brightness": 79,

@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from . import core_deck
 from .core_projection import (
     TERMINAL_BUNDLE_IDS,
     DeviceFacts,
@@ -65,6 +66,15 @@ SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
 MAX_EXTRA_LOOKUPS_PER_BUILD: Final = 6
 PREVIEW_MAX_SECONDS: Final = 30.0
+# The Creator Micro 2: how often the daemon looks for the pad over HID
+# (a background enumerate, ~30 ms), how long an inspected keymap stays
+# good for planning, how long a setup operation may take (a runtime stop
+# of up to 17 s plus the transfer), and how long a device approval may.
+DECK_PROBE_SECONDS: Final = 10.0
+DECK_INSPECTION_TTL_SECONDS: Final = 120.0
+DECK_SETUP_TIMEOUT_SECONDS: Final = 60.0
+DECK_APPROVE_TIMEOUT_SECONDS: Final = 15.0
+DECK_INTEGRATION_TTL_SECONDS: Final = 2.0
 LEGACY_WINDOWS: Final = {
     "settings": "show_settings_window",
     "setup": "show_setup_window",
@@ -1121,6 +1131,246 @@ def _cmd_ping(self, args):
     return {"pong": True, "now": time.time()}
 
 
+# --- the Creator Micro 2 deck (app/README.md, "The Creator Micro 2 deck") ----
+
+
+def deck_probe() -> list[dict[str, Any]]:
+    """One read-only HID enumeration: the pads this Mac can see right now
+    (``serial_number``, ``bus_type``, ``product_id``). Tests replace it."""
+    from .creator_micro_hidapi import HidApiTransport
+
+    rows = []
+    for row in HidApiTransport().enumerate():
+        rows.append(
+            {
+                "serial_number": row.get("serial_number"),
+                "bus_type": row.get("bus_type"),
+                "product_id": row.get("product_id"),
+            }
+        )
+    return rows
+
+
+def _deck_index(args: dict[str, Any], *, limit: int = core_deck.CONTROL_COUNT) -> int:
+    value = args.get("index")
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < limit:
+        raise CommandError("invalid_args", f"index must be 0..{limit - 1}")
+    return value
+
+
+def _deck_plan_args(args: dict[str, Any]) -> tuple[int, int, bool]:
+    profile = args.get("profile", 0)
+    layer = args.get("layer", 0)
+    include_auxiliary = args.get("include_auxiliary", False)
+    if type(profile) is not int:
+        raise CommandError("invalid_plan", "invalid selected profile")
+    if type(layer) is not int:
+        raise CommandError("invalid_plan", "invalid selected layer")
+    if type(include_auxiliary) is not bool:
+        raise CommandError("invalid_plan", "include_auxiliary must be a bool")
+    return profile, layer, include_auxiliary
+
+
+def _deck_plan(preview, profile: int, layer: int, include_auxiliary: bool):
+    """Re-plan the inspected keymap for another layer without touching the
+    device (``plan_keymap`` is pure; ``setup.apply`` re-verifies it)."""
+    from .creator_micro_keymap import plan_keymap
+
+    plan = preview.plan
+    try:
+        return plan_keymap(
+            plan.original_json,
+            {"profile_index": plan.observed_profile, "layer_index": plan.observed_layer + 1},
+            profile_index=profile,
+            layer_index=layer,
+            include_auxiliary=include_auxiliary,
+        )
+    except ValueError as error:
+        raise CommandError("invalid_plan", str(error)) from error
+
+
+@command("deck_press")
+def _cmd_deck_press(self, args):
+    index = _deck_index(args)
+    if getattr(self, "_deck_input_check_active", False):
+        raise CommandError("input_check", core_deck.INPUT_CHECK_MESSAGE)
+    return self._core_deck_press(index)
+
+
+@command("deck_pin")
+def _cmd_deck_pin(self, args):
+    from .deck_control_center import revoke_deck_context
+    from .deck_session_board import SLOTS_PER_BANK
+
+    index = _deck_index(args, limit=SLOTS_PER_BANK)
+    board = self._core_deck_board()
+    _revision, identity = board.resolve_slot(index)
+    if identity is None:
+        raise CommandError("not_found", core_deck.NO_SESSION_MESSAGE)
+    revoke_deck_context(self)
+    board.toggle_pin(index)
+    self._core_deck_store_board()
+    pinned = identity in set(board.serialize()["pinned"])
+    self._core_deck_publish()
+    return {"index": index, "identity": identity, "pinned": pinned}
+
+
+@command("deck_bank")
+def _cmd_deck_bank(self, args):
+    from .deck_control_center import change_deck_bank
+
+    delta = args.get("delta", 1)
+    if isinstance(delta, bool) or type(delta) is not int:
+        raise CommandError("invalid_args", "delta must be an integer")
+    board = self._core_deck_board()
+    count = board.snapshot().bank_count
+    steps = abs(delta) % max(1, count)
+    for _ in range(steps):
+        change_deck_bank(self, 1 if delta > 0 else -1)
+    snapshot = board.snapshot()
+    self._core_publish_state()
+    return {"index": snapshot.bank, "count": snapshot.bank_count}
+
+
+@command("deck_rail")
+def _cmd_deck_rail(self, args):
+    board = self._core_deck_board()
+    try:
+        board.set_rail_edge(args.get("edge"))
+    except ValueError as error:
+        raise CommandError("invalid_args", "edge must be off, left, right, top or bottom") from error
+    self._core_deck_store_board()
+    self._core_publish_state()
+    return {"edge": board.snapshot().rail_edge}
+
+
+@command("deck_clear_absent")
+def _cmd_deck_clear_absent(self, args):
+    from .deck_control_center import revoke_deck_context
+
+    board = self._core_deck_board()
+    before = len(board.serialize()["slots"])
+    revoke_deck_context(self)
+    board.clear_inactive()
+    self._core_deck_store_board()
+    after = board.snapshot()
+    self._core_deck_publish()
+    self._core_log(f"deck: cleared {before - len(board.serialize()['slots'])} absent slots")
+    return {
+        "removed": before - len(board.serialize()["slots"]),
+        "banks": {"index": after.bank, "count": after.bank_count},
+    }
+
+
+@command("deck_plan_keymap", main_thread=False)
+def _cmd_deck_plan_keymap(self, args):
+    profile, layer, include_auxiliary = _deck_plan_args(args)
+    preview = self._core_deck_inspect()
+    return core_deck.plan_document(_deck_plan(preview, profile, layer, include_auxiliary))
+
+
+@command("deck_apply_keymap", main_thread=False)
+def _cmd_deck_apply_keymap(self, args):
+    from .creator_micro_setup_controller import SetupPreview, begin_creator_micro_apply
+
+    profile, layer, include_auxiliary = _deck_plan_args(args)
+    preview = self._core_deck_inspect()
+    plan = _deck_plan(preview, profile, layer, include_auxiliary)
+    self._deck_control_labels = plan.control_labels
+    result = self._core_deck_run_setup(
+        lambda: begin_creator_micro_apply(self, SetupPreview(preview.approved_serial, plan))
+    )
+    if result.code not in ("keymap_verified", "already_configured"):
+        raise CommandError(result.code, core_deck.receipt_message(result.code))
+    document = {"code": result.code, "message": core_deck.receipt_message(result.code), "changes": list(plan.changes)}
+    document.update(self._core_deck_keymap_document(preview.approved_serial))
+    return document
+
+
+@command("deck_restore_keymap", main_thread=False)
+def _cmd_deck_restore_keymap(self, args):
+    from .creator_micro_setup_controller import begin_creator_micro_restore
+
+    # The confirmation is the app's; the daemon never runs the alert.
+    result = self._core_deck_run_setup(lambda: begin_creator_micro_restore(self, confirm=lambda: True))
+    if result.code not in ("keymap_restored", "already_restored"):
+        raise CommandError(result.code, core_deck.receipt_message(result.code))
+    document = {"code": result.code, "message": core_deck.receipt_message(result.code)}
+    document.update(self._core_deck_keymap_document(self._core_deck_integration()[1]))
+    return document
+
+
+@command("deck_approve_device", main_thread=False)
+def _cmd_deck_approve_device(self, args):
+    from .creator_micro_settings import save_creator_micro_choice_async
+
+    if not self._core_deck_probe_rows() and not getattr(self, "_core_deck_probe_pending", False):
+        # Look once more before refusing: the pad may have just come on.
+        self._core_deck_probe_now(wait=True)
+    self._core_deck_settings_done.clear()
+    save_creator_micro_choice_async(self, True)
+    if not self._core_deck_settings_done.wait(DECK_APPROVE_TIMEOUT_SECONDS):
+        raise CommandError("busy", "Creator Micro 2 approval did not finish in time.")
+    result = self._core_deck_settings_result
+    if result is None or not result.saved:
+        reason = getattr(result, "reason", "settings_save_failed")
+        message = core_deck.NO_DEVICE_MESSAGE if reason == "no_device" else f"Creator Micro 2: {reason.replace('_', ' ')}."
+        raise CommandError(reason if reason in ("no_device", "ambiguous_device_identity", "device_identity_unavailable") else "refused", message)
+    self._core_deck_integration_cache = None
+    _enabled, serial = self._core_deck_integration()
+    self._core_deck_probe_now()
+    self._core_publish_state_soon()
+    return {"serial": serial, "approved": True}
+
+
+@command("deck_check_input")
+def _cmd_deck_check_input(self, args):
+    enabled = args.get("enabled")
+    if type(enabled) is not bool:
+        raise CommandError("invalid_args", "enabled must be a bool")
+    self._core_deck_set_input_check(enabled)
+    self._core_publish_state()
+    return {"enabled": enabled}
+
+
+@command("deck_set_settings", main_thread=False)
+def _cmd_deck_set_settings(self, args):
+    from dataclasses import replace
+
+    from .deck_control_settings import DeckControlSettings, load_deck_controls, save_deck_controls
+    from .deck_settings_controller import DeckSettingsApplyResult
+
+    updates = {key: args[key] for key in ("enabled", "session_mode", "analog_enabled") if key in args}
+    if not updates or any(type(value) is not bool for value in updates.values()):
+        raise CommandError("invalid_args", "enabled, session_mode and analog_enabled must be bools")
+    previous = getattr(self, "_deck_control_settings", None)
+    if type(previous) is not DeckControlSettings:
+        try:
+            previous = load_deck_controls()
+        except (OSError, ValueError, TypeError) as error:
+            raise CommandError("refused", "Deck settings could not be read safely.") from error
+    candidate = replace(previous, **updates)
+    if candidate != previous:
+        try:
+            save_deck_controls(candidate, expected=previous)
+        except ValueError as error:
+            raise CommandError("refused", "Deck settings changed. Reload before saving.") from error
+        except OSError as error:
+            raise CommandError("refused", "Could not save device actions. The previous settings are unchanged.") from error
+        generation = int(getattr(self, "_deck_settings_save_generation", 0)) + 1
+        self._deck_settings_save_generation = generation
+        self._deck_settings_save_in_flight = True
+        self.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "applyDeckSettingsResult:", DeckSettingsApplyResult(generation, previous, candidate), True
+        )
+    self._core_publish_state_soon()
+    return {
+        "enabled": candidate.enabled,
+        "session_mode": candidate.session_mode,
+        "analog_enabled": candidate.analog_enabled,
+    }
+
+
 # --- the headless controller ---------------------------------------------------
 
 
@@ -1187,6 +1437,22 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
+            # The Creator Micro 2 deck.
+            self._core_deck_last_input: tuple[int, str, float] | None = None
+            self._core_deck_receipt: dict[str, Any] | None = None
+            self._core_deck_last_output_reason: str | None = None
+            self._core_deck_inspection: tuple[float, Any] | None = None
+            self._core_deck_keymap_generation = 0
+            self._core_deck_setup_done = threading.Event()
+            self._core_deck_setup_result: Any = None
+            self._core_deck_settings_done = threading.Event()
+            self._core_deck_settings_result: Any = None
+            self._core_deck_devices: list[dict[str, Any]] = []
+            self._core_deck_probe_at = 0.0
+            self._core_deck_probe_pending = False
+            self._core_deck_probe_error: str | None = None
+            self._core_deck_integration_cache: tuple[float, bool, str | None] | None = None
+            self._core_deck_lock = threading.Lock()
             return self
 
         # -- launch (the non-hostile half of the production launch) ---------
@@ -1233,6 +1499,12 @@ def build_headless_controller_class() -> type:
             ).start()
             # The Screen Bar is the app's; the daemon only computes its program.
             self.virtual_status_device.hide()
+            # The Creator Micro 2 output service and deck input, exactly as
+            # the menu-bar app started them (provider_usage_status_bar).
+            from .optional_integration_runtime import start_optional_integration_runtime
+
+            self._jrbar_optional_integration_runtime = start_optional_integration_runtime(self)
+            self._core_deck_probe_now()
             self._core_pending_drainer = PendingHookDrainer(
                 self._core_submit_pending, log=legacy.log_status_bar
             )
@@ -1273,6 +1545,12 @@ def build_headless_controller_class() -> type:
             if expired:
                 self.refresh_(None)
                 self._core_publish_lights()
+            if now - self._core_deck_probe_at >= DECK_PROBE_SECONDS:
+                self._core_deck_probe_now()
+
+        @objc.IBAction
+        def corePublishState_(self, _payload):
+            self._core_publish_state()
 
         @objc.IBAction
         def coreClientsChanged_(self, count):
@@ -1504,6 +1782,457 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
             self._core_note_hardware_write(dot_command, dot_result)
             self._core_publish_lights()
+
+        # -- the Creator Micro 2 deck ------------------------------------------
+
+        @property
+        def _deck_last_input(self):
+            """``DeckInputDispatch`` records every observed control here (from
+            the HID thread); the daemon turns each one into a ``deck_input``
+            event and a fresh ``state``."""
+            return self._core_deck_last_input
+
+        @_deck_last_input.setter
+        def _deck_last_input(self, value) -> None:
+            self._core_deck_last_input = value
+            if getattr(self, "_core", None) is None or type(value) is not tuple or len(value) != 3:
+                return
+            index, kind, at = value
+            self._core_publish_event(
+                "deck_input",
+                label=core_deck.control_label(int(index), dict(getattr(self, "_deck_control_labels", ()) or ())),
+                input={"index": int(index), "kind": core_deck.input_kind(int(index), str(kind)), "at": mono_to_epoch(at)},
+            )
+            self._core_publish_state_soon()
+
+        def _core_publish_state_soon(self) -> None:
+            if threading.current_thread() is threading.main_thread():
+                self._core_publish_state()
+            else:
+                self.performSelectorOnMainThread_withObject_waitUntilDone_("corePublishState:", None, False)
+
+        def _core_deck_board(self):
+            from .deck_control_center import ensure_deck_board
+
+            return ensure_deck_board(self)
+
+        def _core_deck_store_board(self) -> None:
+            store = getattr(self, "_deck_board_store", None)
+            board = getattr(self, "_deck_session_board", None)
+            if store is not None and board is not None:
+                store.submit(board)
+
+        def _core_deck_publish(self) -> None:
+            from .deck_control_center import publish_deck_frame
+
+            try:
+                publish_deck_frame(self)
+            except Exception as exc:
+                legacy.log_status_bar(f"core: deck frame not published: {exc.__class__.__name__}")
+            self._core_publish_state()
+
+        def _core_deck_note_receipt(self, code: str, message: str) -> None:
+            self._core_deck_receipt = {"code": code, "message": message, "at": time.time()}
+            self._core_publish_event("deck_receipt", label=core_deck.DECK_NAME, code=code, message=message)
+
+        def applyCreatorMicroOutputReceipt_(self, receipt) -> None:
+            self._creator_micro_output_receipt = receipt
+            reason = str(getattr(receipt, "reason", "") or "")
+            if reason and reason != self._core_deck_last_output_reason:
+                self._core_deck_last_output_reason = reason
+                legacy.log_status_bar(f"deck: {reason}")
+                self._core_deck_note_receipt(reason, core_deck.receipt_message(reason, source="output"))
+            self._core_publish_state()
+
+        def applyCreatorMicroSettings_(self, result) -> None:
+            from .creator_micro_settings import apply_creator_micro_settings
+
+            apply_creator_micro_settings(self, result)
+            self._core_deck_integration_cache = None
+            self._core_deck_settings_result = result
+            self._core_deck_settings_done.set()
+
+        def applyCreatorMicroSetupResult_(self, result) -> None:
+            """The setup thread's answer, without the Python alerts: the
+            inspection is cached for planning and the pad is handed back to
+            the output service; an apply or restore records its receipt."""
+            from .creator_micro_setup_controller import SetupPreview
+
+            if (
+                getattr(result, "generation", None) is not getattr(self, "_creator_micro_setup_generation", None)
+                or getattr(self, "_runtime_termination_started", False)
+                or getattr(self, "_deck_runtime_stopping", False)
+            ):
+                return
+            self._creator_micro_setup_busy = False
+            if getattr(self, "_deck_runtime_generation", None) is not result.generation:
+                return
+            code = str(result.code)
+            if code == "inspection_ready":
+                preview = getattr(result, "preview", None)
+                self._core_deck_inspection = (time.monotonic(), preview) if type(preview) is SetupPreview else None
+                if getattr(result, "runtime_was_stopped", False):
+                    self.reconfigureDeckRuntime_(None)
+            else:
+                if getattr(result, "runtime_was_stopped", False) or getattr(
+                    self, "_creator_micro_setup_runtime_needs_restart", False
+                ):
+                    self._creator_micro_setup_runtime_needs_restart = False
+                    self.reconfigureDeckRuntime_(None)
+                self._core_deck_keymap_generation += 1
+                self._core_deck_inspection = None
+                self._core_deck_note_receipt(code, core_deck.receipt_message(code))
+                legacy.log_status_bar(f"deck: {result.operation} -> {code}")
+                if code == "keymap_verified":
+                    self._core_deck_set_input_check(True)
+            self._core_deck_setup_result = result
+            self._core_deck_setup_done.set()
+            self._core_publish_state()
+
+        # The deck selectors of deck_status_bar.install_deck_status_bar, so the
+        # daemon is whole even when the base class was composed without them.
+        def reconfigureDeckRuntime_(self, _sender) -> None:
+            from .deck_controller import reconfigure_deck_runtime
+
+            reconfigure_deck_runtime(self)
+
+        def applyDeckSettingsResult_(self, payload) -> None:
+            from .deck_settings_controller import apply_deck_settings_result
+
+            apply_deck_settings_result(self, payload)
+
+        def applyDeckAutomationResult_(self, receipt) -> None:
+            if not getattr(self, "_runtime_termination_started", False):
+                self._deck_action_receipt = receipt
+
+        def applyDeckControlsLoaded_(self, payload) -> None:
+            self._core_publish_state()
+
+        def applyDeckInput_(self, batch) -> None:
+            """A physical input batch (main thread): the same executor as the
+            menu-bar app, with the 0.8 session-key rule (answer a live ask
+            when its terminal is in front, else reveal)."""
+            from .deck_input_dispatch import DeckInputBatch
+
+            if type(batch) is not DeckInputBatch or getattr(self, "_runtime_termination_started", False):
+                return
+            receipts = batch.owner.deliver(batch, self._core_deck_executor())
+            if not receipts:
+                return
+            self._deck_action_receipt = receipts[-1]
+            legacy.log_status_bar(f"deck: {receipts[-1].code}")
+            self._core_publish_state()
+
+        def _core_deck_executor(self):
+            from .deck_control_center import deck_executor
+
+            executor = deck_executor(self)
+            executor._session_revealer = self._core_deck_reveal_or_answer
+            return executor
+
+        def _core_deck_statuses(self) -> tuple:
+            monitor = getattr(self, "monitor", None)
+            current = getattr(monitor, "current_statuses_by_key", None)
+            if callable(current):
+                try:
+                    return tuple(current().values())
+                except Exception:
+                    pass
+            return tuple(getattr(getattr(self, "last_snapshot", None), "statuses", ()) or ())
+
+        def _core_deck_status_for_identity(self, identity: str):
+            from .deck_session_board import session_identity
+
+            for status in self._core_deck_statuses():
+                if session_identity(status) == identity:
+                    return status
+            return None
+
+        def _core_deck_try_answer(self, status) -> dict[str, Any] | None:
+            """Answer the session's live ask through the answer_ask path when
+            the daemon confirms its terminal is frontmost; ``None`` means
+            reveal instead (no ask, not in front, or not answerable)."""
+            try:
+                return _cmd_answer_ask(self, {"session": status.agent_id, "decision": "approve", "only_if_frontmost": True})
+            except CommandError as error:
+                if error.code not in ("not_found", "not_frontmost", "unsupported"):
+                    legacy.log_status_bar(f"deck: answer refused: {error.code}")
+                return None
+
+        def _core_deck_reveal_or_answer(self, identity: str, revision: int | None):
+            from .deck_actions_macos import DeckActionReceipt
+            from .deck_control_center import reveal_deck_session
+
+            status = self._core_deck_status_for_identity(identity)
+            if status is not None and self._core_deck_try_answer(status) is not None:
+                return DeckActionReceipt("ask_answered", True)
+            return reveal_deck_session(self, identity, revision)
+
+        def _core_deck_press(self, index: int) -> dict[str, Any]:
+            from .deck_control_center import reveal_deck_session
+            from .deck_session_board import SLOTS_PER_BANK
+
+            settings = getattr(self, "_deck_control_settings", None)
+            action = settings.action_for(index) if settings is not None else None
+            if action is not None:
+                receipt = self._core_deck_executor().execute(action)
+                self._deck_action_receipt = receipt
+                result: dict[str, Any] = {
+                    "index": index,
+                    "action": action.kind,
+                    "identity": None,
+                    "session": None,
+                    "receipt": receipt.code,
+                }
+                if action.kind in ("next_bank", "previous_bank"):
+                    snapshot = self._core_deck_board().snapshot()
+                    result["bank"] = {"index": snapshot.bank, "count": snapshot.bank_count}
+                elif not receipt.success:
+                    raise CommandError("refused", core_deck.receipt_message(receipt.code, source="action"))
+                legacy.log_status_bar(f"deck: {core_deck.control_label(index)} runs {action.kind}: {receipt.code}")
+                self._core_publish_state()
+                return result
+            if index >= SLOTS_PER_BANK:
+                raise CommandError("not_found", core_deck.AUXILIARY_MESSAGE)
+            board = self._core_deck_board()
+            revision, identity = board.resolve_slot(index)
+            if identity is None:
+                raise CommandError("not_found", core_deck.NO_SESSION_MESSAGE)
+            status = self._core_deck_status_for_identity(identity)
+            if status is None:
+                raise CommandError("not_found", core_deck.RESERVED_MESSAGE)
+            result = {"index": index, "identity": identity, "session": status.agent_id}
+            answered = self._core_deck_try_answer(status)
+            if answered is not None:
+                legacy.log_status_bar(f"deck: key {index + 1} answers {status.agent_id}")
+                result.update({"action": "answer_ask", "decision": answered.get("decision"), "answered": True})
+                return result
+            receipt = reveal_deck_session(self, identity, revision)
+            self._deck_action_receipt = receipt
+            if not receipt.success:
+                raise CommandError("refused", core_deck.receipt_message(receipt.code, source="action"))
+            extras = self._core_extras_for(status)
+            result.update(
+                {
+                    "action": "reveal_session",
+                    "receipt": receipt.code,
+                    "activated": (extras.terminal or {}).get("app") if extras is not None else None,
+                }
+            )
+            legacy.log_status_bar(f"deck: key {index + 1} reveals {self._core_label(status)}")
+            self._core_publish_state()
+            return result
+
+        def _core_deck_set_input_check(self, enabled: bool) -> None:
+            self._deck_input_check_active = bool(enabled)
+            runner = getattr(self, "_deck_automation_runner", None)
+            if enabled and runner is not None:
+                self._deck_automation_runner = None
+                runner.close()
+            dispatch = getattr(getattr(self, "_jrbar_optional_integration_runtime", None), "_deck_dispatch", None)
+            if dispatch is not None:
+                dispatch.reset_connection()
+
+        def _core_deck_run_setup(self, start: Callable[[], Any]):
+            """Start a setup operation (inspect / apply / restore) and wait
+            for its result on this (socket) thread; the main thread receives
+            it through ``applyCreatorMicroSetupResult:``."""
+            if getattr(self, "_creator_micro_setup_busy", False):
+                raise CommandError("busy", "Creator Micro 2 setup is already running.")
+            self._core_deck_setup_done.clear()
+            self._core_deck_setup_result = None
+            thread = start()
+            if thread is None:
+                raise CommandError("busy", "Creator Micro 2 setup is already running.")
+            if not self._core_deck_setup_done.wait(DECK_SETUP_TIMEOUT_SECONDS):
+                raise CommandError("busy", "Creator Micro 2 did not answer in time.")
+            result = self._core_deck_setup_result
+            if result is None:
+                raise CommandError("internal", "setup produced no result")
+            return result
+
+        def _core_deck_inspect(self):
+            """The inspected keymap (a ``SetupPreview``), reading the device
+            when the cached one is older than ``DECK_INSPECTION_TTL_SECONDS``."""
+            from .creator_micro_setup_controller import SetupPreview, begin_creator_micro_inspection
+
+            cached = self._core_deck_inspection
+            if cached is not None and time.monotonic() - cached[0] < DECK_INSPECTION_TTL_SECONDS:
+                return cached[1]
+            result = self._core_deck_run_setup(lambda: begin_creator_micro_inspection(self))
+            preview = getattr(result, "preview", None)
+            if result.code != "inspection_ready" or type(preview) is not SetupPreview:
+                code = result.code if result.code != "inspection_ready" else "setup_failed"
+                raise CommandError(code, core_deck.receipt_message(code))
+            return preview
+
+        def _core_deck_integration(self) -> tuple[bool, str | None]:
+            """(creator_micro_enabled, approved serial) from integrations.json."""
+            cached = self._core_deck_integration_cache
+            now = time.monotonic()
+            if cached is not None and now - cached[0] < DECK_INTEGRATION_TTL_SECONDS:
+                return cached[1], cached[2]
+            enabled, serial = False, None
+            try:
+                from .integration_settings import load_integration_settings
+
+                settings = load_integration_settings().settings
+                serial = getattr(settings, "creator_micro_device_serial", None)
+                serial = serial.strip() if isinstance(serial, str) and serial.strip() else None
+                enabled = bool(getattr(settings, "creator_micro_enabled", False)) and serial is not None
+            except Exception as exc:
+                legacy.log_status_bar(f"core: integration settings unreadable: {exc.__class__.__name__}")
+            self._core_deck_integration_cache = (now, enabled, serial)
+            return enabled, serial
+
+        def _core_deck_probe_rows(self) -> list[dict[str, Any]]:
+            with self._core_deck_lock:
+                return list(self._core_deck_devices)
+
+        def _core_deck_probe_now(self, *, wait: bool = False) -> None:
+            """Look for the pad over HID on a background thread; a changed
+            answer republishes ``state``."""
+            with self._core_deck_lock:
+                if self._core_deck_probe_pending:
+                    return
+                self._core_deck_probe_pending = True
+            self._core_deck_probe_at = time.monotonic()
+
+            def probe() -> None:
+                error = None
+                try:
+                    rows = deck_probe()
+                except Exception as exc:
+                    rows, error = [], f"{exc.__class__.__name__}"
+                with self._core_deck_lock:
+                    changed = rows != self._core_deck_devices or error != self._core_deck_probe_error
+                    self._core_deck_devices = rows
+                    self._core_deck_probe_error = error
+                    self._core_deck_probe_pending = False
+                if changed and getattr(self, "_core", None) is not None:
+                    legacy.log_status_bar(f"deck: probe {len(rows)} pad(s)" + (f" ({error})" if error else ""))
+                    self._core_publish_state_soon()
+
+            thread = threading.Thread(target=probe, name="JRBarDeckProbe", daemon=True)
+            thread.start()
+            if wait:
+                thread.join(2.0)
+
+        def _core_deck_keymap_document(self, serial: str | None) -> dict[str, Any]:
+            facts = core_deck.keymap_facts(self._core_deck_backup_path(serial))
+            return {"state": facts.state, "backup_at": facts.backup_at, "generation": self._core_deck_keymap_generation}
+
+        @staticmethod
+        def _core_deck_backup_path(serial: str | None):
+            if not serial:
+                return None
+            from .creator_micro_setup import device_backup_key
+            from .integration_settings import default_integration_settings_path
+
+            try:
+                return default_integration_settings_path().parent / f"creator-micro-keymap-{device_backup_key(serial)}.json"
+            except ValueError:
+                return None
+
+        def _core_deck_document(self, sessions: list[dict[str, Any]]) -> dict[str, Any]:
+            from .creator_micro_lighting import CreatorMicroBrightnessProfile
+            from .deck_control_center import refresh_deck_board
+            from .deck_session_board import session_identity
+
+            try:
+                snapshot = refresh_deck_board(self)
+            except Exception as exc:
+                legacy.log_status_bar(f"core: deck board unavailable: {exc.__class__.__name__}")
+                snapshot = self._core_deck_board().snapshot()
+            controls = getattr(self, "_deck_control_settings", None)
+            bindings = {index: action.kind for index, action in getattr(controls, "bindings", ()) or ()}
+            control_labels = dict(getattr(self, "_deck_control_labels", ()) or ())
+            enabled, approved_serial = self._core_deck_integration()
+            rows = self._core_deck_probe_rows()
+            receipt = getattr(self, "_creator_micro_output_receipt", None)
+            reason = str(getattr(receipt, "reason", "") or "")
+            service_connected = bool(getattr(receipt, "available", False)) or reason in (
+                "device_conflict",
+                "per_key_output_unsupported",
+                "unsupported_firmware",
+            )
+            serial = approved_serial
+            if serial is None and rows:
+                serial = next((row.get("serial_number") for row in rows if isinstance(row.get("serial_number"), str)), None)
+            row = next((row for row in rows if row.get("serial_number") == serial), None) if serial else None
+            inspection = self._core_deck_inspection
+            plan = inspection[1].plan if inspection is not None else None
+            device = None
+            if serial is not None or rows:
+                device = core_deck.device_document(
+                    serial=serial,
+                    transport=core_deck.transport_word(row.get("bus_type")) if row else None,
+                    connected=row is not None or service_connected,
+                    approved=enabled and approved_serial is not None and serial == approved_serial,
+                    layer=plan.observed_layer if plan is not None else None,
+                    profile=plan.observed_profile if plan is not None else None,
+                    conflict="foreign_responses" if reason == "device_conflict" else None,
+                    receipt=self._core_deck_receipt,
+                )
+            labels = {row["id"]: row.get("label") for row in sessions if isinstance(row, dict) and row.get("id")}
+            statuses = {}
+            for status in self._core_deck_statuses():
+                identity = session_identity(status)
+                if identity is not None:
+                    statuses[identity] = status
+            slots = []
+            for slot in snapshot.slots:
+                status = statuses.get(slot.identity) if slot.identity else None
+                slots.append(
+                    core_deck.DeckSlotFacts(
+                        index=slot.index,
+                        identity=slot.identity,
+                        session=status.agent_id if status is not None else None,
+                        label=(labels.get(status.agent_id) or self._core_label(status)) if status is not None else None,
+                        provider=status.provider if status is not None else None,
+                        state=slot.state,
+                        pinned=slot.pinned,
+                        navigable=slot.navigable,
+                    )
+                )
+            keymap = core_deck.keymap_facts(self._core_deck_backup_path(serial))
+            layers = core_deck.keymap_layer_rows(plan.original_json if plan is not None else keymap.original_json)
+            try:
+                brightness = self.effective_brightness_for_device(CreatorMicroBrightnessProfile()) / 255.0
+            except Exception:
+                brightness = 0.4
+            last = self._core_deck_last_input
+            last_input = None
+            if type(last) is tuple and len(last) == 3:
+                last_input = {
+                    "index": int(last[0]),
+                    "kind": core_deck.input_kind(int(last[0]), str(last[1])),
+                    "at": mono_to_epoch(last[2]),
+                }
+            colors = getattr(self.settings, "colors", None)
+            return core_deck.build_deck_document(
+                device=device,
+                slots=slots,
+                bank=snapshot.bank,
+                bank_count=snapshot.bank_count,
+                rail_edge=snapshot.rail_edge,
+                keymap_state=keymap.state,
+                backup_at=keymap.backup_at,
+                keymap_generation=self._core_deck_keymap_generation,
+                layers=layers,
+                input_check=bool(getattr(self, "_deck_input_check_active", False)),
+                last_input=last_input,
+                settings={
+                    "enabled": bool(getattr(controls, "enabled", False)),
+                    "session_mode": bool(getattr(controls, "session_mode", False)),
+                    "analog_enabled": bool(getattr(controls, "analog_enabled", False)),
+                },
+                bindings=bindings,
+                control_labels=control_labels,
+                colors=colors,
+                brightness=brightness,
+                driven=bool(getattr(receipt, "available", False)) and bool(getattr(controls, "session_mode", False)),
+            )
 
         # -- server plumbing ---------------------------------------------------
 
@@ -1881,7 +2610,7 @@ def build_headless_controller_class() -> type:
                 helper = sleep_helper_installed()
             except Exception:
                 helper = False
-            return build_state_document(
+            document = build_state_document(
                 now=time.time(),
                 generation=self._core_state_generation,
                 snapshot=snapshot,
@@ -1905,6 +2634,11 @@ def build_headless_controller_class() -> type:
                 settings_generation=self._core_settings_generation,
                 extras_by_id=extras,
             )
+            try:
+                document["deck"] = self._core_deck_document(document["sessions"])
+            except Exception:
+                legacy.log_status_bar(f"core: deck projection failed: {traceback.format_exc(limit=6)}")
+            return document
 
         def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:
             """The dimming and DND facts behind one surface's ``why``."""
@@ -2117,6 +2851,9 @@ def build_headless_controller_class() -> type:
                 state = self._core_documents.get("state") or {}
             hooks = ((state.get("health") or {}).get("hooks")) or {}
             devices = {device.get("id"): ("connected" if device.get("connected", device.get("enabled")) else "absent") for device in state.get("devices") or []}
+            deck_device = (state.get("deck") or {}).get("device")
+            if deck_device:
+                devices["creator-micro"] = "connected" if deck_device.get("connected") else "absent"
             return {
                 "ok": all(check["ok"] for check in checks),
                 "core_version": CORE_VERSION,
@@ -2202,6 +2939,7 @@ __all__ = [
     "HeadlessNotificationClient",
     "build_headless_controller_class",
     "command_names",
+    "deck_probe",
     "device_transitions",
     "get_path",
     "mono_to_epoch",

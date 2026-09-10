@@ -121,9 +121,10 @@ class _TimerAPI:
 
 
 class _Thread:
-    def __init__(self, *, target, daemon):
+    def __init__(self, *, target, daemon, name=None):
         self.target = target
         self.daemon = daemon
+        self.name = name
 
     def start(self) -> None:
         return None
