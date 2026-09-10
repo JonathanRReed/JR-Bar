@@ -237,6 +237,10 @@ final class PanelController {
                 store.openUsageCenter()
                 return nil
             }
+            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "k" {
+                store.openControlCenter()
+                return nil
+            }
             switch event.keyCode {
             case 53: close(); return nil                            // Esc
             case 125: store.moveSelection(by: 1); return nil       // Down

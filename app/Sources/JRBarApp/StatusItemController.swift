@@ -27,6 +27,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onOpenHistory: (@MainActor () -> Void)?
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
+    var onOpenControlCenter: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
     /// The style and ring the next `update` draws with.
     var iconStyle: StatusIconStyle = .glyph { didSet { if iconStyle != oldValue { redraw() } } }
@@ -64,6 +65,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         usage.target = self
         let effects = NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: "")
         effects.target = self
+        let controlCenter = NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k")
+        controlCenter.target = self
 
         menu.addItem(headerItem)
         menu.addItem(detailItem)
@@ -74,6 +77,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(history)
         menu.addItem(usage)
         menu.addItem(effects)
+        menu.addItem(controlCenter)
         menu.addItem(showBarItem)
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
         settings.target = self
@@ -210,6 +214,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openEffects(_ sender: Any?) {
         onOpenEffects?()
+    }
+
+    @objc private func openControlCenter(_ sender: Any?) {
+        onOpenControlCenter?()
     }
 
     @objc private func toggleScreenBar(_ sender: NSMenuItem) {

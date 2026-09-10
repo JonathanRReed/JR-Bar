@@ -279,6 +279,83 @@ public final class CoreModel {
         return reply
     }
 
+    // MARK: Control Center (app-proposed extensions, see app/README.md)
+
+    public var deck: DeckState? { state?.deck }
+
+    /// `deck_press {index}`: what a physical press of that control does,
+    /// from the screen (a session key reveals its session; an auxiliary
+    /// control runs its explicit mapping). Indices 0..23.
+    @discardableResult
+    public func deckPress(index: Int) async throws -> CoreReply {
+        try await send("deck_press", args: ["index": .number(Double(index))])
+    }
+
+    /// `deck_pin {index}`: toggles the pin on the identity at that key. Pins
+    /// are per identity, so they survive Clear absent and bank changes.
+    @discardableResult
+    public func deckPin(index: Int) async throws -> CoreReply {
+        try await send("deck_pin", args: ["index": .number(Double(index))])
+    }
+
+    /// `deck_bank {delta}`: ±1, wrapping.
+    @discardableResult
+    public func deckBank(delta: Int) async throws -> CoreReply {
+        try await send("deck_bank", args: ["delta": .number(Double(delta))])
+    }
+
+    /// `deck_rail {edge}`: off, left, right, top or bottom.
+    @discardableResult
+    public func deckRail(edge: DeckRailEdge) async throws -> CoreReply {
+        try await send("deck_rail", args: ["edge": .string(edge.rawValue)])
+    }
+
+    /// `deck_clear_absent`: unpinned identities with no observed session leave the board.
+    @discardableResult
+    public func deckClearAbsent() async throws -> CoreReply { try await send("deck_clear_absent") }
+
+    /// `deck_plan_keymap {profile, layer, include_auxiliary}`: the review
+    /// text and change list Apply would write, without writing.
+    public func deckPlanKeymap(profile: Int, layer: Int, includeAuxiliary: Bool) async throws -> CoreReply {
+        try await send("deck_plan_keymap", args: [
+            "profile": .number(Double(profile)), "layer": .number(Double(layer)), "include_auxiliary": .bool(includeAuxiliary),
+        ])
+    }
+
+    /// `deck_apply_keymap {profile, layer, include_auxiliary}`: backs the
+    /// original up, writes the vendor keycodes to that layer and verifies
+    /// the readback. The reply carries the receipt `{code, message}`.
+    @discardableResult
+    public func deckApplyKeymap(profile: Int, layer: Int, includeAuxiliary: Bool) async throws -> CoreReply {
+        try await send("deck_apply_keymap", args: [
+            "profile": .number(Double(profile)), "layer": .number(Double(layer)), "include_auxiliary": .bool(includeAuxiliary),
+        ])
+    }
+
+    /// `deck_restore_keymap`: the first private backup goes back, verified.
+    @discardableResult
+    public func deckRestoreKeymap() async throws -> CoreReply { try await send("deck_restore_keymap") }
+
+    /// `deck_approve_device`: binds JR-Bar to the connected pad's serial.
+    @discardableResult
+    public func deckApproveDevice() async throws -> CoreReply { try await send("deck_approve_device") }
+
+    /// `deck_check_input {enabled}`: inputs are shown, actions are paused.
+    @discardableResult
+    public func deckCheckInput(enabled: Bool) async throws -> CoreReply {
+        try await send("deck_check_input", args: ["enabled": .bool(enabled)])
+    }
+
+    /// `deck_set_settings {enabled, session_mode, analog_enabled}` (any subset).
+    @discardableResult
+    public func deckSetSettings(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil) async throws -> CoreReply {
+        var args: [String: JSONValue] = [:]
+        if let enabled { args["enabled"] = .bool(enabled) }
+        if let sessionMode { args["session_mode"] = .bool(sessionMode) }
+        if let analogEnabled { args["analog_enabled"] = .bool(analogEnabled) }
+        return try await send("deck_set_settings", args: args)
+    }
+
     // MARK: Inbound
 
     private func handle(_ event: CoreClient.Event) {

@@ -150,8 +150,8 @@ struct MockCoreIntegrationTests {
     @MainActor
     func historyAndUndo() async throws {
         let socket = Self.temporarySocketPath()
-        // Step 5 is "codex completed": the world starts with one finished session.
-        let mock = try Self.launchMock(socket: socket, extraArguments: ["--step", "60", "--start-at", "5"])
+        // Step 6 is "codex completed": the world starts with one finished session.
+        let mock = try Self.launchMock(socket: socket, extraArguments: ["--step", "60", "--start-at", "6"])
         defer {
             mock.terminate()
             mock.waitUntilExit()

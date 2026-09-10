@@ -63,6 +63,9 @@ final class SettingsStore {
     var page: Page = .general
     /// Lighting › Effects… opens the Effect Studio window.
     var onOpenEffects: (@MainActor () -> Void)?
+    /// Devices › Creator Micro 2 › Open Control Center…
+    var onOpenControlCenter: (@MainActor () -> Void)?
+    var deck: DeckState? { core.deck }
     var calibrating: String?
     var doctorReport: JSONValue?
     var doctorRunning = false

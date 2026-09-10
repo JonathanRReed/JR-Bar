@@ -21,6 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var usageWindow: UsageCenterWindowController?
     private var effectsStore: EffectStudioStore?
     private var effectsWindow: EffectStudioWindowController?
+    private var deckStore: DeckStore?
+    private var controlCenterWindow: ControlCenterWindowController?
+    private var rail: DeckRailController?
     private var events: EventCoordinator?
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
@@ -105,6 +108,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
         settingsStore.onOpenEffects = { [weak effectsWindow] in effectsWindow?.show() }
 
+        let deckStore = DeckStore(core: core)
+        let controlCenterWindow = ControlCenterWindowController(store: deckStore)
+        let rail = DeckRailController(store: deckStore)
+        self.deckStore = deckStore
+        self.controlCenterWindow = controlCenterWindow
+        self.rail = rail
+        store.onOpenControlCenter = { [weak controlCenterWindow] in controlCenterWindow?.show() }
+        statusItem.onOpenControlCenter = { [weak controlCenterWindow] in controlCenterWindow?.show() }
+        settingsStore.onOpenControlCenter = { [weak controlCenterWindow] in controlCenterWindow?.show() }
+        deckStore.onOpenControlCenter = { [weak controlCenterWindow] in controlCenterWindow?.show() }
+
         // Events → the Mac: sounds, banners, the HUD, the amber pulse, the chime.
         let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
         self.events = events
@@ -183,6 +197,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { effectsWindow?.show(effect: effect == "1" ? nil : effect) }
             }
         }
+        // `JRBAR_OPEN_CONTROL_CENTER=1` opens the Control Center;
+        // `JRBAR_DECK_RAIL=left|right|top|bottom` asks the core to show the
+        // rail on that edge once live (screenshots).
+        if let mode = environment["JRBAR_OPEN_CONTROL_CENTER"] {
+            // `apply`, `restore` or `clear` also opens that sheet once the
+            // core is live, so the sheet's plan request has a socket (screenshots).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak controlCenterWindow, weak deckStore, weak core] in
+                MainActor.assumeIsolated {
+                    controlCenterWindow?.show()
+                    guard ["apply", "restore", "clear"].contains(mode) else { return }
+                    _ = Task { @MainActor in
+                        for _ in 0..<40 where core?.isLive != true { try? await Task.sleep(for: .milliseconds(250)) }
+                        switch mode {
+                        case "apply": deckStore?.openApplySheet()
+                        case "restore": deckStore?.openRestoreSheet()
+                        default: deckStore?.openClearAbsentSheet()
+                        }
+                    }
+                }
+            }
+        }
+        if let edgeName = environment["JRBAR_DECK_RAIL"], let edge = DeckRailEdge(rawValue: edgeName) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak core] in
+                MainActor.assumeIsolated {
+                    _ = Task { _ = try? await core?.deckRail(edge: edge) }
+                }
+            }
+        }
         if let pageName = environment["JRBAR_OPEN_SETTINGS"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak settingsWindow, weak effectsWindow] in
                 MainActor.assumeIsolated {
@@ -237,6 +279,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
         appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
         appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k"))
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Quit JR-Bar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         appItem.submenu = appMenu
@@ -267,6 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openUsageCenter(_ sender: Any?) {
         usageWindow?.show()
+    }
+
+    @objc private func openControlCenter(_ sender: Any?) {
+        controlCenterWindow?.show()
     }
 
     @objc private func openEffects(_ sender: Any?) {
