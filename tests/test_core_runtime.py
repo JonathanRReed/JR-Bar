@@ -326,6 +326,46 @@ def test_app_introduced_settings_are_served_and_the_token_path_is_read_only(head
     assert published["quota_alert_thresholds"] == [90.0, 95.0]
 
 
+def test_state_builds_feed_the_usage_sample_buffer(headless, tmp_path: Path) -> None:
+    """Every state build records the provider lanes into the daemon's
+    sample buffer (under the state dir), and the projection reads the
+    forecast back from it once there is history."""
+    from jrbar.core_usage_samples import SAMPLE_LIMIT, UsageSample
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    buffer = controller._core_usage_samples
+    assert buffer.path == tmp_path / "state" / "usage-samples.json" and buffer.is_empty
+    controller.provider_usage_state = SimpleNamespace(
+        refreshed_at=1.0, next_refresh_at=2.0, refreshing=False,
+        snapshots=(
+            SimpleNamespace(
+                provider_id="claude", source_instance_id="default", account_label="Max",
+                state=SimpleNamespace(value="ready"), reason_code=None, action_label=None, observed_at=1.0,
+                input_tokens=0, cached_input_tokens=0, output_tokens=0, estimated_cost_usd=None, credits_remaining=None,
+                lanes=(SimpleNamespace(lane_id="five-hour", label="5h", remaining_percent=58.0, reset_at=None, scope="account", model=None),),
+            ),
+        ),
+    )
+    document = controller._core_build_state()
+    assert buffer.samples("claude", "five-hour") == [UsageSample(document["now"], 42.0)]
+    claude = document["usage"]["providers"][0]
+    assert claude["forecast"] is None  # one sample is not a pace
+    assert buffer.path.exists()  # the first change is saved at once
+    # Backfill an hour of history: the next build carries a forecast.
+    now = document["now"]
+    buffer._table["claude|five-hour"] = [UsageSample(now - offset * 60.0, 42.0 - offset * 0.2) for offset in range(60, 0, -5)]
+    document = controller._core_build_state()
+    forecast = document["usage"]["providers"][0]["forecast"]
+    assert forecast["window_id"] == "five-hour" and forecast["pace"] == "ahead"
+    assert forecast["rate_pct_per_hour"] == pytest.approx(12.0, abs=0.1)
+    assert len(buffer.samples("claude", "five-hour")) <= SAMPLE_LIMIT
+    # Quitting writes the buffer out, whatever the save throttle says.
+    buffer.path.unlink()
+    controller.applicationWillTerminate_(None)
+    assert buffer.path.exists()
+
+
 def test_doctor_and_history_answer_without_a_snapshot(headless) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)

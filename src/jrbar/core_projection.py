@@ -657,7 +657,23 @@ def session_document(
     }
 
 
-def usage_document(usage_state: object) -> dict[str, Any] | None:
+def primary_window(windows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The window a provider's forecast is about: the 5h one when reported,
+    else the first (the app's ``UsageCenterStore.primaryWindow`` rule)."""
+    for window in windows:
+        if str(window.get("name") or "").lower() == "5h":
+            return window
+    return windows[0] if windows else None
+
+
+def usage_document(
+    usage_state: object,
+    *,
+    usage_samples: object = None,
+    now: float | None = None,
+) -> dict[str, Any] | None:
+    """``state.usage``. With a ``UsageSampleBuffer`` the primary window of
+    each provider gets a ``forecast``; without one it stays null."""
     if usage_state is None:
         return None
     providers = []
@@ -697,9 +713,23 @@ def usage_document(usage_state: object) -> dict[str, Any] | None:
             )
         state = getattr(getattr(snapshot, "state", None), "value", None)
         account_label = getattr(snapshot, "account_label", None)
+        provider_id = getattr(snapshot, "provider_id", "unknown")
+        forecast = None
+        primary = primary_window(windows)
+        if usage_samples is not None and primary is not None and now is not None:
+            try:
+                forecast = usage_samples.forecast(
+                    provider_id,
+                    primary.get("id"),
+                    used_pct=primary.get("used_pct"),
+                    resets_at=primary.get("resets_at"),
+                    now=now,
+                )
+            except Exception:
+                forecast = None
         providers.append(
             {
-                "id": getattr(snapshot, "provider_id", "unknown"),
+                "id": provider_id,
                 "instance": getattr(snapshot, "source_instance_id", "default"),
                 # The app's UsageAccount block: {plan, label, fidelity}.
                 "account": (
@@ -720,7 +750,7 @@ def usage_document(usage_state: object) -> dict[str, Any] | None:
                 },
                 "estimated_cost_usd": getattr(snapshot, "estimated_cost_usd", None),
                 "credits_remaining": getattr(snapshot, "credits_remaining", None),
-                "forecast": None,
+                "forecast": forecast,
             }
         )
     return {
@@ -784,9 +814,11 @@ def build_state_document(
     extras_by_id: dict[str, SessionExtras] | None = None,
     peers: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
     deck: dict[str, Any] | None = None,
+    usage_samples: object = None,
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
-    object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``."""
+    object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
+    ``usage_samples`` is the daemon's ``UsageSampleBuffer`` for forecasts."""
     extras_by_id = extras_by_id or {}
     statuses: list[object] = []
     seen: set[str] = set()
@@ -861,7 +893,7 @@ def build_state_document(
         "sessions": sessions,
         "asks": asks,
         "devices": [device_document(device) for device in devices],
-        "usage": usage_document(usage_state),
+        "usage": usage_document(usage_state, usage_samples=usage_samples, now=now),
         "power": {
             "keep_awake": bool(power.keep_awake),
             "closed_lid": {
@@ -1014,6 +1046,7 @@ __all__ = [
     "light_why",
     "origin_document",
     "origin_kind",
+    "primary_window",
     "session_document",
     "session_label",
     "short_session_id",

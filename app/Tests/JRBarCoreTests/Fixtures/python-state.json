@@ -466,7 +466,14 @@
     "credits_remaining": null,
     "estimated_cost_usd": null,
     "fidelity": "official",
-    "forecast": null,
+    "forecast": {
+     "exhausts_at": 1789000292.4,
+     "pace": "under",
+     "rate_pct_per_hour": 12.0,
+     "remaining_pct": 58.0,
+     "samples": 13,
+     "window_id": "five_hour"
+    },
     "id": "claude",
     "instance": "default",
     "observed_at": 1788982850.0,

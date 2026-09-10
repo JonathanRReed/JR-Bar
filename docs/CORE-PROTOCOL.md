@@ -74,7 +74,7 @@ protocol 1. Timestamps are Unix epoch seconds.
                                    {"name":"7d","id":"seven_day","used_pct":61.0,"resets_at":…}],
                         "fidelity":"official","state":"ready","reason":null,"action":null,"observed_at":…,
                         "tokens":{"input":1200,"cached_input":800,"output":300},"estimated_cost_usd":null,"credits_remaining":null,
-                        "forecast":null}]},
+                        "forecast":{"window_id":"five_hour","remaining_pct":58.0,"exhausts_at":1789000292.4,"pace":"under","rate_pct_per_hour":12.0,"samples":13}}]},
  "power":{"keep_awake":true,"closed_lid":{"policy":"agents","holding":false,"helper_installed":true}},
  "focus":{"mode":"dim","source":"schedule","until":…,"display":"all","brightness_factor":0.15,"banner_allowed":true,"audible_allowed":false,"summary":"Dim until 07:00"},
  "escalation":{"stage":"menu_bar","since":1788982800.0},
@@ -127,8 +127,24 @@ Vocabulary:
   `fable-only`, …). `used_pct` is `100 - remaining_percent` from the
   provider usage lanes; `resets_at` is the lane's reset epoch whenever the
   lane knows it; `fidelity` is `stale` when the source is stale, else
-  `official`; `state` is the `ProviderSourceState` value. `forecast` is
-  not produced yet.
+  `official`; `state` is the `ProviderSourceState` value.
+- `usage.providers[].forecast` is the CodexBar reading for the provider's
+  primary window (the `5h` one when reported, else the first; `window_id`
+  names it): `exhausts_at` (epoch, or null when nothing is burning),
+  `pace` (`ahead`: the line through the recent samples crosses 100 %
+  before `resets_at`; `on`: within 10 % of the time left until the reset,
+  either side; `under`: the reset comes first, or nothing is burning;
+  `exhausted`: `used_pct` at or above 99.5), `remaining_pct`,
+  `rate_pct_per_hour` and `samples` (how many shaped the line). The
+  daemon keeps its own history: one `(at, used_pct)` sample per provider
+  window whenever the percentage moves or five minutes pass, at most 48
+  per window, in `~/.local/state/jrbar/usage-samples.json` (saved at most
+  once a minute and on quit). The pace is a least-squares line over the
+  samples of the last 90 minutes after the last reset (a drop of more
+  than a point), and needs 30 minutes of spread; until then `forecast`
+  is null (the app extrapolates from its own samples) unless the window
+  is already exhausted. Without a known reset a window heading for 100 %
+  is `ahead`.
 - `focus` reflects the DND projection: `mode` is the active DND mode
   (`mute`, `dim`, `pause`, `asks_only`, `dark`) or `normal`, `source` is
   `manual`, `schedule`, `focus` or `default`, `until` the next transition.
