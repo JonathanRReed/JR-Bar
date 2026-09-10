@@ -65,9 +65,13 @@ exit 0
 def _run_release_ref_gate(
     tmp_path: Path,
     *,
-    checkout: str,
+    checkout: str = "tip",
     required_hardware: str | None = None,
     confirm_hardware: bool = False,
+    app_identity: str | None = "test-app",
+    keychain_identities: str = '  1) AAAA "Developer ID Application: Discovered (TEAM123456)"\n',
+    notary_profile_exists: bool = False,
+    arguments: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     origin = tmp_path / "origin.git"
     repo = tmp_path / "release"
@@ -97,26 +101,44 @@ def _run_release_ref_gate(
 
     fake_bin = tmp_path / "bin"
     _write_executable(fake_bin / "uname", "#!/bin/bash\necho Darwin\n")
+    # The gate discovers signing capability instead of demanding it, so the
+    # keychain and notarytool are seams the test can answer for.
+    _write_executable(
+        fake_bin / "security",
+        f"#!/bin/bash\ncat <<'LISTING'\n{keychain_identities}LISTING\n",
+    )
+    _write_executable(
+        fake_bin / "xcrun",
+        f"#!/bin/bash\nexit {0 if notary_profile_exists else 1}\n",
+    )
     env = os.environ.copy()
+    for name in (
+        "APP_SIGN_IDENTITY",
+        "INSTALLER_SIGN_IDENTITY",
+        "SPARKLE_KEY_ACCOUNT",
+        "JRBAR_REQUIRED_HARDWARE",
+        "JRBAR_HARDWARE_CONFIRM",
+    ):
+        env.pop(name, None)
     env.update(
         {
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "PYTHON": "/usr/bin/true",
-            "APP_SIGN_IDENTITY": "test-app",
-            "INSTALLER_SIGN_IDENTITY": "test-installer",
+            "SECURITY_TOOL": str(fake_bin / "security"),
+            "XCRUN_TOOL": str(fake_bin / "xcrun"),
             "NOTARY_PROFILE": "test-notary",
-            "SPARKLE_KEY_ACCOUNT": "test-sparkle",
             "JRBAR_PERFORMANCE_EVIDENCE": str(repo / "performance.json"),
-            "JRBAR_RUN_INSTALLED_UPGRADE": "1",
             "JRBAR_RUN_UNINSTALL": "1",
         }
     )
+    if app_identity is not None:
+        env["APP_SIGN_IDENTITY"] = app_identity
     if required_hardware is not None:
         env["JRBAR_REQUIRED_HARDWARE"] = required_hardware
     if confirm_hardware:
         env["JRBAR_HARDWARE_CONFIRM"] = "1"
     return subprocess.run(
-        [str(repo / "scripts" / "verify_macos_release.sh")],
+        [str(repo / "scripts" / "verify_macos_release.sh"), *arguments],
         cwd=repo,
         env=env,
         capture_output=True,
@@ -271,6 +293,59 @@ def test_release_gate_requires_authorization_for_an_explicit_hardware_profile(
     assert "PACKAGING_REACHED" not in result.stdout
 
 
+def test_release_gate_discovers_the_developer_id_identity_from_the_keychain(
+    tmp_path: Path,
+) -> None:
+    result = _run_release_ref_gate(tmp_path, app_identity=None)
+
+    assert result.returncode == 73, result.stderr
+    assert "Developer ID Application: Discovered (TEAM123456)" in result.stdout
+    assert "PACKAGING_REACHED" in result.stdout
+
+
+def test_release_gate_refuses_a_candidate_with_no_developer_id_identity(
+    tmp_path: Path,
+) -> None:
+    result = _run_release_ref_gate(
+        tmp_path,
+        app_identity=None,
+        keychain_identities='  1) BBBB "Nautilus Local Dev"\n',
+    )
+
+    assert result.returncode == 2
+    assert "No 'Developer ID Application' identity" in result.stderr
+    assert "PACKAGING_REACHED" not in result.stdout
+
+
+def test_release_gate_reports_missing_notary_and_installer_instead_of_failing(
+    tmp_path: Path,
+) -> None:
+    # The reason this file could not be touched for so long: it demanded four
+    # environment variables that name material this Mac does not have yet.
+    result = _run_release_ref_gate(tmp_path, arguments=("--preflight",))
+
+    assert result.returncode == 0, result.stderr
+    assert "NOT NOTARIZED" in result.stdout
+    assert "UNSIGNED" in result.stdout
+    assert "verify the candidate but not publish it" in result.stdout
+    # Preflight is a read-only report: it may not build anything.
+    assert "PACKAGING_REACHED" not in result.stdout
+
+
+def test_release_gate_notarizes_as_soon_as_the_keychain_profile_appears(
+    tmp_path: Path,
+) -> None:
+    result = _run_release_ref_gate(
+        tmp_path,
+        notary_profile_exists=True,
+        arguments=("--preflight",),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "notarization: keychain profile test-notary" in result.stdout
+    assert "NOT NOTARIZED" not in result.stdout
+
+
 def test_release_gate_rejects_detached_old_commit(tmp_path: Path) -> None:
     result = _run_release_ref_gate(tmp_path, checkout="old")
 
@@ -288,17 +363,64 @@ def test_authoritative_release_gate_requires_every_external_evidence_class() -> 
         "pkgutil --check-signature",
         "spctl -a -vv -t install",
         "verify_hardware_release.py",
-        "verify_installed_upgrade.py",
         "verify_uninstalled_candidate.py",
-        "verify_clean_pkg_install.py",
+        "capture_installed_release_baseline.py",
         "release_evidence.py",
         "JRBAR_RUN_UNINSTALL",
         "git rev-parse origin/main",
-        '"$installed_binary" status-bar start',
     ):
         assert required in text or required in receipt_runner
     assert "stapling-receipt" in text
     assert '["/usr/bin/xcrun", "stapler", "validate", str(args.pkg)]' in receipt_runner
+
+
+def test_release_gate_verifies_the_0_8_bundle_layout_it_actually_builds() -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+
+    # 0.8 assembles the candidate at build/macos-pkg/app; build/macos-pkg/swift
+    # is the Swift input and build/macos-pkg/pyinstaller is PyInstaller's raw
+    # output. The gate used to look for JR-Bar.app under pyinstaller/, where
+    # nothing has been assembled since the Swift rewrite.
+    assert 'APP="$BUILD_DIR/app/JR-Bar.app"' in text
+    assert 'SWIFT_APP="$BUILD_DIR/swift/JR-Bar.app"' in text
+    assert "pyinstaller/JR-Bar.app" not in text
+
+    # The bundle is three programs. All three are checked for presence and
+    # for being sealed by the outer signature.
+    assert 'CORE_HELPER="Contents/Helpers/jrbar-core.app"' in text
+    assert 'HOOK_HELPER="Contents/Helpers/jrbar-hook"' in text
+    assert "codesign --verify --deep --strict" in text
+    assert "sealed, team" in text
+    assert "Sparkle.framework" in text
+
+
+def test_release_gate_runs_the_bundled_daemon_doctor_against_the_installed_app() -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+
+    # Contents/MacOS/JR-Bar is the Swift menu-bar app and takes no arguments.
+    # The 0.8 doctor is a subcommand of the bundled daemon.
+    assert '"$core" doctor' in text
+    assert '"$core" hooks doctor' in text
+    assert "status-bar start" not in text
+    assert "integrations\", \"status\"" not in text
+    # The installed daemon has to point at the shim inside its own bundle,
+    # not at whatever a developer checkout left in the provider config.
+    assert 'hook shim: $app/Contents/Helpers/jrbar-hook' in text
+
+
+def test_release_gate_installs_into_the_home_applications_folder_by_default() -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
+
+    # /Applications needs an administrator password, which would stall the
+    # gate; the product archive enables currentUserHome for exactly this.
+    assert 'INSTALLED_APP="$HOME/Applications/JR-Bar.app"' in text
+    assert 'INSTALLER_TARGET="CurrentUserHomeDirectory"' in text
+    assert 'INSTALL_SCOPE="${JRBAR_INSTALL_SCOPE:-home}"' in text
+    # A home install records its receipt on the home volume, not on /.
+    assert '"--volume" "$HOME"' in text
+    # The system path is still reachable, and still the only one that can
+    # exercise the root-only supported uninstaller.
+    assert 'INSTALLED_APP="/Applications/JR-Bar.app"' in text
 
 
 def test_release_gate_records_every_exact_candidate_receipt_kind() -> None:
@@ -340,13 +462,16 @@ def test_release_manifest_consumes_receipts_instead_of_asserting_success() -> No
     assert 'installed_upgrade": True' not in text
 
 
-def test_installed_upgrade_gate_executes_doctor_integrations_and_launchagent() -> None:
-    text = (ROOT / "scripts" / "verify_installed_upgrade.py").read_text()
+def test_installed_app_receipt_binds_the_installed_tree_to_the_exact_candidate() -> None:
+    text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
-    assert '"doctor"' in text
-    assert '"integrations", "status", "--json"' in text
-    assert '"/bin/launchctl", "print"' in text
-    assert 'EXPECTED_LAUNCH_AGENT_LABEL = "com.jonathanreed.jrbar.app"' in text
+    # An installed bundle that merely looks right is not evidence. The
+    # clean-install receipt hashes the installed tree and compares it with the
+    # candidate the receipts describe.
+    assert "the installed app is not the exact candidate" in text
+    assert "the upgraded app is not the exact candidate" in text
+    assert "require_strict_version_upgrade" in text
+    assert "sha256_tree" in text
 
 
 def test_release_publication_is_draft_first_and_rolls_back_on_failure() -> None:
@@ -362,9 +487,9 @@ def test_release_gate_binds_exact_sparkle_assets_and_app_notary_evidence() -> No
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     for required in (
-        "--format updater-path",
-        "--format appcast-path",
-        "--format channel-metadata-path",
+        "contract updater-path",
+        "contract appcast-path",
+        "contract channel-metadata-path",
         "generate_sparkle_channel.py",
         "app-notary-submission.json",
         "app-notary-log.json",
