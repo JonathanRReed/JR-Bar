@@ -443,10 +443,16 @@ struct DevicesPage: View {
         }
 
         Section {
-            SettingToggle(store, "Link Pro and Dot", subtitle: "The Dot plays a phase-locked continuation of the Pro's animation instead of its own two-LED rendering.",
+            SettingToggle(store, "Link Pro and Dot", subtitle: "The Dot follows the strip instead of driving itself. Off, it always renders its own two-LED display, whatever its role says.",
                           path: "devices_linked", default: true)
+            SettingSlider(store, "Dot brightness", subtitle: "How bright the linked Dot runs next to the strip: two LEDs an arm's length away read much brighter than eight across a desk.",
+                          path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded())) %" }
+                .disabled(!(store.document.bool("devices_linked") ?? true))
+            DotRoleControls(store: store, inDeviceCard: false)
         } header: {
             Text("Pro + Dot")
+        } footer: {
+            SectionNote("The role is what the Dot is for; the link is whether the core drives it at all.")
         }
 
         CreatorMicroCard(store: store)
@@ -503,6 +509,9 @@ struct DeviceCard: View {
                     .disabled(!store.core.isLive)
             } label: {
                 SettingLabel(title: "Colour calibration", subtitle: calibrationSummary)
+            }
+            if device.kind == "dot" {
+                DotRoleControls(store: store, inDeviceCard: true)
             }
         } header: {
             HStack(spacing: 8) {

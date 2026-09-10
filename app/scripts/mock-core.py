@@ -86,6 +86,22 @@ DOT_ASK = ASK_PULSE
 DOT_DONE = COMPLETED_UNSEEN
 DOT_IDLE = IDLE_BREATH
 
+# The `asks` beacon (docs/CORE-PROTOCOL.md, "The Dot's role"): dark until
+# something needs the person, then a breath whose cadence tightens with the
+# escalation stage. Both phases are cosine, every cadence at or under 1 Hz.
+BEACON_CADENCE_MS = {0: 1200, 1: 900, 2: 600, 3: 500}
+
+
+def beacon_program(color: str, stage: int) -> str:
+    ms = BEACON_CADENCE_MS.get(stage, 1200)
+    return f"{color} {ms}ms cosine\noff {ms}ms cosine\nrepeat"
+
+
+BEACON_DARK = "off"
+# What an unlinked Dot has always rendered for itself: the ambient
+# dispatch's `dot_binary_heartbeat`.
+DOT_BINARY_HEARTBEAT = "off 200ms none\n0:#3A3A3C 220ms cosine\n0:#000000 220ms cosine\n1:#3A3A3C 220ms cosine\n1:#000000 220ms cosine\noff 1200ms none\nrepeat"
+
 HOME = str(Path.home())
 CLAUDE_ID = "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
 CLAUDE_WORKER_ID = "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973:worker:1"
@@ -888,6 +904,8 @@ def default_settings_document() -> dict:
         "dnd_schedule_end_minutes": 420,
         "dnd_schedule_mode": "dark",
         "dnd_schedule_start_minutes": 1320,
+        "dot_role": "extend",
+        "dot_role_include_completions": False,
         "escalation_final_seconds": 300.0,
         "escalation_menu_bar_seconds": 120.0,
         "escalation_ramp_seconds": 30.0,
@@ -928,6 +946,7 @@ def default_settings_document() -> dict:
                        "0:#00FF66 180ms ease 80ms; 7:#00FF66 180ms ease 80ms\n#00FF66 220ms ease\noff 320ms ease-out",
         },
         "link_screen_bar_to_hardware": True,
+        "linked_dot_scale": 0.3,
         "menu_bar_icon_style": "meters",
         "menu_bar_label_enabled": False,
         "notification_policy_version": 1,
@@ -1525,6 +1544,45 @@ class World:
         return {"mode": mode, "source": "display", "factor": round(max(floor, reading), 4),
                 "available": mode == "display", "reading": reading}
 
+    def dot_surface(self, dot: str, motion: str, fallback: str, why: str) -> dict:
+        """The `dot` surface under the role in the document.
+
+        `extend` and `asks` are role-driven and carry `role`; `status` means
+        the Dot renders its own two-LED display, and the frame carries no
+        `role` at all (docs/CORE-PROTOCOL.md, "The Dot's role"). The role
+        decides the Dot's `why` as well as its program."""
+        role = self.document.get("dot_role")
+        if role not in ("extend", "asks", "status"):
+            role = "extend"
+        surface = {"program": dot, "led_count": 2, "anchor": self.anchor, "motion": motion,
+                   "static_fallback": fallback, "brightness": self.brightness, "why": why,
+                   "why_detail": self.why_detail(why)}
+        if role == "status":
+            # Nothing is driving the Dot but the Dot: its own heartbeat, no role.
+            surface["program"] = DOT_BINARY_HEARTBEAT
+            surface["motion"] = "beat"
+            surface["static_fallback"] = "#3A3A3C"
+            surface["why"] = "studio"
+            surface["why_detail"] = self.why_detail("studio")
+            return surface
+        if role == "asks":
+            stage = {"none": 0, "ramp": 1, "menu_bar": 2, "final": 3}.get(self.escalation.get("stage"), 0)
+            aggregate = self.aggregate()
+            if aggregate.get("failed"):
+                surface.update(program=beacon_program("#FF0000", max(stage, 2)), motion="beat",
+                               static_fallback="#FF0000", why="failed")
+            elif aggregate.get("needs_you"):
+                surface.update(program=beacon_program("#FF9F0A", stage), motion="beat",
+                               static_fallback="#FF9F0A", why="waiting")
+            elif aggregate.get("ready") and bool(self.document.get("dot_role_include_completions")):
+                surface.update(program=beacon_program("#00FF66", 0), motion="beat",
+                               static_fallback="#00FF66", why="completed")
+            else:
+                surface.update(program=BEACON_DARK, motion="static", static_fallback="#000000", why="idle")
+            surface["why_detail"] = self.why_detail(surface["why"])
+        surface["role"] = role
+        return surface
+
     def lights(self) -> dict:
         programs = {
             "working": (WORKING_RELAY, DOT_WORKING, "working"),
@@ -1543,9 +1601,7 @@ class World:
             "surfaces": {
                 "hardware": dict(surface),
                 "screen_bar": dict(surface),
-                "dot": {"program": dot, "led_count": 2, "anchor": self.anchor, "motion": motion,
-                        "static_fallback": fallback, "brightness": self.brightness, "why": why,
-                        "why_detail": self.why_detail(why)},
+                "dot": self.dot_surface(dot, motion, fallback, why),
             },
             "linked": True,
             "devices_linked": bool(self.document.get("devices_linked", True)),
@@ -2025,7 +2081,8 @@ class World:
                 return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
                         "error": {"code": "invalid_path", "message": f"cannot write {path!r}"}}
             self.push_settings()
-            if path == "auto_dim" or path.startswith("auto_dim."):
+            if path == "auto_dim" or path.startswith("auto_dim.") or path in (
+                    "dot_role", "dot_role_include_completions", "devices_linked", "linked_dot_scale"):
                 self.push_lights(self.lights_semantic)
             self.push_log("info", f"setting {path} changed")
             result = {"generation": self.settings_generation, "path": path}
