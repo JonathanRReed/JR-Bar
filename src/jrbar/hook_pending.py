@@ -28,6 +28,7 @@ PENDING_SUFFIX: Final = ".pending.jsonl"
 PENDING_DRAIN_INTERVAL_SECONDS: Final = 30.0
 MAX_PENDING_FILE_BYTES: Final = 64 * 1024 * 1024
 MAX_PENDING_LINES_PER_DRAIN: Final = 5000
+DRAINING_INFIX: Final = ".draining-"
 
 
 def pending_hook_files(state_dir: Path | None = None) -> list[Path]:
@@ -40,6 +41,56 @@ def pending_hook_files(state_dir: Path | None = None) -> list[Path]:
         )
     except OSError:
         return []
+
+
+def _drain_owner_pid(name: str) -> int | None:
+    """The pid embedded in a ``…pending.jsonl.draining-<pid>-<ms>`` name."""
+    marker = f"{PENDING_SUFFIX}{DRAINING_INFIX}"
+    if marker not in name:
+        return None
+    try:
+        return int(name.rsplit(marker, 1)[1].split("-", 1)[0])
+    except (IndexError, ValueError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 1:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError as exc:  # ESRCH means gone; EPERM means alive but foreign.
+        import errno
+
+        return exc.errno == errno.EPERM
+    return True
+
+
+def orphaned_drain_files(state_dir: Path | None = None) -> list[Path]:
+    """Drain files whose owning process died before it finished reading.
+
+    ``drain_pending_hooks`` renames a pending file before reading it, so a
+    shim appending at that moment starts a fresh file instead of racing the
+    reader. The cost is that a crash between the rename and the unlink
+    strands every record in the renamed file: nothing looks at that name
+    again. A HID crash loop on 2026-09-10 left 36 such files holding 226
+    records. These are adopted on the next drain; the ingress deduplicates
+    by event token, so a record that did reach the log is not counted twice.
+    """
+    base = Path(state_dir) if state_dir is not None else default_state_dir()
+    orphans: list[Path] = []
+    try:
+        entries = list(base.iterdir())
+    except OSError:
+        return []
+    for path in entries:
+        if not path.is_file() or path.is_symlink():
+            continue
+        owner = _drain_owner_pid(path.name)
+        if owner is None or _pid_alive(owner):
+            continue
+        orphans.append(path)
+    return sorted(orphans)
 
 
 def _default_log_path(provider: str) -> str:
@@ -94,13 +145,21 @@ def drain_pending_hooks(
 ) -> int:
     """Submit every queued payload in file order. Returns the number submitted."""
     submitted = 0
-    for path in pending_hook_files(state_dir):
-        draining = path.with_name(f"{path.name}.draining-{os.getpid()}-{int(time.time() * 1000)}")
+    # A drain file left behind by a process that died mid-read is adopted
+    # before the fresh pending files, so its records keep their order.
+    for path in [*orphaned_drain_files(state_dir), *pending_hook_files(state_dir)]:
+        adopted = DRAINING_INFIX in path.name
+        draining = path.with_name(
+            f"{path.name}{DRAINING_INFIX}{os.getpid()}-{int(time.time() * 1000)}"
+            if not adopted
+            else path.name
+        )
         try:
             if path.stat().st_size > MAX_PENDING_FILE_BYTES:
                 path.unlink()
                 continue
-            path.rename(draining)
+            if not adopted:
+                path.rename(draining)
             text = draining.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
