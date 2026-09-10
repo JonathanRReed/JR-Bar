@@ -66,6 +66,7 @@ from .animation import (
     read_program,
     render_animation,
 )
+from .led_status import ERROR_RED
 
 #: A SidePulse Dot is two LEDs. Not a guess, not a setting.
 DOT_LED_COUNT: Final = 2
@@ -132,10 +133,19 @@ class DotRoleColors:
     blocked red beside it, and #FF3A00 is a saturated red to the
     presentation compiler, which would cap the pulse at 1 Hz for a reason
     that has nothing to do with this surface.
+
+    ``blocked`` is now the shared ``ERROR_RED`` rather than this file's own
+    #FF0000 literal. The Dot had solved the ask/blocked collision locally
+    and privately, which is why the strip, the pad and the app kept it: the
+    separation is a product-wide constant now, and this surface reads it
+    from the same place everything else does. #B00020 is also NOT a
+    saturated red to the compiler (#FF0000 was), so the blocked pulse is no
+    longer sitting exactly on the 1 Hz ceiling it was measured against --
+    see _ESCALATION_CADENCES, which needed no change either way.
     """
 
     ask: str = "#FF9F0A"
-    blocked: str = "#FF0000"
+    blocked: str = ERROR_RED
     completion: str = "#00FF66"
 
     def __post_init__(self) -> None:

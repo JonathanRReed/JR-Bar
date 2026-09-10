@@ -13460,7 +13460,7 @@ class StatusBarController(NSObject):
             if active is not None:
                 _set_virtual(
                     failure_signal_program(
-                        self.settings.colors.mode_color("ask"),
+                        self.settings.colors.rendered_error_color(),
                         active,
                         brightness=brightness,
                         led_count=8,
@@ -15793,7 +15793,7 @@ class StatusBarController(NSObject):
             LED_DISPLAY_FAILURE: (
                 lambda brightness, led_count: (
                     failure_signal_program(
-                        self.settings.colors.mode_color("ask"),
+                        self.settings.colors.rendered_error_color(),
                         active,
                         brightness=brightness,
                         led_count=led_count,

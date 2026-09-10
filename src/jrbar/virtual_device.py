@@ -1079,6 +1079,16 @@ def virtual_led_colors(
     if state == LedDisplayState.ASK:
         amount = 0.5 - 0.5 * math.cos(2.0 * math.pi * (elapsed % 1.6) / 1.6)
         return [(scale * amount, 0.227 * scale * amount, 0.0, amount)] * LED_COUNT
+    if state == LedDisplayState.FAILED:
+        # FAILED used to have no branch at all here and fell through to the
+        # Working roll, so the on-screen device showed a crashed strip as an
+        # agent quietly working in cyan. It is the hardware's own signature:
+        # led_status.ERROR_RED (#B00020 = 0.690, 0.0, 0.125), hard-blinked
+        # at 1 Hz -- no easing, which is what tells it from the Ask breath.
+        amount = 1.0 if (elapsed % 1.0) < 0.5 else 0.0
+        return [
+            (0.690 * scale * amount, 0.0, 0.125 * scale * amount, amount)
+        ] * LED_COUNT
     if state == LedDisplayState.IDLE:
         amount = 0.5 - 0.5 * math.cos(2.0 * math.pi * (elapsed % 6.0) / 6.0)
         dim = 2.0 / 255.0

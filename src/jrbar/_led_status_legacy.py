@@ -43,6 +43,27 @@ ASK_AMBER = "#FF3A00"
 WORKING_CYAN = "#00E5FF"
 DONE_GREEN = "#00FF66"
 IDLE_DIM = "#020204"
+# "It broke" is its own light, not a shade of "it needs you". Until
+# 2026-09-10 FAILED rendered in ask_color, so a crashed agent and one
+# holding a permission prompt were the same colour on every surface.
+#
+# #B00020 is a deep crimson, chosen and measured rather than reached for:
+#   * dE 39 from the shipped ask (#FF3A00) in the WORST of normal,
+#     deuteranopic and protanopic vision -- pure red #FF0000 manages 2.8,
+#     i.e. the obvious "just use red" is the same light as the default ask.
+#   * >= dE 20 from every provider colour and every curated/identity
+#     palette slot, so no agent ever wears the failure colour (the bar
+#     test_provider_colour_dichromacy holds providers to is dE 12).
+#   * dE 87 from the violet an owner has picked for Ask today.
+#   * Y 0.093 against ask's 0.243: a failure is DARKER as well as a
+#     different hue, and lightness is the one channel a dichromat keeps.
+#   * red 0xB0 (176) is below presentation_compiler._is_saturated_red's
+#     192 threshold, so the failure blink is governed by the ordinary 2 Hz
+#     accessibility ceiling instead of the 1 Hz saturated-red one the
+#     bright ask beat is held to -- the two rhythms stay visibly apart.
+# A user is free to set either colour to anything; colors.separated_error_color
+# is what stops the pair collapsing back into one light.
+ERROR_RED = "#B00020"
 # 240, not 60: every reassert physically rewrites LEDS.LED and the
 # firmware restarts its loop from line 1 -- a visible mid-breath hitch.
 # Remounts are caught by device discovery immediately anyway; this
@@ -76,7 +97,15 @@ class LedStatusWrite:
 
 
 def display_state_for_mode(mode: AgentMode) -> LedDisplayState:
-    if mode in {AgentMode.WAITING_FOR_INPUT, AgentMode.BLOCKED_ERROR}:
+    # BLOCKED_ERROR is a FAILURE, not an ask -- every other mapping in the
+    # codebase already said so (attention -> FAILED_VISIBLE, core_projection
+    # -> "failed", deck_session_board -> "failure", the collector's
+    # WorkLifecycle.FAILED -> BLOCKED_ERROR) and this one function said ASK.
+    # It is the aggregate/Classic/no-statuses path, so on that path a
+    # crashed agent rendered as a permission prompt.
+    if mode is AgentMode.BLOCKED_ERROR:
+        return LedDisplayState.FAILED
+    if mode == AgentMode.WAITING_FOR_INPUT:
         return LedDisplayState.ASK
     if mode in {
         AgentMode.WORKING,
@@ -766,6 +795,7 @@ def program_for_display_state(
     ask_color: str = ASK_AMBER,
     done_color: str = DONE_GREEN,
     working_color: str = WORKING_CYAN,
+    error_color: str = ERROR_RED,
     idle_floor: float = 0.0,
     idle_ceiling: float = 1.0,
     ask_floor: float = 0.0,
@@ -779,9 +809,11 @@ def program_for_display_state(
 ) -> str:
     """Render the LED program for one display state.
 
-    The four ``*_color`` keyword arguments default to this module's original
+    The five ``*_color`` keyword arguments default to this module's original
     hardcoded constants, so every existing caller (and Classic blend mode in
-    colors.py) keeps producing byte-identical output. Passing a different
+    colors.py) keeps producing byte-identical output -- except a FAILED
+    render, which now defaults to ERROR_RED instead of reusing ask_color.
+    Passing a different
     color lets colors.py reuse this same animation shape (pulse/roll/solid)
     for customized mode colors and per-agent single-block rendering, instead
     of duplicating the animation logic.
@@ -826,9 +858,11 @@ def program_for_display_state(
         return "off"
     if state == LedDisplayState.FAILED:
         # Failure stays visible after its finite two-pulse cue without
-        # becoming the persistent Ask animation. The existing configurable
-        # blocked/error color is the base; only the temporal signature differs.
-        return apply_brightness(ask_color, brightness)
+        # becoming the persistent Ask animation. It has its own colour --
+        # this used to render in ask_color, which made "it broke" and "it
+        # needs you" the same light everywhere the strip was the only thing
+        # you looked at.
+        return apply_brightness(error_color, brightness)
     if state == LedDisplayState.WORKING:
         return apply_brightness(
             _render_full_strip(
