@@ -34,7 +34,7 @@ Command Line Tools only (no Xcode, no `xcodebuild`):
 ```sh
 cd app
 swift build                 # library + app, debug
-swift test                  # 190 tests / 33 suites; the parity and keyframe tests fan out over 29 programs
+swift test                  # 210 tests / 36 suites; the parity and keyframe tests fan out over 29 programs
 ./scripts/build-app.sh      # release build -> build/JR-Bar.app (signed "Nautilus Local Dev", ad-hoc fallback)
 ./scripts/run-dev.sh        # mock + build/JR-Bar-dev.app on the mock socket (--build rebuilds, --stop ends both)
 ```
@@ -498,18 +498,30 @@ three layers):
     (Settings › Usage, "Show in the panel", in that order), each filled
     from the bottom by its primary window (the 5 h one when the provider
     reports it, else the first), amber from 80 % and red from 95 %.
+    The fill is the track's own capsule shape cut off at the level, with a
+    1.5 pt foot for a provider that has barely started — not a capsule of
+    its own, which could not be shorter than its 3.5 pt width and so drew
+    the same blob for every figure under 29 % (36 % and 1 % were one
+    picture on the real menu bar until 2026-09-10).
     Providers past five become "+n"; a provider that reports no window at
     all is left out. The strip is a template image while every window is
     calm and the dot is quiet, so it takes the menu bar's own colour;
-    colour appears only when it means something. The tooltip and the
-    accessibility label read the figures out ("JR-Bar · working · Claude
-    16 %, Codex 83 % · 2 more").
+    colour appears only when it means something. The accessibility label
+    reads the figures out ("JR-Bar · working · Claude 16 %, Codex 83 % ·
+    2 more") and the tooltip
+    (`StatusIconRenderer.tooltip`) is three lines: the aggregate word and
+    the counts, what the dot means ("Amber dot: something needs you."),
+    then every provider's figure. Where the item *sits* is the person's
+    (Command-drag); macOS offers no API for it, so the item carries a
+    stable `autosaveName` and that choice survives a rebuild.
   * `meters_percent`: the same columns, then the leading provider's glyph
     and number ("✳ 16", `~` when the figure is derived).
   * `glyph`, `glyph_ring` (the glyph inside a thin ring of the primary
     provider's 5 h window, amber from 80 %, red from 95 %) and
     `glyph_label` (the glyph beside "1 ask · 2 working" as the button's
-    title), all 18×18 pt, as before.
+    title — `StatusIconRenderer.label` carries at most the two counts that
+    matter most, since "1 ask · 1 working · 5 done" is three counts wider
+    than the bar will give a slot to), all 18×18 pt, as before.
 
   Width is the scarce thing on a notched MacBook: an item much past 80 pt
   is given no slot at all and macOS hides it behind the "«" (measured on
@@ -567,7 +579,11 @@ three layers):
   panel is open, a pressed tint only while the mouse is down, and the
   selection tint only for the keyboard's row. Sections: header (aggregate
   word, counts, connection dot with a tooltip), Sessions (asks pinned first
-  with Approve/Deny sending `answer_ask`; then waiting, failed, working,
+  with Approve/Deny sending `answer_ask` — including an ask whose session
+  the daemon no longer lists (`CoreState.orphanAsks`: cleared out from
+  under a request that is still open, which the header still counts and
+  the light is still about, so it gets a row of its own rather than
+  disappearing); then waiting, failed, working,
   done, ended, idle rows with the provider tile, the label (`SessionLabel`: the
   daemon's label with a leading provider name dropped and UUIDs shortened,
   else `short_id`, so "Claude Claude fca1eb06-…" can never appear), cwd
@@ -624,7 +640,11 @@ three layers):
   names are never doubled and UUIDs never printed. Hovering the row for
   0.35 s opens a detail popover (a glass child window that never becomes
   key, so the panel keeps the keyboard) with the hardware / Screen Bar /
-  Dot programs, how long the state has held, the dimming in effect and
+  Dot programs, the Dot's role (the role decides its program and its
+  `why`, so the popover names it, or says the Dot is rendering its own
+  display), how long the state has held — a `seconds_in_state` past a year
+  is not a duration and is not printed, since the daemon has been seen
+  sending an epoch there — the dimming in effect and
   the settings that shape brightness; it follows the row when rows above
   come and go. Clicking it opens the session the light is about. The
   Screen Bar tooltip carries the same headline as its second line.
@@ -653,6 +673,8 @@ three layers):
   `default_agent_color` values, captured from `sidepulse/colors.py`), and a
   glyph (SF Symbol, or a text glyph for π and K) for claude, codex, gemini,
   pi, grok, devin, opencode, openclaw, antigravity, cursor, hermes and kiro;
+  plus `openai-api`, a usage source rather than an agent (so the Usage
+  Center says "OpenAI API", not "Openai-api" under a question mark);
   unknown providers get a neutral tile and a capitalised name.
 * Screen Bar: a borderless non-activating `NSPanel` at `.statusBar` level on
   all Spaces, click-through, sized by the ports of
@@ -728,7 +750,20 @@ three layers):
   Devices & Screen Bar (a card per `devices[]` entry with display mode,
   brightness, auto-brightness, provider pin, asks-only, Calibrate… sheet
   with RGB gains + resting glow previewed live through `preview_program`
-  and applied through `apply_calibration`; Pro+Dot link; gap width, wing
+  and applied through `apply_calibration`; the Dot's card also carries its
+  **role** — a segmented Extend / Ask beacon / Status picker on `dot_role`
+  with what each one actually does, the "Also glow for finished runs"
+  switch on `dot_role_include_completions` enabled only for the beacon,
+  and a live row reading `lights.surfaces.dot.role` with a two-LED preview
+  of the program the Dot is really playing (`DotRole` / `DotRoleReadout`
+  in JRBarCore: "Extending the strip", "Beacon: amber, something needs
+  you", "Its own two-LED status code", plus the two cases that are not a
+  role — the core has not picked the choice up yet, and Pro + Dot
+  unlinked, where the daemon plans nothing for the Dot whatever the key
+  says); Pro + Dot link and `linked_dot_scale`, with a compact
+  cross-reference to that same live reading so one global key is never two
+  pickers on one page (with no Dot in `devices[]` that section carries the
+  controls instead); gap width, wing
   length (null = automatic), bracket style, minimum glow), Lighting
   (provider colour pickers, blend mode with descriptions, cycle speed, done
   celebration, pulse floor/ceiling per mode, idle/sleep dim, auto-off,
@@ -757,11 +792,16 @@ three layers):
   menu): a 760×720 titled window with a range picker (7d / 30d / 90d /
   365d), a Tokens / Cost picker and Refresh (`refresh_usage`, ⌘R). One
   card per provider in `state.usage.providers`: tile, name, a state badge
-  ("Near limit", "Limited", "Stale"), the account line (plan · label ·
-  fidelity from `account`, else the history's), the primary (5h) percent
+  ("Near limit", "Limited", "Stale", "Off", "Needs setup"), the account
+  line (plan · label · fidelity from `account`, else the history's; a
+  label that is a bare account UUID is shortened the way every other id in
+  the app is, and the daemon's `action` / `reason` fix-it hint takes that
+  line when it sends one — "Import Cursor browser session · browser
+  session not imported"), the primary (5h) percent
   in the provider accent turning amber at 80 % and red at 95 % with `~`
   when the fidelity is not official, then a ring per window with its reset
-  countdown and burn rate, and beside the rings the forecast reading:
+  countdown and burn rate — the primary window's ring leads, so the ring
+  under the headline percent is the window the headline is about — and beside the rings the forecast reading:
   the daemon's `forecast {exhausts_at, pace}` when it sends one, else a
   least-squares pace over the last 45 minutes of `state` samples
   (`UsageSampleLog` in `CoreModel`, `UsageForecaster` in `JRBarCore`):
@@ -785,7 +825,10 @@ three layers):
   before it becomes an error row. Empty states:
   "Core not connected", "No usage yet", "Sign in via the CLI" for a
   provider whose `state` says it is signed out (windows stay hidden in the
-  panel), a breathing skeleton while a history loads ("Reading transcripts
+  panel), the state's own sentence for a provider with no window at all
+  ("Turned off: the core is not collecting OpenAI API usage.", "Import
+  Cursor browser session to see quota windows here.") rather than a flat
+  "No quota window reported yet", a breathing skeleton while a history loads ("Reading transcripts
   — the core is still scanning." while the daemon says so), an error row
   with Retry when the command fails, "Nothing recorded in this range", and
   — when the scan finished and `records` is 0 — "Devin reports no local
@@ -798,13 +841,21 @@ three layers):
   grouped by meaning ("Provider animation", "Attention required", "Pack ·
   nightlab", …), each row a still of the effect's brightest frame (the
   selected row animates), pack and Attention / Critical badges, a check
-  when an assignment uses it. Inspector: label, pack badge, id,
-  description and meaning; the live 8-LED preview (`LEDStripPreview`,
+  when an assignment uses it, and the effect's `role` under its name
+  ("directional flow", "mechanical", "ambient"). Inspector: label, pack
+  badge, id, description and `EffectDefinition.familyLine` — the family
+  and the role ("Provider animation · directional flow"), since the
+  daemon's own `meaning` for the nineteen provider animations is just the
+  family and the id again; the meaning is kept only when it says something
+  new ("General · attention required"). Then the live 8-LED preview
+  (`LEDStripPreview`,
   30 Hz, every program through the presentation compiler first) plus the
   Screen Bar band under it; "Preview on hardware" (`preview_program` on
   `hardware` for 5 s, a one-time consent alert remembered in
   `UserDefaults`, a countdown while it plays); Assign… (⌘↩); fact chips
-  (safety, energy, surfaces, Reduce Motion fallback); a safety panel for
+  (safety, energy, surfaces, Reduce Motion fallback; they wrap onto a
+  second line rather than truncating "menu bar, Screen B…", since the
+  daemon writes their words); a safety panel for
   attention / critical effects and named cadences ("1.0 Hz · 500 ms on /
   500 ms off", the 2 Hz clamp note); parameters as native controls from
   `EffectParameter.control` (switch, slider with unit, integer slider or
@@ -836,14 +887,16 @@ three layers):
   of 2 / 4 / 4 / 3, the dial beside the short top row with its three
   inputs named by their mappings, the joystick beside the bottom row with
   its four sectors; each key a dark cap carrying the provider tile, the
-  number, the label ("Unassigned" / "Reserved" / the session), the state
+  number, the label ("Unassigned" / "Reserved" / the session, through
+  `SessionLabel` like every other surface, so a key never reads "Devin
+  blush-lu" where the panel says "blush-lu"), the state
   word, a glow in the daemon's solid colour when lit, a pin badge, and a
   pin/unpin button on hover; click sends `deck_press`; a white flash on
   `deck_input` (0.9 s, no animation under Reduce Motion). "Bank N of M"
   with wrapping ‹ › (arrow keys). Under it the observed-input line ("Key 3
   pressed 4 s ago", "No physical input observed") and the Python
-  footnote. A Sessions list beside the pad (bound key number, pin mark,
-  "other bank"); dragging a session onto the pad pins the slot that holds
+  footnote. A Sessions list beside the pad (the same short label, bound
+  key number, pin mark, "other bank"); dragging a session onto the pad pins the slot that holds
   it, the context menu pins, reveals or opens it. A control strip at the
   top (inside the content: the NSToolbar shows menus as bare icons):
   Check input (`deck_check_input`; presses are refused while it is on),
@@ -935,9 +988,12 @@ three layers):
   and friends since 2026-09-09 and `state.deck` since 2026-09-10; the
   history section still shows an error row with Retry, and the studio its
   "Loading effects…" state, against any core that lacks them. The
-  daemon reports no price table, so the Usage Center's cost lines read
-  "≈ $0.00 · Approximate: the core reported no price table for this
-  provider". `apply_effect`'s `parameters` argument is an extension: the
+  daemon serves a price table since 2026-09-10 ($4.00 in / $20.00 out /
+  $0.40 cache per M tokens for Codex, as of 2026-08-26), so the cost lines
+  are real figures with the "Approximate: list prices … Subscription plans
+  are not billed per token." disclosure under them; a provider it prices
+  at nothing still reads "≈ $0.00 · the core reported no price table".
+  `apply_effect`'s `parameters` argument is an extension: the
   daemon's `EffectAssignmentRecord` has no parameters yet, so tuned values
   only survive on the mock.
 * The Control Center against a remembered pad that is off (the owner's
@@ -959,9 +1015,14 @@ three layers):
   "8870963f" over the Claude tile); the app does not persist its own copy,
   so nothing is shown while the core is away.
 * Settings keys the daemon does not serve show "Not provided by core"
-  rather than a blank: today `quota_alert_thresholds` and
-  `cloud_ingest_token_path` (the `SettingsKey.appIntroduced` set).
-  `menu_bar_icon_style` is in that set too, and worse: the daemon *does*
+  rather than a blank. As of 2026-09-10 the daemon serves every key in the
+  catalogue, `dot_role`, `dot_role_include_completions`,
+  `linked_dot_scale`, `quota_alert_thresholds` and `devices_linked`
+  included, so nothing on any page shows that caption on this Mac;
+  `cloud_ingest_token_path` is served but is in the daemon's
+  `READ_ONLY_SETTINGS`, which is why the Remote page shows the path with a
+  Reveal button rather than a field.
+  `menu_bar_icon_style` is the exception, and worse: the daemon *does*
   send a value for it and answers a write with `ok` while keeping its own
   ("glyph", the Python default it has no field to change). So the app owns
   that key — the choice lives in `app-state.json`, the picker reads and

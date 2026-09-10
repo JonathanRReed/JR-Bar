@@ -90,7 +90,14 @@ struct LightExplanationTests {
         ]))
         let explanation = try #require(LightExplainer.explain(lights: Self.lights(why: "idle"), state: Self.state(), settings: document, now: Self.now))
         let labels = explanation.details.map(\.label)
-        #expect(labels == ["Hardware", "Screen Bar", "Dot", "Linked", "Global brightness", "Idle dim", "Quiet hours"])
+        #expect(labels == ["Hardware", "Screen Bar", "Dot", "Dot role", "Linked", "Global brightness", "Idle dim", "Quiet hours"])
+        // The role decides the Dot's program and its `why`, so the popover
+        // names it; a frame with no `role` means the Dot drives itself.
+        #expect(explanation.details.first { $0.label == "Dot role" }?.value == "Status · its own display")
+        var driven = Self.lights(why: "idle")
+        driven.surfaces["dot"]?.role = "asks"
+        let beacon = try #require(LightExplainer.explain(lights: driven, state: Self.state(), settings: document, now: Self.now))
+        #expect(beacon.details.first { $0.label == "Dot role" }?.value == "Ask beacon")
         #expect(explanation.details.first?.value == "8 LEDs · beat · red · 79% bright · started 12 s ago")
         #expect(explanation.details.first { $0.label == "Global brightness" }?.value == "80%")
         #expect(explanation.details.first { $0.label == "Idle dim" }?.value == "to 30% after 10 min")
@@ -110,5 +117,19 @@ struct LightExplanationTests {
         #expect(LightExplainer.colourName("#FFFFFF") == "white")
         #expect(LightExplainer.colourName("off") == "off")
         #expect(LightExplainer.colourName("nope") == nil)
+    }
+
+    @Test("a seconds_in_state that is really an epoch is not printed as a duration")
+    func implausibleDurations() {
+        #expect(LightExplainer.elapsed(seconds: 0) == "0 s")
+        #expect(LightExplainer.elapsed(seconds: 45) == "45 s")
+        #expect(LightExplainer.elapsed(seconds: 3 * 3600) == "3 h")
+        #expect(LightExplainer.elapsed(seconds: 5 * 86400) == "5 d")
+        #expect(LightExplainer.elapsed(seconds: -1) == nil)
+        // What the daemon actually sent on 2026-09-10: an epoch, which
+        // would have read "20704 d" in the popover and in the headline.
+        #expect(LightExplainer.elapsed(seconds: 1_788_870_132.6) == nil)
+        #expect(LightExplainer.elapsed(seconds: .infinity) == nil)
+        #expect(LightExplainer.elapsed(seconds: .nan) == nil)
     }
 }

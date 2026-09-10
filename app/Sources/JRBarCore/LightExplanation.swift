@@ -311,6 +311,13 @@ public enum LightExplainer {
             if let anchor = surface.anchor, let ago = elapsed(seconds: context.now.timeIntervalSince1970 - anchor) { parts.append("started \(ago) ago") }
             if parts.isEmpty { parts.append(surface.program.isEmpty ? "no program" : "\(surface.program.split(separator: "\n").count) lines") }
             result.append(.init(label: label, value: parts.joined(separator: " · ")))
+            // The Dot's role decides its program and its `why`, so the
+            // popover says which one is driving it — or that nothing is
+            // (`role` absent means the Dot renders its own display).
+            if key == "dot" {
+                let role = surface.role.map(DotRole.parse)
+                result.append(.init(label: "Dot role", value: role.map(\.label) ?? "Status · its own display"))
+            }
         }
         if lights.linked == true, lights.surfaces.count > 1 { result.append(.init(label: "Linked", value: "hardware and Screen Bar share one program")) }
         if let detail = context.detail {
@@ -366,7 +373,14 @@ public enum LightExplainer {
 
     // MARK: Formatting
 
+    /// No light state has held for more than a year, so anything past that
+    /// is not a duration. The daemon has been seen sending an epoch in
+    /// `why_detail.seconds_in_state` (1.79e9 on 2026-09-10, which would
+    /// have read "20704 d"); saying nothing beats saying that.
+    static let longestPlausibleState: Double = 400 * 24 * 60 * 60
+
     static func elapsed(seconds: Double) -> String? {
+        guard seconds.isFinite, seconds < longestPlausibleState else { return nil }
         let seconds = Int(seconds.rounded())
         guard seconds >= 0 else { return nil }
         if seconds < 60 { return "\(seconds) s" }
