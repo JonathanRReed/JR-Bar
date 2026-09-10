@@ -422,3 +422,50 @@ def test_a_refused_open_reports_its_code_and_its_own_words():
     assert receipt.detail == "macOS Input Monitoring is denied for this process"
     # A refusal with nothing to say still gets a sentence.
     assert CreatorMicro2Adapter(FakeTransport(open_error=PermissionError()), INFO).connect().detail
+
+
+def test_our_own_answer_arriving_twice_is_not_another_controller():
+    """Observed on the real pad over Bluetooth: a completed request is
+    answered again, and the old rule read that echo as a second controller
+    and stopped output for good on a pad nobody else was touching."""
+    transport = FakeTransport([rpc_result(1), rpc_result(1), rpc_result(2)])
+    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}))
+    assert adapter.connect().code == "connected"
+    assert adapter.apply(SemanticState.ACTIVE).code == "applied"
+    # The echo of id 1 is skipped; the answer to id 2 still lands.
+    assert adapter.apply(SemanticState.IDLE).code == "applied"
+    assert adapter.conflict.active is False
+
+
+def test_an_id_we_never_issued_is_still_a_conflict():
+    """The only evidence of a second owner there is must keep working."""
+    transport = FakeTransport([rpc_result(742)])
+    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}))
+    adapter.connect()
+    receipt = adapter.apply(SemanticState.ACTIVE)
+    assert receipt.code == "device_conflict" and receipt.recoverable is False
+    assert adapter.conflict.active is True
+
+
+def test_a_reconnect_forgets_the_ids_of_the_previous_connection():
+    """A new connection starts its ids again, so last connection's echoes
+    must not excuse a genuinely foreign response on this one."""
+    from jrbar.creator_micro_adapter import DeviceConflict
+
+    conflict = DeviceConflict()
+    conflict.issued_ids.add(5)
+    assert conflict.observe(5) is None
+    assert conflict.observe(5) == "duplicate_response_id"
+    conflict.reset()
+    assert conflict.observe(5) == "foreign_response_id"
+    assert conflict.active is True
+
+
+def test_polling_ignores_our_own_echo_instead_of_dropping_the_connection():
+    transport = FakeTransport([rpc_result(1)])
+    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}))
+    adapter.connect()
+    assert adapter.apply(SemanticState.ACTIVE).code == "applied"
+    transport.reads.extend([rpc_result(1)])
+    assert adapter.poll_inputs() == []
+    assert adapter.conflict.active is False and adapter.connected is True
