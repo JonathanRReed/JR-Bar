@@ -2819,6 +2819,7 @@ def build_headless_controller_class() -> type:
         def _core_doctor_document(self) -> dict[str, Any]:
             from .doctor import collect_diagnostics
             from .install import hook_shim_path
+            from .memory_probe import memory_report
 
             checks: list[dict[str, Any]] = []
             try:
@@ -2871,6 +2872,7 @@ def build_headless_controller_class() -> type:
                 "state_generation": self._core_state_generation,
                 "commands": list(command_names()),
                 "checks": checks,
+                "memory": memory_report(),
             }
 
     _CLASS_CACHE[base] = JRCoreHeadlessController
@@ -2905,7 +2907,12 @@ def build_core_parser() -> argparse.ArgumentParser:
 
 def run_core(argv: list[str] | None = None) -> int:
     args = build_core_parser().parse_args(argv)
+    from . import status_bar_legacy as legacy_module
     from .ipc import another_instance_alive
+    from .memory_probe import start_if_requested
+
+    # JRBAR_TRACEMALLOC=1 profiles retained allocations from here on.
+    start_if_requested(lambda message: legacy_module.log_status_bar(message))
 
     if another_instance_alive():
         print("jrbar core: another JR-Bar (core or status bar) already owns the event socket; exiting.", file=sys.stderr)

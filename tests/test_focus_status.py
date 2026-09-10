@@ -136,7 +136,8 @@ def test_supported_macos_loads_the_public_intents_center() -> None:
             self.registered: list[tuple[bytes, bytes, dict[str, object]]] = []
             self._C_NSInteger = b"q"
 
-        def loadBundle(self, name, namespace, *, bundle_path) -> None:
+        def loadBundle(self, name, namespace, *, bundle_path, scan_classes=True) -> None:
+            assert scan_classes is False, "the class scan retains every ObjC class in the process"
             assert namespace == {}
             self.loaded.append((name, bundle_path))
 
