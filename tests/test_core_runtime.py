@@ -394,3 +394,63 @@ def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monke
     with pytest.raises(CommandError) as unknown:
         controller._core_dispatch("usage_history", {"provider": "grok", "range": "7d"})
     assert unknown.value.code == "not_found"
+
+
+def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
+    """With ``devices_linked`` and both mounted, the Dot's request rides on
+    the Pro's command: one submission, the Dot written right after the Pro
+    from the same presentation, both results applied on the main thread,
+    the skew measured, and the lights document saying so."""
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult, StatusBarDevice
+
+    controller = headless
+    pro_device = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
+    dot_device = StatusBarDevice("sidepulse:dot:1", "SidePulse Dot", Path("/Volumes/PulseDot"), Path("/Volumes/PulseDot/LEDS.LED"), True, "agent")
+    pro = HardwareWriteRequest(pro_device, AgentMode.WORKING, None, (), None, 0.5)
+    dot = HardwareWriteRequest(dot_device, AgentMode.WORKING, None, (), None, 0.5)
+    submitted: list = []
+    discarded: list = []
+    controller._hardware_write_worker = SimpleNamespace(
+        submit=lambda command: submitted.append(command),
+        discard_pending_prefix=lambda prefix: discarded.append(prefix),
+    )
+    controller._hardware_write_generation = 1
+    controller._hardware_write_active = True
+    controller.settings = controller.settings.with_devices_linked(True)
+
+    controller._submit_hardware_write_requests([pro, dot], 100.0)
+    assert [command.payload for command in submitted] == [pro]
+    assert controller._core_linked_companion[2] is dot
+    assert discarded == [controller._hardware_worker_key(dot_device)]
+
+    completed = {"pro": 100.0, "dot": 100.011}
+
+    def fake_sync(request):
+        which = "dot" if request is dot else "pro"
+        return HardwareWriteResult(
+            request=request,
+            write=LedStatusWrite(LedDisplayState.WORKING, request.device.target, "0:#000000", True),
+            label=f"{request.device.name} Working",
+            agent_display_rendered=True,
+            completed_at=completed[which],
+        )
+
+    controller._sync_hardware_device = fake_sync
+    result = controller._execute_hardware_write_command(submitted[0])
+    assert result.request is pro
+    dot_command, dot_result = controller._core_linked_results[submitted[0].key]
+    assert dot_command.payload is dot and dot_result.request is dot
+
+    controller._apply_hardware_write_result(submitted[0], result)
+    assert controller._core_linked_results == {}
+    assert controller._core_linked_skew_ms == 11.0
+    assert set(controller._core_hardware_anchor) == {"sidepulse:pro:1", "sidepulse:dot:1"}
+
+    # Unlinked: every device gets its own command, nothing rides along.
+    submitted.clear()
+    controller.settings = controller.settings.with_devices_linked(False)
+    controller._submit_hardware_write_requests([pro, dot], 100.0)
+    assert [command.payload for command in submitted] == [pro, dot]
+    assert controller._core_linked_companion is None

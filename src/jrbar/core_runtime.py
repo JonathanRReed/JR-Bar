@@ -1153,6 +1153,12 @@ def build_headless_controller_class() -> type:
             self._core_housekeeping_timer = None
             self._core_supervision_timer = None
             self._core_last_stage_event = 0
+            # Linked Pro + Dot: the Dot request riding on the Pro's worker
+            # command, the Dot result waiting for the main thread, and the
+            # last measured write skew (Dot completion minus Pro completion).
+            self._core_linked_companion: tuple[str, int, Any] | None = None
+            self._core_linked_results: dict[str, tuple[Any, Any]] = {}
+            self._core_linked_skew_ms: float | None = None
             return self
 
         # -- launch (the non-hostile half of the production launch) ---------
@@ -1367,7 +1373,7 @@ def build_headless_controller_class() -> type:
             objc.super(JRCoreHeadlessController, self).sync_virtual_status_device(*args, **kwargs)
             self._core_publish_lights()
 
-        def _apply_hardware_write_result(self, command, result) -> None:
+        def _core_note_hardware_write(self, command, result) -> None:
             objc.super(JRCoreHeadlessController, self)._apply_hardware_write_result(command, result)
             try:
                 request = getattr(result, "request", None)
@@ -1378,6 +1384,71 @@ def build_headless_controller_class() -> type:
                         self._core_hardware_anchor[request.device.device_id] = anchor
             except Exception:
                 pass
+
+        # -- linked Pro + Dot writes -------------------------------------------
+
+        def _submit_hardware_write_requests(self, requests, now: float) -> None:
+            """With ``devices_linked`` and one Pro plus one Dot mounted, the
+            Dot's request rides on the Pro's worker command: the worker
+            writes the Pro, then the Dot immediately after, from the same
+            presentation, relay epoch and anchor, so the two loop as one."""
+            from ._led_status_legacy import led_count_for_target
+
+            pro = dot = None
+            if bool(getattr(self.settings, "devices_linked", True)) and len(requests) >= 2:
+                strips = [r for r in requests if led_count_for_target(r.device.target) != 2]
+                dots = [r for r in requests if led_count_for_target(r.device.target) == 2]
+                if len(strips) == 1 and len(dots) == 1:
+                    pro, dot = strips[0], dots[0]
+            if pro is None or dot is None:
+                self._core_linked_companion = None
+                return objc.super(JRCoreHeadlessController, self)._submit_hardware_write_requests(requests, now)
+            command = self._hardware_write_command(pro, now)
+            self._core_linked_companion = (command.key, command.generation, dot)
+            # The Dot's own pending command (from an unlinked refresh) must
+            # not fire a second, skewed write.
+            try:
+                self._hardware_write_worker.discard_pending_prefix(self._hardware_worker_key(dot.device))
+            except Exception:
+                pass
+            self._hardware_write_worker.submit(command)
+            for request in requests:
+                if request is not pro and request is not dot:
+                    self._hardware_write_worker.submit(self._hardware_write_command(request, now))
+
+        def _execute_hardware_write_command(self, command):
+            result = objc.super(JRCoreHeadlessController, self)._execute_hardware_write_command(command)
+            companion = self._core_linked_companion
+            if companion is None or companion[0] != command.key or companion[1] != command.generation:
+                return result
+            dot_request = companion[2]
+            try:
+                dot_result = self._sync_hardware_device(dot_request)
+            except Exception as exc:
+                legacy.log_status_bar(f"core: linked dot write failed: {exc.__class__.__name__}")
+                return result
+            dot_command = self._hardware_write_command(dot_request, command.deadline - 1.0)
+            self._core_linked_results[command.key] = (dot_command, dot_result)
+            return result
+
+        def _apply_hardware_write_result(self, command, result) -> None:
+            self._core_note_hardware_write(command, result)
+            companion = self._core_linked_results.pop(getattr(command, "key", ""), None)
+            if companion is None:
+                self._core_publish_lights()
+                return
+            dot_command, dot_result = companion
+            if dot_command.generation != self._hardware_write_generation:
+                self._core_publish_lights()
+                return
+            try:
+                skew = float(dot_result.completed_at) - float(result.completed_at)
+            except Exception:
+                skew = None
+            if skew is not None and getattr(dot_result.write, "changed", False) and getattr(result.write, "changed", False):
+                self._core_linked_skew_ms = round(skew * 1000.0, 1)
+                legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
+            self._core_note_hardware_write(dot_command, dot_result)
             self._core_publish_lights()
 
         # -- server plumbing ---------------------------------------------------
@@ -1930,11 +2001,14 @@ def build_headless_controller_class() -> type:
                     override=override,
                     why_detail=hardware.why_detail,
                 )
-            return build_lights_document(
+            document = build_lights_document(
                 surfaces,
                 linked=linked,
                 devices_linked=devices_linked and "dot" in surfaces and "hardware" in surfaces,
             )
+            if document.get("devices_linked") and self._core_linked_skew_ms is not None:
+                document["linked_skew_ms"] = self._core_linked_skew_ms
+            return document
 
         def _core_doctor_document(self) -> dict[str, Any]:
             from .doctor import collect_diagnostics

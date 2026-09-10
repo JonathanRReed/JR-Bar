@@ -12991,40 +12991,58 @@ class StatusBarController(NSObject):
 
         relay_elapsed_seconds = max(0.0, time.monotonic() - self._relay_epoch)
         now = self._runtime_worker_monotonic()
+        requests: list[HardwareWriteRequest] = []
         for device in devices:
             if self.calibration_test is not None and self.calibration_test[0] == device.device_id:
                 continue
             device_display_kind = self.active_led_display_kind_for_device(device, battery_snapshot)
             policy = hardware_write_policy(device_display_kind, resolved_glance)
-            worker_key = self._hardware_worker_key(device)
-            request = HardwareWriteRequest(
-                device=device,
-                mode=mode,
-                battery_snapshot=battery_snapshot,
-                statuses=statuses,
-                projection=projection,
-                relay_elapsed_seconds=relay_elapsed_seconds,
-                accessibility_preferences=self._accessibility_display_preferences,
-                resolved_glance=resolved_glance,
-                presentation_time=presentation_time,
-                capacity_remaining_fraction=(
-                    capacity.remaining_fraction if capacity is not None else None
-                ),
-                display_kind=device_display_kind,
-                write_priority=policy.priority,
-                coalesce_identity=policy.coalesce_identity,
-            )
-            self._hardware_write_worker.submit(
-                RuntimeWorkCommand(
-                    domain=RuntimeWorkerDomain.HARDWARE_WRITE,
-                    key=worker_key,
-                    generation=self._hardware_write_generation,
-                    deadline=now + max(5.0, STATUS_BAR_REFRESH_SECONDS * 2.0),
-                    payload=request,
-                    priority=policy.priority,
-                    coalesce_key=hardware_coalesce_key(worker_key, policy.coalesce_identity),
+            requests.append(
+                HardwareWriteRequest(
+                    device=device,
+                    mode=mode,
+                    battery_snapshot=battery_snapshot,
+                    statuses=statuses,
+                    projection=projection,
+                    relay_elapsed_seconds=relay_elapsed_seconds,
+                    accessibility_preferences=self._accessibility_display_preferences,
+                    resolved_glance=resolved_glance,
+                    presentation_time=presentation_time,
+                    capacity_remaining_fraction=(
+                        capacity.remaining_fraction if capacity is not None else None
+                    ),
+                    display_kind=device_display_kind,
+                    write_priority=policy.priority,
+                    coalesce_identity=policy.coalesce_identity,
                 )
             )
+        self._submit_hardware_write_requests(requests, now)
+
+    def _hardware_write_command(
+        self,
+        request: HardwareWriteRequest,
+        now: float,
+    ) -> RuntimeWorkCommand:
+        worker_key = self._hardware_worker_key(request.device)
+        return RuntimeWorkCommand(
+            domain=RuntimeWorkerDomain.HARDWARE_WRITE,
+            key=worker_key,
+            generation=self._hardware_write_generation,
+            deadline=now + max(5.0, STATUS_BAR_REFRESH_SECONDS * 2.0),
+            payload=request,
+            priority=request.write_priority,
+            coalesce_key=hardware_coalesce_key(worker_key, request.coalesce_identity),
+        )
+
+    def _submit_hardware_write_requests(
+        self,
+        requests: list[HardwareWriteRequest],
+        now: float,
+    ) -> None:
+        """One worker command per device. The headless core overrides this
+        to write a linked Pro + Dot pair inside one command."""
+        for request in requests:
+            self._hardware_write_worker.submit(self._hardware_write_command(request, now))
 
     def has_connected_physical_device(self) -> bool:
         return any(
