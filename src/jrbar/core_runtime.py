@@ -803,7 +803,12 @@ def _effect_catalog(self) -> dict[str, Any]:
         core_effects.catalog_document(
             cache.registry(),
             packs,
-            generation=cache.generation,
+            # Content-derived, so the Studio badge tracks the catalog
+            # instead of reading "gen 0" until something saves an
+            # assignment; the cache's counter still moves it.
+            generation=core_effects.catalog_generation(
+                cache.registry(), packs, revision=cache.generation
+            ),
             pack_paths={key: value for key, value in paths.items() if value},
         )
     )
@@ -813,11 +818,13 @@ def _assignments_document(self) -> dict[str, Any]:
     from . import core_effects
 
     cache = _effects_cache(self)
+    document = cache.snapshot()
+    active_scene = getattr(self.settings, "active_scene", None)
     return core_effects.assignment_document(
-        cache.snapshot(),
+        document,
         parameters=core_effects.load_assignment_parameters(),
-        active_scene=getattr(self.settings, "active_scene", None),
-        generation=cache.generation,
+        active_scene=active_scene,
+        generation=core_effects.assignments_generation(document, active_scene=active_scene),
     )
 
 
@@ -1559,6 +1566,17 @@ def build_headless_controller_class() -> type:
             self._core_deck_devices: list[dict[str, Any]] = []
             self._core_deck_probe_at = 0.0
             self._core_deck_probe_pending = False
+            # hidapi's IOHIDManager keeps the run loop of whichever thread
+            # first touched it, so every probe has to run on the SAME
+            # thread. A fresh thread per probe left the manager holding a
+            # run loop that had gone with its thread, and the next
+            # enumeration -- or a device arriving mid-enumeration -- died
+            # on a pointer-authentication trap inside CoreFoundation, which
+            # takes the whole daemon with it. One long-lived worker, woken
+            # by an event, is the whole fix.
+            self._core_deck_probe_wake = threading.Event()
+            self._core_deck_probe_done = threading.Event()
+            self._core_deck_probe_worker: threading.Thread | None = None
             self._core_deck_probe_error: str | None = None
             self._core_deck_integration_cache: tuple[float, bool, str | None] | None = None
             self._core_deck_lock = threading.Lock()
@@ -2488,34 +2506,46 @@ def build_headless_controller_class() -> type:
             with self._core_deck_lock:
                 return list(self._core_deck_devices)
 
+        def _core_deck_probe_once(self) -> None:
+            """One HID enumeration, on the probe thread and nowhere else."""
+            error = None
+            try:
+                rows = deck_probe()
+            except Exception as exc:
+                rows, error = [], f"{exc.__class__.__name__}"
+            with self._core_deck_lock:
+                changed = rows != self._core_deck_devices or error != self._core_deck_probe_error
+                self._core_deck_devices = rows
+                self._core_deck_probe_error = error
+                self._core_deck_probe_pending = False
+            if changed and getattr(self, "_core", None) is not None:
+                legacy.log_status_bar(f"deck: probe {len(rows)} pad(s)" + (f" ({error})" if error else ""))
+                self._core_publish_state_soon()
+
+        def _core_deck_probe_loop(self) -> None:
+            while True:
+                self._core_deck_probe_wake.wait()
+                self._core_deck_probe_wake.clear()
+                self._core_deck_probe_once()
+                self._core_deck_probe_done.set()
+
         def _core_deck_probe_now(self, *, wait: bool = False) -> None:
-            """Look for the pad over HID on a background thread; a changed
+            """Ask the probe thread to look for the pad over HID; a changed
             answer republishes ``state``."""
             with self._core_deck_lock:
                 if self._core_deck_probe_pending:
                     return
                 self._core_deck_probe_pending = True
+                if self._core_deck_probe_worker is None:
+                    self._core_deck_probe_worker = threading.Thread(
+                        target=self._core_deck_probe_loop, name="JRBarDeckProbe", daemon=True
+                    )
+                    self._core_deck_probe_worker.start()
             self._core_deck_probe_at = time.monotonic()
-
-            def probe() -> None:
-                error = None
-                try:
-                    rows = deck_probe()
-                except Exception as exc:
-                    rows, error = [], f"{exc.__class__.__name__}"
-                with self._core_deck_lock:
-                    changed = rows != self._core_deck_devices or error != self._core_deck_probe_error
-                    self._core_deck_devices = rows
-                    self._core_deck_probe_error = error
-                    self._core_deck_probe_pending = False
-                if changed and getattr(self, "_core", None) is not None:
-                    legacy.log_status_bar(f"deck: probe {len(rows)} pad(s)" + (f" ({error})" if error else ""))
-                    self._core_publish_state_soon()
-
-            thread = threading.Thread(target=probe, name="JRBarDeckProbe", daemon=True)
-            thread.start()
+            self._core_deck_probe_done.clear()
+            self._core_deck_probe_wake.set()
             if wait:
-                thread.join(2.0)
+                self._core_deck_probe_done.wait(2.0)
 
         def _core_deck_keymap_document(self, serial: str | None) -> dict[str, Any]:
             facts = core_deck.keymap_facts(self._core_deck_backup_path(serial))
@@ -2615,7 +2645,7 @@ def build_headless_controller_class() -> type:
                 bank=snapshot.bank,
                 bank_count=snapshot.bank_count,
                 rail_edge=snapshot.rail_edge,
-                keymap_state=keymap.state,
+                keymap_state=core_deck.observed_keymap_state(plan, keymap.state),
                 backup_at=keymap.backup_at,
                 keymap_generation=self._core_deck_keymap_generation,
                 layers=layers,

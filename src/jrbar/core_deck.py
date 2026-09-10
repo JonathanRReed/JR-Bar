@@ -195,6 +195,31 @@ class KeymapFacts:
     original_json: str | None = None
 
 
+def observed_keymap_state(plan: KeymapPlan | None, filed: str) -> str:
+    """The pad's own answer about its keymap, when one has just been read.
+
+    ``keymap_facts`` can only describe what JR-Bar believes it wrote. A
+    missing recovery journal is read there as "nothing reached the device",
+    and that is not true of a pad configured by a build that kept no
+    journal, or one whose journal was since removed: the owner is then told
+    his keys are stock while every one of them is a JR-Bar device input.
+
+    An inspection is the device speaking for itself, so it wins. ``pending``
+    still wins over both: an interrupted transfer is the more urgent fact
+    and the pad may be holding half a keymap.
+    """
+    if plan is None or filed == "recovering":
+        return filed
+    matrix = sum(1 for line in plan.changes if line.startswith("Key "))
+    if matrix == 0:
+        return "applied"
+    if matrix == SLOTS_PER_BANK:
+        return "stock"
+    # Some keys ours, some not: neither word is true, and guessing which
+    # would be the one that decides whether Apply or Restore is offered.
+    return "unknown"
+
+
 def keymap_facts(backup_path: Path | None) -> KeymapFacts:
     """What the private backup and its recovery journal say about the pad:
     ``stock`` (no backup, or the journal says the original is back on the
@@ -393,6 +418,7 @@ __all__ = [
     "input_kind",
     "keymap_facts",
     "keymap_layer_rows",
+    "observed_keymap_state",
     "plan_document",
     "preview_text",
     "receipt_message",
