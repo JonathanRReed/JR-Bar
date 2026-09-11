@@ -22,8 +22,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let window = self.window ?? makeWindow()
         self.window = window
         // An accessory app is never frontmost on its own; the window needs the
-        // app active to draw its controls as key.
-        // An accessory app is never frontmost on its own; the window needs the
         // app active to draw its controls as key. The NSRunningApplication
         // form is the one that still forces it on macOS 26/27.
         NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])

@@ -104,7 +104,7 @@ final class SettingsStore {
     /// dataclass has no field for it), so the app is the one that
     /// remembers, in `app-state.json`. The write still goes out, so a
     /// daemon that learns the key one day stays in step.
-    var menuBarIconStyle: String = StatusIconStyle.meters.rawValue {
+    var menuBarIconStyle: String = StatusIconStyle.agents.rawValue {
         didSet {
             guard menuBarIconStyle != oldValue else { return }
             onSetMenuBarIconStyle?(menuBarIconStyle)
@@ -113,6 +113,18 @@ final class SettingsStore {
     }
     /// Persists the choice; wired to `AppState` by the delegate.
     var onSetMenuBarIconStyle: (@MainActor (String) -> Void)?
+
+    /// "Summon the panel with ⌃⌥J": an app-local UserDefaults key (not a
+    /// daemon setting); the delegate registers/unregisters the Carbon
+    /// hot-key when it flips.
+    var panelHotkeyEnabled: Bool = UserDefaults.standard.bool(forKey: PanelHotkey.defaultsKey) {
+        didSet {
+            guard panelHotkeyEnabled != oldValue else { return }
+            UserDefaults.standard.set(panelHotkeyEnabled, forKey: PanelHotkey.defaultsKey)
+            onPanelHotkeyChange?(panelHotkeyEnabled)
+        }
+    }
+    var onPanelHotkeyChange: (@MainActor (Bool) -> Void)?
 
     init(core: CoreModel) {
         self.core = core

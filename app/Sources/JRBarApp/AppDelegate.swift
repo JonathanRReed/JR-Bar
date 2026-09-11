@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
     private var updater: SparkleUpdater?
+    private var hotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
     private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
@@ -101,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.settingsWindow = settingsWindow
         // The menu bar style is the app's own: seed the picker from
         // `app-state.json` and write every choice straight back to it.
-        settingsStore.menuBarIconStyle = appState.menuBarIconStyle ?? StatusIconStyle.meters.rawValue
+        settingsStore.menuBarIconStyle = appState.menuBarIconStyle ?? StatusIconStyle.agents.rawValue
         settingsStore.onSetMenuBarIconStyle = { [weak self] value in
             guard let self else { return }
             self.appState.menuBarIconStyle = value
@@ -129,6 +130,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         panel.setAnchorProvider { [weak statusItem] in statusItem?.anchorRect }
         panel.onOpenStateChange = { [weak statusItem] open in statusItem?.setPanelOpen(open) }
         statusItem.onTogglePanel = { [weak panel] in panel?.toggle() }
+        // The optional global hotkey (Settings › General) toggles the panel
+        // through the same path the status item's click does.
+        let hotkey = PanelHotkey()
+        hotkey.onPress = { [weak panel] in panel?.toggle() }
+        hotkey.setEnabled(settingsStore.panelHotkeyEnabled)
+        settingsStore.onPanelHotkeyChange = { [weak hotkey] on in hotkey?.setEnabled(on) }
+        self.hotkey = hotkey
         statusItem.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onQuit = { NSApp.terminate(nil) }
@@ -149,7 +157,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.refreshLights()
         }
         self.alcove = alcove
-        store.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
+        store.onOpenSettings = { [weak settingsWindow] page in settingsWindow?.show(page: page) }
         statusItem.onOpenSettings = { [weak settingsWindow] in settingsWindow?.show() }
 
         // History window (⌘Y).
@@ -165,7 +173,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let usageWindow = UsageCenterWindowController(store: usageStore)
         self.usageStore = usageStore
         self.usageWindow = usageWindow
-        store.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
+        store.onOpenUsageCenter = { [weak usageWindow, weak usageStore] provider in
+            // A provider id means the panel's usage row was clicked:
+            // scroll to that card and flash it.
+            if let provider { usageStore?.focus(provider: provider) }
+            usageWindow?.show()
+        }
         statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         settingsStore.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         let effectsStore = EffectStudioStore(core: core)
@@ -280,9 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             StatusItemController.renderStyles(to: directory)
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak statusItem] in
                 MainActor.assumeIsolated {
-                    guard let meters = statusItem?.meters, !meters.isEmpty else { return }
-                    StatusItemController.renderStyles(to: directory, live: meters)
-                    print("status icons: re-rendered with \(meters.count) live meters (\(meters.map(\.readout).joined(separator: ", ")))")
+                    guard let statusItem, !statusItem.meters.isEmpty || !statusItem.sessionDots.isEmpty else { return }
+                    StatusItemController.renderStyles(to: directory, live: statusItem.meters, liveDots: statusItem.sessionDots)
+                    print("status icons: re-rendered with \(statusItem.meters.count) live meters, \(statusItem.sessionDots.count) sessions")
                 }
             }
         }
@@ -355,6 +368,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        hotkey?.unregister()
         panel?.close()
         interaction?.stop()
         screenBar?.hide()
@@ -644,7 +658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // a write of this key with `ok` and then keeps its value — the
         // Python settings dataclass has no field for it — so its copy is
         // frozen at the old `glyph` default and is not read here; unset
-        // means the app's default, the meters.
+        // means the app's default, the session dots.
         statusItem.iconStyle = StatusIconStyle(setting: appState.menuBarIconStyle)
         let preferred = document?.strings("usage_graph_providers") ?? []
         let usage = core.isLive ? core.usage : []
@@ -654,6 +668,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // a ring at zero, and this window was never measured.
         statusItem.ringFraction = window.flatMap { $0.usedPct }.map { $0 / 100 }
         refreshMeters(preferred: preferred, usage: usage)
+        refreshSessionDots()
         if core.isLive, let aggregate = core.state?.aggregate {
             let failed = core.sessions.filter { SessionActivity.reduce($0) == .failed }.count
             statusItem.labelText = StatusIconRenderer.label(active: aggregate.active, needsYou: aggregate.needsYou, ready: aggregate.ready, failed: failed)
@@ -692,6 +707,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
         statusItem.dotState = dotState()
+    }
+
+    /// The `agents` strip: one dot per session in the panel's order (asks,
+    /// waiting, failed, working, done), plus the tooltip's one line per
+    /// session. `store.rows` is the panel's own ordering, so the icon and
+    /// the panel can never disagree about who leads.
+    private func refreshSessionDots() {
+        guard let statusItem, let store else { return }
+        let rows = store.rows
+        statusItem.sessionDots = rows.map { row in
+            SessionDot(id: row.id, state: Self.sessionDotState(for: row),
+                       accentHex: row.activity == .working ? row.style.accentHex : nil)
+        }
+        let now = Date()
+        statusItem.sessionLines = rows.map { Self.sessionTooltipLine(for: $0, now: now) }
+    }
+
+    /// A row's dot colour: an open ask (or a wait) is amber, a failure
+    /// red, a working run its provider's accent, a fresh completion green.
+    static func sessionDotState(for row: SessionRow) -> StatusDotState {
+        if row.ask != nil { return .ask }
+        switch row.activity {
+        case .waiting: return .ask
+        case .failed: return .error
+        case .working: return .working
+        case .done: return .done
+        case .idle, .ended: return .idle
+        }
+    }
+
+    /// "docs-sweep · waiting on you 2h 31m · Gemini".
+    static func sessionTooltipLine(for row: SessionRow, now: Date) -> String {
+        var word = row.activity.word.lowercased()
+        if let elapsed = PanelStore.elapsed(since: row.since, now: now) { word += " \(elapsed)" }
+        return "\(row.label) · \(word) · \(row.style.name)"
     }
 
     /// The providers the strip meters, in the panel's order: the ones

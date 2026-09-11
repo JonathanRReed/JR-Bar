@@ -1,10 +1,12 @@
 import AppKit
 
-/// `menu_bar_icon_style`: a column per provider (the default, and the
-/// thing that is worth a glance), the same with the leading provider's
-/// percent spelled out, or one of the three older looks — the glyph
-/// alone, the glyph inside a thin usage ring, the glyph beside a label.
+/// `menu_bar_icon_style`: a dot per live session (the default — this is an
+/// agent monitor, so agent state outranks quota at a glance), a column per
+/// provider, the same with the leading provider's percent spelled out, or
+/// one of the three older looks — the glyph alone, the glyph inside a thin
+/// usage ring, the glyph beside a label.
 public enum StatusIconStyle: String, CaseIterable, Sendable {
+    case agents
     case meters
     case metersPercent = "meters_percent"
     case glyph
@@ -12,14 +14,15 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     case glyphLabel = "glyph_label"
 
     /// Accepts the settings value in either spelling (`ring` / `glyph_ring`);
-    /// anything unknown, and an absent value, is the default `meters`.
+    /// anything unknown, and an absent value, is the default `agents`.
     public init(setting: String?) {
         switch setting?.lowercased() {
         case "glyph", "icon", "plain", "mark": self = .glyph
         case "glyph_ring", "ring", "usage_ring": self = .glyphRing
         case "glyph_label", "label", "text", "counts": self = .glyphLabel
+        case "meters", "meter", "bars", "columns": self = .meters
         case "meters_percent", "meters+percent", "percent", "meters_pct": self = .metersPercent
-        default: self = .meters
+        default: self = .agents
         }
     }
 
@@ -29,6 +32,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     /// The Settings picker's words.
     public var title: String {
         switch self {
+        case .agents: return "Session dots"
         case .meters: return "Usage meters"
         case .metersPercent: return "Usage meters with percent"
         case .glyph: return "Glyph only"
@@ -39,6 +43,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
 
     public var subtitle: String {
         switch self {
+        case .agents: return "One dot per live session, coloured by what it is doing; the mark alone when nothing runs."
         case .meters: return "A column per provider you show in the panel, plus a state dot."
         case .metersPercent: return "The same columns, with the first provider's number."
         case .glyph: return "The JR-Bar mark, tinted by what the agents are doing."
@@ -102,6 +107,23 @@ public struct StatusMeter: Hashable, Sendable {
     }
 }
 
+/// One session's dot in the `agents` style, in the panel's order (asks,
+/// waiting, failed, working, done). Kept small — the spec is `Hashable`
+/// and compared on every redraw.
+public struct SessionDot: Hashable, Sendable {
+    public var id: String
+    public var state: StatusDotState
+    /// The provider's configured accent (`#RRGGBB`), for a working dot;
+    /// the other states carry their own colour.
+    public var accentHex: String?
+
+    public init(id: String, state: StatusDotState, accentHex: String? = nil) {
+        self.id = id
+        self.state = state
+        self.accentHex = accentHex
+    }
+}
+
 /// The dot at the left of the meters: what the agents are doing right now,
 /// independent of how full anybody's quota is.
 public enum StatusDotState: String, Hashable, Sendable, CaseIterable {
@@ -120,6 +142,10 @@ public enum StatusDotState: String, Hashable, Sendable, CaseIterable {
 
     /// Only these three move, so only these three run the redraw timer.
     public var animates: Bool { self == .working || self == .ask || self == .error }
+
+    /// In the `agents` strip only asks and failures move: a working dot
+    /// holds still so a busy menu bar stays calm.
+    public var breathes: Bool { self == .ask || self == .error }
 
     /// What the dot at the left is saying, in one line, so its meaning is
     /// somewhere other than this file. The tooltip's second line.
@@ -149,17 +175,22 @@ public struct StatusIconSpec: Hashable, Sendable {
     /// Providers past the cap: drawn as "+2".
     public var overflow: Int
     public var dot: StatusDotState
+    /// The `agents` style: one dot per live session, in the panel's order,
+    /// capped by `StatusIconRenderer.maxSessionDots`.
+    public var sessions: [SessionDot]
     /// 0…1 breathing phase for the moving dots; steady dots ignore it.
     public var phase: Double
 
     public init(style: StatusIconStyle, ringFraction: Double? = nil, tintHex: String? = nil,
-                meters: [StatusMeter] = [], overflow: Int = 0, dot: StatusDotState = .idle, phase: Double = 0) {
+                meters: [StatusMeter] = [], overflow: Int = 0, dot: StatusDotState = .idle,
+                sessions: [SessionDot] = [], phase: Double = 0) {
         self.style = style
         self.ringFraction = ringFraction.map { max(0, min(1, $0)) }
         self.tintHex = tintHex
         self.meters = meters
         self.overflow = max(0, overflow)
         self.dot = dot
+        self.sessions = sessions
         self.phase = max(0, min(1, phase))
     }
 
@@ -174,7 +205,9 @@ public struct StatusIconSpec: Hashable, Sendable {
             bucketed.fraction = meter.fraction.map { ($0 * 50).rounded() / 50 }
             return bucketed
         }
-        key.phase = style.isMeters && dot.animates ? (phase * 4).rounded() / 4 : 0
+        let animating = (style.isMeters && dot.animates)
+            || (style == .agents && sessions.contains { $0.state.breathes })
+        key.phase = animating ? (phase * 4).rounded() / 4 : 0
         return key
     }
 
@@ -196,7 +229,8 @@ public struct StatusIconSpec: Hashable, Sendable {
 }
 
 /// Draws and caches the status item images: 18×18 pt for the glyph
-/// styles, a 22 pt-tall strip as wide as it needs for the meters.
+/// styles, a 22 pt-tall strip as wide as it needs for the meters and the
+/// session dots.
 public final class StatusIconRenderer: @unchecked Sendable {
     public static let shared = StatusIconRenderer()
     public static let size = NSSize(width: 18, height: 18)
@@ -213,10 +247,18 @@ public final class StatusIconRenderer: @unchecked Sendable {
     public static let barHeight: CGFloat = 22
     /// Providers past this many become "+n".
     public static let maxMeters = 5
+    /// Sessions past this many become five dots and "+n".
+    public static let maxSessionDots = 6
     static let edgeInset: CGFloat = 2
     static let dotDiameter: CGFloat = 5
     static let dotGap: CGFloat = 6
     static let glyphBox: CGFloat = 11
+    /// The `agents` strip: the mark in a 14 pt box, then 6 pt session dots
+    /// 3 pt apart.
+    static let agentsMark: CGFloat = 14
+    static let agentsGap: CGFloat = 4
+    static let sessionDot: CGFloat = 6
+    static let sessionDotGap: CGFloat = 3
     /// One provider's column: a track with the used fraction filled from
     /// the bottom.
     static let meterBarWidth: CGFloat = 3.5
@@ -240,9 +282,19 @@ public final class StatusIconRenderer: @unchecked Sendable {
     }
 
     /// How wide the image for this spec is. The glyph styles are square;
-    /// a meter strip grows with the providers it shows, so the status item
-    /// has to ask before it sets its own length.
+    /// a meter or session strip grows with what it shows, so the status
+    /// item has to ask before it sets its own length.
     public static func size(for spec: StatusIconSpec) -> NSSize {
+        if spec.style == .agents {
+            // No sessions: the mark alone, square like the glyph styles.
+            guard !spec.sessions.isEmpty else { return size }
+            let over = spec.sessions.count > maxSessionDots
+            let shown = over ? maxSessionDots - 1 : spec.sessions.count
+            var width = edgeInset + agentsMark + agentsGap
+                + CGFloat(shown) * sessionDot + CGFloat(max(0, shown - 1)) * sessionDotGap
+            if over { width += agentsGap + overflowWidth(spec.sessions.count - shown) }
+            return NSSize(width: (width + edgeInset).rounded(.up), height: barHeight)
+        }
         guard spec.style.isMeters else { return size }
         var width = edgeInset + dotDiameter + dotGap
         if spec.meters.isEmpty {
@@ -313,6 +365,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// (the drawing handler runs at draw time, so it re-resolves).
     static func draw(_ spec: StatusIconSpec) -> NSImage {
         if spec.style.isMeters { return drawMeters(spec) }
+        if spec.style == .agents { return drawAgents(spec) }
         let warning = spec.ringWarning
         let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
         let template = warning == .none && tint == nil
@@ -449,6 +502,73 @@ public final class StatusIconRenderer: @unchecked Sendable {
         }
     }
 
+    // MARK: Session dots
+
+    /// The `agents` strip: the JR-Bar mark at the left, then one dot per
+    /// live session in the panel's order — ask amber, error red, done
+    /// green, working in the provider's accent, idle hollow — and "+n"
+    /// past the cap. With no sessions it is the mark alone, tinted the way
+    /// the glyph styles tint it.
+    ///
+    /// The image stays a template while every session is quiet (or there
+    /// are none) so it follows the menu bar's own colour; any coloured dot
+    /// — or a tint — makes it full colour, and the neutral parts are drawn
+    /// in `labelColor`, which the drawing handler re-resolves for the
+    /// current appearance.
+    static func drawAgents(_ spec: StatusIconSpec) -> NSImage {
+        let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
+        let coloured = spec.sessions.contains { $0.state != .idle }
+        let template = !coloured && tint == nil
+        let imageSize = Self.size(for: spec)
+        let image = NSImage(size: imageSize, flipped: false) { _ in
+            let ink: NSColor = template ? .black : .labelColor
+            let midY = imageSize.height / 2
+            var x = edgeInset
+            let markColor = tint ?? ink
+            drawMark(cap: markColor.withAlphaComponent(0.38), bar: markColor,
+                     center: NSPoint(x: x + agentsMark / 2, y: midY), scale: agentsMark / 18)
+            x += agentsMark
+            if !spec.sessions.isEmpty {
+                x += agentsGap
+                let over = spec.sessions.count > maxSessionDots
+                let shown = over ? maxSessionDots - 1 : spec.sessions.count
+                for session in spec.sessions.prefix(shown) {
+                    let rect = NSRect(x: x, y: midY - sessionDot / 2, width: sessionDot, height: sessionDot)
+                    drawSessionDot(session, phase: spec.phase, rect: rect, ink: ink)
+                    x += sessionDot + sessionDotGap
+                }
+                if over {
+                    x += agentsGap - sessionDotGap
+                    let text = "+\(spec.sessions.count - shown)" as NSString
+                    let attributes: [NSAttributedString.Key: Any] = [.font: overflowFont, .foregroundColor: ink.withAlphaComponent(0.55)]
+                    let height = text.size(withAttributes: attributes).height
+                    text.draw(at: NSPoint(x: x, y: midY - height / 2), withAttributes: attributes)
+                }
+            }
+            return true
+        }
+        image.isTemplate = template
+        image.accessibilityDescription = accessibilityLabel(spec)
+        return image
+    }
+
+    /// One session's dot, drawn by the same routine as the meters' state
+    /// dot: asks and failures breathe with the strip's phase, everything
+    /// else holds still (a working dot is steady — the accent, not the
+    /// motion, is what says it is running).
+    static func drawSessionDot(_ session: SessionDot, phase: Double, rect: NSRect, ink: NSColor) {
+        let color: NSColor?
+        switch session.state {
+        case .idle: color = nil
+        case .working: color = session.accentHex.flatMap(NSColor.init(statusHex:)) ?? .systemTeal
+        case .ask: color = .systemOrange
+        case .error: color = .systemRed
+        case .done: color = .systemGreen
+        }
+        let phase = session.state.breathes ? phase : 0.5
+        drawDot(StatusIconSpec(style: .agents, dot: session.state, phase: phase), rect: rect, color: color, ink: ink)
+    }
+
     static func meterColor(_ meter: StatusMeter, ink: NSColor, template: Bool) -> NSColor {
         switch meter.warning {
         case .red: return template ? ink : .systemRed
@@ -532,6 +652,22 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// "Working · Claude 82 %, Codex 41 % · 2 more" — what VoiceOver reads
     /// and what the button's tooltip says.
     public static func accessibilityLabel(_ spec: StatusIconSpec) -> String {
+        if spec.style == .agents {
+            var parts: [String] = ["JR-Bar"]
+            let words: [(StatusDotState, String, String)] = [
+                (.ask, "needs you", "need you"),
+                (.error, "failed", "failed"),
+                (.working, "working", "working"),
+                (.done, "finished", "finished"),
+                (.idle, "idle", "idle"),
+            ]
+            for (state, one, many) in words {
+                let count = spec.sessions.filter { $0.state == state }.count
+                guard count > 0 else { continue }
+                parts.append(count == 1 ? "1 \(one)" : "\(count) \(many)")
+            }
+            return parts.joined(separator: " · ")
+        }
         guard spec.style.isMeters else { return "JR-Bar" }
         var parts: [String] = ["JR-Bar"]
         switch spec.dot {
@@ -549,8 +685,14 @@ public final class StatusIconRenderer: @unchecked Sendable {
     /// The status item's tooltip: what state the app is in and what the
     /// counts are, then what the dot means, then every provider's figure.
     /// `headline` is the caller's "JR-Bar · Needs input · 1 working · 1
-    /// needs you"; the meters and the dot's line come from the spec.
-    public static func tooltip(_ spec: StatusIconSpec, headline: String) -> String {
+    /// needs you"; the meters and the dot's line come from the spec. For
+    /// the `agents` style the caller passes `sessionLines` — one per live
+    /// session ("docs-sweep · waiting on you 2h 31m · Gemini"), capped at
+    /// the strip's own six.
+    public static func tooltip(_ spec: StatusIconSpec, headline: String, sessionLines: [String] = []) -> String {
+        if spec.style == .agents {
+            return ([headline] + sessionLines.prefix(maxSessionDots)).joined(separator: "\n")
+        }
         guard spec.style.isMeters else { return headline }
         var lines = [headline, spec.dot.meaning]
         if !spec.meters.isEmpty {
@@ -565,8 +707,14 @@ public final class StatusIconRenderer: @unchecked Sendable {
 
     /// A rounded bar tucked under a small notch cap, as in the original glyph.
     static func drawGlyph(cap capColor: NSColor, bar barColor: NSColor, scale: CGFloat) {
+        drawMark(cap: capColor, bar: barColor, center: NSPoint(x: 9, y: 9), scale: scale)
+    }
+
+    /// The same mark centred on `center` at `scale` — the `agents` strip
+    /// draws it in a 14 pt box beside the session dots.
+    static func drawMark(cap capColor: NSColor, bar barColor: NSColor, center: NSPoint, scale: CGFloat) {
         let transform = NSAffineTransform()
-        transform.translateX(by: 9, yBy: 9)
+        transform.translateX(by: center.x, yBy: center.y)
         transform.scale(by: scale)
         transform.translateX(by: -9, yBy: -9)
         transform.concat()

@@ -123,6 +123,9 @@ final class PanelStore {
     // UI state.
     var isOpen = false
     var selectedID: String?
+    /// The selection came from ↑/↓/Tab, not the pointer: the selected row
+    /// gets an extra accent stroke so a keyboard pick reads as a pick.
+    var selectionByKeyboard = false
     var now = Date()
     var localBrightness: Double?
     var toast: String?
@@ -139,9 +142,10 @@ final class PanelStore {
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
     var onQuit: (@MainActor () -> Void)?
     var onClose: (@MainActor () -> Void)?
-    var onOpenSettings: (@MainActor () -> Void)?
+    var onOpenSettings: (@MainActor (SettingsStore.Page?) -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
-    var onOpenUsageCenter: (@MainActor () -> Void)?
+    /// The provider a usage row was clicked for, when it was.
+    var onOpenUsageCenter: (@MainActor (String?) -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
     /// The overflow menu's "Check for Updates…" (Sparkle, through the delegate).
@@ -183,6 +187,7 @@ final class PanelStore {
         animationsArmed = false
         // Nothing is selected until an arrow key says so.
         selectedID = nil
+        selectionByKeyboard = false
         now = Date()
         clock?.invalidate()
         let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -197,6 +202,7 @@ final class PanelStore {
         isOpen = false
         animationsArmed = false
         selectedID = nil
+        selectionByKeyboard = false
         clock?.invalidate()
         clock = nil
     }
@@ -597,6 +603,7 @@ final class PanelStore {
 
     func open(_ row: SessionRow) {
         selectedID = row.id
+        selectionByKeyboard = false
         core.openSession(row.id)
         onClose?()
     }
@@ -773,9 +780,9 @@ final class PanelStore {
         onToggleScreenBar?(screenBarShown)
     }
 
-    func openSettings() {
+    func openSettings(page: SettingsStore.Page? = nil) {
         onClose?()
-        onOpenSettings?()
+        onOpenSettings?(page)
     }
 
     func openHistory() {
@@ -783,9 +790,9 @@ final class PanelStore {
         onOpenHistory?()
     }
 
-    func openUsageCenter() {
+    func openUsageCenter(provider: String? = nil) {
         onClose?()
-        onOpenUsageCenter?()
+        onOpenUsageCenter?(provider)
     }
 
     func openEffects() {
@@ -823,6 +830,7 @@ final class PanelStore {
     func moveSelection(by delta: Int) {
         let rows = rows
         guard !rows.isEmpty else { return }
+        selectionByKeyboard = true
         let current = rows.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : rows.count)
         let next = min(rows.count - 1, max(0, current + delta))
         selectedID = rows[next].id

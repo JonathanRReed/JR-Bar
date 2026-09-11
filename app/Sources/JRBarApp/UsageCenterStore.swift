@@ -92,6 +92,24 @@ final class UsageCenterStore {
     var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     /// Provider → when its `quota_reset` arrived; the card celebrates for ~1.4 s.
     var resetPulses: [String: Date] = [:]
+    /// The panel's per-provider drill ("Open Claude in the Usage Center"):
+    /// the view scrolls this provider's card into view, and `focusPulses`
+    /// flashes its border once on the same 1.6 s clock as `quota_reset`.
+    /// `focusPulses` is also the scroll trigger: re-focusing the same
+    /// provider still moves the marker, where a repeated id would not.
+    var focusProvider: String?
+    var focusPulses: [String: Date] = [:]
+
+    func focus(provider: String?) {
+        guard let provider else { return }
+        focusProvider = provider
+        focusPulses[provider] = Date()
+    }
+
+    func isFocused(_ provider: String) -> Bool {
+        guard let at = focusPulses[provider] else { return false }
+        return now.timeIntervalSince(at) < 1.6
+    }
 
     private(set) var histories: [String: UsageHistory] = [:]
     private(set) var loading: Set<String> = []
@@ -144,6 +162,7 @@ final class UsageCenterStore {
         reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // Expired pulses go away so the overlay is not kept alive for nothing.
         resetPulses = resetPulses.filter { now.timeIntervalSince($0.value) < 3 }
+        focusPulses = focusPulses.filter { now.timeIntervalSince($0.value) < 3 }
     }
 
     /// Watches the daemon's events and connection: a `quota_reset` triggers

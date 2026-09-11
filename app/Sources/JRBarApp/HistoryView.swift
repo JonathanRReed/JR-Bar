@@ -12,6 +12,21 @@ struct HistoryView: View {
                 AwayBanner(summary: away, store: store)
             }
             HistoryFilterBar(store: store)
+            if let error = store.error, !store.rows.isEmpty {
+                // A failed refresh keeps the stale rows and says so in one
+                // line, rather than only in the empty state nobody sees.
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    Text(error).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                    Spacer()
+                    Button("Retry") { store.reload() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 5)
+                .accessibilityElement(children: .combine)
+            }
             Divider()
             if store.rows.isEmpty {
                 HistoryEmptyState(store: store)
@@ -279,7 +294,8 @@ struct HistoryRowView: View {
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.12) : (hovering ? Color.primary.opacity(0.05) : Color.clear))
+                    .fill(selected ? Color.accentColor.opacity(0.12)
+                                   : (hovering && row.session != nil ? Color.primary.opacity(0.05) : Color.clear))
             )
             .padding(.horizontal, 8)
             if !isLast {
@@ -288,7 +304,11 @@ struct HistoryRowView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { store.open(row) }
+        // A row whose session is gone from the daemon has nothing to open.
+        .onTapGesture { if row.session != nil { store.open(row) } }
+        .help(row.session == nil
+              ? "Ended; the session is gone from the daemon so there is nothing to open"
+              : "Open the session")
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.displayLabel) \(row.kindWord) at \(HistoryStore.clock(row.date))")
     }

@@ -34,7 +34,7 @@ at the end so nobody claims them.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| Status item with three icon styles (glyph, glyph + usage ring, glyph + label), tinted by the aggregate, amber pulse during escalation | Ships | Glyph |
+| Status item with six icon styles (session dots, usage meters, meters + percent, glyph, glyph + usage ring, glyph + label), tinted by the aggregate, amber pulse during escalation | Ships | Session dots |
 | Glass panel: asks pinned with Approve / Deny, sessions, usage bars, device chips, brightness, Quiet…, Clear done, keyboard navigation (↑↓ ↩ ⌘↩ ⌘D ⌘Y ⌘U ⌘K ⌘, ⌘Q) | Ships | Click the icon |
 | "Why this light" row with a hover popover (programs per surface, time in state, dimming, brightness settings) | Ships | On |
 | Settings window: General, Agents, Usage, Devices & Screen Bar, Lighting, Notifications & Focus, Remote, Advanced; every control writes through `set_setting`, refused writes shown | Ships | ⌘, |

@@ -3,11 +3,11 @@ import JRBarCore
 import JRBarUI
 import QuartzCore
 
-/// The menu-bar item: a template glyph of the bar under a notch, tinted by
-/// the aggregate agent state, in one of the three `menu_bar_icon_style`
-/// looks (glyph, glyph with a usage ring, glyph with a label). Left click
-/// opens the panel; right click (or Option-click) shows a small utility
-/// menu. Stage-2 escalation pulses the icon amber.
+/// The menu-bar item: the `menu_bar_icon_style` look — a dot per live
+/// session (the default), a meter per provider, or the glyph alone, in a
+/// usage ring, or beside a label. Left click opens the panel; right click
+/// (or Option-click) shows a small utility menu. Stage-2 escalation
+/// pulses the icon amber.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
@@ -31,7 +31,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onOpenControlCenter: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
     /// The style and ring the next `update` draws with.
-    var iconStyle: StatusIconStyle = .meters {
+    var iconStyle: StatusIconStyle = .agents {
         didSet {
             guard iconStyle != oldValue else { return }
             syncBreathing()
@@ -54,6 +54,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             redraw()
         }
     }
+    /// The `agents` style: one dot per live session, in the panel's order.
+    /// An ask or a failure in the list runs the same breathing timer the
+    /// meters' dot does.
+    var sessionDots: [SessionDot] = [] {
+        didSet {
+            guard sessionDots != oldValue else { return }
+            syncBreathing()
+            applyPulseAnimation()
+            redraw()
+        }
+    }
+    /// One tooltip line per session for the `agents` style
+    /// ("docs-sweep · waiting on you 2h 31m · Gemini"), same order.
+    var sessionLines: [String] = [] { didSet { if sessionLines != oldValue { redraw() } } }
 
     private static let pulseKey = "jrbar.escalationPulse"
     /// The breathing clock: two frames a second, only while the dot moves.
@@ -76,7 +90,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         super.init()
 
         if let button = statusItem.button {
-            button.image = renderer.image(for: StatusIconSpec(style: .meters))
+            button.image = renderer.image(for: StatusIconSpec(style: .agents))
             button.imagePosition = .imageOnly
             button.toolTip = "JR-Bar"
             button.target = self
@@ -165,17 +179,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   meters: iconStyle.isMeters ? meters : [],
                                   overflow: iconStyle.isMeters ? meterOverflow : 0,
                                   dot: iconStyle.isMeters ? (isPulsing ? .ask : dotState) : .idle,
+                                  sessions: iconStyle == .agents ? sessionDots : [],
                                   phase: phase)
+        // The meter strip and a non-empty session strip size themselves.
+        let strip = iconStyle.isMeters || (iconStyle == .agents && !sessionDots.isEmpty)
         let label = iconStyle == .glyphLabel ? labelText : nil
         if spec != currentSpec {
             currentSpec = spec
             let image = renderer.image(for: spec)
             if button.image !== image { button.image = image }
             // A template image takes the tint from the button; a coloured
-            // one carries its own. A meter strip is never tinted whole:
-            // the meters carry the only colour that means anything.
-            button.contentTintColor = image.isTemplate && !iconStyle.isMeters ? tint : nil
-            if iconStyle.isMeters {
+            // one carries its own. A strip is never tinted whole:
+            // its dots and meters carry the only colour that means anything.
+            button.contentTintColor = image.isTemplate && !strip ? tint : nil
+            if strip {
                 let width = StatusIconRenderer.size(for: spec).width
                 if width != currentWidth {
                     currentWidth = width
@@ -186,11 +203,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 currentWidth = 0
             }
         }
-        if iconStyle.isMeters {
-            button.toolTip = StatusIconRenderer.tooltip(spec, headline: stateSummary)
+        if iconStyle.isMeters || iconStyle == .agents {
+            button.toolTip = StatusIconRenderer.tooltip(spec, headline: stateSummary,
+                                                        sessionLines: iconStyle == .agents ? sessionLines : [])
             button.setAccessibilityLabel(StatusIconRenderer.accessibilityLabel(spec))
         }
-        if label != currentLabel || (iconStyle.isMeters && button.imagePosition != .imageOnly) {
+        if label != currentLabel || (strip && button.imagePosition != .imageOnly) {
             currentLabel = label
             if let label {
                 button.attributedTitle = NSAttributedString(string: label, attributes: [
@@ -203,9 +221,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             } else {
                 button.title = ""
                 button.imagePosition = .imageOnly
-                // The meter strip sets its own width above; the other
-                // styles are square.
-                if !iconStyle.isMeters { statusItem.length = NSStatusItem.squareLength }
+                // A strip sets its own width above; the square styles are
+                // square.
+                if !strip { statusItem.length = NSStatusItem.squareLength }
             }
         }
     }
@@ -217,17 +235,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private func logFrame(width: CGFloat) {
         guard let rect = anchorRect, let screen = NSScreen.screens.first else { return }
         let top = screen.frame.maxY - rect.maxY
-        print(String(format: "status item: %@ %d meters (+%d) dot=%@ x=%.0f y=%.0f w=%.0f h=%.0f top=%.0f (screencapture -R%.0f,%.0f,%.0f,%.0f)",
-                     iconStyle.rawValue, meters.count, meterOverflow, dotState.rawValue,
+        print(String(format: "status item: %@ %d meters (+%d) %d sessions dot=%@ x=%.0f y=%.0f w=%.0f h=%.0f top=%.0f (screencapture -R%.0f,%.0f,%.0f,%.0f)",
+                     iconStyle.rawValue, meters.count, meterOverflow, sessionDots.count, dotState.rawValue,
                      rect.minX, rect.minY, width, rect.height, top, rect.minX, top, width, rect.height))
     }
 
-    /// The 2 Hz clock behind the breathing dot: it runs only while the dot
-    /// actually moves (working or an open ask) and only in the meter
-    /// styles, so a quiet menu bar costs nothing. Reduce Motion holds the
-    /// dot at its brightest instead of breathing.
+    /// The 2 Hz clock behind the breathing dots: it runs only while a dot
+    /// actually moves (a working or open-ask dot in the meter styles, an
+    /// ask or failure in the session strip), so a quiet menu bar costs
+    /// nothing. Reduce Motion holds the dot at its brightest instead of
+    /// breathing.
     private func syncBreathing() {
-        let wanted = iconStyle.isMeters && dotState.animates && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let moving = (iconStyle.isMeters && dotState.animates)
+            || (iconStyle == .agents && sessionDots.contains { $0.state.breathes })
+        let wanted = moving && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if wanted, breathing == nil {
             phase = 0.5
             let timer = Timer(timeInterval: Self.breathingInterval, repeats: true) { [weak self] _ in
@@ -256,14 +277,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     /// The whole-item fade is for the glyph styles, which have nowhere else
-    /// to put the escalation. In the meter styles the state dot is already
-    /// pulsing amber, and fading the strip on top of that only makes the
-    /// meters unreadable — so the layer animation is left off there.
+    /// to put the escalation. In the strips a dot is already pulsing amber,
+    /// and fading the strip on top of that only makes it unreadable — so
+    /// the layer animation is left off there.
     private func applyPulseAnimation() {
         guard let button = statusItem.button else { return }
         button.wantsLayer = true
         button.layer?.removeAnimation(forKey: Self.pulseKey)
-        if isPulsing, !iconStyle.isMeters, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        let dotsPulse = iconStyle == .agents && !sessionDots.isEmpty
+        if isPulsing, !iconStyle.isMeters, !dotsPulse,
+           !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let pulse = CABasicAnimation(keyPath: "opacity")
             pulse.fromValue = 1.0
             pulse.toValue = 0.3
@@ -341,11 +364,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// `live` is the item's own meters when the core has answered, so a
     /// design review is of the reader's real providers rather than of a
     /// sample nobody has; empty falls back to the sample.
-    static func renderStyles(to directory: String, live: [StatusMeter] = []) {
+    static func renderStyles(to directory: String, live: [StatusMeter] = [], liveDots: [SessionDot] = []) {
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
         let scale: CGFloat = 8
         let sample = live.isEmpty ? StatusItemController.sampleMeters : live
+        let dots = liveDots.isEmpty ? StatusItemController.sampleSessionDots : liveDots
+        let manyDots = dots + [
+            SessionDot(id: "extra-1", state: .working, accentHex: "#34C759"),
+            SessionDot(id: "extra-2", state: .idle),
+            SessionDot(id: "extra-3", state: .done),
+        ]
         let samples: [(String, StatusIconSpec, String?)] = [
+            ("agents", StatusIconSpec(style: .agents, sessions: dots, phase: 0.4), nil),
+            ("agents_empty", StatusIconSpec(style: .agents), nil),
+            ("agents_overflow", StatusIconSpec(style: .agents, sessions: manyDots, phase: 0.4), nil),
             ("meters_idle", StatusIconSpec(style: .meters, meters: sample, dot: .idle), nil),
             ("meters_working", StatusIconSpec(style: .meters, tintHex: "#00E5FF", meters: sample, dot: .working, phase: 0.5), nil),
             ("meters_ask", StatusIconSpec(style: .meters, meters: sample, dot: .ask, phase: 0.4), nil),
@@ -404,6 +436,18 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             StatusMeter(id: "codex", name: "Codex", glyph: .symbol("chevron.left.forwardslash.chevron.right"), fraction: 0.83),
             StatusMeter(id: "gemini", name: "Gemini", glyph: .symbol("sparkle"), fraction: 0.97),
             StatusMeter(id: "devin", name: "Devin", glyph: .symbol("hammer.fill"), fraction: 0.41, approximate: true),
+        ]
+    }
+
+    /// Five believable sessions for the `agents` previews, in the panel's
+    /// order (asks first, done last), used whenever the daemon has none.
+    static var sampleSessionDots: [SessionDot] {
+        [
+            SessionDot(id: "s-ask", state: .ask),
+            SessionDot(id: "s-claude", state: .working, accentHex: "#D97757"),
+            SessionDot(id: "s-codex", state: .working, accentHex: "#2B8FFF"),
+            SessionDot(id: "s-done", state: .done),
+            SessionDot(id: "s-idle", state: .idle),
         ]
     }
 

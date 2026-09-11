@@ -6,6 +6,9 @@ import SwiftUI
 final class HistoryWindowController: NSObject, NSWindowDelegate {
     private let store: HistoryStore
     private var window: NSWindow?
+    /// ↑/↓ and Return for the row list; scoped to this window so a stray
+    /// key in another window never moves the selection.
+    private var keyMonitor: Any?
 
     init(store: HistoryStore) {
         self.store = store
@@ -18,6 +21,25 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
         store.windowDidOpen()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+        installKeyMonitor()
+    }
+
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            // Typing in the search field keeps its arrows and Return.
+            if event.window?.firstResponder is NSTextView { return event }
+            switch event.keyCode {
+            case 125: self.store.moveSelection(by: 1); return nil   // Down
+            case 126: self.store.moveSelection(by: -1); return nil  // Up
+            case 36, 76:                                            // Return / keypad Enter
+                guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else { return event }
+                self.store.openSelected()
+                return nil
+            default: return event
+            }
+        }
     }
 
     func toggle() {

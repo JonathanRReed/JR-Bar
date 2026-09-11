@@ -111,6 +111,27 @@ final class HistoryStore {
         core.openSession(session)
     }
 
+    // MARK: Keyboard
+
+    /// The rows in the order the window shows them (days, newest first).
+    var displayed: [CoreHistoryRow] { days.flatMap(\.rows) }
+
+    /// ↑/↓ move the selection through the displayed rows.
+    func moveSelection(by delta: Int) {
+        let rows = displayed
+        guard !rows.isEmpty else { return }
+        let current = rows.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : rows.count)
+        let next = min(rows.count - 1, max(0, current + delta))
+        selectedID = rows[next].id
+    }
+
+    /// Return opens the selected row; rows with no live session (the run
+    /// is gone from the daemon) have nothing to open.
+    func openSelected() {
+        guard let row = displayed.first(where: { $0.id == selectedID }) else { return }
+        open(row)
+    }
+
     func clearCompleted() {
         core.clearCompleted()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in

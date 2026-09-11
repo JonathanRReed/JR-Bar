@@ -608,10 +608,25 @@ struct SessionRowView: View {
             }
         }
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: row.activity)
+        // A keyboard pick gets an accent stroke on top of the fill; a
+        // pointer pick keeps the fill alone.
+        .overlay {
+            if store.selectionByKeyboard, store.selectedID == row.id {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .inset(by: 1)
+                    .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                    .padding(.horizontal, 6)
+                    .allowsHitTesting(false)
+            }
+        }
         .help(row.help(now: store.now) ?? "")
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.label), \(row.style.name), \(row.activity.word)")
+        .accessibilityLabel([
+            row.label, row.style.name, row.activity.word,
+            PanelStore.elapsed(since: row.since, now: store.now) ?? "just started",
+            row.cwdTail.map { "in \($0)" } ?? "no folder on record",
+        ].joined(separator: ", "))
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -697,6 +712,12 @@ struct AskRow: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.orange.opacity(0.22), lineWidth: 0.5)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .inset(by: 1)
+                .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                .opacity(store.selectionByKeyboard && store.selectedID == row.id ? 1 : 0)
+        )
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onTapGesture { store.open(row) }
@@ -773,6 +794,7 @@ struct UsageSection: View {
 struct UsageRow: View {
     let usage: CoreProviderUsage
     @Bindable var store: PanelStore
+    @ViewState private var hovering = false
 
     /// The percent column: `~100%` fits with room to spare.
     static let percentWidth: CGFloat = 46
@@ -823,8 +845,17 @@ struct UsageRow: View {
         }
         .padding(.horizontal, 8)
         .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(hovering ? 0.05 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { store.openUsageCenter(provider: usage.id) }
+        .help("Open \(style.name) in the Usage Center")
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: primary?.usedPct)
         .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line; a blank keeps the row height.
@@ -977,7 +1008,8 @@ struct DevicesSection: View {
         default: nil
         }
         let pairHelp = { (device: CoreDevice?, fallback: String) in
-            [device.map { self.deviceHelp($0) } ?? fallback, pairNote].compactMap { $0 }.joined(separator: " · ")
+            ([device.map { self.deviceHelp($0) } ?? fallback, pairNote].compactMap { $0 } + ["click for Devices settings"])
+                .joined(separator: " · ")
         }
         result.append(("pro", "Pro", pro?.isPresent ?? false, pairHelp(pro, "SidePulse Pro: not reported")))
         result.append(("dot", "Dot", dot?.isPresent ?? false, pairHelp(dot, "PulseDot: not reported")))
@@ -1003,7 +1035,14 @@ struct DevicesSection: View {
                     }
                     DeviceChip(name: chip.name, present: chip.present, dimmed: !store.isLive && chip.id != "screen_bar")
                         .help(chip.help)
-                        .onTapGesture { if chip.id == "screen_bar" { store.toggleScreenBar() } }
+                        .onTapGesture {
+                            if chip.id == "screen_bar" {
+                                store.toggleScreenBar()
+                            } else {
+                                // Pro and Dot chips open their page.
+                                store.openSettings(page: .devices)
+                            }
+                        }
                 }
                 Spacer()
             }

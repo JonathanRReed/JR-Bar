@@ -16,14 +16,35 @@ struct UsageCenterView: View {
                 UsageEmptyState(symbol: "chart.bar", title: "No usage yet",
                                 text: "No provider has reported a quota window. Hooks are installed from Settings › Agents.")
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 14) {
-                        statusLine
-                        ForEach(store.providers) { provider in
-                            ProviderUsageCard(provider: provider, store: store)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 14) {
+                            statusLine
+                            ForEach(store.providers) { provider in
+                                ProviderUsageCard(provider: provider, store: store)
+                                    .id(provider.id)
+                            }
+                        }
+                        .padding(18)
+                    }
+                    // The panel's per-provider drill: scroll the card into
+                    // view and flash it. `focusPulses` is the trigger so a
+                    // repeat click on the same provider still scrolls.
+                    .onChange(of: store.focusPulses) {
+                        guard let target = store.focusProvider else { return }
+                        if store.reduceMotion {
+                            proxy.scrollTo(target)
+                        } else {
+                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(target) }
                         }
                     }
-                    .padding(18)
+                    // A focus set before the window existed (panel drill
+                    // opening the Usage Center for the first time) still
+                    // scrolls, once the cards are laid out.
+                    .onAppear {
+                        guard let target = store.focusProvider else { return }
+                        DispatchQueue.main.async { proxy.scrollTo(target) }
+                    }
                 }
             }
         }
@@ -121,6 +142,10 @@ struct ProviderUsageCard: View {
     private var style: ProviderStyle { ProviderStyle.style(for: provider.id, document: store.document) }
     private var history: UsageHistory? { store.history(for: provider.id) }
     private var celebrating: Bool { store.isCelebrating(provider.id) }
+    /// The panel drilled straight here: the same accent flash as
+    /// `quota_reset`, without the "Window reset" badge.
+    private var focused: Bool { store.isFocused(provider.id) }
+    private var flashing: Bool { celebrating || focused }
     private var primary: CoreUsageWindow? { UsageCenterStore.primaryWindow(of: provider) }
 
     var body: some View {
@@ -152,13 +177,14 @@ struct ProviderUsageCard: View {
         }
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(celebrating ? style.accent.opacity(0.7) : Color.primary.opacity(0.07), lineWidth: celebrating ? 1.5 : 0.5)
+                .strokeBorder(flashing ? style.accent.opacity(0.7) : Color.primary.opacity(0.07), lineWidth: flashing ? 1.5 : 0.5)
         }
         .background {
-            // The quota_reset flourish: a brief wash of the accent that fades out.
+            // The quota_reset / focus flourish: a brief wash of the accent
+            // that fades out.
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(style.accent.opacity(celebrating ? 0.10 : 0))
-                .blur(radius: celebrating ? 0 : 8)
+                .fill(style.accent.opacity(flashing ? 0.10 : 0))
+                .blur(radius: flashing ? 0 : 8)
         }
         .overlay(alignment: .topTrailing) {
             if celebrating {
@@ -172,7 +198,7 @@ struct ProviderUsageCard: View {
                     .transition(store.reduceMotion ? .opacity : .scale(scale: 0.8).combined(with: .opacity))
             }
         }
-        .animation(store.reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.45, dampingFraction: 0.75), value: celebrating)
+        .animation(store.reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.45, dampingFraction: 0.75), value: flashing)
         .accessibilityElement(children: .contain)
     }
 
@@ -496,7 +522,10 @@ struct UsageChart: View {
     let metric: UsageCenterStore.Metric
     let accent: Color
 
+    @ViewState private var selected: Date?
+
     private var hourly: Bool { range == .week && !history.hours.isEmpty }
+    private var unit: Calendar.Component { hourly ? .hour : .day }
 
     private var points: [UsagePoint] {
         if hourly {
@@ -531,15 +560,88 @@ struct UsageChart: View {
         }
     }
 
-    var body: some View {
-        Chart(points) { point in
-            BarMark(
-                x: .value("Time", point.date, unit: hourly ? .hour : .day),
-                y: .value(metric == .tokens ? "Tokens" : "Cost", point.value)
-            )
-            .foregroundStyle(by: .value("Kind", point.kind))
-            .cornerRadius(hourly ? 1 : 2)
+    /// The bucket under the cursor: "Tue 9 Sep" for a daily chart,
+    /// "Tue 14:00" for an hourly one.
+    private static let dayTitle: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE d MMM"
+        return formatter
+    }()
+
+    private static let hourTitle: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE HH:00"
+        return formatter
+    }()
+
+    /// The bucket the selection landed on, matched at the chart's own
+    /// granularity (an hour's bar and a day's bar both exist for Tuesday).
+    private func bucket(at date: Date) -> (input: Int, output: Int, cache: Int, cost: Double)? {
+        let calendar = Calendar.current
+        if hourly {
+            return history.hours.first { hour in
+                hour.date.map { calendar.isDate($0, equalTo: date, toGranularity: .hour) } ?? false
+            }.map { ($0.tokensIn, $0.tokensOut, $0.cacheRead, $0.costUsd) }
         }
+        return history.days.first { day in
+            day.day.map { calendar.isDate($0, equalTo: date, toGranularity: .day) } ?? false
+        }.map { ($0.tokensIn, $0.tokensOut, $0.cacheRead, $0.costUsd) }
+    }
+
+    @ViewBuilder
+    private func annotation(for date: Date) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text((hourly ? Self.hourTitle : Self.dayTitle).string(from: date))
+                .font(.caption.weight(.semibold))
+            if let bucket = bucket(at: date) {
+                if metric == .tokens {
+                    line("Input", UsageFormat.tokens(bucket.input))
+                    line("Output", UsageFormat.tokens(bucket.output))
+                    line("Cache reads", UsageFormat.tokens(bucket.cache))
+                    line("Total", UsageFormat.tokens(bucket.input + bucket.output + bucket.cache), bold: true)
+                } else {
+                    line("Cost", UsageFormat.cost(bucket.cost, currency: history.pricing?.currency ?? "USD"), bold: true)
+                }
+            }
+        }
+        .font(.caption2)
+        .monospacedDigit()
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func line(_ name: String, _ value: String, bold: Bool = false) -> some View {
+        HStack {
+            Text(name).foregroundStyle(.secondary)
+            Spacer(minLength: 14)
+            Text(value).fontWeight(bold ? .semibold : .regular)
+        }
+    }
+
+    var body: some View {
+        Chart {
+            ForEach(points) { point in
+                BarMark(
+                    x: .value("Time", point.date, unit: hourly ? .hour : .day),
+                    y: .value(metric == .tokens ? "Tokens" : "Cost", point.value)
+                )
+                .foregroundStyle(by: .value("Kind", point.kind))
+                .cornerRadius(hourly ? 1 : 2)
+            }
+            // Hover a bucket: a rule at the bucket's start and a card with
+            // its figures. No selection, no overlay. The rule is drawn,
+            // never animated — nothing to gate on Reduce Motion.
+            if let selected {
+                RuleMark(x: .value("Selected", selected, unit: unit))
+                    .foregroundStyle(.secondary.opacity(0.4))
+                    .lineStyle(StrokeStyle(lineWidth: 1))
+                    .annotation(position: .top, overflowResolution: .init(x: .fit, y: .disabled)) {
+                        annotation(for: selected)
+                    }
+            }
+        }
+        .chartXSelection(value: $selected)
         .chartForegroundStyleScale(scale)
         .chartLegend(position: .top, alignment: .leading, spacing: 6)
         .chartXAxis {
