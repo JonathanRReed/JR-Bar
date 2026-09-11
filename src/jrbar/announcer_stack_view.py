@@ -38,6 +38,7 @@ from .announcer_stack import (
     AnnouncerStackVisibility,
 )
 from .answer_in_place import AnswerActionKind, AnswerControlPlan
+from .draw_guard import guard_draw
 from .window_presentation import desktop_takeover_suppressed, present_window
 
 _PILL_HEIGHT = 22.0
@@ -89,6 +90,7 @@ class _CollapsedAnnouncerView(NSView):
         if callable(handler):
             handler()
 
+    @guard_draw
     def drawRect_(self, _rect) -> None:
         bounds = self.bounds()
         path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
@@ -120,6 +122,7 @@ class _ExpandedAnnouncerView(NSView):
     def acceptsFirstResponder(self) -> bool:
         return True
 
+    @guard_draw
     def drawRect_(self, _rect) -> None:
         bounds = self.bounds()
         path = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
@@ -183,6 +186,7 @@ class _AnnouncerButton(NSButton):
                 return
         objc.super(_AnnouncerButton, self).keyDown_(event)
 
+    @guard_draw
     def drawRect_(self, rect) -> None:
         objc.super(_AnnouncerButton, self).drawRect_(rect)
         window = self.window()

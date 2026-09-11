@@ -208,55 +208,76 @@ class CreatorMicroOutputService:
                         retry_at = time.monotonic() + retry_delay
                         retry_delay = min(10.0, retry_delay * 2)
                         continue
-                with self._condition:
-                    if self._pending is None and not self._closed:
-                        self._condition.wait(timeout=0.05 if self._input_callback else 0.5)
-                    if self._closed:
+                try:
+                    with self._condition:
+                        if self._pending is None and not self._closed:
+                            self._condition.wait(timeout=0.05 if self._input_callback else 0.5)
+                        if self._closed:
+                            return
+                        pending, self._pending = self._pending, None
+                        self._busy = pending is not None
+                    failed = False
+                    if pending is not None:
+                        mode, signal, frame = pending
+                        state = creator_semantic_state(mode, signal=signal)
+                        output = (state, frame)
+                        if output != last_output or time.monotonic() - last_write_at >= 1.0:
+                            methods = adapter.capabilities().methods
+                            preview = "lights.preview" in methods and frame is not None and not frame.slots
+                            if preview:
+                                result = adapter.apply_preview(frame)
+                            elif "v.oai.thstatus" in methods:
+                                result = adapter.apply(state, frame.params()) if frame is not None else adapter.apply(state)
+                            else:
+                                self._publish(False, "per_key_output_unsupported")
+                                return
+                            self._publish(result.code == "applied",
+                                          "aggregate_preview" if preview and result.code == "applied" else result.code,
+                                          result.detail)
+                            if result.code not in {"applied", "timeout", "transport_unavailable", "backoff"}:
+                                return
+                            failed = result.code != "applied"
+                            if not failed:
+                                last_output, last_write_at = output, time.monotonic()
+                    # Poll even with actions disabled: this detects competing owners
+                    # and disconnects. Never replay notifications after reconnect.
+                    inputs = adapter.poll_inputs() if not failed else []
+                    if adapter.conflict.active:
+                        self._publish(False, "device_conflict")
                         return
-                    pending, self._pending = self._pending, None
-                    self._busy = pending is not None
-                failed = False
-                if pending is not None:
-                    mode, signal, frame = pending
-                    state = creator_semantic_state(mode, signal=signal)
-                    output = (state, frame)
-                    if output != last_output or time.monotonic() - last_write_at >= 1.0:
-                        methods = adapter.capabilities().methods
-                        preview = "lights.preview" in methods and frame is not None and not frame.slots
-                        if preview:
-                            result = adapter.apply_preview(frame)
-                        elif "v.oai.thstatus" in methods:
-                            result = adapter.apply(state, frame.params()) if frame is not None else adapter.apply(state)
-                        else:
-                            self._publish(False, "per_key_output_unsupported")
-                            return
-                        self._publish(result.code == "applied",
-                                      "aggregate_preview" if preview and result.code == "applied" else result.code,
-                                      result.detail)
-                        if result.code not in {"applied", "timeout", "transport_unavailable", "backoff"}:
-                            return
-                        failed = result.code != "applied"
-                        if not failed:
-                            last_output, last_write_at = output, time.monotonic()
-                # Poll even with actions disabled: this detects competing owners
-                # and disconnects. Never replay notifications after reconnect.
-                inputs = adapter.poll_inputs() if not failed else []
-                if adapter.conflict.active:
-                    self._publish(False, "device_conflict")
-                    return
-                failed = failed or not adapter.connected
-                if not failed and inputs and self._input_callback is not None:
-                    self._input_callback(inputs)
-                with self._condition:
-                    self._busy = False
-                    self._condition.notify_all()
-                if failed:
-                    adapter.close()
-                    adapter = None
+                    failed = failed or not adapter.connected
+                    if not failed and inputs and self._input_callback is not None:
+                        self._input_callback(inputs)
+                    with self._condition:
+                        self._busy = False
+                        self._condition.notify_all()
+                    if failed:
+                        adapter.close()
+                        adapter = None
+                        if self._input_reset_callback is not None:
+                            self._input_reset_callback()
+                        self._publish(False, "reconnecting")
+                        retry_at = time.monotonic() + retry_delay
+                except Exception as error:
+                    # One bad packet or a bug in a poll used to fall through
+                    # to the outer except, which closed the service for good:
+                    # deck I/O dead until the daemon restarted. An unexpected
+                    # failure is a device failure -- drop the adapter and take
+                    # the same reconnect path a disconnect would.
+                    with self._condition:
+                        self._busy = False
+                        self._condition.notify_all()
+                    if adapter is not None:
+                        try:
+                            adapter.close()
+                        except Exception:
+                            pass
+                        adapter = None
                     if self._input_reset_callback is not None:
                         self._input_reset_callback()
-                    self._publish(False, "reconnecting")
+                    self._publish(False, "reconnecting", f"{type(error).__name__}: {error}")
                     retry_at = time.monotonic() + retry_delay
+                    retry_delay = min(10.0, retry_delay * 2)
         except Exception:
             self._publish(False, "transport_unavailable")
         finally:

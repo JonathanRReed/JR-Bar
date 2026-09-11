@@ -239,6 +239,61 @@ def test_output_service_reports_unsupported_firmware_without_applying():
     assert receipts[-1].reason == "unsupported_firmware"
 
 
+def test_output_service_recovers_from_an_unexpected_poll_failure():
+    """A bug in a poll or one malformed packet used to kill deck I/O
+    until the daemon restarted: the worker's outer except latched
+    ``_closed`` and the service could never start again. An unexpected
+    failure is a device failure -- the adapter closes, the owner is told,
+    and the loop reconnects on the same backoff a disconnect takes."""
+    receipts, builds = [], []
+    repolled = threading.Event()
+
+    class Adapter:
+        def __init__(self):
+            self.conflict = SimpleNamespace(active=False)
+            self.connected = True
+            self.polls = 0
+
+        def connect(self):
+            return SimpleNamespace(code="connected", detail="")
+
+        def negotiate_capabilities(self):
+            return SimpleNamespace(code="capabilities_negotiated", detail="")
+
+        def capabilities(self):
+            return SimpleNamespace(methods=frozenset({"v.oai.thstatus"}))
+
+        def apply(self, _state):
+            return SimpleNamespace(code="applied", detail="")
+
+        def poll_inputs(self):
+            self.polls += 1
+            if len(builds) == 1:
+                raise RuntimeError("bad packet")
+            repolled.set()
+            return []
+
+        def close(self):
+            self.connected = False
+
+    def factory():
+        adapter = Adapter()
+        builds.append(adapter)
+        return adapter
+
+    service = CreatorMicroOutputService(adapter_factory=factory, callback=receipts.append)
+    service.start()
+    try:
+        assert repolled.wait(4.0)
+    finally:
+        service.close()
+    assert len(builds) == 2
+    assert any(receipt.reason == "reconnecting" for receipt in receipts)
+    # The replacement adapter went through a full live loop -- connect,
+    # negotiate, poll -- not just a retry attempt that died again.
+    assert builds[1].polls > 0
+
+
 def test_input_is_delivered_while_output_is_idle_on_the_same_transport_owner():
     from collections import deque
 

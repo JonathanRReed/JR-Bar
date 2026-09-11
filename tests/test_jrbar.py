@@ -3955,6 +3955,35 @@ for (const event of [
 
             self.assertEqual(candidates, [])
 
+    def test_device_discovery_rejects_leds_led_on_unnamed_volume(self) -> None:
+        """An arbitrary SD card carrying an LEDS.LED file is not a
+        SidePulse device; without a known mount name or the firmware's
+        own STATUS.TXT the app must not claim it and write to it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mount_root = Path(tmp)
+            device = mount_root / "USB Drive"
+            device.mkdir()
+            (device / "LEDS.LED").write_text("off")
+
+            candidates = discover_devices(mount_root=mount_root)
+
+            self.assertEqual(candidates, [])
+
+    def test_device_discovery_accepts_firmware_marker_on_renamed_volume(self) -> None:
+        """The volume label is the owner's to change; STATUS.TXT is the
+        firmware's self-identification. A renamed strip still mounts."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mount_root = Path(tmp)
+            device = mount_root / "BACKUP-STK"
+            device.mkdir()
+            (device / "LEDS.LED").write_text("off")
+            (device / "STATUS.TXT").write_text("serial SPP-000067\nuptime_ms 1\n")
+
+            candidates = discover_devices(mount_root=mount_root)
+
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0].target, device / "LEDS.LED")
+
     def test_device_discovery_skips_mount_io_errors(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             mount_root = Path(tmp)

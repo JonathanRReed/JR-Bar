@@ -9624,6 +9624,11 @@ class StatusBarController(NSObject):
                 f"{dead.record.provider} {dead.record.session_id[:8]} "
                 f"pid={dead.record.pid} reason={dead.reason}"
             )
+        if getattr(result, "failed_sends", 0):
+            log_status_bar(
+                f"liveness: {result.failed_sends} end event write(s) failed; "
+                "sessions still looking live will be re-ended"
+            )
         return bool(result.ended_sessions)
 
     @objc.IBAction

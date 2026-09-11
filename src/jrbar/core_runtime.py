@@ -87,6 +87,23 @@ DECK_INSPECTION_TTL_SECONDS: Final = 120.0
 DECK_SETUP_TIMEOUT_SECONDS: Final = 60.0
 DECK_APPROVE_TIMEOUT_SECONDS: Final = 15.0
 DECK_INTEGRATION_TTL_SECONDS: Final = 2.0
+# Display kinds a live claim arms for a bounded window only. The lights
+# document reads the kind the last sync recorded; when the write path
+# misses, that record survives the claim by hours -- a dead quota blink
+# reported itself as "capacity" long after its window closed. A recorded
+# kind past its own deadline cannot still be playing, so the why falls
+# back to the glance.
+_TRANSIENT_KIND_DEADLINE: Final = {
+    "quota_alert": "quota_blink_until",
+    "reset_celebration": "quota_reset_celebration_until",
+    "connection_notice": "connection_notice_until",
+    "reminders": "reminders_glow_until",
+    "calendar": "calendar_glow_until",
+    "completion": "completion_sweep_until",
+    "all_clear": "all_clear_until",
+    "peek": "peek_until",
+    "signal_test": "test_signal_until",
+}
 LEGACY_WINDOWS: Final = {
     "settings": "show_settings_window",
     "setup": "show_setup_window",
@@ -3265,8 +3282,22 @@ def build_headless_controller_class() -> type:
                 previewing = preview is not None and device.device_id in preview.device_ids
                 if previewing:
                     program, anchor = preview.program, preview.started_epoch
+                # The recorded display kind is only rewritten on a
+                # successful sync; a missed write leaves it frozen at a
+                # long-finished claim (a quota alert reported "capacity"
+                # for three hours after its blink had ended). Transient
+                # claims are time-windowed, so a recorded kind whose
+                # window passed cannot be what the strip is still
+                # playing -- report the glance instead of the corpse.
+                recorded_kind = display_kinds.get(device.device_id)
+                deadline_field = _TRANSIENT_KIND_DEADLINE.get(recorded_kind or "")
+                if deadline_field is not None and (
+                    time.monotonic()
+                    > float(getattr(self, deadline_field, 0.0) or 0.0)
+                ):
+                    recorded_kind = None
                 facts = self._core_light_facts(
-                    device, preview=previewing, display_kind=display_kinds.get(device.device_id)
+                    device, preview=previewing, display_kind=recorded_kind
                 )
                 surface_why = light_why(glance, facts)
                 name = "dot" if leds == 2 else ("hardware" if first_strip else f"hardware:{device.device_id}")

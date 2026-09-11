@@ -11,6 +11,7 @@ from jrbar.operator_state import (
     MAX_CANONICAL_WORKS,
     MAX_CLOCK_DELTA_DIVERGENCE_SECONDS,
     MAX_EVENTS_PER_REDUCTION,
+    REQUEST_LIVE_GRACE_SECONDS,
     TIMING_RECOVERY_CONFIRMATIONS,
     TIMING_UNCERTAINTY_LEASE_SECONDS,
     AcknowledgementEligibility,
@@ -340,6 +341,110 @@ def test_request_opens_and_only_newer_explicit_provider_fact_resolves_it() -> No
         AcknowledgementEligibility.RESOLVED
     )
     assert _event_kinds(resolved) == (TransitionKind.REQUEST_RESOLVED,)
+
+
+def test_terminal_work_resolves_its_open_requests() -> None:
+    """An ask whose session ended is not actionable -- nobody is home to
+    answer it. A permission prompt orphaned by a swept process must not
+    keep claiming 'needs you' until the day-long work retirement runs."""
+    state, _, work_key, request_key = _initial_active_request()
+    assert state.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
+
+    completed_mark = _watermark("event:done", epoch=1_800_000_020.0)
+    result = reduce_operator_state(
+        state,
+        _batch(
+            watermark=completed_mark,
+            work_facts=(
+                _work_fact(
+                    WorkLifecycle.COMPLETED,
+                    key=work_key,
+                    watermark=completed_mark,
+                ),
+            ),
+        ),
+        clock=_clock(wall=1_800_000_020.0, monotonic=120.0),
+    )
+    request = result.state.requests[0]
+    assert request.phase is RequestPhase.RESOLVED
+    assert request.acknowledgement_eligibility is AcknowledgementEligibility.RESOLVED
+    assert TransitionKind.COMPLETED in _event_kinds(result)
+    assert TransitionKind.REQUEST_RESOLVED in _event_kinds(result)
+
+
+def test_request_on_a_completed_work_never_goes_live() -> None:
+    """Same rule, other order: a request fact arriving after its work
+    already closed must not resurrect a 'needs you' claim."""
+    work_key = _work_key()
+    request_key = _request_key(work_key=work_key)
+    done = _watermark("event:done", epoch=1_800_000_010.0)
+    late_mark = _watermark("event:late-ask", epoch=1_800_000_011.0)
+    state = reduce_operator_state(
+        empty_operator_state(),
+        _batch(
+            watermark=done,
+            work_facts=(
+                _work_fact(
+                    WorkLifecycle.COMPLETED, key=work_key, watermark=done
+                ),
+            ),
+        ),
+        clock=_clock(wall=1_800_000_010.0, monotonic=110.0),
+    ).state
+
+    late = reduce_operator_state(
+        state,
+        _batch(
+            watermark=late_mark,
+            request_facts=(
+                _request_fact(key=request_key, watermark=late_mark),
+            ),
+        ),
+        clock=_clock(wall=1_800_000_011.0, monotonic=111.0),
+    )
+    # The request truth exists -- the provider did report it -- but the
+    # phase is resolved, so nothing actionable follows from it.
+    assert late.state.requests[0].phase is RequestPhase.RESOLVED
+
+
+def test_ask_past_the_presence_horizon_is_held_not_live() -> None:
+    """A silent source cannot keep 'needs you' lit forever. Past the same
+    hour every row and light already stops trusting, the ask demotes to
+    STALE_HOLD -- held, not resolved, so a real session re-observed gets
+    its claim back on the next batch."""
+    state, _, _, request_key = _initial_active_request()
+    request = state.requests[0]
+    assert request.phase is RequestPhase.LIVE_UNACKNOWLEDGED
+
+    horizon = request.opened_at_epoch + REQUEST_LIVE_GRACE_SECONDS + 10.0
+    mark = _watermark("event:age", epoch=horizon)
+    aged = reduce_operator_state(
+        state,
+        _batch(watermark=mark),
+        clock=_clock(wall=horizon, monotonic=horizon - 1_800_000_000.0 + 100.0),
+    )
+    aged_request = aged.state.requests[0]
+    assert aged_request.phase is RequestPhase.STALE_HOLD
+    assert aged_request.acknowledgement_eligibility is (
+        AcknowledgementEligibility.STALE_HOLD
+    )
+
+    # A genuinely live session that asks again is not punished: fresh
+    # facts about the same request re-promote it.
+    still_live = reduce_operator_state(
+        aged.state,
+        _batch(
+            watermark=_watermark("event:still", epoch=horizon + 5.0),
+            request_facts=(
+                _request_fact(
+                    key=request_key,
+                    watermark=_watermark("event:still", epoch=horizon + 5.0),
+                ),
+            ),
+        ),
+        clock=_clock(wall=horizon + 5.0, monotonic=horizon - 1_800_000_000.0 + 105.0),
+    )
+    assert still_live.state.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
 
 
 def test_acknowledgement_is_reversible_presentation_state_and_never_an_edge() -> None:
