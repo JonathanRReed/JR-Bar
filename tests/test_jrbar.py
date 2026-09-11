@@ -17636,8 +17636,14 @@ class GlowDialTests(unittest.TestCase):
         from jrbar.settings import AgentMonitorSettings
 
         settings = AgentMonitorSettings()
-        # No devices yet: setter is a safe no-op, getter defaults 0.
+        # An unremembered device gets a row (apply_calibration must persist
+        # the glow it was asked to write for a fresh strip), clamped to the
+        # glow ceiling, and the getter reads it back.
         settings = settings.with_device_resting_glow("nope", 0.1)
+        self.assertEqual(settings.resting_glow_for_device("nope"), 0.1)
+        settings = settings.with_device_resting_glow("nope", 9.9)
+        self.assertEqual(settings.resting_glow_for_device("nope"), 0.35)
+        settings = settings.with_device_resting_glow("nope", -1.0)
         self.assertEqual(settings.resting_glow_for_device("nope"), 0.0)
 
 

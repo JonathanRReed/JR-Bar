@@ -2148,6 +2148,11 @@ class StatusBarController(NSObject):
         self._installed_agent_inventory_result = None
         self._hardware_write_active = False
         self._hardware_write_generation = 1
+        # Monotonic stamp of the liveness worker's last sweep; a refresh
+        # landing right behind it skips its own reaping pass. Stays None
+        # where no worker runs (tests, the legacy app's first ticks), so
+        # refresh keeps sweeping there.
+        self._liveness_worker_sweep_at: float | None = None
         self._hardware_device_keys: frozenset[str] = frozenset()
         (
             self._runtime_worker_registry,
@@ -3124,7 +3129,12 @@ class StatusBarController(NSObject):
         self._refresh_dnd_environment("handle_environment_refresh")
         try:
             self.ingest_transcript_fallback()
-            self.reap_dead_agent_processes()
+            # The worker already sweeps every LIVENESS_POLL_SECONDS; a tick
+            # that lands right behind it would fork a second ``ps`` for the
+            # same answer.
+            last_sweep = self._liveness_worker_sweep_at
+            if last_sweep is None or time.monotonic() - last_sweep >= LIVENESS_POLL_SECONDS:
+                self.reap_dead_agent_processes()
             try:
                 from .integration_settings import load_integration_settings
                 from .t3_compat import update_t3_snapshot_runtime
@@ -9647,6 +9657,7 @@ class StatusBarController(NSObject):
             try:
                 if self.reap_dead_agent_processes():
                     self.schedule_event_refresh()
+                self._liveness_worker_sweep_at = time.monotonic()
             finally:
                 self._liveness_sweep_running = False
 

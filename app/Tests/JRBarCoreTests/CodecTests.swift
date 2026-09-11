@@ -193,6 +193,21 @@ struct CodecTests {
         #expect(throws: CoreCodecError.frameTooLarge(big.count)) { try CoreCodec.decode(frame: big) }
     }
 
+    @Test("a malformed payload for a known type throws .malformed naming it")
+    func malformedKnownType() {
+        do {
+            _ = try CoreCodec.decode(line: #"{"t":"state","v":1,"sessions":"nope"}"#)
+            Issue.record("malformed state frame decoded")
+        } catch let error as CoreCodecError {
+            guard case .malformed(let why) = error else {
+                Issue.record("expected .malformed, got \(error)"); return
+            }
+            #expect(why.hasPrefix("state:"))
+        } catch {
+            Issue.record("expected CoreCodecError, got \(error)")
+        }
+    }
+
     @Test("a minimal state decodes with defaults")
     func minimalState() throws {
         guard case .state(let state) = try CoreCodec.decode(line: #"{"t":"state","v":1}"#) else {

@@ -15,13 +15,21 @@ struct ScreenBarFocus: Equatable {
 }
 
 /// Hover and click for a click-through band. The panel keeps
-/// `ignoresMouseEvents` so it never takes focus or blocks the menu bar;
-/// instead an `NSEvent` monitor watches the pointer and hit-tests it against
-/// the band's own rounded rect (the way codenotch does). Hovering shows a
-/// transient glass pill under the band, clicking opens the session.
+/// `ignoresMouseEvents` so it never takes focus or blocks the menu bar --
+/// which is also why an `NSTrackingArea` cannot do this job (a tracking area
+/// needs the window to take mouse events, and the band shares its strip of
+/// screen with Alcove's capsule, so eating clicks there is not an option).
+/// Instead an `NSEvent` monitor watches the pointer and hit-tests it against
+/// the band's own rounded rect (the way codenotch does), coalesced to at
+/// most one main-actor wake per `moveInterval` so a fast pointer does not
+/// run the actor at mouse-event rate. Hovering shows a transient glass pill
+/// under the band, clicking opens the session.
 @MainActor
 final class ScreenBarInteraction {
     static let hoverDelay: TimeInterval = 0.32
+    /// Pointer moves are needed at ~20 Hz for hover; the raw stream is far
+    /// denser than that.
+    nonisolated static let moveInterval: TimeInterval = 0.05
     /// The tooltip is a glance, not a label: it leaves on its own even if
     /// the pointer parks on the band.
     static let maxTooltipLife: TimeInterval = 4.0
@@ -32,6 +40,13 @@ final class ScreenBarInteraction {
 
     private var globalMonitors: [Any] = []
     private var localMonitors: [Any] = []
+    /// The monitor callback runs off-actor; a lock and one pending flag keep
+    /// the coalescing there instead of paying a `Task` hop per event.
+    private final class MoveGate: @unchecked Sendable {
+        let lock = NSLock()
+        var pending = false
+    }
+    nonisolated private let moveGate = MoveGate()
     private var hovering = false
     private var showWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
@@ -51,13 +66,13 @@ final class ScreenBarInteraction {
         // that is every pointer event over it while we are not active).
         // Local: the same events when this app happens to be active.
         if let moved = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.pointerMoved() }
+            self?.schedulePointerMoved()
         } { globalMonitors.append(moved) }
         if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
             Task { @MainActor [weak self] in self?.pointerClicked() }
         } { globalMonitors.append(down) }
         if let moved = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
-            Task { @MainActor [weak self] in self?.pointerMoved() }
+            self?.schedulePointerMoved()
             return event
         } { localMonitors.append(moved) }
         if let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
@@ -82,6 +97,25 @@ final class ScreenBarInteraction {
     }
 
     // MARK: Pointer
+
+    /// At most one main-actor hop per `moveInterval` however fast the
+    /// monitor stream is. `pointerMoved` reads `NSEvent.mouseLocation`
+    /// rather than the event, so a dropped intermediate event is a dropped
+    /// stale sample, not a dropped state.
+    nonisolated private func schedulePointerMoved() {
+        moveGate.lock.lock()
+        let already = moveGate.pending
+        moveGate.pending = true
+        moveGate.lock.unlock()
+        guard !already else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.moveInterval) { [weak self] in
+            guard let self else { return }
+            self.moveGate.lock.lock()
+            self.moveGate.pending = false
+            self.moveGate.lock.unlock()
+            MainActor.assumeIsolated { self.pointerMoved() }
+        }
+    }
 
     private func pointerInsideBand() -> Bool {
         guard let rect = bandRect() else { return false }

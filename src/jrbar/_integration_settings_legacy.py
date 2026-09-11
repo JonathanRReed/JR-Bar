@@ -224,10 +224,32 @@ def _settings_from_document(document: dict[str, object]) -> IntegrationSettings:
     )
 
 
+# (mtime_ns, size) -> loaded settings, keyed by resolved path. The refresh
+# tick re-reads this file every pass; a stat answer is enough to know the
+# previous parse is still current. ``None`` metadata means "absent".
+_LOAD_CACHE: dict[Path, tuple[tuple[int, int] | None, LoadedIntegrationSettings]] = {}
+
+
 def load_integration_settings(
     path: Path | None = None,
 ) -> LoadedIntegrationSettings:
     target = (path or default_integration_settings_path()).expanduser().absolute()
+    try:
+        info = target.stat()
+        stat_key: tuple[int, int] | None = (info.st_mtime_ns, info.st_size)
+    except OSError:
+        stat_key = None
+    cached = _LOAD_CACHE.get(target)
+    if cached is not None and cached[0] == stat_key:
+        return cached[1]
+    loaded = _load_integration_document(target)
+    _LOAD_CACHE[target] = (stat_key, loaded)
+    return loaded
+
+
+def _load_integration_document(
+    target: Path,
+) -> LoadedIntegrationSettings:
     try:
         document = _read_document(target)
     except FileNotFoundError:
@@ -302,7 +324,9 @@ def save_integration_settings(
     }
     document.update(encoded)
     payload = json.dumps(document, indent=2, sort_keys=True, allow_nan=False) + "\n"
-    return atomic_private_write(target, payload)
+    written = atomic_private_write(target, payload)
+    _LOAD_CACHE.pop(target, None)
+    return written
 
 
 __all__ = [

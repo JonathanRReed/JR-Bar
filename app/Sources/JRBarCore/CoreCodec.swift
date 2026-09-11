@@ -24,9 +24,63 @@ public enum CoreCodecError: Error, Equatable, CustomStringConvertible {
 public enum CoreCodec {
     public static let maxFrameBytes = 1 << 20
 
-    private struct Envelope: Decodable {
-        let t: String?
-        let v: Int?
+    /// `t`/`v` read out of the same keyed container the payload then
+    /// decodes from, so a frame is parsed once.
+    private struct FrameKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    private enum CoreFrame: Decodable {
+        case hello(CoreHello)
+        case state(CoreState)
+        case lights(CoreLights)
+        case event(CoreEvent)
+        case settings(CoreSettings)
+        case reply(CoreReply)
+        case log(CoreLog)
+        case unknown(type: String, version: Int?)
+
+        init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: FrameKey.self)
+            guard let type = try container.decodeIfPresent(String.self, forKey: FrameKey(stringValue: "t")!) else {
+                throw CoreCodecError.missingType
+            }
+            let version = try container.decodeIfPresent(Int.self, forKey: FrameKey(stringValue: "v")!)
+            if let version, version != CoreProtocol.version {
+                self = .unknown(type: type, version: version)
+                return
+            }
+            do {
+                switch type {
+                case "hello": self = .hello(try CoreHello(from: decoder))
+                case "state": self = .state(try CoreState(from: decoder))
+                case "lights": self = .lights(try CoreLights(from: decoder))
+                case "event": self = .event(try CoreEvent(from: decoder))
+                case "settings": self = .settings(try CoreSettings(from: decoder))
+                case "reply": self = .reply(try CoreReply(from: decoder))
+                case "log": self = .log(try CoreLog(from: decoder))
+                default: self = .unknown(type: type, version: version)
+                }
+            } catch {
+                throw CoreCodecError.malformed("\(type): \(error)")
+            }
+        }
+
+        var message: CoreMessage {
+            switch self {
+            case .hello(let payload): return .hello(payload)
+            case .state(let payload): return .state(payload)
+            case .lights(let payload): return .lights(payload)
+            case .event(let payload): return .event(payload)
+            case .settings(let payload): return .settings(payload)
+            case .reply(let payload): return .reply(payload)
+            case .log(let payload): return .log(payload)
+            case .unknown(let type, let version): return .unknown(type: type, version: version)
+            }
+        }
     }
 
     private static let decoder: JSONDecoder = {
@@ -44,30 +98,17 @@ public enum CoreCodec {
     public static func decode(frame: Data) throws -> CoreMessage {
         guard !frame.isEmpty else { throw CoreCodecError.emptyFrame }
         guard frame.count <= maxFrameBytes else { throw CoreCodecError.frameTooLarge(frame.count) }
-        let envelope: Envelope
         do {
-            envelope = try decoder.decode(Envelope.self, from: frame)
+            return try decoder.decode(CoreFrame.self, from: frame).message
+        } catch let error as CoreCodecError {
+            throw error
         } catch {
+            // A structural failure (not a JSON object, or `t`/`v` of the
+            // wrong kind): same ruling the envelope pass gave -- a frame
+            // that is still valid JSON reads `.notAnObject`, one that is
+            // not reads `.malformed`.
             if (try? decoder.decode(JSONValue.self, from: frame)) != nil { throw CoreCodecError.notAnObject }
             throw CoreCodecError.malformed(String(describing: error))
-        }
-        guard let type = envelope.t else { throw CoreCodecError.missingType }
-        if let version = envelope.v, version != CoreProtocol.version {
-            return .unknown(type: type, version: version)
-        }
-        do {
-            switch type {
-            case "hello": return .hello(try decoder.decode(CoreHello.self, from: frame))
-            case "state": return .state(try decoder.decode(CoreState.self, from: frame))
-            case "lights": return .lights(try decoder.decode(CoreLights.self, from: frame))
-            case "event": return .event(try decoder.decode(CoreEvent.self, from: frame))
-            case "settings": return .settings(try decoder.decode(CoreSettings.self, from: frame))
-            case "reply": return .reply(try decoder.decode(CoreReply.self, from: frame))
-            case "log": return .log(try decoder.decode(CoreLog.self, from: frame))
-            default: return .unknown(type: type, version: envelope.v)
-            }
-        } catch {
-            throw CoreCodecError.malformed("\(type): \(error)")
         }
     }
 
