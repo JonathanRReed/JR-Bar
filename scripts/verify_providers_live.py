@@ -429,7 +429,10 @@ def codex_drills(check: Check, scratch: Path, work: Path, shim: Path, *, asks: b
                 check.ok("codex interrupt events", " > ".join(names))
             else:
                 check.fail("codex interrupt events", f"got {names}")
-            row = session_row("codex", thread or "") if thread else None
+            # The same beat the exec drill needs: the projection catches up
+            # after the hook record, and a busy daemon takes more than one
+            # refresh tick to list a row that only just ended.
+            row = session_row("codex", thread or "", wait=45.0) if thread else None
             if row is not None and row.get("lifecycle") in FINISHED_LIFECYCLES:
                 check.ok("codex interrupt state row", f"lifecycle={row['lifecycle']} mode={row['mode']} pid={row.get('pid')}")
             else:
