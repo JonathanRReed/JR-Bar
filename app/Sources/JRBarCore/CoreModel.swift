@@ -197,6 +197,17 @@ public final class CoreModel {
         post("apply_calibration", args: ["device": .string(device), "profile": .object(profile)])
     }
 
+    /// A held calibration preview: the daemon keeps the patch lit on the
+    /// device until `endCalibrationPreview` (or its ten-minute backstop),
+    /// so the sheet re-sends only when the working values change.
+    public func previewCalibration(device: String, args: [String: JSONValue]) {
+        post("preview_calibration", args: args)
+    }
+
+    public func endCalibrationPreview(device: String) {
+        post("end_calibration_preview", args: ["device": .string(device)])
+    }
+
     public func doctor() async throws -> CoreReply { try await send("doctor") }
 
     /// Puts every listed path back to the daemon's default.

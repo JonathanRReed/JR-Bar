@@ -78,6 +78,20 @@ UNSETTLED_EXTRAS_SECONDS: Final = 60.0
 ANSWER_REPLY_BUDGET_SECONDS: Final = 6.0
 MAX_EXTRA_LOOKUPS_PER_BUILD: Final = 6
 PREVIEW_MAX_SECONDS: Final = 30.0
+# A calibration preview is held, not flashed: the sheet is open for
+# minutes while the eye decides, so the device keeps the patch until the
+# sheet ends it or this backstop passes -- a dead client must not leave a
+# strip lit on a colour nobody asked for. Every `preview_calibration`
+# call re-arms the deadline.
+CALIBRATION_HOLD_SECONDS: Final = 600.0
+# The guided flow's named patches; a literal "#RRGGBB" is also accepted.
+CALIBRATION_PATCHES: Final = {
+    "white": "#FFFFFF",
+    "red": "#FF0000",
+    "green": "#00FF00",
+    "blue": "#0000FF",
+    "grey": "#808080",
+}
 # The Creator Micro 2: how often the daemon looks for the pad over HID
 # (a background enumerate, ~30 ms), how long an inspected keymap stays
 # good for planning, how long a setup operation may take (a runtime stop
@@ -339,6 +353,14 @@ class _Preview:
     until_monotonic: float
     started_epoch: float
     device_ids: tuple[str, ...]
+    # A held preview owns its devices' write path until it ends or expires;
+    # a `preview_program` flash does not -- three seconds can ride out one
+    # refresh, a ten-minute calibration hold cannot.
+    held: bool = False
+    # For a companion lit only to be matched against (the strip beside a
+    # Dot under calibration): the primary session's device id, so ending or
+    # applying on the Dot drops the strip's patch too.
+    companion_of: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -736,18 +758,47 @@ def _cmd_apply_calibration(self, args):
     }
     if device not in known:
         raise CommandError("not_found", "no such device")
+
+    def number(key: str) -> float | None:
+        if key not in profile:
+            return None
+        try:
+            value = float(profile[key])
+        except (TypeError, ValueError) as error:
+            raise CommandError("invalid_args", f"{key} must be a number") from error
+        if value != value or value in (float("inf"), float("-inf")):
+            raise CommandError("invalid_args", f"{key} must be finite")
+        return value
+
     settings = self.settings
     applied: dict[str, float] = {}
     for channel in ("red", "green", "blue"):
         key = f"{channel}_gain"
-        if key in profile:
-            settings = settings.with_device_channel_gain(device, channel, float(profile[key]))
-            applied[key] = float(profile[key])
-    if "resting_glow" in profile:
-        settings = settings.with_device_resting_glow(device, float(profile["resting_glow"]))
-        applied["resting_glow"] = float(profile["resting_glow"])
+        value = number(key)
+        if value is not None:
+            # The mutator clamps to MIN..MAX_CHANNEL_GAIN; the reply echoes
+            # what persisted, not what was asked for.
+            settings = settings.with_device_channel_gain(device, channel, value)
+            applied[key] = settings.channel_gains_for_device(device)[
+                ("red", "green", "blue").index(channel)
+            ]
+    glow = number("resting_glow")
+    if glow is not None:
+        settings = settings.with_device_resting_glow(device, glow)
+        applied["resting_glow"] = settings.resting_glow_for_device(device)
+    brightness = number("brightness")
+    if brightness is not None:
+        # Brightness is calibration too: two LEDs an arm's length away (the
+        # Dot) read far brighter than eight across a desk, so matching by
+        # eye ends here as often as it ends on the gains.
+        settings = settings.with_device_brightness(device, brightness)
+        applied["brightness"] = float(settings.brightness_for_device(device))
     self.settings = settings
     self._core_legacy().save_settings(self.settings)
+    # The applied values ARE the live ones now: a held preview still
+    # showing the working numbers would be claiming a calibration the
+    # device is no longer running.
+    self._core_end_calibration_preview(device, refresh=False)
     self._core_after_settings_change(["devices"])
     return {"device": device, "profile": applied, "generation": self._core_settings_generation}
 
@@ -784,6 +835,181 @@ def _cmd_preview_program(self, args):
     self._core_previews[surface] = _Preview(program, time.monotonic() + seconds, time.time(), tuple(device_ids))
     self._core_publish_lights()
     return {"surface": surface, "until": time.time() + seconds, "devices": device_ids}
+
+
+@command("preview_calibration")
+def _cmd_preview_calibration(self, args):
+    """Show a calibration patch through the GIVEN values, held on the device.
+
+    Unlike ``preview_program`` this writes bytes that have already been
+    through the device's write boundary -- resting glow and the caller's
+    gains applied here, never the stored ones and never twice. ``sync_program``
+    would apply the stored profile on top, which is how the old sheet's
+    preview lied: the hex it built carried the working gains and the write
+    path carried the stored ones, so the strip showed neither.
+    """
+    import re
+
+    from ._led_status_legacy import (
+        LedDisplayState,
+        apply_brightness,
+        apply_channel_gain_to_program,
+        apply_resting_glow_to_program,
+        apply_strip_transform_to_program,
+        led_count_for_target,
+        normalize_brightness,
+        normalize_channel_gain,
+    )
+
+    legacy = self._core_legacy()
+    device_id = args.get("device")
+    if not isinstance(device_id, str) or not device_id:
+        raise CommandError("invalid_args", "device is required")
+    devices = self.status_bar_devices(remember=False)
+    device = next(
+        (entry for entry in devices if entry.device_id == device_id and entry.connected),
+        None,
+    )
+    if device is None:
+        raise CommandError("not_found", "no such device")
+
+    def number(key: str, default: float, lo: float, hi: float) -> float:
+        raw = args.get(key)
+        if raw is None:
+            return default
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as error:
+            raise CommandError("invalid_args", f"{key} must be a number") from error
+        if value != value or value in (float("inf"), float("-inf")):
+            raise CommandError("invalid_args", f"{key} must be finite")
+        return max(lo, min(hi, value))
+
+    gains_arg = args.get("gains")
+    if not isinstance(gains_arg, dict):
+        raise CommandError("invalid_args", "gains must be a mapping")
+    try:
+        gains = (
+            normalize_channel_gain(float(gains_arg["red"])),
+            normalize_channel_gain(float(gains_arg["green"])),
+            normalize_channel_gain(float(gains_arg["blue"])),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise CommandError("invalid_args", "gains need numeric red, green and blue") from error
+    resting_glow = number("resting_glow", device.resting_glow, 0.0, 0.35)
+    brightness = normalize_brightness(number("brightness", device.brightness, 0.0, 255.0))
+
+    patch = args.get("patch", "white")
+    if isinstance(patch, str) and patch in CALIBRATION_PATCHES:
+        patch_hex = CALIBRATION_PATCHES[patch]
+    elif isinstance(patch, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", patch):
+        patch_hex = patch.upper()
+    else:
+        raise CommandError("invalid_args", "patch must be a name or #RRGGBB")
+    companion = bool(args.get("companion", False))
+
+    # The nominal patch: the colour the device SHOULD read as, with the
+    # caller's brightness as the program's own `brightness N` line. All the
+    # transforms below run on this nominal text exactly as the live path
+    # runs on rendered programs.
+    nominal = apply_brightness(f"{patch_hex} 500ms\nrepeat", brightness)
+    until_monotonic = time.monotonic() + CALIBRATION_HOLD_SECONDS
+    until_epoch = time.time() + CALIBRATION_HOLD_SECONDS
+    started_epoch = time.time()
+
+    if device.device_id == legacy.VIRTUAL_DEVICE_ID:
+        # The Screen Bar's boundary is the code-domain one: its on-screen
+        # engine multiplies the encoded code, so gains multiply the code
+        # too -- the strip's light-domain decode would double-dim it. The
+        # bar itself renders from the lights document, so the preview is
+        # the surface entry; nothing is written to hardware.
+        program = apply_channel_gain_to_program(
+            apply_resting_glow_to_program(nominal, resting_glow),
+            gains,
+        )
+        self._core_previews["screen_bar"] = _Preview(
+            program, until_monotonic, started_epoch, (device.device_id,), held=True
+        )
+        self._core_publish_lights()
+        return {
+            "device": device_id,
+            "surface": "screen_bar",
+            "until": until_epoch,
+            "program": program,
+            "companion": None,
+        }
+
+    leds = led_count_for_target(device.target)
+    program = apply_strip_transform_to_program(
+        nominal, resting_glow=resting_glow, gains=gains
+    )
+    controller = self.agent_controller_for_device(device)
+    try:
+        controller.sync_transferred_program(program, LedDisplayState.ASK)
+    except Exception as exc:
+        raise CommandError("refused", f"device refused the program: {exc}") from exc
+    surface = (
+        "dot"
+        if leds == 2
+        else "hardware" if self._core_is_followed_strip(device) else device.device_id
+    )
+    self._core_previews[surface] = _Preview(
+        program, until_monotonic, started_epoch, (device.device_id,), held=True
+    )
+
+    companion_id: str | None = None
+    if companion and leds == 2:
+        # Dot brightness matching: the followed strip shows the same patch
+        # through the strip's OWN stored profile, so the user dims the Dot
+        # down to meet the light it actually sits beside. The strip's entry
+        # is held too, or the next refresh would repaint it mid-comparison.
+        strip_id = self._core_followed_strip_id()
+        strip = next(
+            (entry for entry in devices if entry.device_id == strip_id and entry.connected),
+            None,
+        )
+        if strip is not None:
+            companion_nominal = apply_brightness(
+                f"{patch_hex} 500ms\nrepeat",
+                strip.brightness,
+            )
+            companion_program = apply_strip_transform_to_program(
+                companion_nominal,
+                resting_glow=strip.resting_glow,
+                gains=strip.channel_gains,
+            )
+            strip_controller = self.agent_controller_for_device(strip)
+            try:
+                strip_controller.sync_transferred_program(companion_program, LedDisplayState.ASK)
+            except Exception as exc:
+                raise CommandError("refused", f"companion strip refused the program: {exc}") from exc
+            self._core_previews["hardware"] = _Preview(
+                companion_program,
+                until_monotonic,
+                started_epoch,
+                (strip.device_id,),
+                held=True,
+                companion_of=device.device_id,
+            )
+            companion_id = strip.device_id
+
+    self._core_publish_lights()
+    return {
+        "device": device_id,
+        "surface": surface,
+        "until": until_epoch,
+        "program": program,
+        "companion": companion_id,
+    }
+
+
+@command("end_calibration_preview")
+def _cmd_end_calibration_preview(self, args):
+    device = args.get("device")
+    if not isinstance(device, str) or not device:
+        raise CommandError("invalid_args", "device is required")
+    ended = self._core_end_calibration_preview(device)
+    return {"device": device, "ended": ended}
 
 
 @command("apply_effect")
@@ -2065,6 +2291,53 @@ def build_headless_controller_class() -> type:
             followed = self._core_followed_strip_id()
             return followed is None or device.device_id == followed
 
+        def _core_held_preview_devices(self) -> frozenset:
+            """Device ids a held preview currently owns.
+
+            A three-second ``preview_program`` flash rides out one refresh;
+            a ten-minute calibration hold cannot -- every sync would
+            overwrite the patch the user is matching by eye. Requests for
+            these devices are not built, and an in-flight command that
+            predates the hold is refused at the write boundary.
+            """
+            return frozenset(
+                held_id
+                for preview in self._core_previews.values()
+                if preview.held
+                for held_id in preview.device_ids
+            )
+
+        def _core_end_calibration_preview(self, device_id: str, *, refresh: bool = True) -> bool:
+            """Drop the held preview(s) a calibration session owns -- the
+            device's own and a companion strip's -- and hand the devices
+            back to the live render. Idempotent: the sheet calls this on
+            Apply, on Cancel AND on disappear, so a second call must be a
+            no-op rather than an error.
+            """
+            dropped = [
+                name
+                for name, preview in self._core_previews.items()
+                if preview.held
+                and (device_id in preview.device_ids or preview.companion_of == device_id)
+            ]
+            for name in dropped:
+                preview = self._core_previews.pop(name)
+                for held_id in preview.device_ids:
+                    # The deduper believes the preview bytes are what is
+                    # playing; clear the identity so the refresh writes the
+                    # live program even when it is byte-identical to what
+                    # the preview left on the device.
+                    controller = self.agent_led_controllers_by_device.get(held_id)
+                    if controller is not None:
+                        controller.last_program_identity = None
+                        controller.last_attempt_monotonic = 0.0
+            if not dropped:
+                return False
+            if refresh:
+                self.refresh_(None)
+            self._core_publish_lights()
+            return True
+
         def _core_note_device_inventory(self, devices, transitions) -> None:
             """Forget what departed hardware was playing.
 
@@ -2084,6 +2357,13 @@ def build_headless_controller_class() -> type:
             for kind, _name, device_id in transitions:
                 if kind == "device_disconnected":
                     self._core_hardware_anchor.pop(device_id, None)
+                    # A held calibration preview outlives its device by
+                    # minutes; left in place it would keep claiming the
+                    # surface -- and suppressing live writes -- if the
+                    # hardware came back inside the hold window, and a
+                    # departed Dot would leave its companion strip stuck
+                    # on the patch. refresh=False: the caller IS a refresh.
+                    self._core_end_calibration_preview(device_id, refresh=False)
             try:
                 strip_present = any(
                     bool(getattr(device, "connected", False))
@@ -2250,6 +2530,24 @@ def build_headless_controller_class() -> type:
             return identity in ("", "latest") or identity.startswith("ambient-")
 
         def _sync_hardware_device(self, request):
+            if request.device.device_id in self._core_held_preview_devices():
+                # A request queued before the hold began, or one that
+                # slipped past the build-time skip: the held patch is the
+                # truth on this device until the sheet ends it. Reporting
+                # an unchanged write keeps the result pipeline honest
+                # without repainting over the preview.
+                return legacy.HardwareWriteResult(
+                    request=request,
+                    write=legacy.LedStatusWrite(
+                        state=legacy.LedDisplayState.IDLE,
+                        target=getattr(request.device, "target", None),
+                        program="",
+                        changed=False,
+                    ),
+                    label=f"{request.device.name} Calibration preview",
+                    agent_display_rendered=False,
+                    completed_at=self._runtime_worker_monotonic(),
+                )
             if self._core_linked_dot_follows(request):
                 controller = self.agent_controller_for_device(request.device)
                 plan = self._core_dot_plan(controller)
@@ -2334,6 +2632,11 @@ def build_headless_controller_class() -> type:
             if companion is None or companion[0] != command.key or companion[1] != command.generation:
                 return result
             dot_request = companion[2]
+            if dot_request.device.device_id in self._core_held_preview_devices():
+                # The Dot went under a held calibration preview after this
+                # batch was queued: writing the strip's replay now would
+                # paint over the patch mid-match.
+                return result
             try:
                 dot_result = self._core_linked_dot_write(dot_request, result)
             except Exception as exc:
