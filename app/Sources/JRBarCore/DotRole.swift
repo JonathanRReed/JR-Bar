@@ -78,29 +78,45 @@ public struct DotRoleReadout: Equatable, Sendable {
 
     /// `chosen` from the settings document, everything else from the
     /// `dot` surface of the newest `lights` frame (nil when there is none).
-    /// `linked` is `devices_linked`: with the two unlinked the daemon plans
-    /// nothing for the Dot, so no role is in effect whatever the key says.
+    /// `link` is the daemon's `dot_link` word — when present it is the
+    /// authority and `linked` (the `devices_linked` setting) is only the
+    /// fallback for daemons that predate it. `linkedSkewMs` /
+    /// `linkedSkewFresh` carry the measured gap, shown only while the
+    /// measurement is still worth quoting.
     public static func make(chosen: DotRole, includeCompletions: Bool, linked: Bool = true,
+                            link: CoreDotLink? = nil, linkedSkewMs: Double? = nil,
+                            linkedSkewFresh: Bool = false,
                             dot: CoreLightSurface?) -> DotRoleReadout {
-        guard let dot else {
-            return DotRoleReadout(chosen: chosen, active: nil, rendersItself: false,
-                                  headline: "No Dot in the lights frame",
-                                  detail: "The core reports nothing for the Dot; plug it in or link it to see this.",
-                                  settling: false)
+        let active = dot?.role.map(DotRole.parse)
+        let rendersItself = dot != nil && dot?.role == nil
+        // The daemon's own link word answers first: it knows about states
+        // the settings document cannot express (no strip to extend, a
+        // failed linked write).
+        if let link {
+            switch link.state {
+            case "off":
+                return unlinked(chosen: chosen, active: active, rendersItself: rendersItself)
+            case "no_dot":
+                return missing(chosen: chosen)
+            case "no_strip":
+                return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
+                                      headline: "Nothing to extend",
+                                      detail: "No strip is connected. Plug in the SidePulse, or pick Ask beacon or Status, which need no strip.",
+                                      settling: false)
+            case "failed":
+                return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
+                                      headline: "The Dot's last linked write failed",
+                                      detail: link.error, settling: false)
+            default:
+                break  // linked / beacon / solo: the role mapping below applies
+            }
         }
-        let active = dot.role.map(DotRole.parse)
-        let rendersItself = dot.role == nil
-        if !linked {
-            var readout = DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
-                                         headline: "Its own two-LED status code",
-                                         detail: "Pro and Dot are not linked, so no role is in effect.",
-                                         settling: false)
-            readout.unlinked = true
-            return readout
-        }
+        guard let dot else { return missing(chosen: chosen) }
+        if !linked { return unlinked(chosen: chosen, active: active, rendersItself: rendersItself) }
         // `status` is exactly the case the daemon reports by leaving `role`
-        // off, so it is settled, not settling.
-        let settling = active != nil ? active != chosen : (chosen != .status)
+        // off, so it is settled, not settling; "not picked up yet" only
+        // ever names a genuine transition, never a steady state.
+        let settling = (active ?? .status) != chosen
 
         var headline: String
         var detail: String?
@@ -108,6 +124,9 @@ public struct DotRoleReadout: Equatable, Sendable {
         case .extend?:
             headline = "Extending the strip"
             detail = "Two bands, LEDs 0–3 and 4–7, each showing its band's brightest lit colour."
+            if linkedSkewFresh, let skew = linkedSkewMs {
+                detail! += " In step: the Dot restarts \(Int(skew.rounded())) ms after the strip."
+            }
         case .asks?:
             let state = beaconState(why: dot.why, program: dot.program)
             headline = "Beacon: \(state.word)"
@@ -128,6 +147,25 @@ public struct DotRoleReadout: Equatable, Sendable {
         }
         return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
                               headline: headline, detail: detail, settling: settling)
+    }
+
+    /// `dot_link.state == "no_dot"`, or no `dot` surface at all.
+    private static func missing(chosen: DotRole) -> DotRoleReadout {
+        DotRoleReadout(chosen: chosen, active: nil, rendersItself: false,
+                       headline: "No Dot in the lights frame",
+                       detail: "The core reports nothing for the Dot; plug it in or link it to see this.",
+                       settling: false)
+    }
+
+    /// `dot_link.state == "off"`, or `devices_linked` off on a daemon too
+    /// old to send `dot_link`: no role is in effect whatever the key says.
+    private static func unlinked(chosen: DotRole, active: DotRole?, rendersItself: Bool) -> DotRoleReadout {
+        var readout = DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
+                                     headline: "Its own two-LED status code",
+                                     detail: "Pro and Dot are not linked, so no role is in effect.",
+                                     settling: false)
+        readout.unlinked = true
+        return readout
     }
 
     /// The beacon's four states, from the `why` the role decides (the

@@ -19,10 +19,19 @@ struct DotRoleControls: View {
     private var chosen: DotRole { DotRole.parse(store.document.string("dot_role")) }
     private var includeCompletions: Bool { store.document.bool("dot_role_include_completions") ?? false }
     /// With `devices_linked` off the daemon plans nothing for the Dot, so
-    /// no role is in effect whatever the key says.
+    /// no role is in effect whatever the key says. The daemon's `dot_link`
+    /// word is the authority when it exists; the setting is the fallback
+    /// for a daemon too old to send it.
+    private var link: CoreDotLink? { store.core.lights?.dotLink }
     private var linked: Bool { store.document.bool("devices_linked") ?? true }
+    /// `off` is the one state where the picker cannot matter: with the
+    /// link merely broken (`no_strip`, `failed`) changing the role is
+    /// exactly how the reader fixes it.
+    private var linkOff: Bool { link.map { $0.state == "off" } ?? !linked }
     private var readout: DotRoleReadout {
         DotRoleReadout.make(chosen: chosen, includeCompletions: includeCompletions, linked: linked,
+                            link: link, linkedSkewMs: store.core.lights?.linkedSkewMs,
+                            linkedSkewFresh: store.core.lights?.isLinkedSkewFresh ?? false,
                             dot: store.core.lights?.dot)
     }
 
@@ -35,18 +44,19 @@ struct DotRoleControls: View {
                     }
                 } label: {
                     SettingLabel(title: "Role",
-                                 subtitle: linked ? chosen.explanation
-                                     : "Link Pro and Dot below to give the Dot a role; unlinked it always renders its own display.")
+                                 subtitle: linkOff
+                                     ? "Link Pro and Dot below to give the Dot a role; unlinked it always renders its own display."
+                                     : chosen.explanation)
                 }
                 .pickerStyle(.segmented)
-                .disabled(!linked)
+                .disabled(linkOff)
             }
             Provided(store, "dot_role_include_completions") {
                 Toggle(isOn: store.bool("dot_role_include_completions")) {
                     SettingLabel(title: "Also glow for finished runs",
                                  subtitle: "The beacon adds a slow green breath for a completion nobody has looked at yet. Blocked still outranks waiting, which outranks finished.")
                 }
-                .disabled(!linked || !chosen.usesCompletions)
+                .disabled(linkOff || !chosen.usesCompletions)
             }
             DotRoleReadoutRow(readout: readout, program: store.core.lights?.dot?.program, compact: false)
         } else {

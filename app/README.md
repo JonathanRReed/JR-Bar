@@ -249,7 +249,8 @@ compiler ports reproduce exactly.
   providers with the daemon's `action` / `reason` fix-it hints), `lights`
   (surfaces by name with program, led count, anchor, motion, static
   fallback, brightness, why; `linked`, `devices_linked`, `linked_skew_ms`
-  and the `auto_dim` decision as `CoreAutoDim`), `event`, `settings` (document as `JSONValue`),
+  with its `linked_skew_at` instant, the `dot_link` state row as
+  `CoreDotLink`, and the `auto_dim` decision as `CoreAutoDim`), `event`, `settings` (document as `JSONValue`),
   `reply`, `log`, and `command` encoding. Unknown keys are ignored, unknown
   types and future `v` values decode to `.unknown` instead of failing, and
   every field the daemon might omit is optional.

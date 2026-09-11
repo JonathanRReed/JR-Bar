@@ -205,6 +205,12 @@ Vocabulary:
 - Device ids are the Python device ids; the Screen Bar row is `screen-bar`
   with `enabled` (the Python `virtual_status_device_enabled` setting).
   Hardware `brightness` is the effective percent after idle/DND dimming.
+  `linked` follows the row's `kind`, because two different mechanisms
+  share the word: on `screen_bar` it is `link_screen_bar_to_hardware`
+  (the bar plays the strip's program); on `pro` and `dot` it is the
+  `devices_linked` pairing — true only while the setting is on AND one
+  of each is actually connected, so a Dot with no strip never claims to
+  be linked.
 - `usage.providers[].windows[].name` is the short form the panel shows:
   `5h`, `7d`, `Daily`, `Weekly`, `Monthly`, `Credits` (a model-scoped lane
   such as Claude's Fable window is `7d Fable`; a lane with no short form
@@ -323,20 +329,26 @@ end) and with every refresh.
    "screen_bar":{"program":"…","led_count":8,"anchor":1788982891.31,"motion":"continuous","static_fallback":"…","brightness":1.0,"why":"waiting","why_detail":{…},"override":"focus"},
    "dot":{"program":"…","led_count":2,"anchor":1788982891.31,"why":"waiting","why_detail":{…}}
  },
- "linked":true,"devices_linked":true,"linked_skew_ms":11.0}
+ "linked":true,"devices_linked":true,"linked_skew_ms":11.0,"linked_skew_at":1788982891.31,
+ "dot_link":{"state":"linked","role":"extend","error":null}}
 ```
 
 - `hardware` is the first connected 8-LED strip (a second one is
   `hardware:<device id>`), `dot` the connected 2-LED device, `screen_bar`
   the program the Python Screen Bar would draw (calibration and resting
-  glow applied). With the Screen Bar setting off and a strip present, the
-  `screen_bar` surface mirrors `hardware`.
+  glow applied). The `screen_bar` surface mirrors `hardware` only while
+  the bar is linked (`link_screen_bar_to_hardware`) and a strip is
+  connected; unlinked it publishes nothing unless a live bar program is
+  playing.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when
   `linked` (the `link_screen_bar_to_hardware` setting) and a strip is
   connected the Screen Bar carries the strip's anchor, because the strip
   loops from its write and never re-anchors on a Screen Bar re-sync
-  (`core_runtime.screen_bar_anchor`).
+  (`core_runtime.screen_bar_anchor`). `screen_bar_phase_offset_ms`
+  (settings document, `set_setting`, ±1000 ms, default 0) shifts that
+  anchor on the Screen Bar only: positive values hold the bar back, for
+  when the two are visibly out of step.
 - `brightness` is what the DEVICE is driven at: the `brightness N` in the
   bytes on the device, over 255. `brightness_policy`, present only when it
   differs, is the percentage the brightness policy asked for. The two are
@@ -405,11 +417,35 @@ end) and with every refresh.
   sensor, an external or sleeping display); `reading` the raw reading (lux
   for ambient, the display fraction, minutes since midnight for schedule).
 - `devices_linked` (the `devices_linked` setting, default on) is present
-  when both a Pro and a Dot are connected: their programs were written
+  when both a Pro and a Dot are connected: their programs are written
   back to back in one hardware worker command from the same presentation,
-  relay epoch and anchor, so the `dot` surface carries the strip's anchor
-  and the two loop as one unit. `linked_skew_ms` is the last measured
-  gap between the Pro's and the Dot's write completion (11 ms on this Mac).
+  relay epoch and anchor, and only after such a coupled write has landed
+  cleanly does the `dot` surface carry the strip's anchor and the two
+  loop as one unit. `linked_skew_ms` is the last measured gap between the
+  Pro's and the Dot's write completion (11 ms on this Mac), always paired
+  with `linked_skew_at`, the epoch it was measured; both appear or
+  neither does.
+- `dot_link` (top level, always present) is the daemon's own word for the
+  Pro + Dot link — the truth `devices_linked` can only guess at:
+  `{state, role, error}`. `role` is the normalised `dot_role` (null when
+  the link is off or there is no Dot); `error` is the failed linked
+  write's exception class, null otherwise. `state` is one of:
+
+  | state | meaning |
+  | --- | --- |
+  | `off` | `devices_linked` is off; the Dot always renders itself |
+  | `no_dot` | linked on, no Dot connected |
+  | `no_strip` | linked on, Dot connected, role `extend`, no strip to extend — the Dot renders itself until one mounts |
+  | `beacon` | role `asks`: the beacon needs no strip |
+  | `solo` | role `status`: the Dot drives itself by choice |
+  | `linked` | role `extend` and the last coupled write landed cleanly |
+  | `failed` | role `extend`, both devices connected, and the Dot's half of the last linked write raised (`error` names the class) |
+
+  `no_dot`/`no_strip`/`failed` are the states a settings toggle cannot
+  express: unplugging the strip the Dot was extending forgets the strip's
+  last program with it — the Dot's next request falls through to its own
+  display rather than looping a ghost, and the frame drops to `no_strip`
+  with no `hardware` surface and no `role` on `dot`.
 
 ### event
 Transient things the app should react to once. The daemon states the fact

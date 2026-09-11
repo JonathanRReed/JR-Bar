@@ -1197,15 +1197,21 @@ def build_lights_document(
     *,
     linked: bool,
     devices_linked: bool | None = None,
+    dot_link: dict[str, Any] | None = None,
     auto_dim: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """``linked`` is the Screen Bar following the strip; ``devices_linked``
     (when given) says a Pro and a Dot are being written as one unit;
+    ``dot_link`` (when given) is the Pro + Dot link's own status row --
+    ``{state, role, error}``, ``state`` one of ``off`` / ``no_dot`` /
+    ``no_strip`` / ``beacon`` / ``solo`` / ``linked`` / ``failed``;
     ``auto_dim`` is the ``AutoDimResult`` document behind the ``auto_dim``
     dimming word (``{mode, source, factor, available, reading}``)."""
     document: dict[str, Any] = {"t": "lights", "v": PROTOCOL_VERSION, "surfaces": {}, "linked": bool(linked)}
     if devices_linked is not None:
         document["devices_linked"] = bool(devices_linked)
+    if dot_link is not None:
+        document["dot_link"] = dict(dot_link)
     if auto_dim is not None:
         document["auto_dim"] = dict(auto_dim)
     for name, facts in surfaces.items():

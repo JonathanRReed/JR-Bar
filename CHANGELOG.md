@@ -85,6 +85,26 @@ All notable changes to JR-Bar are documented here.
   writes both devices in one hardware worker command from the same
   presentation and anchor; `lights.devices_linked` and `linked_skew_ms`
   report it.
+- Link mode gets honest: two mechanisms shared the word and neither told
+  the truth about itself. The linked Dot used to replay an unplugged
+  strip's last program forever — the inventory change now forgets it and
+  the Dot falls through to its own display. With two strips the Dot
+  follows the first in inventory order, the one `lights` calls
+  `hardware`, and the second strip's writes no longer overwrite the
+  program it loops. The Dot's surface carries the strip's anchor only
+  after a coupled write actually landed, a failed linked write surfaces
+  as `dot_link.state: "failed"` with its error class, and the new
+  `lights.dot_link` object says which of `off`, `no_dot`, `no_strip`,
+  `beacon`, `solo`, `linked` or `failed` applies, with `linked_skew_at`
+  timestamping every `linked_skew_ms`. `state.devices[].linked` stops
+  repeating the Screen Bar's setting on every row: the bar reports
+  `link_screen_bar_to_hardware`, the pair reports whether a Pro and a Dot
+  are actually joined. The Screen Bar's own link gains
+  `screen_bar_phase_offset_ms` (±1 s, default 0) to nudge the bar against
+  the strip, and the app reads all of it: the Dot's readout says
+  "Nothing to extend" or names the failed write, a link glyph sits
+  between the panel's Pro and Dot chips, and the two links are never
+  conflated in copy again.
 - New providers: pi (`jrbar agent-monitor install pi` writes
   `~/.pi/agent/extensions/jrbar.ts`) and Gemini CLI (`install gemini` adds
   hooks to `~/.gemini/settings.json`), both with transcript fallbacks

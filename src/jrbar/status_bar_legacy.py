@@ -14717,9 +14717,15 @@ class StatusBarController(NSObject):
             # Linked means SYNCED: the strip restarted its cycle at this
             # write; snap the bar's phase to the same moment so the two
             # surfaces loop together instead of a few hundred ms apart.
+            # ``screen_bar_phase_offset_ms`` shifts that anchor for the
+            # pair that still reads out of step -- positive holds the bar
+            # back, so its t=0 lands later than the strip's write.
             reanchor = getattr(self.virtual_status_device, "reanchor_program", None)
             if callable(reanchor):
-                reanchor(result.completed_at)
+                offset_ms = float(
+                    getattr(self.settings, "screen_bar_phase_offset_ms", 0.0) or 0.0
+                )
+                reanchor(result.completed_at + offset_ms / 1000.0)
 
     def _lid_observation_relevant(self) -> bool:
         if self.settings.closed_lid_awake_policy != CLOSED_LID_AWAKE_NEVER:

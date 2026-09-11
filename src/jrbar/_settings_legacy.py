@@ -239,6 +239,17 @@ def _clamp_linked_dot_scale(value: object) -> float:
     return min(1.0, max(0.05, scale))
 
 
+def _clamp_screen_bar_phase_offset(value: object) -> float:
+    """Milliseconds in [-1000, 1000]; anything unreadable means no nudge."""
+    try:
+        offset = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+    if offset != offset:
+        return 0.0
+    return min(1000.0, max(-1000.0, offset))
+
+
 @dataclass(frozen=True)
 class AgentMonitorSettings:
     codex_transcripts_enabled: bool = False
@@ -409,6 +420,12 @@ class AgentMonitorSettings:
     # On by default -- a user who owns the hardware wants them to agree,
     # and a user who does not never notices the setting exists.
     link_screen_bar_to_hardware: bool = True
+    # Fixed phase nudge between the Screen Bar and a linked strip, in
+    # milliseconds clamped to +/-1 s. The bar snaps its clock to the
+    # strip's write-completion moment; when the two still read out of step
+    # (a slow sampler, a window-server beat) this shifts the bar's t=0 --
+    # positive holds the bar back, starting its cycle that much later.
+    screen_bar_phase_offset_ms: float = 0.0
     # Pro + Dot as one unit: when both are mounted their programs are
     # written back to back from the same presentation and anchor.
     devices_linked: bool = True
@@ -1068,6 +1085,11 @@ class AgentMonitorSettings:
     def with_link_screen_bar_to_hardware(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, link_screen_bar_to_hardware=bool(enabled))
 
+    def with_screen_bar_phase_offset_ms(self, offset: object) -> AgentMonitorSettings:
+        return replace(
+            self, screen_bar_phase_offset_ms=_clamp_screen_bar_phase_offset(offset)
+        )
+
     def with_devices_linked(self, enabled: bool) -> AgentMonitorSettings:
         return replace(self, devices_linked=bool(enabled))
 
@@ -1559,6 +1581,7 @@ class AgentMonitorSettings:
             "menu_bar_icon_style": normalize_menu_bar_icon_style(self.menu_bar_icon_style),
             "screen_bar_min_glow": self.screen_bar_min_glow,
             "link_screen_bar_to_hardware": self.link_screen_bar_to_hardware,
+            "screen_bar_phase_offset_ms": self.screen_bar_phase_offset_ms,
             "devices_linked": self.devices_linked,
             "linked_dot_scale": self.linked_dot_scale,
             "dot_role": normalize_dot_role(self.dot_role),
@@ -1912,6 +1935,9 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         screen_bar_min_glow=_fraction_setting(data.get("screen_bar_min_glow"), 0.25),
         link_screen_bar_to_hardware=_bool_setting(
             data.get("link_screen_bar_to_hardware"), True
+        ),
+        screen_bar_phase_offset_ms=_clamp_screen_bar_phase_offset(
+            data.get("screen_bar_phase_offset_ms")
         ),
         devices_linked=_bool_setting(data.get("devices_linked"), True),
         linked_dot_scale=_clamp_linked_dot_scale(data.get("linked_dot_scale")),

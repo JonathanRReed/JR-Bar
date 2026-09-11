@@ -1606,6 +1606,27 @@ def build_headless_controller_class() -> type:
             self._core_linked_companion: tuple[str, int, Any] | None = None
             self._core_linked_results: dict[str, tuple[Any, Any]] = {}
             self._core_linked_skew_ms: float | None = None
+            # The strip's latest nominal program and its LED count: what a
+            # linked ``extend`` Dot replays. Set on every write to the
+            # followed strip, cleared when no connected strip remains --
+            # before the clear, a departed strip's last program looped on
+            # the Dot forever.
+            self._core_linked_pro_program: tuple[str, Any] | None = None
+            self._core_linked_pro_leds = 8
+            # The skew's measurement instant (epoch), so a reader can tell
+            # "11 ms, just now" from "11 ms, three hours ago". Published
+            # only together with the skew itself.
+            self._core_linked_skew_at: float | None = None
+            # Whether the last coupled Pro+Dot batch landed clean on both
+            # devices. The lights document only stamps the Dot with the
+            # strip's anchor while this is true -- an uncoupled batch means
+            # the two are not running from one clock, and claiming the
+            # shared anchor anyway was the lie this field exists to retire.
+            self._core_linked_pair_ok = False
+            # The exception class behind the last failed linked Dot write
+            # (e.g. "OSError"), surfaced as ``lights.dot_link.error``;
+            # cleared by the next clean coupled write.
+            self._core_linked_dot_error: str | None = None
             # device_id -> monotonic time a bounded cue stops moving. A cue
             # that ends holds whatever its last line painted until something
             # writes again; these deadlines are what puts the live status
@@ -1857,6 +1878,20 @@ def build_headless_controller_class() -> type:
         def refresh_(self, sender):
             previous_asks = self._core_prev_asks
             previous_devices = self._core_prev_devices
+            # Forget a departed strip BEFORE the legacy refresh plans the
+            # Dot's next write: the disconnecting refresh itself would
+            # otherwise still submit the ghost program it is reacting to.
+            try:
+                self._core_note_device_inventory(
+                    [
+                        d
+                        for d in self.status_bar_devices(remember=False)
+                        if d.device_id != legacy.VIRTUAL_DEVICE_ID
+                    ],
+                    (),
+                )
+            except Exception:
+                pass
             result = objc.super(JRCoreHeadlessController, self).refresh_(sender)
             if getattr(self, "_core", None) is None:
                 return result
@@ -1880,13 +1915,16 @@ def build_headless_controller_class() -> type:
                             label=self._core_label(status),
                         )
             self._core_prev_asks = asks
-            devices, transitions = device_transitions(
-                previous_devices,
-                [d for d in self.status_bar_devices(remember=False) if d.device_id != legacy.VIRTUAL_DEVICE_ID],
-            )
+            physical = [
+                d
+                for d in self.status_bar_devices(remember=False)
+                if d.device_id != legacy.VIRTUAL_DEVICE_ID
+            ]
+            devices, transitions = device_transitions(previous_devices, physical)
             for kind, name, device_id in transitions:
                 self._core_publish_event(kind, label=name, detail=device_id)
             self._core_prev_devices = devices
+            self._core_note_device_inventory(physical, transitions)
             self._core_publish_state()
             self._core_publish_lights()
             return result
@@ -1979,13 +2017,110 @@ def build_headless_controller_class() -> type:
                         # it a SECOND time: #D187F5 arrived as #3103FF and
                         # `brightness 131` arrived as `brightness 1`, which
                         # is a Dot the owner reads as broken (2026-09-10).
-                        self._core_linked_pro_program = (
-                            write.nominal_program or write.program,
-                            write.state,
-                        )
-                        self._core_linked_pro_leds = led_count_for_target(request.device.target)
+                        # Only the FOLLOWED strip feeds the Dot: with two
+                        # strips mounted, letting the second one's write
+                        # overwrite the program would have the Dot extend a
+                        # strip the lights document is not calling
+                        # ``hardware``.
+                        if self._core_is_followed_strip(request.device):
+                            self._core_linked_pro_program = (
+                                write.nominal_program or write.program,
+                                write.state,
+                            )
+                            self._core_linked_pro_leds = led_count_for_target(request.device.target)
             except Exception:
                 pass
+
+        def _core_followed_strip_id(self) -> str | None:
+            """The strip a linked Dot follows: the first connected strip in
+            inventory order.
+
+            ``status_bar_devices`` sorts connected devices first, then by
+            name and mount path, and ``_core_build_lights`` names that same
+            first strip the ``hardware`` surface -- so this is the one the
+            app already sees as the hardware, and the only one whose writes
+            may set the program a linked Dot replays.
+            """
+            from ._led_status_legacy import led_count_for_target
+
+            try:
+                for device in self.status_bar_devices(remember=False):
+                    if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
+                        continue
+                    if led_count_for_target(device.target) != 2:
+                        return device.device_id
+            except Exception:
+                return None
+            return None
+
+        def _core_is_followed_strip(self, device) -> bool:
+            """Whether this device's writes may set the linked program.
+
+            When the inventory cannot see the writer at all -- a test
+            double, or a strip mid-disconnect whose row is already gone --
+            there is nothing to follow but the writer itself, so it
+            records. A visible inventory that names a different strip
+            vetoes the write.
+            """
+            followed = self._core_followed_strip_id()
+            return followed is None or device.device_id == followed
+
+        def _core_note_device_inventory(self, devices, transitions) -> None:
+            """Forget what departed hardware was playing.
+
+            ``_core_linked_pro_program`` was set on every followed-strip
+            write and never cleared, so a linked ``extend`` Dot kept
+            looping the unplugged strip's last program forever -- the Dot
+            looked busy beside a desk with no strip on it. A departure
+            drops the device's write anchor, and the last strip leaving
+            drops everything the link had claimed: the replayed program,
+            the measured skew, the pair's clean-write record and its last
+            error. The Dot's dedupe identity is cleared with them, or its
+            next own-display request looks "already written" against the
+            program it is no longer supposed to play.
+            """
+            from ._led_status_legacy import led_count_for_target
+
+            for kind, _name, device_id in transitions:
+                if kind == "device_disconnected":
+                    self._core_hardware_anchor.pop(device_id, None)
+            try:
+                strip_present = any(
+                    bool(getattr(device, "connected", False))
+                    and led_count_for_target(device.target) != 2
+                    for device in devices
+                )
+            except Exception:
+                return
+            if strip_present:
+                return
+            if (
+                self._core_linked_pro_program is None
+                and self._core_linked_skew_ms is None
+                and not self._core_linked_pair_ok
+                and self._core_linked_dot_error is None
+            ):
+                # Nothing linked was ever claimed: resetting the Dot's
+                # dedupe identity anyway would force a rewrite every
+                # refresh the strip stays unplugged.
+                return
+            self._core_linked_pro_program = None
+            self._core_linked_pro_leds = 8
+            self._core_linked_skew_ms = None
+            self._core_linked_skew_at = None
+            self._core_linked_pair_ok = False
+            self._core_linked_dot_error = None
+            for device in devices:
+                try:
+                    if not device.connected or led_count_for_target(device.target) != 2:
+                        continue
+                except Exception:
+                    continue
+                controller = self.agent_led_controllers_by_device.get(device.device_id)
+                if controller is None:
+                    continue
+                controller.last_program_identity = None
+                controller.last_attempt_monotonic = 0.0
 
         # -- what the Dot is FOR (jrbar.dot_role) ------------------------------
 
@@ -2146,20 +2281,39 @@ def build_headless_controller_class() -> type:
         # -- linked Pro + Dot writes -------------------------------------------
 
         def _submit_hardware_write_requests(self, requests, now: float) -> None:
-            """With ``devices_linked`` and one Pro plus one Dot mounted, the
-            Dot's request rides on the Pro's worker command: the worker
-            writes the Pro, then the Dot immediately after, from the same
-            presentation, relay epoch and anchor, so the two loop as one."""
+            """With ``devices_linked`` and a Pro plus one Dot mounted, the
+            Dot's request rides on the FOLLOWED strip's worker command: the
+            worker writes the strip, then the Dot immediately after, from
+            the same presentation, relay epoch and anchor, so the two loop
+            as one. Other strips in the batch submit on their own --
+            coupling them to the Dot's clock would make a second strip's
+            write decide what the Dot replays."""
             from ._led_status_legacy import led_count_for_target
 
             pro = dot = None
             if bool(getattr(self.settings, "devices_linked", True)) and len(requests) >= 2:
-                strips = [r for r in requests if led_count_for_target(r.device.target) != 2]
                 dots = [r for r in requests if led_count_for_target(r.device.target) == 2]
-                if len(strips) == 1 and len(dots) == 1:
-                    pro, dot = strips[0], dots[0]
+                followed = self._core_followed_strip_id()
+                if followed is not None:
+                    strip = next(
+                        (r for r in requests if r.device.device_id == followed), None
+                    )
+                else:
+                    # The inventory cannot see the writers (test doubles):
+                    # the batch's own order, device_id-sorted upstream, is
+                    # the deterministic pick.
+                    strips = [
+                        r for r in requests if led_count_for_target(r.device.target) != 2
+                    ]
+                    strip = strips[0] if strips else None
+                if strip is not None and len(dots) == 1:
+                    pro, dot = strip, dots[0]
             if pro is None or dot is None:
                 self._core_linked_companion = None
+                # A batch that did not couple the pair cannot vouch for it:
+                # until the next coupled write lands clean, the Dot keeps
+                # its own anchor in the lights document.
+                self._core_linked_pair_ok = False
                 return objc.super(JRCoreHeadlessController, self)._submit_hardware_write_requests(requests, now)
             command = self._hardware_write_command(pro, now)
             self._core_linked_companion = (command.key, command.generation, dot)
@@ -2183,6 +2337,8 @@ def build_headless_controller_class() -> type:
             try:
                 dot_result = self._core_linked_dot_write(dot_request, result)
             except Exception as exc:
+                self._core_linked_dot_error = f"{exc.__class__.__name__}"
+                self._core_linked_pair_ok = False
                 legacy.log_status_bar(f"core: linked dot write failed: {exc.__class__.__name__}")
                 return result
             dot_command = self._hardware_write_command(dot_request, command.deadline - 1.0)
@@ -2236,12 +2392,29 @@ def build_headless_controller_class() -> type:
             if dot_command.generation != self._hardware_write_generation:
                 self._core_publish_lights()
                 return
+            # The pair's word on this coupled batch, taken BEFORE the skew
+            # bookkeeping below touches the program record: a clean pair is
+            # what lets the lights document stamp the Dot with the strip's
+            # anchor and clear the last linked-write error. A Dot-side
+            # write error is a linked-write failure worth naming; the Pro
+            # failing only means this batch did not couple, not that the
+            # Dot's own write went wrong.
+            dot_error = getattr(dot_result.write, "error", None)
+            pro_ok = getattr(result.write, "error", None) is None
+            self._core_linked_pair_ok = pro_ok and dot_error is None
+            if dot_error is not None:
+                self._core_linked_dot_error = str(dot_error)
+            elif pro_ok:
+                self._core_linked_dot_error = None
             try:
                 skew = float(dot_result.completed_at) - float(result.completed_at)
             except Exception:
                 skew = None
             if skew is not None and getattr(dot_result.write, "changed", False) and getattr(result.write, "changed", False):
                 self._core_linked_skew_ms = round(skew * 1000.0, 1)
+                # Epoch, so a stale number can be told apart from a fresh
+                # one: the lights document publishes the two together.
+                self._core_linked_skew_at = time.time()
                 legacy.log_status_bar(f"linked write: dot {self._core_linked_skew_ms} ms after pro")
             self._core_note_hardware_write(dot_command, dot_result)
             self._core_publish_lights()
@@ -3078,8 +3251,30 @@ def build_headless_controller_class() -> type:
             from ._led_status_legacy import led_count_for_target
 
             facts: list[DeviceFacts] = []
-            linked = bool(getattr(self.settings, "link_screen_bar_to_hardware", False))
-            for device in self.status_bar_devices(remember=False):
+            # Two different links, one field name -- which mechanism a row's
+            # ``linked`` describes follows its ``kind``: the Screen Bar's is
+            # its own setting (``link_screen_bar_to_hardware``, default on),
+            # while a Pro or Dot reports whether the ``devices_linked`` link
+            # is in effect for the pair -- which needs one of each connected.
+            # Until the split a Dot's ``linked: true`` was claiming "the
+            # Screen Bar follows the strip", a fact about a different device.
+            bar_linked = bool(getattr(self.settings, "link_screen_bar_to_hardware", True))
+            devices = self.status_bar_devices(remember=False)
+            strip_connected = dot_connected = False
+            for device in devices:
+                if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
+                    continue
+                try:
+                    if led_count_for_target(device.target) == 2:
+                        dot_connected = True
+                    else:
+                        strip_connected = True
+                except Exception:
+                    continue
+            pair_linked = bool(getattr(self.settings, "devices_linked", True)) and (
+                strip_connected and dot_connected
+            )
+            for device in devices:
                 if device.device_id == legacy.VIRTUAL_DEVICE_ID:
                     facts.append(
                         DeviceFacts(
@@ -3089,7 +3284,7 @@ def build_headless_controller_class() -> type:
                             leds=legacy.LED_COUNT,
                             enabled=bool(self.settings.virtual_status_device_enabled),
                             brightness=self._core_brightness_percent(device),
-                            linked=linked,
+                            linked=bar_linked,
                         )
                     )
                     continue
@@ -3103,7 +3298,9 @@ def build_headless_controller_class() -> type:
                         leds=leds,
                         connected=bool(device.connected),
                         brightness=self._core_brightness_percent(device),
-                        linked=linked,
+                        # A row whose device is not connected is not linked
+                        # to anything, whatever the pair's standing is.
+                        linked=pair_linked and bool(device.connected),
                         last_write=self._core_hardware_anchor.get(device.device_id),
                         error=self.device_errors.get(device.device_id),
                     )
@@ -3259,24 +3456,40 @@ def build_headless_controller_class() -> type:
 
         def _core_build_lights(self) -> dict[str, Any]:
             from ._led_status_legacy import delivered_brightness, led_count_for_target
+            from .dot_role import normalize_dot_role
             from .presentation_policy import MotionClass
 
             glance = getattr(self, "_current_resolved_glance", None)
             _why, override = why_for_glance(glance)
-            linked = bool(getattr(self.settings, "link_screen_bar_to_hardware", False))
+            linked = bool(getattr(self.settings, "link_screen_bar_to_hardware", True))
             devices_linked = bool(getattr(self.settings, "devices_linked", True))
+            dot_role = normalize_dot_role(getattr(self.settings, "dot_role", None))
+            # ``screen_bar_phase_offset_ms`` in seconds: the fixed nudge
+            # between the Screen Bar and a linked strip, positive holding
+            # the bar's t=0 back behind the strip's write.
+            bar_phase_offset = float(
+                getattr(self.settings, "screen_bar_phase_offset_ms", 0.0) or 0.0
+            ) / 1000.0
             surfaces: dict[str, SurfaceFacts] = {}
             hardware_anchor: float | None = None
             first_strip = True
+            # Connectivity, tracked apart from surfaces: a connected device
+            # with no program yet has no surface, but ``dot_link`` still has
+            # to call it connected.
+            dot_connected = strip_connected = False
             display_kinds = getattr(self, "last_led_display_kind_by_device", {}) or {}
             for device in self.status_bar_devices(remember=False):
                 if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
                     continue
+                leds = led_count_for_target(device.target)
+                if leds == 2:
+                    dot_connected = True
+                else:
+                    strip_connected = True
                 controller = self.agent_led_controllers_by_device.get(device.device_id)
                 program = getattr(controller, "last_program", None)
                 if not isinstance(program, str) or not program:
                     continue
-                leds = led_count_for_target(device.target)
                 anchor = self._core_hardware_anchor.get(device.device_id)
                 preview = self._core_previews.get("hardware" if leds != 2 else "dot") or self._core_previews.get(device.device_id)
                 previewing = preview is not None and device.device_id in preview.device_ids
@@ -3331,10 +3544,16 @@ def build_headless_controller_class() -> type:
                 dot = surfaces["dot"]
                 dot_plan = self._core_dot_plan()
                 # Linked Pro + Dot also share an anchor, so the app reads the
-                # two as one unit (core_runtime linked writes).
+                # two as one unit (core_runtime linked writes) -- but only a
+                # coupled batch that landed clean earns the shared stamp. A
+                # batch that went out uncoupled or failed leaves the Dot its
+                # own anchor rather than claiming a sync nobody measured.
                 anchor = (
                     hardware_anchor
-                    if devices_linked and "hardware" in surfaces and hardware_anchor is not None
+                    if devices_linked
+                    and "hardware" in surfaces
+                    and hardware_anchor is not None
+                    and self._core_linked_pair_ok
                     else dot.anchor
                 )
                 why = dot_plan.why if dot_plan is not None else dot.why
@@ -3389,6 +3608,8 @@ def build_headless_controller_class() -> type:
                 motion = kwargs.get("motion")
                 anchor = mono_to_epoch(kwargs.get("started_at"))
                 anchor = screen_bar_anchor(anchor, hardware_anchor, linked=linked)
+                if linked and hardware_anchor is not None:
+                    anchor = hardware_anchor + bar_phase_offset
                 surfaces["screen_bar"] = SurfaceFacts(
                     program=str(program),
                     led_count=legacy.LED_COUNT,
@@ -3400,12 +3621,18 @@ def build_headless_controller_class() -> type:
                     override=override,
                     why_detail=self._core_why_detail(bar_why, bar_facts, glance),
                 )
-            elif "hardware" in surfaces:
+            elif linked and "hardware" in surfaces:
+                # The bar only mirrors the strip while the two are linked;
+                # unlinked and idle, it has no program of its own to claim.
                 hardware = surfaces["hardware"]
                 surfaces["screen_bar"] = SurfaceFacts(
                     program=hardware.program,
                     led_count=hardware.led_count,
-                    anchor=hardware.anchor,
+                    anchor=(
+                        hardware.anchor + bar_phase_offset
+                        if hardware.anchor is not None
+                        else None
+                    ),
                     brightness=bar_brightness,
                     why=hardware.why,
                     override=override,
@@ -3419,11 +3646,53 @@ def build_headless_controller_class() -> type:
                 surfaces,
                 linked=linked,
                 devices_linked=devices_linked and "dot" in surfaces and "hardware" in surfaces,
+                dot_link=self._core_dot_link(dot_connected, strip_connected, dot_role),
                 auto_dim=auto_dim,
             )
-            if document.get("devices_linked") and self._core_linked_skew_ms is not None:
+            # The skew and its measurement instant travel together: a reader
+            # shown only the number could not tell a fresh 11 ms from one
+            # measured before the strip was last unplugged.
+            if (
+                document.get("devices_linked")
+                and self._core_linked_skew_ms is not None
+                and self._core_linked_skew_at is not None
+            ):
                 document["linked_skew_ms"] = self._core_linked_skew_ms
+                document["linked_skew_at"] = self._core_linked_skew_at
             return document
+
+        def _core_dot_link(self, dot_connected: bool, strip_connected: bool, dot_role: str) -> dict[str, Any]:
+            """The ``lights.dot_link`` row: one honest word for what the
+            Pro + Dot link is doing right now.
+
+            The words a settings toggle cannot say on its own -- the strip
+            is gone, the last coupled write failed -- used to be guesswork
+            the app did from ``devices_linked`` and the surface list. The
+            ``role`` echoes the normalized setting (``null`` only when no
+            role is in play at all: the link off or no Dot connected), and
+            ``error`` carries the last linked-write failure's class name.
+            """
+            from .dot_role import DotRole
+
+            if not bool(getattr(self.settings, "devices_linked", True)):
+                return {"state": "off", "role": None, "error": None}
+            if not dot_connected:
+                return {"state": "no_dot", "role": None, "error": None}
+            if dot_role == DotRole.ASKS.value:
+                # A beacon needs no strip: it is lit by asks, not by light
+                # borrowed from the Pro.
+                return {"state": "beacon", "role": dot_role, "error": None}
+            if dot_role == DotRole.STATUS.value:
+                return {"state": "solo", "role": dot_role, "error": None}
+            if not strip_connected:
+                return {"state": "no_strip", "role": dot_role, "error": None}
+            if self._core_linked_dot_error is not None:
+                return {"state": "failed", "role": dot_role, "error": self._core_linked_dot_error}
+            # The steady state: extend with both devices connected is
+            # "linked" the moment the next batch couples them -- the shared
+            # anchor is the claim that waits for a clean coupled write, the
+            # state word is not.
+            return {"state": "linked", "role": dot_role, "error": None}
 
         def _core_doctor_document(self) -> dict[str, Any]:
             from .doctor import collect_diagnostics

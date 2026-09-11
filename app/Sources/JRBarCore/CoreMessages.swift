@@ -679,6 +679,34 @@ public struct CoreAutoDim: Codable, Hashable, Sendable {
     public var isActive: Bool { mode != "off" }
 }
 
+/// `lights.dot_link`: the daemon's own word for the Pro + Dot link —
+/// which of `off`, `no_dot`, `no_strip`, `beacon`, `solo`, `linked` or
+/// `failed` applies right now, the `dot_role` behind it, and the linked
+/// write's error class when the last one failed. The states a settings
+/// toggle cannot express (`no_strip`, `failed`) are why this exists; it
+/// is nil on daemons that predate it, and the app falls back to the
+/// `devices_linked` setting then.
+public struct CoreDotLink: Codable, Hashable, Sendable {
+    public var state: String
+    public var role: String?
+    public var error: String?
+
+    public init(state: String, role: String? = nil, error: String? = nil) {
+        self.state = state
+        self.role = role
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey { case state, role, error }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? "off"
+        role = try c.decodeIfPresent(String.self, forKey: .role)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
 public struct CoreLights: Codable, Hashable, Sendable {
     public var surfaces: [String: CoreLightSurface]
     public var linked: Bool?
@@ -687,14 +715,21 @@ public struct CoreLights: Codable, Hashable, Sendable {
     /// their write completions, and the auto-dim decision.
     public var devicesLinked: Bool?
     public var linkedSkewMs: Double?
+    /// When `linkedSkewMs` was measured (epoch seconds); the two travel
+    /// together or not at all.
+    public var linkedSkewAt: Double?
+    public var dotLink: CoreDotLink?
     public var autoDim: CoreAutoDim?
 
     public init(surfaces: [String: CoreLightSurface] = [:], linked: Bool? = nil, devicesLinked: Bool? = nil,
-                linkedSkewMs: Double? = nil, autoDim: CoreAutoDim? = nil) {
+                linkedSkewMs: Double? = nil, linkedSkewAt: Double? = nil,
+                dotLink: CoreDotLink? = nil, autoDim: CoreAutoDim? = nil) {
         self.surfaces = surfaces
         self.linked = linked
         self.devicesLinked = devicesLinked
         self.linkedSkewMs = linkedSkewMs
+        self.linkedSkewAt = linkedSkewAt
+        self.dotLink = dotLink
         self.autoDim = autoDim
     }
 
@@ -702,6 +737,8 @@ public struct CoreLights: Codable, Hashable, Sendable {
         case surfaces, linked
         case devicesLinked = "devices_linked"
         case linkedSkewMs = "linked_skew_ms"
+        case linkedSkewAt = "linked_skew_at"
+        case dotLink = "dot_link"
         case autoDim = "auto_dim"
     }
 
@@ -711,12 +748,22 @@ public struct CoreLights: Codable, Hashable, Sendable {
         linked = try c.decodeIfPresent(Bool.self, forKey: .linked)
         devicesLinked = try? c.decodeIfPresent(Bool.self, forKey: .devicesLinked)
         linkedSkewMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewMs)
+        linkedSkewAt = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewAt)
+        dotLink = try? c.decodeIfPresent(CoreDotLink.self, forKey: .dotLink)
         autoDim = try? c.decodeIfPresent(CoreAutoDim.self, forKey: .autoDim)
     }
 
     public var screenBar: CoreLightSurface? { surfaces["screen_bar"] }
     public var hardware: CoreLightSurface? { surfaces["hardware"] }
     public var dot: CoreLightSurface? { surfaces["dot"] }
+
+    /// The skew is a measurement, not a state: past half an hour it is
+    /// old news and says nothing about whether the pair is in step now.
+    public static let linkedSkewFreshSeconds: TimeInterval = 30 * 60
+    public var isLinkedSkewFresh: Bool {
+        guard let linkedSkewAt, linkedSkewMs != nil else { return false }
+        return linkedSkewAt >= Date().timeIntervalSince1970 - Self.linkedSkewFreshSeconds
+    }
 }
 
 // MARK: - event
