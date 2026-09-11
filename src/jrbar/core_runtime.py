@@ -32,6 +32,7 @@ import sys
 import threading
 import time
 import traceback
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -1813,6 +1814,17 @@ def build_headless_controller_class() -> type:
             self._core_lock = threading.RLock()
             self._core_documents: dict[str, dict[str, Any]] = {}
             self._core_state_generation = 0
+            self._core_lights_generation = 0
+            # Set for the duration of the legacy refresh: publishes requested
+            # from inside it (the virtual-device sync, the DND projection
+            # callback, escalation) are dropped outright; the refresh tail
+            # publishes each kind once, so nothing is lost.
+            self._core_in_refresh = False
+            # Broadcast stamps behind doctor's ``performance.frames``.
+            self._core_state_frame_times: deque[float] = deque()
+            self._core_lights_frame_times: deque[float] = deque()
+            self._core_doctor_rusage: tuple[float, float] | None = None
+            self._core_doctor_at: float | None = None
             self._core_hardware_anchor: dict[str, float] = {}
             self._core_previews: dict[str, _Preview] = {}
             self._core_prev_asks: dict[str, Any] | None = None
@@ -2118,7 +2130,15 @@ def build_headless_controller_class() -> type:
                 )
             except Exception:
                 pass
-            result = objc.super(JRCoreHeadlessController, self).refresh_(sender)
+            # Everything the legacy refresh publishes mid-pipeline (the
+            # virtual-device sync, the DND callback, escalation) defers to
+            # the two builds at the tail: one state build, one lights
+            # build, per admitted tick.
+            self._core_in_refresh = True
+            try:
+                result = objc.super(JRCoreHeadlessController, self).refresh_(sender)
+            finally:
+                self._core_in_refresh = False
             if getattr(self, "_core", None) is None:
                 return result
             asks = {status.agent_id: status for status in self._core_ask_statuses()}
@@ -3277,6 +3297,11 @@ def build_headless_controller_class() -> type:
         # -- publishing --------------------------------------------------------
 
         def _core_publish_state(self) -> None:
+            if getattr(self, "_core_in_refresh", False):
+                # Inside a refresh the tail publishes once; a mid-pipeline
+                # request (DND, escalation) would only rebuild the same
+                # projection.
+                return
             server = getattr(self, "_core", None)
             if server is None:
                 return
@@ -3288,8 +3313,11 @@ def build_headless_controller_class() -> type:
             with self._core_lock:
                 self._core_documents["state"] = document
             server.publish_state(document)
+            self._core_note_frame(self._core_state_frame_times)
 
         def _core_publish_lights(self) -> None:
+            if getattr(self, "_core_in_refresh", False):
+                return
             server = getattr(self, "_core", None)
             if server is None:
                 return
@@ -3301,6 +3329,16 @@ def build_headless_controller_class() -> type:
             with self._core_lock:
                 self._core_documents["lights"] = document
             server.publish_lights(document)
+            self._core_lights_generation += 1
+            self._core_note_frame(self._core_lights_frame_times)
+
+        def _core_note_frame(self, times: deque) -> None:
+            """One broadcast stamp, pruned to the rolling 60 s window here so
+            the deque stays bounded even when nobody ever calls ``doctor``."""
+            now = time.monotonic()
+            times.append(now)
+            while times and times[0] < now - 60.0:
+                times.popleft()
 
         def _core_publish_settings(self) -> None:
             server = getattr(self, "_core", None)
@@ -4063,6 +4101,19 @@ def build_headless_controller_class() -> type:
             )
             pending = pending_hook_files()
             checks.append({"name": "pending hook lines", "ok": not pending, "detail": f"{len(pending)} files"})
+            try:
+                performance = self._core_performance_document()
+            except Exception:
+                performance = {
+                    "metrics": {},
+                    "cpu": {"user_s": None, "system_s": None, "percent_since_last": None},
+                    "frames": {
+                        "state_generation": self._core_state_generation,
+                        "lights_generation": self._core_lights_generation,
+                        "state_per_minute": 0,
+                        "lights_per_minute": 0,
+                    },
+                }
             server = self._core
             with self._core_lock:
                 state = self._core_documents.get("state") or {}
@@ -4087,6 +4138,60 @@ def build_headless_controller_class() -> type:
                 "commands": list(command_names()),
                 "checks": checks,
                 "memory": memory_report(),
+                "performance": performance,
+            }
+
+        def _core_performance_document(self) -> dict[str, Any]:
+            """The timings, CPU and frame counters behind ``doctor``.
+
+            ``metrics`` is the production ``PerformanceRegistry`` (the same
+            numbers the legacy Why panel renders). ``percent_since_last`` is
+            CPU consumed between doctor calls: ``null`` on the first call,
+            which has nothing to divide by. ``frames`` counts state/lights
+            documents actually broadcast, per-minute over a rolling 60 s
+            window of publish stamps.
+            """
+            import resource
+
+            metrics: dict[str, Any] = {}
+            performance = getattr(self, "_performance", None)
+            if callable(performance):
+                for metric in performance().snapshot().metrics:
+                    metrics[metric.name] = {
+                        "count": metric.count,
+                        "p50_ms": round(metric.p50_ms, 3),
+                        "p95_ms": round(metric.p95_ms, 3),
+                        "max_ms": round(metric.maximum_ms, 3),
+                        "outcomes": dict(metric.outcomes),
+                    }
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            user_s, system_s = usage.ru_utime, usage.ru_stime
+            now = time.monotonic()
+            percent = None
+            if self._core_doctor_rusage is not None and self._core_doctor_at is not None:
+                wall = now - self._core_doctor_at
+                if wall > 0:
+                    cpu_used = (user_s - self._core_doctor_rusage[0]) + (system_s - self._core_doctor_rusage[1])
+                    percent = cpu_used / wall * 100.0
+            self._core_doctor_rusage = (user_s, system_s)
+            self._core_doctor_at = now
+            cutoff = now - 60.0
+            for times in (self._core_state_frame_times, self._core_lights_frame_times):
+                while times and times[0] < cutoff:
+                    times.popleft()
+            return {
+                "metrics": metrics,
+                "cpu": {
+                    "user_s": round(user_s, 3),
+                    "system_s": round(system_s, 3),
+                    "percent_since_last": round(percent, 1) if percent is not None else None,
+                },
+                "frames": {
+                    "state_generation": self._core_state_generation,
+                    "lights_generation": self._core_lights_generation,
+                    "state_per_minute": len(self._core_state_frame_times),
+                    "lights_per_minute": len(self._core_lights_frame_times),
+                },
             }
 
     _CLASS_CACHE[base] = JRCoreHeadlessController

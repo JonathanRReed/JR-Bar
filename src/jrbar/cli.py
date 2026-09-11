@@ -23,8 +23,10 @@ from .doctor import (
     PUBLIC_COLLECTION_ERROR_MESSAGE,
     DoctorExportError,
     collect_diagnostics,
+    core_doctor_document,
     encode_diagnostic_result,
     render_diagnostic_result,
+    render_performance_section,
     write_diagnostic_export,
 )
 from .hook import hook_log_main
@@ -895,6 +897,12 @@ def add_doctor_arguments(parser: argparse.ArgumentParser) -> None:
         type=Path,
         help="Save one bounded private JSON diagnostic file.",
     )
+    parser.add_argument(
+        "--socket",
+        type=Path,
+        default=None,
+        help="Also query the core daemon at this socket for its performance section (default: the standard core.sock).",
+    )
 
 
 def add_serve_arguments(parser: argparse.ArgumentParser) -> None:
@@ -1074,12 +1082,29 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         )
         return 1
 
+    # A running core daemon adds its own self-report (timings, CPU, frame
+    # counts). Absent or unreachable, the local probes stand alone.
+    daemon = None
+    socket_path = getattr(args, "socket", None)
     try:
-        output = (
-            encode_diagnostic_result(result).decode("ascii")
-            if args.json
-            else render_diagnostic_result(result) + "\n"
-        )
+        daemon = core_doctor_document(socket_path)
+    except Exception:
+        daemon = None
+
+    try:
+        if args.json:
+            document = json.loads(encode_diagnostic_result(result))
+            if isinstance(daemon, dict):
+                document["daemon"] = {
+                    "pid": daemon.get("pid"),
+                    "uptime_seconds": daemon.get("uptime_seconds"),
+                    "performance": daemon.get("performance"),
+                }
+            output = json.dumps(document, allow_nan=False, ensure_ascii=True, sort_keys=True) + "\n"
+        else:
+            output = render_diagnostic_result(result) + "\n"
+            if isinstance(daemon, dict) and isinstance(daemon.get("performance"), dict):
+                output += "\n" + render_performance_section(daemon["performance"]) + "\n"
     except Exception:
         print(
             f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}",

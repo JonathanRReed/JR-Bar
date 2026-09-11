@@ -818,6 +818,108 @@ def render_diagnostic_result(result: DiagnosticResult) -> str:
     return "\n".join(lines)
 
 
+def core_doctor_document(
+    socket_path: Path | None = None,
+    *,
+    timeout: float = 1.5,
+) -> dict | None:
+    """The running core daemon's ``doctor`` reply, or ``None``.
+
+    Best-effort: no daemon, a foreign socket, a busy one, or a reply that
+    never arrives all read as "no daemon section" rather than an error --
+    the local probes above are the diagnostics; this is the daemon's own
+    view of itself.
+    """
+    import socket
+
+    from .core_server import default_core_socket_path, encode_frame
+
+    target = Path(socket_path) if socket_path is not None else default_core_socket_path()
+    connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    connection.settimeout(timeout)
+    try:
+        connection.connect(str(target))
+        connection.sendall(
+            encode_frame({"t": "command", "id": "doctor", "name": "doctor", "args": {}})
+        )
+        buffer = bytearray()
+        while len(buffer) <= 1 << 20:
+            chunk = connection.recv(65536)
+            if not chunk:
+                return None
+            buffer.extend(chunk)
+            while b"\n" in buffer:
+                line, _, rest = buffer.partition(b"\n")
+                buffer = bytearray(rest)
+                try:
+                    frame = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if (
+                    isinstance(frame, dict)
+                    and frame.get("t") == "reply"
+                    and frame.get("id") == "doctor"
+                ):
+                    result = frame.get("result")
+                    return result if isinstance(result, dict) else None
+        return None
+    except OSError:
+        return None
+    finally:
+        connection.close()
+
+
+def render_performance_section(performance: dict) -> str:
+    """One ``Performance`` block for the human-readable doctor output:
+    top metrics by p95, daemon CPU, and documents broadcast per minute."""
+    lines = ["performance:"]
+    metrics = performance.get("metrics")
+    if isinstance(metrics, dict) and metrics:
+        ranked = sorted(
+            metrics.items(),
+            key=lambda item: (
+                -(item[1].get("p95_ms") or 0.0)
+                if isinstance(item[1], dict)
+                else 0.0
+            ),
+        )[:8]
+        for name, metric in ranked:
+            if not isinstance(metric, dict):
+                continue
+            outcomes = metric.get("outcomes")
+            outcome_text = (
+                " ".join(f"{key}={count}" for key, count in sorted(outcomes.items()))
+                if isinstance(outcomes, dict) and outcomes
+                else "ok"
+            )
+            lines.append(
+                f"  {name}: count={metric.get('count', 0)} "
+                f"p50={metric.get('p50_ms', 0)}ms "
+                f"p95={metric.get('p95_ms', 0)}ms "
+                f"max={metric.get('max_ms', 0)}ms "
+                f"({outcome_text})"
+            )
+    else:
+        lines.append("  metrics: none recorded yet")
+    cpu = performance.get("cpu")
+    if isinstance(cpu, dict):
+        percent = cpu.get("percent_since_last")
+        since = f"{percent}%" if percent is not None else "n/a (first sample)"
+        lines.append(
+            f"  cpu: user={cpu.get('user_s')}s system={cpu.get('system_s')}s "
+            f"since-last={since}"
+        )
+    frames = performance.get("frames")
+    if isinstance(frames, dict):
+        lines.append(
+            f"  frames: state={frames.get('state_per_minute', 0)}/min "
+            f"(gen {frames.get('state_generation', 0)}), "
+            f"lights={frames.get('lights_per_minute', 0)}/min "
+            f"(gen {frames.get('lights_generation', 0)})"
+        )
+    return "\n".join(lines)
+
+
 __all__ = [
     "DIAGNOSTIC_MANIFEST",
     "DOCTOR_DOCUMENT",
@@ -834,7 +936,9 @@ __all__ = [
     "DoctorExportError",
     "SanitizedFailureClass",
     "collect_diagnostics",
+    "core_doctor_document",
     "encode_diagnostic_result",
     "render_diagnostic_result",
+    "render_performance_section",
     "write_diagnostic_export",
 ]

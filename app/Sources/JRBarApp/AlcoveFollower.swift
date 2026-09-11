@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import JRBarCore
+import QuartzCore
 
 /// Keeps the Screen Bar on Alcove's capsule (`screen_bar_follow_alcove`).
 ///
@@ -10,16 +11,25 @@ import JRBarCore
 /// is such a container and this process already has accessibility access
 /// (never asked for here), the capsule is estimated from the controls Alcove
 /// lays out inside it (`AlcoveGeometry.capsule(fromContentFrames:)`). The
-/// list is read at 2 Hz, and only while Alcove is running; with Alcove gone,
-/// or the setting off, the poll stops and the band goes back to the notch.
+/// list is read at 2 Hz for a few seconds after an Alcove launch/terminate
+/// ping or a capsule change -- a live activity opening or growing -- then at
+/// 0.5 Hz once the width is stable, and only while Alcove is running; with
+/// Alcove gone, or the setting off, the poll stops and the band goes back to
+/// the notch.
 @MainActor
 final class AlcoveFollower {
+    /// While the capsule may be moving.
     static let pollInterval: TimeInterval = 0.5
+    /// Once its width has been still for `activePollWindow`.
+    static let idlePollInterval: TimeInterval = 2.0
+    /// How long after activity the fast cadence holds.
+    static let activePollWindow: TimeInterval = 3.0
 
     /// Called on the main actor whenever the capsule changes (nil: stop following).
     var onChange: (@MainActor (AlcoveCapsule?) -> Void)?
     private(set) var capsule: AlcoveCapsule?
     private var timer: Timer?
+    private var fastPollUntil: CFTimeInterval = 0
     private var observers: [NSObjectProtocol] = []
 
     /// The setting, and whether the bar is shown at all.
@@ -54,14 +64,7 @@ final class AlcoveFollower {
 
     private func reconcile() {
         if enabled, isAlcoveRunning {
-            if timer == nil {
-                let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.poll() }
-                }
-                timer.tolerance = 0.1
-                RunLoop.main.add(timer, forMode: .common)
-                self.timer = timer
-            }
+            noteActivity()
             poll()
         } else {
             timer?.invalidate()
@@ -70,10 +73,32 @@ final class AlcoveFollower {
         }
     }
 
+    /// A workspace ping or a changed capsule buys another few seconds of
+    /// 2 Hz sampling; a still capsule drops to the idle cadence.
+    private func noteActivity() {
+        fastPollUntil = CACurrentMediaTime() + Self.activePollWindow
+    }
+
+    /// One-shot re-arm: the interval is chosen fresh each tick so the
+    /// cadence can fall back without the timer being rebuilt anywhere else.
+    private func schedulePoll() {
+        timer?.invalidate()
+        timer = nil
+        guard enabled, isAlcoveRunning else { return }
+        let interval = CACurrentMediaTime() < fastPollUntil ? Self.pollInterval : Self.idlePollInterval
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
     /// How the last capsule was found, for the status menu.
     private(set) var source = "none"
 
     func poll() {
+        defer { schedulePoll() }
         guard let screen = ScreenBarGeometry.preferredScreen() else { update(nil); return }
         let primaryHeight = NSScreen.screens.first?.frame.height ?? screen.frame.maxY
         let rows = Self.windowRows()
@@ -139,6 +164,9 @@ final class AlcoveFollower {
     private func update(_ new: AlcoveCapsule?) {
         guard new != capsule else { return }
         capsule = new
+        // A change the poll just saw keeps the fast window alive, so an
+        // expanding live activity is tracked at 2 Hz through the animation.
+        noteActivity()
         onChange?(new)
     }
 
