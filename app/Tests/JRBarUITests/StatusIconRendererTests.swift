@@ -66,20 +66,100 @@ struct StatusIconRendererTests {
         #expect(renderer.image(for: StatusIconSpec(style: .glyph)) === renderer.image(for: StatusIconSpec(style: .glyph)))
     }
 
-    @Test("the settings value maps in either spelling, and the default is the meters")
+    @Test("the settings value maps in either spelling, and the default is the session dots")
     func settingNames() {
+        #expect(StatusIconStyle(setting: "agents") == .agents)
+        #expect(StatusIconStyle(setting: "sessions") == .agents)
+        #expect(StatusIconStyle(setting: "dots") == .agents)
         #expect(StatusIconStyle(setting: "glyph") == .glyph)
         #expect(StatusIconStyle(setting: "glyph_ring") == .glyphRing)
         #expect(StatusIconStyle(setting: "ring") == .glyphRing)
         #expect(StatusIconStyle(setting: "glyph_label") == .glyphLabel)
         #expect(StatusIconStyle(setting: "label") == .glyphLabel)
-        #expect(StatusIconStyle(setting: "meters") == .meters)
+        #expect(StatusIconStyle(setting: "meters") == .meters, "an explicit choice is kept")
         #expect(StatusIconStyle(setting: "meters_percent") == .metersPercent)
         #expect(StatusIconStyle(setting: "percent") == .metersPercent)
-        #expect(StatusIconStyle(setting: nil) == .meters, "no setting means the useful one")
-        #expect(StatusIconStyle(setting: "banana") == .meters)
+        #expect(StatusIconStyle(setting: nil) == .agents, "no setting means the agent-first one")
+        #expect(StatusIconStyle(setting: "banana") == .agents)
         #expect(StatusIconStyle.meters.isMeters && StatusIconStyle.metersPercent.isMeters)
-        #expect(!StatusIconStyle.glyph.isMeters)
+        #expect(!StatusIconStyle.glyph.isMeters && !StatusIconStyle.agents.isMeters)
+    }
+}
+
+@Suite("Session dots menu bar icon")
+struct StatusSessionDotsTests {
+    static func pixels(_ image: NSImage) -> [UInt8] {
+        StatusMetersTests.pixels(image)
+    }
+
+    static func dots(_ states: [StatusDotState]) -> [SessionDot] {
+        states.enumerated().map { SessionDot(id: "s\($0.offset)", state: $0.element,
+                                             accentHex: $0.element == .working ? "#2B8FFF" : nil) }
+    }
+
+    @Test("no sessions is the mark alone, square like the glyph styles")
+    func empty() {
+        let spec = StatusIconSpec(style: .agents)
+        #expect(StatusIconRenderer.size(for: spec) == StatusIconRenderer.size)
+        let image = StatusIconRenderer().image(for: spec)
+        #expect(image.size == NSSize(width: 18, height: 18))
+        #expect(image.isTemplate, "a mark alone follows the menu bar's own colour")
+    }
+
+    @Test("the strip grows one dot per session and caps at six, then prints +n")
+    func cap() {
+        let six = StatusIconRenderer.size(for: StatusIconSpec(style: .agents, sessions: Self.dots([.working, .working, .working, .working, .working, .working])))
+        let five = StatusIconRenderer.size(for: StatusIconSpec(style: .agents, sessions: Self.dots([.idle, .idle, .idle, .idle, .idle])))
+        let seven = StatusIconRenderer.size(for: StatusIconSpec(style: .agents, sessions: Self.dots(Array(repeating: .idle, count: 7))))
+        #expect(six.height == StatusIconRenderer.barHeight && six.width > five.width)
+        // Past six the strip draws five dots and "+2", not a seventh dot.
+        #expect(seven.width < six.width + StatusIconRenderer.agentsMark)
+        let renderer = StatusIconRenderer()
+        let sixImage = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots(Array(repeating: .done, count: 6))))
+        let sevenImage = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots(Array(repeating: .done, count: 7))))
+        #expect(Self.pixels(sixImage) != Self.pixels(sevenImage))
+    }
+
+    @Test("the dots' order is the spec's order, not re-sorted")
+    func ordering() {
+        let renderer = StatusIconRenderer()
+        let askFirst = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.ask, .done]), phase: 0.5))
+        let doneFirst = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.done, .ask]), phase: 0.5))
+        #expect(Self.pixels(askFirst) != Self.pixels(doneFirst), "the first dot is the first session")
+    }
+
+    @Test("a working dot carries the provider's accent; asks and failures breathe")
+    func coloursAndBreathing() {
+        let renderer = StatusIconRenderer()
+        let working = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.working])))
+        let plain = renderer.image(for: StatusIconSpec(style: .agents, sessions: [SessionDot(id: "s", state: .working)]))
+        #expect(Self.pixels(working) != Self.pixels(plain), "an accent changes the dot")
+        #expect(!working.isTemplate && !plain.isTemplate)
+        // Only asks and failures move the strip: a working dot's phase is
+        // pinned so the picture (and the cache) holds still.
+        #expect(StatusDotState.ask.breathes && StatusDotState.error.breathes)
+        #expect(!StatusDotState.working.breathes && !StatusDotState.idle.breathes && !StatusDotState.done.breathes)
+        let breathing = StatusIconSpec(style: .agents, sessions: Self.dots([.ask]), phase: 0.9)
+        #expect(breathing.cacheKey.phase == 1, "an ask in the strip keeps the clock")
+        let still = StatusIconSpec(style: .agents, sessions: Self.dots([.working]), phase: 0.9)
+        #expect(still.cacheKey.phase == 0, "a strip with no ask or failure ignores the clock")
+        let a = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.ask]), phase: 0.1))
+        let b = renderer.image(for: StatusIconSpec(style: .agents, sessions: Self.dots([.ask]), phase: 0.5))
+        #expect(Self.pixels(a) != Self.pixels(b), "an ask dot breathes")
+    }
+
+    @Test("the tooltip keeps the headline and adds one line per session, six at most")
+    func tooltipLines() {
+        let spec = StatusIconSpec(style: .agents, sessions: Self.dots([.ask, .working, .done]))
+        let lines = StatusIconRenderer.tooltip(spec, headline: "JR-Bar · Working",
+                                               sessionLines: ["a · working 4m · Claude", "b · waiting on you 2m · Codex"])
+            .split(separator: "\n").map(String.init)
+        #expect(lines == ["JR-Bar · Working", "a · working 4m · Claude", "b · waiting on you 2m · Codex"])
+        let many = (1...9).map { "s\($0)" }
+        let capped = StatusIconRenderer.tooltip(spec, headline: "JR-Bar", sessionLines: many).split(separator: "\n")
+        #expect(capped.count == 7, "headline + six sessions")
+        let voice = StatusIconRenderer.accessibilityLabel(spec)
+        #expect(voice.contains("needs you") && voice.contains("working") && voice.contains("finished"))
     }
 }
 

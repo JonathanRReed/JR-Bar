@@ -13,6 +13,10 @@ struct GeneralPage: View {
                 SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Registers JR-Bar with the system so it starts with your Mac.")
             }
             MenuBarStylePicker(store: store)
+            Toggle(isOn: $store.panelHotkeyEnabled) {
+                SettingLabel(title: "Summon the panel with ⌃⌥J",
+                             subtitle: "A global hotkey: works from any app, toggles the panel under the menu-bar icon.")
+            }
         }
 
         Section("Screen Bar") {
@@ -92,6 +96,35 @@ struct MenuBarStylePicker: View {
         return max(0, shown.count - StatusIconRenderer.maxMeters)
     }
 
+    /// The session dots as the menu bar would draw them now: the live
+    /// sessions in the panel's order, or a sample while the core is away.
+    private var sessions: [SessionDot] {
+        let live = store.core.isLive ? store.core.sessions : []
+        guard !live.isEmpty else { return StatusItemController.sampleSessionDots }
+        return live.sorted { Self.rank($0) < Self.rank($1) }.map { session in
+            let activity = SessionActivity.reduce(session)
+            let state: StatusDotState = session.ask != nil || activity == .waiting ? .ask
+                : activity == .failed ? .error
+                : activity == .working ? .working
+                : activity == .done ? .done : .idle
+            return SessionDot(id: session.id, state: state,
+                              accentHex: activity == .working ? ProviderStyle.style(for: session.provider, document: store.document).accentHex : nil)
+        }
+    }
+
+    /// Asks lead, then failures, work and done — the panel's order.
+    private static func rank(_ session: CoreSession) -> Int {
+        if session.ask != nil { return 0 }
+        switch SessionActivity.reduce(session) {
+        case .waiting: return 1
+        case .failed: return 2
+        case .working: return 3
+        case .done: return 4
+        case .ended: return 5
+        case .idle: return 6
+        }
+    }
+
     var body: some View {
         Group {
             VStack(alignment: .leading, spacing: 6) {
@@ -103,6 +136,7 @@ struct MenuBarStylePicker: View {
                                         selected: current == style,
                                         meters: meters,
                                         overflow: overflow,
+                                        sessions: sessions,
                                         label: labelText) {
                             store.menuBarIconStyle = style.rawValue
                         }
@@ -130,6 +164,7 @@ struct MenuBarStyleRow: View {
     let selected: Bool
     let meters: [StatusMeter]
     let overflow: Int
+    let sessions: [SessionDot]
     let label: String?
     let action: () -> Void
     @ViewState private var hovering = false
@@ -140,7 +175,7 @@ struct MenuBarStyleRow: View {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
                     .font(.system(size: 13))
                     .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.6))
-                MenuBarPreview(style: style, meters: meters, overflow: overflow, label: label)
+                MenuBarPreview(style: style, meters: meters, overflow: overflow, sessions: sessions, label: label)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(style.title).foregroundStyle(.primary)
                     Text(style.subtitle)
@@ -171,6 +206,7 @@ struct MenuBarPreview: View {
     let style: StatusIconStyle
     let meters: [StatusMeter]
     let overflow: Int
+    let sessions: [SessionDot]
     let label: String?
     @Environment(\.colorScheme) private var scheme
 
@@ -186,6 +222,7 @@ struct MenuBarPreview: View {
                        meters: style.isMeters ? meters : [],
                        overflow: style.isMeters ? overflow : 0,
                        dot: style.isMeters ? .working : .idle,
+                       sessions: style == .agents ? sessions : [],
                        phase: 0.5)
     }
 
@@ -195,7 +232,7 @@ struct MenuBarPreview: View {
         HStack(spacing: 5) {
             Image(nsImage: image)
                 .renderingMode(image.isTemplate ? .template : .original)
-                .foregroundStyle(image.isTemplate && !style.isMeters ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
+                .foregroundStyle(image.isTemplate && !style.isMeters && style != .agents ? Color(nsColor: NSColor(hex: "#00E5FF") ?? .labelColor) : .primary)
                 .frame(width: size.width, height: size.height)
             if style == .glyphLabel, let label {
                 Text(label).font(.system(size: 11.5, weight: .medium)).monospacedDigit()
