@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from jrbar.today_menu import (
+    TodayFeed,
     TodaySnapshot,
     _relative_start,
     project_today_rows,
@@ -39,3 +40,16 @@ def test_rows_read_in_order() -> None:
     assert rows[1][2] == "reminders"
     assert rows[-1][2] == "reminders"
     assert not any(alert for _text, alert, _kind in rows)
+
+
+def test_reminder_lines_read_the_tuple_contract(monkeypatch) -> None:
+    """fetch_due delivers (identifier, title) tuples -- a consumer looking
+    for a .title() method on each item drops every real reminder and the
+    menu reads "Nothing due" forever."""
+    from jrbar import reminders_watch
+
+    def fake_fetch_due(lookback, completion):
+        completion([("id-1", "Pay rent"), ("id-2", "Call back"), ("id-3", "")])
+
+    monkeypatch.setattr(reminders_watch, "fetch_due", fake_fetch_due)
+    assert TodayFeed()._reminder_lines() == ("Pay rent", "Call back")

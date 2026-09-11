@@ -101,8 +101,15 @@ class TodayFeed:
 
         def _completion(reminders) -> None:
             try:
-                for reminder in list(reminders or [])[:MAX_REMINDER_ROWS]:
-                    title = str(getattr(reminder, "title", lambda: "")() or "")
+                # fetch_due hands over (identifier, title) tuples, not
+                # EventKit objects -- the identifier is the menu's
+                # completion handle, the title is the row.
+                for item in list(reminders or [])[:MAX_REMINDER_ROWS]:
+                    try:
+                        _identifier, title = item
+                    except (TypeError, ValueError):
+                        continue
+                    title = str(title or "")
                     if title:
                         collected.append(title)
             except Exception:

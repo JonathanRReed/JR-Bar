@@ -27,6 +27,7 @@ from AppKit import (
 from Foundation import NSObject
 
 from . import native_ui
+from .draw_guard import guard_draw
 from .global_action_controller import GlobalActionChangeResult
 from .global_actions import (
     GlobalActionID,
@@ -266,6 +267,7 @@ class _ShortcutRecorderView(NSView):
         self.setNeedsDisplay_(True)
         return accepted
 
+    @guard_draw
     def drawRect_(self, rect) -> None:
         objc.super(_ShortcutRecorderView, self).drawRect_(rect)
         bounds = self.bounds()

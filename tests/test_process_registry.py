@@ -154,6 +154,42 @@ def test_sweeper_ends_dead_and_keeps_alive(tmp_path: Path):
     assert sweeper.sweep([("codex", "dead")]) == []
 
 
+def test_sweeper_re_reports_an_end_the_row_never_took(tmp_path: Path):
+    """The record is marked ended before the synthetic event lands, so a
+    lost write used to leave the session lit forever. A session still on
+    the caller's live list past the grace window is proof the end never
+    took -- say it again on a cooldown until the row actually goes away."""
+
+    pr.record_agent_process(
+        "codex", "gone", pr.ProcessEntry(301, 1, 6.0, "codex"), state_dir=tmp_path
+    )
+    table = _table((1, 0, 0.0, "/sbin/launchd"))
+    clock = [1000.0]
+    sweeper = pr.ProcessSweeper(
+        state_dir=tmp_path,
+        table_loader=lambda: table,
+        claude_index_loader=dict,
+        clock=lambda: clock[0],
+    )
+
+    assert [d.record.session_id for d in sweeper.sweep([("codex", "gone")])] == ["gone"]
+    # Inside the grace window the recorded end is trusted to be in flight.
+    clock[0] += pr.REEMIT_AFTER_SECONDS - 1
+    assert sweeper.sweep([("codex", "gone")]) == []
+    # Past it, still claimed live: the end is reported again.
+    clock[0] += 2.0
+    again = sweeper.sweep([("codex", "gone")])
+    assert [d.record.session_id for d in again] == ["gone"]
+    assert again[0].reason == "process_exited"
+    # A re-report does not open the floodgates: one per cooldown.
+    assert sweeper.sweep([("codex", "gone")]) == []
+    clock[0] += pr.REEMIT_AFTER_SECONDS + 1
+    assert [d.record.session_id for d in sweeper.sweep([("codex", "gone")])] == ["gone"]
+    # And once the caller stops listing it -- the row really did end --
+    # the death is not reported again.
+    assert sweeper.sweep([]) == []
+
+
 def test_classify_names_the_living_as_well_as_the_dead(tmp_path: Path):
     """The sweep answers both halves of one question, and the live half is
     the only evidence strong enough to outvote the silence timer. It is
@@ -200,6 +236,43 @@ def test_sweeper_declares_nothing_dead_without_a_process_table(tmp_path: Path):
     pr.record_agent_process("codex", "s", pr.ProcessEntry(9, 1, 1.0, "codex"), state_dir=tmp_path)
     sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=dict, claude_index_loader=dict)
     assert sweeper.sweep([("codex", "s")]) == []
+
+
+def test_shared_host_provider_never_registers_or_vouches(tmp_path: Path):
+    """Devin's hook fires inside one long-lived host that multiplexes
+    sessions; its pid outlives every session on it. Registering it made
+    dead sessions vouch themselves alive -- the silence clock is the only
+    honest evidence these providers have."""
+
+    host = pr.ProcessEntry(700, 1, 10.0, "devin")
+    table = _table((700, 1, 10.0, "devin"), (701, 0, 9.0, "zsh"))
+    pr.note_hook_payload(
+        "devin",
+        json.dumps(
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "sess-1",
+                "cwd": "/tmp/work",
+            }
+        ),
+        state_dir=tmp_path,
+        table_loader=lambda: table,
+        start_pid=701,
+        start_pid_started=9.0,
+    )
+    assert pr.load_record("devin", "sess-1", state_dir=tmp_path) is None
+
+    # A record written by an older build must not keep vouching either:
+    # not live evidence, and not a fabricated death.
+    pr.record_agent_process("devin", "sess-2", host, state_dir=tmp_path)
+    sweeper = pr.ProcessSweeper(
+        state_dir=tmp_path,
+        table_loader=lambda: table,
+        claude_index_loader=dict,
+        clock=lambda: 1000.0,
+    )
+    dead, live = sweeper.classify([("devin", "sess-2")])
+    assert dead == [] and live == frozenset()
 
 
 def test_prune_registry_removes_old_records(tmp_path: Path):

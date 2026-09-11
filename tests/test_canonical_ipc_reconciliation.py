@@ -121,6 +121,46 @@ def test_equal_watermark_after_restore_confirms_live_source_freshness(
     assert confirmed.source_freshness.value == "fresh"
 
 
+def test_restore_drops_works_whose_process_ran_in_a_verify_sandbox(
+    tmp_path: Path,
+) -> None:
+    """Live provider drills run real CLIs out of ``jrbar-verify-*``
+    temp dirs -- real while they run, never user work. A drill corpse in
+    latest.json must not resurrect after a restart."""
+    from jrbar import process_registry as pr
+
+    state_path = tmp_path / "latest.json"
+    log = tmp_path / "codex.jsonl"
+    log.write_text(_legacy_codex_line(sequence=1) + "\n")
+    seed = LiveAgentMonitor(latest_state_path=state_path)
+    seed.reconcile_refresh_hint(_hint("event:1"), log_path=log)
+    seed.write_latest_state()
+    assert seed.operator_state.works
+
+    # The drill's hook registered its process against the sandbox work dir.
+    pr.record_agent_process(
+        "codex",
+        "work:ipc",
+        pr.ProcessEntry(501, 1, 2.0, "codex"),
+        state_dir=tmp_path,
+        cwd="/var/folders/xx/jrbar-verify-abc123/work",
+    )
+
+    restored = LiveAgentMonitor(latest_state_path=state_path)
+    assert restored.operator_state.works == ()
+
+    # A session outside a verify sandbox still gets the benefit of the doubt.
+    pr.record_agent_process(
+        "codex",
+        "work:ipc",
+        pr.ProcessEntry(501, 1, 2.0, "codex"),
+        state_dir=tmp_path,
+        cwd="/Users/jonathanreed/real-project",
+    )
+    restored_real = LiveAgentMonitor(latest_state_path=state_path)
+    assert len(restored_real.operator_state.works) == 1
+
+
 def test_duplicate_out_of_order_and_forged_hints_never_author_truth(
     tmp_path: Path,
 ) -> None:

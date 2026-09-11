@@ -1332,6 +1332,10 @@ class LiveAgentMonitor(LiveSessionMemory):
         except (RecursionError, TypeError, UnicodeError, ValueError):
             self.restore_health = RestoreHealth.CORRUPT
             return
+        state = _drop_verify_sandbox_works(
+            state,
+            state_dir=self.latest_state_path.parent,
+        )
         self.operator_state = state
         self._status_overlays_by_work_key = (
             _presentation_overlays_from_document(document)
@@ -2062,6 +2066,62 @@ def _v1_state_from_document(
         last_clock=None,
     )
     return state, RestoreHealth.DEGRADED if degraded else RestoreHealth.HEALTHY
+
+
+def _cwd_is_verify_sandbox(cwd: str | None) -> bool:
+    """True when the session ran inside a ``jrbar-verify-*`` work dir.
+
+    The live provider drills drive real CLIs out of a throwaway
+    ``mkdtemp(prefix="jrbar-verify-")`` sandbox, so the hooks, the
+    daemon, and the lights all see a real session -- that end-to-end
+    honesty is the point of the drill. What it must not do is come back
+    as user work after a restart: a restored drill corpse was the purple
+    blink that outlived its own process.
+    """
+    if not cwd:
+        return False
+    return any(
+        part.startswith("jrbar-verify-")
+        for part in str(cwd).split("/")
+    )
+
+
+def _drop_verify_sandbox_works(
+    state: CanonicalOperatorState,
+    *,
+    state_dir: Path | None,
+) -> CanonicalOperatorState:
+    """Remove restored works whose process registry record names a verify
+    sandbox cwd, plus the requests those works owned.
+
+    Detection goes through the registry (``processes/<provider>/<session>
+    .json``), not the work payload: the canonical truth deliberately
+    carries no cwd, and the drill's own record is the ground it ran on.
+    Sessions the registry never heard of keep the benefit of the doubt.
+    """
+    from .process_registry import load_record
+
+    dropped: set[WorkKey] = set()
+    works = []
+    for work in state.works:
+        try:
+            record = load_record(
+                work.key.source_key.provider_id,
+                work.key.work_id.value,
+                state_dir=state_dir,
+            )
+        except Exception:
+            record = None
+        if record is not None and _cwd_is_verify_sandbox(record.cwd):
+            dropped.add(work.key)
+            continue
+        works.append(work)
+    if not dropped:
+        return state
+    requests = tuple(
+        request for request in state.requests if request.key.work_key not in dropped
+    )
+    return replace(state, works=tuple(works), requests=requests)
 
 
 def _operator_state_from_document(

@@ -33,6 +33,7 @@ from AppKit import (
 )
 
 from .colors import default_agent_color
+from .draw_guard import guard_draw
 from .product_identity import PRODUCT_DISPLAY_NAME
 from .provider_feature_settings import (
     ProviderInstancePolicyProjection,
@@ -81,6 +82,7 @@ class UsageMeterBarView(NSView):
         )
         return self
 
+    @guard_draw
     def drawRect_(self, _rect):
         bounds = self.bounds()
         radius = bounds.size.height / 2.0

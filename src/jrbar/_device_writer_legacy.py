@@ -626,10 +626,24 @@ def discover_devices(
         ):
             continue
         if file_exists:
-            candidates.append(DeviceCandidate(volume, target, f"contains {target.name}"))
-        elif name_matches:
+            # LEDS.LED alone is not an identity: any SD card or thumb
+            # drive can carry one, and treating it as a device meant the
+            # app writing status programs to somebody else's storage.
+            # A recognized mount name or the firmware's own STATUS.TXT
+            # telemetry file is what makes it a device.
+            if name_matches or _has_firmware_marker(volume):
+                candidates.append(
+                    DeviceCandidate(volume, target, f"contains {target.name}")
+                )
+        elif name_matches or _has_firmware_marker(volume):
             candidates.append(DeviceCandidate(volume, target, "name matches device"))
     return candidates
+
+
+def _has_firmware_marker(volume: Path) -> bool:
+    """The firmware writes STATUS.TXT telemetry at boot; an arbitrary
+    volume containing LEDS.LED does not have one."""
+    return path_exists(volume / "STATUS.TXT")
 
 
 def _validated_file_name(file_name: str) -> str:

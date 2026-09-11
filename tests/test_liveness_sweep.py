@@ -81,6 +81,62 @@ def test_reap_swallows_pipeline_errors(tmp_path: Path):
         log_path_for=lambda p: Path("/x"),
     )
     assert result.synthesized_events == 0 and len(result.ended_sessions) == 1
+    assert result.failed_sends == 1
+
+
+def test_reap_retries_a_send_the_first_attempt_lost(tmp_path: Path):
+    """The whole point of the cooldown: a failed terminal write is a delay,
+    not a disappearance. The session stays on the live list, and once the
+    grace window passes the sweep emits the end again."""
+
+    pr.record_agent_process("codex", "dead", pr.ProcessEntry(301, 1, 6.0, "codex"), state_dir=tmp_path)
+    clock = [1000.0]
+    sweeper = pr.ProcessSweeper(
+        state_dir=tmp_path,
+        table_loader=lambda: {1: pr.ProcessEntry(1, 0, 0.0, "launchd")},
+        claude_index_loader=dict,
+        clock=lambda: clock[0],
+    )
+    sent = []
+    attempts = []
+
+    def flaky(provider, log_path, payload, *, refresh_hint_handler):
+        attempts.append(payload)
+        if len(attempts) == 1:
+            raise RuntimeError("disk wedged")
+        sent.append(json.loads(payload))
+
+    statuses = [_status("codex", "codex:session:dead", "dead")]
+    first = reap_dead_agents(
+        statuses,
+        sweeper=sweeper,
+        refresh_hint_handler=None,
+        process_payload=flaky,
+        log_path_for=lambda p: Path("/x"),
+    )
+    assert first.synthesized_events == 0 and first.failed_sends == 1
+
+    # Still claimed live; inside the grace window the first end is trusted.
+    second = reap_dead_agents(
+        statuses,
+        sweeper=sweeper,
+        refresh_hint_handler=None,
+        process_payload=flaky,
+        log_path_for=lambda p: Path("/x"),
+    )
+    assert second.ended_sessions == () and sent == []
+
+    # Past the window, the sweep says it again -- and this time it lands.
+    clock[0] += pr.REEMIT_AFTER_SECONDS + 1
+    third = reap_dead_agents(
+        statuses,
+        sweeper=sweeper,
+        refresh_hint_handler=None,
+        process_payload=flaky,
+        log_path_for=lambda p: Path("/x"),
+    )
+    assert third.synthesized_events == 1 and third.failed_sends == 0
+    assert sent[0]["hook_event_name"] == "SessionEnd"
 
 
 def test_reap_reports_the_sessions_it_found_alive(tmp_path: Path):

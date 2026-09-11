@@ -75,6 +75,52 @@ DEVICE_LED_COUNTS = {
     "pulsedot": 2,
     "sidepulsepro": 8,
 }
+# Firmware serial prefixes in STATUS.TXT are the canonical identity: SPD
+# is a Dot (2 LEDs), SPP a Pro (8). The mount name is only a hint -- the
+# live Pro mounts as bare "SidePulse", which no name rule can classify,
+# and a user renaming a volume must never change its LED count.
+DEVICE_SERIAL_LED_COUNTS = {
+    "SPD": 2,
+    "SPP": 8,
+}
+
+
+def _led_count_from_serial(root: Path) -> int | None:
+    try:
+        text = (root / "STATUS.TXT").read_text(errors="replace")[:4096]
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if not line.startswith("serial "):
+            continue
+        parts = line.split()
+        if len(parts) == 2:
+            prefix = parts[1].split("-", 1)[0].upper()
+            return DEVICE_SERIAL_LED_COUNTS.get(prefix)
+        return None
+    return None
+
+
+def _led_count_from_name(name: str) -> int:
+    normalized = normalized_device_name(name)
+    for hint, led_count in DEVICE_LED_COUNTS.items():
+        if hint in normalized:
+            return led_count
+    return 8
+
+
+def led_count_for_target(target: Path) -> int:
+    """LED count for the volume holding ``target``.
+
+    The serial in STATUS.TXT outranks the mount name: a Dot that mounts
+    as ``/Volumes/SidePulse`` still gets two segments, and a Pro whose
+    owner renamed it does not shrink to two. The read is one page-cached
+    telemetry file per compose, so no cache and no clock.
+    """
+    count = _led_count_from_serial(target.parent)
+    if count is None:
+        count = _led_count_from_name(target.parent.name)
+    return count
 
 
 @dataclass(frozen=True)
@@ -1042,14 +1088,6 @@ def burn_saved_animation_to_power_up(
         dry_run=dry_run,
         allow_warnings=allow_warnings,
     )
-
-
-def led_count_for_target(target: Path) -> int:
-    name = normalized_device_name(target.parent.name)
-    for hint, led_count in DEVICE_LED_COUNTS.items():
-        if hint in name:
-            return led_count
-    return 8
 
 
 def normalized_device_name(name: str) -> str:

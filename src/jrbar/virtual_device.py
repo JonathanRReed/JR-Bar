@@ -2189,6 +2189,7 @@ class _AnnouncerPillView(NSView):
     def isFlipped(self):
         return False
 
+    @guard_draw
     def drawRect_(self, _rect):
         bounds = self.bounds()
         radius = bounds.size.height / 2.0

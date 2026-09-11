@@ -169,3 +169,29 @@ def test_a_pulsedot_volume_is_a_dot_with_two_leds(tmp_path: Path) -> None:
     assert led_count_for_target(Path("/Volumes/PulseDot/LEDS.LED")) == 2
     assert is_device_name("PulseDot")
     assert device_display_name("PulseDot") == "SidePulse Dot"
+
+
+def test_led_count_follows_the_serial_not_the_volume_label(tmp_path: Path) -> None:
+    """Every device mounts with the same bare ``SidePulse`` label, so the
+    mount name cannot tell a Pro from a Dot -- the firmware serial in
+    STATUS.TXT can. A Pro's name guessing wrong must never shrink its
+    eight segments to two."""
+    from jrbar._led_status_legacy import led_count_for_target
+
+    pro = tmp_path / "SidePulse"
+    pro.mkdir()
+    (pro / "LEDS.LED").write_text("off")
+    (pro / "STATUS.TXT").write_text("serial SPP-000067\nuptime_ms 1\n")
+
+    dot = tmp_path / "SidePulseRenamed"
+    dot.mkdir()
+    (dot / "LEDS.LED").write_text("off")
+    (dot / "STATUS.TXT").write_text("serial SPD-000120\nuptime_ms 1\n")
+
+    assert led_count_for_target(pro / "LEDS.LED") == 8
+    assert led_count_for_target(dot / "LEDS.LED") == 2
+
+    # No STATUS.TXT: the name hints still carry a serial-less old Dot.
+    nameless = tmp_path / "PulseDot"
+    nameless.mkdir()
+    assert led_count_for_target(nameless / "LEDS.LED") == 2

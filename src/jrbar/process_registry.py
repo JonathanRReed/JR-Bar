@@ -41,6 +41,14 @@ SWEEP_MIN_INTERVAL_SECONDS = 2.0
 # lstart has one-second resolution; allow drift between sources that
 # report milliseconds (Claude's session index) and ps.
 START_TOLERANCE_SECONDS = 5.0
+# Recording a death is not the job; making the session stop looking alive
+# is. A session still on the caller's live-looking list long after its
+# record was ended means the synthetic terminal event never took -- the
+# write failed, or the app died between marking the record and reaping.
+# Re-report the death on a cooldown until the row actually goes away: a
+# delivered end removes the session from the caller's list within a
+# refresh or two, so this repeats only while it is still needed.
+REEMIT_AFTER_SECONDS = 30.0
 
 _SHELL_NAMES = frozenset(
     {"sh", "bash", "zsh", "fish", "env", "python", "python3", "node", "caffeinate"}
@@ -66,6 +74,12 @@ PROVIDER_PROCESS_NAMES: Mapping[str, frozenset[str]] = {
     "devin": frozenset({"devin"}),
     "antigravity": frozenset({"agy", "antigravity"}),
 }
+# Providers whose hooks fire inside one long-lived shared host rather than
+# a per-session process. The ancestor walk finds that host, and its pid
+# stays valid after every session on it has ended -- a record makes dead
+# sessions vouch themselves alive forever. These providers get no record;
+# the silence clock is their only liveness evidence.
+SHARED_HOST_PROVIDERS = frozenset({"devin"})
 
 _SESSION_ID_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -401,6 +415,11 @@ def note_hook_payload(
                 state_dir=state_dir,
             )
         return
+    if provider in SHARED_HOST_PROVIDERS:
+        # No record: the pid the walk would find is the shared host's, and
+        # registering it would pin the session's liveness to a process
+        # that outlives the session by design.
+        return
     if existing is not None and existing.ended_at_epoch is None and event != "SessionStart":
         return
     table = table_loader()
@@ -521,6 +540,7 @@ class ProcessSweeper:
         self._clock = clock
         self._last_sweep_at = 0.0
         self._table: dict[int, ProcessEntry] = {}
+        self._reemitted_at: dict[tuple[str, str], float] = {}
 
     def _refresh_table(self) -> dict[int, ProcessEntry]:
         now = self._clock()
@@ -557,7 +577,16 @@ class ProcessSweeper:
         claude_index: dict[str, ProcessEntry] | None = None
         dead: list[DeadAgentProcess] = []
         live: set[tuple[str, str]] = set()
+        wanted_keys = set(wanted)
+        for key in list(self._reemitted_at):
+            if key not in wanted_keys:
+                del self._reemitted_at[key]
         for provider, session_id in wanted:
+            if provider in SHARED_HOST_PROVIDERS:
+                # The pid on file is the shared host's, alive by design --
+                # it says nothing about the session. Not a vouch, and not
+                # a death: the silence timer answers for these.
+                continue
             record = load_record(provider, session_id, state_dir=self.state_dir)
             if record is None and provider == "claude":
                 if claude_index is None:
@@ -567,7 +596,21 @@ class ProcessSweeper:
                     record = record_agent_process(
                         provider, session_id, entry, state_dir=self.state_dir, now=self._clock()
                     )
-            if record is None or record.ended_at_epoch is not None:
+            if record is None:
+                continue
+            if record.ended_at_epoch is not None:
+                # Already recorded dead, yet still claimed live past the
+                # grace window: the terminal event never landed. Say it
+                # again -- each caller that keeps listing the session is
+                # telling us the first one was lost.
+                last = self._reemitted_at.get(
+                    (provider, session_id), record.ended_at_epoch
+                )
+                if self._clock() - last >= REEMIT_AFTER_SECONDS:
+                    self._reemitted_at[(provider, session_id)] = self._clock()
+                    dead.append(
+                        DeadAgentProcess(record, record.end_reason or "process_exited")
+                    )
                 continue
             alive, reason = process_is_live(record, table)
             if alive:

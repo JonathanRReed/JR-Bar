@@ -53,6 +53,13 @@ class SweepResult:
     # proved alive. Affirmative only -- a session absent from this set is
     # one nobody could vouch for, not one known dead.
     live_sessions: frozenset[tuple[str, str]] = frozenset()
+    # Payloads the pipeline refused. The registry marks a death before the
+    # event lands, so a failed write used to be a silent permanent loss --
+    # the session kept its light and the corpse kept its ask. ``classify``
+    # re-reports any session still claimed live past its recorded end, so
+    # a failure is now a delay instead of a loss; the count exists so the
+    # caller can log that delay instead of swallowing it.
+    failed_sends: int = 0
 
 
 def _subagent_worker_id(status: AgentStatus) -> str | None:
@@ -124,6 +131,7 @@ def reap_dead_agents(
     else:  # a sweeper double that only knows the old question
         dead, live = sweeper.sweep(sessions), frozenset()
     synthesized = 0
+    failed = 0
     for item in dead:
         for payload in synthetic_end_payloads(item, rows):
             try:
@@ -135,8 +143,8 @@ def reap_dead_agents(
                 )
                 synthesized += 1
             except Exception:
-                continue
-    return SweepResult(tuple(dead), synthesized, frozenset(live))
+                failed += 1
+    return SweepResult(tuple(dead), synthesized, frozenset(live), failed)
 
 
 __all__ = ["LIVE_MODES", "SweepResult", "reap_dead_agents", "synthetic_end_payloads"]

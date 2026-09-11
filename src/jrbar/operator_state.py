@@ -156,6 +156,13 @@ MAX_CANONICAL_WORKS: Final = 1_000
 # (discontinuity or future-dated facts) so a distrusted wall clock can
 # never mass-expire live work.
 CANONICAL_WORK_RETENTION_SECONDS: Final = 24 * 3_600.0
+# How long an ask may stand unanswered while still claiming "needs you".
+# Same hour as the presence horizon on purpose: the lights, the status
+# rows, and the mailbox all stop trusting a row past it, so a request
+# older than it cannot be reached by anything that could answer it.
+# Past it the ask is held, not deleted -- a live session re-observed
+# re-promotes it on the next batch.
+REQUEST_LIVE_GRACE_SECONDS: Final = 3_600.0
 MAX_CANONICAL_REQUESTS: Final = 1_000
 MAX_EVENTS_PER_REDUCTION: Final = 2_000
 MAX_REDUCER_DIAGNOSTICS: Final = 16
@@ -1273,9 +1280,14 @@ def _new_request_truth(
         opened_at = previous.opened_at_epoch if previous is not None else None
         eligible = previous.eligible_elapsed_seconds if previous is not None else 0.0
     else:
+        # STALE_HOLD is a held ask, not a dead one: a fresh fact about it
+        # is the source proving the session is still out there, so the
+        # ask reopens with a new clock rather than staying held on the
+        # strength of the timestamp it was first seen with.
         reopening = previous is None or previous.phase in {
             RequestPhase.RESOLVED,
             RequestPhase.UNKNOWN_EXPIRED,
+            RequestPhase.STALE_HOLD,
         }
         if restored or source_freshness is not SourceFreshness.FRESH:
             phase = RequestPhase.STALE_HOLD
@@ -1661,7 +1673,37 @@ def reduce_operator_state(
             batch,
             metadata_applies,
         )
-        if source in uncertain_sources:
+        owner = works.get(key.work_key)
+        prior_owner = previous_works.get(key.work_key)
+        if (
+            provider_live
+            and owner is not None
+            and owner.lifecycle in {WorkLifecycle.COMPLETED, WorkLifecycle.FAILED}
+            and (
+                key in previous_requests
+                or (
+                    prior_owner is not None
+                    and prior_owner.lifecycle
+                    in {WorkLifecycle.COMPLETED, WorkLifecycle.FAILED}
+                )
+            )
+        ):
+            # The session that was asking is over -- ended, killed, or
+            # swept -- and nobody is home to answer a prompt on it. An
+            # unresolved ask must not keep claiming "needs you" from the
+            # grave, so a terminal work closes its open requests. A
+            # request that first arrives in the batch that closed the work
+            # still opens: the provider did report it live, and its own
+            # resolution fact -- or the next batch, which cascades it
+            # then -- carries the close.
+            phase = RequestPhase.RESOLVED
+            request_events[key] = _event(
+                key,
+                TransitionKind.REQUEST_RESOLVED,
+                owner.watermark,
+                freshness,
+            )
+        elif source in uncertain_sources:
             timing = source_timing[source]
             lease_expired = (
                 clock.monotonic_seconds - timing.uncertain_since_monotonic
@@ -1677,11 +1719,25 @@ def reduce_operator_state(
                 else request.phase
             )
         elif provider_live:
-            phase = (
-                RequestPhase.LIVE_ACKNOWLEDGED
-                if key in acknowledged_requests
-                else RequestPhase.LIVE_UNACKNOWLEDGED
+            opened_at = (
+                request.opened_at_epoch
+                if request.opened_at_epoch is not None
+                else request.watermark.occurred_at_epoch
             )
+            if opened_at < clock.wall_epoch - REQUEST_LIVE_GRACE_SECONDS:
+                # A live-looking ask past the presence horizon is memory,
+                # not a claim: every light and row already drops it past
+                # the same line, so holding LIVE_* here only let a silent
+                # source keep "needs you" lit forever. Held, not resolved --
+                # fresh facts about a real session re-promote it on the
+                # next batch.
+                phase = RequestPhase.STALE_HOLD
+            else:
+                phase = (
+                    RequestPhase.LIVE_ACKNOWLEDGED
+                    if key in acknowledged_requests
+                    else RequestPhase.LIVE_UNACKNOWLEDGED
+                )
             if freshness in {
                 SourceFreshness.TIMING_UNCERTAIN,
                 SourceFreshness.RESTORED,
