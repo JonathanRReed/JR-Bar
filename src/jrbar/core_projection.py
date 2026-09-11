@@ -77,6 +77,11 @@ TERMINAL_BUNDLE_IDS: Final = frozenset(bundle for _name, bundle in TERMINAL_APPS
 _WORKING_MODES: Final = frozenset(
     {AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.LONG_TASK_PROGRESS}
 )
+#: The modes the silence timer acts on, and so the only ones a live process
+#: outvotes it for: work in progress, plus the word the timer replaces it
+#: with. Nothing finished, failed or idle is in here -- those have their own
+#: clocks and must keep them.
+_LIVE_WORK_MODES: Final = _WORKING_MODES | {AgentMode.ENDED_UNCONFIRMED}
 _ESCALATION_STAGE_NAMES: Final = {0: "none", 1: "ramp", 2: "menu_bar", 3: "final"}
 # ``lights.surfaces.*.why``: the documented vocabulary (docs/CORE-PROTOCOL.md).
 WHY_VALUES: Final = (
@@ -801,6 +806,23 @@ def session_document(
     event_name = getattr(status, "event_name", None)
     process_alive = extras.process_alive if extras is not None else None
     provider_ended = extras.provider_ended if extras is not None else None
+    # A dead process without an end event is a session that stopped being
+    # delivered, whatever its last mode said. A run that ended itself and
+    # then exited -- every one-shot CLI turn -- is not stale, it is over.
+    if process_alive is False and event_name not in END_EVENT_NAMES:
+        stale = True
+    # And the mirror, for the modes the silence timer acts on. ``stale``
+    # means "the source stopped delivering and nobody can vouch for this
+    # row"; the registry just did, this refresh, by finding the agent's
+    # process in the table. A long tool run's row is OLD, not unvouched,
+    # and the difference is not cosmetic: ``session_visibility`` ages a
+    # stale row out of the list after ten quiet minutes, the aggregate
+    # drops it from ``active``, and Clear offers to sweep it away -- three
+    # ways to lose a session that is still running. ``since`` carries the
+    # quiet. Finished and idle modes keep their own clocks, so that a
+    # terminal left open does not pin a done row on screen for ever.
+    if process_alive is True and mode in _LIVE_WORK_MODES:
+        stale = False
     lifecycle = lifecycle_for_mode(
         mode,
         stale=stale,
@@ -808,11 +830,6 @@ def session_document(
         process_alive=process_alive,
         provider_ended=provider_ended,
     )
-    # A dead process without an end event is a session that stopped being
-    # delivered, whatever its last mode said. A run that ended itself and
-    # then exited -- every one-shot CLI turn -- is not stale, it is over.
-    if process_alive is False and event_name not in END_EVENT_NAMES:
-        stale = True
     # ``mode`` travels beside ``lifecycle`` and the app reads whichever is
     # more definite; a run demoted to ``ended`` must not still say
     # ``completed`` or it renders as Done with a green check.
