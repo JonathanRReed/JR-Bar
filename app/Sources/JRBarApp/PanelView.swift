@@ -283,6 +283,16 @@ struct PanelHeader: View {
                     .contentTransition(.numericText())
             }
             Spacer(minLength: 8)
+            if let quietLabel = store.quietLabel {
+                // `state.focus` says a quiet is in effect: the moon so it
+                // is visible at a glance, the label on hover for the
+                // countdown. "Quiet…" in the footer says the same words.
+                Image(systemName: "moon.zzz.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .help(quietLabel)
+                    .accessibilityLabel("Quiet: \(quietLabel)")
+            }
             ConnectionDot(state: store.coreCrashed ? .crashed : store.connectionDot, reduced: store.reduceMotion, active: store.isOpen)
                 .help(store.connectionDescription)
         }
@@ -598,9 +608,41 @@ struct SessionRowView: View {
             }
         }
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: row.activity)
+        .help(row.help(now: store.now) ?? "")
+        .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(row.label), \(row.style.name), \(row.activity.word)")
         .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The right-click menu both row types share: open the session in its own
+/// terminal, snooze the family while it is waiting (or lift a snooze that
+/// is on), copy or reveal the working directory, clear a finished row.
+struct SessionContextMenu: View {
+    let row: SessionRow
+    @Bindable var store: PanelStore
+
+    var body: some View {
+        Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+        if row.isSnoozed(now: store.now) {
+            Button("Unsnooze") { store.snooze(row, seconds: 0) }
+        } else if row.ask != nil || row.activity == .waiting {
+            // Snooze quiets the session's whole family at the mailbox; the
+            // daemon resolves the work key from the session id.
+            Button("Snooze 15 minutes") { store.snooze(row, seconds: 900) }
+            Button("Snooze 1 hour") { store.snooze(row, seconds: 3600) }
+            Button("Snooze until tomorrow") { store.snooze(row, seconds: PanelStore.secondsUntilMorning()) }
+        }
+        if let cwd = row.cwd, !cwd.isEmpty {
+            Divider()
+            Button("Copy Path") { store.copyPath(row) }
+            Button("Reveal in Finder") { store.reveal(row) }
+        }
+        if row.activity.isClearable || row.stale {
+            Divider()
+            Button("Clear") { store.clear(row) }
+        }
     }
 }
 
@@ -641,10 +683,8 @@ struct AskRow: View {
                 Spacer()
                 Button("Deny") { if let ask = row.ask { store.deny(ask) } }
                     .buttonStyle(PillButtonStyle(prominent: false))
-                    .keyboardShortcut("d", modifiers: .command)
                 Button("Approve") { if let ask = row.ask { store.approve(ask) } }
                     .buttonStyle(PillButtonStyle(prominent: true))
-                    .keyboardShortcut(.return, modifiers: .command)
             }
         }
         .padding(.horizontal, 8)
@@ -660,6 +700,8 @@ struct AskRow: View {
         .padding(.horizontal, 6)
         .contentShape(Rectangle())
         .onTapGesture { store.open(row) }
+        .help(row.help(now: store.now) ?? "")
+        .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(row.label) asks: \(row.ask?.summary ?? "")")
     }
@@ -735,7 +777,7 @@ struct UsageRow: View {
     /// The percent column: `~100%` fits with room to spare.
     static let percentWidth: CGFloat = 46
 
-    private var style: ProviderStyle { ProviderStyle.style(for: usage.id) }
+    private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
     private var windows: (primary: CoreUsageWindow?, secondary: CoreUsageWindow?) { PanelStore.windows(of: usage) }
 
     var body: some View {
@@ -1045,19 +1087,50 @@ struct PanelFooter: View {
                     .transition(.opacity)
             }
             Menu {
-                Button("30 minutes") { store.quiet(minutes: 30) }
-                Button("1 hour") { store.quiet(minutes: 60) }
-                Button("4 hours") { store.quiet(minutes: 240) }
-                Button("Until tomorrow") { store.quiet(minutes: 12 * 60) }
+                Button("30 minutes") { store.quietFor(seconds: 30 * 60) }
+                Button("1 hour") { store.quietFor(seconds: 60 * 60) }
+                Button("4 hours") { store.quietFor(seconds: 240 * 60) }
+                Button("Until \(PanelStore.clockTime(store.morningTarget)) tomorrow") {
+                    store.quietFor(seconds: PanelStore.secondsUntilMorning())
+                }
+                Divider()
+                Menu("Mode") {
+                    ForEach(PanelStore.quietModes, id: \.id) { mode in
+                        Button {
+                            store.quietMode = mode.id
+                        } label: {
+                            if store.quietMode == mode.id {
+                                Label(mode.label, systemImage: "checkmark")
+                            } else {
+                                Text(mode.label)
+                            }
+                        }
+                    }
+                }
+                if store.quietIsOurs {
+                    Divider()
+                    Button("End quiet") { store.endQuiet() }
+                }
             } label: {
-                Text("Quiet…")
+                // "Quiet…" idle; "Paused 42m" while the daemon's focus
+                // says a quiet is in effect, in the waiting amber.
+                Text(store.quietLabel ?? "Quiet…")
+                    .lineLimit(1)
+                    .foregroundStyle(store.quiet != nil ? SessionActivity.waiting.tint : .primary)
             }
             .menuStyle(.button)
             .buttonStyle(FooterButtonStyle(dimmed: !store.isLive, active: store.isOpen))
             .menuIndicator(.hidden)
             .fixedSize()
+            .help(store.quietLabel.map { "Quiet: \($0) · from \((store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu")" }
+                  ?? "Quiet the lights and sounds for a while")
+            .accessibilityLabel("Quiet")
             Spacer()
-            FooterButton(title: "History", dimmed: !store.isLive, shortcut: "⌘Y", active: store.isOpen) { store.openHistory() }
+            // While a quiet is in effect its label needs the room the
+            // shortcut hints take; the shortcuts themselves still work
+            // and the .help texts keep naming them.
+            FooterButton(title: "History", dimmed: !store.isLive,
+                         shortcut: store.quiet == nil ? "⌘Y" : nil, active: store.isOpen) { store.openHistory() }
                 .help("Activity history (⌘Y)")
             Menu {
                 Button { store.openControlCenter() } label: { Text("Control Center…") }
@@ -1086,7 +1159,8 @@ struct PanelFooter: View {
             .buttonStyle(FooterButtonStyle(dimmed: false, active: store.isOpen))
             .help("Settings… (⌘,)")
             .accessibilityLabel("Settings")
-            FooterButton(title: "Quit", dimmed: false, shortcut: "⌘Q", active: store.isOpen) { store.quit() }
+            FooterButton(title: "Quit", dimmed: false,
+                         shortcut: store.quiet == nil ? "⌘Q" : nil, active: store.isOpen) { store.quit() }
         }
         .padding(.horizontal, 8)
         .frame(height: CGFloat(PanelLayout.footerHeight))

@@ -780,6 +780,7 @@ def session_document(
     extras: SessionExtras | None,
     workers: int,
     parent_label: str | None = None,
+    snoozed_until: float | None = None,
 ) -> dict[str, Any]:
     mode = getattr(status, "mode", AgentMode.UNKNOWN)
     if not isinstance(mode, AgentMode):
@@ -874,6 +875,9 @@ def session_document(
         "ask": ask_document(status, operator_state, with_session=False) if agent_id in ask_ids else None,
         "terminal": extras.terminal if extras is not None else None,
         "workers": workers,
+        # The family mailbox's active snooze, when one covers this
+        # session: the panel's "Snoozed until…" / Unsnooze read it.
+        "snoozed_until": epoch(snoozed_until),
         "event": getattr(status, "event_name", None),
         "tool": getattr(status, "tool_name", None),
         "message": getattr(status, "message", None),
@@ -995,24 +999,56 @@ def usage_document(
     }
 
 
-def focus_document(dnd_projection: object) -> dict[str, Any]:
+#: The contribution sources, in the app's words. `manual` is the panel's
+#: own "Quiet" menu (a `quiet` command), so it reads "override"; both
+#: Focus kinds read "focus" -- the named-vs-OS distinction is the
+#: schedule page's business, not a footer's.
+_FOCUS_SOURCE_WORDS = {
+    "manual": "override",
+    "schedule": "schedule",
+    "macos_focus": "focus",
+    "named_focus": "focus",
+}
+
+
+def focus_document(dnd_projection: object, *, override_until: object = None) -> dict[str, Any]:
+    """``state.focus``: the quiet state in the words the panel reads.
+
+    ``mode`` is the active quiet mode (``pause``, ``dim``, ``mute``,
+    ``dark``, ``asks_only``) or the literal ``"off"`` -- never null and
+    never "normal", so `mode == "off"` is the one test a reader needs.
+    ``source`` is ``override`` (the panel's quiet menu), ``schedule`` or
+    ``focus``; null while nothing quiet is in effect. ``until`` answers
+    "when does this quiet end": an override knows its own expiry, a
+    schedule's ``next_transition`` is the interval's end while it is in
+    effect, and with nothing in effect the next transition is a quiet
+    period *starting* -- which a reader would paint as an end time, so
+    the field is null then.
+    """
     contributions = getattr(dnd_projection, "contributions", ()) or ()
-    mode = "normal"
-    source = "default"
+    mode: str | None = None
+    source: str | None = None
     for contribution in contributions:
         contribution_mode = getattr(getattr(contribution, "mode", None), "value", None)
         if contribution_mode:
             mode = contribution_mode
-            source = getattr(getattr(contribution, "source", None), "value", source)
+            source = getattr(getattr(contribution, "source", None), "value", None)
             break
-    else:
+    if source is None:
         sources = getattr(dnd_projection, "active_sources", ()) or ()
         if sources:
-            source = getattr(sources[0], "value", source)
+            source = getattr(sources[0], "value", None)
+    next_transition = epoch(getattr(dnd_projection, "next_transition_epoch", None))
+    if not contributions:
+        until = None
+    elif source == "manual":
+        until = epoch(override_until) or next_transition
+    else:
+        until = next_transition
     return {
-        "mode": mode,
-        "source": source,
-        "until": epoch(getattr(dnd_projection, "next_transition_epoch", None)),
+        "mode": mode or "off",
+        "source": _FOCUS_SOURCE_WORDS.get(source, source) if source else None,
+        "until": until,
         "display": getattr(getattr(dnd_projection, "display_admission", None), "value", None),
         "brightness_factor": getattr(dnd_projection, "brightness_factor", None),
         "banner_allowed": getattr(dnd_projection, "banner_allowed", None),
@@ -1050,6 +1086,8 @@ def build_state_document(
     deck: dict[str, Any] | None = None,
     usage_samples: object = None,
     acknowledged_keys: object = (),
+    snoozed_until_by_id: dict[str, float] | None = None,
+    dnd_override_until: object = None,
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
     object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
@@ -1099,6 +1137,7 @@ def build_state_document(
             extras=extras_by_id.get(agent_id),
             workers=workers_by_parent.get(agent_id, 0),
             parent_label=labels_by_id.get(str(parent)) if parent else None,
+            snoozed_until=(snoozed_until_by_id or {}).get(agent_id),
         )
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
@@ -1151,7 +1190,7 @@ def build_state_document(
                 "helper_installed": bool(power.helper_installed),
             },
         },
-        "focus": focus_document(dnd_projection),
+        "focus": focus_document(dnd_projection, override_until=dnd_override_until),
         "escalation": {
             "stage": escalation_stage_name(escalation.stage),
             "since": epoch(escalation.since),

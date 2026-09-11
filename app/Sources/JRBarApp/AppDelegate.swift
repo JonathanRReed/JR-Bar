@@ -680,13 +680,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// `maxMeters` the rest become "+n".
     private func refreshMeters(preferred: [String], usage: [CoreProviderUsage]) {
         guard let statusItem else { return }
+        let document = core?.settings.map { SettingsDocument($0.document) }
         let shown = Self.meteredProviders(preferred: preferred, usage: usage)
         let cap = StatusIconRenderer.maxMeters
         statusItem.meters = shown.prefix(cap).map { provider in
             let window = UsageCenterStore.primaryWindow(of: provider)
             return StatusItemController.meter(for: provider.id,
                                               fraction: window.flatMap { $0.usedPct }.map { $0 / 100 },
-                                              approximate: provider.isDerived)
+                                              approximate: provider.isDerived,
+                                              document: document)
         }
         statusItem.meterOverflow = max(0, shown.count - cap)
         statusItem.dotState = dotState()

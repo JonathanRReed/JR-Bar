@@ -282,11 +282,22 @@ final class PanelController {
                 store.openControlCenter()
                 return nil
             }
+            if flags.contains(.command), event.charactersIgnoringModifiers?.lowercased() == "d",
+               store.keyboardAsk != nil {
+                // ⌘D answers the selected ask card (the first, when none is
+                // selected) — registered once here, not once per ask row.
+                store.denySelectedAsk()
+                return nil
+            }
             switch event.keyCode {
             case 53: close(); return nil                            // Esc
             case 125: store.moveSelection(by: 1); return nil       // Down
             case 126: store.moveSelection(by: -1); return nil      // Up
             case 36, 76:                                            // Return / keypad Enter
+                if flags.contains(.command) {
+                    if store.keyboardAsk != nil { store.approveSelectedAsk(); return nil }
+                    return event
+                }
                 if flags.isEmpty { store.activateSelection(); return nil }
                 return event
             case 48:                                                // Tab: keep focus inside

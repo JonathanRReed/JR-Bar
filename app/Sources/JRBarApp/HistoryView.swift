@@ -131,7 +131,7 @@ struct HistoryFilterBar: View {
             ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(store.providers, id: \.self) { provider in
-                    let style = ProviderStyle.style(for: provider)
+                    let style = ProviderStyle.style(for: provider, document: store.document)
                     FilterChip(selected: store.filter.providers.contains(provider), accent: style.accent) {
                         HStack(spacing: 5) {
                             ProviderTile(style: style, size: 14)
@@ -242,7 +242,7 @@ struct HistoryRowView: View {
     let isLast: Bool
     @ViewState private var hovering = false
 
-    private var style: ProviderStyle { ProviderStyle.style(for: row.provider ?? "") }
+    private var style: ProviderStyle { ProviderStyle.style(for: row.provider ?? "", document: store.document) }
     private var selected: Bool { store.selectedID == row.id }
 
     var body: some View {

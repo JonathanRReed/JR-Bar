@@ -126,6 +126,35 @@ All notable changes to JR-Bar are documented here.
   `with_device_resting_glow` used to drop the glow when the device had no
   settings row yet, and a malformed calibration number answers
   `invalid_args` instead of leaking a ValueError.
+- The panel now says when a quiet is in effect, and says it truthfully:
+  `state.focus` carries `mode` (`pause`, `dim`, `mute`, `dark`,
+  `asks_only`, or the literal `off` -- never null), `source`
+  (`override` for the panel's own Quiet menu, `schedule`, `focus` for a
+  macOS or named Focus) and `until` (when this quiet ends; null when
+  none is in effect). The footer reads "Paused · 42m" in the waiting
+  amber, a `moon.zzz` glyph sits in the header, and "End quiet" exists
+  only while the quiet is the panel's own override -- a schedule's quiet
+  is not this menu's to cancel. The Quiet menu's presets run in the
+  chosen mode ("Until 08:00 tomorrow" names the real clock time rather
+  than promising a guessed 12 h). Session rows gain a context menu --
+  open in the session's own terminal, snooze the family for 15 minutes /
+  an hour / until tomorrow (or Unsnooze; `sessions[].snoozed_until`
+  carries the family mailbox's expiry so the row knows), copy or reveal
+  the working directory, and Clear for finished, ended and stale rows --
+  and the full path is the row's tooltip. ⌘↩ and ⌘D answer the selected
+  ask card once, at the panel level, instead of once per row.
+- Settings stops lying about usage. "Show tips" is gone (no tip UI
+  exists); the Usage page's provider list is now honestly labelled "Menu
+  bar meters"; "Lead with" and "Graph range" are `usage_display_mode`
+  and `usage_graph_days` for real -- the Usage Center's toolbar writes
+  the same keys through `set_setting` instead of a private UserDefaults
+  copy, and the panel's sparklines follow the configured range (a week,
+  or a month when the range is longer). A stored "percent" metric reads
+  as tokens rather than rendering nothing, and the nonexistent "Today"
+  range is gone from the picker. Provider colours set in Settings ›
+  Lighting (`colors.agent_colors.*`) now reach the panel's rows and
+  sparklines, the Usage Center's tiles and rings, History's tiles and
+  filter chips, and the menu-bar meter columns.
 - New providers: pi (`jrbar agent-monitor install pi` writes
   `~/.pi/agent/extensions/jrbar.ts`) and Gemini CLI (`install gemini` adds
   hooks to `~/.gemini/settings.json`), both with transcript fallbacks

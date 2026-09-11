@@ -266,6 +266,25 @@ struct StatusMetersTests {
         #expect(StatusIconRenderer.tooltip(StatusIconSpec(style: .glyph), headline: "JR-Bar · Idle") == "JR-Bar · Idle")
     }
 
+    @Test("a configured provider colour tints the column, which drops the template flag")
+    func accentColours() {
+        let renderer = StatusIconRenderer()
+        let plain = renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("claude", 0.4)]))
+        var coloured = Self.meter("claude", 0.4)
+        coloured.accentHex = "#112233"
+        let tinted = renderer.image(for: StatusIconSpec(style: .meters, meters: [coloured]))
+        #expect(plain.isTemplate, "a calm uncoloured strip follows the menu bar")
+        #expect(!tinted.isTemplate, "a coloured column cannot be a template image")
+        #expect(Self.pixels(plain) != Self.pixels(tinted))
+        // A warning still wins over the accent: near-full is red, not brand.
+        var hot = Self.meter("claude", 0.97)
+        hot.accentHex = "#112233"
+        #expect(hot.warning == .red)
+        let warned = renderer.image(for: StatusIconSpec(style: .meters, meters: [hot]))
+        let warnedPlain = renderer.image(for: StatusIconSpec(style: .meters, meters: [Self.meter("claude", 0.97)]))
+        #expect(Self.pixels(warned) == Self.pixels(warnedPlain), "the warning colour is the warning colour")
+    }
+
     /// How much ink a strip carries: the fill is opaque, the track is not,
     /// so a taller fill is a bigger number. Enough to tell two levels apart
     /// without asserting pixels.

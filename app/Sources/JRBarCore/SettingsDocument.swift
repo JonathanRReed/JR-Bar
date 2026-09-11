@@ -108,6 +108,26 @@ public struct SettingsDocument: Hashable, Sendable {
     public func deviceIndex(id: String) -> Int? {
         deviceEntries.first { $0.id == id }?.index
     }
+
+    // MARK: Provider colours
+
+    /// `colors.agent_colors.<provider>` as a canonical `#RRGGBB` string,
+    /// nil when the key is absent or holds a malformed value — the
+    /// surfaces that take an accent all check this rather than parsing
+    /// the hex themselves.
+    public func agentColorHex(_ provider: String) -> String? {
+        string(SettingsPath("colors.agent_colors.\(provider)")).flatMap(normalizedColorHex)
+    }
+}
+
+/// `#RRGGBB` or `RRGGBB` → canonical `#RRGGBB`; nil for anything else.
+/// Same grammar `NSColor(hex:)` accepts, so a string that passes here
+/// parses there.
+public func normalizedColorHex(_ text: String) -> String? {
+    var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.hasPrefix("#") { trimmed.removeFirst() }
+    guard trimmed.count == 6, UInt32(trimmed, radix: 16) != nil else { return nil }
+    return "#" + trimmed.uppercased()
 }
 
 // MARK: - Key catalogue
@@ -162,7 +182,6 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.general, "link_screen_bar_to_hardware", .bool),
             SettingsKey(.general, "screen_bar_phase_offset_ms", .number),
             SettingsKey(.general, "global_brightness_scale", .number),
-            SettingsKey(.general, "tips_enabled", .bool),
             // Agents
             SettingsKey(.agents, "subagent_asks_alert", .bool),
             SettingsKey(.agents, "session_open_preferences", .object),

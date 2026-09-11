@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import JRBarUI
 import QuartzCore
 
@@ -406,17 +407,21 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         ]
     }
 
-    /// A provider's panel style as a menu-bar meter.
-    /// `fraction` is nil when the provider reports its primary window
-    /// without a number; the strip marks that column as unread.
-    static func meter(for provider: String, fraction: Double?, approximate: Bool) -> StatusMeter {
-        let style = ProviderStyle.style(for: provider)
+    /// A provider's panel style as a menu-bar meter. `fraction` is nil
+    /// when the provider reports its primary window without a number; the
+    /// strip marks that column as unread. `document` carries the
+    /// configured `colors.agent_colors.<id>` accent, when one validates.
+    static func meter(for provider: String, fraction: Double?, approximate: Bool,
+                      document: SettingsDocument? = nil) -> StatusMeter {
+        let style = ProviderStyle.style(for: provider, document: document)
         let glyph: StatusMeter.Glyph
         switch style.glyph {
         case .symbol(let name): glyph = .symbol(name)
         case .text(let text): glyph = .text(text)
         }
-        return StatusMeter(id: style.id, name: style.name, glyph: glyph, fraction: fraction, approximate: approximate)
+        return StatusMeter(id: style.id, name: style.name, glyph: glyph, fraction: fraction,
+                           approximate: approximate,
+                           accentHex: document?.agentColorHex(provider))
     }
 }
 

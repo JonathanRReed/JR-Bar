@@ -52,4 +52,18 @@ struct PythonProjectionFixtureTests {
             #expect(session.lifecycle != "ended", "\(session.id) has a pid and reads ended")
         }
     }
+
+    @Test("focus carries the quiet words and sessions carry their snooze")
+    func focusAndSnoozeDecode() throws {
+        let state = try Self.state()
+        let focus = try #require(state.focus)
+        // The fixture's schedule contribution: source is the app's word
+        // "schedule", never the daemon's internal name.
+        #expect(focus.mode == "dim")
+        #expect(focus.source == "schedule")
+        #expect(focus.until != nil)
+        // `snoozed_until` is on every row, null until the family mailbox
+        // snoozes it.
+        #expect(state.sessions.allSatisfy { $0.snoozedUntil == nil })
+    }
 }

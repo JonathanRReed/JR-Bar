@@ -82,6 +82,24 @@ struct SettingsDocumentTests {
         #expect(paths.contains("screen_bar_min_glow"))
         #expect(!paths.contains("devices[].brightness"))
     }
+
+    @Test("a provider colour override applies when the hex validates and is ignored when it does not")
+    func agentColourOverride() {
+        let document = SettingsDocument(["colors": ["agent_colors": [
+            "claude": "#112233",
+            "codex": "not-a-hex",
+            "gemini": "#FFF",
+        ]]])
+        // A valid override comes out canonical; the surfaces apply it over
+        // the default accent.
+        #expect(document.agentColorHex("claude") == "#112233")
+        // Malformed or absent values are nil, so the default stands.
+        #expect(document.agentColorHex("codex") == nil)
+        #expect(document.agentColorHex("gemini") == nil)
+        #expect(document.agentColorHex("pi") == nil)
+        #expect(normalizedColorHex("a1b2c3") == "#A1B2C3")
+        #expect(normalizedColorHex("") == nil)
+    }
 }
 
 @Suite("Settings against the mock", .serialized)

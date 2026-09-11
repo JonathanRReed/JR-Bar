@@ -71,7 +71,7 @@ protocol 1. Timestamps are Unix epoch seconds.
     "since":1788982891.0,"updated_at":1788982891.0,"stale":false,
     "pid":9170,"origin":{"kind":"claude_app","label":"Claude App","bundle_id":"com.anthropic.claudefordesktop"},
     "ask":null,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
-    "workers":1,"event":"PreToolUse","tool":"Bash","message":null}
+    "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null}
  ],
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build"}],
@@ -164,7 +164,10 @@ Vocabulary:
   reads `ended`.
 
   `next_actor` comes from canonical operator state (`user`, `provider`)
-  with a mode-based fallback.
+  with a mode-based fallback. `snoozed_until` is the family mailbox's
+  active snooze epoch for this session (a `snooze` command covers the
+  family, not the row), null while none is in effect -- the panel reads
+  it to say "Snoozed until…" and to offer Unsnooze.
 - `sessions` is what the panel should be looking at, not everything the
   daemon remembers (`completion_visibility`): live sessions -- working,
   tool running, waiting, blocked, idle-ready -- while they are still being
@@ -236,9 +239,15 @@ Vocabulary:
   is null (the app extrapolates from its own samples) unless the window
   is already exhausted. Without a known reset a window heading for 100 %
   is `ahead`.
-- `focus` reflects the DND projection: `mode` is the active DND mode
-  (`mute`, `dim`, `pause`, `asks_only`, `dark`) or `normal`, `source` is
-  `manual`, `schedule`, `focus` or `default`, `until` the next transition.
+- `focus` is the quiet state in the words a client reads: `mode` is the
+  active quiet mode (`mute`, `dim`, `pause`, `asks_only`, `dark`) or the
+  literal `off` -- never null -- while nothing quiet is in effect.
+  `source` is `override` (a `quiet` command's manual override),
+  `schedule`, `focus` (a macOS or named Focus), or null under `off`.
+  `until` is when *this* quiet ends: the override's own expiry for a
+  manual quiet, the schedule interval's end for a scheduled or Focus
+  quiet, and null while nothing is in effect -- a merely upcoming quiet
+  period never surfaces as an end time.
 - `escalation.stage`: `none`, `ramp`, `menu_bar`, `final` (0…3);
   `since` is when the oldest unanswered ask started blocking.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`

@@ -13,7 +13,6 @@ struct GeneralPage: View {
                 SettingLabel(title: "Launch at login", subtitle: store.launchAtLoginError ?? "Registers JR-Bar with the system so it starts with your Mac.")
             }
             MenuBarStylePicker(store: store)
-            SettingToggle(store, "Show tips", subtitle: "Occasional hints in the panel about what the light means.", path: "tips_enabled", default: true)
         }
 
         Section("Screen Bar") {
@@ -82,7 +81,8 @@ struct MenuBarStylePicker: View {
         return shown.prefix(StatusIconRenderer.maxMeters).map { provider in
             StatusItemController.meter(for: provider.id,
                                        fraction: UsageCenterStore.primaryWindow(of: provider).flatMap { $0.usedPct }.map { $0 / 100 },
-                                       approximate: provider.isDerived)
+                                       approximate: provider.isDerived,
+                                       document: store.document)
         }
     }
 
@@ -247,7 +247,7 @@ struct AgentRow: View {
     @Bindable var store: SettingsStore
     let provider: String
 
-    private var style: ProviderStyle { ProviderStyle.style(for: provider) }
+    private var style: ProviderStyle { ProviderStyle.style(for: provider, document: store.document) }
     private var status: String? { store.hookStatus(provider) }
 
     private var statusWord: String {
@@ -318,7 +318,7 @@ struct UsagePage: View {
             Provided(store, "usage_graph_providers") {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
                     ForEach(SettingsKey.providers, id: \.self) { provider in
-                        let style = ProviderStyle.style(for: provider)
+                        let style = ProviderStyle.style(for: provider, document: store.document)
                         Toggle(isOn: store.listMember("usage_graph_providers", provider)) {
                             HStack(spacing: 6) {
                                 ProviderTile(style: style, size: 16)
@@ -331,16 +331,18 @@ struct UsagePage: View {
                 .padding(.vertical, 2)
             }
         } header: {
-            Text("Show in the panel")
+            Text("Menu bar meters")
+        } footer: {
+            SectionNote("Which providers get a meter in the menu-bar icon (Meters styles). The panel and Usage Center always show every provider with usage.")
         }
 
         Section {
             SettingPicker(store, "Lead with", path: "usage_display_mode", options: [
-                ("tokens", "Tokens"), ("cost", "Cost"), ("percent", "Percent"),
+                ("tokens", "Tokens"), ("cost", "Cost"),
             ], default: "tokens", segmented: true)
                 .fixedSize()
             SettingIntPicker(store, "Graph range", path: "usage_graph_days", options: [
-                (1, "Today"), (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
+                (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
             LabeledContent {
                 Button("Open Usage Center") { store.onOpenUsageCenter?() }
@@ -351,7 +353,7 @@ struct UsagePage: View {
         } header: {
             Text("Display")
         } footer: {
-            SectionNote("Graphs live in the Usage Center (⌘U). This range is what it opens on and what the panel's sparklines cover.")
+            SectionNote("Graphs live in the Usage Center (⌘U): this range is what it opens on, and both pickers are the same settings it writes. The panel's sparklines cover a week, or a month when the range is longer.")
         }
 
         Section {

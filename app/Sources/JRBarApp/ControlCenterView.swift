@@ -461,7 +461,7 @@ struct KeyCap: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 if let provider = slot.provider, !provider.isEmpty {
-                    ProviderTile(style: ProviderStyle.style(for: provider), size: 22)
+                    ProviderTile(style: ProviderStyle.style(for: provider, document: store.document), size: 22)
                         .opacity(dim ? 0.5 : 1)
                 } else {
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -708,7 +708,7 @@ struct SessionDragRow: View {
     let session: CoreSession
     @ViewState private var hovered = false
 
-    private var style: ProviderStyle { ProviderStyle.style(for: session.provider) }
+    private var style: ProviderStyle { ProviderStyle.style(for: session.provider, document: store.document) }
     private var activity: SessionActivity { SessionActivity.reduce(session) }
     private var boundKey: Int? { store.slotIndex(bound: session.id) }
     private var pinned: Bool { boundKey.flatMap { store.deck?.slot(at: $0)?.pinned } ?? false }

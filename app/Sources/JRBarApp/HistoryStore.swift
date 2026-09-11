@@ -8,6 +8,9 @@ import Observation
 @Observable
 final class HistoryStore {
     let core: CoreModel
+
+    /// The daemon's settings document, for provider colour overrides.
+    var document: SettingsDocument? { core.settings.map { SettingsDocument($0.document) } }
     var rows: [CoreHistoryRow] = []
     var filter = HistoryFilter()
     var loading = false
