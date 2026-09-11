@@ -160,6 +160,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.general, "screen_bar_follow_alcove", .bool),
             SettingsKey(.general, "screen_bar_show_in_full_screen", .bool),
             SettingsKey(.general, "link_screen_bar_to_hardware", .bool),
+            SettingsKey(.general, "screen_bar_phase_offset_ms", .number),
             SettingsKey(.general, "global_brightness_scale", .number),
             SettingsKey(.general, "tips_enabled", .bool),
             // Agents

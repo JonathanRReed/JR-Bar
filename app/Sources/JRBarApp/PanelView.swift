@@ -908,15 +908,43 @@ struct QuotaBar: View {
 struct DevicesSection: View {
     @Bindable var store: PanelStore
 
+    /// The daemon's `dot_link` word, when it sends one; the glyph between
+    /// the Pro and Dot chips and the chips' help both read it.
+    private var dotLink: CoreDotLink? { store.core.lights?.dotLink }
+
+    /// The pair's glyph, shown between the Pro and Dot chips only when the
+    /// link is a fact (`linked`) or a problem (`failed`); the four other
+    /// states draw nothing between the chips.
+    private var linkGlyph: (name: String, style: AnyShapeStyle)? {
+        switch dotLink?.state {
+        case "linked": return ("link", AnyShapeStyle(.tertiary))
+        case "failed": return ("exclamationmark.triangle", AnyShapeStyle(Color.orange))
+        default: return nil
+        }
+    }
+
     private var chips: [(id: String, name: String, present: Bool, help: String)] {
         var result: [(String, String, Bool, String)] = []
         let pro = store.devices.first { $0.kind == "pro" }
         let dot = store.devices.first { $0.kind == "dot" }
         let bar = store.devices.first { $0.kind == "screen_bar" }
-        result.append(("pro", "Pro", pro?.isPresent ?? false, pro.map { deviceHelp($0) } ?? "SidePulse Pro: not reported"))
-        result.append(("dot", "Dot", dot?.isPresent ?? false, dot.map { deviceHelp($0) } ?? "PulseDot: not reported"))
+        let pairNote: String? = switch dotLink?.state {
+        case "linked": "linked as one"
+        case "no_strip": "Dot has nothing to extend"
+        case "failed": dotLink?.error.map { "linked write failed: \($0)" } ?? "linked write failed"
+        default: nil
+        }
+        let pairHelp = { (device: CoreDevice?, fallback: String) in
+            [device.map { self.deviceHelp($0) } ?? fallback, pairNote].compactMap { $0 }.joined(separator: " · ")
+        }
+        result.append(("pro", "Pro", pro?.isPresent ?? false, pairHelp(pro, "SidePulse Pro: not reported")))
+        result.append(("dot", "Dot", dot?.isPresent ?? false, pairHelp(dot, "PulseDot: not reported")))
         let barShown = store.screenBarShown && (bar?.isPresent ?? true)
-        result.append(("screen_bar", "Screen Bar", barShown, barShown ? "Screen Bar shown under the notch · click to hide" : "Screen Bar hidden · click to show"))
+        var barHelp = barShown ? "Screen Bar shown under the notch · click to hide" : "Screen Bar hidden · click to show"
+        if store.core.lights?.linked == true, store.core.lights?.hardware != nil {
+            barHelp += " · in step with the strip"
+        }
+        result.append(("screen_bar", "Screen Bar", barShown, barHelp))
         return result.map { (id: $0.0, name: $0.1, present: $0.2, help: $0.3) }
     }
 
@@ -925,6 +953,12 @@ struct DevicesSection: View {
             SectionLabel(text: "Devices", trailing: store.isLive ? nil : "from files")
             HStack(spacing: 6) {
                 ForEach(chips, id: \.id) { chip in
+                    if chip.id == "dot", let glyph = linkGlyph {
+                        Image(systemName: glyph.name)
+                            .font(.system(size: 10))
+                            .foregroundStyle(glyph.style)
+                            .accessibilityHidden(true)
+                    }
                     DeviceChip(name: chip.name, present: chip.present, dimmed: !store.isLive && chip.id != "screen_bar")
                         .help(chip.help)
                         .onTapGesture { if chip.id == "screen_bar" { store.toggleScreenBar() } }

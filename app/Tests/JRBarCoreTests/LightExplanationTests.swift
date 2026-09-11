@@ -90,7 +90,7 @@ struct LightExplanationTests {
         ]))
         let explanation = try #require(LightExplainer.explain(lights: Self.lights(why: "idle"), state: Self.state(), settings: document, now: Self.now))
         let labels = explanation.details.map(\.label)
-        #expect(labels == ["Hardware", "Screen Bar", "Dot", "Dot role", "Linked", "Global brightness", "Idle dim", "Quiet hours"])
+        #expect(labels == ["Hardware", "Screen Bar", "Dot", "Dot role", "Screen Bar link", "Global brightness", "Idle dim", "Quiet hours"])
         // The role decides the Dot's program and its `why`, so the popover
         // names it; a frame with no `role` means the Dot drives itself.
         #expect(explanation.details.first { $0.label == "Dot role" }?.value == "Status · its own display")
@@ -102,6 +102,27 @@ struct LightExplanationTests {
         #expect(explanation.details.first { $0.label == "Global brightness" }?.value == "80%")
         #expect(explanation.details.first { $0.label == "Idle dim" }?.value == "to 30% after 10 min")
         #expect(explanation.details.first { $0.label == "Quiet hours" }?.value == "dark 22:00–07:00")
+    }
+
+    @Test("the two links are named separately, and only claimed when real")
+    func linkLines() throws {
+        // `lights.linked` is the Screen Bar following the strip and needs
+        // both surfaces in the frame; `dot_link.state` is the Pro + Dot
+        // pair written as one unit. One flag must never stand in for the
+        // other.
+        var linked = Self.lights(why: "idle")
+        linked.dotLink = CoreDotLink(state: "linked", role: "extend")
+        let both = try #require(LightExplainer.explain(lights: linked, state: Self.state(), settings: nil, now: Self.now))
+        #expect(both.details.first { $0.label == "Screen Bar link" }?.value == "plays the strip's program")
+        #expect(both.details.first { $0.label == "Pro + Dot link" }?.value == "written as one unit")
+
+        // linked: true with no screen_bar surface claims nothing, and a
+        // daemon that sends no dot_link never gets a Pro + Dot line.
+        var barless = Self.lights(why: "idle")
+        barless.surfaces.removeValue(forKey: "screen_bar")
+        let none = try #require(LightExplainer.explain(lights: barless, state: Self.state(), settings: nil, now: Self.now))
+        #expect(none.details.contains { $0.label == "Screen Bar link" } == false)
+        #expect(none.details.contains { $0.label == "Pro + Dot link" } == false)
     }
 
     @Test("colour names follow the hue")

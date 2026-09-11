@@ -966,6 +966,7 @@ def default_settings_document() -> dict:
         "screen_bar_gap_width": None,
         "screen_bar_gauges_enabled": False,
         "screen_bar_min_glow": 0.25,
+        "screen_bar_phase_offset_ms": 0.0,
         "screen_bar_show_in_full_screen": False,
         "screen_bar_wing_length": None,
         "session_open_preferences": {},
@@ -1292,12 +1293,20 @@ class World:
                 "forecast": {"exhausts_at": exhausts_at, "pace": u["pace"]},
                 "account": USAGE_ACCOUNTS.get(pid),
             })
+        # `linked` means different things per kind: the Screen Bar's own
+        # link setting on the bar, the Pro + Dot pairing on the hardware.
+        devices = [dict(d) for d in self.devices.values()]
+        for d in devices:
+            if d.get("kind") in ("pro", "dot"):
+                d["linked"] = bool(self.document.get("devices_linked", True)) and bool(d.get("connected"))
+            elif d.get("kind") == "screen_bar":
+                d["linked"] = bool(self.document.get("link_screen_bar_to_hardware", True))
         return {
             "t": "state", "v": PROTOCOL_VERSION, "generation": self.generation, "now": now,
             "aggregate": self.aggregate(),
             "sessions": list(self.sessions.values()),
             "asks": list(self.asks),
-            "devices": list(self.devices.values()),
+            "devices": devices,
             "usage": {"refreshed_at": self.usage_refreshed_at, "providers": providers},
             "power": {"keep_awake": True, "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True}},
             "focus": self.focus,
@@ -1559,6 +1568,10 @@ class World:
         role = self.document.get("dot_role")
         if role not in ("extend", "asks", "status"):
             role = "extend"
+        # With `devices_linked` off the core plans nothing for the Dot: it
+        # renders its own display, exactly as `status` does.
+        if not bool(self.document.get("devices_linked", True)):
+            role = "status"
         surface = {"program": dot, "led_count": 2, "anchor": self.anchor, "motion": motion,
                    "static_fallback": fallback, "brightness": self.brightness, "why": why,
                    "why_detail": self.why_detail(why)}
@@ -1601,16 +1614,36 @@ class World:
         surface = {"program": strip, "led_count": 8, "anchor": self.anchor, "motion": motion,
                    "static_fallback": fallback, "brightness": self.brightness, "why": why,
                    "why_detail": self.why_detail(why)}
+        # `linked` is the Screen Bar's own link; while it is on the bar
+        # carries the strip's anchor shifted by `screen_bar_phase_offset_ms`
+        # (positive holds the bar back), exactly as the daemon does.
+        linked = bool(self.document.get("link_screen_bar_to_hardware", True))
+        screen_bar = dict(surface)
+        if linked:
+            screen_bar["anchor"] = self.anchor + float(self.document.get("screen_bar_phase_offset_ms", 0.0)) / 1000.0
+        # `dot_link` is the daemon's word for the Pro + Dot link; the mock
+        # never fails a write and always has both devices, so its states
+        # are only off / linked / beacon / solo.
+        devices_linked = bool(self.document.get("devices_linked", True))
+        role = self.document.get("dot_role")
+        role = role if role in ("extend", "asks", "status") else "extend"
+        if not devices_linked:
+            dot_link = {"state": "off", "role": None, "error": None}
+        else:
+            dot_link = {"state": {"extend": "linked", "asks": "beacon", "status": "solo"}[role],
+                        "role": role, "error": None}
         return {
             "t": "lights", "v": PROTOCOL_VERSION,
             "surfaces": {
                 "hardware": dict(surface),
-                "screen_bar": dict(surface),
+                "screen_bar": screen_bar,
                 "dot": self.dot_surface(dot, motion, fallback, why),
             },
-            "linked": True,
-            "devices_linked": bool(self.document.get("devices_linked", True)),
+            "linked": linked,
+            "devices_linked": devices_linked,
             "linked_skew_ms": 11.0,
+            "linked_skew_at": self.anchor,
+            "dot_link": dot_link,
             "auto_dim": self.auto_dim(),
         }
 
@@ -2090,7 +2123,8 @@ class World:
                         "error": {"code": "invalid_path", "message": f"cannot write {path!r}"}}
             self.push_settings()
             if path == "auto_dim" or path.startswith("auto_dim.") or path in (
-                    "dot_role", "dot_role_include_completions", "devices_linked", "linked_dot_scale"):
+                    "dot_role", "dot_role_include_completions", "devices_linked", "linked_dot_scale",
+                    "link_screen_bar_to_hardware", "screen_bar_phase_offset_ms"):
                 self.push_lights(self.lights_semantic)
             self.push_log("info", f"setting {path} changed")
             result = {"generation": self.settings_generation, "path": path}

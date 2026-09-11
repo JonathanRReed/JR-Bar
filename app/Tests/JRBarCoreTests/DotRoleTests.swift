@@ -115,6 +115,69 @@ struct DotRoleTests {
         #expect(DotRoleReadout.make(chosen: .asks, includeCompletions: false, dot: dot).unlinked == false)
     }
 
+    @Test("the daemon's dot_link states map to readouts the settings cannot express")
+    func linkStates() {
+        let dot = CoreLightSurface(program: "off 200ms none", ledCount: 2)
+        // `no_strip`: changing the role is how you fix it, so it is a
+        // steady state, not a settling one.
+        let noStrip = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                          link: CoreDotLink(state: "no_strip", role: "extend"), dot: dot)
+        #expect(noStrip.headline == "Nothing to extend")
+        #expect(noStrip.detail == "No strip is connected. Plug in the SidePulse, or pick Ask beacon or Status, which need no strip.")
+        #expect(!noStrip.settling)
+        // `failed`: the error class is the detail.
+        let failed = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                         link: CoreDotLink(state: "failed", role: "extend", error: "DeviceWriteError"), dot: dot)
+        #expect(failed.headline == "The Dot's last linked write failed")
+        #expect(failed.detail == "DeviceWriteError")
+        #expect(!failed.settling)
+        // `off` is the unlinked readout; `no_dot` is the missing one.
+        let off = DotRoleReadout.make(chosen: .asks, includeCompletions: false,
+                                      link: CoreDotLink(state: "off"), dot: dot)
+        #expect(off.unlinked)
+        let noDot = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                        link: CoreDotLink(state: "no_dot"), dot: nil)
+        #expect(noDot.headline == "No Dot in the lights frame")
+    }
+
+    @Test("a fresh skew is quoted in the linked readout; a stale or absent one is not")
+    func linkedSkew() {
+        let dot = CoreLightSurface(program: "0:#00E5FF 1400ms pulse", ledCount: 2, why: "working", role: "extend")
+        let link = CoreDotLink(state: "linked", role: "extend")
+        let fresh = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                        link: link, linkedSkewMs: 11.0, linkedSkewFresh: true, dot: dot)
+        #expect(fresh.detail?.contains("In step: the Dot restarts 11 ms after the strip.") == true)
+        let stale = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
+                                        link: link, linkedSkewMs: 11.0, linkedSkewFresh: false, dot: dot)
+        #expect(stale.detail?.contains("In step") == false)
+        // `linked_skew_at` is what makes a skew fresh: it must be present
+        // and inside the last 30 minutes.
+        let now = Date().timeIntervalSince1970
+        #expect(CoreLights(linkedSkewMs: 11, linkedSkewAt: now).isLinkedSkewFresh)
+        #expect(!CoreLights(linkedSkewMs: 11, linkedSkewAt: now - 31 * 60).isLinkedSkewFresh)
+        #expect(!CoreLights(linkedSkewMs: 11).isLinkedSkewFresh)
+        #expect(!CoreLights(linkedSkewAt: now).isLinkedSkewFresh)
+    }
+
+    @Test("dot_link decodes; a daemon that sends none falls back to the setting")
+    func dotLinkDecoding() throws {
+        let frame = """
+        {"t":"lights","v":1,"surfaces":{"dot":{"program":"off 200ms none","led_count":2}},
+         "devices_linked":true,"linked_skew_ms":11.0,"linked_skew_at":1788982891.31,
+         "dot_link":{"state":"linked","role":"extend","error":null}}
+        """
+        let message = try CoreCodec.decode(frame: Data(frame.utf8))
+        guard case .lights(let lights) = message else { Issue.record("not lights"); return }
+        #expect(lights.dotLink == CoreDotLink(state: "linked", role: "extend"))
+        #expect(lights.linkedSkewAt == 1788982891.31)
+        // The old-daemon path: link nil, so `devices_linked` and the role
+        // on the surface decide — a pending role is still "not picked up".
+        let dot = CoreLightSurface(program: "off 200ms none", ledCount: 2)
+        let readout = DotRoleReadout.make(chosen: .asks, includeCompletions: false, linked: true, link: nil, dot: dot)
+        #expect(readout.settling)
+        #expect(readout.detail == "The core has not picked this up yet.")
+    }
+
     @Test("no dot surface at all says so instead of guessing")
     func noDot() {
         let readout = DotRoleReadout.make(chosen: .extend, includeCompletions: false, dot: nil)

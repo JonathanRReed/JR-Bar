@@ -20,7 +20,10 @@ struct GeneralPage: View {
             SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
             SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
             SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen")
-            SettingToggle(store, "Link to the hardware strip", subtitle: "The Screen Bar plays the same animation the SidePulse is running, phase-locked.", path: "link_screen_bar_to_hardware", default: true)
+            SettingToggle(store, "Link to the hardware strip", subtitle: "The Screen Bar plays the same animation the SidePulse is running, restarting from the strip's write. Independent of Link Pro and Dot in Devices.", path: "link_screen_bar_to_hardware", default: true)
+            SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
+                          path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
+                .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
         }
 
         Section("Brightness") {
@@ -451,14 +454,14 @@ struct DevicesPage: View {
         Section {
             SettingToggle(store, "Link Pro and Dot", subtitle: "The Dot follows the strip instead of driving itself. Off, it always renders its own two-LED display, whatever its role says.",
                           path: "devices_linked", default: true)
-            SettingSlider(store, "Dot brightness", subtitle: "How bright the linked Dot runs next to the strip: two LEDs an arm's length away read much brighter than eight across a desk.",
+            SettingSlider(store, "Dot brightness", subtitle: "How bright the linked Dot runs next to the strip in the Extend role: two LEDs an arm's length away read much brighter than eight across a desk. The ask beacon is never dimmed.",
                           path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded())) %" }
                 .disabled(!(store.document.bool("devices_linked") ?? true))
             DotRoleControls(store: store, inDeviceCard: false)
         } header: {
             Text("Pro + Dot")
         } footer: {
-            SectionNote("The role is what the Dot is for; the link is whether the core drives it at all.")
+            SectionNote("The role is what the Dot is for; the link is whether the core drives it at all. The Screen Bar has its own link, in General.")
         }
 
         CreatorMicroCard(store: store)

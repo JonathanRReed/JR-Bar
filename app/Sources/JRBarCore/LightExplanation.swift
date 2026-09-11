@@ -325,7 +325,17 @@ public enum LightExplainer {
                 result.append(.init(label: "Dot role", value: role.map(\.label) ?? "Status · its own display"))
             }
         }
-        if lights.linked == true, lights.surfaces.count > 1 { result.append(.init(label: "Linked", value: "hardware and Screen Bar share one program")) }
+        // Two different mechanisms share the word "linked": the Screen
+        // Bar mirroring the strip (`lights.linked`, the
+        // `link_screen_bar_to_hardware` setting — claimed only when both
+        // surfaces are actually in the frame) and the Pro + Dot pair
+        // written as one unit (`dot_link.state == "linked"`).
+        if lights.linked == true, lights.screenBar != nil, lights.hardware != nil {
+            result.append(.init(label: "Screen Bar link", value: "plays the strip's program"))
+        }
+        if lights.dotLink?.state == "linked" {
+            result.append(.init(label: "Pro + Dot link", value: "written as one unit"))
+        }
         if let detail = context.detail {
             if let seconds = detail.secondsInState, let text = elapsed(seconds: seconds) { result.append(.init(label: "In this state", value: text)) }
             if !detail.dimming.isEmpty {

@@ -842,6 +842,283 @@ def test_the_dots_role_decides_what_it_plays(headless) -> None:
     assert controller._core_dot_plan(SimpleNamespace(brightness=255)) is None
 
 
+def _pro_and_dot(controller, *, second_strip: bool = False):
+    """A connected SidePulse + PulseDot (+ a second strip on demand) and the
+    plumbing ``_core_build_lights`` needs to describe them."""
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    pro = StatusBarDevice("sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"), Path("/Volumes/SidePulse/LEDS.LED"), True, "agent")
+    dot = StatusBarDevice("sidepulse:dot:1", "SidePulse Dot", Path("/Volumes/PulseDot"), Path("/Volumes/PulseDot/LEDS.LED"), True, "agent")
+    devices = [pro, dot]
+    if second_strip:
+        strip2 = StatusBarDevice("sidepulse:pro:2", "SidePulse Two", Path("/Volumes/SidePulse2"), Path("/Volumes/SidePulse2/LEDS.LED"), True, "agent")
+        devices = [pro, strip2, dot]
+    controller.status_bar_devices = lambda *, remember=True: list(devices)
+    controllers = {
+        device.device_id: SimpleNamespace(
+            last_program="#112233 500ms pulse\nrepeat", brightness=255
+        )
+        for device in devices
+    }
+    controller.agent_led_controllers_by_device = controllers
+    return devices
+
+
+def test_strip_unmount_forgets_the_program_the_dot_was_replaying(headless) -> None:
+    """``_core_linked_pro_program`` was written on every strip write and
+    never cleared: unplug the strip and the linked Dot kept looping its
+    last program forever. The inventory seam in ``refresh_`` now forgets
+    it, drops the departed device's anchor, and clears the Dot's dedupe
+    identity so its next request falls through to its own display."""
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
+
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller.settings = controller.settings.with_devices_linked(True).with_dot_role("extend")
+
+    pro_request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
+    write = LedStatusWrite(LedDisplayState.WORKING, pro.target, "#112233 500ms pulse\nrepeat", True)
+    controller._core_note_hardware_write(
+        controller._hardware_write_command(pro_request, 100.0),
+        HardwareWriteResult(request=pro_request, write=write, label="SidePulse Working", agent_display_rendered=True, completed_at=4.0),
+    )
+    assert controller._core_linked_pro_program == (write.program, write.state)
+    assert controller._core_hardware_anchor.get(pro.device_id) is not None
+    dot_controller = controller.agent_led_controllers_by_device[dot.device_id]
+    dot_controller.last_program_identity = ("program", write.program)
+    dot_controller.last_attempt_monotonic = 9.0
+
+    # The strip leaves: the inventory seam runs on the refresh that saw it.
+    controller.status_bar_devices = lambda *, remember=True: [dot]
+    controller._core_note_device_inventory([dot], [("device_disconnected", "SidePulse", pro.device_id)])
+    assert controller._core_linked_pro_program is None
+    assert controller._core_linked_skew_ms is None and controller._core_linked_skew_at is None
+    assert pro.device_id not in controller._core_hardware_anchor
+    assert dot_controller.last_program_identity is None
+    assert dot_controller.last_attempt_monotonic == 0.0
+
+    # The next Dot request falls through to its own display, and the
+    # lights document stops calling anything linked.
+    dot_request = HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5)
+    assert controller._core_linked_dot_follows(dot_request) is False
+    lights = controller._core_build_lights()
+    assert "hardware" not in lights["surfaces"]
+    assert lights["surfaces"]["dot"].get("role") is None
+    assert lights["dot_link"] == {"state": "no_strip", "role": "extend", "error": None}
+
+    # Idle refreshes while the strip stays gone do not keep punching the
+    # deduper: the clear runs once, on the transition.
+    dot_controller.last_program_identity = ("program", "own")
+    controller._core_note_device_inventory([dot], [])
+    assert dot_controller.last_program_identity == ("program", "own")
+
+
+def test_the_dot_rides_only_the_followed_strip(headless) -> None:
+    """Two strips mounted: the Dot couples with the FIRST strip in
+    inventory order -- the one the lights document calls ``hardware`` --
+    and the second strip's writes neither carry the Dot nor overwrite the
+    program it replays."""
+    from jrbar._led_status_legacy import LedDisplayState, LedStatusWrite
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest, HardwareWriteResult
+
+    controller = headless
+    pro, strip2, dot = _pro_and_dot(controller, second_strip=True)
+    controller.settings = controller.settings.with_devices_linked(True)
+    submitted: list = []
+    controller._hardware_write_worker = SimpleNamespace(
+        submit=lambda command: submitted.append(command),
+        discard_pending_prefix=lambda prefix: None,
+    )
+    controller._hardware_write_generation = 1
+    controller._hardware_write_active = True
+
+    first = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
+    second = HardwareWriteRequest(strip2, AgentMode.WORKING, None, (), None, 0.5)
+    dot_request = HardwareWriteRequest(dot, AgentMode.WORKING, None, (), None, 0.5)
+    # The batch order is not the inventory order: the second strip first.
+    controller._submit_hardware_write_requests([second, dot_request, first], 100.0)
+    assert [command.payload for command in submitted] == [first, second]
+    assert controller._core_linked_companion[2] is dot_request
+
+    # The second strip's write is real but is not the followed strip's:
+    # it must not replace the program the Dot replays.
+    followed_write = LedStatusWrite(LedDisplayState.WORKING, pro.target, "#111111 500ms pulse\nrepeat", True)
+    other_write = LedStatusWrite(LedDisplayState.WORKING, strip2.target, "#222222 500ms pulse\nrepeat", True)
+    controller._core_note_hardware_write(
+        controller._hardware_write_command(first, 100.0),
+        HardwareWriteResult(request=first, write=followed_write, label="SidePulse Working", agent_display_rendered=True, completed_at=4.0),
+    )
+    assert controller._core_linked_pro_program == (followed_write.program, followed_write.state)
+    controller._core_note_hardware_write(
+        controller._hardware_write_command(second, 100.0),
+        HardwareWriteResult(request=second, write=other_write, label="Two Working", agent_display_rendered=True, completed_at=4.0),
+    )
+    assert controller._core_linked_pro_program == (followed_write.program, followed_write.state)
+
+
+def test_an_uncoupled_batch_leaves_the_dot_its_own_anchor(headless) -> None:
+    """The lights document stamped the Dot with the strip's anchor on
+    ``devices_linked`` alone -- even for a batch that never coupled the
+    pair, where the two are provably not running from one clock. Only a
+    clean coupled write earns the shared anchor."""
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest
+
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller.settings = controller.settings.with_devices_linked(True)
+    controller._core_hardware_anchor[pro.device_id] = 1000.0
+    controller._core_hardware_anchor[dot.device_id] = 999.0
+    controller._core_linked_pair_ok = True
+    controller._core_linked_skew_ms = 11.0
+    controller._core_linked_skew_at = 1700.0
+
+    # A batch with only the strip in it cannot couple the pair.
+    controller._hardware_write_worker = SimpleNamespace(
+        submit=lambda command: None,
+        discard_pending_prefix=lambda prefix: None,
+    )
+    controller._hardware_write_generation = 1
+    controller._hardware_write_active = True
+    controller._submit_hardware_write_requests(
+        [HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)], 100.0
+    )
+    assert controller._core_linked_pair_ok is False
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["dot"]["anchor"] == 999.0
+    # The skew travels with its measurement instant or not at all.
+    assert lights["linked_skew_ms"] == 11.0
+    assert lights["linked_skew_at"] == 1700.0
+
+    controller._core_linked_pair_ok = True
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["dot"]["anchor"] == 1000.0
+
+
+def test_dot_link_reports_every_state(headless) -> None:
+    """``lights.dot_link`` is always present and says which of the seven
+    words applies -- the states a settings toggle alone cannot express
+    (``no_strip``, ``failed``) are the point of publishing it."""
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller.settings = controller.settings.with_devices_linked(True).with_dot_role("extend")
+
+    def link_state() -> dict:
+        return controller._core_build_lights()["dot_link"]
+
+    assert link_state() == {"state": "linked", "role": "extend", "error": None}
+
+    controller._core_linked_dot_error = "OSError"
+    assert link_state() == {"state": "failed", "role": "extend", "error": "OSError"}
+    controller._core_linked_dot_error = None
+
+    # Roles that need no strip answer before the strip check ever runs.
+    controller.settings = controller.settings.with_dot_role("asks")
+    assert link_state()["state"] == "beacon"
+    controller.settings = controller.settings.with_dot_role("status")
+    assert link_state()["state"] == "solo"
+    controller.settings = controller.settings.with_dot_role("extend")
+
+    # Dot only, strip gone: extend has nothing to extend.
+    controller.status_bar_devices = lambda *, remember=True: [dot]
+    controller.agent_led_controllers_by_device.pop(pro.device_id)
+    assert link_state() == {"state": "no_strip", "role": "extend", "error": None}
+
+    # No Dot at all, and the link switched off: the two states that carry
+    # no role.
+    controller.status_bar_devices = lambda *, remember=True: []
+    controller.agent_led_controllers_by_device.clear()
+    assert link_state() == {"state": "no_dot", "role": None, "error": None}
+    controller.settings = controller.settings.with_devices_linked(False)
+    assert link_state() == {"state": "off", "role": None, "error": None}
+
+
+def test_state_devices_linked_names_the_right_mechanism(headless) -> None:
+    """``devices[].linked`` used to be the Screen Bar's setting on every
+    row, so a Dot reporting ``linked: true`` was claiming the Screen Bar
+    follows the strip. Now the field follows the row's ``kind``: the bar
+    reports its own setting; Pro and Dot report whether the
+    ``devices_linked`` pair is actually in effect."""
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    bar = SimpleNamespace(
+        device_id=status_bar.VIRTUAL_DEVICE_ID, connected=True,
+        brightness=255, name="Screen Bar", target=Path("/virtual"),
+        root=Path("/virtual"),
+    )
+    controller.status_bar_devices = lambda *, remember=True: [pro, dot, bar]
+    controller.settings = controller.settings.with_devices_linked(True)
+
+    by_kind = {facts.kind: facts for facts in controller._core_device_facts()}
+    assert by_kind["screen_bar"].linked is True  # link_screen_bar_to_hardware's default
+    assert by_kind["pro"].linked is True and by_kind["dot"].linked is True
+
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(False)
+    by_kind = {facts.kind: facts for facts in controller._core_device_facts()}
+    assert by_kind["screen_bar"].linked is False
+    assert by_kind["pro"].linked is True
+
+    # The pair link needs one of each actually connected.
+    controller.status_bar_devices = lambda *, remember=True: [dot, bar]
+    by_kind = {facts.kind: facts for facts in controller._core_device_facts()}
+    assert by_kind["dot"].linked is False
+
+
+def test_the_screen_bar_mirrors_the_strip_only_while_linked(headless) -> None:
+    """With no live Screen Bar call, an UNLINKED bar has no business
+    replaying the strip's program -- the mirror surface appeared anyway,
+    because nothing checked the link."""
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller._core_hardware_anchor[pro.device_id] = 1000.0
+
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(False)
+    lights = controller._core_build_lights()
+    assert lights["linked"] is False
+    assert "screen_bar" not in lights["surfaces"]
+
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+    lights = controller._core_build_lights()
+    assert "screen_bar" in lights["surfaces"]
+    assert lights["surfaces"]["screen_bar"]["anchor"] == 1000.0
+
+
+def test_screen_bar_phase_offset_shifts_the_linked_anchor(headless) -> None:
+    """``screen_bar_phase_offset_ms`` nudges the bar's clock against the
+    strip's: 250 ms holds the bar's t=0 a quarter second later than the
+    strip's write, both on a live call and on the mirror surface."""
+    import time as _time
+
+    controller = headless
+    pro, dot = _pro_and_dot(controller)
+    controller._core_hardware_anchor[pro.device_id] = 1000.0
+    controller.settings = controller.settings.with_screen_bar_phase_offset_ms(250)
+
+    # The mirror surface (no live call): hardware anchor plus the offset.
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["anchor"] == pytest.approx(1000.25)
+
+    # A live program call: the presentation's own anchor loses to the
+    # strip's, and the offset lands on top.
+    controller.virtual_status_device._live_program_call = (
+        "#FF3A00 1.6s pulse\nrepeat",
+        {"started_at": _time.monotonic(), "motion": None},
+    )
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["anchor"] == pytest.approx(1000.25)
+    controller.virtual_status_device._live_program_call = None
+
+    # The setting clamps to +/-1 s and round-trips through the document.
+    assert controller.settings.with_screen_bar_phase_offset_ms(5000).screen_bar_phase_offset_ms == 1000.0
+    assert controller.settings.with_screen_bar_phase_offset_ms(-5000).screen_bar_phase_offset_ms == -1000.0
+    assert controller.settings.to_dict()["screen_bar_phase_offset_ms"] == 250.0
+    reply = controller._core_dispatch("set_setting", {"path": "screen_bar_phase_offset_ms", "value": 120.0})
+    assert reply["value"] == 120.0 and controller.settings.screen_bar_phase_offset_ms == 120.0
+
+
 # --- clear_completed / undo_clear over the real command path -----------------
 
 
