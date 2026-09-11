@@ -150,11 +150,18 @@ Vocabulary:
   `lifecycle: "active"` (or `"stale"` once its information is old enough
   for the collector to say so), never `ended` and never `completed`, since
   being alive is not a finish. `since` carries how long it has been quiet.
-  The aggregate counts it in `active`, so the header, the strip and the Dot
-  keep showing work that is still happening. The evidence is affirmative
-  only: no registry record, no readable process table, or a reused pid all
-  leave the silence rule exactly as it was, so a session whose process is
-  gone and which never sent a terminal event still reads `ended`.
+  Nor is it `stale`: `stale` means "the source stopped delivering and
+  nobody can vouch for this row", and the registry just did. That matters
+  three times over -- a stale row is dropped from `sessions` ten quiet
+  minutes after its last event, is not counted in `active`, and is offered
+  to `clear_completed` -- so the header, the strip and the Dot keep showing
+  work that is still happening, and the row stays listed for as long as the
+  tool run takes. Finished, failed and idle modes keep their own clocks: a
+  terminal left open does not pin a Done row on screen for ever. The
+  evidence is affirmative only: no registry record, no readable process
+  table, or a reused pid all leave the silence rule exactly as it was, so a
+  session whose process is gone and which never sent a terminal event still
+  reads `ended`.
 
   `next_actor` comes from canonical operator state (`user`, `provider`)
   with a mode-based fallback.

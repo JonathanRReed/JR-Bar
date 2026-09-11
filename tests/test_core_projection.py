@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from jrbar.completion_visibility import filter_visible_sessions
 from jrbar.core_deck import DeckSlotFacts, build_deck_document, device_document
 from jrbar.core_projection import (
     MAX_DURATION_SECONDS,
@@ -843,6 +844,44 @@ def test_a_live_but_silent_session_reads_working_in_the_document() -> None:
     counts = aggregate_counts([row])
     assert counts["active"] == 1 and counts["total"] == 1
     assert aggregate_mode(counts) == "working"
+
+
+def test_a_live_but_silent_session_is_not_marked_stale_or_aged_out() -> None:
+    """The third way to lose a running session, after "Ended" and "not
+    active": `session_visibility` drops a **stale** row from the list ten
+    quiet minutes after its last event. A row whose process the registry
+    just found in the table is old, not unvouched -- so it stays listed,
+    however long the tool run takes, and disappears only when the process
+    does."""
+
+    quiet = _status(
+        mode=AgentMode.WORKING,
+        event_name="PreToolUse",
+        stale=True,
+        updated_at=_at(45 * 60.0),
+    )
+    row = session_document(
+        quiet,
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=4242, process_alive=True),
+        workers=0,
+    )
+    assert row["stale"] is False and row["lifecycle"] == "active"
+    listed, hidden, _ = filter_visible_sessions([row], now=NOW)
+    assert listed == [row] and hidden == 0
+
+    # A finished row on the same live process keeps its own clock: an open
+    # terminal must not pin "Done" on screen for ever.
+    done = session_document(
+        _status(mode=AgentMode.COMPLETED, event_name="Stop", stale=True, updated_at=_at(45 * 60.0)),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=4242, process_alive=True),
+        workers=0,
+    )
+    assert done["stale"] is True and done["lifecycle"] == "completed"
+    assert filter_visible_sessions([done], now=NOW)[0] == []
 
 
 def test_a_killed_session_still_reads_ended_in_the_document() -> None:
