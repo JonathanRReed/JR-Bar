@@ -30,6 +30,7 @@ from jrbar.core_server import CommandError
 REQUIRED_COMMANDS = {
     "open_session", "answer_ask", "snooze", "clear_completed", "undo_clear", "set_setting",
     "reset_settings", "set_brightness", "set_device_display", "apply_calibration", "preview_program",
+    "preview_calibration", "end_calibration_preview",
     "apply_effect", "refresh_usage", "install_hooks", "uninstall_hooks", "set_closed_lid_policy",
     "quiet", "list_history", "doctor", "quit", "open_legacy_window",
     # app-proposed extensions (app/README.md): Effect Studio and Usage Center
@@ -1117,6 +1118,381 @@ def test_screen_bar_phase_offset_shifts_the_linked_anchor(headless) -> None:
     assert controller.settings.to_dict()["screen_bar_phase_offset_ms"] == 250.0
     reply = controller._core_dispatch("set_setting", {"path": "screen_bar_phase_offset_ms", "value": 120.0})
     assert reply["value"] == 120.0 and controller.settings.screen_bar_phase_offset_ms == 120.0
+
+
+# --- calibration previews ----------------------------------------------------
+
+
+def _calibration_devices(controller, *, stored_gains=(1.0, 0.38, 1.0), with_dot=True):
+    """A strip (and Dot) with real dry-run controllers, so the preview's
+    write path runs end to end and the exact bytes stay inspectable."""
+    from jrbar._led_status_legacy import AgentLedController
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    pro = StatusBarDevice(
+        "sidepulse:pro:1", "SidePulse", Path("/Volumes/SidePulse"),
+        Path("/Volumes/SidePulse/LEDS.LED"), True, "agent",
+        channel_gains=stored_gains, resting_glow=0.1, brightness=200,
+    )
+    dot = StatusBarDevice(
+        "sidepulse:dot:1", "PulseDot", Path("/Volumes/PulseDot"),
+        Path("/Volumes/PulseDot/LEDS.LED"), True, "agent",
+        channel_gains=stored_gains, brightness=255,
+    )
+    devices = [pro, dot] if with_dot else [pro]
+    controller.status_bar_devices = lambda *, remember=True: list(devices)
+    controllers = {
+        device.device_id: AgentLedController(device_path=device.target, dry_run=True)
+        for device in devices
+    }
+
+    def make(device):
+        entry = controllers[device.device_id]
+        entry.brightness = device.brightness
+        entry.channel_gains = device.channel_gains
+        entry.resting_glow = device.resting_glow
+        return entry
+
+    controller.agent_controller_for_device = make
+    controller.agent_led_controllers_by_device = controllers
+    return devices
+
+
+def test_calibration_preview_drives_the_given_gains_once(headless) -> None:
+    """Stored G=0.38, working G=1.0: the preview must write what the CALLER
+    asked through the strip boundary -- not the stored profile on top, which
+    is how the old double-application preview lied (a ~12 drive beside the
+    applied 97 on the owner's strip)."""
+    from jrbar._led_status_legacy import apply_strip_transform_to_program
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "resting_glow": 0.0,
+        "patch": "white",
+    })
+    assert reply["surface"] == "hardware" and reply["companion"] is None
+    # The default brightness is the device's stored 200, decoded to its
+    # drive code by the same transfer pass as the colours.
+    expected = apply_strip_transform_to_program(
+        "brightness 200\n#FFFFFF 500ms\nrepeat", resting_glow=0.0, gains=(1.0, 1.0, 1.0)
+    )
+    led = controller.agent_led_controllers_by_device[pro.device_id]
+    assert led.last_program == expected == reply["program"]
+    # A nominal white at unity gains transfers to full drive -- the stored
+    # 0.38 green die correction never touched it.
+    assert "#FFFFFF" in reply["program"]
+
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 0.38, "blue": 1.0},
+        "patch": "white",
+    })
+    expected = apply_strip_transform_to_program(
+        "brightness 200\n#FFFFFF 500ms\nrepeat", resting_glow=0.1, gains=(1.0, 0.38, 1.0)
+    )
+    # The default glow is the device's STORED one, and the given gains run
+    # once -- the second preview wrote different bytes, so it was not deduped.
+    assert led.last_program == expected == reply["program"]
+    assert "#FFFFFF" not in reply["program"]
+
+
+def test_calibration_preview_transfers_the_patch_and_holds(headless) -> None:
+    """Grey is a nominal colour, not drive bytes: it must come out the far
+    side of the strip transfer, and the preview must be held on the device
+    (owning its write path) for the sheet's whole session, not three
+    seconds."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "resting_glow": 0.0,
+        "brightness": 128,
+        "patch": "grey",
+    })
+    assert "#808080" not in reply["program"]
+    assert "brightness 128" not in reply["program"]  # rewritten to a drive code
+    preview = controller._core_previews["hardware"]
+    assert preview.held and pro.device_id in preview.device_ids
+    remaining = preview.until_monotonic - time.monotonic()
+    assert 550 < remaining <= 600.0
+    assert pro.device_id in controller._core_held_preview_devices()
+
+    # Every call re-arms the hold rather than stacking another flash.
+    preview.until_monotonic = time.monotonic() + 60
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "patch": "white",
+    })
+    assert controller._core_previews["hardware"].until_monotonic - time.monotonic() > 550
+
+    # A live request that slipped in anyway must not repaint over the hold.
+    from jrbar.models import AgentMode
+    from jrbar.status_bar_legacy import HardwareWriteRequest
+
+    request = HardwareWriteRequest(pro, AgentMode.WORKING, None, (), None, 0.5)
+    result = controller._sync_hardware_device(request)
+    assert result.write.changed is False
+    assert controller.agent_led_controllers_by_device[pro.device_id].last_program == reply["program"]
+
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["hardware"]["why"] == "preview"
+    assert lights["surfaces"]["hardware"]["program"] == reply["program"]
+
+
+def test_calibration_preview_ends_and_rearms_the_live_program(headless) -> None:
+    """End drops the hold -- the device's own and any companion's -- clears
+    the dedupe identity the preview bytes left behind, and republishes."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+    })
+    led = controller.agent_led_controllers_by_device[pro.device_id]
+    led.last_attempt_monotonic = time.monotonic()
+
+    reply = controller._core_dispatch("end_calibration_preview", {"device": pro.device_id})
+    assert reply == {"device": pro.device_id, "ended": True}
+    assert "hardware" not in controller._core_previews
+    assert led.last_program_identity is None and led.last_attempt_monotonic == 0.0
+    controller.refresh_.assert_called()
+
+    # Idempotent: the sheet calls this on Cancel, on Apply and on disappear.
+    reply = controller._core_dispatch("end_calibration_preview", {"device": pro.device_id})
+    assert reply["ended"] is False
+    with pytest.raises(CommandError) as invalid:
+        controller._core_dispatch("end_calibration_preview", {})
+    assert invalid.value.code == "invalid_args"
+
+
+def test_dot_companion_preview_lights_the_strip_with_its_stored_profile(headless) -> None:
+    """Matching the Dot to the strip by eye needs the strip showing the same
+    patch at the strip's OWN stored gains and brightness -- the thing the
+    Dot will sit beside -- held for the same session."""
+    from jrbar._led_status_legacy import apply_strip_transform_to_program
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, dot = _calibration_devices(controller)
+
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": dot.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "resting_glow": 0.0,
+        "brightness": 153,
+        "patch": "white",
+        "companion": True,
+    })
+    assert reply["surface"] == "dot" and reply["companion"] == pro.device_id
+    dot_led = controller.agent_led_controllers_by_device[dot.device_id]
+    assert "brightness " in dot_led.last_program  # the caller's 153, rewritten
+    expected_strip = apply_strip_transform_to_program(
+        "brightness 200\n#FFFFFF 500ms\nrepeat",
+        resting_glow=0.1,
+        gains=(1.0, 0.38, 1.0),
+    )
+    strip_led = controller.agent_led_controllers_by_device[pro.device_id]
+    assert strip_led.last_program == expected_strip
+    companion = controller._core_previews["hardware"]
+    assert companion.held and companion.companion_of == dot.device_id
+    assert controller._core_held_preview_devices() == {pro.device_id, dot.device_id}
+
+    # Ending the Dot's session releases the strip too.
+    reply = controller._core_dispatch("end_calibration_preview", {"device": dot.device_id})
+    assert reply["ended"] is True
+    assert not controller._core_previews
+
+
+def test_calibration_preview_ends_when_its_device_leaves(headless) -> None:
+    """A hold can outlive its device by ten minutes: a strip that goes away
+    mid-calibration must take its preview (and, for a Dot, the companion's)
+    with it, or a replug inside the window would find its live writes still
+    suppressed by a session nobody is looking at any more."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, dot = _calibration_devices(controller)
+
+    controller._core_dispatch("preview_calibration", {
+        "device": dot.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "companion": True,
+    })
+    assert controller._core_held_preview_devices() == {pro.device_id, dot.device_id}
+
+    # The Dot leaves: its session -- including the held strip -- ends.
+    controller.status_bar_devices = lambda *, remember=True: [pro]
+    controller._core_note_device_inventory(
+        [pro], [("device_disconnected", "PulseDot", dot.device_id)]
+    )
+    assert not controller._core_previews
+
+    # And a held strip leaving mid-session releases its claim too.
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+    })
+    assert "hardware" in controller._core_previews
+    controller.status_bar_devices = lambda *, remember=True: []
+    controller._core_note_device_inventory(
+        [], [("device_disconnected", "SidePulse", pro.device_id)]
+    )
+    assert not controller._core_previews
+
+
+def test_calibration_preview_routes_the_screen_bar_to_its_own_surface(headless) -> None:
+    """The Screen Bar is the settings device ``virtual:status-bar``; its
+    preview must take the code-domain transform to the ``screen_bar``
+    surface -- never the strip boundary, never the physical ``hardware``
+    surface."""
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    bar = StatusBarDevice(
+        status_bar.VIRTUAL_DEVICE_ID, "Screen Bar", Path("/virtual"),
+        Path("/virtual/LEDS.LED"), True, "agent", brightness=255,
+    )
+    controller.status_bar_devices = lambda *, remember=True: [bar]
+
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": status_bar.VIRTUAL_DEVICE_ID,
+        "gains": {"red": 1.0, "green": 0.5, "blue": 1.0},
+        "patch": "white",
+    })
+    assert reply["surface"] == "screen_bar" and reply["companion"] is None
+    # Code domain: 0.5 * 255 -> 128, no sRGB decode -- and brightness stays
+    # a code too (the bar's engine multiplies the encoded code).
+    assert "#FF80FF" in reply["program"]
+    preview = controller._core_previews["screen_bar"]
+    assert preview.held and preview.device_ids == (status_bar.VIRTUAL_DEVICE_ID,)
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["program"] == reply["program"]
+    assert lights["surfaces"]["screen_bar"]["why"] == "preview"
+
+
+def test_calibration_preview_validates_and_finds(headless) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+
+    with pytest.raises(CommandError) as missing:
+        controller._core_dispatch("preview_calibration", {"device": "nope", "gains": {}})
+    assert missing.value.code == "not_found"
+    with pytest.raises(CommandError) as invalid:
+        controller._core_dispatch("preview_calibration", {
+            "device": pro.device_id, "gains": {"red": 1.0, "green": "fast", "blue": 1.0},
+        })
+    assert invalid.value.code == "invalid_args"
+    with pytest.raises(CommandError) as bad_patch:
+        controller._core_dispatch("preview_calibration", {
+            "device": pro.device_id,
+            "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+            "patch": "chartreuse",
+        })
+    assert bad_patch.value.code == "invalid_args"
+
+    # Out-of-range numbers clamp rather than fail: a slider at its stop is
+    # a valid request.
+    reply = controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 4.0, "green": 1.0, "blue": 1.0},
+        "patch": "#FF8800",
+    })
+    assert reply["device"] == pro.device_id
+
+
+def test_apply_calibration_persists_brightness_and_glow_on_a_new_device(headless) -> None:
+    """Three fixes: brightness is part of the profile, the glow write used
+    to vanish when the device had no settings row yet, and a malformed
+    number must answer invalid_args instead of leaking a ValueError."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    assert all(entry.device_id != pro.device_id for entry in controller.settings.devices)
+
+    with pytest.raises(CommandError) as invalid:
+        controller._core_dispatch("apply_calibration", {
+            "device": pro.device_id, "profile": {"green_gain": "soon"},
+        })
+    assert invalid.value.code == "invalid_args"
+    with pytest.raises(CommandError) as unknown:
+        controller._core_dispatch("apply_calibration", {
+            "device": "ghost", "profile": {"brightness": 100},
+        })
+    assert unknown.value.code == "not_found"
+
+    reply = controller._core_dispatch("apply_calibration", {
+        "device": pro.device_id,
+        "profile": {"red_gain": 0.9, "resting_glow": 0.08, "brightness": 300},
+    })
+    assert controller.settings.resting_glow_for_device(pro.device_id) == pytest.approx(0.08)
+    assert controller.settings.channel_gains_for_device(pro.device_id) == (0.9, 1.0, 1.0)
+    # The reply echoes the persisted (clamped) value, not the request.
+    assert reply["profile"] == {"red_gain": 0.9, "resting_glow": pytest.approx(0.08), "brightness": 255.0}
+    assert controller.settings.brightness_for_device(pro.device_id) == 255
+
+    # Applying ends any held preview for the device: the persisted values
+    # are what the device now shows, so the hold's work is done.
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id, "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+    })
+    assert "hardware" in controller._core_previews
+    controller._core_dispatch("apply_calibration", {"device": pro.device_id, "profile": {"blue_gain": 0.8}})
+    assert "hardware" not in controller._core_previews
+
+
+def test_battery_display_uses_the_strip_transfer(headless) -> None:
+    """Battery mode rendered through the code-domain gain multiply, so the
+    same colour meant a different light by display mode -- including a
+    ``brightness N`` never decoded. The battery boundary is now the strip's
+    own transform, so the bytes match what the agent path would write for
+    the same nominal program."""
+    from jrbar._battery_legacy import BatteryLedController
+    from jrbar._led_status_legacy import (
+        AgentLedController,
+        LedDisplayState,
+        apply_strip_transform_to_program,
+        led_count_for_target,
+    )
+    from jrbar.battery import BatterySnapshot, program_for_battery
+
+    snapshot = BatterySnapshot(percent=64)
+    gains = (1.0, 0.38, 1.0)
+    battery = BatteryLedController(
+        device_path=Path("/Volumes/SidePulse"), dry_run=True,
+        brightness=180, channel_gains=gains,
+    )
+    battery.resting_glow = 0.12
+    write = battery.sync_snapshot(snapshot)
+    assert write.changed and write.error is None
+
+    target = battery.last_target
+    nominal = program_for_battery(
+        snapshot, led_count=led_count_for_target(target), brightness=180
+    )
+    assert battery.last_program == apply_strip_transform_to_program(
+        nominal, resting_glow=0.12, gains=gains
+    )
+
+    # The same nominal program through the agent controller's write
+    # boundary produces the identical bytes.
+    agent = AgentLedController(
+        device_path=Path("/Volumes/SidePulse"), dry_run=True,
+        brightness=180, channel_gains=gains,
+    )
+    agent.resting_glow = 0.12
+    agent_write = agent.sync_program(nominal, LedDisplayState.WORKING)
+    assert agent_write.program == battery.last_program
 
 
 # --- clear_completed / undo_clear over the real command path -----------------

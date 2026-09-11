@@ -57,7 +57,7 @@ at the end so nobody claims them.
 | `PulseDot` (first-batch Dot firmware) recognised as a 2-LED Dot | Ships | Automatic |
 | Screen Bar: one band under the notch, the strip's program phase-locked, raised-cosine blend, 60 Hz display link that pauses when static; hover pill; click opens the session; Alcove capsule following; over full screen | Ships | On |
 | Per-device display mode (agent, battery, studio, quota runway), brightness, auto-brightness, provider pin, asks-only | Ships | Agent status |
-| Colour calibration per device: RGB gains and resting glow, live preview, applied through the daemon | Ships | Uncalibrated |
+| Colour calibration per device: RGB gains, resting glow and brightness, guided sheet with named patches and a held live preview (`preview_calibration`/`end_calibration_preview`), Dot-to-strip matching, applied through the daemon | Ships | Uncalibrated |
 | Global brightness; idle dim; sleep dim; auto-off | Ships | 100 %, on |
 | Auto-dim: off / schedule / follow display / ambient light (IOKit HID sensor, falls back to the display) with the current reading shown | Ships | Off |
 | Provider colours (dichromacy-safe defaults), blend modes, cycle speed, pulse floor and ceiling, done celebration | Ships | Reviewed defaults |

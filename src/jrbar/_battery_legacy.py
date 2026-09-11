@@ -21,7 +21,7 @@ from .device_writer import (
 from .led_status import (
     NEUTRAL_CHANNEL_GAINS,
     apply_brightness,
-    apply_channel_gain_to_program,
+    apply_strip_transform_to_program,
     led_count_for_target,
     normalize_brightness,
 )
@@ -448,12 +448,17 @@ class BatteryLedController:
                 led_count=led_count_for_target(target),
                 brightness=self.brightness,
             )
-            from .led_status import apply_resting_glow_to_program
-
-            program = apply_resting_glow_to_program(
-                program, getattr(self, "resting_glow", 0.0)
+            # The SAME write boundary the agent display uses: a code-domain
+            # gain multiply here once made "battery 62%" a different light
+            # than "working" at the same colour -- including decoding
+            # ``brightness N`` twice away from what the policy set. The
+            # display mode may change what the strip says; it may not
+            # change what a colour means.
+            program = apply_strip_transform_to_program(
+                program,
+                resting_glow=getattr(self, "resting_glow", 0.0),
+                gains=self.channel_gains,
             )
-            program = apply_channel_gain_to_program(program, self.channel_gains)
         except (DeviceWriteError, OSError) as exc:
             self.last_error = str(exc)
             return BatteryLedWrite(

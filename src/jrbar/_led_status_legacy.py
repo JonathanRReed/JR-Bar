@@ -525,6 +525,28 @@ def apply_strip_transfer_to_program(
     )
 
 
+def apply_strip_transform_to_program(
+    program: str,
+    *,
+    resting_glow: float,
+    gains: tuple[float, float, float],
+) -> str:
+    """The whole write boundary for a physical strip, in the one order
+    that is right: resting glow first -- the ember is a nominal colour and
+    the transfer should shape it like any other -- then the surface
+    transfer, which carries the channel gains and decodes ``brightness N``
+    into the light domain.
+
+    ``AgentLedController._for_strip``, the battery display, and the
+    calibration preview all produce device bytes through this one helper so
+    a colour cannot drift between display modes, and so what the
+    calibration sheet previews is exactly what ``apply_calibration`` will
+    write afterwards.
+    """
+    program = apply_resting_glow_to_program(program, resting_glow)
+    return apply_strip_transfer_to_program(program, gains)
+
+
 def normalize_channel_gain(value: float | None) -> float:
     if value is None:
         return DEFAULT_CHANNEL_GAIN
@@ -550,10 +572,12 @@ def apply_channel_gain_to_hex(hex_color: str, gains: tuple[float, float, float])
     only fixes what the code means before it gets here.
 
     Kept encoded-domain and unchanged on purpose. This function is still the
-    Screen Bar's and the battery reminder's write boundary (status_bar.py and
-    battery.py call it directly), and a surface that has no die imbalance to
-    correct must not have this applied at all -- see the Screen Bar note in
-    strip_drive_code's module comment.
+    Screen Bar's write boundary (its on-screen engine multiplies the encoded
+    code, unlike the strip's linear PWM), and a surface that has no die
+    imbalance to correct must not have this applied at all -- see the Screen
+    Bar note in strip_drive_code's module comment. Physical strips take the
+    sRGB/light-domain strip transfer instead, battery display included, so
+    one colour reads the same in every display mode.
     """
     cleaned = hex_color.lstrip("#")
     try:
@@ -1367,8 +1391,11 @@ class AgentLedController:
         receives, so the two surfaces differ only in the final translation into
         their own units rather than diverging somewhere upstream.
         """
-        program = apply_resting_glow_to_program(program, getattr(self, "resting_glow", 0.0))
-        return apply_strip_transfer_to_program(program, self.channel_gains)
+        return apply_strip_transform_to_program(
+            program,
+            resting_glow=getattr(self, "resting_glow", 0.0),
+            gains=self.channel_gains,
+        )
 
     def sync_mode(self, mode: AgentMode) -> LedStatusWrite:
         state = display_state_for_mode(mode)
@@ -1586,6 +1613,30 @@ class AgentLedController:
             program,
             dedupe_token=dedupe_token,
             nominal=nominal,
+        )
+
+    def sync_transferred_program(
+        self,
+        program: str,
+        state: LedDisplayState,
+        *,
+        dedupe_token: object | None = None,
+    ) -> LedStatusWrite:
+        """``sync_program`` for bytes that have ALREADY been through the
+        strip transform -- a calibration preview hands in finished drive
+        text (glow and the caller's gains applied upstream), so running
+        ``_for_strip`` again would decode the colours and the brightness a
+        second time. That double transfer is exactly what made the first
+        calibration sheet's preview useless: at a stored G=0.38 its white
+        drove the green die at ~12 while the applied profile drove 97.
+        Dedupe and the write log still run, so the lights document and the
+        reassert clock keep telling the truth about what is on the device.
+        """
+        return self._write_deduped_program(
+            state,
+            program,
+            dedupe_token=dedupe_token,
+            nominal=program,
         )
 
     UPTIME_CHECK_SECONDS = 60.0

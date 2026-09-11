@@ -138,6 +138,9 @@ Developer switches (environment variables read at launch):
 * `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on `general`, `agents`,
   `usage`, `devices`, `lighting`, `notifications`, `remote`, `advanced` or
   `effects`; `JRBAR_SETTINGS_HEIGHT=1100` makes it tall enough to show a whole page.
+  `JRBAR_OPEN_CALIBRATE=<device id>` opens the calibration sheet once Settings
+  is up, and `JRBAR_CALIBRATE_FINE_TUNE=1` opens its Fine-tune disclosure —
+  the pair is the sheet's screenshot path.
   `JRBAR_USAGE_HEIGHT=900` does the same for the Usage Center, so a whole
   provider card (rings, forecast, graph) fits in one screenshot.
 * `JRBAR_PLAIN_MATERIAL=1` uses an `NSVisualEffectView` instead of `NSGlassEffectView`.
@@ -335,6 +338,8 @@ echoes a new `settings` (an index past the end of an array is refused with
 `invalid_path`), `reset_settings` (`paths[]`, a protocol-1 extension)
 restores from the defaults, `install_hooks` / `uninstall_hooks` flip
 `health.hooks`, `apply_calibration` writes the gains into the device entry,
+`preview_calibration` / `end_calibration_preview` hold and release a
+calibration patch on a device,
 `doctor` returns a checklist document. The Creator Micro 2 deck is the
 board below (`--deck approved|unapproved|absent|usb|recovering` picks how
 the pad starts). `--step`, `--start-at`, `--loop` (the timeline plays once
@@ -749,9 +754,12 @@ three layers):
   panel's sparklines cover." under it, Claude plan-limits consent (writes `claude_plan_limits_enabled`
   and `…_consent_version` together), quota thresholds, capacity history),
   Devices & Screen Bar (a card per `devices[]` entry with display mode,
-  brightness, auto-brightness, provider pin, asks-only, Calibrate… sheet
-  with RGB gains + resting glow previewed live through `preview_program`
-  and applied through `apply_calibration`; the Dot's card also carries its
+  brightness, auto-brightness, provider pin, asks-only, Calibrate… sheet —
+  a guided flow that holds a nominal patch on the device through
+  `preview_calibration` (RGB gains, resting glow and brightness applied
+  once through the device's write boundary; a Dot can light its strip
+  beside it with `companion`), applied through `apply_calibration`; the
+  Dot's card also carries its
   **role** — a segmented Extend / Ask beacon / Status picker on `dot_role`
   with what each one actually does, the "Also glow for finished runs"
   switch on `dot_role_include_completions` enabled only for the beacon,

@@ -105,6 +105,27 @@ All notable changes to JR-Bar are documented here.
   "Nothing to extend" or names the failed write, a link glyph sits
   between the panel's Pro and Dot chips, and the two links are never
   conflated in copy again.
+- Calibration is a guided sheet now, and its preview finally tells the
+  truth. The old preview multiplied the working gains into the patch hex
+  and then ran it through `preview_program`, which applied the STORED
+  gains through the strip transfer on top -- at the owner's real G=0.38 a
+  previewed white drove green at ~12 while the applied profile drove 97.
+  The new `preview_calibration` command takes the nominal patch plus the
+  working gains, resting glow and brightness and puts them through the
+  same write boundary live output uses, once, and `end_calibration_preview`
+  hands the device back to the live program; the hold is daemon-side
+  (600 s, re-armed on every change) so the sheet's debounced edits no
+  longer flash three-second previews. Brightness is part of the profile
+  (`apply_calibration` accepts `brightness`, and a device dimmed by
+  calibration stops reading "Uncalibrated"), a Dot can light its strip
+  beside it with `companion: true` so the two can be matched by eye, the
+  Screen Bar calibrates through its own code-domain transform on
+  `virtual:status-bar`, and battery display mode now runs the same strip
+  transfer the agent path does instead of a code-domain multiply that
+  rendered every colour differently. Fixes along the way:
+  `with_device_resting_glow` used to drop the glow when the device had no
+  settings row yet, and a malformed calibration number answers
+  `invalid_args` instead of leaking a ValueError.
 - New providers: pi (`jrbar agent-monitor install pi` writes
   `~/.pi/agent/extensions/jrbar.ts`) and Gemini CLI (`install gemini` adds
   hooks to `~/.gemini/settings.json`), both with transcript fallbacks

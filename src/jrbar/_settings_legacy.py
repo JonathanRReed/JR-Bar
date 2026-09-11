@@ -1120,13 +1120,30 @@ class AgentMonitorSettings:
 
     def with_device_resting_glow(self, device_id: str, fraction: float) -> AgentMonitorSettings:
         clamped = max(0.0, min(0.35, float(fraction)))
-        devices = tuple(
-            replace(device, resting_glow=clamped)
-            if device.device_id == device_id
-            else device
-            for device in self.devices
-        )
-        return replace(self, devices=devices)
+        devices: list[DeviceDisplaySetting] = []
+        updated = False
+        for device in self.devices:
+            if device.device_id == device_id:
+                devices.append(replace(device, resting_glow=clamped))
+                updated = True
+            else:
+                devices.append(device)
+        if not updated:
+            # ``with_device_channel_gain`` has always created the row for a
+            # never-remembered device; this mutator only rewrote existing
+            # ones, so ``apply_calibration`` on a fresh strip kept the gains
+            # and silently dropped the glow it was asked to persist.
+            devices.append(
+                DeviceDisplaySetting(
+                    device_id=device_id,
+                    name=device_id,
+                    path=device_id,
+                    led_display=self.display_for_device(device_id),
+                    brightness=self.brightness_for_device(device_id),
+                    resting_glow=clamped,
+                )
+            )
+        return replace(self, devices=tuple(devices))
 
     def resting_glow_for_device(self, device_id: str) -> float:
         for device in self.devices:

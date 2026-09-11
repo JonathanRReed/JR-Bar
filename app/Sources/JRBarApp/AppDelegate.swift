@@ -339,6 +339,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 }
             }
         }
+        if let device = environment["JRBAR_OPEN_CALIBRATE"] {
+            // Opens the calibration sheet on that device id -- the
+            // screenshot path for the sheet (mock core only). Shows the
+            // Settings window on Devices first when nothing else did.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak settingsWindow] in
+                MainActor.assumeIsolated {
+                    if environment["JRBAR_OPEN_SETTINGS"] == nil { settingsWindow?.show(page: .devices) }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak settingsStore] in
+                MainActor.assumeIsolated { settingsStore?.calibrating = device }
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

@@ -538,13 +538,26 @@ struct DeviceCard: View {
     }
 
     private var calibrationSummary: String {
-        let doc = store.document
-        let r = doc.double(SettingsPath("\(device.prefix).red_gain")) ?? 1
-        let g = doc.double(SettingsPath("\(device.prefix).green_gain")) ?? 1
-        let b = doc.double(SettingsPath("\(device.prefix).blue_gain")) ?? 1
-        let glow = doc.double(SettingsPath("\(device.prefix).resting_glow")) ?? 0
-        if r == 1, g == 1, b == 1, glow == 0 { return "Uncalibrated" }
-        return String(format: "R %.2f · G %.2f · B %.2f · glow %d %%", r, g, b, Int((glow * 100).rounded()))
+        SettingsStore.calibrationSummary(document: store.document, prefix: device.prefix)
+    }
+}
+
+extension SettingsStore {
+    /// The one-line "Colour calibration" summary: gains and glow always,
+    /// brightness when it is not the full drive -- the sheet edits all
+    /// three, so a dimmed-by-calibration device is not "Uncalibrated".
+    static func calibrationSummary(document: SettingsDocument, prefix: String) -> String {
+        let r = document.double(SettingsPath("\(prefix).red_gain")) ?? 1
+        let g = document.double(SettingsPath("\(prefix).green_gain")) ?? 1
+        let b = document.double(SettingsPath("\(prefix).blue_gain")) ?? 1
+        let glow = document.double(SettingsPath("\(prefix).resting_glow")) ?? 0
+        let brightness = document.double(SettingsPath("\(prefix).brightness")) ?? 255
+        if r == 1, g == 1, b == 1, glow == 0, brightness >= 255 { return "Uncalibrated" }
+        var summary = String(format: "R %.2f · G %.2f · B %.2f · glow %d %%", r, g, b, Int((glow * 100).rounded()))
+        if brightness < 255 {
+            summary += String(format: " · %d %%", Int((brightness / 255 * 100).rounded()))
+        }
+        return summary
     }
 }
 
@@ -665,6 +678,19 @@ struct ScreenBarCard: View {
         ], default: "auto")
         SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor. Zero is pitch black: only the moving signal shows.",
                       path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
+        LabeledContent {
+            Button("Calibrate…") { store.calibrating = "virtual:status-bar" }
+                .disabled(!store.core.isLive)
+        } label: {
+            SettingLabel(title: "Colour calibration", subtitle: screenBarCalibrationSummary)
+        }
+    }
+
+    private var screenBarCalibrationSummary: String {
+        guard let index = store.document.deviceIndex(id: "virtual:status-bar") else {
+            return "Uncalibrated"
+        }
+        return SettingsStore.calibrationSummary(document: store.document, prefix: "devices.\(index)")
     }
 }
 

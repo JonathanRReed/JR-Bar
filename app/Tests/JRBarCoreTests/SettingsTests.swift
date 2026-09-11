@@ -111,7 +111,9 @@ struct SettingsMockTests {
         // Spot checks on kinds the pages rely on.
         #expect(document.bool("tips_enabled") == true)
         #expect(document.string("colors.blend_mode") == "round_robin")
-        #expect(document.deviceEntries.count == 2)
+        // Strip, Dot and the remembered `virtual:status-bar` row the
+        // daemon writes once the Screen Bar is enabled.
+        #expect(document.deviceEntries.count == 3)
         #expect(document.double("devices.0.brightness") == 255)
         #expect(document.value(at: "screen_bar_gap_width")?.isNull == true)
         #expect(document.array("quota_alert_thresholds")?.compactMap(\.doubleValue) == [90, 95])

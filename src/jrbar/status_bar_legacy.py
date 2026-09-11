@@ -13168,9 +13168,17 @@ class StatusBarController(NSObject):
 
         relay_elapsed_seconds = max(0.0, time.monotonic() - self._relay_epoch)
         now = self._runtime_worker_monotonic()
+        # Devices under a held calibration preview are owned by it: the
+        # headless core keeps the patch on the hardware for minutes while
+        # the user matches by eye, and a routine refresh must not paint
+        # over it. Absent on the AppKit controller -- getattr keeps this
+        # loop shared.
+        held_devices = getattr(self, "_core_held_preview_devices", lambda: frozenset())()
         requests: list[HardwareWriteRequest] = []
         for device in devices:
             if self.calibration_test is not None and self.calibration_test[0] == device.device_id:
+                continue
+            if device.device_id in held_devices:
                 continue
             device_display_kind = self.active_led_display_kind_for_device(device, battery_snapshot)
             policy = hardware_write_policy(device_display_kind, resolved_glance)

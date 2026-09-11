@@ -892,6 +892,10 @@ def default_settings_document() -> dict:
         "devices": [
             device(PRO_ID, "SidePulse", "/Volumes/SidePulse"),
             device(DOT_ID, "PulseDot", "/Volumes/PulseDot"),
+            # The daemon remembers the Screen Bar as a settings device once
+            # it is enabled (`with_remembered_device(VIRTUAL_DEVICE_ID)`),
+            # which is what gives its calibration rows a home.
+            device("virtual:status-bar", "Screen Bar", "virtual:status-bar"),
         ],
         "devices_linked": True,
         "dismissed_tips": [],
@@ -1146,6 +1150,10 @@ class World:
                       "devin": "missing", "opencode": "stale", "openclaw": "missing", "antigravity": "missing",
                       "cursor": "ok", "hermes": "missing", "kiro": "missing"}
         self.previews: dict[str, float] = {}
+        # Held calibration previews, surface -> {program, until, device,
+        # companion_of}: the lights document shows the patch while held,
+        # exactly as the daemon's `_core_previews` do.
+        self.calibration_previews: dict[str, dict] = {}
         # Deck: the board's ordered identities (a digest per session; new ones
         # are appended, positions are stable, absent ones keep their slot as
         # "Reserved" until cleared), pins by identity, the bank, the rail
@@ -1632,13 +1640,28 @@ class World:
         else:
             dot_link = {"state": {"extend": "linked", "asks": "beacon", "status": "solo"}[role],
                         "role": role, "error": None}
+        surfaces = {
+            "hardware": dict(surface),
+            "screen_bar": screen_bar,
+            "dot": self.dot_surface(dot, motion, fallback, why),
+        }
+        # A held calibration patch replaces the surface's program for as
+        # long as it is held -- the Screen Bar reads this document, so this
+        # is what puts the preview colour on screen.
+        now = time.time()
+        for surface_name, preview in list(self.calibration_previews.items()):
+            if preview["until"] <= now:
+                del self.calibration_previews[surface_name]
+                continue
+            held = surfaces.get(surface_name)
+            if held is not None:
+                held.update(program=preview["program"], motion="static",
+                            static_fallback=None, why="preview",
+                            anchor=preview["started"],
+                            why_detail=self.why_detail("preview"))
         return {
             "t": "lights", "v": PROTOCOL_VERSION,
-            "surfaces": {
-                "hardware": dict(surface),
-                "screen_bar": screen_bar,
-                "dot": self.dot_surface(dot, motion, fallback, why),
-            },
+            "surfaces": surfaces,
             "linked": linked,
             "devices_linked": devices_linked,
             "linked_skew_ms": 11.0,
@@ -2153,15 +2176,102 @@ class World:
             with self.lock:
                 for entry in self.document.get("devices", []):
                     if entry.get("id") == device:
-                        for key in ("red_gain", "green_gain", "blue_gain", "resting_glow"):
+                        for key in ("red_gain", "green_gain", "blue_gain", "resting_glow", "brightness"):
                             if key in profile:
                                 entry[key] = float(profile[key])
                         applied = True
+                # Like the daemon's mutators, a never-remembered device gets
+                # a row rather than a silent drop.
+                if not applied and device:
+                    self.document.setdefault("devices", []).append({"id": device, "name": device, "path": device})
+                    for entry in self.document.get("devices", []):
+                        if entry.get("id") == device:
+                            for key in ("red_gain", "green_gain", "blue_gain", "resting_glow", "brightness"):
+                                if key in profile:
+                                    entry[key] = float(profile[key])
+                            applied = True
+                ended = [s for s, p in self.calibration_previews.items()
+                         if p.get("device") == device or p.get("companion_of") == device]
+                for s in ended:
+                    del self.calibration_previews[s]
             if not applied:
                 return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
                         "error": {"code": "not_found", "message": "no such device"}}
             self.push_settings()
+            self.push_lights(self.lights_semantic)
             result = {"device": device, "profile": profile}
+        elif name == "preview_calibration":
+            device = str(args.get("device") or "")
+            record = self.devices.get(device)
+            bar = device in ("virtual:status-bar", "screen-bar")
+            if not bar and (record is None or not record.get("connected")):
+                return self._error(cid, "not_found", "no such device")
+            patches = {"white": "#FFFFFF", "red": "#FF0000", "green": "#00FF00",
+                       "blue": "#0000FF", "grey": "#808080"}
+            patch = args.get("patch", "white")
+            if isinstance(patch, str) and patch in patches:
+                patch_hex = patches[patch]
+            elif isinstance(patch, str) and len(patch) == 7 and patch.startswith("#"):
+                try:
+                    int(patch[1:], 16)
+                    patch_hex = patch.upper()
+                except ValueError:
+                    return self._error(cid, "invalid_args", "patch must be a name or #RRGGBB")
+            else:
+                return self._error(cid, "invalid_args", "patch must be a name or #RRGGBB")
+            try:
+                gains = args.get("gains") or {}
+                rgb = tuple(max(0.3, min(1.5, float(gains[c]))) for c in ("red", "green", "blue"))
+                brightness = int(round(max(0.0, min(255.0, float(args.get("brightness", 255))))))
+            except (TypeError, ValueError, KeyError):
+                return self._error(cid, "invalid_args", "gains need numeric red, green and blue")
+
+            def calibrated(hex_color: str, g: tuple) -> str:
+                # Code-domain multiply is enough here: the app only needs
+                # the patch's colour to reach the named surface.
+                value = int(hex_color[1:], 16)
+                channels = [int(round(((value >> shift) & 0xFF) * gain))
+                            for shift, gain in zip((16, 8, 0), g)]
+                return "#" + "".join(f"{min(255, c):02X}" for c in channels)
+
+            surface = ("screen_bar" if bar
+                       else "dot" if record.get("leds") == 2 else "hardware")
+            program = f"brightness {brightness}\n{calibrated(patch_hex, rgb)} 500ms\nrepeat"
+            until = time.time() + 600.0
+            companion_id = None
+            with self.lock:
+                self.calibration_previews[surface] = {
+                    "program": program, "until": until, "started": time.time(),
+                    "device": device, "companion_of": None,
+                }
+                if bool(args.get("companion")) and record is not None and record.get("leds") == 2:
+                    strip = next((d for d in self.devices.values()
+                                  if d.get("kind") == "pro" and d.get("connected")), None)
+                    if strip is not None:
+                        entry = next((e for e in self.document.get("devices", [])
+                                      if e.get("id") == strip["id"]), {})
+                        strip_gains = (float(entry.get("red_gain", 1.0)),
+                                       float(entry.get("green_gain", 1.0)),
+                                       float(entry.get("blue_gain", 1.0)))
+                        strip_program = (f"brightness {int(round(float(entry.get('brightness', 255))))}\n"
+                                         f"{calibrated(patch_hex, strip_gains)} 500ms\nrepeat")
+                        self.calibration_previews["hardware"] = {
+                            "program": strip_program, "until": until, "started": time.time(),
+                            "device": strip["id"], "companion_of": device,
+                        }
+                        companion_id = strip["id"]
+            self.push_lights(self.lights_semantic)
+            result = {"device": device, "surface": surface, "until": until,
+                      "program": program, "companion": companion_id}
+        elif name == "end_calibration_preview":
+            device = str(args.get("device") or "")
+            with self.lock:
+                ended = [s for s, p in self.calibration_previews.items()
+                         if p.get("device") == device or p.get("companion_of") == device]
+                for s in ended:
+                    del self.calibration_previews[s]
+            self.push_lights(self.lights_semantic)
+            result = {"device": device, "ended": bool(ended)}
         elif name == "preview_program":
             surface = str(args.get("surface", "hardware"))
             seconds = float(args.get("seconds", 3))
