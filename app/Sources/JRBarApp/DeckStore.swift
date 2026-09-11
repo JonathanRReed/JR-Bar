@@ -11,6 +11,9 @@ import Observation
 final class DeckStore {
     let core: CoreModel
 
+    /// The daemon's settings document, for provider colour overrides.
+    var document: SettingsDocument? { core.settings.map { SettingsDocument($0.document) } }
+
     /// Controls lit by input check (and by inputs arriving at any time).
     private(set) var flashes = DeckInputFlashes()
     var now = Date().timeIntervalSince1970

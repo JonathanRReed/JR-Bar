@@ -70,7 +70,7 @@ at the end so nobody claims them.
 
 | Capability | Status | Default |
 | --- | --- | --- |
-| Quiet…: Mute, Dim, Pause, Asks-only, Dark for 30 min / 1 h / 4 h / 12 h; daily quiet schedule | Ships | Off |
+| Quiet…: Pause, Dim, Mute, Asks-only, Dark for 30 min / 1 h / 4 h / until 08:00 tomorrow; the panel shows the active quiet (footer label + moon glyph) and can cancel an override; daily quiet schedule | Ships | Off |
 | macOS Focus following with a dim rule per Focus (Full Disk Access) | Ships | Off |
 | Keep awake while agents work (`caffeinate -ims`), released with a grace period when they finish; optional display assertion; battery threshold | Ships | On |
 | Closed-lid policy `never` / `agents` / `always` through the `pmset` helper (one sudoers rule) | Ships | Never |

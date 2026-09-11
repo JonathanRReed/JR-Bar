@@ -3625,6 +3625,35 @@ def build_headless_controller_class() -> type:
                 return frozenset()
             return state.acknowledged_keys
 
+        def _core_snoozed_untils(self, statuses) -> dict[str, float]:
+            """``agent_id`` -> the family mailbox's active ``snoozed_until``.
+
+            Snooze lives on the family's mailbox preference, never on the
+            session; the row reports it so the panel can show "Snoozed"
+            and offer Unsnooze without a second document."""
+            try:
+                state = getattr(self, "current_operator_state", None)
+                preferences = getattr(self, "mailbox_preferences", ()) or ()
+                if state is None or not preferences:
+                    return {}
+                now = time.time()
+                result: dict[str, float] = {}
+                for status in statuses:
+                    work_key = getattr(status, "work_key", None)
+                    agent_id = str(getattr(status, "agent_id", "") or "")
+                    if work_key is None or not agent_id:
+                        continue
+                    family = legacy._family_work_key(state, work_key)
+                    if family is None:
+                        continue
+                    preference = legacy._preference_for_work_key(preferences, family)
+                    until = getattr(preference, "snoozed_until", None) if preference is not None else None
+                    if until is not None and float(until) > now:
+                        result[agent_id] = float(until)
+                return result
+            except Exception:
+                return {}
+
         def _core_build_state(self) -> dict[str, Any]:
             from .lid_sleep import sleep_helper_installed
 
@@ -3699,6 +3728,10 @@ def build_headless_controller_class() -> type:
                 settings_generation=self._core_settings_generation,
                 extras_by_id=extras,
                 acknowledged_keys=self._core_acknowledged_keys(),
+                snoozed_until_by_id=self._core_snoozed_untils(
+                    [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())] if snapshot else ()
+                ),
+                dnd_override_until=getattr(self.settings, "dnd_override_until_epoch", None),
             )
             try:
                 document["deck"] = self._core_deck_document(document["sessions"])

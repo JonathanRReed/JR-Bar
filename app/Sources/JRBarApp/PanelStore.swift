@@ -8,18 +8,33 @@ struct SessionRow: Identifiable, Equatable {
     let id: String
     let style: ProviderStyle
     let label: String
+    /// The session's full working directory, for the tooltip and the
+    /// context menu's Copy / Reveal; `cwdTail` is what the row shows.
+    let cwd: String?
     let cwdTail: String?
+    /// The terminal the daemon says owns the session (`terminal.app`),
+    /// for "Open in Ghostty"; nil when it does not know.
+    let terminalApp: String?
+    /// `main` / `worker` -- a worker's open is its parent's.
+    let kind: String
+    /// The family mailbox's snooze expiry (`snoozed_until`), while one is
+    /// in effect; the row offers Unsnooze and says when it ends.
+    let snoozedUntil: Double?
     let activity: SessionActivity
     let since: Date?
     let workers: Int
     let ask: CoreAsk?
     let stale: Bool
 
-    init(session: CoreSession, pinnedAsk: CoreAsk?) {
+    init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil) {
         id = session.id
-        style = ProviderStyle.style(for: session.provider)
+        style = ProviderStyle.style(for: session.provider, document: document)
         label = session.displayLabel
+        cwd = session.cwd
         cwdTail = session.cwd.map { Self.tail(of: $0) }
+        terminalApp = session.terminal?.app
+        kind = session.kind
+        snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
         since = session.since.map { Date(timeIntervalSince1970: $0) }
         workers = session.workers
@@ -36,18 +51,40 @@ struct SessionRow: Identifiable, Equatable {
     /// open request. The header counts it and the light pulses amber for
     /// it, so it must never be the one thing the panel does not show; the
     /// id is all there is, and Approve / Deny still answer it.
-    init(orphanAsk ask: CoreAsk) {
+    init(orphanAsk ask: CoreAsk, document: SettingsDocument? = nil) {
         let session = ask.session ?? ""
         let provider = String(session.split(separator: ":").first ?? "")
         id = session.isEmpty ? ask.id : session
-        style = ProviderStyle.style(for: provider)
+        style = ProviderStyle.style(for: provider, document: document)
         label = SessionLabel.display(label: nil, shortId: nil, id: session, provider: provider)
+        cwd = nil
         cwdTail = nil
+        terminalApp = nil
+        kind = "main"
+        snoozedUntil = nil
         activity = .waiting
         since = ask.openedAt.map { Date(timeIntervalSince1970: $0) }
         workers = 0
         self.ask = ask
         stale = false
+    }
+
+    /// The row's whole tooltip: the full working directory, the snooze
+    /// while one is in effect, and why a stale row is still listed.
+    func help(now: Date) -> String? {
+        var parts: [String] = []
+        if let cwd, !cwd.isEmpty { parts.append(cwd) }
+        if isSnoozed(now: now), let until = snoozedUntil {
+            parts.append("Snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
+        }
+        if stale { parts.append("No signal in a while — the session may have ended without a goodbye") }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
+    /// The family mailbox's snooze still covers this session.
+    func isSnoozed(now: Date) -> Bool {
+        guard let snoozedUntil else { return false }
+        return snoozedUntil > now.timeIntervalSince1970
     }
 
     /// `/Users/j/Downloads/JR-Bar/src` → `JR-Bar/src`; `~` collapses the home directory.
@@ -261,16 +298,22 @@ final class PanelStore {
 
     // MARK: Derived: sessions
 
+    /// The daemon's settings document, for provider colour overrides.
+    var settingsDocument: SettingsDocument? {
+        core.settings.map { SettingsDocument($0.document) }
+    }
+
     /// Asks first (newest ask last, as the daemon lists them), then the
     /// rest: waiting, working, done, idle; ties by most recent change.
     var rows: [SessionRow] {
         guard core.isLive else { return [] }
+        let document = settingsDocument
         let pinned = Dictionary(core.asks.compactMap { ask in ask.session.map { ($0, ask) } }, uniquingKeysWith: { first, _ in first })
         // An ask whose session the daemon no longer lists still needs an
         // answer: it is counted in the header and it is what the light is
         // about, so it gets a row of its own rather than disappearing.
-        let orphans = (core.state?.orphanAsks ?? []).map(SessionRow.init(orphanAsk:))
-        let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id]) } + orphans
+        let orphans = (core.state?.orphanAsks ?? []).map { SessionRow(orphanAsk: $0, document: document) }
+        let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id], document: document) } + orphans
         func rank(_ row: SessionRow) -> Int {
             if row.ask != nil { return 0 }
             switch row.activity {
@@ -317,6 +360,125 @@ final class PanelStore {
     /// `clear_completed {sessions: "all"}` clears daemon-side.
     var completedCount: Int { rows.filter { $0.activity.isClearable || $0.stale }.count }
 
+    // MARK: Derived: quiet
+
+    /// `state.focus` while a quiet is in effect; nil when the daemon says
+    /// `"off"` (or sends nothing). The footer's label and the header's
+    /// moon both read this, so neither can paint quiet the daemon denies.
+    struct Quiet: Equatable {
+        var mode: String
+        /// `override` (this menu), `schedule`, or `focus` (macOS/named).
+        var source: String?
+        var until: Date?
+    }
+
+    var quiet: Quiet? {
+        guard let focus = core.state?.focus,
+              let mode = focus.mode,
+              mode != "off", mode != "normal" else { return nil }
+        return Quiet(mode: mode, source: focus.source,
+                     until: focus.until.map { Date(timeIntervalSince1970: $0) })
+    }
+
+    /// The footer's words: "Paused 52m", "Dimmed 1h" — the countdown
+    /// drops its minutes past an hour so the longest case ("Asks only
+    /// 23h") still leaves the footer's other buttons room. For a quiet
+    /// with no clock on it, just the mode word.
+    var quietLabel: String? {
+        guard let quiet else { return nil }
+        let word = Self.quietWord(quiet.mode)
+        guard let until = quiet.until else { return word }
+        let seconds = until.timeIntervalSince(now)
+        if seconds <= 0 { return word }
+        let minutes = Int((seconds + 30) / 60)
+        if minutes < 60 { return "\(word) \(minutes)m" }
+        if minutes < 24 * 60 { return "\(word) \((minutes + 30) / 60)h" }
+        return "\(word) \((minutes + 12 * 60) / (24 * 60))d"
+    }
+
+    /// The quiet can be ended from here only when this menu put it there;
+    /// a schedule's or macOS Focus's quiet is not ours to cancel, and a
+    /// button that silently failed would be worse than none.
+    var quietIsOurs: Bool { quiet?.source == "override" }
+
+    /// The mode the quiet presets use: Pause hides everything, Dim stills
+    /// the lights, Mute stills the sounds, Asks only lets asks through,
+    /// Dark turns the hardware off. Remembered across opens.
+    var quietMode: String = UserDefaults.standard.string(forKey: "quietMode") ?? "pause" {
+        didSet { UserDefaults.standard.set(quietMode, forKey: "quietMode") }
+    }
+
+    /// The quiet modes the footer's Mode submenu offers, in menu order.
+    nonisolated static let quietModes: [(id: String, label: String)] = [
+        ("pause", "Pause"),
+        ("dim", "Dim"),
+        ("mute", "Mute"),
+        ("asks_only", "Asks only"),
+        ("dark", "Dark"),
+    ]
+
+    nonisolated static func quietWord(_ mode: String) -> String {
+        switch mode {
+        case "pause": return "Paused"
+        case "dim": return "Dimmed"
+        case "mute": return "Muted"
+        case "dark": return "Dark"
+        case "asks_only": return "Asks only"
+        default: return "Quiet"
+        }
+    }
+
+    /// `HH:mm` for "until 08:00" in the toast and the menu's preset label.
+    nonisolated static func clockTime(_ date: Date) -> String {
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+
+    /// Seconds to the next local 08:00 that is at least an hour away:
+    /// what "Until 8:00 tomorrow" means at 06:45 as well as at 23:10.
+    /// Shared by the quiet preset and the rows' "Snooze until tomorrow".
+    nonisolated static func secondsUntilMorning(from now: Date = Date()) -> Int {
+        let calendar = Calendar.current
+        let components = DateComponents(hour: 8, minute: 0)
+        var target = calendar.nextDate(after: now, matching: components, matchingPolicy: .nextTime)
+            ?? now.addingTimeInterval(8 * 3600)
+        if target.timeIntervalSince(now) < 3600 {
+            target = calendar.nextDate(after: target, matching: components, matchingPolicy: .nextTime)
+                ?? target.addingTimeInterval(86400)
+        }
+        return max(60, Int(target.timeIntervalSince(now)))
+    }
+
+    /// The wall-clock moment "Until 8:00 tomorrow" ends at, so the menu
+    /// can name it ("Until 08:00 tomorrow") instead of promising a guess.
+    var morningTarget: Date {
+        now.addingTimeInterval(TimeInterval(Self.secondsUntilMorning(from: now)))
+    }
+
+    /// `state.focus.source` in the words the footer help uses.
+    nonisolated static func quietSourceWord(_ source: String) -> String {
+        switch source {
+        case "override": return "this menu"
+        case "schedule": return "the schedule"
+        case "focus": return "macOS Focus"
+        default: return source
+        }
+    }
+
+    /// `quiet {mode, seconds}` in the mode the Mode submenu last chose.
+    func quietFor(seconds: Int) {
+        core.quiet(mode: quietMode, seconds: seconds)
+        let until = Date().addingTimeInterval(TimeInterval(seconds))
+        show(toast: "\(Self.quietWord(quietMode)) until \(Self.clockTime(until))")
+    }
+
+    /// `quiet {seconds: 0}`: end the override this menu set. Not offered
+    /// for a schedule or macOS Focus quiet — see `quietIsOurs`.
+    func endQuiet() {
+        core.quiet(mode: quietMode, seconds: 0)
+        show(toast: "Quiet ended")
+    }
+
     // MARK: Derived: why this light
 
     /// "Amber pulse: Codex sidepulse-core is waiting on you (permission, 45 s)".
@@ -358,13 +520,24 @@ final class PanelStore {
         return values
     }
 
-    /// Asks the daemon for a week of history for every provider the panel
-    /// shows, unless it asked recently. Failures are silent: a row without
-    /// a sparkline simply has none. `force` is for the
-    /// `usage_history_ready` event, which means the rows just changed.
+    /// `usage_graph_days` as the range the sparkline can draw: the little
+    /// row graph has room for a week or a month of 5 pt bars, so a
+    /// configured quarter or year reads its closest month rather than
+    /// clipping mid-bar.
+    var sparklineRange: UsageHistoryRange {
+        let days = settingsDocument?.int("usage_graph_days") ?? 7
+        return days <= 7 ? .week : .month
+    }
+
+    /// Asks the daemon for `usage_graph_days` of history — week or month,
+    /// see `sparklineRange` — for every provider the panel shows, unless
+    /// it asked recently. Failures are silent: a row without a sparkline
+    /// simply has none. `force` is for the `usage_history_ready` event,
+    /// which means the rows just changed.
     func refreshSparklines(force: Bool = false) {
         guard core.isLive else { return }
         let now = Date()
+        let range = sparklineRange
         for provider in usage {
             let id = provider.id
             if !force, let at = sparklineFetchedAt[id], now.timeIntervalSince(at) < Self.sparklineInterval { continue }
@@ -372,7 +545,7 @@ final class PanelStore {
             Task { [weak self] in
                 guard let self else { return }
                 do {
-                    let history = try await self.core.usageHistory(provider: id, range: .week)
+                    let history = try await self.core.usageHistory(provider: id, range: range)
                     let values = UsageSparkline.tokensPerDay(history)
                     if UsageSparkline.hasSignal(values) {
                         self.sparklines[id] = values
@@ -453,16 +626,22 @@ final class PanelStore {
     /// gone in two seconds.
     func clearCompleted() {
         guard completedCount > 0 else { show(toast: "Nothing to clear"); return }
-        let count = completedCount
+        runClear(sessions: nil, expected: completedCount)
+    }
+
+    /// One `clear_completed` for the footer's "all" and a row's own
+    /// "Clear": `sessions` nil asks for every clearable row, a list asks
+    /// for just those. The reply's batch becomes the footer's Undo offer.
+    private func runClear(sessions: [String]?, expected: Int? = nil) {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let reply = try await self.core.clearCompletedNow()
+                let reply = try await self.core.clearCompletedNow(sessions: sessions)
                 guard reply.ok else {
                     self.show(toast: "Clear failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
                     return
                 }
-                let cleared = reply.result?["cleared"]?.arrayValue?.count ?? count
+                let cleared = reply.result?["cleared"]?.arrayValue?.count ?? expected ?? sessions?.count ?? 0
                 if let batch = reply.result?["batch"]?.stringValue {
                     self.undoOffer = (batch, Date(), cleared)
                     self.show(toast: cleared == 1 ? "Cleared 1 · Undo in the footer" : "Cleared \(cleared) · Undo in the footer")
@@ -495,9 +674,59 @@ final class PanelStore {
         }
     }
 
-    func quiet(minutes: Int) {
-        core.quiet(seconds: minutes * 60)
-        show(toast: minutes >= 60 ? "Quiet for \(minutes / 60) h" : "Quiet for \(minutes) min")
+    /// The ask ⌘↩ / ⌘D answer: the keyboard-selected card when it is an
+    /// ask, else the first one. With two or more asks open, the selected
+    /// card is the target — the shortcuts never answer a card the user
+    /// is not looking at.
+    var selectedAsk: SessionRow? {
+        askRows.first { $0.id == selectedID }
+    }
+
+    var keyboardAsk: SessionRow? { selectedAsk ?? askRows.first }
+
+    func approveSelectedAsk() {
+        guard let ask = keyboardAsk?.ask else { return }
+        approve(ask)
+    }
+
+    func denySelectedAsk() {
+        guard let ask = keyboardAsk?.ask else { return }
+        deny(ask)
+    }
+
+    /// `snooze {session, seconds}` — the daemon resolves the session's
+    /// family work key, so one snooze covers every session in the family.
+    /// `seconds: 0` lifts it.
+    func snooze(_ row: SessionRow, seconds: Int) {
+        core.snooze(session: row.id, seconds: seconds)
+        if seconds > 0 {
+            let until = Date().addingTimeInterval(TimeInterval(seconds))
+            show(toast: "Snoozed \(row.label) until \(Self.clockTime(until))")
+        } else {
+            show(toast: "Unsnoozed \(row.label)")
+        }
+    }
+
+    /// `clear_completed {sessions: [id]}` for one finished, ended or stale
+    /// row. Same reply handling as "Clear done": the batch is the undo
+    /// offer in the footer.
+    func clear(_ row: SessionRow) {
+        guard row.activity.isClearable || row.stale else { return }
+        runClear(sessions: [row.id])
+    }
+
+    /// The full working directory, on the pasteboard.
+    func copyPath(_ row: SessionRow) {
+        guard let cwd = row.cwd, !cwd.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(cwd, forType: .string)
+        show(toast: "Copied \(cwd)")
+    }
+
+    /// The working directory selected in a Finder window.
+    func reveal(_ row: SessionRow) {
+        guard let cwd = row.cwd, !cwd.isEmpty else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: cwd)
     }
 
     /// The slider's stream of values, throttled to one `set_brightness`

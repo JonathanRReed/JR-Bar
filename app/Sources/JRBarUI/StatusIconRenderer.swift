@@ -68,13 +68,20 @@ public struct StatusMeter: Hashable, Sendable {
     public var fraction: Double?
     /// The figure is derived rather than official: the percent style says `~`.
     public var approximate: Bool
+    /// The provider's configured accent (`#RRGGBB`), when the settings
+    /// document carries a usable `colors.agent_colors.<id>`. A coloured
+    /// column cannot be a template image, so one accent renders the whole
+    /// strip in colours.
+    public var accentHex: String?
 
-    public init(id: String, name: String, glyph: Glyph, fraction: Double?, approximate: Bool = false) {
+    public init(id: String, name: String, glyph: Glyph, fraction: Double?, approximate: Bool = false,
+                accentHex: String? = nil) {
         self.id = id
         self.name = name
         self.glyph = glyph
         self.fraction = fraction.map { max(0, min(1, $0)) }
         self.approximate = approximate
+        self.accentHex = accentHex
     }
 
     /// The window exists and nobody said how full it is.
@@ -346,7 +353,11 @@ public final class StatusIconRenderer: @unchecked Sendable {
     static func drawMeters(_ spec: StatusIconSpec) -> NSImage {
         let warning = spec.meterWarning
         let dotColor = dotColor(spec)
-        let template = warning == .none && dotColor == nil
+        // A configured provider colour is the reason the column exists, so
+        // it shows even while everything is calm -- which costs the strip
+        // its template colouring, the same trade a warning makes.
+        let coloured = spec.meters.contains { $0.accentHex != nil }
+        let template = warning == .none && dotColor == nil && !coloured
         let imageSize = Self.size(for: spec)
         let image = NSImage(size: imageSize, flipped: false) { _ in
             let ink: NSColor = template ? .black : .labelColor
@@ -442,7 +453,14 @@ public final class StatusIconRenderer: @unchecked Sendable {
         switch meter.warning {
         case .red: return template ? ink : .systemRed
         case .amber: return template ? ink : .systemOrange
-        case .none: return ink.withAlphaComponent(template ? 1 : 0.85)
+        case .none:
+            // The configured accent wins over the neutral fill; a warning
+            // wins over the accent, because a near-full window outranks a
+            // brand colour.
+            if !template, let accent = meter.accentHex.flatMap({ NSColor(statusHex: $0) }) {
+                return accent
+            }
+            return ink.withAlphaComponent(template ? 1 : 0.85)
         }
     }
 

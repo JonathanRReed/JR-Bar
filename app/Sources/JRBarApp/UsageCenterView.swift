@@ -118,7 +118,7 @@ struct ProviderUsageCard: View {
     let provider: CoreProviderUsage
     @Bindable var store: UsageCenterStore
 
-    private var style: ProviderStyle { ProviderStyle.style(for: provider.id) }
+    private var style: ProviderStyle { ProviderStyle.style(for: provider.id, document: store.document) }
     private var history: UsageHistory? { store.history(for: provider.id) }
     private var celebrating: Bool { store.isCelebrating(provider.id) }
     private var primary: CoreUsageWindow? { UsageCenterStore.primaryWindow(of: provider) }
@@ -284,7 +284,7 @@ struct ProviderUsageCard: View {
         if forecast.verdict == .unmeasured {
             // Nothing to pace: the window is real and its balance was never
             // stated, which is a fact about the provider, not a wait.
-            return "\(ProviderStyle.style(for: provider.id).name) reports this window without a number"
+            return "\(ProviderStyle.style(for: provider.id, document: store.document).name) reports this window without a number"
         }
         switch forecast.source {
         case .daemon: parts.append("Core forecast")

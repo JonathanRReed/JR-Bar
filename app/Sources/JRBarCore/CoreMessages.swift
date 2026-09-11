@@ -134,11 +134,15 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var ask: CoreAsk?
     public var terminal: CoreTerminal?
     public var workers: Int
+    /// The family mailbox's active snooze (`snoozed_until`), when one
+    /// covers this session.
+    public var snoozedUntil: Double?
 
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
-                origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0) {
+                origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
+                snoozedUntil: Double? = nil) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -157,6 +161,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.ask = ask
         self.terminal = terminal
         self.workers = workers
+        self.snoozedUntil = snoozedUntil
     }
 
     enum CodingKeys: String, CodingKey {
@@ -164,6 +169,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         case shortId = "short_id"
         case nextActor = "next_actor"
         case updatedAt = "updated_at"
+        case snoozedUntil = "snoozed_until"
     }
 
     public init(from decoder: Decoder) throws {
@@ -186,6 +192,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         ask = try c.decodeIfPresent(CoreAsk.self, forKey: .ask)
         terminal = try c.decodeIfPresent(CoreTerminal.self, forKey: .terminal)
         workers = try c.decodeIfPresent(Int.self, forKey: .workers) ?? 0
+        snoozedUntil = try c.decodeIfPresent(Double.self, forKey: .snoozedUntil)
     }
 }
 

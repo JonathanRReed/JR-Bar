@@ -16,14 +16,75 @@ final class UsageCenterStore {
     }
 
     let core: CoreModel
+
+    /// The daemon's settings document: `usage_graph_days` and
+    /// `usage_display_mode` live there, so the Settings page's "Graph
+    /// range" and "Lead with" pickers and this window's toolbar write the
+    /// same keys through `set_setting`.
+    var document: SettingsDocument? { core.settings.map { SettingsDocument($0.document) } }
+
+    /// The range the cards show: `usage_graph_days` as a history range.
+    /// A write from this window lands through `set_setting` and repaints
+    /// via the pushed document; `pendingRange` covers the instant in
+    /// between so the toolbar never flickers back to the old value.
     var range: UsageHistoryRange {
-        didSet {
-            UserDefaults.standard.set(range.rawValue, forKey: "usageCenterRange")
-            loadAll()
+        get { pendingRange ?? Self.range(forDays: document?.int("usage_graph_days")) }
+        set { setRange(newValue) }
+    }
+
+    /// The metric the cards lead with: `usage_display_mode`. "percent"
+    /// and "sessions" are legal daemon values the legacy menu graphs; the
+    /// Usage Center has no such chart, so they read as tokens rather than
+    /// rendering a blank window.
+    var metric: Metric {
+        get { pendingMetric ?? (Metric(rawValue: document?.string("usage_display_mode") ?? "") ?? .tokens) }
+        set { setMetric(newValue) }
+    }
+
+    private var pendingRange: UsageHistoryRange?
+    private var pendingMetric: Metric?
+    private var seenSettingsGeneration: Int?
+
+    /// `usage_graph_days` as a `UsageHistoryRange`; anything else the
+    /// document holds (absent, corrupt) is the daemon's own default week.
+    static func range(forDays days: Int?) -> UsageHistoryRange {
+        switch days {
+        case 30: return .month
+        case 90: return .quarter
+        case 365: return .year
+        default: return .week
         }
     }
-    var metric: Metric = Metric(rawValue: UserDefaults.standard.string(forKey: "usageCenterMetric") ?? "") ?? .tokens {
-        didSet { UserDefaults.standard.set(metric.rawValue, forKey: "usageCenterMetric") }
+
+    /// Write `usage_graph_days` and reload every card for the new range.
+    func setRange(_ newValue: UsageHistoryRange) {
+        guard newValue != range else { return }
+        pendingRange = newValue
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.core.setSetting("usage_graph_days", value: .number(Double(newValue.days)))
+            } catch {
+                self.pendingRange = nil
+                self.show(error: "Range not saved: \(Self.describe(error))")
+            }
+        }
+        loadAll()
+    }
+
+    /// Write `usage_display_mode`; the cards repaint on the push.
+    func setMetric(_ newValue: Metric) {
+        guard newValue != metric else { return }
+        pendingMetric = newValue
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.core.setSetting("usage_display_mode", value: .string(newValue.rawValue))
+            } catch {
+                self.pendingMetric = nil
+                self.show(error: "Metric not saved: \(Self.describe(error))")
+            }
+        }
     }
     var now = Date()
     var refreshing = false
@@ -57,7 +118,6 @@ final class UsageCenterStore {
 
     init(core: CoreModel) {
         self.core = core
-        range = UsageHistoryRange(rawValue: UserDefaults.standard.string(forKey: "usageCenterRange") ?? "") ?? .month
     }
 
     // MARK: Lifecycle
@@ -99,6 +159,7 @@ final class UsageCenterStore {
             _ = core.lastEvent?.id
             _ = core.isLive
             _ = core.usage.count
+            _ = core.settings?.generation
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -122,6 +183,16 @@ final class UsageCenterStore {
             if event.kind == CoreEvent.usageHistoryReadyKind {
                 historyDidBecomeReady(provider: event.provider, range: event.range)
             }
+        }
+        // A pushed settings document can carry a range or metric written
+        // from the Settings page: the pendings this window set are now
+        // facts, and a range change means the cards need the other range.
+        let generation = core.settings?.generation
+        if generation != seenSettingsGeneration {
+            seenSettingsGeneration = generation
+            pendingRange = nil
+            pendingMetric = nil
+            loadAll()
         }
         let live = core.isLive
         let ids = core.usage.map(\.id)

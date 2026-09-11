@@ -1139,7 +1139,7 @@ class World:
             {"effect_id": "heartbeat", "scope": "provider", "target_id": "claude", "parameters": {}},
             {"effect_id": "pack:nightlab:ember", "scope": "device", "target_id": DOT_ID, "parameters": {}},
         ]
-        self.focus = {"mode": "normal", "source": "default", "until": None}
+        self.focus = {"mode": "off", "source": None, "until": None}
         self.escalation = {"stage": "none", "since": None}
         self.lights_semantic = "idle"
         self.anchor = now
@@ -1244,7 +1244,7 @@ class World:
             "short_id": sid.rsplit(":", 1)[-1][:8], "cwd": cwd,
             "mode": mode, "lifecycle": lifecycle, "next_actor": next_actor, "since": since,
             "updated_at": since, "stale": False, "pid": pid, "origin": origin, "ask": None,
-            "terminal": terminal, "workers": 0,
+            "terminal": terminal, "workers": 0, "snoozed_until": None,
         }
 
     # -- documents ------------------------------------------------------------
@@ -1277,6 +1277,8 @@ class World:
         for s in self.sessions.values():
             if s["kind"] == "main":
                 s["workers"] = sum(1 for w in self.sessions.values() if w["parent"] == s["id"] and w["lifecycle"] == "active")
+            if s.get("snoozed_until") is not None and s["snoozed_until"] <= now:
+                s["snoozed_until"] = None
         providers = []
         for pid, u in self.usage.items():
             if u["h5"] is None:
@@ -2127,16 +2129,42 @@ class World:
             rows.sort(key=lambda r: r["at"], reverse=True)
             result = {"rows": rows[:limit], "total": len(rows)}
         elif name == "quiet":
+            # A manual override, like the daemon's `dnd_override`: the
+            # focus document carries the mode under source "override",
+            # and a zero-or-negative duration ends it back to "off".
             with self.lock:
                 seconds = float(args.get("seconds", 1800))
-                self.focus = {"mode": args.get("mode", "dnd"), "source": "manual", "until": time.time() + seconds}
+                if seconds <= 0:
+                    self.focus = {"mode": "off", "source": None, "until": None}
+                    result = {"until": None}
+                else:
+                    mode = str(args.get("mode") or "pause")
+                    if mode == "dnd":
+                        mode = "pause"
+                    self.focus = {"mode": mode, "source": "override", "until": time.time() + seconds}
+                    result = {"until": self.focus["until"], "mode": mode}
             self.push_state()
             self.push_settings()
-            result = {"until": self.focus["until"]}
         elif name == "snooze":
+            # `snooze {session, seconds}` marks the session (or every
+            # waiting one for "all") the way the daemon's family mailbox
+            # snooze shows up on the row; `seconds: 0` lifts it.
             with self.lock:
-                self.snoozed_until = time.time() + float(args.get("seconds", 600))
-            result = {"until": self.snoozed_until}
+                seconds = float(args.get("seconds", 600))
+                target = args.get("session") or "all"
+                until = time.time() + seconds if seconds > 0 else None
+                if target == "all":
+                    applied = [
+                        sid for sid, s in self.sessions.items()
+                        if s.get("ask") or s.get("next_actor") == "user"
+                    ]
+                else:
+                    applied = [str(target)] if str(target) in self.sessions else []
+                for sid in applied:
+                    self.sessions[sid]["snoozed_until"] = until
+                self.snoozed_until = until or 0.0
+            self.push_state()
+            result = {"sessions": applied, "until": until}
         elif name == "set_setting":
             path = str(args.get("path", ""))
             with self.lock:

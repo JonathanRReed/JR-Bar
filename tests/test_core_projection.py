@@ -372,6 +372,62 @@ def test_state_document_projects_devices_usage_power_focus_and_health() -> None:
     json.dumps(document)
 
 
+def test_state_document_focus_reads_off_when_idle_and_override_when_manual() -> None:
+    """The quiet words the footer reads: ``"off"`` -- never null -- while
+    nothing quiet is in effect (a merely *upcoming* quiet must not hand
+    the row an ``until`` it would paint as an end time), ``override``
+    with the quiet's own expiry for a manual quiet."""
+    inputs = fixture_inputs()
+    inputs["dnd_projection"] = SimpleNamespace(
+        contributions=(),
+        active_sources=(),
+        next_transition_epoch=NOW + 1800.0,  # a quiet period STARTS then
+        display_admission=SimpleNamespace(value="all"),
+        brightness_factor=1.0,
+        banner_allowed=True,
+        audible_allowed=True,
+        summary="All channels open",
+    )
+    focus = build_state_document(**inputs)["focus"]
+    assert focus["mode"] == "off" and focus["source"] is None and focus["until"] is None
+
+    inputs["dnd_projection"] = SimpleNamespace(
+        contributions=(
+            SimpleNamespace(mode=SimpleNamespace(value="pause"), source=SimpleNamespace(value="manual")),
+        ),
+        active_sources=(SimpleNamespace(value="manual"),),
+        next_transition_epoch=NOW + 900.0,
+        display_admission=SimpleNamespace(value="banner"),
+        brightness_factor=0.3,
+        banner_allowed=False,
+        audible_allowed=False,
+        summary="Paused",
+    )
+    inputs["dnd_override_until"] = NOW + 14400.0
+    focus = build_state_document(**inputs)["focus"]
+    assert focus["mode"] == "pause" and focus["source"] == "override"
+    # The override's own expiry wins over the projection's transition.
+    assert focus["until"] == NOW + 14400.0
+    # Without a remembered expiry the transition is still an honest end.
+    inputs["dnd_override_until"] = None
+    assert build_state_document(**inputs)["focus"]["until"] == NOW + 900.0
+
+    inputs["dnd_projection"].contributions[0].source.value = "macos_focus"
+    inputs["dnd_projection"].active_sources[0].value = "macos_focus"
+    assert build_state_document(**inputs)["focus"]["source"] == "focus"
+
+
+def test_state_document_marks_snoozed_sessions() -> None:
+    """``snoozed_until`` lands on the row the family snooze covers --
+    live and stale alike -- and is null elsewhere."""
+    inputs = fixture_inputs()
+    inputs["snoozed_until_by_id"] = {CODEX_ID: NOW + 3600.0, GEMINI_ID: NOW + 120.0}
+    rows = {row["id"]: row for row in build_state_document(**inputs)["sessions"]}
+    assert rows[CODEX_ID]["snoozed_until"] == NOW + 3600.0
+    assert rows[GEMINI_ID]["snoozed_until"] == NOW + 120.0
+    assert rows[CLAUDE_ID]["snoozed_until"] is None
+
+
 def test_state_document_tolerates_an_empty_world() -> None:
     document = build_state_document(
         now=NOW, generation=1, snapshot=None, ask_statuses=[], unseen_completion_ids=frozenset()
