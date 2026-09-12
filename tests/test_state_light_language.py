@@ -465,7 +465,7 @@ def test_a_waiting_agent_beats_while_a_working_one_chases() -> None:
             event_name="Test",
         )
 
-    settings = ColorSettings.defaults().with_round_robin_urgency_alert(False)
+    settings = ColorSettings.defaults().with_blend_mode("round_robin").with_round_robin_urgency_alert(False)
     statuses = (status("codex", AgentMode.WORKING), status("claude", AgentMode.WAITING_FOR_INPUT))
     _state, program = program_for_snapshot(statuses, led_count=4, colors=settings)
     motion_line = [line for line in program.splitlines() if line.startswith("0:")][-1]

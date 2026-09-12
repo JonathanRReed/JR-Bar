@@ -591,6 +591,20 @@ struct EffectAssignmentsPane: View {
                 .padding(.vertical, 8)
                 Divider()
             }
+            if !store.providerPlayback.isEmpty || !store.devicePlayback.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("What plays where").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    ForEach(store.providerPlayback) { playback in
+                        ProviderPlaybackRow(playback: playback, store: store)
+                    }
+                    ForEach(store.devicePlayback) { assignment in
+                        DevicePlaybackRow(assignment: assignment, store: store)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider()
+            }
             if let document = store.assignments, !document.assignments.isEmpty {
                 List {
                     ForEach(document.byScope, id: \.scope) { group in
@@ -675,6 +689,116 @@ struct ScenePackRow: View {
     }
 }
 
+/// A "what plays on X" row: the provider's tile and name, what its
+/// working motion resolves to, and — indented underneath — the semantic
+/// effects its events fire and any provider-instance rows. Tapping the
+/// row jumps to the provider's assignment, or opens the assign sheet
+/// pre-filled for it when the provider has no scope of its own.
+struct ProviderPlaybackRow: View {
+    let playback: EffectStudioStore.ProviderPlayback
+    @Bindable var store: EffectStudioStore
+
+    private func effectLabel(_ assignment: EffectAssignment) -> String {
+        store.catalog?.effect(assignment.effectID)?.label ?? assignment.effectID
+    }
+
+    /// "Comet while working" for a provider animation, the plain effect
+    /// name for any other provider-scope row, "default motion" for none.
+    private var motionText: String {
+        guard let assignment = playback.provider else { return "default motion" }
+        let label = effectLabel(assignment)
+        return store.catalog?.effect(assignment.effectID)?.catalog == "provider_animation"
+            ? "\(label) while working" : label
+    }
+
+    /// `claude:work` → "work".
+    private func instanceName(of assignment: EffectAssignment) -> String {
+        guard let target = assignment.targetID, let colon = target.firstIndex(of: ":") else {
+            return assignment.targetLabel
+        }
+        return String(target[target.index(after: colon)...])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Button { store.focusPlayback(playback) } label: {
+                HStack(spacing: 7) {
+                    ProviderTile(style: ProviderStyle.style(for: playback.providerID), size: 16)
+                    Text(playback.name).font(.callout).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(motionText)
+                        .font(.caption)
+                        .foregroundStyle(playback.provider == nil ? HierarchicalShapeStyle.tertiary : .secondary)
+                        .lineLimit(1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(playback.provider.map { "Show \(effectLabel($0))" }
+                  ?? "No motion of its own — assign one to \(playback.name)")
+            ForEach(playback.instances) { assignment in
+                subline(assignment, detail: "instance \(instanceName(of: assignment))")
+            }
+            ForEach(playback.semantics) { assignment in
+                subline(assignment, detail: assignment.targetLabel.lowercased())
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func subline(_ assignment: EffectAssignment, detail: String) -> some View {
+        Button { store.selectedID = assignment.effectID } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.tertiary)
+                Text("\(effectLabel(assignment)) on \(detail)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 23)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show \(effectLabel(assignment))")
+    }
+}
+
+/// A device-scope row of the "what plays where" block: the device's
+/// name and the effect it plays; a linked Dot's shadowing caveat shows.
+struct DevicePlaybackRow: View {
+    let assignment: EffectAssignment
+    @Bindable var store: EffectStudioStore
+
+    var body: some View {
+        Button { store.selectedID = assignment.effectID } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "lightstrip")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(store.targetTitle(for: assignment)).font(.callout).lineLimit(1)
+                    if let note = store.assignmentNote(assignment) {
+                        Text(note).font(.caption2).foregroundStyle(.orange).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                Text(store.catalog?.effect(assignment.effectID)?.label ?? assignment.effectID)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Show \(store.catalog?.effect(assignment.effectID)?.label ?? assignment.effectID)")
+        .padding(.vertical, 2)
+    }
+}
+
 struct AssignmentRow: View {
     let assignment: EffectAssignment
     let title: String
@@ -736,7 +860,7 @@ struct AssignSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 if let effect {
-                    LEDStripPreview(program: store.previewProgram(for: effect), ledCount: store.previewLedCount(for: effect), style: .dots, dotSize: 9, spacing: 5, showsBackground: true)
+                    LEDStripPreview(program: store.draftPreviewProgram(for: effect), ledCount: store.previewLedCount(for: effect), style: .dots, dotSize: 9, spacing: 5, showsBackground: true)
                         .frame(width: 130)
                 }
                 VStack(alignment: .leading, spacing: 2) {
@@ -756,7 +880,7 @@ struct AssignSheet: View {
                 }
                 target
                 if let effect, !effect.parameters.isEmpty {
-                    Toggle("Keep the parameters as tuned here", isOn: $store.draftUsesParameters)
+                    Toggle("Keep the parameters shown for this target", isOn: $store.draftUsesParameters)
                 }
             }
             .formStyle(.grouped)

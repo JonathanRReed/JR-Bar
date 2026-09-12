@@ -27,6 +27,9 @@ final class ScreenBarController {
     private var lastCodes: [RGB8] = []
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
     private var displayAsleep = false
+    /// Reduce Motion: the band holds the program's brightest frame instead
+    /// of playing it. Live-read and re-presented on the workspace's change.
+    private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     private(set) var isShown = false
     private(set) var programText: String = ""
     private var lastRawText = ""
@@ -51,6 +54,7 @@ final class ScreenBarController {
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
+        workspace.addObserver(self, selector: #selector(reduceMotionChanged(_:)), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
     }
 
     /// The band's rounded rect in screen coordinates, for hit testing.
@@ -64,8 +68,9 @@ final class ScreenBarController {
     /// "keyframes (12 + 61 frames)" or "frame clock", for the status menu.
     var motionDescription: String {
         guard sampler != nil else { return "nothing" }
+        if plan?.isStatic == true { return "static" }
+        if reduceMotion { return "still (Reduce Motion)" }
         if let plan {
-            if plan.isStatic { return "static" }
             return "keyframes (\(plan.lead?.count ?? 0) + \(plan.loop?.count ?? 0) frames)"
         }
         return "frame clock"
@@ -89,6 +94,13 @@ final class ScreenBarController {
     @objc private func screensChanged(_ note: Notification) { reposition() }
     @objc private func screensDidSleep(_ note: Notification) { displayAsleep = true; updateClock() }
     @objc private func screensDidWake(_ note: Notification) { displayAsleep = false; present() }
+
+    /// Reduce Motion toggled in System Settings: freeze the moving program
+    /// or hand a still one back to Core Animation.
+    @objc private func reduceMotionChanged(_ note: Notification) {
+        reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        present()
+    }
 
     private func reposition() {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
@@ -181,10 +193,19 @@ final class ScreenBarController {
     // MARK: Presentation
 
     /// Puts the current program on the layers: keyframes when the plan fits,
-    /// else the frame clock.
+    /// else the frame clock — or, under Reduce Motion, one still frame and
+    /// no clock at all. The colour still carries the state; the motion is
+    /// what goes away.
     private func present() {
         guard sampler != nil else { updateClock(); return }
         if Self.logsMotion { NSLog("JR-Bar: screen bar %@, anchor %.1f s ago", motionDescription, programAge) }
+        updateAccessibility()
+        if reduceMotion {
+            view.stopKeyframes()
+            displayLink?.isPaused = true
+            renderStillFrame()
+            return
+        }
         if let plan {
             displayLink?.isPaused = true
             if isShown { view.play(plan: plan, anchor: anchor) }
@@ -193,6 +214,39 @@ final class ScreenBarController {
             renderCurrentFrame()
             updateClock()
         }
+    }
+
+    /// The frame Reduce Motion holds: the brightest instant of the program's
+    /// first cycle — the same still `LEDStripPreview` shows — so a pulse
+    /// keeps its peak and a chase keeps its gradient, not a dark first frame.
+    private func renderStillFrame() {
+        guard let sampler else { return }
+        var t = 0.0
+        let span = sampler.cycleDuration ?? sampler.motionEndsAt ?? 0
+        if span > 0 {
+            var bestLevel = -1.0
+            for k in 0..<12 {
+                let probe = span * Double(k) / 12
+                let level = sampler.colors(at: probe).map(\.maxChannel).reduce(0, +)
+                if level > bestLevel { bestLevel = level; t = probe }
+            }
+        }
+        let codes = sampler.codes(atMilliseconds: Int((t * 1000).rounded()))
+        lastCodes = codes
+        view.display(colors: codes.map(\.rgb))
+    }
+
+    /// VoiceOver's name for the band: the current focus session when one is
+    /// on the band ("Screen Bar — Codex, needs you"), else what the band is;
+    /// either way it owns up when a program was refused. Refreshed from
+    /// `present()` and from `coreDidChange`, so a state change that doesn't
+    /// move the light still reaches VoiceOver.
+    var focusProvider: (@MainActor () -> ScreenBarFocus?)?
+    func updateAccessibility() {
+        let summary = focusProvider?().map { "\($0.label) — \($0.word.lowercased())" }
+        view.setAccessibilityLabel(lastRejection == nil
+            ? "Screen Bar — \(summary ?? "agent status light")"
+            : "Screen Bar — \(summary ?? "agent status light"); a program was refused, showing the last safe one")
     }
 
     // MARK: Frame clock (fallback)

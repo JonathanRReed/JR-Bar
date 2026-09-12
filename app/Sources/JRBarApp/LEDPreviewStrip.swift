@@ -62,6 +62,7 @@ struct LEDStripPreview: View {
             frame(colors)
         }
         .onChange(of: program) { _, _ in origin = Date() }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(sampler == nil ? "Program refused" : "LED preview")
     }
 

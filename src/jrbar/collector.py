@@ -113,10 +113,12 @@ class LiveAgentMonitor(_LegacyLiveAgentMonitor):
         protected_agent_ids.update(
             status.agent_id for status in external if not status.stale
         )
+        requests_by_key = {request.key: request for request in state.requests}
         protected_agent_ids.update(
             _legacy.agent_status_from_canonical_work(
                 work,
                 overlay=overlays.get(work.key),
+                requests=requests_by_key,
             ).agent_id
             for work in state.works
         )

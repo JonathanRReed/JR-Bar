@@ -63,7 +63,7 @@ from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import PendingHookDrainer, pending_hook_files
 from .state_paths import default_state_dir
 
-CORE_VERSION: Final = "0.9.1"
+CORE_VERSION: Final = "0.9.2"
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0

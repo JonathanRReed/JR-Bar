@@ -221,7 +221,7 @@ def test_the_strip_is_coloured_by_main_agents_only() -> None:
         _main("a", AgentMode.WORKING),
         _main("b", AgentMode.WORKING, provider="codex"),
     ] + [_worker(index, AgentMode.WORKING) for index in range(_OBSERVED_FANOUT)]
-    colors = ColorSettings.defaults()
+    colors = ColorSettings.defaults().with_blend_mode("round_robin")
 
     _state, program = program_for_projection(
         _project(statuses),
@@ -507,7 +507,7 @@ def test_idle_sessions_do_not_claim_strip_slots_while_anyone_works() -> None:
     )
 
     _, program = program_for_snapshot(
-        statuses, led_count=8, colors=ColorSettings.defaults(), brightness=255
+        statuses, led_count=8, colors=ColorSettings.defaults().with_blend_mode("round_robin"), brightness=255
     )
     # The engaged agent's strip is a travelling wave: one painted
     # head-and-tail profile carried by `roll`. Every colour on that line is a
@@ -547,7 +547,7 @@ def test_an_idle_only_fleet_keeps_its_ambient_presence() -> None:
     )
 
     state, program = program_for_snapshot(
-        statuses, led_count=8, colors=ColorSettings.defaults(), brightness=255
+        statuses, led_count=8, colors=ColorSettings.defaults().with_blend_mode("round_robin"), brightness=255
     )
     assert state is LedDisplayState.IDLE
     assert program.strip(), "idle presence still renders"
@@ -567,7 +567,7 @@ def test_a_resting_companion_keeps_its_whisper_while_slots_are_free() -> None:
     )
 
     _, program = program_for_snapshot(
-        statuses, led_count=8, colors=ColorSettings.defaults(), brightness=255
+        statuses, led_count=8, colors=ColorSettings.defaults().with_blend_mode("round_robin"), brightness=255
     )
     working_line = next(line for line in program.splitlines() if "pulse" in line)
     peaks = {

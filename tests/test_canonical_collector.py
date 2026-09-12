@@ -269,6 +269,67 @@ def test_canonical_projection_derives_content_free_legacy_fields_and_typed_keys(
     assert snapshot_status == status
 
 
+def test_live_unanswered_request_pins_active_work_to_waiting() -> None:
+    """A work can be lifecycle-ACTIVE with a live ask on it -- the agent kept
+    an unrelated tool call moving while its permission prompt sat on screen.
+    The projection used to read that as WORKING/UserPromptSubmit, hiding an
+    unanswered ask behind ordinary activity; the live request wins."""
+    monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
+    monitor.ingest_batch(
+        _batch(WorkLifecycle.WAITING, 1, request_live=True),
+        clock=_clock(monotonic=101.0),
+    )
+    monitor.ingest_batch(
+        _batch(WorkLifecycle.ACTIVE, 2),
+        clock=_clock(monotonic=102.0),
+    )
+
+    snapshot = monitor.snapshot()
+
+    assert snapshot.statuses[0].mode is AgentMode.WAITING_FOR_INPUT
+    assert snapshot.statuses[0].event_name == "PermissionRequest"
+    assert snapshot.aggregate.mode is AgentMode.WAITING_FOR_INPUT
+
+
+def test_resolved_request_does_not_pin_active_work_to_waiting() -> None:
+    """The matching PostToolUse resolves the derived request identity, and the
+    resolved tombstone stays linked -- it must not keep the row 'waiting'."""
+    monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
+    monitor.ingest_batch(
+        _batch(WorkLifecycle.WAITING, 1, request_live=True),
+        clock=_clock(monotonic=101.0),
+    )
+    resolved = ProviderRequestFact(
+        RequestKey(
+            WorkKey(SOURCE, WorkIdentifier("work:one")),
+            RequestIdentifier("request:one"),
+        ),
+        ProviderRequestState.RESOLVED,
+        RequestKind.PERMISSION,
+        NextActor.NONE,
+        _watermark(2),
+    )
+    monitor.ingest_batch(
+        ProviderFactBatch(
+            source_key=SOURCE,
+            observation_authority=ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+            source_health=SourceHealth.HEALTHY,
+            source_freshness=SourceFreshness.FRESH,
+            observed_at_epoch=NOW.timestamp(),
+            watermark=_watermark(2),
+            work_facts=_batch(WorkLifecycle.ACTIVE, 2).work_facts,
+            request_facts=(resolved,),
+            diagnostics=(),
+        ),
+        clock=_clock(monotonic=102.0),
+    )
+
+    snapshot = monitor.snapshot()
+
+    assert snapshot.statuses[0].mode is AgentMode.WORKING
+    assert snapshot.aggregate.mode is AgentMode.WORKING
+
+
 def test_one_thousand_works_and_requests_are_bounded_and_deterministic() -> None:
     watermark = _watermark(1)
     work_keys = tuple(

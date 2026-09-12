@@ -92,3 +92,11 @@ read-only; see `remote_peers.py` for the five rules the transport keeps.
 `jrbar serve` answers `GET /status.json` on loopback with redacted agent
 aggregates and provider quota summaries, for scripts and things like a
 Stream Deck. `jrbar --help` lists the rest of the command line.
+
+Inside the app the same endpoint is the **Serve status** switch (Settings
+› Remote, mirrored on the Devices & Screen Bar page's Stream Deck card):
+`GET http://127.0.0.1:8737/status.json` with
+`Authorization: Bearer <token>`, the token at
+`~/.local/state/jrbar/serve-token` (0600) — the card's Copy token button
+hands it over. `integrations/streamdeck/` carries an alpha plugin
+scaffold that polls it; sideload per its README.

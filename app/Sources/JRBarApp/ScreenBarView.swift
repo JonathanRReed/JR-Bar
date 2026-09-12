@@ -33,6 +33,8 @@ final class ScreenBarView: NSView {
     private static let haloEnabled = ProcessInfo.processInfo.environment["JRBAR_NO_HALO"] == nil
     private static let leadKey = "jrbar.lead"
     private static let loopKey = "jrbar.loop"
+    /// Reduce Motion is a live setting; read it per call, never cached.
+    private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// Which mode the layers are in, so a switch resets the other's state.
     private(set) var isPlayingKeyframes = false
 
@@ -82,6 +84,14 @@ final class ScreenBarView: NSView {
         root.addSublayer(haloLayer)
         root.addSublayer(bandLayer)
         root.addSublayer(outlineLayer)
+
+        // A status light, not a bare coloured rect: VoiceOver gets a name
+        // for the band (the controller refines the label when a program
+        // is refused).
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        setAccessibilityLabel("Screen Bar — agent status light")
+        setAccessibilityHelp("Mirrors the agents' status; the same words are on the JR-Bar menu bar item")
     }
 
     @available(*, unavailable)
@@ -132,7 +142,10 @@ final class ScreenBarView: NSView {
         func colors(_ codes: [RGB8]) -> [CGColor] {
             ScreenBarBlend.columnSamples(colors: codes.map(\.rgb), bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha).map(cgColor(for:))
         }
-        let restColors = colors(plan.loop?.frames.first ?? plan.finalCodes)
+        // Reduce Motion keeps the colour and drops the motion: the layers
+        // hold the program's brightest frame and no animation goes on.
+        let reduced = Self.reduceMotion
+        let restColors = colors(Self.stillCodes(for: plan, reduced: reduced))
         let layerAnchor = bandLayer.convertTime(anchor, from: nil)
 
         CATransaction.begin()
@@ -143,7 +156,7 @@ final class ScreenBarView: NSView {
             layer.locations = locations
             layer.colors = restColors
         }
-        if let lead = plan.lead, layerAnchor + Double(lead.durationMs) / 1000.0 > CACurrentMediaTime() {
+        if !reduced, let lead = plan.lead, layerAnchor + Double(lead.durationMs) / 1000.0 > CACurrentMediaTime() {
             let animation = Self.keyframeAnimation(track: lead, colors: lead.frames.map(colors))
             animation.beginTime = layerAnchor
             animation.repeatCount = 1
@@ -152,7 +165,7 @@ final class ScreenBarView: NSView {
             bandLayer.add(animation, forKey: Self.leadKey)
             if Self.haloEnabled, let copy = animation.copy() as? CAKeyframeAnimation { haloLayer.add(copy, forKey: Self.leadKey) }
         }
-        if let loop = plan.loop {
+        if !reduced, let loop = plan.loop {
             let animation = Self.keyframeAnimation(track: loop, colors: loop.frames.map(colors))
             animation.beginTime = layerAnchor + Double(plan.loopStartMs) / 1000.0
             animation.repeatCount = .infinity
@@ -162,6 +175,21 @@ final class ScreenBarView: NSView {
             if Self.haloEnabled, let copy = animation.copy() as? CAKeyframeAnimation { haloLayer.add(copy, forKey: Self.loopKey) }
         }
         CATransaction.commit()
+    }
+
+    /// The frame the layers hold. Unreduced that is the loop's first frame —
+    /// what the lead hands the loop. Under Reduce Motion it is the program's
+    /// brightest frame, so a pulse keeps its peak and a chase keeps its
+    /// gradient instead of resting on a first frame that may be dark.
+    private static func stillCodes(for plan: LEDSKeyframePlan, reduced: Bool) -> [RGB8] {
+        guard reduced else { return plan.loop?.frames.first ?? plan.finalCodes }
+        let frames = (plan.lead?.frames ?? []) + (plan.loop?.frames ?? []) + [plan.finalCodes]
+        return frames.max { lightLevel($0) < lightLevel($1) } ?? plan.finalCodes
+    }
+
+    /// Total light in a frame, for picking the brightest.
+    private static func lightLevel(_ codes: [RGB8]) -> Int {
+        codes.reduce(0) { $0 + Int(max($1.r, max($1.g, $1.b))) }
     }
 
     /// Takes Core Animation's hands off the layers; the next `display` paints.
