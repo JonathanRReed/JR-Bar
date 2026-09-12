@@ -291,6 +291,12 @@ final class PanelController {
             }
             switch event.keyCode {
             case 53: close(); return nil                            // Esc
+            case 51:                                                // ⌘⌫ on the selected row
+                // Dismiss a stuck/quiet row (hides until it next speaks),
+                // clear a finished/ended/stale one. Pinned by an open ask
+                // or remote, there is nothing to take back.
+                if flags.contains(.command), store.dismissSelected() { return nil }
+                return event
             case 125: store.moveSelection(by: 1); return nil       // Down
             case 126: store.moveSelection(by: -1); return nil      // Up
             case 36, 76:                                            // Return / keypad Enter

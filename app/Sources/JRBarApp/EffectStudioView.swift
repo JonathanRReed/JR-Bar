@@ -44,6 +44,8 @@ struct EffectStudioView: View {
                         Button("Export “\(effect.label)”…") { store.exportPack(ids: [effect.id], suggestedName: effect.label) }
                         if let pack = effect.pack, let entry = store.catalog?.pack(pack) {
                             Button("Export pack “\(entry.name)” (\(entry.effectIDs.count))…") { store.exportPack(ids: entry.effectIDs, suggestedName: entry.name) }
+                            Divider()
+                            Button("Remove pack “\(entry.name)”…") { store.removePack(entry) }
                         }
                     }
                     Button("Export every provider animation…") {
@@ -81,11 +83,20 @@ struct EffectStudioView: View {
         .sheet(isPresented: $store.assigning) {
             AssignSheet(store: store)
         }
-        .alert("Preview on the strip?", isPresented: $store.askingConsent) {
+        .alert("Preview on hardware?", isPresented: $store.askingConsent) {
             Button("Preview for 5 seconds") { store.grantConsent(and: store.selected) }
             Button("Cancel", role: .cancel) { store.askingConsent = false }
         } message: {
-            Text("The core will play this effect on the SidePulse hardware for five seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
+            Text("The core will play this effect on the connected SidePulse hardware for five seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
+        }
+        .alert("Pack already installed", isPresented: Binding(
+            get: { store.packConflict != nil },
+            set: { if !$0 { store.packConflict = nil } }
+        )) {
+            Button("Update pack") { store.updatePack() }
+            Button("Keep installed copy", role: .cancel) { store.packConflict = nil }
+        } message: {
+            Text("A pack with this id is already installed. Update replaces the installed copy with \(store.packConflict?.name ?? "the file").")
         }
     }
 }
@@ -254,13 +265,13 @@ struct EffectInspectorPane: View {
                     store.previewOnHardware(effect)
                 } label: {
                     if store.hardwarePreviewActive {
-                        Label("On the strip · \(store.hardwarePreviewRemaining) s", systemImage: "light.beacon.max.fill")
+                        Label("On \(store.previewSurface?.name ?? "hardware") · \(store.hardwarePreviewRemaining) s", systemImage: "light.beacon.max.fill")
                     } else {
-                        Label("Preview on hardware", systemImage: "light.beacon.max")
+                        Label(store.previewSurface.map { "Preview on \($0.name)" } ?? "Preview on hardware", systemImage: "light.beacon.max")
                     }
                 }
-                .disabled(store.hardwarePreviewActive || !store.isLive)
-                .help(store.hasHardware ? "Play this effect on the SidePulse strip for 5 seconds, then revert" : "No strip connected; the core will still answer")
+                .disabled(store.hardwarePreviewActive || !store.isLive || !store.hasHardware)
+                .help(store.previewSurface.map { "Play this effect on \($0.name) (\($0.ledCount) LEDs) for 5 seconds, then revert" } ?? "No strip or Dot is connected, so there is nothing to play it on")
                 Button {
                     store.beginAssigning(effect)
                 } label: {
@@ -566,6 +577,16 @@ struct EffectAssignmentsPane: View {
             }
             .padding(12)
             Divider()
+            if !store.scenePacks.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(store.scenePacks) { pack in
+                        ScenePackRow(pack: pack, store: store)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider()
+            }
             if let document = store.assignments, !document.assignments.isEmpty {
                 List {
                     ForEach(document.byScope, id: \.scope) { group in
@@ -573,6 +594,7 @@ struct EffectAssignmentsPane: View {
                             ForEach(group.assignments) { assignment in
                                 AssignmentRow(assignment: assignment, title: store.targetTitle(for: assignment),
                                               effect: store.catalog?.effect(assignment.effectID),
+                                              note: store.isUnreachableDot(assignment) ? "the Dot only follows the global look" : nil,
                                               selected: store.selectedID == assignment.effectID) {
                                     store.remove(assignment)
                                 } select: {
@@ -618,14 +640,52 @@ struct EffectAssignmentsPane: View {
     }
 }
 
+/// An installed scene pack: name, its scenes, and an on-screen preview of
+/// the pack's program (the daemon renders it at the connected LED count).
+struct ScenePackRow: View {
+    let pack: ScenePackSummary
+    @Bindable var store: EffectStudioStore
+
+    private var preview: EffectPreview? {
+        store.scenePreview?.packID == pack.id ? store.scenePreview?.preview : nil
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if let preview {
+                LEDStripPreview(program: preview.program, ledCount: preview.ledCount,
+                                style: .band, dotSize: 6, showsBackground: false)
+                    .frame(width: 40)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(pack.displayName).lineLimit(1)
+                Text(pack.scenes.isEmpty ? "No scenes listed" : pack.scenes.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Button(preview == nil ? "Preview" : "Preview again") { store.previewScenePack(pack) }
+                .buttonStyle(.link)
+                .font(.caption)
+        }
+        .padding(.vertical, 1)
+    }
+}
+
 struct AssignmentRow: View {
     let assignment: EffectAssignment
     let title: String
     let effect: EffectDefinition?
+    /// A caveat under the effect name (e.g. a Dot device row that never
+    /// applies) — shown in place of nothing, not hidden.
+    var note: String? = nil
     let selected: Bool
     let remove: () -> Void
     let select: () -> Void
     @ViewState private var hovering = false
+
+    /// A `none` record is an explicit suppress: the scope is hidden, not
+    /// "assigned to an effect called none".
+    private var suppressed: Bool { assignment.effectID == "none" && effect == nil }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -635,10 +695,14 @@ struct AssignmentRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).lineLimit(1)
                 HStack(spacing: 4) {
-                    Text(effect?.label ?? assignment.effectID).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(suppressed ? "None — hide this scope" : (effect?.label ?? assignment.effectID))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     if !assignment.parameters.isEmpty, let effect, assignment.parameters != effect.defaultParameters {
                         Text("· tuned").font(.caption2).foregroundStyle(.tertiary)
                     }
+                }
+                if let note {
+                    Text(note).font(.caption2).foregroundStyle(.orange).lineLimit(1)
                 }
             }
             Spacer()
@@ -647,7 +711,7 @@ struct AssignmentRow: View {
             }
             .buttonStyle(.plain)
             .opacity(hovering ? 1 : 0.35)
-            .help("Remove this assignment")
+            .help(suppressed ? "Stop suppressing this scope" : "Remove this assignment")
             .accessibilityLabel("Remove")
         }
         .contentShape(Rectangle())

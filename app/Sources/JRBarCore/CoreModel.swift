@@ -97,6 +97,22 @@ public final class CoreModel {
         ])
     }
 
+    /// `answer_ask` awaited: the reply carries the daemon's verdict —
+    /// `ok: false` with `error.message` naming the refusal
+    /// (`not_frontmost`, `accessibility_required`, `unsupported`, …).
+    /// Callers that show a toast must show this, not a guessed success.
+    @discardableResult
+    public func answerAskNow(session: String, approve: Bool, onlyIfFrontmost: Bool = false,
+                             replyText: String? = nil) async throws -> CoreReply {
+        var args: [String: JSONValue] = [
+            "session": .string(session),
+            "decision": .string(approve ? "approve" : "deny"),
+            "only_if_frontmost": .bool(onlyIfFrontmost),
+        ]
+        if let replyText { args["reply_text"] = .string(replyText) }
+        return try await send("answer_ask", args: args, timeout: 8)
+    }
+
     /// Acknowledges completions; the reply's `batch` is kept so `undoClear`
     /// can put them back within `EventPolicy.undoWindow`.
     public func clearCompleted(sessions: [String]? = nil) {
@@ -188,13 +204,39 @@ public final class CoreModel {
 
     public func uninstallHooks(providers: [String]) { post("uninstall_hooks", args: ["providers": .array(providers.map(JSONValue.string))]) }
 
+    /// `install_hooks` awaited: the reply's `results` maps each provider to
+    /// its outcome so the row can show "Installed" or the error string.
+    @discardableResult
+    public func installHooksNow(providers: [String]) async throws -> CoreReply {
+        try await send("install_hooks", args: ["providers": .array(providers.map(JSONValue.string))])
+    }
+
+    @discardableResult
+    public func uninstallHooksNow(providers: [String]) async throws -> CoreReply {
+        try await send("uninstall_hooks", args: ["providers": .array(providers.map(JSONValue.string))])
+    }
+
     /// Shows `program` on `surface` for `seconds`, then the daemon reverts.
     public func previewProgram(surface: String, program: String, seconds: Double) {
         post("preview_program", args: ["surface": .string(surface), "program": .string(program), "seconds": .number(seconds)])
     }
 
+    /// Awaited `preview_program`: `ok: false` (e.g. `not_found` when no
+    /// device of that surface is connected) must reach the caller.
+    @discardableResult
+    public func previewProgramNow(surface: String, program: String, seconds: Double) async throws -> CoreReply {
+        try await send("preview_program", args: ["surface": .string(surface), "program": .string(program), "seconds": .number(seconds)])
+    }
+
     public func applyCalibration(device: String, profile: [String: JSONValue]) {
         post("apply_calibration", args: ["device": .string(device), "profile": .object(profile)])
+    }
+
+    /// Awaited `apply_calibration`: the reply says whether the profile
+    /// persisted (`not_found` when the device was never seen).
+    @discardableResult
+    public func applyCalibrationNow(device: String, profile: [String: JSONValue]) async throws -> CoreReply {
+        try await send("apply_calibration", args: ["device": .string(device), "profile": .object(profile)])
     }
 
     /// A held calibration preview: the daemon keeps the patch lit on the
@@ -204,11 +246,70 @@ public final class CoreModel {
         post("preview_calibration", args: args)
     }
 
+    /// Awaited variant: `not_found` when the device is not connected —
+    /// the sheet must know rather than claim a lit patch.
+    @discardableResult
+    public func previewCalibrationNow(args: [String: JSONValue]) async throws -> CoreReply {
+        try await send("preview_calibration", args: args)
+    }
+
     public func endCalibrationPreview(device: String) {
         post("end_calibration_preview", args: ["device": .string(device)])
     }
 
     public func doctor() async throws -> CoreReply { try await send("doctor") }
+
+    /// `mark_history_seen`: the user just looked at History — the daemon
+    /// advances its `last_seen` watermark so `unseen` rows and the "while
+    /// you were away" banner reflect looking, not app restarts.
+    @discardableResult
+    public func markHistorySeen() async throws -> CoreReply {
+        try await send("mark_history_seen")
+    }
+
+    /// `dismiss_session {session}`: acknowledge a live or stuck row until
+    /// it next speaks — the "hide this" affordance for a session whose
+    /// process is alive but isn't going anywhere.
+    @discardableResult
+    public func dismissSession(_ session: String) async throws -> CoreReply {
+        try await send("dismiss_session", args: ["session": .string(session)])
+    }
+
+    /// `list_scene_packs`: the installed scene packs (id, name, effect ids).
+    public func listScenePacks() async throws -> [ScenePackSummary] {
+        let reply = try await send("list_scene_packs")
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "list_scene_packs failed") }
+        let packs = reply.result?["packs"]?.arrayValue ?? []
+        let decoder = JSONDecoder()
+        return try packs.compactMap { value in
+            let data = try JSONEncoder().encode(value)
+            return try decoder.decode(ScenePackSummary.self, from: data)
+        }
+    }
+
+    /// `import_scene_pack {path}`: the daemon validates and installs the
+    /// pack file itself. Replies `{ok, pack_id, ...}` or an error.
+    @discardableResult
+    public func importScenePack(path: String) async throws -> CoreReply {
+        try await send("import_scene_pack", args: ["path": .string(path)])
+    }
+
+    /// `preview_scene_pack {pack_id}`: renders the pack's program so the
+    /// Studio can preview it before installing or assigning.
+    public func previewScenePack(packID: String, ledCount: Int = 8) async throws -> EffectPreview {
+        try await request("preview_scene_pack", args: [
+            "pack_id": .string(packID),
+            "led_count": .number(Double(ledCount)),
+        ], as: EffectPreview.self)
+    }
+
+    /// `serve_token`: the loopback status endpoint's bearer token, for the
+    /// Settings › Remote reveal row. Local socket, so plain text is fine.
+    public func serveToken() async throws -> String? {
+        let reply = try await send("serve_token")
+        guard reply.ok else { return nil }
+        return reply.result?["token"]?.stringValue
+    }
 
     /// Puts every listed path back to the daemon's default.
     @discardableResult
@@ -262,37 +363,48 @@ public final class CoreModel {
         ], as: EffectPreview.self)
     }
 
-    /// `apply_effect {effect, scope, target, parameters}` (protocol 1): the
-    /// Effect Studio assignment for that scope and target. The reply carries
-    /// the assignment list; `parameters` is an app-proposed extension the
-    /// daemon may ignore.
+    /// `set_assignment {effect_id, scope, target_id, parameters}`: the
+    /// Effect Studio assignment for that scope and target. Unlike
+    /// `apply_effect` this command persists tuned `parameters` to the
+    /// sidecar and returns the full document (assignments, `active_scene`,
+    /// `generation`).
     @discardableResult
     public func setAssignment(_ assignment: EffectAssignment) async throws -> EffectAssignmentDocument {
         var args: [String: JSONValue] = [
-            "effect": .string(assignment.effectID),
+            "effect_id": .string(assignment.effectID),
             "scope": .string(assignment.scope.rawValue),
-            "target": assignment.targetID.map(JSONValue.string) ?? .null,
+            "target_id": assignment.targetID.map(JSONValue.string) ?? .null,
             "parameters": .object(assignment.parameters),
         ]
         if assignment.parameters.isEmpty { args["parameters"] = nil }
-        return try await request("apply_effect", args: args, as: EffectAssignmentDocument.self)
+        return try await request("set_assignment", args: args, as: EffectAssignmentDocument.self)
     }
 
-    /// `apply_effect` with `effect: null` removes the assignment.
+    /// `clear_assignment {scope, target_id}` removes the assignment.
     @discardableResult
     public func clearAssignment(scope: EffectScope, targetID: String?) async throws -> EffectAssignmentDocument {
         let args: [String: JSONValue] = [
-            "effect": .null,
             "scope": .string(scope.rawValue),
-            "target": targetID.map(JSONValue.string) ?? .null,
+            "target_id": targetID.map(JSONValue.string) ?? .null,
         ]
-        return try await request("apply_effect", args: args, as: EffectAssignmentDocument.self)
+        return try await request("clear_assignment", args: args, as: EffectAssignmentDocument.self)
     }
 
-    /// `import_effect_pack {path}`: the daemon reads and validates the JSON
-    /// itself (the app never parses a pack) and replies with the new catalog.
-    public func importEffectPack(path: String) async throws -> EffectCatalog {
-        try await request("import_effect_pack", args: ["path": .string(path)], as: EffectCatalog.self)
+    /// `import_effect_pack {path, update?}`: the daemon reads and validates
+    /// the JSON itself (the app never parses a pack) and replies with the
+    /// new catalog. `update: true` is the explicit replace a Studio offers
+    /// after an `already_installed` conflict.
+    public func importEffectPack(path: String, update: Bool = false) async throws -> EffectCatalog {
+        var args: [String: JSONValue] = ["path": .string(path)]
+        if update { args["update"] = .bool(true) }
+        return try await request("import_effect_pack", args: args, as: EffectCatalog.self)
+    }
+
+    /// `remove_effect_pack {pack_id}`: uninstalls a pack and replies with
+    /// the new catalog. (App-proposed; a core without it answers
+    /// `unknown_command`, which the Studio shows as the refusal.)
+    public func removeEffectPack(packID: String) async throws -> EffectCatalog {
+        try await request("remove_effect_pack", args: ["pack_id": .string(packID)], as: EffectCatalog.self)
     }
 
     /// `export_effect_pack {ids[], path}` writes a data-only JSON v2 pack.

@@ -361,6 +361,58 @@ def test_semantic_colors_are_typed_normalized_and_do_not_mutate_inputs() -> None
         dispatch.outputs[0].program = "off"  # type: ignore[misc]
 
 
+def test_semantic_program_override_plays_the_assigned_effect() -> None:
+    """An assignment's rendered program replaces the generic swell.
+
+    The Effect Studio's promise is "this effect, with these parameters" --
+    the daemon renders that program once per selection and hands it in
+    here, uncompiled, so each surface binds its own LED count at write
+    time.
+    """
+    from jrbar.semantic_effect_router import (
+        DEFAULT_SEMANTIC_EFFECT_MAP,
+        SemanticEffectAssignment,
+        SemanticEffectMap,
+    )
+
+    assignments = tuple(
+        SemanticEffectAssignment(
+            row.semantic,
+            "kitt" if row.semantic is SemanticEventKind.COMPLETION else row.effect_identifier,
+        )
+        for row in DEFAULT_SEMANTIC_EFFECT_MAP.assignments
+    )
+    selection = route_semantic_effects(
+        (SemanticEffectCandidate("semantic:done", SemanticEventKind.COMPLETION),),
+        effect_map=SemanticEffectMap(assignments=assignments),
+    )
+    assert selection.registry_effect_identifier == "kitt"
+
+    custom = "#112233 100ms none\n#445566 100ms none\nrepeat 3"
+    dispatch = compile_ambient_effect_dispatch(
+        semantic_selection=selection, semantic_program=custom
+    )
+    assert dispatch.outputs
+    for output in dispatch.outputs:
+        assert "#112233" in output.program and "#445566" in output.program
+        led_count = 2 if output.surface is AmbientEffectSurface.SIDEPULSE_DOT else 8
+        _animation, problems = read_program(output.program, led_count=led_count)
+        assert errors_only(problems) == ()
+
+    # A bounded builtin keeps its safety variant; the override only ever
+    # applies to the effect it was rendered for.
+    ask = route_semantic_effects(
+        (SemanticEffectCandidate("semantic:ask", SemanticEventKind.ASK),)
+    )
+    builtin = compile_ambient_effect_dispatch(
+        semantic_selection=ask, semantic_program=custom
+    )
+    assert all("#112233" not in output.program for output in builtin.outputs)
+
+    with pytest.raises(TypeError):
+        compile_ambient_effect_dispatch(semantic_selection=selection, semantic_program=42)
+
+
 def test_suppressed_or_empty_plans_emit_nothing() -> None:
     dispatch = compile_ambient_effect_dispatch(
         semantic_selection=route_semantic_effects(()),

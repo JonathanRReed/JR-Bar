@@ -45,6 +45,18 @@ from .state_paths import default_state_dir
 PARAMETERS_SIDECAR_NAME: Final = "effect-assignment-parameters.json"
 MAX_PARAMETERS_SIDECAR_BYTES: Final = 256_000
 BASE_COLOR: Final = "#00E5FF"
+#: Preview/render LED counts clamp to this range: the smallest real strip
+#: is a Dot's 2, the widest canvas the app asks for is the Screen Bar's 24.
+MIN_RENDER_LED_COUNT: Final = 2
+MAX_RENDER_LED_COUNT: Final = 24
+
+
+def _render_led_count(value: object) -> int:
+    try:
+        count = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        count = 8
+    return max(MIN_RENDER_LED_COUNT, min(MAX_RENDER_LED_COUNT, count))
 SEMANTIC_COLORS: Final = {
     "working": "#00E5FF",
     "asking": "#FF3A00",
@@ -118,6 +130,18 @@ def cadence_document(cadence: BlinkCadence) -> dict[str, Any]:
     }
 
 
+def _numeric_bounds(value: int | float) -> dict[str, Any]:
+    """Sane slider bounds for a pack value the registry never typed.
+
+    A 0.25 floor is a ratio and belongs on 0-1, not on a 0-10 slider that
+    makes the pack's own number untouchably tiny; a plain count still gets
+    headroom above its default.
+    """
+    if 0 <= value <= 1:
+        return {"minimum": 0 if isinstance(value, int) else 0.0, "maximum": 1 if isinstance(value, int) else 1.0}
+    return {"minimum": 0, "maximum": max(10, value * 2)}
+
+
 def _pack_parameters(pack_effect: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Pack effects carry untyped data; type it the way the mock did so the
     Studio's controls know what to draw."""
@@ -129,14 +153,17 @@ def _pack_parameters(pack_effect: Mapping[str, Any] | None) -> list[dict[str, An
     motion_ids = sorted(colors_module.PROVIDER_ANIMATION_CHOICES)
     for name in sorted(str(key) for key in pack_effect if key not in _EFFECT_METADATA_KEYS):
         value = pack_effect[name]
-        title = name.replace("_", " ").capitalize()
-        row: dict[str, Any] = {"name": name, "description": f"{title} (pack value)."}
+        # No invented prose: the pack's own value is the default, and the
+        # Studio already renders the name. "(pack value)" taught nothing.
+        row: dict[str, Any] = {"name": name, "description": None}
         if isinstance(value, bool):
             row.update(type="boolean", default=value)
-        elif isinstance(value, int):
-            row.update(type="integer", default=value, minimum=0, maximum=max(10, value * 2))
-        elif isinstance(value, float):
-            row.update(type="number", default=value, minimum=0.0, maximum=max(10.0, value * 2))
+        elif isinstance(value, (int, float)):
+            row.update(
+                type="integer" if isinstance(value, int) else "number",
+                default=value,
+                **_numeric_bounds(value),
+            )
         elif isinstance(value, str) and _HEX.match(value):
             row.update(type="color", default=value.upper())
         elif isinstance(value, (list, tuple)) and value and all(isinstance(v, str) and _HEX.match(v) for v in value):
@@ -171,6 +198,7 @@ def effect_document(
     effect: EffectDefinition,
     *,
     pack_effect: Mapping[str, Any] | None = None,
+    pack_name: str | None = None,
     preview: dict[str, Any] | None = None,
     cadence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -195,6 +223,9 @@ def effect_document(
     pack = pack_id_of(effect.identifier)
     if pack is not None:
         document["pack"] = pack
+        # The human pack name beside the id, so a badge need not join
+        # ``packs[]`` to say "Nightlab".
+        document["pack_name"] = pack_name
     if preview is not None:
         document["preview"] = preview
     if cadence is not None:
@@ -358,7 +389,18 @@ def _motion_program(motion: str, color: str, parameters: Mapping[str, Any], *, l
     return colors_module.provider_motion_preview_program("claude", color, colors, led_count=led_count)
 
 
-def render_effect(
+def _render_color(
+    parameters: Mapping[str, Any], color: str | None, semantic: str | None
+) -> str:
+    chosen = parameters.get("color")
+    if not (isinstance(chosen, str) and _HEX.match(chosen)):
+        chosen = color if isinstance(color, str) and _HEX.match(color) else None
+    if chosen is None:
+        chosen = SEMANTIC_COLORS.get(semantic or "", BASE_COLOR)
+    return chosen.upper()
+
+
+def render_effect_source(
     effect: EffectDefinition,
     parameters: Mapping[str, Any],
     *,
@@ -366,14 +408,13 @@ def render_effect(
     color: str | None = None,
     semantic: str | None = None,
 ) -> str:
-    """One safe LEDS program for an effect and its normalised parameters."""
-    led_count = max(2, min(8, int(led_count)))
-    chosen = parameters.get("color")
-    if not (isinstance(chosen, str) and _HEX.match(chosen)):
-        chosen = color if isinstance(color, str) and _HEX.match(color) else None
-    if chosen is None:
-        chosen = SEMANTIC_COLORS.get(semantic or "", BASE_COLOR)
-    chosen = chosen.upper()
+    """The uncompiled LEDS source for an effect and its parameters.
+
+    The ambient dispatcher compiles per surface at write time, so it needs
+    this stage rather than the led-count-bound ``render_effect`` result.
+    """
+    led_count = _render_led_count(led_count)
+    chosen = _render_color(parameters, color, semantic)
     candidate = _builtin_program(effect.identifier, chosen)
     if candidate is None and effect.catalog == "provider_animation":
         motion = effect.identifier
@@ -389,6 +430,23 @@ def render_effect(
         else:
             primitive = SEMANTIC_PRIMITIVES.get(semantic or _semantic_of(effect), "none")
             candidate = _builtin_program(primitive, chosen) or chosen
+    return candidate
+
+
+def render_effect(
+    effect: EffectDefinition,
+    parameters: Mapping[str, Any],
+    *,
+    led_count: int = 8,
+    color: str | None = None,
+    semantic: str | None = None,
+) -> str:
+    """One safe LEDS program for an effect and its normalised parameters."""
+    led_count = _render_led_count(led_count)
+    chosen = _render_color(parameters, color, semantic)
+    candidate = render_effect_source(
+        effect, parameters, led_count=led_count, color=color, semantic=semantic
+    )
     compiled = compile_presentation_program(candidate, led_count=led_count, fallback=chosen)
     return compiled.program
 
@@ -478,23 +536,27 @@ def catalog_document(
     *,
     generation: int | None = None,
     pack_paths: Mapping[str, str] | None = None,
+    preview_led_count: int = 8,
 ) -> dict[str, Any]:
     packs = tuple(packs)
     if generation is None:
         generation = catalog_generation(registry, packs)
+    preview_led_count = _render_led_count(preview_led_count)
+    pack_names = {pack.pack_id: pack.name for pack in packs}
     effects: list[dict[str, Any]] = []
     for effect in registry.as_mapping().values():
         pack_effect = pack_effect_for(packs, effect.identifier)
         parameters = normalize_parameters(effect, {}, pack_effect=pack_effect)
         try:
-            program = render_effect(effect, parameters, led_count=8)
+            program = render_effect(effect, parameters, led_count=preview_led_count)
         except Exception:
             program = BASE_COLOR
         effects.append(
             effect_document(
                 effect,
                 pack_effect=pack_effect,
-                preview={"program": program, "led_count": 8},
+                pack_name=pack_names.get(pack_id_of(effect.identifier) or ""),
+                preview={"program": program, "led_count": preview_led_count},
                 cadence=effect_cadence(effect, parameters),
             )
         )
@@ -554,6 +616,7 @@ def assignment_document(
     parameters: Mapping[str, Mapping[str, Any]] | None = None,
     active_scene: str | None,
     generation: int | None = None,
+    completion_banners_enabled: bool = True,
 ) -> dict[str, Any]:
     if generation is None:
         generation = assignments_generation(document, active_scene=active_scene)
@@ -568,7 +631,14 @@ def assignment_document(
                 "parameters": dict((parameters or {}).get(assignment_key(scope, record.target_id), {})),
             }
         )
-    return {"assignments": rows, "active_scene": active_scene, "generation": int(generation)}
+    return {
+        "assignments": rows,
+        "active_scene": active_scene,
+        "generation": int(generation),
+        # The app's banner affordance mirrors the daemon's completion-sweep
+        # setting, and it lives here so an assignment reply carries it.
+        "completion_banners_enabled": bool(completion_banners_enabled),
+    }
 
 
 # --- packs ----------------------------------------------------------------------
@@ -661,5 +731,6 @@ __all__ = [
     "parameters_sidecar_path",
     "registry_with_packs",
     "render_effect",
+    "render_effect_source",
     "save_assignment_parameters",
 ]

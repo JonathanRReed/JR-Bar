@@ -44,12 +44,16 @@ public struct CoreAggregate: Codable, Hashable, Sendable {
     public var needsYou: Int
     public var active: Int
     public var ready: Int
+    /// Sessions in a failed/blocked state — the daemon has always sent it;
+    /// the header just never decoded it.
+    public var failed: Int
 
-    public init(mode: String = "idle", needsYou: Int = 0, active: Int = 0, ready: Int = 0) {
+    public init(mode: String = "idle", needsYou: Int = 0, active: Int = 0, ready: Int = 0, failed: Int = 0) {
         self.mode = mode
         self.needsYou = needsYou
         self.active = active
         self.ready = ready
+        self.failed = failed
     }
 
     enum CodingKeys: String, CodingKey {
@@ -57,6 +61,7 @@ public struct CoreAggregate: Codable, Hashable, Sendable {
         case needsYou = "needs_you"
         case active
         case ready
+        case failed
     }
 
     public init(from decoder: Decoder) throws {
@@ -65,6 +70,7 @@ public struct CoreAggregate: Codable, Hashable, Sendable {
         needsYou = try c.decodeIfPresent(Int.self, forKey: .needsYou) ?? 0
         active = try c.decodeIfPresent(Int.self, forKey: .active) ?? 0
         ready = try c.decodeIfPresent(Int.self, forKey: .ready) ?? 0
+        failed = try c.decodeIfPresent(Int.self, forKey: .failed) ?? 0
     }
 }
 
@@ -97,18 +103,33 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     public var kind: String?
     public var openedAt: Double?
     public var summary: String?
+    /// The daemon's verdict on whether the answer chain can type a reply
+    /// into this session (provider capability + a live target). nil on
+    /// older daemons — treat as answerable to preserve old behaviour.
+    public var answerable: Bool?
+    /// Whether this ask accepts free text (a reply field instead of
+    /// Approve/Deny).
+    public var replyable: Bool?
 
     public var id: String { (session ?? "") + "|" + (summary ?? "") + "|" + String(openedAt ?? 0) }
 
-    public init(session: String? = nil, kind: String? = nil, openedAt: Double? = nil, summary: String? = nil) {
+    /// What the buttons may claim: assume yes when the daemon is too old
+    /// to say, so nothing regresses against pre-0.8.2 cores.
+    public var canAnswer: Bool { answerable ?? true }
+    public var wantsTextReply: Bool { replyable ?? false }
+
+    public init(session: String? = nil, kind: String? = nil, openedAt: Double? = nil, summary: String? = nil,
+                answerable: Bool? = nil, replyable: Bool? = nil) {
         self.session = session
         self.kind = kind
         self.openedAt = openedAt
         self.summary = summary
+        self.answerable = answerable
+        self.replyable = replyable
     }
 
     enum CodingKeys: String, CodingKey {
-        case session, kind, summary
+        case session, kind, summary, answerable, replyable
         case openedAt = "opened_at"
     }
 }
@@ -272,11 +293,18 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// stated no number. Never substitute a number for nil.
     public var usedPct: Double?
     public var resetsAt: Double?
+    /// Per-window pace projection; the daemon emits it for every measured
+    /// window, not only the primary one.
+    public var forecast: CoreUsageForecast?
 
     public var id: String { key ?? name }
 
     /// The panel's short label for the window: `5h`, `7d`, `Daily`, `Monthly`, `Credits`.
     public var shortName: String { UsageWindowLabel.short(id: key, name: name) }
+
+    /// The expanded label for captions and tooltips: `5-hour`, `7-day`, or
+    /// the daemon's own name when it is already a word.
+    public var longName: String { UsageWindowLabel.long(id: key, name: name) }
 
     /// The window exists and nobody said how full it is.
     public var isUnknown: Bool { usedPct == nil }
@@ -289,11 +317,12 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// "no reading" — never "0 percent used".
     public var spokenPercent: String { UsageWindowLabel.spoken(usedPct) }
 
-    public init(key: String? = nil, name: String, usedPct: Double?, resetsAt: Double? = nil) {
+    public init(key: String? = nil, name: String, usedPct: Double?, resetsAt: Double? = nil, forecast: CoreUsageForecast? = nil) {
         self.key = key
         self.name = name
         self.usedPct = usedPct
         self.resetsAt = resetsAt
+        self.forecast = forecast
     }
 
     enum CodingKeys: String, CodingKey {
@@ -301,6 +330,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         case key = "id"
         case usedPct = "used_pct"
         case resetsAt = "resets_at"
+        case forecast
     }
 
     public init(from decoder: Decoder) throws {
@@ -313,6 +343,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         let raw = (try? c.decodeIfPresent(Double.self, forKey: .usedPct)) ?? nil
         usedPct = raw.flatMap { $0.isFinite ? $0 : nil }
         resetsAt = try c.decodeIfPresent(Double.self, forKey: .resetsAt)
+        forecast = try? c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
     }
 }
 
@@ -345,9 +376,16 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// (`authentication_required`, `browser_session_not_imported`).
     public var action: String?
     public var reason: String?
+    /// Which configured account this reading belongs to — two accounts of
+    /// one provider arrive as two rows sharing `id`, distinguished here.
+    public var instance: String?
+    /// False when the provider has no quota source at all (Pi, Kiro, …):
+    /// a "meters" checkbox for it would be a dead control.
+    public var quotaSource: Bool
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
-                account: UsageAccount? = nil, action: String? = nil, reason: String? = nil) {
+                account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
+                instance: String? = nil, quotaSource: Bool = true) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
@@ -356,6 +394,8 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         self.account = account
         self.action = action
         self.reason = reason
+        self.instance = instance
+        self.quotaSource = quotaSource
     }
 
     public init(from decoder: Decoder) throws {
@@ -368,6 +408,20 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         account = try c.decodeIfPresent(UsageAccount.self, forKey: .account)
         action = try? c.decodeIfPresent(String.self, forKey: .action)
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        instance = try? c.decodeIfPresent(String.self, forKey: .instance)
+        quotaSource = (try? c.decodeIfPresent(Bool.self, forKey: .quotaSource)) ?? true
+    }
+
+    /// Stable identity across multi-account rows of the same provider;
+    /// the default instance collapses to the bare id.
+    public var identity: String {
+        guard let instance, !instance.isEmpty, instance != "default" else { return id }
+        return "\(id)|\(instance)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, windows, fidelity, state, forecast, account, action, reason, instance
+        case quotaSource = "quota_source"
     }
 
     /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI
@@ -477,11 +531,15 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// completions, older ended runs) that `list_history` still has; nil
     /// from a daemon that does not count them.
     public var hiddenCount: Int?
+    /// Moves when the effect registry, packs or assignments change, so the
+    /// Effect Studio can reload its catalog without reconnecting.
+    public var catalogGeneration: Int?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
-                health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil) {
+                health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
+                catalogGeneration: Int? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -496,12 +554,14 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.settingsGeneration = settingsGeneration
         self.deck = deck
         self.hiddenCount = hiddenCount
+        self.catalogGeneration = catalogGeneration
     }
 
     enum CodingKeys: String, CodingKey {
         case generation, now, aggregate, sessions, asks, devices, usage, power, focus, escalation, health, deck
         case settingsGeneration = "settings_generation"
         case hiddenCount = "hidden_count"
+        case catalogGeneration = "catalog_generation"
     }
 
     public init(from decoder: Decoder) throws {
@@ -527,6 +587,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         } else {
             hiddenCount = nil
         }
+        catalogGeneration = try? c.decodeIfPresent(Int.self, forKey: .catalogGeneration)
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -805,9 +866,14 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// a daemon that never sends it costs nothing.
     public static let usageHistoryReadyKind = "usage_history_ready"
 
+    /// `list_history` rows: seconds the session ran when the daemon knows
+    /// both ends of it. nil for events without a measured span.
+    public var duration: Double?
+
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
-                input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil) {
+                input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
+                duration: Double? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -822,9 +888,10 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.code = code
         self.message = message
         self.range = range
+        self.duration = duration
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range }
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, duration }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -848,6 +915,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         code = try? c.decodeIfPresent(String.self, forKey: .code)
         message = try? c.decodeIfPresent(String.self, forKey: .message)
         range = try? c.decodeIfPresent(String.self, forKey: .range)
+        duration = try? c.decodeIfPresent(Double.self, forKey: .duration)
     }
 
     /// `deck_receipt` as a receipt value.

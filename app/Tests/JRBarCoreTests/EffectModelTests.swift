@@ -175,7 +175,7 @@ struct EffectModelTests {
         #expect(EffectAssignment(effectID: "x", scope: .provider, targetID: " ").problem == .missingTarget)
         #expect(EffectAssignment(effectID: "x", scope: .semantic, targetID: "asking").problem == .urgentSemantic)
         #expect(EffectAssignment(effectID: "x", scope: .semantic, targetID: "working").problem == nil)
-        #expect(EffectSemantic.assignable.count == 7)
+        #expect(EffectSemantic.assignable.count == 8)
         #expect(EffectScope.precedence.first == .device)
         #expect(EffectScene.dnd.label == "Do Not Disturb")
 

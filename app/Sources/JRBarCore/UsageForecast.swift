@@ -32,7 +32,8 @@ public struct UsageSampleLog: Hashable, Sendable {
                 // A window with no reading is not a window at zero: a
                 // sample of 0 would drag every pace this log computes.
                 guard let usedPct = window.usedPct else { continue }
-                record(provider: provider.id, window: window.name, usedPct: usedPct, at: now)
+                // `identity` keeps two accounts of one provider apart.
+                record(provider: provider.identity, window: window.name, usedPct: usedPct, at: now)
             }
         }
     }

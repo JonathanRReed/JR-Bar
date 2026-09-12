@@ -522,7 +522,7 @@ public enum EffectScope: String, Codable, Hashable, Sendable, CaseIterable, Iden
 /// The semantic targets a `semantic` assignment may name; ASK and FAILURE
 /// are urgent and keep their reserved effects.
 public enum EffectSemantic: String, CaseIterable, Sendable, Identifiable {
-    case asking, failure, notification, transition, working, completion, recovery, environment, idle
+    case asking, failure, notification, transition, working, completion, recovery, quota, environment, idle
 
     public var id: String { rawValue }
 
@@ -535,6 +535,7 @@ public enum EffectSemantic: String, CaseIterable, Sendable, Identifiable {
         case .working: return "Working"
         case .completion: return "Done"
         case .recovery: return "Recovered"
+        case .quota: return "Quota"
         case .environment: return "Environment"
         case .idle: return "Idle"
         }
@@ -662,6 +663,25 @@ public struct EffectAssignmentDocument: Codable, Hashable, Sendable {
 
     /// The effects that any assignment uses, for "used by" badges.
     public func usage(of effectID: String) -> [EffectAssignment] { assignments.filter { $0.effectID == effectID } }
+}
+
+/// A scene pack as `list_scene_packs` reports it: an installable bundle of
+/// named scenes, each scene a set of per-state effect picks.
+public struct ScenePackSummary: Codable, Hashable, Sendable, Identifiable {
+    public var id: String
+    public var name: String?
+    public var scenes: [String]
+    public var installed: Bool
+
+    public init(id: String, name: String? = nil, scenes: [String] = [], installed: Bool = false) {
+        self.id = id
+        self.name = name
+        self.scenes = scenes
+        self.installed = installed
+    }
+
+    /// What the row should show — the pack's human name before its slug.
+    public var displayName: String { name ?? id }
 }
 
 /// Decodes a `reply.result` (a `JSONValue`) into a Codable model.

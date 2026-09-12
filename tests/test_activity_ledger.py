@@ -365,12 +365,21 @@ def test_an_unsupported_version_is_named_rather_than_guessed(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / ACTIVITY_LEDGER_NAME
+    # Version 2 is current; version 1 still loads (its rows simply carry no
+    # measured duration). Anything newer is refused, not guessed at.
     path.write_text(
-        '{"version":2,"entries":[],"last_seen_epoch":0.0}\n',
+        '{"version":3,"entries":[],"last_seen_epoch":0.0}\n',
         encoding="utf-8",
     )
 
     assert load_activity_ledger(path).health is ActivityRestoreHealth.UNSUPPORTED
+
+    path.write_text(
+        '{"version":1,"entries":[],"last_seen_epoch":0.0}\n',
+        encoding="utf-8",
+    )
+
+    assert load_activity_ledger(path).health is ActivityRestoreHealth.HEALTHY
 
 
 def test_the_store_never_writes_more_than_its_byte_cap(tmp_path: Path) -> None:

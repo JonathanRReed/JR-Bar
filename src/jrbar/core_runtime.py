@@ -63,7 +63,7 @@ from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import PendingHookDrainer, pending_hook_files
 from .state_paths import default_state_dir
 
-CORE_VERSION: Final = "0.8.0"
+CORE_VERSION: Final = "0.9.0"
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
@@ -102,6 +102,10 @@ DECK_INSPECTION_TTL_SECONDS: Final = 120.0
 DECK_SETUP_TIMEOUT_SECONDS: Final = 60.0
 DECK_APPROVE_TIMEOUT_SECONDS: Final = 15.0
 DECK_INTEGRATION_TTL_SECONDS: Final = 2.0
+# ``health.detected`` re-runs the reviewed installed-agent markers at most
+# this often: the scan is a few dozen lstats, but ``state`` rebuilds on
+# every refresh and "is the CLI still installed" does not move that fast.
+DETECTED_AGENTS_TTL_SECONDS: Final = 60.0
 # Display kinds a live claim arms for a bounded window only. The lights
 # document reads the kind the last sync recorded; when the write path
 # misses, that record survives the claim by hours -- a dead quota blink
@@ -664,6 +668,85 @@ def _cmd_undo_clear(self, args):
     return {"batch": batch, "restored": restored}
 
 
+@command("dismiss_session")
+def _cmd_dismiss_session(self, args):
+    """Acknowledge one live or stuck row until its session next speaks.
+
+    The same receipt ``clear_completed`` writes, aimed at a single session
+    the batch clear would never touch: its ``completed_at_epoch`` is the
+    row's own ``updated_at``, so the row leaves ``state.sessions`` now and
+    returns the moment a newer event lands. A row pinned by an open ask is
+    refused -- the ask is the point -- and a ``remote:`` row is the peer's
+    to manage.
+    """
+    from .clear_agents import (
+        MAX_COMPLETION_RECEIPTS,
+        ClearAgentsState,
+        CompletionPresentationKey,
+        CompletionPresentationReceipt,
+    )
+    from .clear_agents_store import save_clear_agents_state
+
+    status = _find_status(self, args.get("session"))
+    agent_id = status.agent_id
+    if agent_id.startswith("remote:"):
+        raise CommandError("refused", "a remote session is the peer's to manage")
+    if agent_id in {s.agent_id for s in self._core_ask_statuses()}:
+        raise CommandError("refused", "the session has an open ask")
+    try:
+        key = CompletionPresentationKey(
+            source_key=status.work_key.source_key,
+            agent_id=agent_id,
+            event_name=status.event_name,
+            completed_at_epoch=status.updated_at.timestamp(),
+        )
+    except (AttributeError, TypeError, ValueError, OSError, OverflowError) as error:
+        raise CommandError("refused", "the session cannot be acknowledged") from error
+    state = getattr(self, "clear_agents_state", None)
+    if type(state) is not ClearAgentsState:
+        state = ClearAgentsState()
+    # Keys the live (un-undone) batch still claims must stay: dropping one
+    # would make ``latest_batch`` invalid on the next state.
+    protected = (
+        set(state.latest_batch.newly_added_keys)
+        if state.latest_batch is not None and not state.latest_batch.undone
+        else frozenset()
+    )
+    merged = {receipt.key: receipt for receipt in state.receipts}
+    merged[key] = CompletionPresentationReceipt(
+        key=key, acknowledged_at_epoch=time.time()
+    )
+    kept = sorted(merged.values(), key=lambda receipt: receipt.key)
+    if len(kept) > MAX_COMPLETION_RECEIPTS:
+        # Retire the oldest acknowledgements first; a dismissed row simply
+        # reappears if its receipt ages out.
+        excess = len(kept) - MAX_COMPLETION_RECEIPTS
+        droppable = [
+            receipt.key
+            for receipt in sorted(kept, key=lambda r: r.acknowledged_at_epoch)
+            if receipt.key not in protected
+        ][:excess]
+        dropped = set(droppable)
+        kept = [receipt for receipt in kept if receipt.key not in dropped]
+    try:
+        next_state = ClearAgentsState(
+            generation=state.generation + 1,
+            receipts=tuple(kept),
+            latest_batch=state.latest_batch,
+        )
+    except ValueError as error:
+        raise CommandError("internal", f"could not record the dismissal: {error}") from error
+    try:
+        save_clear_agents_state(self.clear_agents_path, next_state)
+    except (OSError, TypeError, ValueError) as error:
+        raise CommandError("refused", f"could not save the dismissal: {error}") from error
+    self.clear_agents_state = next_state
+    self.current_mailbox_projection = None
+    self._menu_signature = None
+    self._core_publish_state()
+    return {"session": agent_id, "dismissed": True}
+
+
 def _apply_settings_document(self, document: dict[str, Any], *, touched: list[str]) -> int:
     legacy = self._core_legacy()
     try:
@@ -1041,6 +1124,13 @@ def _cmd_end_calibration_preview(self, args):
 
 @command("apply_effect")
 def _cmd_apply_effect(self, args):
+    """The protocol-1 alias: ``effect`` null or ``"none"`` is the remove.
+
+    ``set_assignment``/``clear_assignment`` are the current spellings; this
+    one stays for older clients and answers the same fuller assignment
+    document, parameters sidecar included.
+    """
+    from . import core_effects
     from .effect_assignment_store import (
         EffectAssignmentRecord,
         EffectAssignmentStoreError,
@@ -1054,9 +1144,12 @@ def _cmd_apply_effect(self, args):
     effect = args.get("effect")
     scope = args.get("scope") or "global"
     target = args.get("target")
+    removing = effect in (None, "", "none")
+    before_count = 0
     try:
+        before_count = len(cache.snapshot().assignments)
         document = cache.snapshot()
-        if effect in (None, "", "none"):
+        if removing:
             from .effect_studio import AssignmentScope
 
             document = document.without_assignment(AssignmentScope(str(scope)), target)
@@ -1067,16 +1160,47 @@ def _cmd_apply_effect(self, args):
         cache.replace(document)
     except (EffectAssignmentStoreError, TypeError, ValueError) as error:
         raise CommandError("invalid_args", str(error)) from error
+    if removing:
+        removed = len(document.assignments) < before_count
+        table = core_effects.load_assignment_parameters()
+        if table.pop(core_effects.assignment_key(str(scope), target), None) is not None:
+            try:
+                core_effects.save_assignment_parameters(table)
+            except OSError:
+                pass
+    else:
+        assigned = cache.registry().get(str(effect))
+        pack_effect = core_effects.pack_effect_for(_effect_packs(self), str(effect))
+        parameters = _jsonable(
+            core_effects.normalize_parameters(assigned, args.get("parameters"), pack_effect=pack_effect)
+        ) if assigned is not None else {}
+        table = core_effects.load_assignment_parameters()
+        key = core_effects.assignment_key(str(scope), target)
+        if parameters:
+            table[key] = parameters
+        else:
+            table.pop(key, None)
+        try:
+            core_effects.save_assignment_parameters(table)
+        except OSError as error:
+            self._core_log(f"core: assignment parameters not saved: {error}")
     self.refresh_(None)
-    return {
-        "effect": effect,
-        "scope": scope,
-        "target": target,
-        "assignments": [
-            {"effect": item.effect_id, "scope": item.scope.value, "target": item.target_id}
-            for item in document.assignments
-        ],
-    }
+    result = _assignments_document(self)
+    if removing:
+        result.update({"effect": None, "scope": scope, "target": target, "removed": removed})
+    else:
+        result.update({
+            "effect": effect,
+            "scope": scope,
+            "target": target,
+            "assignment": {
+                "effect_id": effect,
+                "scope": scope,
+                "target_id": target,
+                "parameters": parameters,
+            },
+        })
+    return result
 
 
 def _jsonable(value: Any) -> Any:
@@ -1175,7 +1299,7 @@ def _cmd_render_effect(self, args):
     return {
         "effect_id": effect.identifier,
         "program": program,
-        "led_count": max(2, min(8, led_count)),
+        "led_count": core_effects._render_led_count(led_count),
         "parameters": _jsonable(parameters),
         "cadence": core_effects.effect_cadence(effect, parameters),
     }
@@ -1211,6 +1335,69 @@ def _save_assignments(self, document) -> None:
     self.refresh_(None)
 
 
+# Semantic-scope targets the event-driven router can actually deliver:
+# ``_semantic_kind`` only ever produces these four, so assigning the rest
+# would persist a row nothing ever resolves.
+_ROUTABLE_SEMANTIC_TARGETS: Final = frozenset(
+    {"asking", "failure", "completion", "notification"}
+)
+
+
+def _apply_provider_motion_assignment(self, effect, scope, target_id) -> str | None:
+    """Provider-scope motion assignments write the live color policy.
+
+    ``provider_animation``-catalog effects are the persistent per-provider
+    motion the solo renderers read through ``colors.provider_animation``.
+    Recording the assignment alone would leave the picker's promise a dead
+    write, so a provider target also lands in settings. Returns a warning
+    string when the motion could not be applied; the assignment itself is
+    already saved either way.
+    """
+    from .effect_studio import AssignmentScope
+
+    if effect.catalog != "provider_animation" or scope is not AssignmentScope.PROVIDER:
+        return None
+    legacy = self._core_legacy()
+    try:
+        colors = self.settings.colors.with_agent_animation(target_id, effect.identifier)
+    except (TypeError, ValueError):
+        return f"{effect.identifier} is not a motion this build can apply"
+    self.settings = self.settings.with_colors(colors)
+    try:
+        legacy.save_settings(self.settings)
+    except Exception as error:
+        return f"the motion was assigned but settings would not save: {error}"
+    self._core_publish_settings()
+    return None
+
+
+def _clear_provider_motion_assignment(self, record) -> None:
+    """Undo the settings half of a provider-scope motion assignment."""
+    from .effect_studio import AssignmentScope
+
+    if record is None or record.scope is not AssignmentScope.PROVIDER:
+        return
+    cache = _effects_cache(self)
+    effect = cache.registry().get(record.effect_id)
+    if effect is None or effect.catalog != "provider_animation":
+        return
+    from .colors import PROVIDER_ANIMATION_AUTO
+
+    legacy = self._core_legacy()
+    try:
+        colors = self.settings.colors.with_agent_animation(
+            record.target_id, PROVIDER_ANIMATION_AUTO
+        )
+    except (TypeError, ValueError):
+        return
+    self.settings = self.settings.with_colors(colors)
+    try:
+        legacy.save_settings(self.settings)
+    except Exception:
+        return
+    self._core_publish_settings()
+
+
 @command("set_assignment")
 def _cmd_set_assignment(self, args):
     from . import core_effects
@@ -1223,6 +1410,12 @@ def _cmd_set_assignment(self, args):
     target = str(target).strip() if target is not None else None
     if target == "":
         target = None
+    if scope is AssignmentScope.SEMANTIC and target not in _ROUTABLE_SEMANTIC_TARGETS:
+        raise CommandError(
+            "unroutable_semantic",
+            f"{target} is a persistent state, not a deliverable effect; "
+            "assign to a provider or scene instead",
+        )
     if scope is AssignmentScope.SEMANTIC and target in ("asking", "failure") and effect.identifier != "alert":
         raise CommandError("reserved_semantic", "asking and failure keep their reserved effects")
     cache = _effects_cache(self)
@@ -1245,6 +1438,7 @@ def _cmd_set_assignment(self, args):
         core_effects.save_assignment_parameters(table)
     except OSError as error:
         self._core_log(f"core: assignment parameters not saved: {error}")
+    motion_error = _apply_provider_motion_assignment(self, effect, plan.scope, plan.target_id)
     result = _assignments_document(self)
     result["assignment"] = {
         "effect_id": plan.effect_id,
@@ -1252,6 +1446,8 @@ def _cmd_set_assignment(self, args):
         "target_id": plan.target_id,
         "parameters": parameters,
     }
+    if motion_error is not None:
+        result["motion_warning"] = motion_error
     return result
 
 
@@ -1266,6 +1462,7 @@ def _cmd_clear_assignment(self, args):
         target = None
     cache = _effects_cache(self)
     current = cache.snapshot()
+    removed_record = current.assignment_for(scope, target)
     document = current.without_assignment(scope, target)
     removed = len(document.assignments) < len(current.assignments)
     if removed:
@@ -1276,6 +1473,7 @@ def _cmd_clear_assignment(self, args):
                 core_effects.save_assignment_parameters(table)
             except OSError:
                 pass
+        _clear_provider_motion_assignment(self, removed_record)
     result = _assignments_document(self)
     result["removed"] = removed
     return result
@@ -1347,6 +1545,136 @@ def _cmd_export_effect_pack(self, args):
     except (OSError, ValueError) as error:
         raise CommandError("export_failed", f"could not write {path}: {error.__class__.__name__}") from error
     return {"path": str(written), "effects": len(payload["effects"]), "bytes": len(encoded), "id": payload["id"]}
+
+
+def _scene_pack_summary(pack) -> dict[str, Any]:
+    """One ``list_scene_packs`` row: the ``ScenePackSummary`` the app decodes."""
+    return {
+        "id": pack.pack_id,
+        "name": pack.name,
+        "scenes": [entry.scene.value for entry in pack.scenes],
+        "installed": True,
+    }
+
+
+# The strip tour ``preview_scene_pack`` renders, one step per scene the pack
+# overrides: the colour names the scene, the policy's brightness dims it,
+# the policy's motion picks the interpolation. A pack is policy, not pixels
+# -- this is what its policies *feel* like, not a stored animation.
+_SCENE_PACK_COLORS: Final = {
+    "focus": "#FF9F0A",
+    "calm": "#0A84FF",
+    "night": "#5E5CE6",
+    "demo": "#FFD60A",
+    "travel": "#64D2FF",
+    "dnd": "#6E6E73",
+}
+_SCENE_PACK_STEP_MS: Final = {"full": 600, "reduced": 900, "static": 1400}
+_SCENE_PACK_INTERPOLATION: Final = {"full": "pulse", "reduced": "cosine", "static": "none"}
+
+
+def _dimmed_color(color: str, brightness: float) -> str:
+    try:
+        factor = max(0.0, min(1.0, float(brightness)))
+    except (TypeError, ValueError):
+        factor = 1.0
+    red = int(color[1:3], 16)
+    green = int(color[3:5], 16)
+    blue = int(color[5:7], 16)
+    return f"#{round(red * factor):02X}{round(green * factor):02X}{round(blue * factor):02X}"
+
+
+def _scene_pack_program(pack, *, led_count: int) -> str:
+    """Compile the pack's scene-by-scene policy tour into a safe program."""
+    from .core_effects import BASE_COLOR
+    from .presentation_compiler import compile_presentation_program
+
+    lines: list[str] = []
+    for entry in pack.scenes:
+        policy = entry.policy
+        color = _dimmed_color(
+            _SCENE_PACK_COLORS.get(entry.scene.value, BASE_COLOR),
+            getattr(policy, "brightness", 1.0),
+        )
+        motion = getattr(getattr(policy, "effective_motion", None), "value", "static")
+        lines.append(
+            f"{color} {_SCENE_PACK_STEP_MS.get(motion, 1400)}ms "
+            f"{_SCENE_PACK_INTERPOLATION.get(motion, 'none')}"
+        )
+    if len(lines) > 1:
+        lines.append("repeat")
+    compiled = compile_presentation_program(
+        "\n".join(lines) or "off", led_count=led_count
+    )
+    return compiled.program
+
+
+@command("list_scene_packs", main_thread=False)
+def _cmd_list_scene_packs(self, args):
+    from .scene_pack_store import ScenePackStore, ScenePackStoreError
+
+    try:
+        packs = ScenePackStore().list()
+    except ScenePackStoreError as error:
+        raise CommandError("internal", str(error)) from error
+    return {"packs": [_scene_pack_summary(pack) for pack in packs]}
+
+
+@command("import_scene_pack")
+def _cmd_import_scene_pack(self, args):
+    from .effect_pack_store import PackMutationStatus
+    from .scene_pack_store import ScenePackStore, ScenePackStoreError
+
+    raw = args.get("path")
+    if not isinstance(raw, str) or not raw.strip():
+        raise CommandError("invalid_args", "path is required")
+    path = Path(raw).expanduser()
+    store = ScenePackStore()
+    try:
+        # Validate and preview BEFORE any mutation -- the store re-validates
+        # the same plan on install, so a refused pack never writes a byte.
+        plan = store.preview_source(path)
+    except ScenePackStoreError as error:
+        raise CommandError("invalid_pack", str(error)) from error
+    try:
+        if args.get("update"):
+            receipt = store.update(plan.pack)
+        else:
+            receipt = store.install(plan.pack)
+    except ScenePackStoreError as error:
+        raise CommandError("invalid_pack", str(error)) from error
+    if receipt.status is PackMutationStatus.REFUSED:
+        code = "conflict" if receipt.reason == "already_installed" else "refused"
+        raise CommandError(code, f"scene pack {receipt.pack_id} refused: {receipt.reason}")
+    self._core_log(f"core: imported scene pack {receipt.pack_id} ({len(plan.pack.scenes)} scenes)")
+    return {
+        "pack_id": receipt.pack_id,
+        "name": plan.pack.name,
+        "scenes": [entry.scene.value for entry in plan.pack.scenes],
+        "installed": True,
+        "migrated": bool(plan.migrated),
+        "status": receipt.status.value,
+    }
+
+
+@command("preview_scene_pack", main_thread=False)
+def _cmd_preview_scene_pack(self, args):
+    from .core_effects import _render_led_count
+    from .scene_pack_store import ScenePackStore, ScenePackStoreError
+
+    pack_id = args.get("pack_id")
+    if not isinstance(pack_id, str) or not pack_id.strip():
+        raise CommandError("invalid_args", "pack_id is required")
+    try:
+        plan = ScenePackStore().preview(pack_id.strip())
+    except ScenePackStoreError as error:
+        raise CommandError("not_found", f"no such scene pack: {pack_id}") from error
+    led_count = _render_led_count(args.get("led_count"))
+    try:
+        program = _scene_pack_program(plan.pack, led_count=led_count)
+    except Exception as error:
+        raise CommandError("internal", f"preview render failed: {error.__class__.__name__}") from error
+    return {"pack_id": plan.pack.pack_id, "led_count": led_count, "program": program}
 
 
 #: Seconds after the daemon is ready before the transcript caches warm.
@@ -1434,15 +1762,36 @@ def _hooks_command(self, args, *, install: bool):
     providers = [p for p in (args.get("providers") or []) if isinstance(p, str) and p]
     if not providers:
         raise CommandError("invalid_args", "providers[] is required")
+    try:
+        detected = self._core_detected_agents()
+    except Exception:
+        detected = {}
     results: dict[str, Any] = {}
     changed = False
     for provider in providers:
+        # A provider whose CLI was never found cannot be hooked; the reply
+        # carries that per provider, not as a failed command.
+        if install and detected.get(provider) is False:
+            results[provider] = {
+                "ok": False,
+                "detected": False,
+                "error": "no CLI found on PATH",
+            }
+            continue
         try:
             result = install_provider_hooks(provider) if install else uninstall_provider_hooks(provider)
             changed = changed or bool(result.changed)
-            results[provider] = {"ok": True, **result.to_dict()}
+            results[provider] = {
+                "ok": True,
+                "detected": detected.get(provider),
+                **result.to_dict(),
+            }
         except Exception as exc:
-            results[provider] = {"ok": False, "error": str(exc)[:500]}
+            results[provider] = {
+                "ok": False,
+                "detected": detected.get(provider),
+                "error": str(exc)[:500],
+            }
     self.performSelectorOnMainThread_withObject_waitUntilDone_(
         "hooksUpdated:",
         {"ok": True, "changed": changed, "provider": ",".join(providers), "install": install},
@@ -1511,6 +1860,36 @@ def _cmd_list_history(self, args):
     ledger = self.ensure_activity_ledger()
     rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
     return {"rows": rows, "total": len(ledger.entries), "last_seen": ledger.last_seen_epoch}
+
+
+@command("mark_history_seen")
+def _cmd_mark_history_seen(self, args):
+    """The user just looked at History: advance the ledger's ``last_seen``.
+
+    Same stamp the menu writes when the dropdown opens -- ``unseen`` rows
+    and the "while you were away" banner measure from the last look, not
+    from a restart.
+    """
+    self.mark_activity_seen_now()
+    return {"last_seen": self.ensure_activity_ledger().last_seen_epoch}
+
+
+@command("serve_token", main_thread=False)
+def _cmd_serve_token(self, args):
+    """The loopback status endpoint's bearer token, for the reveal row.
+
+    The token travels on the local Unix socket only -- never inside the
+    HTTP document it guards. ``None`` when the daemon was not launched
+    with one; the app's copy action reports that honestly.
+    """
+    from .cli import SERVE_ACCESS_TOKEN_ENV
+
+    token = os.environ.get(SERVE_ACCESS_TOKEN_ENV) or None
+    return {
+        "token": token,
+        "enabled": bool(getattr(self.settings, "serve_enabled", False)),
+        "running": getattr(self, "_core_serve_server", None) is not None,
+    }
 
 
 @command("doctor")
@@ -1962,6 +2341,7 @@ def build_headless_controller_class() -> type:
             self._install_accessibility_display_observer()
             self.reconcile_lid_observation()
             self._core_start_server()
+            self._core_sync_serve_server()
             self.refresh_(None)
             self.timer = _schedule_timer(legacy.STATUS_BAR_REFRESH_SECONDS, self, "refresh:", True)
             if not hasattr(self.virtual_status_device, "presentation_scheduler_inputs"):
@@ -3292,11 +3672,75 @@ def build_headless_controller_class() -> type:
             self._core = server
             self._core_publish_settings()
 
+        def _core_sync_serve_server(self) -> None:
+            """Start/stop the loopback status endpoint to match settings.
+
+            ``serve_enabled`` is the switch the Settings > Remote card
+            writes; the token arrives in the daemon's environment (the app
+            injects it at spawn), so an unsupervised ``jrbar core`` has no
+            token and simply reports ``running: false``.
+            """
+            from .cli import SERVE_ACCESS_TOKEN_ENV
+
+            enabled = bool(getattr(self.settings, "serve_enabled", False))
+            token = os.environ.get(SERVE_ACCESS_TOKEN_ENV) or None
+            server = getattr(self, "_core_serve_server", None)
+            if not enabled or not token:
+                if server is not None:
+                    self._core_serve_server = None
+                    # shutdown() deadlocks unless serve_forever is actually
+                    # running -- the started event gates it (the test
+                    # fixture's inert Thread never opens the loop).
+                    try:
+                        if self._core_serve_started.is_set():
+                            server.shutdown()
+                        server.server_close()
+                    except Exception:
+                        pass
+                    legacy.log_status_bar("core: serve stopped")
+                return
+            if server is not None:
+                return
+            from .serve import SERVE_DEFAULT_PORT, create_serve_server
+
+            try:
+                port = int(os.environ.get("JRBAR_SERVE_PORT") or SERVE_DEFAULT_PORT)
+            except ValueError:
+                port = SERVE_DEFAULT_PORT
+            try:
+                server = create_serve_server(
+                    port=port, status_access_token=token.encode("utf-8")
+                )
+            except OSError as error:
+                legacy.log_status_bar(f"core: serve could not bind :{port}: {error}")
+                return
+            self._core_serve_server = server
+            self._core_serve_started = threading.Event()
+
+            def _serve_loop() -> None:
+                self._core_serve_started.set()
+                server.serve_forever(poll_interval=0.5)
+
+            threading.Thread(target=_serve_loop, daemon=True, name="jrbar-serve").start()
+            legacy.log_status_bar(
+                f"core: serving status on http://127.0.0.1:{port}/status.json"
+            )
+
         def _core_stop_server(self) -> None:
             drainer = self._core_pending_drainer
             self._core_pending_drainer = None
             if drainer is not None:
                 drainer.stop()
+            serve_server = getattr(self, "_core_serve_server", None)
+            self._core_serve_server = None
+            if serve_server is not None:
+                try:
+                    started = getattr(self, "_core_serve_started", None)
+                    if started is not None and started.is_set():
+                        serve_server.shutdown()
+                    serve_server.server_close()
+                except Exception:
+                    pass
             for name in ("_core_housekeeping_timer", "_core_supervision_timer"):
                 timer = getattr(self, name, None)
                 setattr(self, name, None)
@@ -3436,6 +3880,8 @@ def build_headless_controller_class() -> type:
                     self.reload_monitor()
                 if "remote_peers" in joined and self.settings.remote_peers.enabled:
                     self.start_remote_peer_refresh()
+                if "serve_enabled" in joined:
+                    self._core_sync_serve_server()
                 if "virtual_status_device" in joined or "screen_bar" in joined:
                     self.virtual_status_device.hide()
             except Exception as exc:
@@ -3727,6 +4173,86 @@ def build_headless_controller_class() -> type:
                 return frozenset()
             return state.acknowledged_keys
 
+        def _core_detected_agents(self) -> dict[str, bool]:
+            """``{hook provider: the agent's CLI or app is on this Mac}``.
+
+            The reviewed inventory markers (``installed_agent_inventory``)
+            reduced to one flag per hook provider. Our own hook files
+            (``LOCAL_HARNESS``) answer "are the hooks in", not "is the agent
+            installed", so they never count. Cached for a minute: the scan
+            is a few dozen lstats, but ``state`` rebuilds on every refresh
+            and the answer does not move that fast.
+            """
+            now = time.monotonic()
+            cached = getattr(self, "_core_detected_agents_cache", None)
+            if (
+                isinstance(cached, tuple)
+                and len(cached) == 2
+                and now - float(cached[0]) < DETECTED_AGENTS_TTL_SECONDS
+            ):
+                return dict(cached[1])
+            try:
+                from .installed_agent_inventory import (
+                    collect_installed_agent_inventory,
+                    default_inventory_roots,
+                )
+                from .installed_agents import (
+                    InstalledSurfaceKind,
+                    SurfacePresence,
+                    installed_surface_registrations,
+                )
+                from .providers import HOOK_PROVIDERS
+
+                result = collect_installed_agent_inventory(default_inventory_roots())
+                present = {
+                    observation.key
+                    for observation in result.reduction.observations
+                    if observation.presence is not SurfacePresence.ABSENT
+                }
+                detected: dict[str, bool] = {}
+                for registration in installed_surface_registrations():
+                    if registration.kind is InstalledSurfaceKind.LOCAL_HARNESS:
+                        continue
+                    provider = registration.provider_id
+                    if provider not in HOOK_PROVIDERS:
+                        # The inventory groups Google's surfaces under
+                        # "google"; the hook provider is the surface's own
+                        # name ("gemini-cli" -> "gemini").
+                        provider = registration.surface_id.split("-", 1)[0]
+                    if provider not in HOOK_PROVIDERS:
+                        continue
+                    if registration.key in present:
+                        detected[provider] = True
+                    else:
+                        detected.setdefault(provider, False)
+            except Exception:
+                self._core_log(
+                    f"core: agent detection failed: {traceback.format_exc(limit=3)}"
+                )
+                detected = dict(cached[1]) if isinstance(cached, tuple) and len(cached) == 2 else {}
+            self._core_detected_agents_cache = (now, detected)
+            return dict(detected)
+
+        def _core_catalog_generation(self) -> int | None:
+            """``state.catalog_generation``: the Effect Studio's reload cue.
+
+            Content-derived (``core_effects.catalog_generation``), so a pack
+            installed through the ``jrbar effects`` CLI while the daemon ran
+            still moves it; the assignment cache's own revision folds in.
+            """
+            from . import core_effects
+
+            cache = getattr(type(self), "_effect_assignment_cache", None)
+            if cache is None:
+                return None
+            return int(
+                core_effects.catalog_generation(
+                    cache.registry(),
+                    _effect_packs(self),
+                    revision=cache.generation,
+                )
+            )
+
         def _core_snoozed_untils(self, statuses) -> dict[str, float]:
             """``agent_id`` -> the family mailbox's active ``snoozed_until``.
 
@@ -3805,6 +4331,14 @@ def build_headless_controller_class() -> type:
                 samples.save_if_due()
             except Exception:
                 legacy.log_status_bar(f"core: usage samples failed: {traceback.format_exc(limit=3)}")
+            try:
+                detected_agents = self._core_detected_agents()
+            except Exception:
+                detected_agents = None
+            try:
+                catalog_generation = self._core_catalog_generation()
+            except Exception:
+                catalog_generation = None
             document = build_state_document(
                 now=wall_now,
                 generation=self._core_state_generation,
@@ -3834,6 +4368,12 @@ def build_headless_controller_class() -> type:
                     [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())] if snapshot else ()
                 ),
                 dnd_override_until=getattr(self.settings, "dnd_override_until_epoch", None),
+                answer_contracts=getattr(self, "_answer_contracts_by_source", None),
+                has_answer_handler=getattr(
+                    getattr(self, "answer_handler_registry", None), "has_handler", None
+                ),
+                detected_agents=detected_agents,
+                catalog_generation=catalog_generation,
             )
             try:
                 document["deck"] = self._core_deck_document(document["sessions"])

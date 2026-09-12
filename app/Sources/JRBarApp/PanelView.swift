@@ -30,7 +30,7 @@ struct PanelView: View {
         .font(.system(size: 13))
         .frame(width: Self.width, height: CGFloat(layout.totalHeight), alignment: .top)
         .clipped()
-        .overlay(alignment: .bottom) { ToastView(text: store.toast, reduced: store.reduceMotion, armed: store.animationsArmed) }
+        .overlay(alignment: .bottom) { ToastView(text: store.toast, action: store.toastAction, reduced: store.reduceMotion, armed: store.animationsArmed) }
         .onChange(of: layout) { _, newLayout in store.layoutDidChange(newLayout) }
     }
 }
@@ -518,9 +518,16 @@ struct SessionsEmptyState: View {
 
     private var detail: String {
         if live {
-            return store.hiddenCount > 0
-                ? "Everything you had running is finished and acknowledged."
-                : "Claude, Codex, Gemini and friends appear the moment they start."
+            if store.hiddenCount > 0 {
+                return "Everything you had running is finished and acknowledged."
+            }
+            // A live core with hooks never installed is a setup state, not
+            // a quiet one: say what to do rather than "they will appear".
+            if !store.missingHooks.isEmpty {
+                let names = store.missingHooks.prefix(3).map { SessionLabel.providerName($0) }.joined(separator: ", ")
+                return "Hooks install themselves at first launch — none for \(names) yet, so those agents cannot report in."
+            }
+            return "Hooks install themselves; Claude, Codex, Gemini and friends appear the moment they start."
         }
         return "Showing the file feeds: \(store.fallbackDetail.lowercased())."
     }
@@ -547,6 +554,12 @@ struct SessionsEmptyState: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            if live && !store.missingHooks.isEmpty {
+                // The one thing this state needs is a way forward.
+                Button("Set up agents…") { store.openSettings(page: .agents) }
+                    .buttonStyle(PillButtonStyle(prominent: false))
+                    .help("Install or repair agent hooks in Settings › Agents")
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -580,11 +593,22 @@ struct SessionRowView: View {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
                         if row.workers > 0 { CountBadge(text: "\(row.workers)").help("\(row.workers) workers") }
+                        if row.isSnoozed(now: store.now) {
+                            // The family mailbox is muted until the time in
+                            // the tooltip: say so, or the quiet row reads
+                            // as a session nobody is answering.
+                            Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                        }
                         if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
                     }
                     HStack(spacing: 4) {
                         Text(row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
-                        if let tail = row.cwdTail {
+                        if row.isRemote {
+                            // A peer's session: name the machine, never a
+                            // path this Mac cannot open.
+                            Text("·").foregroundStyle(.quaternary)
+                            Text("on \(row.remoteMachine ?? "a peer")").foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
+                        } else if let tail = row.cwdTail {
                             Text("·").foregroundStyle(.quaternary)
                             Text(tail).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
                         }
@@ -601,7 +625,7 @@ struct SessionRowView: View {
                             .contentTransition(.opacity)
                         ActivityMark(activity: row.activity, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen)
                     }
-                    Text(PanelStore.elapsed(since: row.since, now: store.now) ?? " ")
+                    Text(row.elapsedText(now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
                 }
                 .frame(width: Self.trailingWidth, alignment: .trailing)
@@ -625,40 +649,65 @@ struct SessionRowView: View {
         .accessibilityLabel([
             row.label, row.style.name, row.activity.word,
             PanelStore.elapsed(since: row.since, now: store.now) ?? "just started",
-            row.cwdTail.map { "in \($0)" } ?? "no folder on record",
+            row.isRemote
+                ? "on \(row.remoteMachine ?? "a peer")"
+                : (row.cwdTail.map { "in \($0)" } ?? "no folder on record"),
         ].joined(separator: ", "))
         .accessibilityAddTraits(.isButton)
     }
 }
 
-/// The right-click menu both row types share: open the session in its own
-/// terminal, snooze the family while it is waiting (or lift a snooze that
-/// is on), copy or reveal the working directory, clear a finished row.
+/// The right-click menu both row types share: answer an open ask, open the
+/// session in its own terminal, snooze the family while it is waiting (or
+/// lift a snooze that is on), copy or reveal the working directory, clear
+/// a finished row. A remote row gets none of the local verbs — it has no
+/// window here to open and no local path to copy.
 struct SessionContextMenu: View {
     let row: SessionRow
     @Bindable var store: PanelStore
 
     var body: some View {
-        Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
-        if row.isSnoozed(now: store.now) {
-            Button("Unsnooze") { store.snooze(row, seconds: 0) }
-        } else if row.ask != nil || row.activity == .waiting {
-            // Snooze quiets the session's whole family at the mailbox; the
-            // daemon resolves the work key from the session id.
-            Button("Snooze 15 minutes") { store.snooze(row, seconds: 900) }
-            Button("Snooze 1 hour") { store.snooze(row, seconds: 3600) }
-            Button(PanelStore.morningLabel(verb: "Snooze until", target: store.morningTarget)) {
-                store.snooze(row, seconds: PanelStore.secondsUntilMorning())
+        if row.isRemote {
+            Text(row.remoteMachine.map { "Runs on \($0)" } ?? "Runs on a peer Mac")
+            if row.activity.isClearable || row.stale {
+                Divider()
+                Button("Clear") { store.clear(row) }
             }
-        }
-        if let cwd = row.cwd, !cwd.isEmpty {
-            Divider()
-            Button("Copy Path") { store.copyPath(row) }
-            Button("Reveal in Finder") { store.reveal(row) }
-        }
-        if row.activity.isClearable || row.stale {
-            Divider()
-            Button("Clear") { store.clear(row) }
+        } else {
+            // The card's buttons, also on the menu — behind the daemon's
+            // own answerability gate, never an offer it would refuse.
+            if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil {
+                Button("Approve") { store.approve(ask) }
+                Button("Deny") { store.deny(ask) }
+                Divider()
+            }
+            Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+            if row.isSnoozed(now: store.now) {
+                Button("Unsnooze") { store.snooze(row, seconds: 0) }
+            } else if row.ask != nil || row.activity == .waiting {
+                // Snooze quiets the session's whole family at the mailbox;
+                // the daemon resolves the work key from the session id.
+                Button("Snooze 15 minutes") { store.snooze(row, seconds: 900) }
+                Button("Snooze 1 hour") { store.snooze(row, seconds: 3600) }
+                Button(PanelStore.morningLabel(verb: "Snooze until", target: store.morningTarget)) {
+                    store.snooze(row, seconds: PanelStore.secondsUntilMorning())
+                }
+            }
+            if let cwd = row.cwd, !cwd.isEmpty {
+                Divider()
+                Button("Copy Path") { store.copyPath(row) }
+                Button("Reveal in Finder") { store.reveal(row) }
+            }
+            if row.activity.isClearable || row.stale {
+                Divider()
+                Button("Clear") { store.clear(row) }
+            }
+            if row.isDismissible {
+                // Hide until it next speaks — for the row that is alive
+                // and going nowhere; a row an open ask pins never gets it.
+                Divider()
+                Button("Dismiss") { store.dismiss(row) }
+            }
         }
     }
 }
@@ -666,6 +715,12 @@ struct SessionContextMenu: View {
 struct AskRow: View {
     let row: SessionRow
     @Bindable var store: PanelStore
+    /// The reply draft, for a `replyable` ask; cleared once sent.
+    @ViewState private var replyText = ""
+
+    /// The whole card goes quiet while the family mailbox is snoozed —
+    /// dim, still, and stamped "snoozed until", never dressed as a fresh ask.
+    private var snoozed: Bool { row.isSnoozed(now: store.now) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -680,6 +735,12 @@ struct AskRow: View {
                             .lineLimit(1)
                             .padding(.horizontal, 5).padding(.vertical, 1.5)
                             .background(Capsule().fill(Color.orange.opacity(0.14)))
+                        if snoozed, let until = row.snoozedUntil {
+                            Text("snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
+                                .font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                        } else if snoozed {
+                            Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                        }
                     }
                     Text(row.ask?.summary ?? "Needs your answer")
                         .font(.system(size: 12))
@@ -690,7 +751,7 @@ struct AskRow: View {
                 }
                 Spacer(minLength: 6)
                 VStack(alignment: .trailing, spacing: 1) {
-                    ActivityMark(activity: .waiting, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen)
+                    ActivityMark(activity: .waiting, accent: row.style.accent, reduced: store.reduceMotion, active: store.isOpen && !snoozed)
                         .padding(.top, 3)
                     Text(PanelStore.elapsed(since: row.ask?.openedAt.map { Date(timeIntervalSince1970: $0) } ?? row.since, now: store.now) ?? " ")
                         .font(.system(size: 11)).monospacedDigit().foregroundStyle(.tertiary).lineLimit(1)
@@ -698,12 +759,59 @@ struct AskRow: View {
             }
             HStack(spacing: 6) {
                 Spacer()
-                Button("Deny") { if let ask = row.ask { store.deny(ask) } }
-                    .buttonStyle(PillButtonStyle(prominent: false))
-                Button("Approve") { if let ask = row.ask { store.approve(ask) } }
-                    .buttonStyle(PillButtonStyle(prominent: true))
+                if let ask = row.ask, ask.wantsTextReply, ask.canAnswer, ask.session != nil, !row.isRemote {
+                    // A reply-kind ask wants words, not a verdict: a field
+                    // and Send; `reply_text` rides the same answer_ask. A
+                    // daemon that cannot take text for it says so, and the
+                    // toast carries that.
+                    TextField("Reply…", text: $replyText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 9).padding(.vertical, 3.5)
+                        .background(Capsule().fill(Color.primary.opacity(0.08)))
+                        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+                        .frame(maxWidth: 200)
+                        .disabled(store.isAnswerPending(ask))
+                        .onSubmit { send(ask) }
+                    Button("Send") { send(ask) }
+                        .buttonStyle(PillButtonStyle(prominent: true))
+                        .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
+                        .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
+                } else if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil, !row.isRemote {
+                    // Approve/Deny type the answer into the session's own
+                    // terminal (the daemon raises it first); the refusal —
+                    // not a guess — is what the toast then shows. Both go
+                    // quiet while the answer is on the wire so a double
+                    // click cannot post twice.
+                    Button("Deny") { store.deny(ask) }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .disabled(store.isAnswerPending(ask))
+                        .help("Answer no (⌘D)")
+                    Button("Approve") { store.approve(ask) }
+                        .buttonStyle(PillButtonStyle(prominent: true))
+                        .disabled(store.isAnswerPending(ask))
+                        .help("Bring \(row.terminalApp ?? "the terminal") forward and approve there (⌘↩)")
+                } else if row.isRemote {
+                    // A peer's ask: nothing local can type into it.
+                    Text("on \(row.remoteMachine ?? "a peer")")
+                        .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+                } else if row.ask?.session != nil {
+                    // Not answerable from the panel (the daemon said so, or
+                    // it wants a reply this core will not take): the honest
+                    // action is the session's own window.
+                    Button(row.terminalApp.map { "Open in \($0)" } ?? "Open session") { store.open(row) }
+                        .buttonStyle(PillButtonStyle(prominent: false))
+                        .help(row.ask?.wantsTextReply == true
+                              ? "This ask wants a typed reply — answer it in the session's window"
+                              : "The panel cannot answer this one — answer it in the session's window")
+                } else {
+                    // No session left to open or answer: just say so.
+                    Text("answer it in its own window")
+                        .font(.system(size: 11)).foregroundStyle(.tertiary).lineLimit(1)
+                }
             }
         }
+        .opacity(snoozed ? 0.55 : 1)
         .padding(.horizontal, 8)
         .frame(height: CGFloat(PanelLayout.askRowHeight))
         .background(
@@ -727,6 +835,12 @@ struct AskRow: View {
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(row.label) asks: \(row.ask?.summary ?? "")")
+    }
+
+    private func send(_ ask: CoreAsk) {
+        let text = replyText
+        replyText = ""
+        store.reply(ask, text: text)
     }
 }
 
@@ -758,7 +872,7 @@ struct UsageSection: View {
     var body: some View {
         VStack(spacing: 0) {
             SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Details" : nil, onDetail: { store.openUsageCenter() })
-            if store.usage.isEmpty {
+            if store.usage.isEmpty && store.windowlessUsage.isEmpty {
                 Text(store.isLive ? "No usage reported yet." : "Usage comes from the core.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
@@ -769,13 +883,23 @@ struct UsageSection: View {
             } else {
                 ScrollView(.vertical) {
                     VStack(spacing: CGFloat(PanelLayout.usageRowSpacing)) {
-                        ForEach(store.usage) { usage in
+                        // `identity` (id|instance), not `id`: two accounts
+                        // of one provider are two rows here.
+                        ForEach(store.usage, id: \.identity) { usage in
                             UsageRow(usage: usage, store: store)
+                                .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
+                        }
+                        // A provider that reports in with no window is a
+                        // setup state, not a quiet zero: it gets a row that
+                        // says so and opens the Usage Center on it.
+                        ForEach(store.windowlessUsage, id: \.identity) { usage in
+                            UsageSetupRow(usage: usage, store: store)
                                 .transition(PanelMotion.rowTransition(reduced: store.reduceMotion))
                         }
                     }
                     .padding(.horizontal, 6)
-                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed), value: store.usage.map(\.id))
+                    .animation(PanelMotion.contents(reduced: store.reduceMotion, armed: store.animationsArmed),
+                               value: store.usage.map(\.identity) + store.windowlessUsage.map(\.identity))
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: CGFloat(layout.usageHeight))
@@ -790,6 +914,46 @@ struct UsageSection: View {
         guard let at = store.core.state?.usage?.refreshedAt else { return nil }
         guard let elapsed = PanelStore.elapsed(since: Date(timeIntervalSince1970: at), now: store.now) else { return nil }
         return "\(elapsed) ago"
+    }
+}
+
+/// A provider that reports in but carries no window — signed out, or no
+/// reader configured. One compact row (name + the daemon's state word +
+/// chevron) that opens the Usage Center on it; a silent absence used to
+/// pass for "not tracked".
+struct UsageSetupRow: View {
+    let usage: CoreProviderUsage
+    @Bindable var store: PanelStore
+    @ViewState private var hovering = false
+
+    private var style: ProviderStyle { ProviderStyle.style(for: usage.id, document: store.settingsDocument) }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            ProviderTile(style: style, size: 20)
+            Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
+            Text(usage.state?.replacingOccurrences(of: "_", with: " ") ?? "setup needed")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Image(systemName: "chevron.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.tertiary)
+                .opacity(hovering && store.isOpen ? 1 : 0.5)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: CGFloat(PanelLayout.usageRowHeight))
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(hovering && store.isOpen ? 0.05 : 0))
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture { store.openUsageCenter(provider: usage.id) }
+        .help("\(style.name) reports no usage windows — the Usage Center can set it up")
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
@@ -811,11 +975,31 @@ struct UsageRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(style.name).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                    if let hint = PanelStore.paceHint(usage.forecast?.pace) {
+                    if isStale {
+                        // The reading is old, not current: "Stale", the
+                        // Usage Center's own word, beside the name — never
+                        // a number quietly trusted anyway.
+                        Text("Stale")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.orange)
+                            .lineLimit(1)
+                            .help("This reading is old — the last refresh did not land")
+                    } else if usage.isDerived {
+                        // `derived`/`estimated` fidelity spelled out; the
+                        // bare "~" it used to hide behind was invisible.
+                        Text("est.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .help("Derived estimate (\(usage.fidelity ?? "derived")), not the provider's own figure")
+                    }
+                    if let hint = PanelStore.paceHint(usage.forecast?.pace,
+                                                    exhaustsAt: usage.forecast?.exhaustsAt,
+                                                    resetsAt: primary?.resetsAt, now: store.now) {
                         Text(hint).font(.system(size: 10)).foregroundStyle(paceColor(usage.forecast?.pace)).lineLimit(1)
                     }
                     Spacer(minLength: 4)
-                    Text(primary.map { (usage.isDerived && !$0.isUnknown ? "~" : "") + $0.percentText } ?? "")
+                    Text(primary?.percentText ?? "")
                         .font(.system(size: 12, weight: .medium))
                         .monospacedDigit()
                         .lineLimit(1)
@@ -860,12 +1044,24 @@ struct UsageRow: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// "5h resets in 1h 02m · 7d resets in 3d 5h", one line; a blank keeps the row height.
+    /// The daemon's `state`/`fidelity` say the reading is old — what the
+    /// row's "Stale" tag shows.
+    private var isStale: Bool {
+        usage.state?.lowercased() == "stale" || usage.fidelity?.lowercased() == "stale"
+    }
+
+    /// "5h resets in 1h 02m · 7d resets in 3d 5h · runs out in 2h", one
+    /// line. With no reset to name, the daemon's own fix-it (`action`,
+    /// "Retry later", "Run grok login") beats the bare state word.
     private func resetLine(primary: CoreUsageWindow?, secondary: CoreUsageWindow?) -> String {
         var parts: [String] = []
         if let primary, let text = PanelStore.countdown(to: primary.resetsAt, now: store.now) { parts.append("\(primary.shortName) \(text)") }
         if let secondary, let text = PanelStore.countdown(to: secondary.resetsAt, now: store.now) { parts.append("\(secondary.shortName) \(text)") }
+        if let exhaustsAt = usage.forecast?.exhaustsAt, exhaustsAt > store.now.timeIntervalSince1970 {
+            parts.append("runs out \(UsageForecast.relative(to: exhaustsAt, now: store.now))")
+        }
         if parts.isEmpty {
+            if let action = usage.action, !action.isEmpty { return action }
             if let state = usage.state, !state.isEmpty, state != "ready" { return state.replacingOccurrences(of: "_", with: " ") }
             return "no reset time"
         }
@@ -1122,15 +1318,22 @@ struct PanelFooter: View {
 
     var body: some View {
         HStack(spacing: 2) {
+            // "Clear finished" never leaves: while an undo offer stands it
+            // shrinks to a small inline link beside the button rather than
+            // replacing it — a footer that swaps its verb out from under
+            // the pointer is a trap.
+            FooterButton(title: "Clear finished", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
+                .help(store.completedCount == 0
+                      ? "Nothing finished to acknowledge"
+                      : "Acknowledge the \(store.completedCount) finished, ended and stale sessions; Undo stays here for 5 minutes")
             if let countdown = store.undoCountdown {
-                FooterButton(title: "Undo clear", dimmed: false, shortcut: countdown, active: store.isOpen) { store.undoClear() }
+                Button("Undo (\(countdown))") { store.undoClear() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+                    .lineLimit(1)
+                    .padding(.leading, 4)
                     .help("Put the sessions you just cleared back (\(countdown) left)")
-                    .transition(.opacity)
-            } else {
-                FooterButton(title: "Clear done", dimmed: store.completedCount == 0, active: store.isOpen) { store.clearCompleted() }
-                    .help(store.completedCount == 0
-                          ? "Nothing finished to acknowledge"
-                          : "Acknowledge the \(store.completedCount) finished, ended and stale sessions; Undo stays here for 5 minutes")
                     .transition(.opacity)
             }
             Menu {
@@ -1262,26 +1465,39 @@ struct FooterButtonStyle: ButtonStyle {
 
 struct ToastView: View {
     let text: String?
+    /// An optional button inside the capsule (the refused-answer "Open
+    /// Settings"); when set, the toast takes clicks for it.
+    var action: (title: String, run: () -> Void)? = nil
     let reduced: Bool
     var armed: Bool = true
 
     var body: some View {
         ZStack {
             if let text {
-                Text(text)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Capsule().fill(.regularMaterial))
-                    .overlay(Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
-                    .padding(.bottom, 40)
-                    .transition(reduced ? .opacity : .opacity.combined(with: .offset(y: 6)))
-                    .id(text)
+                HStack(spacing: 8) {
+                    Text(text)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if let action {
+                        Button(action.title) { action.run() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(.regularMaterial))
+                .overlay(Capsule().strokeBorder(.primary.opacity(0.10), lineWidth: 0.5))
+                .padding(.bottom, 40)
+                .transition(reduced ? .opacity : .opacity.combined(with: .offset(y: 6)))
+                .id(text)
             }
         }
         .animation(PanelMotion.contents(reduced: reduced, armed: armed), value: text)
-        .allowsHitTesting(false)
+        // Click-through unless a button is on the capsule to click.
+        .allowsHitTesting(action != nil)
     }
 }

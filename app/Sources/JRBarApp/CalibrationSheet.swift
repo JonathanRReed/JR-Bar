@@ -115,9 +115,22 @@ struct CalibrationSheet: View {
                 Spacer()
                 Button("Cancel") { endPreview(); dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Apply") {
-                    store.core.applyCalibration(device: deviceID, profile: model.profileArguments())
-                    endPreview()
-                    dismiss()
+                    // Awaited so a `not_found` (the device went away
+                    // mid-sheet) is reported instead of looking applied.
+                    Task { [weak store] in
+                        guard let store else { return }
+                        do {
+                            let reply = try await store.core.applyCalibrationNow(device: deviceID, profile: model.profileArguments())
+                            if reply.ok {
+                                endPreview()
+                                dismiss()
+                            } else {
+                                store.report(error: reply.error?.message ?? reply.error?.code ?? "Apply refused")
+                            }
+                        } catch {
+                            store.report(error: "Apply failed: \(error)")
+                        }
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!model.isDirty)
@@ -195,10 +208,21 @@ struct CalibrationSheet: View {
     }
 
     private func sendPreview() {
-        store.core.previewCalibration(
-            device: deviceID,
-            args: previewed.previewArguments(device: deviceID, companion: canMatchStrip && companion)
-        )
+        // Awaited so a refusal (the device vanished, the daemon is busy)
+        // is said out loud instead of the header claiming a lit patch.
+        Task { [weak store] in
+            guard let store else { return }
+            do {
+                let reply = try await store.core.previewCalibrationNow(
+                    args: previewed.previewArguments(device: deviceID, companion: canMatchStrip && companion)
+                )
+                if !reply.ok {
+                    store.report(error: reply.error?.message ?? reply.error?.code ?? "Preview refused")
+                }
+            } catch {
+                store.report(error: "Preview failed: \(error)")
+            }
+        }
     }
 
     /// Every edit re-previews, debounced: the hold is daemon-side, so this

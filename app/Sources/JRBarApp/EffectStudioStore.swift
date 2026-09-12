@@ -50,6 +50,7 @@ final class EffectStudioStore {
     @ObservationIgnored private var statusClear: DispatchWorkItem?
     @ObservationIgnored private var observing = false
     @ObservationIgnored private var wasLive = false
+    @ObservationIgnored private var seenCatalogGeneration: Int?
 
     init(core: CoreModel) {
         self.core = core
@@ -87,11 +88,20 @@ final class EffectStudioStore {
     private func track() {
         withObservationTracking {
             _ = core.isLive
-            _ = core.settings?.generation
+            // `catalog_generation` moves when the registry, packs or
+            // assignments change anywhere (this window, the CLI, another
+            // client); `settings_generation` carries `active_scene`.
+            _ = core.state?.catalogGeneration
+            _ = core.state?.settingsGeneration
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                let generation = self.core.state?.catalogGeneration
                 if self.core.isLive, !self.wasLive { self.reload() }
+                if generation != self.seenCatalogGeneration {
+                    self.seenCatalogGeneration = generation
+                    if self.core.isLive { self.reload() }
+                }
                 self.wasLive = self.core.isLive
                 self.track()
             }
@@ -110,9 +120,11 @@ final class EffectStudioStore {
                 async let assignments = self.core.listAssignments()
                 self.catalog = try await catalog
                 self.assignments = try await assignments
+                self.seenCatalogGeneration = self.catalog?.generation
                 if self.selectedID == nil || self.catalog?.effect(self.selectedID ?? "") == nil {
                     self.selectedID = self.catalog?.effects.first?.id
                 }
+                await self.loadScenePacks()
             } catch {
                 self.fail("Could not load effects: \(Self.describe(error))")
             }
@@ -159,8 +171,10 @@ final class EffectStudioStore {
         return effect.preview?.program ?? "off"
     }
 
+    /// The LED count the on-screen strip renders at: the connected
+    /// device's real count so the preview matches the hardware.
     func previewLedCount(for effect: EffectDefinition) -> Int {
-        effect.preview?.ledCount ?? 8
+        previewSurface.map { min(24, max(2, $0.ledCount)) } ?? effect.preview?.ledCount ?? 8
     }
 
     /// The cadence the daemon reports for the current parameters, else the
@@ -187,7 +201,7 @@ final class EffectStudioStore {
             self.rendering = true
             defer { self.rendering = false }
             do {
-                let preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: effect.preview?.ledCount ?? 8)
+                let preview = try await self.core.renderEffect(effect.id, parameters: values, ledCount: previewLedCount)
                 self.renders[key] = preview
             } catch {
                 self.fail("Preview render failed: \(Self.describe(error))")
@@ -204,14 +218,49 @@ final class EffectStudioStore {
         return max(0, Int(until.timeIntervalSince(now).rounded(.up)))
     }
 
-    var hasHardware: Bool { core.devices.contains { ($0.kind == "pro" || $0.kind == "dot") && $0.isPresent } }
+    /// The surface a hardware preview plays on: the Pro strip when one is
+    /// connected, the Dot when it is the only hardware. Nil with neither.
+    var previewSurface: (surface: String, ledCount: Int, name: String)? {
+        if let strip = core.devices.first(where: { $0.kind == "pro" && $0.isPresent }) {
+            return ("hardware", strip.leds ?? 8, strip.name ?? "strip")
+        }
+        if let dot = core.devices.first(where: { $0.kind == "dot" && $0.isPresent }) {
+            return ("dot", dot.leds ?? 2, dot.name ?? "Dot")
+        }
+        return nil
+    }
+
+    var hasHardware: Bool { previewSurface != nil }
+
+    /// The LED count previews render at: the connected device's real
+    /// count (2–24 is what `render_effect` supports), the catalog's 8
+    /// otherwise.
+    var previewLedCount: Int {
+        guard let ledCount = previewSurface?.ledCount else { return 8 }
+        return min(24, max(2, ledCount))
+    }
 
     func previewOnHardware(_ effect: EffectDefinition) {
         guard hardwareConsent else { askingConsent = true; return }
+        guard let target = previewSurface else {
+            fail("Nothing to play on: no strip or Dot is connected")
+            return
+        }
         let program = previewProgram(for: effect)
-        core.previewProgram(surface: "hardware", program: program, seconds: Self.hardwarePreviewSeconds)
-        hardwarePreviewUntil = Date().addingTimeInterval(Self.hardwarePreviewSeconds)
-        show(status: "Playing \(effect.label) on the strip for \(Int(Self.hardwarePreviewSeconds)) s")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.previewProgramNow(surface: target.surface, program: program, seconds: Self.hardwarePreviewSeconds)
+                if reply.ok {
+                    self.hardwarePreviewUntil = Date().addingTimeInterval(Self.hardwarePreviewSeconds)
+                    self.show(status: "Playing \(effect.label) on \(target.name) for \(Int(Self.hardwarePreviewSeconds)) s")
+                } else {
+                    self.fail(reply.error?.message ?? reply.error?.code ?? "Preview refused")
+                }
+            } catch {
+                self.fail("Preview failed: \(Self.describe(error))")
+            }
+        }
     }
 
     func grantConsent(and effect: EffectDefinition?) {
@@ -292,9 +341,19 @@ final class EffectStudioStore {
         }
     }
 
-    /// Targets the draft can pick from, by scope.
+    /// Targets the draft can pick from, by scope. The Dot is not offered:
+    /// a device-scope assignment never reaches it (it only follows the
+    /// global look), so offering it would write a row that does nothing.
     var deviceTargets: [(id: String, label: String)] {
-        core.devices.filter { $0.kind != "screen_bar" }.map { ($0.id, $0.name ?? $0.id) } + [("screen-bar", "Screen Bar")]
+        core.devices.filter { $0.kind != "screen_bar" && $0.kind != "dot" }
+            .map { ($0.id, $0.name ?? $0.id) } + [("screen-bar", "Screen Bar")]
+    }
+
+    /// A stored device assignment naming a Dot: it exists (written by an
+    /// older build or by hand) but the Dot never applies scoped effects.
+    func isUnreachableDot(_ assignment: EffectAssignment) -> Bool {
+        assignment.scope == .device
+            && core.devices.contains { $0.id == assignment.targetID && $0.kind == "dot" }
     }
 
     func defaultTarget(for scope: EffectScope) -> String {
@@ -310,6 +369,69 @@ final class EffectStudioStore {
 
     // MARK: Packs
 
+    /// Installed scene packs and the pack whose preview is being shown
+    /// (nil from a core without `list_scene_packs`).
+    private(set) var scenePacks: [ScenePackSummary] = []
+    var scenePreview: (packID: String, preview: EffectPreview)?
+
+    /// Set when an import was refused with `already_installed`: the view
+    /// offers an explicit Update retry, which is a different write, not a
+    /// silent re-install.
+    var packConflict: (path: String, name: String)?
+
+    func loadScenePacks() async {
+        do {
+            self.scenePacks = try await self.core.listScenePacks()
+        } catch {
+            // A core without scene-pack commands answers unknown_command;
+            // the section simply does not render.
+            self.scenePacks = []
+        }
+    }
+
+    func previewScenePack(_ pack: ScenePackSummary) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let preview = try await self.core.previewScenePack(packID: pack.id, ledCount: self.previewLedCount)
+                self.scenePreview = (pack.id, preview)
+            } catch {
+                self.fail("Scene pack preview failed: \(Self.describe(error))")
+            }
+        }
+    }
+
+    /// Removes an installed effect pack via `remove_effect_pack`; the
+    /// reply carries the fresh catalog like the import does.
+    func removePack(_ pack: EffectPack) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                self.catalog = try await self.core.removeEffectPack(packID: pack.id)
+                self.show(status: "Removed pack \(pack.name)")
+            } catch {
+                self.fail("Remove refused: \(Self.describe(error))")
+            }
+        }
+    }
+
+    /// `import_effect_pack` with `update: true` — the retry offered after
+    /// an `already_installed` conflict, so replacing a pack is an
+    /// explicit choice rather than a surprise overwrite.
+    func updatePack() {
+        guard let conflict = packConflict else { return }
+        packConflict = nil
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                self.catalog = try await self.core.importEffectPack(path: conflict.path, update: true)
+                self.show(status: "Updated \(conflict.name)")
+            } catch {
+                self.fail("Update refused: \(Self.describe(error))")
+            }
+        }
+    }
+
     func importPack() {
         let panel = NSOpenPanel()
         panel.title = "Import Effect Pack"
@@ -323,6 +445,8 @@ final class EffectStudioStore {
             do {
                 self.catalog = try await self.core.importEffectPack(path: url.path)
                 self.show(status: "Imported \(url.lastPathComponent)")
+            } catch let error as CoreReplyError where error.code == "conflict" || (error.message ?? "").contains("already_installed") {
+                self.packConflict = (url.path, url.lastPathComponent)
             } catch {
                 self.fail("Import refused: \(Self.describe(error))")
             }

@@ -84,3 +84,28 @@ struct SessionLabelTests {
         #expect("\(session.providerName) \(session.displayLabel)" == "Claude fca1eb06")
     }
 }
+
+@Suite("Remote sessions")
+struct RemoteSessionTests {
+    @Test("a remote:<machine>:<source> id is remote, and names its machine")
+    func remoteIDs() {
+        let remote = CoreSession(id: "remote:studio-mac:claude:session:fca1eb06", provider: "claude", kind: "main")
+        #expect(remote.isRemote)
+        #expect(remote.remoteMachine == "studio-mac")
+        #expect(CoreSession.isRemoteID("remote:studio-mac:claude:session:x"))
+        #expect(CoreSession.remoteMachine(inID: "remote:studio-mac:claude:session:x") == "studio-mac")
+    }
+
+    @Test("a local id is never remote, and degenerate remote ids name no machine")
+    func localAndDegenerate() {
+        let local = CoreSession(id: "claude:session:fca1eb06", provider: "claude", kind: "main")
+        #expect(!local.isRemote)
+        #expect(local.remoteMachine == nil)
+        #expect(!CoreSession.isRemoteID("claude:session:x"))
+        #expect(CoreSession.remoteMachine(inID: "claude:session:x") == nil)
+        // "remote:" with nothing after it is still remote but machineless.
+        #expect(CoreSession.isRemoteID("remote:"))
+        #expect(CoreSession.remoteMachine(inID: "remote:") == nil)
+        #expect(CoreSession.remoteMachine(inID: "remote::claude:session:x") == nil)
+    }
+}

@@ -75,11 +75,24 @@ final class HistoryStore {
         RunLoop.main.add(timer, forMode: .common)
         clock = timer
         reload()
+        // Opening the window is itself a look: advance the daemon's
+        // `last_seen` watermark so `unseen` means "since you last looked".
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.core.markHistorySeen()
+        }
     }
 
     func windowDidClose() {
         clock?.invalidate()
         clock = nil
+        // The window was open and read: advance the daemon's `last_seen`
+        // watermark so `unseen` means "since you last looked", not "since
+        // the app last disconnected" (the app stays connected).
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.core.markHistorySeen()
+        }
     }
 
     func reload() {
@@ -105,10 +118,22 @@ final class HistoryStore {
 
     // MARK: Actions
 
+    /// The session the row names is still a live row in the daemon's
+    /// state (not finished, ended or failed) — a "started" history row for
+    /// it must not read as a completed run.
+    func isLiveSession(_ id: String?) -> Bool {
+        guard let id else { return false }
+        return core.sessions.contains { session in
+            session.id == id && ![SessionActivity.done, .ended, .failed].contains(SessionActivity.reduce(session))
+        }
+    }
+
     func open(_ row: CoreHistoryRow) {
         selectedID = row.id
-        guard let session = row.session else { return }
-        core.openSession(session)
+        // Only a session still live in the daemon's state can be opened;
+        // an ended row keeps its history but has nothing to show.
+        guard isLiveSession(row.session) else { return }
+        core.openSession(row.session!)
     }
 
     // MARK: Keyboard

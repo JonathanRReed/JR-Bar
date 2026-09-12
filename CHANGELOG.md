@@ -2,6 +2,69 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.0
+
+- Assigning an effect now does what the picker says. Provider-scope
+  `provider_animation` assignments write `colors.provider_animation`, the
+  persistent per-provider motion the solo renderers already read — so
+  "Devin breathes while working" is a real write instead of a recorded
+  wish, and clearing the assignment restores Automatic. Semantic targets
+  the event router can never deliver (`working`, `idle`, `recovery`,
+  `environment`, `transition`, `quota`) are refused `unroutable_semantic`
+  rather than saved as a write-only row, and an assigned effect's own
+  program — parameters applied — is what reaches each surface, rendered
+  once per selection and compiled per LED count. The four bounded
+  builtins keep their safety-timed variants.
+- Settings > Remote's Serve switch runs the endpoint it describes. The
+  app mints a bearer token once (`~/.local/state/jrbar/serve-token`,
+  0600) and hands it to the daemon it spawns; with `serve_enabled` on the
+  core hosts `serve.py` in-process on loopback and `serve_token` reports
+  `running` alongside `enabled`, so the card can say serving, not just
+  switched.
+- The core protocol grew the commands the panel's newer affordances need.
+  `dismiss_session` acknowledges a live or stuck row — the same receipt
+  `clear_completed` writes — so it leaves the list until the session next
+  speaks; remote rows and sessions with an open ask are refused.
+  `mark_history_seen` advances the activity ledger's persistent
+  `last_seen` watermark, and `list_history` now derives each row's
+  `unseen` from it rather than a stored flag. `list_scene_packs`,
+  `import_scene_pack` (validate-and-preview before any write, with
+  version-1 packs migrated on the way in) and `preview_scene_pack` expose
+  the Scene pack store to the Studio. `serve_token` hands the loopback
+  status endpoint's bearer to Settings over the local socket only.
+- The state document says more of the truth. Asks carry `answerable` and
+  `replyable` computed from the provider's negotiated contract and the
+  registered handler, so an Approve button is never offered for an ask no
+  daemon can type. Sessions carry `remote` for a peer Mac's row.
+  `health.detected` reports which provider CLIs were actually found, and
+  `install_hooks` answers per-provider `detected` plus a refused row for
+  a provider that was never seen rather than claiming success.
+  `catalog_generation` lets a client reload the effect catalog only when
+  it actually changed.
+- The mock daemon (`app/scripts/mock-core.py`) matches: dismissal,
+  remote rows, history watermarks, scene packs, detected-agent metadata
+  and the serve token, so app development and fixture tests exercise the
+  same contract.
+- The panel says what it means. `long_task_progress` rows read Working
+  instead of grey Idle while the header still counted them; failed
+  sessions get their own tint and count; asks sort oldest-first and
+  snoozed ones stop pulsing in the menu bar; quiet rows say quiet, remote
+  rows say which Mac, and a stuck row can be dismissed in place.
+  Answer-in-place only offers Approve/Deny or a reply field when the
+  daemon reports the ask answerable, and a refused answer surfaces the
+  refusal (with the Accessibility-settings deep link when that is the
+  missing piece) instead of toasting "Approved" anyway.
+- The surfaces got honest. Effect Studio's scope picker only offers
+  targets that can fire, "keep tuned parameters" actually reaches the
+  daemon, scene packs list/import/preview from the window, and hardware
+  preview says which target it lit. History rows carry real durations,
+  open affordances only appear on live sessions, and the unseen banner
+  resets when the window opens. Usage Center reads the daemon's
+  per-window forecast, keeps duplicate provider accounts distinct, and
+  shows missing readings as missing rather than zero. Calibration errors
+  surface instead of silently saving, and hardware-gated controls say so
+  when nothing is plugged in.
+
 ## 0.8.1
 
 - A Devin session could read "Working" forever. The startup replay seeds a

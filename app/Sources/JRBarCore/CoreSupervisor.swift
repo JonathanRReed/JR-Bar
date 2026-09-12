@@ -272,6 +272,39 @@ public final class CoreSupervisor: @unchecked Sendable {
     }
 }
 
+// MARK: - Serve token
+
+/// `~/.local/state/jrbar/serve-token`: the bearer the loopback status
+/// endpoint requires. Generated once (0600, user-only), reused across
+/// launches so a Stream Deck config written against it keeps working.
+public enum ServeToken {
+    public static var path: String {
+        let socketPath = CoreSocketPath.resolve()
+        return (socketPath as NSString).deletingLastPathComponent + "/serve-token"
+    }
+
+    /// Reads the persisted token, generating and storing one on first use.
+    /// Returns nil when the state directory cannot be written.
+    public static func load() -> String? {
+        let path = self.path
+        if let data = FileManager.default.contents(atPath: path),
+           let token = String(data: data, encoding: .utf8)?
+               .trimmingCharacters(in: .whitespacesAndNewlines),
+           token.count >= 24 {
+            return token
+        }
+        let token = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "")
+        let directory = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        guard FileManager.default.createFile(
+            atPath: path,
+            contents: Data(token.utf8),
+            attributes: [.posixPermissions: 0o600]
+        ) else { return nil }
+        return token
+    }
+}
+
 // MARK: - The bundled daemon
 
 extension CoreSupervisor {
@@ -295,10 +328,12 @@ extension CoreSupervisor {
         }
 
         /// The environment every invocation of the bundled binary gets: the
-        /// shim every provider hook must run, and the commit for `doctor`.
+        /// shim every provider hook must run, the commit for `doctor`, and
+        /// the status endpoint's bearer token so `serve` can authenticate.
         public var environment: [String: String] {
             var environment = ["JRBAR_HOOK_EXEC": hookShim, "PYTHONUNBUFFERED": "1"]
             if let commit { environment["JRBAR_COMMIT"] = commit }
+            if let token = ServeToken.load() { environment["JRBAR_SERVE_ACCESS_TOKEN"] = token }
             return environment
         }
 

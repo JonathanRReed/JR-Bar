@@ -747,7 +747,56 @@ def _work_for_status(operator_state: object, status: object):
     return None
 
 
-def ask_document(status: object, operator_state: object, *, with_session: bool) -> dict[str, Any]:
+def _answer_flags(
+    request: object,
+    contracts_by_source: object,
+    has_answer_handler: object,
+) -> tuple[bool, bool]:
+    """``(answerable, replyable)`` for one ask, from the provider's own
+    negotiated contract.
+
+    ``answerable`` means the answer chain can deliver a decision to this
+    session: the contract declares ``answering``, the invocation binds the
+    reviewed local surface, and a handler is registered for it. A provider
+    that only declares ``actionable_requests`` resolves to ``False`` --
+    the button must not offer what no daemon can type. ``replyable`` is
+    the narrower "this ask takes free text" (input asks only).
+    """
+    from .answer_in_place import answer_capability_for_request
+
+    if request is None:
+        return (False, False)
+    work_key = getattr(getattr(request, "key", None), "work_key", None)
+    source_key = getattr(work_key, "source_key", None)
+    if source_key is None or not isinstance(contracts_by_source, Mapping):
+        return (False, False)
+    contract = contracts_by_source.get(source_key)
+    try:
+        capability = answer_capability_for_request(
+            contract, getattr(request, "request_kind", None)
+        )
+    except Exception:
+        return (False, False)
+    if not getattr(capability, "supported", False):
+        return (False, False)
+    invocation = getattr(capability, "invocation", None)
+    if callable(has_answer_handler) and invocation is not None:
+        try:
+            if not has_answer_handler(invocation):
+                return (False, False)
+        except Exception:
+            return (False, False)
+    return (True, bool(getattr(capability, "supports_reply_text", False)))
+
+
+def ask_document(
+    status: object,
+    operator_state: object,
+    *,
+    with_session: bool,
+    answer_contracts: object = None,
+    has_answer_handler: object = None,
+) -> dict[str, Any]:
     request = _request_for_status(operator_state, status)
     kind = getattr(getattr(request, "request_kind", None), "value", None)
     if kind in (None, "unknown"):
@@ -762,10 +811,15 @@ def ask_document(status: object, operator_state: object, *, with_session: bool) 
         getattr(status, "updated_at", None)
     )
     summary = getattr(status, "message", None) or getattr(status, "tool_name", None)
+    answerable, replyable = _answer_flags(
+        request, answer_contracts, has_answer_handler
+    )
     document: dict[str, Any] = {
         "kind": kind,
         "opened_at": opened_at,
         "summary": summary if isinstance(summary, str) else None,
+        "answerable": answerable,
+        "replyable": replyable,
     }
     if with_session:
         document = {"session": getattr(status, "agent_id", None), **document}
@@ -781,6 +835,8 @@ def session_document(
     workers: int,
     parent_label: str | None = None,
     snoozed_until: float | None = None,
+    answer_contracts: object = None,
+    has_answer_handler: object = None,
 ) -> dict[str, Any]:
     mode = getattr(status, "mode", AgentMode.UNKNOWN)
     if not isinstance(mode, AgentMode):
@@ -872,7 +928,22 @@ def session_document(
         "stale": stale,
         "pid": extras.pid if extras is not None else None,
         "origin": origin,
-        "ask": ask_document(status, operator_state, with_session=False) if agent_id in ask_ids else None,
+        # A peer Mac's row is not locally actionable: nothing here can
+        # raise its window or type its answer. The ``remote:<machine>:``
+        # agent id is the namespace (``remote_peers.remote_agent_id``);
+        # this flag just makes it wire-readable without string parsing.
+        "remote": agent_id.startswith("remote:"),
+        "ask": (
+            ask_document(
+                status,
+                operator_state,
+                with_session=False,
+                answer_contracts=answer_contracts,
+                has_answer_handler=has_answer_handler,
+            )
+            if agent_id in ask_ids
+            else None
+        ),
         "terminal": extras.terminal if extras is not None else None,
         "workers": workers,
         # The family mailbox's active snooze, when one covers this
@@ -891,6 +962,23 @@ def primary_window(windows: list[dict[str, Any]]) -> dict[str, Any] | None:
         if str(window.get("name") or "").lower() == "5h":
             return window
     return windows[0] if windows else None
+
+
+def _provider_supports_quota(provider_id: object) -> bool:
+    """Whether a quota collector exists for this provider at all.
+
+    Read off ``provider_usage_platform``'s descriptors rather than the
+    snapshot's own claims: a provider with no collector must never report
+    ``quota_source: true``, whatever the last reading said.
+    """
+    from .provider_usage_platform import provider_descriptors
+
+    if not isinstance(provider_id, str):
+        return False
+    for descriptor in provider_descriptors():
+        if descriptor.provider_id == provider_id:
+            return bool(descriptor.supports_quota)
+    return False
 
 
 def usage_document(
@@ -918,6 +1006,7 @@ def usage_document(
             reset = epoch(getattr(lane, "reset_at", None))
             if base in ("5h", "7d", "Daily", "Monthly") and reset is not None:
                 horizon_by_reset.setdefault(round(reset), base)
+        provider_id = getattr(snapshot, "provider_id", "unknown")
         for lane in lanes:
             remaining = getattr(lane, "remaining_percent", None)
             lane_id = getattr(lane, "lane_id", None)
@@ -926,39 +1015,50 @@ def usage_document(
             sibling = horizon_by_reset.get(round(reset)) if reset is not None else None
             if model and sibling is not None and str(lane_id or "").lower() not in USAGE_WINDOW_NAMES:
                 lane_id = sibling
+            used_pct = (
+                round(100.0 - float(remaining), 1) if remaining is not None else None
+            )
+            # Every measured window gets its own forecast, keyed on the
+            # lane id the samples were recorded under (not the sibling's
+            # display name), so a 7d graph does not have to wait for the
+            # primary 5h card's verdict.
+            window_forecast = None
+            if usage_samples is not None and now is not None:
+                try:
+                    window_forecast = usage_samples.forecast(
+                        provider_id,
+                        getattr(lane, "lane_id", None),
+                        used_pct=used_pct,
+                        resets_at=reset,
+                        now=now,
+                    )
+                except Exception:
+                    window_forecast = None
             windows.append(
                 {
                     "name": usage_window_name(lane_id, getattr(lane, "label", None), model),
                     "id": getattr(lane, "lane_id", None),
-                    "used_pct": (
-                        round(100.0 - float(remaining), 1) if remaining is not None else None
-                    ),
+                    "used_pct": used_pct,
                     "resets_at": epoch(getattr(lane, "reset_at", None)),
                     "scope": getattr(lane, "scope", None),
                     "model": getattr(lane, "model", None),
+                    "forecast": window_forecast,
                 }
             )
         state = getattr(getattr(snapshot, "state", None), "value", None)
         account_label = getattr(snapshot, "account_label", None)
         account_plan = getattr(snapshot, "account_plan", None)
-        provider_id = getattr(snapshot, "provider_id", "unknown")
         forecast = None
         primary = primary_window(windows)
-        if usage_samples is not None and primary is not None and now is not None:
-            try:
-                forecast = usage_samples.forecast(
-                    provider_id,
-                    primary.get("id"),
-                    used_pct=primary.get("used_pct"),
-                    resets_at=primary.get("resets_at"),
-                    now=now,
-                )
-            except Exception:
-                forecast = None
+        if primary is not None:
+            forecast = primary.get("forecast")
         providers.append(
             {
                 "id": provider_id,
                 "instance": getattr(snapshot, "source_instance_id", "default"),
+                # False for a provider with no quota collector at all, so a
+                # "show meters" control can hide instead of drawing dead.
+                "quota_source": _provider_supports_quota(provider_id),
                 # The app's UsageAccount block: {plan, label, fidelity}.
                 # `plan` is the provider's own word for the subscription
                 # ("pro", "Max 20x"), never inferred from which windows
@@ -1088,6 +1188,10 @@ def build_state_document(
     acknowledged_keys: object = (),
     snoozed_until_by_id: dict[str, float] | None = None,
     dnd_override_until: object = None,
+    answer_contracts: object = None,
+    has_answer_handler: object = None,
+    detected_agents: Mapping[str, bool] | None = None,
+    catalog_generation: int | None = None,
 ) -> dict[str, Any]:
     """The full ``state`` frame. ``snapshot`` is a MonitorSnapshot-shaped
     object; ``deck`` is ``core_deck.build_deck_document``'s ``state.deck``;
@@ -1138,6 +1242,8 @@ def build_state_document(
             workers=workers_by_parent.get(agent_id, 0),
             parent_label=labels_by_id.get(str(parent)) if parent else None,
             snoozed_until=(snoozed_until_by_id or {}).get(agent_id),
+            answer_contracts=answer_contracts,
+            has_answer_handler=has_answer_handler,
         )
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
@@ -1161,7 +1267,13 @@ def build_state_document(
     # projected, and a dangling ask is worse than a dropped one -- it is a
     # amber light with nothing behind it.
     asks = [
-        ask_document(status, operator_state, with_session=True)
+        ask_document(
+            status,
+            operator_state,
+            with_session=True,
+            answer_contracts=answer_contracts,
+            has_answer_handler=has_answer_handler,
+        )
         for status in ask_statuses
         if str(getattr(status, "agent_id", "") or "") in listed_ids
     ]
@@ -1197,6 +1309,13 @@ def build_state_document(
         },
         "health": {
             "hooks": hook_health(intake_report),
+            # Whether each agent was actually found on this Mac (the
+            # installed-agent inventory), so the Agents page can say
+            # "not installed" instead of implying a dead hook.
+            "detected": {
+                str(provider): bool(detected)
+                for provider, detected in (detected_agents or {}).items()
+            },
             "sources": {
                 str(getattr(intake, "provider", "")): {
                     "fresh": bool(getattr(intake, "delivering", False)),
@@ -1226,6 +1345,10 @@ def build_state_document(
         "unseen_completions": unseen,
         "settings_generation": int(settings_generation),
     }
+    if catalog_generation is not None:
+        # Moves when the effect registry, packs or assignments change, so a
+        # client can reload its catalog without reconnecting.
+        document["catalog_generation"] = int(catalog_generation)
     if deck is not None:
         document["deck"] = dict(deck)
     return document
@@ -1317,7 +1440,7 @@ def history_rows(ledger: object, *, since: float | None = None, limit: int = 500
                 "session": getattr(entry, "subject_id", None),
                 "label": getattr(entry, "label", None),
                 "detail": getattr(entry, "detail", None),
-                "duration": None,
+                "duration": getattr(entry, "duration_seconds", None),
                 "unseen": at > last_seen,
             }
         )

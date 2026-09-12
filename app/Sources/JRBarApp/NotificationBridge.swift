@@ -5,7 +5,9 @@ import UserNotifications
 /// macOS notifications for daemon events. Permission is requested the
 /// first time a notification is actually due, never at launch. Clicking
 /// a banner opens the session; the ask category adds Approve and Deny
-/// actions that answer it without opening anything.
+/// actions that type the answer into the session's terminal — the daemon
+/// raises that terminal first, so the banner is not "without opening
+/// anything", it answers without the panel.
 ///
 /// `UNUserNotificationCenter` needs a bundle identifier, so when the app
 /// runs unbundled (`swift run`) every call becomes a log line.
@@ -18,6 +20,11 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
 
     var onOpenSession: ((String) -> Void)?
     var onAnswerAsk: ((String, Bool) -> Void)?
+    /// Awaited answerer, preferred over `onAnswerAsk` when set: returns the
+    /// daemon's refusal message (or nil on success), so a refused banner
+    /// action surfaces instead of doing nothing. The app wires it to
+    /// `CoreModel.answerAskNow`.
+    var onAnswerAskNow: (@MainActor (String, Bool) async -> String?)?
     var onLog: ((String) -> Void)?
 
     private var center: UNUserNotificationCenter?
@@ -110,14 +117,33 @@ final class NotificationBridge: NSObject, UNUserNotificationCenterDelegate {
         await MainActor.run {
             switch action {
             case Self.approveAction:
-                if let session { onAnswerAsk?(session, true) }
+                if let session { answer(session, approve: true) }
             case Self.denyAction:
-                if let session { onAnswerAsk?(session, false) }
+                if let session { answer(session, approve: false) }
             case UNNotificationDismissActionIdentifier:
                 break
             default:
                 if let session { onOpenSession?(session) }
             }
+        }
+    }
+
+    /// Approve/Deny on a banner. With `onAnswerAskNow` wired the answer is
+    /// awaited: a refusal becomes a follow-up banner naming why, and
+    /// clicking that banner opens the session to answer it there.
+    private func answer(_ session: String, approve: Bool) {
+        guard let onAnswerAskNow else {
+            onAnswerAsk?(session, approve)
+            return
+        }
+        Task { @MainActor in
+            let refusal = await onAnswerAskNow(session, approve)
+            guard let refusal else { return }
+            onLog?("answer_ask refused: \(refusal)")
+            deliver(.init(identifier: "answer-refused:\(session)",
+                          title: "Could not \(approve ? "approve" : "deny") the ask",
+                          body: "\(refusal) — click to open the session.",
+                          category: .plain, session: session))
         }
     }
 }

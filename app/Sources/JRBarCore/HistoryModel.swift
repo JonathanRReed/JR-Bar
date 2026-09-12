@@ -11,7 +11,9 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
     public var detail: String?
     /// Seconds the thing took, when the daemon knows (a completed run, an answered ask).
     public var duration: Double?
-    /// True when it happened while the Mac was asleep or locked.
+    /// True when the row is newer than the daemon's `last_seen` watermark —
+    /// everything recorded since the History window last looked, however the
+    /// Mac spent that time (asleep, locked, or simply unopened).
     public var unseen: Bool
 
     public var id: String { "\(at)|\(kind)|\(session ?? "")|\(label ?? "")" }
@@ -24,6 +26,26 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         let text = SessionLabel.display(label: label, shortId: nil, id: session ?? "", provider: providerID)
         if text.isEmpty { return SessionLabel.providerName(providerID) }
         return text
+    }
+
+    /// The row's title. `displayLabel` falls back to eight characters of a
+    /// session id when the daemon sent no usable label; a daemon-projected
+    /// `detail` (the ask's summary, the sweep's "Swept 14 documents", a
+    /// threshold's "90 %") is more readable than a hash, so it wins when the
+    /// label was absent or itself a bare UUID.
+    public var displayTitle: String {
+        let label = (self.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if (label.isEmpty || SessionLabel.looksLikeUUID(label)), let detail, !detail.isEmpty {
+            return detail
+        }
+        return displayLabel
+    }
+
+    /// True when `displayTitle` promoted the detail: the row then shows the
+    /// provider under the title instead of repeating the same words.
+    public var detailIsTitle: Bool {
+        let label = (self.label ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (label.isEmpty || SessionLabel.looksLikeUUID(label)) && detail?.isEmpty == false
     }
 
     public init(at: Double, kind: String, provider: String? = nil, session: String? = nil, label: String? = nil,
@@ -54,9 +76,12 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
 
     public var date: Date { Date(timeIntervalSince1970: at) }
 
-    public static let kinds = ["started", "completed", "asked", "answered", "failed", "ended"]
+    /// The kinds the daemon's `list_history` emits (`completed`, `asked`,
+    /// `failed`, `quota_crossed`) plus the ones older documents carried.
+    public static let kinds = ["started", "completed", "asked", "answered", "failed", "ended", "quota_crossed"]
 
-    /// "Started", "Needed you", "Answered", "Finished", "Failed", "Ended".
+    /// "Started", "Needed you", "Answered", "Finished", "Failed", "Ended",
+    /// "Quota crossed".
     public var kindWord: String {
         switch kind {
         case "started": return "Started"
@@ -65,6 +90,7 @@ public struct CoreHistoryRow: Codable, Hashable, Sendable, Identifiable {
         case "answered": return "Answered"
         case "failed": return "Failed"
         case "ended": return "Ended"
+        case "quota_crossed": return "Quota crossed"
         default: return kind.prefix(1).uppercased() + kind.dropFirst()
         }
     }
@@ -137,7 +163,7 @@ public struct AwaySummary: Equatable, Sendable {
     public var counts: [String: Int]
 
     public var text: String {
-        let order = ["completed", "asked", "failed", "answered", "started", "ended"]
+        let order = ["completed", "asked", "failed", "answered", "started", "quota_crossed", "ended"]
         let parts = order.compactMap { kind -> String? in
             guard let count = counts[kind], count > 0 else { return nil }
             switch kind {
@@ -146,6 +172,7 @@ public struct AwaySummary: Equatable, Sendable {
             case "failed": return "\(count) failed"
             case "answered": return "\(count) answered"
             case "started": return "\(count) started"
+            case "quota_crossed": return count == 1 ? "1 quota crossing" : "\(count) quota crossings"
             default: return "\(count) ended"
             }
         }

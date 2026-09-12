@@ -52,6 +52,8 @@ from jrbar.core_projection import (
 )
 from jrbar.core_usage_samples import UsageSampleBuffer
 from jrbar.models import AgentMode, AgentStatus
+from jrbar.provider_facts import RequestKind, WorkIdentifier, WorkKey
+from jrbar.providers import negotiated_provider_sources
 
 ROOT = Path(__file__).resolve().parents[1]
 SWIFT_FIXTURE = ROOT / "app" / "Tests" / "JRBarCoreTests" / "Fixtures" / "python-state.json"
@@ -95,20 +97,6 @@ def fixture_inputs() -> dict:
         tool_name=None,
         work_key="wk-claude-worker",
     )
-    codex = _status(
-        provider="codex",
-        agent_id=CODEX_ID,
-        display_name="sidepulse-core",
-        mode=AgentMode.WAITING_FOR_INPUT,
-        updated_at=_at(92.4),
-        event_name="PermissionRequest",
-        session_id="0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
-        cwd="/Users/j/Downloads/JR-Bar/src",
-        tool_name="Bash",
-        message="Run: rm -rf build",
-        origin="Codex CLI",
-        work_key="wk-codex",
-    )
     gemini = _status(
         provider="gemini",
         agent_id=GEMINI_ID,
@@ -123,6 +111,30 @@ def fixture_inputs() -> dict:
         stale=True,
         work_key="wk-gemini",
     )
+    # The codex ask's answerability is decided off the provider's own
+    # negotiated contract, so the fixture carries the real ``WorkKey`` and
+    # the real contract rather than a stub that would always answer False.
+    codex_source = next(
+        source
+        for source in negotiated_provider_sources()
+        if source.source_key.provider_id == "codex"
+        and source.source_key.capability_id == "live_agent_events"
+    )
+    codex_work_key = WorkKey(codex_source.source_key, WorkIdentifier("wk-codex"))
+    codex = _status(
+        provider="codex",
+        agent_id=CODEX_ID,
+        display_name="sidepulse-core",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        updated_at=_at(92.4),
+        event_name="PermissionRequest",
+        session_id="0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
+        cwd="/Users/j/Downloads/JR-Bar/src",
+        tool_name="Bash",
+        message="Run: rm -rf build",
+        origin="Codex CLI",
+        work_key=codex_work_key,
+    )
     snapshot = SimpleNamespace(
         aggregate=SimpleNamespace(mode=AgentMode.WAITING_FOR_INPUT),
         statuses=(claude, worker, codex),
@@ -133,15 +145,15 @@ def fixture_inputs() -> dict:
         generation=41,
         requests=(
             SimpleNamespace(
-                key=SimpleNamespace(work_key="wk-codex"),
+                key=SimpleNamespace(work_key=codex_work_key),
                 phase=SimpleNamespace(value="live_unacknowledged"),
-                request_kind=SimpleNamespace(value="permission"),
+                request_kind=RequestKind.PERMISSION,
                 opened_at_epoch=1788982800.0,
             ),
         ),
         works=(
             SimpleNamespace(key="wk-claude", next_actor=SimpleNamespace(value="provider")),
-            SimpleNamespace(key="wk-codex", next_actor=SimpleNamespace(value="user")),
+            SimpleNamespace(key=codex_work_key, next_actor=SimpleNamespace(value="user")),
             SimpleNamespace(key="wk-gemini", next_actor=SimpleNamespace(value="user")),
         ),
     )
@@ -277,6 +289,13 @@ def fixture_inputs() -> dict:
         extras_by_id=extras,
         deck=deck,
         usage_samples=usage_samples,
+        # The negotiated contracts the daemon actually hands the
+        # projection: the codex ask's ``answerable`` is decided off this
+        # map plus a registered handler for the bound local surface.
+        answer_contracts={codex_source.source_key: codex_source.contract},
+        has_answer_handler=lambda _invocation: True,
+        detected_agents={"claude": True, "codex": True, "pi": False},
+        catalog_generation=4172,
     )
 
 
@@ -309,13 +328,20 @@ def test_state_document_projects_sessions_asks_and_aggregate() -> None:
     assert claude["origin"] == {"kind": "claude_app", "label": "Claude App", "bundle_id": "com.anthropic.claudefordesktop"}
     assert claude["terminal"]["tty"] == "/dev/ttys004"
     assert claude["workers"] == 1
+    assert claude["remote"] is False
     assert claude["ask"] is None
 
     worker = sessions[CLAUDE_WORKER_ID]
     assert worker["kind"] == "worker" and worker["parent"] == CLAUDE_ID
 
     codex = sessions[CODEX_ID]
-    assert codex["ask"] == {"kind": "permission", "opened_at": 1788982800.0, "summary": "Run: rm -rf build"}
+    # The contract declares answering and the handler is registered, so a
+    # permission ask is answerable; ``replyable`` stays False -- free text
+    # is for input asks only.
+    assert codex["ask"] == {
+        "kind": "permission", "opened_at": 1788982800.0, "summary": "Run: rm -rf build",
+        "answerable": True, "replyable": False,
+    }
     assert codex["next_actor"] == "user"
     # The origin comes from the hook annotation when the registry has none.
     assert codex["origin"]["label"] == "Codex CLI" and codex["origin"]["kind"] == "codex_cli"
@@ -324,7 +350,10 @@ def test_state_document_projects_sessions_asks_and_aggregate() -> None:
     assert gemini["stale"] is True and gemini["lifecycle"] == "completed"
 
     assert document["asks"] == [
-        {"session": CODEX_ID, "kind": "permission", "opened_at": 1788982800.0, "summary": "Run: rm -rf build"}
+        {
+            "session": CODEX_ID, "kind": "permission", "opened_at": 1788982800.0,
+            "summary": "Run: rm -rf build", "answerable": True, "replyable": False,
+        }
     ]
     assert document["aggregate"] == {
         "mode": "needs_you", "needs_you": 1, "active": 1, "ready": 1, "failed": 0, "total": 3,
@@ -366,8 +395,10 @@ def test_state_document_projects_devices_usage_power_focus_and_health() -> None:
     assert document["focus"]["until"] == NOW + 3600.0
     assert document["escalation"] == {"stage": "menu_bar", "since": 1788982800.0}
     assert document["health"]["hooks"] == {"claude": "ok", "codex": "stale", "pi": "missing"}
+    assert document["health"]["detected"] == {"claude": True, "codex": True, "pi": False}
     assert document["health"]["sources"]["codex"]["fresh"] is False
     assert document["health"]["intake"]["source_health"] == "partial"
+    assert document["catalog_generation"] == 4172
     assert document["settings_generation"] == 17
     json.dumps(document)
 
@@ -496,13 +527,48 @@ def test_small_helpers() -> None:
     assert origin_document(None) is None
 
 
+def _fixture_is_carried_by(fixture: object, document: object, path: str = "$") -> list[str]:
+    """Every key the Swift fixture carries must decode against what the
+    daemon now emits. The projection may add fields -- Swift's Codable
+    ignores them -- but nothing the fixture names may change or vanish,
+    so the check is fixture ⊆ projection, recursively."""
+    if isinstance(fixture, dict):
+        if not isinstance(document, dict):
+            return [f"{path}: fixture has an object, document has {type(document).__name__}"]
+        mismatches: list[str] = []
+        for key, value in fixture.items():
+            if key not in document:
+                mismatches.append(f"{path}.{key}: missing from the projection")
+            else:
+                mismatches += _fixture_is_carried_by(value, document[key], f"{path}.{key}")
+        return mismatches
+    if isinstance(fixture, list):
+        if not isinstance(document, list) or len(fixture) != len(document):
+            return [f"{path}: fixture has {len(fixture)} rows, projection has "
+                    f"{len(document) if isinstance(document, list) else type(document).__name__}"]
+        mismatches = []
+        for index, (want, got) in enumerate(zip(fixture, document)):
+            mismatches += _fixture_is_carried_by(want, got, f"{path}[{index}]")
+        return mismatches
+    return [] if fixture == document else [f"{path}: {fixture!r} != {document!r}"]
+
+
 def test_swift_fixture_matches_the_projection() -> None:
     document = build_state_document(**fixture_inputs())
     encoded = json.dumps(document, indent=1, sort_keys=True) + "\n"
     if os.environ.get("JRBAR_UPDATE_FIXTURES") == "1":
         SWIFT_FIXTURE.write_text(encoded, encoding="utf-8")
     assert SWIFT_FIXTURE.exists(), "run with JRBAR_UPDATE_FIXTURES=1 to write the Swift fixture"
-    assert json.loads(SWIFT_FIXTURE.read_text(encoding="utf-8")) == json.loads(encoded)
+    # The fixture lives in app/Tests and is rewritten only when the app's
+    # models change; daemon-side additions (answerable, remote, detected,
+    # catalog_generation, …) are ignored by Swift's Codable, so the parity
+    # assertion is directional: everything the fixture names must still
+    # arrive with the same shape and value.
+    mismatches = _fixture_is_carried_by(
+        json.loads(SWIFT_FIXTURE.read_text(encoding="utf-8")),
+        json.loads(encoded),
+    )
+    assert mismatches == [], "\n".join(mismatches)
 
 
 #: A glance's ``relay_epoch`` is a ``time.monotonic()`` reading, not a

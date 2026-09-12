@@ -36,6 +36,9 @@ REQUIRED_COMMANDS = {
     # app-proposed extensions (app/README.md): Effect Studio and Usage Center
     "list_effects", "render_effect", "list_assignments", "set_assignment", "clear_assignment",
     "import_effect_pack", "export_effect_pack", "usage_history",
+    # History/remote/Scene-pack extensions the app's stores already call.
+    "mark_history_seen", "dismiss_session", "serve_token",
+    "list_scene_packs", "import_scene_pack", "preview_scene_pack",
 }
 
 
@@ -416,6 +419,14 @@ def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: p
     assert catalog["packs"] == []
     assert catalog["generation"] == core_effects.catalog_generation(EFFECT_REGISTRY, ())
     assert catalog["generation"] > 0
+    # state carries the same number, so the app sees catalog changes on
+    # the state channel without a second request.
+    assert controller._core_build_state()["catalog_generation"] == catalog["generation"]
+    # ``health.detected`` is the Settings > Agents install gate.
+    detected = controller._core_build_state()["health"]["detected"]
+    assert isinstance(detected, dict) and all(
+        type(value) is bool for value in detected.values()
+    )
     render = controller._core_dispatch("render_effect", {"effect_id": "blink", "parameters": {"cadence": "double"}, "led_count": 2})
     assert render["led_count"] == 2 and render["cadence"]["id"] == "double" and "300ms" in render["program"]
     with pytest.raises(CommandError) as unknown:
@@ -459,6 +470,102 @@ def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: p
     assert bad.value.code == "invalid_pack"
     packed = controller._core_dispatch("render_effect", {"effect_id": "pack:night-lab:aurora", "parameters": {"duration_seconds": 1.0}})
     assert packed["parameters"]["motion"] == "aurora" and packed["program"]
+
+
+def test_set_assignment_rejects_states_that_cannot_fire(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """State-scope assigns the router can never deliver are refused.
+
+    ``_semantic_kind`` only ever produces asking/failure/completion/
+    notification; a "working" or "idle" row in the assignment document
+    would be a write-only promise. The Studio picker stopped offering
+    them; the socket refuses them too.
+    """
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: tmp_path / "packs")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+
+    for target in ("working", "idle", "recovery", "environment", "transition", "quota"):
+        with pytest.raises(CommandError) as refused:
+            controller._core_dispatch("set_assignment", {"effect_id": "pulse", "scope": "semantic", "target_id": target})
+        assert refused.value.code == "unroutable_semantic", target
+
+    routed = controller._core_dispatch("set_assignment", {"effect_id": "comet", "scope": "semantic", "target_id": "completion"})
+    assert routed["assignment"]["target_id"] == "completion"
+
+
+def test_provider_motion_assignment_writes_the_color_policy(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """"Assign → Provider → <agent>" for a motion must reach the strip.
+
+    ``provider_animation`` is the persistent per-provider motion the solo
+    renderers read; recording the row alone was the dead write the
+    assignment picker implied but never delivered.
+    """
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: tmp_path / "packs")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+
+    controller._core_dispatch("set_assignment", {"effect_id": "kitt", "scope": "provider", "target_id": "devin"})
+    assert controller.settings.colors.provider_animation == {"devin": "kitt"}
+
+    # A non-motion effect assigned to a provider still records (it reshapes
+    # that provider's flashes) but must not touch the motion policy.
+    controller._core_dispatch("set_assignment", {"effect_id": "rainbow", "scope": "provider", "target_id": "codex"})
+    assert controller.settings.colors.provider_animation == {"devin": "kitt"}
+
+    controller._core_dispatch("clear_assignment", {"scope": "provider", "target_id": "devin"})
+    assert "devin" not in controller.settings.colors.provider_animation
+    # The flash-path assignment for codex survives the devin motion clear.
+    assert controller._core_dispatch("list_assignments", {})["assignments"] != []
+
+
+def test_serve_server_tracks_serve_enabled_and_the_token(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Settings > Remote's switch runs the loopback endpoint it describes."""
+    monkeypatch.setenv("JRBAR_SERVE_ACCESS_TOKEN", "t" * 32)
+    monkeypatch.setenv("JRBAR_SERVE_PORT", "0")
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    reply = controller._core_dispatch("serve_token", {})
+    assert reply["enabled"] is False and reply["running"] is False
+    assert reply["token"] == "t" * 32
+
+    controller._core_dispatch("set_setting", {"path": "serve_enabled", "value": True})
+    server = getattr(controller, "_core_serve_server", None)
+    assert server is not None
+    assert controller._core_dispatch("serve_token", {})["running"] is True
+    assert server.server_address[1] != 0
+
+    controller._core_dispatch("set_setting", {"path": "serve_enabled", "value": False})
+    assert getattr(controller, "_core_serve_server", None) is None
+    assert controller._core_dispatch("serve_token", {})["running"] is False
+
+
+def test_serve_server_needs_the_token_env(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No token in the daemon's environment means no endpoint -- the
+    anonymous variant is a CLI flag, never a default."""
+    monkeypatch.delenv("JRBAR_SERVE_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("JRBAR_SERVE_PORT", raising=False)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    controller._core_dispatch("set_setting", {"path": "serve_enabled", "value": True})
+    assert getattr(controller, "_core_serve_server", None) is None
+    reply = controller._core_dispatch("serve_token", {})
+    assert reply["enabled"] is True and reply["running"] is False and reply["token"] is None
 
 
 def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1769,6 +1876,231 @@ def test_undo_clear_expires_after_its_window(cleared, monkeypatch: pytest.Monkey
     with pytest.raises(CommandError) as unknown:
         controller._core_dispatch("undo_clear", {"batch": "nope"})
     assert unknown.value.code == "not_found"
+
+
+# --- dismiss_session / mark_history_seen / serve_token -----------------------
+
+
+def test_dismiss_session_hides_a_live_row_until_it_speaks(cleared) -> None:
+    """The row leaves ``state.sessions`` now and returns the moment the
+    session's ``updated_at`` moves past the acknowledgement receipt."""
+    from dataclasses import replace
+    from datetime import datetime, timezone
+
+    controller = cleared
+    assert "claude:session:live" in _listed(controller)
+
+    reply = controller._core_dispatch("dismiss_session", {"session": "claude:session:live"})
+
+    assert reply == {"session": "claude:session:live", "dismissed": True}
+    assert "claude:session:live" not in _listed(controller)
+    # The receipt persists: a restarted daemon keeps the row hidden.
+    assert controller.clear_agents_path.exists()
+
+    live = controller.last_snapshot.statuses[0]
+    controller.last_snapshot.statuses = (
+        replace(live, updated_at=datetime.now(timezone.utc)),
+    )
+    controller._core_publish_state()
+    assert "claude:session:live" in _listed(controller)
+
+
+def test_dismiss_session_refuses_asks_remote_and_unknown_rows(cleared) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from jrbar.capacity_types import SourceKey
+    from jrbar.models import AgentMode, AgentStatus
+    from jrbar.provider_facts import WorkIdentifier, WorkKey
+
+    controller = cleared
+    with pytest.raises(CommandError) as missing:
+        controller._core_dispatch("dismiss_session", {"session": "nope"})
+    assert missing.value.code == "not_found"
+
+    # A row pinned by an open ask stays non-dismissible.
+    live = controller.last_snapshot.statuses[0]
+    controller._core_ask_statuses = lambda: [live]
+    with pytest.raises(CommandError) as pinned:
+        controller._core_dispatch("dismiss_session", {"session": "claude:session:live"})
+    assert pinned.value.code == "refused"
+    del controller._core_ask_statuses
+
+    # A mirrored remote row is the peer's to manage.
+    source = SourceKey("claude", "hooks", "local", "agent_events")
+    remote = AgentStatus(
+        provider="claude",
+        agent_id="remote:studio-mac:claude:session:1",
+        display_name="remote row",
+        mode=AgentMode.WORKING,
+        updated_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        event_name="PreToolUse",
+        work_key=WorkKey(source, WorkIdentifier("remote.work")),
+    )
+    controller.last_snapshot.stale_statuses = (*controller.last_snapshot.stale_statuses, remote)
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("dismiss_session", {"session": remote.agent_id})
+    assert refused.value.code == "refused"
+
+
+def test_dismiss_session_rejects_a_row_without_exact_identity(cleared) -> None:
+    """A status whose work_key is not a real ``WorkKey`` cannot carry a
+    receipt -- the command refuses instead of guessing."""
+    from dataclasses import replace
+
+    controller = cleared
+    live = controller.last_snapshot.statuses[0]
+    controller.last_snapshot.statuses = (replace(live, work_key=None),)
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("dismiss_session", {"session": "claude:session:live"})
+    assert refused.value.code == "refused"
+
+
+def test_mark_history_seen_advances_the_watermark(headless) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    before = controller._core_dispatch("list_history", {})
+    assert before["rows"] == [] and before["last_seen"] is not None
+
+    reply = controller._core_dispatch("mark_history_seen", {})
+
+    assert reply["last_seen"] >= before["last_seen"]
+    after = controller._core_dispatch("list_history", {})
+    assert after["last_seen"] == reply["last_seen"]
+
+
+def test_serve_token_answers_the_loopback_bearer(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.delenv("JRBAR_SERVE_ACCESS_TOKEN", raising=False)
+    reply = controller._core_dispatch("serve_token", {})
+    assert reply["token"] is None
+    monkeypatch.setenv("JRBAR_SERVE_ACCESS_TOKEN", "test-token-123")
+    reply = controller._core_dispatch("serve_token", {})
+    assert reply["token"] == "test-token-123"
+    # The token never lands in a published document -- it is socket-only.
+    import json
+
+    with controller._core_lock:
+        state = controller._core_documents.get("state") or {}
+    assert "test-token-123" not in json.dumps(state)
+
+
+# --- scene packs over the real store ------------------------------------------
+
+
+def _scene_pack_payload(pack_id: str = "nightlab", *, version: int = 2) -> dict:
+    scene_keys = {
+        "brightness": 0.2,
+        "device_selection": "active",
+        "display_admission": "none",
+        "label": "Night",
+        "motion": "static",
+        "notifications": "none",
+        "scene": "night",
+        "surface_role": "ambient",
+    }
+    payload = {
+        "id": pack_id,
+        "name": "Night Lab",
+        "version": version,
+        "safety": {"data_only": True, "network": False},
+        "accessibility": {
+            "reduced_motion": True,
+            "high_contrast": True,
+            "non_color_cues": True,
+        },
+        "scenes": [scene_keys],
+    }
+    if version == 1:
+        # The v1 wire shape: ``policies`` keyed by ``id``, version implicit.
+        entry = dict(scene_keys)
+        entry["id"] = entry.pop("scene")
+        payload = {
+            "id": pack_id,
+            "name": "Night Lab",
+            "policies": [entry],
+        }
+    return payload
+
+
+@pytest.fixture()
+def scene_store(headless, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from jrbar import scene_pack_store
+
+    monkeypatch.setattr(
+        scene_pack_store,
+        "default_scene_pack_store_path",
+        lambda home=None: tmp_path / "scene-packs",
+    )
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    return controller
+
+
+def test_scene_packs_list_import_preview_and_conflict(
+    scene_store, tmp_path: Path
+) -> None:
+    import json as _json
+
+    controller = scene_store
+    assert controller._core_dispatch("list_scene_packs", {}) == {"packs": []}
+    with pytest.raises(CommandError) as unknown:
+        controller._core_dispatch("preview_scene_pack", {"pack_id": "nightlab"})
+    assert unknown.value.code == "not_found"
+
+    source = tmp_path / "nightlab.json"
+    source.write_text(_json.dumps(_scene_pack_payload()), encoding="utf-8")
+    imported = controller._core_dispatch("import_scene_pack", {"path": str(source)})
+    assert imported["pack_id"] == "nightlab" and imported["installed"] is True
+    assert imported["scenes"] == ["night"] and imported["migrated"] is False
+
+    packs = controller._core_dispatch("list_scene_packs", {})["packs"]
+    assert packs == [{"id": "nightlab", "name": "Night Lab", "scenes": ["night"], "installed": True}]
+
+    preview = controller._core_dispatch(
+        "preview_scene_pack", {"pack_id": "nightlab", "led_count": 4}
+    )
+    assert preview["pack_id"] == "nightlab" and preview["led_count"] == 4
+    # A static, dimmed scene compiles to a real (safe) program.
+    assert preview["program"] and "#" in preview["program"]
+
+    with pytest.raises(CommandError) as conflict:
+        controller._core_dispatch("import_scene_pack", {"path": str(source)})
+    assert conflict.value.code == "conflict"
+    # Identical bytes are "already current", not a second write; a changed
+    # pack under `update: true` replaces it.
+    with pytest.raises(CommandError) as same:
+        controller._core_dispatch(
+            "import_scene_pack", {"path": str(source), "update": True}
+        )
+    assert same.value.code == "refused"
+    changed = _scene_pack_payload()
+    changed["scenes"][0]["brightness"] = 0.35
+    source.write_text(_json.dumps(changed), encoding="utf-8")
+    updated = controller._core_dispatch(
+        "import_scene_pack", {"path": str(source), "update": True}
+    )
+    assert updated["pack_id"] == "nightlab" and updated["status"] == "updated"
+
+    with pytest.raises(CommandError) as bad:
+        controller._core_dispatch("import_scene_pack", {"path": str(tmp_path / "missing.json")})
+    assert bad.value.code == "invalid_pack"
+    with pytest.raises(CommandError) as invalid:
+        bad_pack = tmp_path / "bad.json"
+        bad_pack.write_text('{"id": "x"}', encoding="utf-8")
+        controller._core_dispatch("import_scene_pack", {"path": str(bad_pack)})
+    assert invalid.value.code == "invalid_pack"
+
+
+def test_import_scene_pack_reports_a_migrated_v1_pack(
+    scene_store, tmp_path: Path
+) -> None:
+    import json as _json
+
+    source = tmp_path / "legacy.json"
+    source.write_text(_json.dumps(_scene_pack_payload("legacy-pack", version=1)), encoding="utf-8")
+    reply = scene_store._core_dispatch("import_scene_pack", {"path": str(source)})
+    assert reply["pack_id"] == "legacy-pack" and reply["migrated"] is True
 
 
 def _dead_process_row(cleared, monkeypatch: pytest.MonkeyPatch, end_reason: str | None) -> dict:

@@ -22,6 +22,14 @@ struct EventPolicyTests {
         let off = EventPolicy.delivery(for: event, state: Self.state(), settings: Self.settings(["completion_notification_enabled": .bool(false)]))
         #expect(off.sound == "Glass")
         #expect(off.notification == nil)
+        // The daemon's own default is off, so a settings document that
+        // simply never mentions the key must read the same as `false` —
+        // or a fresh install banners every completion.
+        let absent = EventPolicy.delivery(for: event, state: Self.state(), settings: Self.settings(["alert_burst": .number(2)]))
+        #expect(absent.sound == "Glass")
+        #expect(absent.notification == nil)
+        let noDoc = EventPolicy.delivery(for: event, state: Self.state(), settings: nil)
+        #expect(noDoc.notification == nil)
         let silent = EventPolicy.delivery(for: CoreEvent(id: "2", kind: "completed", notify: false), state: Self.state(), settings: nil)
         #expect(silent == .nothing)
     }

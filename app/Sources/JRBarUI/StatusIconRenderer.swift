@@ -116,11 +116,15 @@ public struct SessionDot: Hashable, Sendable {
     /// The provider's configured accent (`#RRGGBB`), for a working dot;
     /// the other states carry their own colour.
     public var accentHex: String?
+    /// A snoozed session's ask draws dim and holds still: the family
+    /// mailbox is muted, so the strip must not pulse amber about it.
+    public var dimmed: Bool
 
-    public init(id: String, state: StatusDotState, accentHex: String? = nil) {
+    public init(id: String, state: StatusDotState, accentHex: String? = nil, dimmed: Bool = false) {
         self.id = id
         self.state = state
         self.accentHex = accentHex
+        self.dimmed = dimmed
     }
 }
 
@@ -206,7 +210,7 @@ public struct StatusIconSpec: Hashable, Sendable {
             return bucketed
         }
         let animating = (style.isMeters && dot.animates)
-            || (style == .agents && sessions.contains { $0.state.breathes })
+            || (style == .agents && sessions.contains { $0.state.breathes && !$0.dimmed })
         key.phase = animating ? (phase * 4).rounded() / 4 : 0
         return key
     }
@@ -565,6 +569,12 @@ public final class StatusIconRenderer: @unchecked Sendable {
         case .error: color = .systemRed
         case .done: color = .systemGreen
         }
+        if session.dimmed {
+            // Snoozed: the state colour at a murmur, no halo, no clock.
+            (color ?? ink).withAlphaComponent(0.38).setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            return
+        }
         let phase = session.state.breathes ? phase : 0.5
         drawDot(StatusIconSpec(style: .agents, dot: session.state, phase: phase), rect: rect, color: color, ink: ink)
     }
@@ -662,10 +672,14 @@ public final class StatusIconRenderer: @unchecked Sendable {
                 (.idle, "idle", "idle"),
             ]
             for (state, one, many) in words {
-                let count = spec.sessions.filter { $0.state == state }.count
+                let count = spec.sessions.filter { $0.state == state && !$0.dimmed }.count
                 guard count > 0 else { continue }
                 parts.append(count == 1 ? "1 \(one)" : "\(count) \(many)")
             }
+            // A dimmed dot is a snoozed session: still listed, but not
+            // read as "needs you" while its mailbox is muted.
+            let snoozed = spec.sessions.filter(\.dimmed).count
+            if snoozed > 0 { parts.append(snoozed == 1 ? "1 snoozed" : "\(snoozed) snoozed") }
             return parts.joined(separator: " · ")
         }
         guard spec.style.isMeters else { return "JR-Bar" }

@@ -456,8 +456,12 @@ extension LightExplainer.Context {
         return Subject(name: name, id: detail.session)
     }
 
+    /// The live sessions the light's "working" why can be about. Reduced
+    /// through `SessionActivity` so the explainer and the panel read a
+    /// mode the same way — a `long_task_progress` row is work here too,
+    /// not a silent gap the reason line can't name.
     var workingSessions: [CoreSession] {
-        mains.filter { ["working", "tool_running", "thinking", "running"].contains(($0.mode ?? "").lowercased()) && ($0.lifecycle ?? "active") == "active" }
+        mains.filter { ($0.lifecycle ?? "active") == "active" && SessionActivity.reduce($0) == .working }
             .sorted { ($0.since ?? 0) > ($1.since ?? 0) }
     }
 
@@ -492,15 +496,12 @@ extension LightExplainer.Context {
     }
 
     var topSession: CoreSession? {
+        // The panel's own precedence: `SessionActivity.reduce` reads the
+        // mode/lifecycle pairs, `sortRank` orders them, and a pinned ask
+        // (which reduce cannot see on the session) still leads.
         func rank(_ session: CoreSession) -> Int {
             if hasAsk(session) { return 0 }
-            let mode = (session.mode ?? "").lowercased()
-            let lifecycle = (session.lifecycle ?? "active").lowercased()
-            if lifecycle == "failed" || mode == "failed" || mode == "error" { return 2 }
-            if lifecycle == "completed" || lifecycle == "done" || mode == "completed" { return 4 }
-            if mode == "waiting" || mode == "ask" || session.nextActor == "user" { return 1 }
-            if ["working", "tool_running", "thinking", "running", "active"].contains(mode) { return 3 }
-            return 5
+            return SessionActivity.reduce(session).sortRank
         }
         return mains.min { a, b in
             let ra = rank(a), rb = rank(b)
@@ -512,13 +513,15 @@ extension LightExplainer.Context {
     /// "is working" / "is waiting on you" / "finished" / "failed" / "is idle" for a session id.
     func activityWord(for id: String?) -> String {
         guard let id, let session = state?.session(withID: id) else { return "is on top" }
-        let mode = (session.mode ?? "").lowercased()
-        let lifecycle = (session.lifecycle ?? "active").lowercased()
-        if lifecycle == "failed" || mode == "failed" || mode == "error" { return "failed" }
-        if lifecycle == "completed" || lifecycle == "done" || mode == "completed" { return "finished" }
-        if hasAsk(session) || mode == "waiting" || mode == "ask" || session.nextActor == "user" { return "is waiting on you" }
-        if ["working", "tool_running", "thinking", "running", "active"].contains(mode) { return "is working" }
-        return "is idle"
+        if hasAsk(session) { return "is waiting on you" }
+        switch SessionActivity.reduce(session) {
+        case .waiting: return "is waiting on you"
+        case .failed: return "failed"
+        case .done: return "finished"
+        case .working: return "is working"
+        case .ended: return "went away without finishing"
+        case .idle: return "is idle"
+        }
     }
 
     /// "12 s ago" from the session's last change, else from `seconds_in_state`.

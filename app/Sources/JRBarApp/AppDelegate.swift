@@ -207,6 +207,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
         self.events = events
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
+        // Approve/Deny on a banner are awaited, so a refused answer is
+        // heard: the bridge turns it into a follow-up banner that opens
+        // the session on click.
+        events.notifications.onAnswerAskNow = { [weak core] session, approve in
+            guard let core else { return "the core is not connected" }
+            do {
+                let reply = try await core.answerAskNow(session: session, approve: approve)
+                return reply.ok ? nil : (reply.error?.message ?? reply.error?.code ?? "the core refused")
+            } catch {
+                return "the core is not answering"
+            }
+        }
 
         // File feeds: the fallback until the daemon is connected.
         feed.onProgram = { [weak self] text, source in
@@ -274,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 MainActor.assumeIsolated { panel?.open() }
             }
             // `JRBAR_OPEN_PANEL=why` also hovers the "Why this light" row;
-            // `=clear` sends Clear done once the core is live, so the
+            // `=clear` sends Clear finished once the core is live, so the
             // footer's Undo offer can be photographed.
             if openPanel == "why" {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak panel] in
@@ -424,14 +436,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                         self?.appState.bundledHooksInstalledFor = stamp
                         self?.persistAppState()
                         core?.appendLocalLog(level: "supervisor", "provider hooks installed for \(stamp)")
+                        // A silent success left the first run looking
+                        // broken: nothing can report in until these exist.
+                        // Shows once per build stamp — the `installedFor`
+                        // record above is what keeps it from repeating.
+                        self?.events?.hud.show("Agent hooks installed", symbol: "checkmark.circle")
+                        self?.store?.show(toast: "Hooks installed — sessions appear when they start", actionTitle: "Settings") { [weak self] in
+                            self?.settingsWindow?.show(page: .agents)
+                        }
                     } else {
                         core?.appendLocalLog(level: "supervisor", "provider hook install exited \(result.status); will retry next launch")
+                        self?.events?.hud.show("Agent hook install failed — will retry at next launch", symbol: "exclamationmark.triangle")
+                        self?.store?.show(toast: "Hooks did not install — retry from Settings › Agents", actionTitle: "Open Settings") { [weak self] in
+                            self?.settingsWindow?.show(page: .agents)
+                        }
                     }
                     NSLog("JR-Bar hooks: install all exited %d", result.status)
                 }
             }
         }
         if !appState.loginItemRegistered {
+            // The very first launch opens the panel once, so the one
+            // surface a menu-bar app has is found without a lucky click.
+            // `loginItemRegistered` is the flag — it is only ever false
+            // before this first run completes.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+                MainActor.assumeIsolated { self?.panel?.open() }
+            }
             do {
                 try SMAppService.mainApp.register()
                 core.appendLocalLog(level: "supervisor", "launch at login: registered (Settings › General turns it off)")
@@ -576,13 +607,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Screen Bar visibility
 
-    private func setScreenBar(shown: Bool) {
+    /// Two stores name the same fact: the app's `app-state.json`
+    /// (`showScreenBar`, which owns the window) and the daemon's
+    /// `virtual_status_device_enabled` (which owns the `screen_bar`
+    /// device and whether the lights target it). They are kept in step
+    /// last-write-wins: a toggle here writes through to the daemon, and
+    /// a change that arrives in the settings document (Settings ›
+    /// Devices, another client) is adopted here. On first contact a
+    /// daemon value that is already present initializes the app side;
+    /// when the daemon carries none, the app's remembered state is
+    /// pushed once so the `screen_bar` device agrees with the window.
+    private var screenBarSyncedWithDaemon = false
+    /// A `set_setting` write we sent but whose echo has not landed yet;
+    /// while it is in flight a mismatch is the old value, not a user's
+    /// new choice.
+    private var pendingScreenBarWrite: (value: Bool, at: Date)?
+
+    private func setScreenBar(shown: Bool, syncDaemon: Bool = true) {
         appState.showScreenBar = shown
         persistAppState()
         statusItem?.isScreenBarShown = shown
         store?.screenBarShown = shown
         if shown { screenBar?.show(); interaction?.start() } else { interaction?.stop(); screenBar?.hide() }
         refreshAlcoveFollowing()
+        if syncDaemon { pushScreenBarSetting(shown) }
+    }
+
+    /// `set_setting virtual_status_device_enabled`: the write-through half
+    /// of the sync. Quiet when the core is down — the reconcile pushes the
+    /// remembered value on first contact instead.
+    private func pushScreenBarSetting(_ shown: Bool) {
+        guard core?.isLive == true else { return }
+        pendingScreenBarWrite = (shown, Date())
+        Task { @MainActor [weak self] in
+            guard let self, let core = self.core else { return }
+            do {
+                let reply = try await core.setSetting("virtual_status_device_enabled", value: .bool(shown))
+                if !reply.ok {
+                    self.pendingScreenBarWrite = nil
+                    core.appendLocalLog(level: "warn", "screen bar: virtual_status_device_enabled refused (\(reply.error?.code ?? "?"))")
+                }
+            } catch {
+                self.pendingScreenBarWrite = nil
+            }
+        }
+    }
+
+    /// The adopt half of the sync, run on every core change: when the
+    /// settings document's `virtual_status_device_enabled` disagrees with
+    /// what the band is doing and it is not our own write still landing,
+    /// the daemon's value is the user's latest choice and the band follows.
+    private func reconcileScreenBarSetting() {
+        guard let core else { return }
+        guard core.isLive else {
+            screenBarSyncedWithDaemon = false
+            pendingScreenBarWrite = nil
+            return
+        }
+        let document = core.settings.map { SettingsDocument($0.document) }
+        guard let daemonValue = document?.bool("virtual_status_device_enabled") else {
+            // First contact and the daemon has never heard the fact: push
+            // the app's remembered visibility so its `screen_bar` device
+            // agrees with the window that is actually up. (A daemon with
+            // the key is left alone — `guard`ed below.)
+            if core.isLive && !screenBarSyncedWithDaemon {
+                screenBarSyncedWithDaemon = true
+                pushScreenBarSetting(appState.showScreenBar)
+            }
+            return
+        }
+        if daemonValue == appState.showScreenBar {
+            screenBarSyncedWithDaemon = true
+            if pendingScreenBarWrite?.value == daemonValue { pendingScreenBarWrite = nil }
+            return
+        }
+        if let pending = pendingScreenBarWrite, Date().timeIntervalSince(pending.at) < 10 { return }
+        pendingScreenBarWrite = nil
+        // A daemon value that is present and disagrees is the user's
+        // latest choice (Settings › Devices, another client), and it is
+        // also the first-contact initializer for `appState.showScreenBar`
+        // when the two stores had never met. Adopt it; don't write back.
+        screenBarSyncedWithDaemon = true
+        setScreenBar(shown: daemonValue, syncDaemon: false)
     }
 
     // MARK: Core observation
@@ -636,6 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshIconStyle()
         refreshLights()
         refreshAlcoveFollowing()
+        reconcileScreenBarSetting()
     }
 
     /// `screen_bar_follow_alcove` (default on) while the bar is shown.
@@ -719,11 +826,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func refreshSessionDots() {
         guard let statusItem, let store else { return }
         let rows = store.rows
-        statusItem.sessionDots = rows.map { row in
-            SessionDot(id: row.id, state: Self.sessionDotState(for: row),
-                       accentHex: row.activity == .working ? row.style.accentHex : nil)
-        }
         let now = Date()
+        statusItem.sessionDots = rows.map { row in
+            // A snoozed ask still owns its dot but draws it dim and still:
+            // a muted mailbox pulsing amber in the strip is the snooze not
+            // working from the only place it must visibly work.
+            SessionDot(id: row.id, state: Self.sessionDotState(for: row),
+                       accentHex: row.activity == .working ? row.style.accentHex : nil,
+                       dimmed: row.isSnoozed(now: now))
+        }
         statusItem.sessionLines = rows.map { Self.sessionTooltipLine(for: $0, now: now) }
     }
 
@@ -740,10 +851,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    /// "docs-sweep · waiting on you 2h 31m · Gemini".
+    /// "docs-sweep · waiting on you 2h 31m · Gemini" — a snoozed row adds
+    /// "· snoozed until 08:00" so the strip's dim dot is explained, and a
+    /// peer's session gets "… · on studio-mac" so the tooltip never
+    /// implies a local window exists for it.
     static func sessionTooltipLine(for row: SessionRow, now: Date) -> String {
         var word = row.activity.word.lowercased()
         if let elapsed = PanelStore.elapsed(since: row.since, now: now) { word += " \(elapsed)" }
+        if row.isSnoozed(now: now), let until = row.snoozedUntil {
+            word += " · snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))"
+        }
+        if row.isRemote, let machine = row.remoteMachine { word += " · on \(machine)" }
         return "\(row.label) · \(word) · \(row.style.name)"
     }
 

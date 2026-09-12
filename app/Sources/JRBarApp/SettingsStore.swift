@@ -73,6 +73,9 @@ final class SettingsStore {
     var doctorReport: JSONValue?
     var doctorRunning = false
     var lastError: String?
+    /// A transient confirmation line ("Hooks installed for Claude") under
+    /// the same auto-clear clock as `lastError`.
+    var status: String?
     var resetTarget: Page?
     var pendingWrites = 0
     /// Software-update channel: an app concern, kept in user defaults for
@@ -186,7 +189,7 @@ final class SettingsStore {
                     self.report(error: reply.error?.message ?? "\(path): refused (\(reply.error?.code ?? "error"))")
                     self.dropPending(path)
                 } else {
-                    self.settlePending(path, value: value)
+                    self.settlePending(path, value: value, echoed: reply.result?["value"])
                 }
             } catch {
                 self.report(error: "\(path): \(error)")
@@ -197,14 +200,49 @@ final class SettingsStore {
 
     /// Once the daemon's document carries the value, the overlay is not
     /// needed; if the echo is late, give it a moment rather than snapping.
-    private func settlePending(_ path: String, value: JSONValue) {
-        let echoed = SettingsDocument(core.settings?.document ?? .object([:])).value(at: SettingsPath(path)) == value
-        if echoed || throttles[path] != nil {
-            if echoed { dropPending(path, ifStill: value) }
+    /// `echoed` is the reply's own normalised `value`: when the daemon kept
+    /// something else (a clamped number, a refused flag) the overlay must
+    /// drop at once and say so, not paint the asked-for value until the
+    /// document push lands.
+    private func settlePending(_ path: String, value: JSONValue, echoed: JSONValue? = nil) {
+        if let echoed, !echoed.isNull, !Self.sameValue(echoed, value) {
+            dropPending(path, ifStill: value)
+            report(error: "\(path): the core kept \(Self.describeValue(echoed)) instead")
+            return
+        }
+        let inDocument = SettingsDocument(core.settings?.document ?? .object([:])).value(at: SettingsPath(path)) == value
+        if inDocument || throttles[path] != nil {
+            if inDocument { dropPending(path, ifStill: value) }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             MainActor.assumeIsolated { self?.dropPending(path, ifStill: value) }
+        }
+    }
+
+    /// Loose reply-vs-request comparison: hex colours compare
+    /// case-insensitively, numbers by value.
+    static func sameValue(_ a: JSONValue, _ b: JSONValue) -> Bool {
+        if a == b { return true }
+        if let sa = a.stringValue, let sb = b.stringValue {
+            if normalizedColorHex(sa) != nil || normalizedColorHex(sb) != nil {
+                return normalizedColorHex(sa) == normalizedColorHex(sb)
+            }
+        }
+        if let na = a.doubleValue, let nb = b.doubleValue, a.stringValue == nil, b.stringValue == nil {
+            return na == nb
+        }
+        return false
+    }
+
+    /// `false` → "off", `42` → "42", a string in quotes.
+    static func describeValue(_ value: JSONValue) -> String {
+        switch value {
+        case .bool(let on): return on ? "on" : "off"
+        case .number(let number): return number == number.rounded() ? "\(Int(number))" : "\(number)"
+        case .string(let text): return "“\(text)”"
+        case .null: return "nothing"
+        default: return "a different value"
         }
     }
 
@@ -216,10 +254,20 @@ final class SettingsStore {
 
     func report(error: String) {
         lastError = error
+        status = nil
         errorClear?.cancel()
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.lastError = nil } }
         errorClear = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+    }
+
+    func show(status text: String) {
+        status = text
+        lastError = nil
+        errorClear?.cancel()
+        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.status = nil } }
+        errorClear = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: work)
     }
 
     // MARK: Bindings
@@ -349,8 +397,123 @@ final class SettingsStore {
 
     // MARK: Hooks
 
+    /// Providers a hook install/uninstall is in flight for; the row
+    /// disables its buttons and the reply's per-provider result is shown.
+    private(set) var hookBusy: Set<String> = []
+
     func hookStatus(_ provider: String) -> String? {
         core.state?.health?["hooks"]?[provider]?.stringValue
+    }
+
+    /// `health.detected[provider]`: whether the agent's CLI was found on
+    /// this Mac — nil means the daemon does not say.
+    func hookDetected(_ provider: String) -> Bool? {
+        core.state?.health?["detected"]?[provider]?.boolValue
+    }
+
+    /// `install_hooks` awaited: the reply's `results[provider]` carries
+    /// `ok`, `changed`, `warning`; a refusal becomes the error line.
+    func installHooks(_ provider: String) {
+        runHook(provider: provider, verb: "Install") { try await self.core.installHooksNow(providers: [provider]) }
+    }
+
+    func uninstallHooks(_ provider: String) {
+        runHook(provider: provider, verb: "Remove") { try await self.core.uninstallHooksNow(providers: [provider]) }
+    }
+
+    private func runHook(provider: String, verb: String, _ body: @escaping @MainActor () async throws -> CoreReply) {
+        guard core.isLive, !hookBusy.contains(provider) else { return }
+        hookBusy.insert(provider)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.hookBusy.remove(provider) }
+            do {
+                let reply = try await body()
+                if !reply.ok {
+                    self.report(error: "\(verb) hooks for \(provider): \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    return
+                }
+                let result = reply.result?["results"]?[provider]
+                if result?["ok"]?.boolValue == false {
+                    self.report(error: "\(verb) hooks for \(provider): \(result?["error"]?.stringValue ?? "failed")")
+                } else if let warning = result?["warning"]?.stringValue, !warning.isEmpty {
+                    self.report(error: "\(provider): \(warning)")
+                } else {
+                    self.show(status: verb == "Install" ? "Hooks installed for \(provider)" : "Hooks removed for \(provider)")
+                }
+            } catch {
+                self.report(error: "\(verb) hooks for \(provider): \(error)")
+            }
+        }
+    }
+
+    // MARK: Claude plan limits
+
+    /// `claude_plan_limits_enabled` is consent-gated: the daemon persists
+    /// it only together with this build's `claude_plan_limits_consent_version`
+    /// stamp (`_settings_legacy._claude_plan_limits_consented`). The stamp is
+    /// written first so a consent-aware core sees it already in the
+    /// document; a core that applies the stamp itself answers with the
+    /// normalised `value`, and a bounce is said out loud instead of the
+    /// toggle flipping and quietly reverting.
+    func setClaudePlanLimits(_ on: Bool) {
+        pending["claude_plan_limits_enabled"] = .bool(on)
+        overlayVersion += 1
+        pendingWrites += 1
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.pendingWrites -= 1 }
+            do {
+                if on {
+                    _ = try await self.core.setSetting("claude_plan_limits_consent_version", value: .number(1))
+                }
+                let reply = try await self.core.setSetting("claude_plan_limits_enabled", value: .bool(on))
+                if !reply.ok {
+                    self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
+                    self.report(error: "claude_plan_limits_enabled: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    return
+                }
+                if on, reply.result?["value"]?.boolValue != true {
+                    self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
+                    self.report(error: "Plan limits stayed off: the core applies its own consent stamp and did not keep the write")
+                    return
+                }
+                self.settlePending("claude_plan_limits_enabled", value: .bool(on), echoed: reply.result?["value"])
+            } catch {
+                self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
+                self.report(error: "claude_plan_limits_enabled: \(error)")
+            }
+        }
+    }
+
+    // MARK: Usage
+
+    /// False when the daemon says this provider has no quota source at all
+    /// (`quota_source: false`): metering it would be a dead checkbox.
+    /// A provider the daemon has never listed keeps its checkbox.
+    func hasQuotaSource(_ provider: String) -> Bool {
+        core.usage.filter { $0.id == provider }.allSatisfy { $0.quotaSource }
+    }
+
+    // MARK: Remote
+
+    /// `serve_token`: copies the loopback status endpoint's bearer token
+    /// to the pasteboard. The token is fetched on demand, never stored.
+    func copyServeToken() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                if let token = try await self.core.serveToken(), !token.isEmpty {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(token, forType: .string)
+                    self.show(status: "Serve token copied")
+                } else {
+                    self.report(error: "The core did not hand over a serve token")
+                }
+            } catch {
+                self.report(error: "serve_token: \(error)")
+            }
+        }
     }
 
     // MARK: Actions
