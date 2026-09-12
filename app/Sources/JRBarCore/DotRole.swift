@@ -125,7 +125,7 @@ public struct DotRoleReadout: Equatable, Sendable {
             headline = "Extending the strip"
             detail = "Two bands, LEDs 0–3 and 4–7, each showing its band's brightest lit colour."
             if linkedSkewFresh, let skew = linkedSkewMs {
-                detail! += " In step: the Dot restarts \(Int(skew.rounded())) ms after the strip."
+                detail = (detail ?? "") + " In step: the Dot restarts \(Int(skew.rounded())) ms after the strip."
             }
         case .asks?:
             let state = beaconState(why: dot.why, program: dot.program)

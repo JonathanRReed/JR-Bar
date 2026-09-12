@@ -29,9 +29,12 @@ struct UsageCenterView: View {
                     }
                     // The panel's per-provider drill: scroll the card into
                     // view and flash it. `focusPulses` is the trigger so a
-                    // repeat click on the same provider still scrolls.
+                    // repeat click on the same provider still scrolls; the
+                    // focus is consumed so a later plain open does not
+                    // re-scroll to it.
                     .onChange(of: store.focusPulses) {
                         guard let target = store.focusProvider else { return }
+                        store.focusProvider = nil
                         if store.reduceMotion {
                             proxy.scrollTo(target)
                         } else {
@@ -43,6 +46,7 @@ struct UsageCenterView: View {
                     // scrolls, once the cards are laid out.
                     .onAppear {
                         guard let target = store.focusProvider else { return }
+                        store.focusProvider = nil
                         DispatchQueue.main.async { proxy.scrollTo(target) }
                     }
                 }

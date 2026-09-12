@@ -126,7 +126,7 @@ struct CalibrationSheet: View {
         .padding(20)
         .frame(width: 540)
         .onAppear(perform: load)
-        .onDisappear { store.core.endCalibrationPreview(device: deviceID) }
+        .onDisappear { endPreview() }
         .onChange(of: model) { _, _ in schedulePreview() }
         .onChange(of: comparing) { _, _ in schedulePreview() }
         .onChange(of: companion) { _, _ in schedulePreview() }
@@ -214,6 +214,10 @@ struct CalibrationSheet: View {
     }
 
     private func endPreview() {
+        // A debounced preview still queued would fire after the end and
+        // re-hold the patch for ten minutes with the sheet gone.
+        previewWork?.cancel()
+        previewWork = nil
         store.core.endCalibrationPreview(device: deviceID)
     }
 }

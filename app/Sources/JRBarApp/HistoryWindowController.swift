@@ -65,6 +65,12 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        // A local monitor outlives its window; remove it with the window
+        // and let show() install a fresh one next time.
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
         store.windowDidClose()
     }
 }

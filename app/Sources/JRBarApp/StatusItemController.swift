@@ -181,8 +181,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   dot: iconStyle.isMeters ? (isPulsing ? .ask : dotState) : .idle,
                                   sessions: iconStyle == .agents ? sessionDots : [],
                                   phase: phase)
-        // The meter strip and a non-empty session strip size themselves.
-        let strip = iconStyle.isMeters || (iconStyle == .agents && !sessionDots.isEmpty)
+        // The meter strip and the session strip size themselves -- agents
+        // included while empty, or the last session ending never shrank the
+        // item back (size(for:) already answers the square for that spec).
+        let strip = iconStyle.isMeters || iconStyle == .agents
         let label = iconStyle == .glyphLabel ? labelText : nil
         if spec != currentSpec {
             currentSpec = spec

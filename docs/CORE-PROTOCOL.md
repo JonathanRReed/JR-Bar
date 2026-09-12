@@ -437,8 +437,9 @@ end) and with every refresh.
 - `dot_link` (top level, always present) is the daemon's own word for the
   Pro + Dot link — the truth `devices_linked` can only guess at:
   `{state, role, error}`. `role` is the normalised `dot_role` (null when
-  the link is off or there is no Dot); `error` is the failed linked
-  write's exception class, null otherwise. `state` is one of:
+  the link is off or there is no Dot); `error` is a short description of
+  the last linked-write failure -- the exception class name, or the
+  write's own error -- null otherwise. `state` is one of:
 
   | state | meaning |
   | --- | --- |
@@ -447,8 +448,8 @@ end) and with every refresh.
   | `no_strip` | linked on, Dot connected, role `extend`, no strip to extend — the Dot renders itself until one mounts |
   | `beacon` | role `asks`: the beacon needs no strip |
   | `solo` | role `status`: the Dot drives itself by choice |
-  | `linked` | role `extend` and the last coupled write landed cleanly |
-  | `failed` | role `extend`, both devices connected, and the Dot's half of the last linked write raised (`error` names the class) |
+  | `linked` | the link is in effect for an extend Dot beside a connected strip; the Dot carries the strip's anchor once a coupled write has landed clean (`linked_skew_ms` appears then) |
+  | `failed` | role `extend`, both devices connected, and the Dot's half of the last linked write failed (`error` says how) |
 
   `no_dot`/`no_strip`/`failed` are the states a settings toggle cannot
   express: unplugging the strip the Dot was extending forgets the strip's
@@ -577,7 +578,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `set_brightness` | device or `all`, value 0..1 | `set_device_brightness` (turns auto-brightness off, as the slider does). |
 | `set_device_display` | device, mode | `agent`, `battery`, `studio`, `quota_runway`. |
 | `apply_calibration` | device, profile {red_gain, green_gain, blue_gain, resting_glow, brightness?} | Per-channel gains (0.3…1.5), resting glow (0…0.35) and device brightness (0…255) for that device, clamped and persisted; the reply's `profile` echoes what actually persisted plus `generation`. Ends any held calibration preview for the device. `not_found` for an unknown device, `invalid_args` for a non-numeric field. |
-| `preview_program` | surface (`screen_bar`, `hardware`, `dot` or a device id), program, seconds (0.2…30) | Writes the program to the matching strip(s) now and marks the surface `why: preview` in `lights`; after `seconds` the daemon refreshes and the live program returns. |
+| `preview_program` | surface (`screen_bar`, `hardware`, `dot` or a device id), program, seconds (0.2…30) | Writes the program to the matching strip(s) now and marks the surface `why: preview` in `lights`; after `seconds` the daemon refreshes and the live program returns. Refused with `busy` while a held `preview_calibration` owns the surface or any target device -- a 3 s flash cannot be allowed to paint over a 10-minute calibration hold. |
 | `preview_calibration` | device, gains {red, green, blue} (0.3…1.5, clamped), resting_glow? (0…0.35), brightness? (0…255, default the device's stored brightness), patch? (`white`/`red`/`green`/`blue`/`grey` or `#RRGGBB`, default `white`), companion? (default false) | Shows the nominal patch through the GIVEN values -- resting glow, channel gains and brightness applied once through the device's own write boundary, never the stored profile on top. Held daemon-side for 600 s (re-armed on every call) so the sheet can sit open while the eye decides; live writes for the held device(s) are suppressed meanwhile. For `virtual:status-bar` the transform is the Screen Bar's code-domain one and the hold lands on the `screen_bar` surface. `companion: true` on a Dot also lights the followed strip with the same patch through the strip's STORED profile, so the Dot can be matched to it by eye; the reply's `companion` names that strip (or null). `{device, surface, until, program, companion}`; `not_found`/`invalid_args` on errors. |
 | `end_calibration_preview` | device | Drops the held preview(s) that device owns -- its own and a companion strip's -- clears the dedupe identity the preview bytes left, and re-arms the live program. Idempotent: `{device, ended}`. |
 | `apply_effect` | effect, scope, target | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null removes the assignment. Returns the assignment list. |

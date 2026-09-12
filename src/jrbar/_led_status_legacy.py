@@ -84,21 +84,40 @@ DEVICE_SERIAL_LED_COUNTS = {
     "SPP": 8,
 }
 
+# STATUS.TXT answers which firmware a volume runs, and this file once read
+# it per call -- on the main thread, per device, per refresh (an inline read
+# on a slow FAT volume once blocked that thread 13.7 s). Memoized per root
+# for 60 s; a disconnect invalidates the root so a swapped device is
+# re-read (2026-09-11 audit).
+_LED_COUNT_TTL_SECONDS = 60.0
+_LED_COUNT_CACHE: dict[Path, tuple[float, int | None]] = {}
+
+
+def invalidate_led_count_cache(root: Path) -> None:
+    """Forget a cached LED count -- the device at ``root`` disconnected."""
+    _LED_COUNT_CACHE.pop(root, None)
+
 
 def _led_count_from_serial(root: Path) -> int | None:
+    now = time.monotonic()
+    cached = _LED_COUNT_CACHE.get(root)
+    if cached is not None and now - cached[0] < _LED_COUNT_TTL_SECONDS:
+        return cached[1]
+    count: int | None = None
     try:
         text = (root / "STATUS.TXT").read_text(errors="replace")[:4096]
     except OSError:
-        return None
+        text = ""
     for line in text.splitlines():
         if not line.startswith("serial "):
             continue
         parts = line.split()
         if len(parts) == 2:
             prefix = parts[1].split("-", 1)[0].upper()
-            return DEVICE_SERIAL_LED_COUNTS.get(prefix)
-        return None
-    return None
+            count = DEVICE_SERIAL_LED_COUNTS.get(prefix)
+        break
+    _LED_COUNT_CACHE[root] = (now, count)
+    return count
 
 
 def _led_count_from_name(name: str) -> int:
@@ -114,8 +133,9 @@ def led_count_for_target(target: Path) -> int:
 
     The serial in STATUS.TXT outranks the mount name: a Dot that mounts
     as ``/Volumes/SidePulse`` still gets two segments, and a Pro whose
-    owner renamed it does not shrink to two. The read is one page-cached
-    telemetry file per compose, so no cache and no clock.
+    owner renamed it does not shrink to two. The serial read is memoized
+    per root for a minute (see ``_led_count_from_serial``); the name check
+    stays live.
     """
     count = _led_count_from_serial(target.parent)
     if count is None:

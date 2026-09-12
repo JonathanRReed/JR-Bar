@@ -15,8 +15,6 @@ struct SessionRow: Identifiable, Equatable {
     /// The terminal the daemon says owns the session (`terminal.app`),
     /// for "Open in Ghostty"; nil when it does not know.
     let terminalApp: String?
-    /// `main` / `worker` -- a worker's open is its parent's.
-    let kind: String
     /// The family mailbox's snooze expiry (`snoozed_until`), while one is
     /// in effect; the row offers Unsnooze and says when it ends.
     let snoozedUntil: Double?
@@ -33,7 +31,6 @@ struct SessionRow: Identifiable, Equatable {
         cwd = session.cwd
         cwdTail = session.cwd.map { Self.tail(of: $0) }
         terminalApp = session.terminal?.app
-        kind = session.kind
         snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
         since = session.since.map { Date(timeIntervalSince1970: $0) }
@@ -60,7 +57,6 @@ struct SessionRow: Identifiable, Equatable {
         cwd = nil
         cwdTail = nil
         terminalApp = nil
-        kind = "main"
         snoozedUntil = nil
         activity = .waiting
         since = ask.openedAt.map { Date(timeIntervalSince1970: $0) }
@@ -455,10 +451,18 @@ final class PanelStore {
         return max(60, Int(target.timeIntervalSince(now)))
     }
 
-    /// The wall-clock moment "Until 8:00 tomorrow" ends at, so the menu
-    /// can name it ("Until 08:00 tomorrow") instead of promising a guess.
+    /// The wall-clock moment "Until 8:00" ends at, so the menu can name
+    /// it instead of promising a guess.
     var morningTarget: Date {
         now.addingTimeInterval(TimeInterval(Self.secondsUntilMorning(from: now)))
+    }
+
+    /// "Until 08:00" when the target is today, "... tomorrow" when it is
+    /// not -- before 07:00 the next 08:00 is this morning, and calling it
+    /// tomorrow was a day wrong.
+    nonisolated static func morningLabel(verb: String, target: Date) -> String {
+        let time = clockTime(target)
+        return Calendar.current.isDateInToday(target) ? "\(verb) \(time)" : "\(verb) \(time) tomorrow"
     }
 
     /// `state.focus.source` in the words the footer help uses.
