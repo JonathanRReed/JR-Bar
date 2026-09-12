@@ -916,6 +916,36 @@ def test_strip_unmount_forgets_the_program_the_dot_was_replaying(headless) -> No
     assert dot_controller.last_program_identity == ("program", "own")
 
 
+def test_disconnect_forgets_the_devices_cached_led_count(headless, tmp_path) -> None:
+    """The STATUS.TXT LED count is memoized per volume root; the root a
+    departed device leaves behind must be re-read, or a Dot swapped in for
+    a Pro at the same mount is trusted on the Pro's serial."""
+    from jrbar import _led_status_legacy as led_status
+    from jrbar.status_bar_legacy import StatusBarDevice
+
+    root = tmp_path / "SidePulse"
+    root.mkdir()
+    (root / "STATUS.TXT").write_text("serial SPP-000067\n")
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro = StatusBarDevice(
+        "sidepulse:pro:1", "SidePulse", root, root / "LEDS.LED", True, "agent"
+    )
+    controller.status_bar_devices = lambda *, remember=True: [pro]
+
+    # The inventory learns the volume while the device is connected.
+    controller._core_note_device_inventory([pro], [])
+    led_status._LED_COUNT_CACHE.clear()
+    assert led_status.led_count_for_target(pro.target) == 8
+    assert root in led_status._LED_COUNT_CACHE
+
+    controller._core_note_device_inventory(
+        [], [("device_disconnected", "SidePulse", pro.device_id)]
+    )
+    assert root not in led_status._LED_COUNT_CACHE
+
+
 def test_the_dot_rides_only_the_followed_strip(headless) -> None:
     """Two strips mounted: the Dot couples with the FIRST strip in
     inventory order -- the one the lights document calls ``hardware`` --
@@ -1449,6 +1479,119 @@ def test_apply_calibration_persists_brightness_and_glow_on_a_new_device(headless
     assert "hardware" in controller._core_previews
     controller._core_dispatch("apply_calibration", {"device": pro.device_id, "profile": {"blue_gain": 0.8}})
     assert "hardware" not in controller._core_previews
+
+
+def test_calibration_preview_registers_the_hold_before_the_write(headless) -> None:
+    """The write used to land before the hold existed: a live command
+    scheduled in the gap painted over the patch, and the just-registered
+    hold then refused every repair for the rest of its 600 s. The hold is
+    on the books before ``sync_transferred_program`` runs, and a refused
+    write withdraws it."""
+    from jrbar._led_status_legacy import LedDisplayState
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    led = controller.agent_led_controllers_by_device[pro.device_id]
+
+    seen = {}
+    real_sync = led.sync_transferred_program
+
+    def spied(program, state, **kwargs):
+        seen["held_at_write"] = pro.device_id in controller._core_held_preview_devices()
+        seen["state"] = state
+        return real_sync(program, state, **kwargs)
+
+    led.sync_transferred_program = spied
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "patch": "white",
+    })
+    assert seen == {"held_at_write": True, "state": LedDisplayState.IDLE}
+
+    # A refused write leaves no hold behind.
+    def refusing(program, state, **kwargs):
+        raise OSError("device gone")
+
+    led.sync_transferred_program = refusing
+    controller._core_dispatch("end_calibration_preview", {"device": pro.device_id})
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("preview_calibration", {
+            "device": pro.device_id,
+            "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+            "patch": "white",
+        })
+    assert refused.value.code == "refused"
+    assert pro.device_id not in controller._core_held_preview_devices()
+    assert "hardware" not in controller._core_previews
+
+
+def test_preview_program_refuses_a_held_surface(headless) -> None:
+    """A three-second flash must not overwrite a held calibration preview:
+    it would drop the hold's entry and paint the patch away mid-match.
+    Surface ``busy`` and leave the hold alone; a surface the hold does not
+    own still flashes."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, dot = _calibration_devices(controller)
+
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "patch": "white",
+    })
+    with pytest.raises(CommandError) as busy:
+        controller._core_dispatch("preview_program", {
+            "surface": "hardware", "program": "#FF0000 500ms\nrepeat",
+        })
+    assert busy.value.code == "busy"
+    assert controller._core_held_preview_devices() == {pro.device_id}
+    assert "hardware" not in {
+        name for name, p in controller._core_previews.items() if not p.held
+    }
+
+    # The Dot is not held: its surface still takes a flash.
+    reply = controller._core_dispatch("preview_program", {
+        "surface": "dot", "program": "#FF0000 500ms\nrepeat",
+    })
+    assert reply["devices"] == [dot.device_id]
+
+
+def test_calibration_preview_leaves_the_next_ask_its_arrival_crest(headless, monkeypatch) -> None:
+    """The preview's bookkeeping state must not be ASK: ``arrival_fresh``
+    reads ``last_state is not ASK``, so a preview that parked ASK there
+    spent the next real ask's once-only crest."""
+    from jrbar import colors as colors_module
+    from jrbar._led_status_legacy import LedDisplayState
+    from jrbar.colors import ColorSettings
+    from jrbar.models import AgentMode
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    pro, _dot = _calibration_devices(controller)
+    led = controller.agent_led_controllers_by_device[pro.device_id]
+
+    controller._core_dispatch("preview_calibration", {
+        "device": pro.device_id,
+        "gains": {"red": 1.0, "green": 1.0, "blue": 1.0},
+        "patch": "white",
+    })
+    assert led.last_state is LedDisplayState.IDLE
+
+    captured = {}
+    real_render = colors_module.program_for_snapshot
+
+    def spy(statuses, **kwargs):
+        # The live render carries the flag; the phase-zero identity render
+        # does not -- record only the call that has it.
+        if "include_attention_arrival" in kwargs:
+            captured["arrival"] = kwargs["include_attention_arrival"]
+        return real_render(statuses, **kwargs)
+
+    monkeypatch.setattr(colors_module, "program_for_snapshot", spy)
+    led.sync_snapshot((), ColorSettings.defaults(), fallback_mode=AgentMode.WAITING_FOR_INPUT)
+    assert captured["arrival"] is True
 
 
 def test_battery_display_uses_the_strip_transfer(headless) -> None:

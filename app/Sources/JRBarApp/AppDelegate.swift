@@ -135,7 +135,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let hotkey = PanelHotkey()
         hotkey.onPress = { [weak panel] in panel?.toggle() }
         hotkey.setEnabled(settingsStore.panelHotkeyEnabled)
-        settingsStore.onPanelHotkeyChange = { [weak hotkey] on in hotkey?.setEnabled(on) }
+        settingsStore.panelHotkeyRegistrationFailed = hotkey.registrationFailed
+        settingsStore.onPanelHotkeyChange = { [weak hotkey, weak settingsStore] on in
+            hotkey?.setEnabled(on)
+            settingsStore?.panelHotkeyRegistrationFailed = hotkey?.registrationFailed ?? false
+        }
         self.hotkey = hotkey
         statusItem.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
@@ -173,11 +177,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let usageWindow = UsageCenterWindowController(store: usageStore)
         self.usageStore = usageStore
         self.usageWindow = usageWindow
-        store.onOpenUsageCenter = { [weak usageWindow, weak usageStore] provider in
+        store.onOpenUsageCenter = { [weak usageWindow] provider in
             // A provider id means the panel's usage row was clicked:
             // scroll to that card and flash it.
-            if let provider { usageStore?.focus(provider: provider) }
-            usageWindow?.show()
+            usageWindow?.show(focusedProvider: provider)
         }
         statusItem.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }
         settingsStore.onOpenUsageCenter = { [weak usageWindow] in usageWindow?.show() }

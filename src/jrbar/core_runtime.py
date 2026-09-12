@@ -819,18 +819,32 @@ def _cmd_preview_program(self, args):
         raise CommandError("invalid_args", "seconds must be a number") from error
     seconds = max(0.2, min(PREVIEW_MAX_SECONDS, seconds))
     wanted_leds = {"hardware": 8, "dot": 2}.get(surface)
+    targets = [
+        device
+        for device in self.status_bar_devices(remember=False)
+        if device.connected
+        and device.device_id != legacy.VIRTUAL_DEVICE_ID
+        and (
+            surface == device.device_id
+            or (wanted_leds is not None and led_count_for_target(device.target) == wanted_leds)
+        )
+    ]
+    # A held calibration preview owns its surface for minutes; a flash
+    # over it would drop the hold's entry and paint the patch away.
+    existing = self._core_previews.get(surface)
+    held = self._core_held_preview_devices()
+    if (existing is not None and existing.held) or any(
+        device.device_id in held for device in targets
+    ):
+        raise CommandError("busy", "a calibration preview holds this surface")
     device_ids: list[str] = []
-    for device in self.status_bar_devices(remember=False):
-        if not device.connected or device.device_id == legacy.VIRTUAL_DEVICE_ID:
-            continue
-        leds = led_count_for_target(device.target)
-        if surface == device.device_id or (wanted_leds is not None and leds == wanted_leds):
-            controller = self.agent_controller_for_device(device)
-            try:
-                controller.sync_program(legacy.apply_brightness(program, controller.brightness), LedDisplayState.ASK)
-            except Exception as exc:
-                raise CommandError("refused", f"device refused the program: {exc}") from exc
-            device_ids.append(device.device_id)
+    for device in targets:
+        controller = self.agent_controller_for_device(device)
+        try:
+            controller.sync_program(legacy.apply_brightness(program, controller.brightness), LedDisplayState.IDLE)
+        except Exception as exc:
+            raise CommandError("refused", f"device refused the program: {exc}") from exc
+        device_ids.append(device.device_id)
     if surface not in ("screen_bar",) and not device_ids:
         raise CommandError("not_found", "no such surface")
     self._core_previews[surface] = _Preview(program, time.monotonic() + seconds, time.time(), tuple(device_ids))
@@ -944,19 +958,28 @@ def _cmd_preview_calibration(self, args):
     program = apply_strip_transform_to_program(
         nominal, resting_glow=resting_glow, gains=gains
     )
-    controller = self.agent_controller_for_device(device)
-    try:
-        controller.sync_transferred_program(program, LedDisplayState.ASK)
-    except Exception as exc:
-        raise CommandError("refused", f"device refused the program: {exc}") from exc
     surface = (
         "dot"
         if leds == 2
         else "hardware" if self._core_is_followed_strip(device) else device.device_id
     )
+    # The hold is registered BEFORE the write: a queued live command that
+    # lands between them used to paint over the patch and then be refused
+    # at the write boundary for the rest of the 600 s hold (2026-09-11
+    # audit). The except path withdraws the registration a refused write
+    # never earned.
     self._core_previews[surface] = _Preview(
         program, until_monotonic, started_epoch, (device.device_id,), held=True
     )
+    controller = self.agent_controller_for_device(device)
+    try:
+        # IDLE, not ASK: the state is bookkeeping on the controller, and an
+        # ASK left there makes the next real ask's arrival_fresh check read
+        # "already asking", so its crest never plays.
+        controller.sync_transferred_program(program, LedDisplayState.IDLE)
+    except Exception as exc:
+        self._core_previews.pop(surface, None)
+        raise CommandError("refused", f"device refused the program: {exc}") from exc
 
     companion_id: str | None = None
     if companion and leds == 2:
@@ -979,11 +1002,8 @@ def _cmd_preview_calibration(self, args):
                 resting_glow=strip.resting_glow,
                 gains=strip.channel_gains,
             )
-            strip_controller = self.agent_controller_for_device(strip)
-            try:
-                strip_controller.sync_transferred_program(companion_program, LedDisplayState.ASK)
-            except Exception as exc:
-                raise CommandError("refused", f"companion strip refused the program: {exc}") from exc
+            # Same order as the primary: the hold exists before the write,
+            # and is withdrawn if the strip refuses it.
             self._core_previews["hardware"] = _Preview(
                 companion_program,
                 until_monotonic,
@@ -992,6 +1012,12 @@ def _cmd_preview_calibration(self, args):
                 held=True,
                 companion_of=device.device_id,
             )
+            strip_controller = self.agent_controller_for_device(strip)
+            try:
+                strip_controller.sync_transferred_program(companion_program, LedDisplayState.IDLE)
+            except Exception as exc:
+                self._core_previews.pop("hardware", None)
+                raise CommandError("refused", f"companion strip refused the program: {exc}") from exc
             companion_id = strip.device_id
 
     self._core_publish_lights()
@@ -1826,6 +1852,9 @@ def build_headless_controller_class() -> type:
             self._core_doctor_rusage: tuple[float, float] | None = None
             self._core_doctor_at: float | None = None
             self._core_hardware_anchor: dict[str, float] = {}
+            # device_id -> volume root, so a disconnect can invalidate the
+            # memoized STATUS.TXT LED count for the root it leaves behind.
+            self._core_device_roots: dict[str, Path] = {}
             self._core_previews: dict[str, _Preview] = {}
             self._core_prev_asks: dict[str, Any] | None = None
             self._core_prev_devices: dict[str, bool] | None = None
@@ -1861,9 +1890,10 @@ def build_headless_controller_class() -> type:
             # the two are not running from one clock, and claiming the
             # shared anchor anyway was the lie this field exists to retire.
             self._core_linked_pair_ok = False
-            # The exception class behind the last failed linked Dot write
-            # (e.g. "OSError"), surfaced as ``lights.dot_link.error``;
-            # cleared by the next clean coupled write.
+            # A short description of the last failed linked Dot write (the
+            # exception class name, or the write's own error), surfaced as
+            # ``lights.dot_link.error``; cleared by the next clean coupled
+            # write.
             self._core_linked_dot_error: str | None = None
             # device_id -> monotonic time a bounded cue stops moving. A cue
             # that ends holds whatever its last line painted until something
@@ -2128,8 +2158,10 @@ def build_headless_controller_class() -> type:
                     ],
                     (),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # A failure here is the linked-Dot ghost-write fix failing,
+                # not noise: name it in the log.
+                legacy.log_status_bar(f"core: inventory note failed: {exc.__class__.__name__}: {exc}")
             # Everything the legacy refresh publishes mid-pipeline (the
             # virtual-device sync, the DND callback, escalation) defers to
             # the two builds at the tail: one state build, one lights
@@ -2320,9 +2352,13 @@ def build_headless_controller_class() -> type:
             these devices are not built, and an in-flight command that
             predates the hold is refused at the write boundary.
             """
+            # .copy(): the hardware-write worker calls this off the main
+            # thread while commands insert and pop -- iterating the live
+            # dict was a "dictionary changed size" that read as a failed
+            # write (2026-09-11 audit).
             return frozenset(
                 held_id
-                for preview in self._core_previews.values()
+                for preview in self._core_previews.copy().values()
                 if preview.held
                 for held_id in preview.device_ids
             )
@@ -2334,9 +2370,11 @@ def build_headless_controller_class() -> type:
             Apply, on Cancel AND on disappear, so a second call must be a
             no-op rather than an error.
             """
+            # .copy() for the same reason as _core_held_preview_devices:
+            # this can run on the write worker while the dict mutates.
             dropped = [
                 name
-                for name, preview in self._core_previews.items()
+                for name, preview in self._core_previews.copy().items()
                 if preview.held
                 and (device_id in preview.device_ids or preview.companion_of == device_id)
             ]
@@ -2372,10 +2410,24 @@ def build_headless_controller_class() -> type:
             next own-display request looks "already written" against the
             program it is no longer supposed to play.
             """
-            from ._led_status_legacy import led_count_for_target
+            from ._led_status_legacy import (
+                invalidate_led_count_cache,
+                led_count_for_target,
+            )
+
+            # Remember each connected device's volume so a disconnect can
+            # drop its memoized STATUS.TXT answer -- a different device
+            # remounting at the same root is re-read, not trusted.
+            for device in devices:
+                target = getattr(device, "target", None)
+                if getattr(device, "connected", False) and target is not None:
+                    self._core_device_roots[device.device_id] = Path(target).parent
 
             for kind, _name, device_id in transitions:
                 if kind == "device_disconnected":
+                    root = self._core_device_roots.pop(device_id, None)
+                    if root is not None:
+                        invalidate_led_count_cache(root)
                     self._core_hardware_anchor.pop(device_id, None)
                     # A held calibration preview outlives its device by
                     # minutes; left in place it would keep claiming the
@@ -4044,7 +4096,8 @@ def build_headless_controller_class() -> type:
             the app did from ``devices_linked`` and the surface list. The
             ``role`` echoes the normalized setting (``null`` only when no
             role is in play at all: the link off or no Dot connected), and
-            ``error`` carries the last linked-write failure's class name.
+            ``error`` carries a short description of the last linked-write
+            failure -- the exception class name, or the write's own error.
             """
             from .dot_role import DotRole
 

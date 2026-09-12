@@ -647,7 +647,9 @@ struct SessionContextMenu: View {
             // daemon resolves the work key from the session id.
             Button("Snooze 15 minutes") { store.snooze(row, seconds: 900) }
             Button("Snooze 1 hour") { store.snooze(row, seconds: 3600) }
-            Button("Snooze until tomorrow") { store.snooze(row, seconds: PanelStore.secondsUntilMorning()) }
+            Button(PanelStore.morningLabel(verb: "Snooze until", target: store.morningTarget)) {
+                store.snooze(row, seconds: PanelStore.secondsUntilMorning())
+            }
         }
         if let cwd = row.cwd, !cwd.isEmpty {
             Divider()
@@ -1033,7 +1035,8 @@ struct DevicesSection: View {
                             .foregroundStyle(glyph.style)
                             .accessibilityHidden(true)
                     }
-                    DeviceChip(name: chip.name, present: chip.present, dimmed: !store.isLive && chip.id != "screen_bar")
+                    DeviceChip(name: chip.name, present: chip.present, dimmed: !store.isLive && chip.id != "screen_bar",
+                               action: chip.id == "screen_bar" ? nil : "opens Devices settings")
                         .help(chip.help)
                         .onTapGesture {
                             if chip.id == "screen_bar" {
@@ -1087,6 +1090,10 @@ struct DeviceChip: View {
     let name: String
     let present: Bool
     let dimmed: Bool
+    /// What a tap does, for VoiceOver ("opens Devices settings"); nil for
+    /// the Screen Bar chip, whose tap toggles the band rather than opening
+    /// a page.
+    var action: String? = nil
 
     var body: some View {
         HStack(spacing: 5) {
@@ -1103,7 +1110,8 @@ struct DeviceChip: View {
         .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
         .opacity(dimmed ? 0.55 : 1)
         .contentShape(Capsule())
-        .accessibilityLabel("\(name) \(present ? "connected" : "not connected")")
+        .accessibilityLabel("\(name) \(present ? "connected" : "not connected")" + (action.map { " · \($0)" } ?? ""))
+        .accessibilityAddTraits(action == nil ? [] : .isButton)
     }
 }
 
@@ -1129,7 +1137,7 @@ struct PanelFooter: View {
                 Button("30 minutes") { store.quietFor(seconds: 30 * 60) }
                 Button("1 hour") { store.quietFor(seconds: 60 * 60) }
                 Button("4 hours") { store.quietFor(seconds: 240 * 60) }
-                Button("Until \(PanelStore.clockTime(store.morningTarget)) tomorrow") {
+                Button(PanelStore.morningLabel(verb: "Until", target: store.morningTarget)) {
                     store.quietFor(seconds: PanelStore.secondsUntilMorning())
                 }
                 Divider()
@@ -1163,7 +1171,7 @@ struct PanelFooter: View {
             .fixedSize()
             .help(store.quietLabel.map { "Quiet: \($0) · from \((store.quiet?.source).map { PanelStore.quietSourceWord($0) } ?? "this menu")" }
                   ?? "Quiet the lights and sounds for a while")
-            .accessibilityLabel("Quiet")
+            .accessibilityLabel(store.quietLabel.map { "Quiet: \($0)" } ?? "Quiet")
             Spacer()
             // While a quiet is in effect its label needs the room the
             // shortcut hints take; the shortcuts themselves still work

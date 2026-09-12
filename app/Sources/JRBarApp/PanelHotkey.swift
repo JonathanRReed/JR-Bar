@@ -18,6 +18,10 @@ final class PanelHotkey {
 
     var onPress: (@MainActor () -> Void)?
 
+    /// `RegisterEventHotKey` said no — another app owns ⌃⌥J. The Settings
+    /// toggle reads this to say so instead of pretending the key works.
+    private(set) var registrationFailed = false
+
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
 
@@ -30,10 +34,19 @@ final class PanelHotkey {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
         let status = InstallEventHandler(GetEventDispatcherTarget(), Self.handlerUPP, 1, &eventType,
                                          Unmanaged.passUnretained(self).toOpaque(), &handler)
-        guard status == noErr else { return }
+        guard status == noErr else {
+            registrationFailed = true
+            return
+        }
         let id = EventHotKeyID(signature: Self.signature, id: 1)
-        RegisterEventHotKey(UInt32(kVK_ANSI_J), UInt32(controlKey | optionKey), id,
-                            GetEventDispatcherTarget(), 0, &hotKey)
+        let keyStatus = RegisterEventHotKey(UInt32(kVK_ANSI_J), UInt32(controlKey | optionKey), id,
+                                          GetEventDispatcherTarget(), 0, &hotKey)
+        if keyStatus != noErr {
+            // The key is taken (or registration otherwise failed): drop the
+            // handler we just installed and remember the refusal.
+            unregister()
+            registrationFailed = true
+        }
     }
 
     func unregister() {
@@ -45,6 +58,13 @@ final class PanelHotkey {
             RemoveEventHandler(handler)
             self.handler = nil
         }
+        registrationFailed = false
+    }
+
+    // Unregistering is the whole point of teardown: a live Carbon handler
+    // holds a dangling self pointer once the object is gone.
+    isolated deinit {
+        unregister()
     }
 
     private static let handlerUPP: EventHandlerUPP = { _, _, userData in

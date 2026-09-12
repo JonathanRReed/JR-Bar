@@ -59,12 +59,6 @@ struct ProviderStyle: Hashable, Sendable {
         return ProviderStyle(id: style.id, name: style.name, accentHex: hex, glyph: style.glyph)
     }
 
-    /// The daemon's `colors.agent_colors.<id>` as a colour when it is a
-    /// usable `RRGGBB` hex; nil for missing or malformed values so
-    /// callers keep the default accent.
-    static func configuredAccent(for provider: String, document: SettingsDocument?) -> NSColor? {
-        document?.agentColorHex(provider).flatMap { NSColor(hex: $0) }
-    }
 }
 
 /// What colour a state is, everywhere in the app. One place, because the

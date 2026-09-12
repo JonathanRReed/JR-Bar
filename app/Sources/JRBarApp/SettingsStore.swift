@@ -126,6 +126,11 @@ final class SettingsStore {
     }
     var onPanelHotkeyChange: (@MainActor (Bool) -> Void)?
 
+    /// The delegate mirrors `PanelHotkey.registrationFailed` here so the
+    /// toggle can say "⌃⌥J is taken by another app" instead of silently
+    /// doing nothing while looking enabled.
+    var panelHotkeyRegistrationFailed = false
+
     init(core: CoreModel) {
         self.core = core
         refreshLaunchAtLogin()

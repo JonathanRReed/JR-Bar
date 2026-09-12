@@ -195,3 +195,42 @@ def test_led_count_follows_the_serial_not_the_volume_label(tmp_path: Path) -> No
     nameless = tmp_path / "PulseDot"
     nameless.mkdir()
     assert led_count_for_target(nameless / "LEDS.LED") == 2
+
+
+def test_led_count_serial_read_is_memoized_and_expires(tmp_path: Path, monkeypatch) -> None:
+    """STATUS.TXT answers once per root per minute now -- the per-device,
+    per-refresh callers on the main thread must not each pay a FAT-volume
+    read (one once blocked it for 13.7 s). A stale or invalidated entry
+    is re-read."""
+    from jrbar import _led_status_legacy as led_status
+
+    root = tmp_path / "SidePulse"
+    root.mkdir()
+    (root / "LEDS.LED").write_text("off")
+    (root / "STATUS.TXT").write_text("serial SPP-000067\nuptime_ms 1\n")
+
+    reads: list[Path] = []
+    real_read = Path.read_text
+
+    def counting(self: Path, *args, **kwargs):
+        if self.name == "STATUS.TXT":
+            reads.append(self)
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting)
+    led_status._LED_COUNT_CACHE.clear()
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert reads == [root / "STATUS.TXT"]
+
+    # Past the TTL the file is read again.
+    stamp, count = led_status._LED_COUNT_CACHE[root]
+    led_status._LED_COUNT_CACHE[root] = (stamp - led_status._LED_COUNT_TTL_SECONDS, count)
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 8
+    assert len(reads) == 2
+
+    # A disconnect invalidates the root: a swapped device is re-read.
+    led_status.invalidate_led_count_cache(root)
+    (root / "STATUS.TXT").write_text("serial SPD-000120\n")
+    assert led_status.led_count_for_target(root / "LEDS.LED") == 2
+    assert len(reads) == 3

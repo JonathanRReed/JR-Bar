@@ -15,7 +15,9 @@ struct GeneralPage: View {
             MenuBarStylePicker(store: store)
             Toggle(isOn: $store.panelHotkeyEnabled) {
                 SettingLabel(title: "Summon the panel with ⌃⌥J",
-                             subtitle: "A global hotkey: works from any app, toggles the panel under the menu-bar icon.")
+                             subtitle: store.panelHotkeyRegistrationFailed
+                                ? "⌃⌥J is taken by another app."
+                                : "A global hotkey: works from any app, toggles the panel under the menu-bar icon.")
             }
         }
 

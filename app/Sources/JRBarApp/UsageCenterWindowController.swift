@@ -13,7 +13,15 @@ final class UsageCenterWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
-    func show() {
+    /// `focusedProvider` is the panel's per-provider drill: scroll to that
+    /// card and flash it. A plain open carries no provider and must not
+    /// re-scroll to the last drilled one, so a stale focus is dropped here.
+    func show(focusedProvider: String? = nil) {
+        if let focusedProvider {
+            store.focus(provider: focusedProvider)
+        } else {
+            store.focusProvider = nil
+        }
         let window = self.window ?? makeWindow()
         self.window = window
         store.windowDidOpen()
