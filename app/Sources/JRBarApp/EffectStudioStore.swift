@@ -500,6 +500,11 @@ final class EffectStudioStore {
         if assignment.scope == .provider, effect?.catalog == "provider_animation" {
             return "plays as \(ProviderStyle.style(for: assignment.targetID ?? "").name)'s motion while it works"
         }
+        // A provider-scope row naming an ordinary effect fires on that
+        // provider's events only -- it does not set the working motion.
+        if assignment.scope == .provider, effect != nil {
+            return "Fires on this provider's events; the working motion is set by a Provider animation."
+        }
         if assignment.scope == .semantic {
             return "fires on \(assignment.targetLabel.lowercased()) events"
         }
@@ -561,7 +566,7 @@ final class EffectStudioStore {
     func importScenePack() {
         let panel = NSOpenPanel()
         panel.title = "Import Scene Pack"
-        panel.message = "Scene packs are data-only JSON; the core validates the file."
+        panel.message = "Scene packs are data-only JSON; the monitor validates the file."
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -616,7 +621,7 @@ final class EffectStudioStore {
     func importPack() {
         let panel = NSOpenPanel()
         panel.title = "Import Effect Pack"
-        panel.message = "Packs are data-only JSON (v2). The core validates the file; nothing in it is executed."
+        panel.message = "Packs are data-only JSON (v2). The monitor validates the file; nothing in it is executed."
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false

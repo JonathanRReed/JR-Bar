@@ -178,16 +178,16 @@ public struct AutoDimSettings: Hashable, Sendable {
 /// The live line under the auto-dim controls, from `lights.auto_dim`:
 /// what the daemon read and the factor it chose.
 public enum AutoDimReadout {
-    /// "Ambient: 12 lux → 45 %", "Sensor unavailable, following display:
-    /// 62 % → 62 %", "Schedule: 23:10, inside the window → 30 %",
-    /// "Display: 62 % → 62 %", "Display unreadable → 100 %", "Off → 100 %".
+    /// "Ambient: 12 lux → 45%", "Sensor unavailable, following display:
+    /// 62% → 62%", "Schedule: 23:10, inside the window → 30%",
+    /// "Display: 62% → 62%", "Display unreadable → 100%", "Off → 100%".
     /// Nil with no `auto_dim` from the daemon.
     public static func line(_ result: CoreAutoDim?, settings: AutoDimSettings? = nil) -> String? {
         guard let result else { return nil }
         let factor = result.factor.map { " → \(AutoDimSettings.percent($0))" } ?? ""
         switch result.mode {
         case "off":
-            return "Off" + (result.factor.map { " → \(AutoDimSettings.percent($0))" } ?? " → 100 %")
+            return "Off" + (result.factor.map { " → \(AutoDimSettings.percent($0))" } ?? " → 100%")
         case "schedule":
             guard let reading = result.reading else { return "Schedule" + factor }
             let minutes = Int(reading)

@@ -254,6 +254,35 @@ def test_headless_launch_skips_every_appkit_surface_and_serves(headless) -> None
     controller.refresh_.assert_called()
 
 
+def test_volatile_only_rebuilds_are_not_republished(headless) -> None:
+    """The wire dedupe can never see two identical state/lights frames --
+    `now`, `generation` and the ages tick every build -- so the publish
+    layer compares significance with the volatile paths stripped. A quiet
+    rebuild must not broadcast; a real change still must."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.refresh_intake_report = lambda: None
+    controller.last_snapshot = _visibility_snapshot(time.time())
+    server = controller._core
+    server.published.clear()
+
+    controller._core_publish_state()
+    controller._core_publish_lights()
+    assert [kind for kind, _ in server.published] == ["state", "lights"]
+
+    controller._core_publish_state()
+    controller._core_publish_lights()
+    controller._core_publish_state()
+    controller._core_publish_lights()
+    assert [kind for kind, _ in server.published] == ["state", "lights"]
+
+    # A real change still publishes.
+    controller.last_snapshot = SimpleNamespace(statuses=[], stale_statuses=())
+    controller._core_publish_state()
+    assert [kind for kind, _ in server.published][-1] == "state"
+    assert len(server.published) == 3
+
+
 def test_settings_property_bumps_the_generation_and_republishes(headless) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -1314,24 +1343,44 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
 
     Linked, the bar now presents the strip's program: the NOMINAL text the
     strip was asked to play (never the written bytes -- the strip's die
-    gains and light-domain brightness decode belong to its PWM), with every
-    colour lifted to the screen legibility floor so codes the bezel reads
-    as faint light stop reading as "off" on a display.
+    gains and light-domain brightness decode belong to its PWM), with dark
+    colour tokens lifted on a continuous curve toward the legibility knee so
+    codes the bezel reads as faint light stay faint -- not clamped to one
+    flat glow the hardware does not have.
     """
     import re
     import time as _time
 
-    from jrbar._led_status_legacy import apply_strip_transform_to_program
+    from jrbar._led_status_legacy import (
+        apply_strip_transform_to_program,
+        delivered_brightness,
+    )
     from jrbar.colors import (
         IDENTITY_LUMINANCE_FLOOR,
+        MIRROR_LIFT_EXPONENT,
         lift_program_luminance,
         relative_luminance,
     )
+    from jrbar.status_bar_legacy import StatusBarDevice
 
     controller = headless
     pro, _dot = _pro_and_dot(controller)
     controller._core_hardware_anchor[pro.device_id] = 1000.0
     controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+
+    # The bar's own ambient plan is dim AND floored by the
+    # ``screen_bar_min_glow`` dial (0.25 -> a ~25% floor while on). Neither
+    # may reach the mirrored program: a dark beat the strip means is a dark
+    # beat on the bar too.
+    virtual_entry = StatusBarDevice(
+        status_bar.VIRTUAL_DEVICE_ID, "Screen Bar", Path("/virtual"),
+        Path("/virtual/LEDS.LED"), True, "agent", brightness=30,
+    )
+    devices = controller.status_bar_devices()
+    controller.status_bar_devices = lambda *, remember=True: [*devices, virtual_entry]
+    controller.settings = controller.settings.with_screen_bar_min_glow(0.25)
+    bar_plan = controller._core_brightness_percent(virtual_entry) / 100.0
+    assert 0.0 < bar_plan < delivered_brightness("brightness 200")
 
     nominal = (
         "brightness 200\n"
@@ -1365,11 +1414,46 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     assert bar["program"] != virtual_program
     hex_re = r"#[0-9A-Fa-f]{6}"
     assert re.sub(hex_re, "@", bar["program"]) == re.sub(hex_re, "@", nominal)
-    for token in re.findall(hex_re, bar["program"]):
-        luminance = relative_luminance(token)
-        assert luminance == 0.0 or luminance >= IDENTITY_LUMINANCE_FLOOR - 0.005
-    # Codes already at or above the floor pass through untouched.
+    sources = re.findall(hex_re, nominal)
+    outputs = re.findall(hex_re, bar["program"])
+    assert len(sources) == len(outputs)
+    for source, out in zip(sources, outputs):
+        source_y = relative_luminance(source)
+        out_y = relative_luminance(out)
+        if source_y <= 0.0:
+            # ``#000000`` stays exactly black -- no resting glow is invented
+            # over a dark beat, whatever ``screen_bar_min_glow`` is set to.
+            assert out == "#000000"
+        elif source_y >= IDENTITY_LUMINANCE_FLOOR:
+            assert out == source  # at/above the knee: untouched
+        else:
+            # Below the knee the lift is the power curve, not the floor:
+            # brighter than the source but still well short of the knee.
+            target = IDENTITY_LUMINANCE_FLOOR * (
+                source_y / IDENTITY_LUMINANCE_FLOOR
+            ) ** MIRROR_LIFT_EXPONENT
+            assert out_y == pytest.approx(target, abs=0.005)
+            assert source_y < out_y < IDENTITY_LUMINANCE_FLOOR
+    # The fade's ordering survives: each step lands strictly dimmer than
+    # the one before it, where the flat floor used to crush them to one.
+    lit = [
+        relative_luminance(token)
+        for token in dict.fromkeys(outputs)
+        if relative_luminance(token) > 0.0
+    ]
+    assert len(set(lit)) == len(lit)
+    assert lit == sorted(lit, reverse=True)
+    # Codes already at or above the knee pass through untouched.
     assert "#8899AA" in bar["program"]
+    # Near-black stays near-black: the strip's `#000000` positions are not
+    # a glow on the display.
+    assert "#000000" in bar["program"]
+
+    # Brightness is what the mirrored program drives the bar at -- the
+    # strip's own ``brightness N`` -- while the bar's floored ambient plan
+    # is reported as policy only.
+    assert bar["brightness"] == pytest.approx(delivered_brightness(nominal))
+    assert bar["brightness_policy"] == pytest.approx(bar_plan)
 
     # The strip's clock and the strip's explanation, not the bar's own.
     assert bar["anchor"] == 1000.0
@@ -1386,7 +1470,10 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     # With no live call the mirror surface tells the same story.
     controller.virtual_status_device._live_program_call = None
     lights = controller._core_build_lights()
-    assert lights["surfaces"]["screen_bar"]["program"] == lift_program_luminance(nominal)
+    fallback_bar = lights["surfaces"]["screen_bar"]
+    assert fallback_bar["program"] == lift_program_luminance(nominal)
+    assert fallback_bar["brightness"] == pytest.approx(delivered_brightness(nominal))
+    assert fallback_bar["brightness_policy"] == pytest.approx(bar_plan)
 
     # A screen_bar preview still outranks everything.
     preview_program = "#00FF00 1s\nrepeat"
@@ -1400,10 +1487,11 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
 
 
 def test_lift_program_luminance_lifts_only_colour_literals() -> None:
-    """The mirror transform: hue kept, floor enforced, everything that is
-    not a colour left byte-identical."""
+    """The mirror transform: hue kept, the lift a continuous curve below
+    the knee, everything that is not a colour left byte-identical."""
     from jrbar.colors import (
         IDENTITY_LUMINANCE_FLOOR,
+        MIRROR_LIFT_EXPONENT,
         lift_program_luminance,
         relative_luminance,
     )
@@ -1415,8 +1503,15 @@ def test_lift_program_luminance_lifts_only_colour_literals() -> None:
     assert lines[2] == "off 100ms"
     assert lines[3] == "repeat"
     dim, bright = lines[1].split(" ")[0], lines[1].split(" ")[1]
-    assert relative_luminance(dim) >= IDENTITY_LUMINANCE_FLOOR - 0.005
-    assert bright == "#8899AA"  # already above the floor: untouched
+    # The near-black token gets a small lift, not the whole floor: the
+    # curve target is ~0.011, far under the old 0.08 resting glow.
+    source_y = relative_luminance("#000510")
+    target = IDENTITY_LUMINANCE_FLOOR * (
+        source_y / IDENTITY_LUMINANCE_FLOOR
+    ) ** MIRROR_LIFT_EXPONENT
+    assert relative_luminance(dim) == pytest.approx(target, abs=0.005)
+    assert source_y < relative_luminance(dim) < IDENTITY_LUMINANCE_FLOOR / 4
+    assert bright == "#8899AA"  # already above the knee: untouched
     # Hue is preserved: the lifted colour is the dim one scaled, so the
     # channel ordering survives (blue still dominates, red still zero).
     assert dim != "#000510"
@@ -1426,6 +1521,53 @@ def test_lift_program_luminance_lifts_only_colour_literals() -> None:
     assert lift_program_luminance("#000000 1s\nrepeat").startswith("#000000")
     # Not a program: handed back as-is.
     assert lift_program_luminance("") == ""
+
+
+def test_lift_program_luminance_curve_is_continuous_and_monotone() -> None:
+    """The lift fades to zero at black and meets the pass-through region
+    without a seam: a token a hair below the knee lands a hair below the
+    knee, and darker tokens always land darker."""
+    from jrbar.colors import (
+        IDENTITY_LUMINANCE_FLOOR,
+        lift_program_luminance,
+        luminance_matched_hex,
+        relative_luminance,
+    )
+
+    floor = IDENTITY_LUMINANCE_FLOOR
+    # A token just below the knee lifts to just below it; just above, the
+    # literal passes through -- no jump at the seam.
+    just_below = luminance_matched_hex("#8899AA", floor * 0.99)
+    just_above = luminance_matched_hex("#8899AA", floor * 1.01)
+    lifted_below = lift_program_luminance(f"{just_below} 1s\nrepeat")
+    assert relative_luminance(lifted_below.split()[0]) == pytest.approx(
+        floor * 0.99, abs=0.01
+    )
+    assert lift_program_luminance(just_above) == just_above
+
+    # Monotone through the whole sub-knee range, and strictly below the
+    # knee everywhere a lift applies.
+    greys = ["#000000", "#050505", "#0A0A0A", "#141414", "#242424", "#404040"]
+    lifted_ys = [
+        relative_luminance(lift_program_luminance(g)) for g in greys
+    ]
+    assert lifted_ys == sorted(lifted_ys)
+    for grey, out_y in zip(greys, lifted_ys):
+        source_y = relative_luminance(grey)
+        if source_y <= 0.0:
+            assert out_y == 0.0
+        elif source_y < floor:
+            assert source_y < out_y < floor
+
+    # A colour at the calibration target from the live report: Y ~= 0.004
+    # lifts to ~0.018, not 0.08.
+    assert relative_luminance("#060D18") == pytest.approx(0.004, abs=0.001)
+    lifted = lift_program_luminance("#060D18")
+    assert 0.015 <= relative_luminance(lifted) <= 0.022
+
+    # floor=0 disables the transform entirely.
+    program = "#000510 1s\nrepeat"
+    assert lift_program_luminance(program, floor=0.0) == program
 
 
 # --- calibration previews ----------------------------------------------------

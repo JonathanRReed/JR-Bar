@@ -114,15 +114,15 @@ final class DeckStore {
         return (eventReceipt.at ?? 0) > (fromState.at ?? 0) ? eventReceipt : fromState
     }
 
-    /// "Key 3 pressed 4 s ago", or the Python window's idle line.
+    /// "Key 3 pressed 4s ago", or the Python window's idle line. The age
+    /// words are `PanelStore.elapsed`'s so the panel and the footnote agree.
     var observedInputText: String {
         guard let input = lastInput else { return "No physical input observed" }
         guard let at = input.at else { return input.sentence }
-        let age = max(0, now - at)
-        if age < 1 { return "\(input.sentence) just now" }
-        if age < 60 { return "\(input.sentence) \(Int(age)) s ago" }
-        if age < 3600 { return "\(input.sentence) \(Int(age / 60)) min ago" }
-        return "\(input.sentence) \(Int(age / 3600)) h ago"
+        if now - at < 1 { return "\(input.sentence) just now" }
+        guard let elapsed = PanelStore.elapsed(since: Date(timeIntervalSince1970: at),
+                                               now: Date(timeIntervalSince1970: now)) else { return input.sentence }
+        return "\(input.sentence) \(elapsed) ago"
     }
 
     /// Sessions the side list offers: every main session the daemon knows,

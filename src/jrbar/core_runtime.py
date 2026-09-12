@@ -254,6 +254,66 @@ def plan_extra_lookups(
     return chosen
 
 
+# Paths whose values move on every build without the document having
+# changed: a stamped clock, monotonic ages, and now-relative forecasts.
+# ``*`` matches any mapping key or list index. Comparing significance
+# without them is what makes an unchanged projection skip its broadcast --
+# the server's byte-level dedupe can never fire while these fields tick.
+# A missed field degrades to the old publish-everything behaviour, never
+# to wrong data.
+_VOLATILE_DOC_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
+    "state": (
+        ("now",),
+        ("generation",),
+        ("health", "sources", "*", "heard_age_seconds"),
+        ("health", "intake", "silence_seconds"),
+        ("usage", "providers", "*", "forecast", "exhausts_at"),
+        ("usage", "providers", "*", "windows", "*", "forecast", "exhausts_at"),
+    ),
+    "lights": (
+        ("now",),
+        ("surfaces", "*", "why_detail", "seconds_in_state"),
+        ("linked_skew_at",),
+        ("linked_skew_ms",),
+        ("auto_dim", "lux"),
+        ("auto_dim", "factor"),
+    ),
+}
+
+
+def _path_is_volatile(path: tuple[str, ...], volatile: tuple[tuple[str, ...], ...]) -> bool:
+    return any(
+        len(pattern) == len(path)
+        and all(segment == "*" or segment == part for segment, part in zip(pattern, path))
+        for pattern in volatile
+    )
+
+
+def _equal_ignoring_volatile(a: Any, b: Any, path: tuple[str, ...], volatile) -> bool:
+    if _path_is_volatile(path, volatile):
+        return True
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in a.keys() ^ b.keys():
+            if not _path_is_volatile((*path, str(key)), volatile):
+                return False
+        return all(
+            _equal_ignoring_volatile(a[key], b[key], (*path, str(key)), volatile)
+            for key in a.keys() & b.keys()
+        )
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(
+            _equal_ignoring_volatile(x, y, (*path, str(index)), volatile)
+            for index, (x, y) in enumerate(zip(a, b))
+        )
+    return type(a) is type(b) and a == b
+
+
+def doc_significant_equal(kind: str, a: Any, b: Any) -> bool:
+    """True when two builds of the same document differ only in volatile
+    fields -- the ones that tick without a state change."""
+    return _equal_ignoring_volatile(a, b, (), _VOLATILE_DOC_PATHS.get(kind, ()))
+
+
 def screen_bar_anchor(own: float | None, hardware: float | None, *, linked: bool) -> float | None:
     """The Screen Bar's playback anchor. Linked to a strip it follows the
     strip's write-completion moment: the strip loops from there and never
@@ -3834,6 +3894,9 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"core: state projection failed: {traceback.format_exc(limit=6)}")
                 return
             with self._core_lock:
+                previous = self._core_documents.get("state")
+                if previous is not None and doc_significant_equal("state", previous, document):
+                    return
                 self._core_documents["state"] = document
             server.publish_state(document)
             self._core_note_frame(self._core_state_frame_times)
@@ -3850,6 +3913,9 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"core: lights projection failed: {traceback.format_exc(limit=6)}")
                 return
             with self._core_lock:
+                previous = self._core_documents.get("lights")
+                if previous is not None and doc_significant_equal("lights", previous, document):
+                    return
                 self._core_documents["lights"] = document
             server.publish_lights(document)
             self._core_lights_generation += 1
@@ -3971,6 +4037,11 @@ def build_headless_controller_class() -> type:
             ):
                 return cached[1]
             extras = self._core_lookup_extras(status)
+            if len(self._core_extras) > 256:
+                # Session ids never repeat, so the map would grow for the
+                # daemon's uptime; a clear is cheaper than an eviction
+                # policy for a cache this cheap to refill.
+                self._core_extras.clear()
             self._core_extras[status.agent_id] = (time.monotonic(), extras)
             return extras
 
@@ -4492,7 +4563,10 @@ def build_headless_controller_class() -> type:
             # to call it connected.
             dot_connected = strip_connected = False
             display_kinds = getattr(self, "last_led_display_kind_by_device", {}) or {}
-            for device in self.status_bar_devices(remember=False):
+            # One device list per build -- each call re-sorts and re-reads
+            # per-device settings, and this build used to ask twice.
+            devices = self.status_bar_devices(remember=False)
+            for device in devices:
                 if device.device_id == legacy.VIRTUAL_DEVICE_ID or not device.connected:
                     continue
                 leds = led_count_for_target(device.target)
@@ -4607,7 +4681,7 @@ def build_headless_controller_class() -> type:
             virtual = self.virtual_status_device
             call = getattr(virtual, "_live_program_call", None)
             virtual_device = next(
-                (d for d in self.status_bar_devices(remember=False) if d.device_id == legacy.VIRTUAL_DEVICE_ID),
+                (d for d in devices if d.device_id == legacy.VIRTUAL_DEVICE_ID),
                 None,
             )
             bar_brightness = (
@@ -4647,13 +4721,22 @@ def build_headless_controller_class() -> type:
                     # carried two programs that read as "blink different".
                     # The lift is legibility only: codes the strip can show
                     # as faint light read as "off" on a display.
+                    mirror_program = lift_program_luminance(
+                        hardware_mirror_program or hardware.program
+                    )
                     surfaces["screen_bar"] = SurfaceFacts(
-                        program=lift_program_luminance(
-                            hardware_mirror_program or hardware.program
-                        ),
+                        program=mirror_program,
                         led_count=hardware.led_count,
                         anchor=anchor,
-                        brightness=bar_brightness,
+                        # What the mirrored program drives the bar at -- its
+                        # own ``brightness N``, which is the strip's. The
+                        # bar's ambient plan (carrying the
+                        # ``screen_bar_min_glow`` floor) stays the policy for
+                        # the bar's OWN render; a mirror reports what it
+                        # plays, so a dark beat never gains a resting glow
+                        # the strip does not have.
+                        brightness=delivered_brightness(mirror_program),
+                        brightness_policy=bar_brightness,
                         why=hardware.why,
                         override=override,
                         why_detail=hardware.why_detail,
@@ -4674,17 +4757,23 @@ def build_headless_controller_class() -> type:
                 # The bar only mirrors the strip while the two are linked;
                 # unlinked and idle, it has no program of its own to claim.
                 hardware = surfaces["hardware"]
+                mirror_program = lift_program_luminance(
+                    hardware_mirror_program or hardware.program
+                )
                 surfaces["screen_bar"] = SurfaceFacts(
-                    program=lift_program_luminance(
-                        hardware_mirror_program or hardware.program
-                    ),
+                    program=mirror_program,
                     led_count=hardware.led_count,
                     anchor=(
                         hardware.anchor + bar_phase_offset
                         if hardware.anchor is not None
                         else None
                     ),
-                    brightness=bar_brightness,
+                    # Same rule as the live-call branch above: the program's
+                    # own ``brightness N`` (the strip's) is what the bar is
+                    # driven at; the bar's ambient plan -- floored by
+                    # ``screen_bar_min_glow`` -- is reported as policy only.
+                    brightness=delivered_brightness(mirror_program),
+                    brightness_policy=bar_brightness,
                     why=hardware.why,
                     override=override,
                     why_detail=hardware.why_detail,

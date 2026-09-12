@@ -35,6 +35,13 @@ final class ScreenBarController {
     private var lastRawText = ""
     private(set) var lastRejection: String?
 
+    /// Settings › Screen Bar › Minimum glow — the housing rim's dial,
+    /// pushed live from the settings document.
+    var minGlow: CGFloat {
+        get { view.minGlow }
+        set { view.minGlow = newValue }
+    }
+
     /// Alcove's capsule when the band follows it; nil hugs the notch.
     var capsule: AlcoveCapsule? {
         didSet { if capsule != oldValue { reposition() } }
@@ -87,16 +94,44 @@ final class ScreenBarController {
 
     // MARK: Visibility
 
+    /// The band eases in and out like every other surface (the tooltip's
+    /// 0.18 s); Reduce Motion keeps the instant swap.
+    private static let fadeSeconds: TimeInterval = 0.18
+
     func show() {
         isShown = true
         reposition()
-        panel.orderFrontRegardless()
+        if reduceMotion {
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+        } else {
+            panel.alphaValue = 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.fadeSeconds
+                panel.animator().alphaValue = 1
+            }
+        }
         present()
     }
 
     func hide() {
         isShown = false
-        panel.orderOut(nil)
+        if reduceMotion {
+            panel.alphaValue = 1
+            panel.orderOut(nil)
+        } else {
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = Self.fadeSeconds
+                panel.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, !self.isShown else { return }
+                    self.panel.orderOut(nil)
+                    self.panel.alphaValue = 1
+                }
+            })
+        }
         updateClock()
     }
 
@@ -135,8 +170,19 @@ final class ScreenBarController {
     /// pulse under the notch swell together. Without it the program starts
     /// now, as a file feed would.
     func apply(programText text: String, anchorEpoch: Double? = nil) {
-        if text == lastRawText, let anchorEpoch, abs(Self.mediaTime(forEpoch: anchorEpoch) - anchor) < 0.02 {
-            return  // Same program, same phase: nothing to restart.
+        if text == lastRawText, sampler != nil {
+            // Same program: only a moved anchor is a reason to act at all,
+            // and a re-aligned anchor replays the plan instead of paying
+            // for a recompile. A nil anchor carries no phase word, so an
+            // identical republish never restarts.
+            guard let anchorEpoch else { return }
+            let now = CACurrentMediaTime()
+            let locked = Self.mediaTime(forEpoch: anchorEpoch)
+            guard locked <= now + 0.05, now - locked < 6 * 3600 else { return }
+            if abs(locked - anchor) < 0.02 { return }
+            anchor = locked
+            present()
+            return
         }
         lastRawText = text
         let compiled = LEDSPresentationCompiler.compile(text, ledCount: ScreenBarGeometry.ledCount, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)

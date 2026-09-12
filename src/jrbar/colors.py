@@ -350,34 +350,53 @@ def readable_identity_hex(hex_color: str) -> str:
     return luminance_matched_hex(hex_color, IDENTITY_LUMINANCE_FLOOR)
 
 
-# --- The linked Screen Bar's legibility floor --------------------------------
+# --- The linked Screen Bar's legibility lift ---------------------------------
 #
 # When the bar follows a strip it presents the strip's own program (see
 # ``core_runtime._core_build_lights``), but the palette that program carries
 # is tuned for a light sitting IN a dark bezel: codes down near black are
 # real, readable light on a die, and the strip's write boundary even lifts
 # chroma-intent colours that PWM quantization would lose. On a display, next
-# to full-bright UI, the same codes read as "off". So the mirror lifts every
-# colour token to a minimum luminance, hue and saturation intact.
+# to full-bright UI, the same codes read as "off". So the mirror lifts
+# sub-floor colour tokens, hue and saturation intact.
 #
-# The floor is IDENTITY_LUMINANCE_FLOOR -- this module's existing calibrated
+# The lift is a continuous power curve, not a clamp to the floor: below the
+# knee a token keeps a PROPORTION of the distance, so the ordering a fade's
+# tail encodes survives -- near-black stays near-black, mid-dark gets a
+# partial lift, and the curve meets the pass-through region without a seam.
+# The earlier flat floor landed every sub-floor code ON the floor, so the
+# embers a resting strip shows as faint pulses (or quantization-crushed
+# blacks) read as one constant glow on the display -- a resting glow the
+# hardware does not have.
+#
+# The knee is IDENTITY_LUMINANCE_FLOOR -- this module's existing calibrated
 # answer to "dim enough to read as unlit". Going higher would compress the
 # contrast of every fade and roll the program carries: a tail code at
 # Y ~= 0.02 lifted to 0.15 sits nearly as bright as a head code at 0.2, and
 # the wave the strip is playing flattens into a wash on screen.
 _PROGRAM_HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}(?![0-9A-Fa-f])")
 
+#: Shape of the mirror's lift below ``floor``: ``floor * (Y / floor) ** 0.5``.
+#: Square root lifts small values by a large fraction and large ones by a
+#: small one, fading smoothly to nothing at black -- a code at a twentieth
+#: of the floor gets about a fifth of the lift, not the whole floor.
+MIRROR_LIFT_EXPONENT = 0.5
+
 
 def lift_program_luminance(
     program: str, floor: float = IDENTITY_LUMINANCE_FLOOR
 ) -> str:
-    """Every ``#rrggbb`` in a program lifted to at least ``floor`` luminance.
+    """Every ``#rrggbb`` in a program lifted toward ``floor`` luminance.
 
     Only the colour literals move: timing, easing, ``roll``/``pulse``
     directives, ``brightness N`` and ``off`` beats pass through
     byte-for-byte. A code already at or above the floor keeps its exact
-    text, and ``#000000`` stays black -- it has no hue to preserve, and a
-    dark beat in the animation is meant to be dark.
+    text. Below the floor the target is the continuous power lift
+    ``floor * (Y / floor) ** MIRROR_LIFT_EXPONENT`` -- monotone, and
+    continuous through the knee -- so a dark beat stays a dark beat and a
+    mid-dark tail gets only a partial lift. ``#000000`` stays black: it
+    has no hue to preserve, and a dark beat in the animation is meant to
+    be dark.
     """
     if not isinstance(program, str) or not program:
         return program
@@ -385,9 +404,13 @@ def lift_program_luminance(
 
     def lift(match: re.Match[str]) -> str:
         token = match.group(0)
-        if floor <= 0.0 or relative_luminance(token) >= floor:
+        if floor <= 0.0:
             return token
-        return luminance_matched_hex(token, floor)
+        luminance = relative_luminance(token)
+        if luminance <= 0.0 or luminance >= floor:
+            return token
+        target = floor * (luminance / floor) ** MIRROR_LIFT_EXPONENT
+        return luminance_matched_hex(token, target)
 
     return _PROGRAM_HEX_RE.sub(lift, program)
 

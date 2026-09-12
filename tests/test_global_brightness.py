@@ -60,6 +60,33 @@ def test_the_dial_scales_both_brightness_paths(request) -> None:
     assert controller.effective_signal_brightness_for_device(device) <= full_signal * 0.55
 
 
+def test_small_ambient_drift_does_not_re_emit(request) -> None:
+    """The deadband: lux noise under the perceptible step must not rewrite
+    the program (each rewrite restarts the animation), while a deliberate
+    settings change or a real move always passes through."""
+    case = SimpleNamespace(
+        addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
+    )
+    isolate_controller(case)
+    controller = case.controller
+    device = _device()
+
+    def emit(brightness: int) -> int:
+        controller.ambient_brightness_plan_for_device = (
+            lambda _d: SimpleNamespace(brightness=brightness)
+        )
+        return controller.effective_brightness_for_device(device)
+
+    first = emit(120)
+    assert emit(124) == first  # drift below the band is held
+    assert emit(118) == first
+    assert emit(160) == 160  # a real move passes
+    assert emit(0) == 0  # fading to black is never held
+    assert emit(3) == 3  # coming back from black emits immediately
+    controller.settings = controller.settings.with_global_brightness_scale(0.5)
+    assert emit(121) == 121  # a settings write re-emits under the band
+
+
 def test_the_menu_action_persists_the_preset(request) -> None:
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),

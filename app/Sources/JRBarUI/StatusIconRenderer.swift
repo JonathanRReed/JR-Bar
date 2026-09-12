@@ -44,7 +44,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     public var subtitle: String {
         switch self {
         case .agents: return "One dot per live session, coloured by what it is doing; the mark alone when nothing runs."
-        case .meters: return "A column per provider you show in the panel, plus a state dot."
+        case .meters: return "A column per provider checked under Settings › Usage, plus a state dot."
         case .metersPercent: return "The same columns, with the first provider's number."
         case .glyph: return "The JR-Bar mark, tinted by what the agents are doing."
         case .glyphRing: return "The mark inside a ring of your primary window."
@@ -99,11 +99,11 @@ public struct StatusMeter: Hashable, Sendable {
         return .none
     }
 
-    /// "Claude 82 %" for the tooltip, "Claude no reading" for a window the
+    /// "Claude 82%" for the tooltip, "Claude no reading" for a window the
     /// provider reports without a number.
     public var readout: String {
         guard let fraction else { return "\(name) no reading" }
-        return "\(name) \(approximate ? "~" : "")\(Int((fraction * 100).rounded())) %"
+        return "\(name) \(approximate ? "~" : "")\(Int((fraction * 100).rounded()))%"
     }
 }
 
@@ -659,7 +659,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
         }
     }
 
-    /// "Working · Claude 82 %, Codex 41 % · 2 more" — what VoiceOver reads
+    /// "Working · Claude 82%, Codex 41% · 2 more" — what VoiceOver reads
     /// and what the button's tooltip says.
     public static func accessibilityLabel(_ spec: StatusIconSpec) -> String {
         if spec.style == .agents {

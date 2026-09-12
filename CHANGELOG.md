@@ -2,7 +2,53 @@
 
 All notable changes to JR-Bar are documented here.
 
-## 0.9.3 (unreleased)
+## 0.9.4 (unreleased)
+
+- Black means black on a linked Screen Bar. The mirror's luminance lift
+  was a flat floor, so every dim code — embers, fade tails, codes the
+  strip's write boundary crushes to off — painted the same constant glow
+  the hardware does not have. The lift is now a continuous curve that
+  keeps dark beats dark: `#000000` stays exact, near-black stays
+  near-black, and a mid-dark tail gets only a partial lift. The surface
+  also reports the program's own `brightness` (the strip's) rather than
+  the bar's ambient plan, and the housing rim follows the live Minimum
+  glow setting and turns off entirely while the band shows no light.
+- Animations no longer restart on brightness noise. Ambient-lux drift
+  was baking a new `brightness N` into the program text every refresh —
+  a real firmware write, a new anchor, a visible restart on the strip
+  and the bar alike. Emitted brightness now has hysteresis: sub-
+  perceptible drift is held, deliberate settings writes always pass,
+  and fades to zero are never held. A republish with the same program
+  and a nil or unmoved anchor no longer recompiles anything; a moved
+  anchor re-aligns by replaying the plan, not rebuilding it; and a
+  window move that changes neither plan nor phase is a no-op.
+- A reassert now publishes the program the strip is actually running.
+  Reasserts write the steady-state variant (no approach frame), so the
+  strip's loop is shorter than the published text — the bar drifted a
+  little further off phase every lap. Both `last_program` and the
+  nominal mirror now record the running variant.
+- The document dedupe now works: state and lights frames carried ticking
+  fields (`now`, ages, now-relative forecasts) that made every broadcast
+  look changed. Publish-time compares significance with those volatile
+  paths stripped — a quiet rebuild costs one compare instead of a full
+  broadcast-and-redecode on every client.
+- `menu_bar_icon_style` no longer bounces: the daemon accepts all five
+  app styles (it only knew the three glyph styles, so picking a meters
+  or dots style reported "the core kept 'glyph' instead").
+- Copy sweep, round two: the daemon is "the monitor" in user-facing text
+  (tooltips, toasts, empty states, errors); the Screen Bar chip says
+  "shown"/"hidden" instead of borrowing "connected"; Ask/Error carry
+  their Lighting names in the assign sheet ("Ask — needs you",
+  "Error — failed") with a caption explaining the reservation and why
+  only two states are offered; the Active scene subtitle says what it
+  does; the Stream Deck card gained its own serve toggle; the integer
+  slider shows its unit; the rail and the band ease in and out instead
+  of snapping (Reduce Motion keeps the instant swap); "Details" is
+  "Usage Center"; elapsed-time units read the same everywhere.
+- Small bounds: the per-session extras cache is capped; the lights build
+  asks for the device list once instead of twice.
+
+## 0.9.3
 
 - Linked Screen Bar mirrors the strip's program, not a second rendering
   of it. The bar and the SidePulse shared an anchor but drew from

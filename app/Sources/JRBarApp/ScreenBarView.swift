@@ -27,9 +27,22 @@ final class ScreenBarView: NSView {
     private var lastStops: [BandStop] = []
     private var lastBandWidth: CGFloat = -1
     private(set) var bandRect: NSRect = .zero
+    /// Settings › Screen Bar › Minimum glow, pushed in live: it scales the
+    /// housing rim and nothing else. A band showing no light gets no rim —
+    /// a black program under a lit outline is a resting glow the strip
+    /// does not have.
+    var minGlow: CGFloat = ScreenBarGeometry.minGlow {
+        didSet { if minGlow != oldValue { updateOutline() } }
+    }
+    private var bandIsLit = false {
+        didSet { if bandIsLit != oldValue { updateOutline() } }
+    }
     /// CGColor objects are the per-frame allocation hot spot; the palette a
     /// program cycles through is small, so cache them by quantised value.
     private var colorCache: [UInt64: CGColor] = [:]
+    /// What Core Animation was last handed; a re-`play` with the same plan
+    /// at the same anchor and width changes nothing on screen.
+    private var lastPlay: (plan: LEDSKeyframePlan, anchor: CFTimeInterval, width: CGFloat)?
     private static let haloEnabled = ProcessInfo.processInfo.environment["JRBAR_NO_HALO"] == nil
     private static let leadKey = "jrbar.lead"
     private static let loopKey = "jrbar.loop"
@@ -81,7 +94,7 @@ final class ScreenBarView: NSView {
 
         outlineLayer.fillColor = nil
         outlineLayer.lineWidth = 0.8
-        outlineLayer.strokeColor = CGColor(colorSpace: colorSpace, components: [0.25, 0.25, 0.25, ScreenBarDesign.outlineAlpha * ScreenBarGeometry.minGlow])
+        updateOutline()
         outlineLayer.actions = ["path": NSNull(), "strokeColor": NSNull()]
 
         root.addSublayer(haloLayer)
@@ -135,12 +148,20 @@ final class ScreenBarView: NSView {
     /// Hands `plan` to Core Animation: the lead pass from `anchor` (a
     /// `CACurrentMediaTime` instant, possibly long past), then the loop
     /// forever from `anchor + loopStart`. Static plans set the colours once.
-    /// Cheap to call again with the same plan (a geometry change, a wake).
+    /// A repeat call with the same plan at the same phase is a no-op:
+    /// re-arming the same animations just re-renders every keyframe's
+    /// colours on the main thread for a window move the band cannot see.
     func play(plan: LEDSKeyframePlan, anchor: CFTimeInterval) {
         let width = bandRect.width
         guard width > 0 else { return }
+        if isPlayingKeyframes, let last = lastPlay,
+           last.plan == plan, last.anchor == anchor, last.width == width {
+            return
+        }
+        lastPlay = (plan, anchor, width)
         isPlayingKeyframes = true
         lastStops = []
+        bandIsLit = planIsLit(plan)
         let locations = ScreenBarBlend.columnLocations(bandWidth: width).map { NSNumber(value: Double($0)) }
         func colors(_ codes: [RGB8]) -> [CGColor] {
             ScreenBarBlend.columnSamples(colors: codes.map(\.rgb), bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha).map(cgColor(for:))
@@ -195,10 +216,25 @@ final class ScreenBarView: NSView {
         codes.reduce(0) { $0 + Int(max($1.r, max($1.g, $1.b))) }
     }
 
+    /// True when the program ever lights an LED: the rim only shows while
+    /// there is something for it to sit around.
+    private func planIsLit(_ plan: LEDSKeyframePlan) -> Bool {
+        let frames = (plan.lead?.frames ?? []) + (plan.loop?.frames ?? []) + [plan.finalCodes]
+        return frames.contains { $0.contains { $0 != .black } }
+    }
+
+    /// The rim's stroke for the current light state: `minGlow` while the
+    /// band shows light, nothing while it is dark.
+    private func updateOutline() {
+        let alpha = bandIsLit ? ScreenBarDesign.outlineAlpha * min(1, max(0, minGlow)) : 0
+        outlineLayer.strokeColor = CGColor(colorSpace: colorSpace, components: [0.25, 0.25, 0.25, alpha])
+    }
+
     /// Takes Core Animation's hands off the layers; the next `display` paints.
     func stopKeyframes() {
         guard isPlayingKeyframes else { return }
         isPlayingKeyframes = false
+        lastPlay = nil
         lastStops = []
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -229,6 +265,7 @@ final class ScreenBarView: NSView {
         let width = bandRect.width
         guard width > 0 else { return }
         let stops = ScreenBarBlend.stops(colors: colors, bandWidth: width, alphaScale: ScreenBarBlend.coreAlpha)
+        bandIsLit = !stops.isEmpty
         if stops == lastStops { return }
         lastStops = stops
         let cgColors = stops.map(cgColor(for:))

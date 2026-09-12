@@ -45,7 +45,7 @@ struct SettingsRootView: View {
             }
             Button("Cancel", role: .cancel) { store.resetTarget = nil }
         } message: {
-            Text("Every setting on that page goes back to the core's default. This cannot be undone.")
+            Text("Every setting on that page goes back to the monitor's default. This cannot be undone.")
         }
     }
 }

@@ -11,7 +11,7 @@ struct UsageCenterView: View {
         Group {
             if !store.isLive {
                 UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                text: "Usage comes from the core daemon. The cards fill in as soon as the socket is live.")
+                                text: "Usage comes from the monitor. The cards fill in as soon as the socket is live.")
             } else if store.providers.isEmpty {
                 VStack(spacing: 10) {
                     UsageEmptyState(symbol: "chart.bar", title: "No usage yet",
@@ -86,7 +86,7 @@ struct UsageCenterView: View {
                     }
                 }
                 .disabled(!store.isLive || store.refreshing)
-                .help("Ask the core to re-read every provider (⌘R)")
+                .help("Ask the monitor to re-read every provider (⌘R)")
                 .keyboardShortcut("r", modifiers: .command)
             }
         }
@@ -278,10 +278,10 @@ struct ProviderUsageCard: View {
     private var noWindowsLine: String {
         switch provider.state?.lowercased() {
         case "disabled", "off":
-            return "Turned off: the core is not collecting \(style.name) usage."
+            return "Turned off: the monitor is not collecting \(style.name) usage."
         case "source_not_found", "error", "unavailable":
             return provider.action.map { "\($0) to see quota windows here." }
-                ?? "The core could not read \(style.name)'s usage source."
+                ?? "The monitor could not read \(style.name)'s usage source."
         default:
             return "No quota window reported yet."
         }
@@ -334,7 +334,7 @@ struct ProviderUsageCard: View {
             return "\(ProviderStyle.style(for: provider.id, document: store.document).name) reports this window without a number"
         }
         switch forecast.source {
-        case .daemon: parts.append("Core forecast")
+        case .daemon: parts.append("Monitor forecast")
         case .local: parts.append("Estimated from the last 45 minutes")
         case .none: parts.append("A pace needs two readings a minute apart")
         }
@@ -409,7 +409,7 @@ struct ProviderUsageCard: View {
                 if let savings = history.cacheSavings, savings > 0, let share = history.cacheShare {
                     HStack(spacing: 5) {
                         Image(systemName: "leaf.fill").foregroundStyle(.green)
-                        Text("Cache saved ≈ \(UsageFormat.cost(savings, currency: currency)) · \(Int((share * 100).rounded())) % of input from cache")
+                        Text("Cache saved ≈ \(UsageFormat.cost(savings, currency: currency)) · \(Int((share * 100).rounded()))% of input from cache")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -423,7 +423,7 @@ struct ProviderUsageCard: View {
     }
 
     private func pricingDisclosure(_ pricing: UsagePricing?) -> String {
-        guard let pricing else { return "Approximate: the core reported no price table for this provider." }
+        guard let pricing else { return "Approximate: the monitor reported no price table for this provider." }
         var text = "Approximate: list prices"
         if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
             text += String(format: " (%@%.2f in / %@%.2f out per M tokens", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
@@ -448,7 +448,7 @@ struct SignedOutRow: View {
                 .frame(width: 30)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Sign in via the CLI").font(.callout.weight(.medium))
-                Text("The core reads \(name)'s quota from the CLI's own login. Run its login command in a terminal and the windows appear here on the next refresh.")
+                Text("The monitor reads \(name)'s quota from the CLI's own login. Run its login command in a terminal and the windows appear here on the next refresh.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -458,7 +458,7 @@ struct SignedOutRow: View {
                     if provider.id == "claude", !store.claudePlanLimitsEnabled {
                         Button("Turn on plan limits") { store.enableClaudePlanLimits() }
                             .controlSize(.small)
-                            .help("Writes claude_plan_limits_enabled so the core may read Claude's plan-limit source")
+                            .help("Writes claude_plan_limits_enabled so the monitor may read Claude's plan-limit source")
                     }
                     Button("Usage settings…") { store.openUsageSettings() }
                         .controlSize(.small)
@@ -730,7 +730,7 @@ struct NoLocalRecordsHint: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(style.name) reports no local records")
                     .font(.callout.weight(.medium))
-                Text("The percentages above come from the provider; the graph needs transcripts on this Mac, and the core found none.")
+                Text("The percentages above come from the provider; the graph needs transcripts on this Mac, and the monitor found none.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -765,7 +765,7 @@ struct UsageSkeleton: View {
                 }
             }
             .frame(height: 110)
-            Text(scanning ? "Reading transcripts — the core is still scanning." : "Loading history…")
+            Text(scanning ? "Reading transcripts — the monitor is still scanning." : "Loading history…")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
         }

@@ -276,7 +276,7 @@ struct PanelHeader: View {
                     .lineLimit(1)
                 Button("Restart") { store.restartCore() }
                     .buttonStyle(PillButtonStyle(prominent: false))
-                    .help("Launch the core again")
+                    .help("Launch the monitor again")
             } else {
                 Text(store.headerCounts)
                     .font(.system(size: 12))
@@ -504,7 +504,7 @@ struct WhyLightRow: View {
 
 /// Nothing to list: a drawn state rather than a sentence in the void — a
 /// soft mark, the headline, and one line saying what happens next. Live
-/// and quiet reads differently from "the core is not there".
+/// and quiet reads differently from "the monitor is not there".
 struct SessionsEmptyState: View {
     @Bindable var store: PanelStore
 
@@ -880,9 +880,9 @@ struct UsageSection: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Details" : nil, onDetail: { store.openUsageCenter() })
+            SectionLabel(text: "Usage", trailing: refreshed, detailTitle: store.isLive ? "Usage Center" : nil, onDetail: { store.openUsageCenter() })
             if store.usage.isEmpty && store.windowlessUsage.isEmpty {
-                Text(store.isLive ? "No usage reported yet." : "Usage comes from the core.")
+                Text(store.isLive ? "No usage reported yet." : "Usage comes from the monitor.")
                     .font(.system(size: 12))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
@@ -1205,8 +1205,11 @@ struct DevicesSection: View {
         }
     }
 
-    private var chips: [(id: String, name: String, present: Bool, help: String)] {
-        var result: [(String, String, Bool, String)] = []
+    /// `state` is the word VoiceOver says after the name: "connected" for
+    /// hardware, "shown"/"hidden"/"not reported" for the Screen Bar chip,
+    /// which announces visibility rather than connectivity.
+    private var chips: [(id: String, name: String, present: Bool, help: String, state: String?)] {
+        var result: [(String, String, Bool, String, String?)] = []
         let pro = store.devices.first { $0.kind == "pro" }
         let dot = store.devices.first { $0.kind == "dot" }
         let bar = store.devices.first { $0.kind == "screen_bar" }
@@ -1220,15 +1223,19 @@ struct DevicesSection: View {
             ([device.map { self.deviceHelp($0) } ?? fallback, pairNote].compactMap { $0 } + ["click for Devices settings"])
                 .joined(separator: " · ")
         }
-        result.append(("pro", "Pro", pro?.isPresent ?? false, pairHelp(pro, "SidePulse Pro: not reported")))
-        result.append(("dot", "Dot", dot?.isPresent ?? false, pairHelp(dot, "PulseDot: not reported")))
-        let barShown = store.screenBarShown && (bar?.isPresent ?? true)
-        var barHelp = barShown ? "Screen Bar shown under the notch · click to hide" : "Screen Bar hidden · click to show"
+        result.append(("pro", "Pro", pro?.isPresent ?? false, pairHelp(pro, "SidePulse Pro: not reported"), nil))
+        result.append(("dot", "Dot", dot?.isPresent ?? false, pairHelp(dot, "PulseDot: not reported"), nil))
+        // The band is the app's own chrome: no device row means the state
+        // is unknown, not "connected".
+        let barShown = store.screenBarShown && (bar?.isPresent == true)
+        var barHelp = (bar == nil ? "Screen Bar not reported"
+                       : (barShown ? "Screen Bar shown under the notch" : "Screen Bar hidden"))
+            + (barShown ? " · click to hide" : " · click to show")
         if store.core.lights?.linked == true, store.core.lights?.hardware != nil {
             barHelp += " · in step with the strip"
         }
-        result.append(("screen_bar", "Screen Bar", barShown, barHelp))
-        return result.map { (id: $0.0, name: $0.1, present: $0.2, help: $0.3) }
+        result.append(("screen_bar", "Screen Bar", barShown, barHelp, bar == nil ? "not reported" : (barShown ? "shown" : "hidden")))
+        return result.map { (id: $0.0, name: $0.1, present: $0.2, help: $0.3, state: $0.4) }
     }
 
     var body: some View {
@@ -1243,7 +1250,7 @@ struct DevicesSection: View {
                             .accessibilityHidden(true)
                     }
                     DeviceChip(name: chip.name, present: chip.present, dimmed: !store.isLive && chip.id != "screen_bar",
-                               action: chip.id == "screen_bar" ? "toggles the band" : "opens Devices settings")
+                               state: chip.state, action: chip.id == "screen_bar" ? "toggles the band" : "opens Devices settings")
                         .help(chip.help)
                         .onTapGesture {
                             if chip.id == "screen_bar" {
@@ -1280,7 +1287,9 @@ struct DevicesSection: View {
             .padding(.horizontal, 14)
             .frame(height: 18)
             .padding(.bottom, 10)
-            .help(store.isLive ? "Strip brightness (sends set_brightness)" : "Brightness needs the core")
+            .help(store.isLive
+                  ? (store.hasHardware ? "Strip brightness (sends set_brightness)" : "No strip connected")
+                  : "Brightness needs the monitor")
         }
         .frame(height: CGFloat(PanelLayout.devicesHeight), alignment: .top)
         .clipped()
@@ -1299,6 +1308,9 @@ struct DeviceChip: View {
     let name: String
     let present: Bool
     let dimmed: Bool
+    /// The word VoiceOver says after the name; hardware chips get
+    /// "connected"/"not connected", the Screen Bar chip passes its own.
+    var state: String? = nil
     /// What a tap does, for VoiceOver ("opens Devices settings" /
     /// "toggles the band" for the Screen Bar chip).
     var action: String? = nil
@@ -1318,7 +1330,7 @@ struct DeviceChip: View {
         .overlay(Capsule().strokeBorder(.primary.opacity(0.08), lineWidth: 0.5))
         .opacity(dimmed ? 0.55 : 1)
         .contentShape(Capsule())
-        .accessibilityLabel("\(name) \(present ? "connected" : "not connected")" + (action.map { " · \($0)" } ?? ""))
+        .accessibilityLabel("\(name) \(state ?? (present ? "connected" : "not connected"))" + (action.map { " · \($0)" } ?? ""))
         .accessibilityAddTraits(.isButton)
     }
 }

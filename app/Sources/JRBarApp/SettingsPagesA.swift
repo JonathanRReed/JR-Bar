@@ -46,7 +46,7 @@ struct GeneralPage: View {
             .pickerStyle(.menu)
             .fixedSize()
         } footer: {
-            SectionNote("Updates are checked by the app, not the core. The channel is remembered on this Mac.")
+            SectionNote("Updates are checked by the app, not the monitor. The channel is remembered on this Mac.")
         }
         .onAppear { store.refreshUpdater() }
     }
@@ -480,7 +480,7 @@ struct DevicesPage: View {
                 if store.hasDocument {
                     Text("No SidePulse hardware yet — plug in a Pro or Dot and it shows up here.").foregroundStyle(.secondary)
                 } else {
-                    Text("Devices appear once the core is connected.").foregroundStyle(.secondary)
+                    Text("Devices appear once the monitor is connected.").foregroundStyle(.secondary)
                 }
             }
         }
@@ -498,7 +498,7 @@ struct DevicesPage: View {
         } header: {
             Text("Pro + Dot")
         } footer: {
-            SectionNote("The role is what the Dot is for; the link is whether the core drives it at all.")
+            SectionNote("The role is what the Dot is for; the link is whether the monitor drives it at all.")
         }
 
         CreatorMicroCard(store: store)
@@ -640,7 +640,7 @@ struct CreatorMicroCard: View {
             Toggle(isOn: Binding(get: { settings.enabled }, set: { set(enabled: $0) })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Enable Creator Micro 2")
-                    Text("The core drives the approved pad's per-key colours and listens to its inputs.")
+                    Text("The monitor drives the approved pad's per-key colours and listens to its inputs.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -691,7 +691,6 @@ struct CreatorMicroCard: View {
                 Text("Control Center")
                 Spacer()
                 Button("Control Center…") { store.onOpenControlCenter?() }
-                    .keyboardShortcut("k", modifiers: .command)
             }
         } header: {
             HStack(spacing: 8) {
@@ -701,7 +700,7 @@ struct CreatorMicroCard: View {
                 }
             }
         } footer: {
-            SectionNote("Thirteen session keys per bank with solid per-key colour, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the core owns the device.")
+            SectionNote("Thirteen session keys per bank with solid per-key colour, a dial and a joystick with explicit mappings. Pins, banks, the rail, input check and the keymap live in the Control Center; the monitor owns the device.")
         }
     }
 }

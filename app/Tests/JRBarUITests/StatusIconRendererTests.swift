@@ -318,8 +318,8 @@ struct StatusMetersTests {
                                   overflow: 2, dot: .ask)
         let label = StatusIconRenderer.accessibilityLabel(spec)
         #expect(label.contains("needs you"))
-        #expect(label.contains("Claude 16 %"))
-        #expect(label.contains("Codex ~83 %"))
+        #expect(label.contains("Claude 16%"))
+        #expect(label.contains("Codex ~83%"))
         #expect(label.contains("2 more"))
         #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .glyph)) == "JR-Bar")
     }
@@ -333,7 +333,7 @@ struct StatusMetersTests {
         #expect(lines.count == 3)
         #expect(lines[0] == "JR-Bar · Needs input · 2 working · 1 needs you")
         #expect(lines[1] == "Amber dot: something needs you.")
-        #expect(lines[2] == "Claude 42 % · Codex 100 % · 2 more")
+        #expect(lines[2] == "Claude 42% · Codex 100% · 2 more")
         // Every dot state says what it means, and none of them repeats another.
         let meanings = StatusDotState.allCases.map(\.meaning)
         #expect(Set(meanings).count == StatusDotState.allCases.count)

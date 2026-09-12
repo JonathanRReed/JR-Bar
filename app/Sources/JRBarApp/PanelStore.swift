@@ -321,17 +321,17 @@ final class PanelStore {
 
     var connectionDescription: String {
         if case .backingOff(let failures, let delay) = supervisorState {
-            return "Core exited (\(failures)×); restarting in \(String(format: "%.1f", delay)) s"
+            return "Monitor exited (\(failures)×); restarting in \(String(format: "%.1f", delay)) s"
         }
         if coreCrashed { return "\(coreCrashDetail). Restart it from the header." }
         switch core.connection {
         case .connected where core.state != nil:
             let version = core.hello?.coreVersion ?? "?"
-            return "Core \(version) connected"
+            return "Monitor \(version) connected"
         case .connected: return "Connected, waiting for state"
-        case .connecting(let attempt): return attempt <= 1 ? "Connecting to core…" : "Reconnecting to core (try \(attempt))…"
-        case .disconnected(let reason): return "Core disconnected: \(reason)"
-        case .idle: return "Core client idle"
+        case .connecting(let attempt): return attempt <= 1 ? "Connecting to the monitor…" : "Reconnecting to the monitor (try \(attempt))…"
+        case .disconnected(let reason): return "Monitor not connected: \(reason)"
+        case .idle: return "Monitor client idle"
         }
     }
 
@@ -719,7 +719,7 @@ final class PanelStore {
                     self.answerRefused(reply.error)
                 }
             } catch {
-                self.show(toast: "No answer from the core — the ask is still open")
+                self.show(toast: "No answer from the monitor — the ask is still open")
             }
         }
     }
@@ -752,7 +752,7 @@ final class PanelStore {
                     self.answerRefused(reply.error)
                 }
             } catch {
-                self.show(toast: "No answer from the core — the ask is still open")
+                self.show(toast: "No answer from the monitor — the ask is still open")
             }
         }
     }
@@ -797,7 +797,7 @@ final class PanelStore {
                     self.show(toast: reply.error?.message ?? "Could not open \(row.label)")
                 }
             } catch {
-                self.show(toast: "The core is not answering — the panel stays open")
+                self.show(toast: "The monitor is not answering — the panel stays open")
             }
         }
     }
@@ -817,7 +817,7 @@ final class PanelStore {
                     self.show(toast: reply.error?.message ?? "Could not dismiss \(row.label)")
                 }
             } catch {
-                self.show(toast: "The core is not answering")
+                self.show(toast: "The monitor is not answering")
             }
         }
     }
@@ -887,7 +887,7 @@ final class PanelStore {
                     self.show(toast: "Cleared \(cleared)")
                 }
             } catch {
-                self.show(toast: "Clear failed: the core is not answering")
+                self.show(toast: "Clear failed: the monitor is not answering")
             }
         }
     }
@@ -907,7 +907,7 @@ final class PanelStore {
                     self.show(toast: "Undo failed: \(reply.error?.message ?? reply.error?.code ?? "refused")")
                 }
             } catch {
-                self.show(toast: "Undo failed: the core is not answering")
+                self.show(toast: "Undo failed: the monitor is not answering")
             }
         }
     }
@@ -1046,7 +1046,7 @@ final class PanelStore {
 
     func restartCore() {
         onRestartCore?()
-        show(toast: "Restarting the core…")
+        show(toast: "Restarting the monitor…")
     }
 
     func quit() { onQuit?() }

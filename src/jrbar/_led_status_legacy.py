@@ -1783,8 +1783,15 @@ class AgentLedController:
             )
 
         self.last_state = state
-        self.last_program = program
-        self.last_nominal_program = nominal
+        # Report what is RUNNING, not what was asked for: on a reassert the
+        # device plays the steady-state variant (the approach frame is
+        # dropped), so the strip's loop is that much shorter. Publishing the
+        # full program would have a linked Screen Bar looping a span the
+        # strip is not running, drifting further off phase every lap.
+        self.last_program = to_write
+        self.last_nominal_program = (
+            _steady_state_variant(nominal) if reassert else nominal
+        )
         self.last_program_identity = identity
         self.last_error = None
         self.last_target = written_target

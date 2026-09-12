@@ -11,7 +11,7 @@ struct EffectStudioView: View {
         Group {
             if !store.isLive {
                 UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                                text: "The effect registry, packs and assignments live in the core daemon. The studio fills in once the socket is live.")
+                                text: "The effect registry, packs and assignments live in the monitor. The studio fills in once the socket is live.")
             } else if store.catalog == nil {
                 VStack(spacing: 10) {
                     ProgressView().controlSize(.regular)
@@ -35,7 +35,7 @@ struct EffectStudioView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button { store.importPack() } label: { Label("Import…", systemImage: "square.and.arrow.down") }
-                    .help("Import a data-only effect pack (JSON v2); the core validates it")
+                    .help("Import a data-only effect pack (JSON v2); the monitor validates it")
                     .disabled(!store.isLive)
             }
             ToolbarItem(placement: .automatic) {
@@ -87,7 +87,7 @@ struct EffectStudioView: View {
             Button("Preview for 5 seconds") { store.grantConsent(and: store.selected) }
             Button("Cancel", role: .cancel) { store.askingConsent = false }
         } message: {
-            Text("The core will play this effect on the connected SidePulse hardware for five seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
+            Text("The monitor will play this effect on the connected SidePulse hardware for five seconds, then put the current light back. Attention and critical effects blink; they are clamped to 2 Hz. You will not be asked again.")
         }
         .alert("Pack already installed", isPresented: Binding(
             get: { store.packConflict != nil },
@@ -125,7 +125,7 @@ struct EffectLibraryPane: View {
             Divider()
             if store.groups.isEmpty {
                 VStack(spacing: 6) {
-                    Text("No effect matches").font(.callout).foregroundStyle(.secondary)
+                    Text("Nothing matches").font(.callout).foregroundStyle(.secondary)
                     Button("Clear search") { store.search = "" }.buttonStyle(.link).font(.caption)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -449,10 +449,10 @@ struct EffectParameterRow: View {
             HStack(spacing: 8) {
                 Slider(value: Binding(get: { value.doubleValue ?? Double(range.lowerBound) }, set: { onChange(.number($0.rounded())) }),
                        in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
-                Text("\(Int(value.doubleValue ?? 0))")
+                Text("\(Int(value.doubleValue ?? 0))" + unitSuffix)
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(width: 36, alignment: .trailing)
+                    .frame(width: 58, alignment: .trailing)
             }
         case .stepper(let range):
             HStack(spacing: 6) {
@@ -585,7 +585,7 @@ struct EffectAssignmentsPane: View {
                     Button("Import scene pack…") { store.importScenePack() }
                         .buttonStyle(.link)
                         .font(.caption)
-                        .help("Installs a data-only JSON scene pack; the core validates the file")
+                        .help("Installs a data-only JSON scene pack; the monitor validates the file")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -630,7 +630,7 @@ struct EffectAssignmentsPane: View {
                 VStack(spacing: 6) {
                     Image(systemName: "list.bullet.rectangle").font(.system(size: 26, weight: .light)).foregroundStyle(.secondary)
                     Text("No assignments").font(.callout.weight(.medium))
-                    Text("Everything follows the core's defaults. Pick an effect and choose Assign… to give a state, scene, provider or device its own look.")
+                    Text("Everything follows the monitor's defaults. Pick an effect and choose Assign… to give a state, scene, provider or device its own look.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -883,7 +883,7 @@ struct AssignSheet: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             if let effect, effect.safety.warns {
-                Label("\(effect.safety.label) effect: it will blink on that scope. The core clamps it to 2 Hz.", systemImage: "exclamationmark.triangle.fill")
+                Label("\(effect.safety.label) effect: it will blink on that scope. The monitor clamps it to 2 Hz.", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(effect.safety == .critical ? .red : .orange)
             }
@@ -921,7 +921,11 @@ struct AssignSheet: View {
             Picker("State", selection: $store.draftTarget) {
                 ForEach(EffectSemantic.assignable) { Text($0.label).tag($0.rawValue) }
             }
-            Text("Needs-you and Failed keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Lighting.")
+            Text("Ask and Error keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Lighting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Working, idle and the rest are looks, not events — set them per provider or under Lighting.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -967,7 +971,7 @@ struct AssignSheet: View {
         switch problem {
         case .globalWithTarget: return "Everywhere takes no target."
         case .missingTarget: return "This scope needs a target."
-        case .urgentSemantic: return "Needs-you and Failed keep their reserved effects."
+        case .urgentSemantic: return "Ask and Error keep their reserved effects."
         }
     }
 }
