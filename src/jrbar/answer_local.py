@@ -693,12 +693,17 @@ def session_host(
     acceptable identity for sessions launched from a provider's own app.
     """
     from .core_projection import origin_document, terminal_from_command
-    from .process_registry import list_processes, load_record
+    from .process_registry import SHARED_HOST_PROVIDERS, list_processes, load_record
 
     pid: int | None = None
     bundles: set[str] = set()
     app_name: str | None = None
-    if type(provider) is str and type(session_id) is str and session_id:
+    if (
+        type(provider) is str
+        and provider not in SHARED_HOST_PROVIDERS
+        and type(session_id) is str
+        and session_id
+    ):
         try:
             record = load_record(provider, session_id)
         except Exception:

@@ -13,7 +13,7 @@ from jrbar.collector import (
     SourceSpec,
     agent_status_from_canonical_work,
 )
-from jrbar.models import AgentMode, HookEvent
+from jrbar.models import AgentMode, AgentStatus, HookEvent
 from jrbar.operator_state import BootIdentifier, ClockSample, TransitionKind
 from jrbar.provider_facts import (
     EventToken,
@@ -183,6 +183,71 @@ def test_real_transcript_fallback_record_cannot_override_direct_truth() -> None:
     assert snapshot.operator_state.works[0].observation_authority is (
         ObservationAuthority.DIRECT_PROVIDER_OBSERVATION
     )
+
+
+def test_stale_replay_status_cannot_shadow_fresher_canonical_projection() -> None:
+    """The startup replay seeds the compatibility row for a session and
+    nothing refreshes it -- every later event for the provider arrives
+    normalized through ``ingest_batch``. A higher-precedence mode frozen in
+    that row must not outrank a newer canonical projection: a ``PreToolUse``
+    replayed moments before a daemon restart pinned a Devin session on
+    "Working" until the presence horizon dropped it entirely."""
+    monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
+    monitor.ingest_batch(
+        _batch(WorkLifecycle.ACTIVE, 10), clock=_clock(monotonic=110.0)
+    )
+    # Exactly what replay_recent_debug_logs leaves behind: the newest
+    # status-producing record for the session, frozen at replay time.
+    monitor._compatibility_statuses_by_agent_id["codex:session:work:one"] = (
+        AgentStatus(
+            provider="codex",
+            agent_id="codex:session:work:one",
+            display_name="Codex work:one",
+            mode=AgentMode.TOOL_RUNNING,
+            updated_at=NOW - timedelta(minutes=34),
+            event_name="PreToolUse",
+            session_id="work:one",
+        )
+    )
+
+    snapshot = monitor.snapshot()
+    status = next(
+        item
+        for item in (*snapshot.statuses, *snapshot.stale_statuses)
+        if item.agent_id == "codex:session:work:one"
+    )
+    assert status.mode is AgentMode.WORKING
+    assert status.updated_at == NOW
+    assert status in snapshot.statuses
+
+
+def test_same_moment_supplemental_status_still_wins_on_precedence() -> None:
+    """The precedence rule exists for two readings of the same moment --
+    a transcript parse and the canonical projection of one event -- so a
+    supplemental status at least as fresh still outranks it."""
+    monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
+    monitor.ingest_batch(
+        _batch(WorkLifecycle.ACTIVE, 10), clock=_clock(monotonic=110.0)
+    )
+    monitor._compatibility_statuses_by_agent_id["codex:session:work:one"] = (
+        AgentStatus(
+            provider="codex",
+            agent_id="codex:session:work:one",
+            display_name="Codex work:one",
+            mode=AgentMode.WAITING_FOR_INPUT,
+            updated_at=NOW,
+            event_name="PermissionRequest",
+            session_id="work:one",
+        )
+    )
+
+    snapshot = monitor.snapshot()
+    status = next(
+        item
+        for item in (*snapshot.statuses, *snapshot.stale_statuses)
+        if item.agent_id == "codex:session:work:one"
+    )
+    assert status.mode is AgentMode.WAITING_FOR_INPUT
 
 
 def test_canonical_projection_derives_content_free_legacy_fields_and_typed_keys() -> None:

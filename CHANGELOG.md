@@ -2,6 +2,31 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.8.1
+
+- A Devin session could read "Working" forever. The startup replay seeds a
+  compatibility status row per session from the newest legacy record and
+  normalized ingest never touches it again, and the merge let that frozen
+  row shadow the live canonical projection on precedence alone -- a
+  `PreToolUse` replayed moments before a restart outranked every newer
+  truth until the presence horizon dropped the row outright. Precedence now
+  only decides between observations of the same moment: a supplemental
+  status must be at least as fresh as the projection it would outrank.
+- The process registry's read side learned what the write side already
+  knew. Shared-host providers record the host's pid, not the session's, so
+  a leftover `devin acp` record made every historical Devin session look
+  alive for as long as the host stayed up -- vetoing the silence timer on
+  the status row and pointing "answer in terminal" at a process that owns
+  no terminal. The record's own end is still session-level truth; liveness
+  is left to the silence timer.
+- Every `PostToolUse` carries a derived request identity so it can close
+  the ask its own tool call opened, and most calls never had one -- but
+  resolving a request nobody opened materialized a permanent tombstone. A
+  long session accumulated the 1000-request cap of dead entries and every
+  refresh and reduce paid to carry them. Unopened resolutions are now a
+  no-op, and dead tombstones are filtered on write and on restore, with the
+  works' request linkage re-derived from what survived.
+
 ## 0.8.0
 
 - Usage history answers inside a reply budget. A cold Codex scan over

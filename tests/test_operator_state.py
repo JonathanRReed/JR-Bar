@@ -343,6 +343,37 @@ def test_request_opens_and_only_newer_explicit_provider_fact_resolves_it() -> No
     assert _event_kinds(resolved) == (TransitionKind.REQUEST_RESOLVED,)
 
 
+def test_resolved_fact_for_a_request_nobody_opened_materializes_nothing() -> None:
+    """Every PostToolUse carries a derived request identity so it can close
+    the ask the same tool call opened; most calls never had one. Resolving
+    a request that was never opened must be a no-op, not a tombstone -- a
+    long Devin session accumulated the 1000-request cap of dead resolved
+    entries and paid for all of them on every refresh."""
+    work_key = _work_key()
+    watermark = _watermark()
+    orphan = _request_key("request:orphan", work_key=work_key)
+    result = reduce_operator_state(
+        empty_operator_state(),
+        _batch(
+            watermark=watermark,
+            work_facts=(_work_fact(key=work_key, watermark=watermark),),
+            request_facts=(
+                _request_fact(
+                    ProviderRequestState.RESOLVED,
+                    key=orphan,
+                    watermark=watermark,
+                    next_actor=NextActor.NONE,
+                ),
+            ),
+        ),
+        clock=_clock(),
+    )
+
+    assert result.state.requests == ()
+    assert result.state.works[0].request_keys == ()
+    assert TransitionKind.REQUEST_RESOLVED not in _event_kinds(result)
+
+
 def test_terminal_work_resolves_its_open_requests() -> None:
     """An ask whose session ended is not actionable -- nobody is home to
     answer it. A permission prompt orphaned by a swept process must not
