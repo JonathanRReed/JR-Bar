@@ -196,7 +196,7 @@ public enum LightExplainer {
                 let suffix = unexplained ? "" : " (\(humanised))"
                 return (derived, "\(who.name) \(verb)\(suffix)", who.id)
             }
-            return (derived, unexplained ? "Core gave no reason" : "Core says \(humanised)", nil)
+            return (derived, unexplained ? "No reason given" : "Reason: \(humanised)", nil)
         }
     }
 
@@ -244,7 +244,8 @@ public enum LightExplainer {
             if kind == .working { return colour.map { "Breathing \($0)" } ?? "Breathing" }
             return cap.map { "\($0) light" } ?? "Light"
         case let other?:
-            return cap.map { "\($0) \(other)" } ?? other.prefix(1).uppercased() + other.dropFirst()
+            let named = other.replacingOccurrences(of: "_", with: " ")
+            return cap.map { "\($0) \(named)" } ?? named.prefix(1).uppercased() + named.dropFirst()
         }
     }
 
@@ -322,7 +323,7 @@ public enum LightExplainer {
             // (`role` absent means the Dot renders its own display).
             if key == "dot" {
                 let role = surface.role.map(DotRole.parse)
-                result.append(.init(label: "Dot role", value: role.map(\.label) ?? "Status · its own display"))
+                result.append(.init(label: "Dot role", value: role.map(\.label) ?? "On its own · its own display"))
             }
         }
         // Two different mechanisms share the word "linked": the Screen

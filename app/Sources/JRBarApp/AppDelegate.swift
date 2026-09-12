@@ -948,7 +948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if core.isLive, let surface = core.lights?.screenBar, !surface.program.isEmpty {
             screenBar.apply(programText: surface.program, anchorEpoch: surface.anchor)
             let why = surface.why.map { " · \($0.replacingOccurrences(of: "_", with: " "))" } ?? ""
-            let description = "core" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
+            let description = "monitor" + why + (screenBar.lastRejection.map { " (refused: \($0))" } ?? "") + lightsSuffix(screenBar)
             if description != lastLightsSource {
                 lastLightsSource = description
                 statusItem?.setFeed(description: description)
@@ -958,11 +958,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
     }
 
-    /// " · keyframes (40 + 40 frames) · Alcove 213 pt": how the band moves
-    /// and whether it is following a capsule, for the status menu's lights line.
+    /// " · still under Reduce Motion · following Alcove": why the band is
+    /// not moving or what it is tracking, for the status menu's lights
+    /// line. Render-path detail (frame counts) stays in the log.
     private func lightsSuffix(_ screenBar: ScreenBarController) -> String {
-        var suffix = " · " + screenBar.motionDescription
-        if let capsule = screenBar.capsule { suffix += " · Alcove \(Int(capsule.width.rounded())) pt" }
+        var suffix = ""
+        if let note = screenBar.menuMotionNote { suffix += " · \(note)" }
+        if screenBar.capsule != nil { suffix += " · following Alcove" }
         return suffix
     }
 

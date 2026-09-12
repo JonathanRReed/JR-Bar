@@ -65,7 +65,16 @@ final class ScreenBarController {
 
     var onGeometryChange: (@MainActor () -> Void)?
 
-    /// "keyframes (12 + 61 frames)" or "frame clock", for the status menu.
+    /// A short reason the band is not animating, for the status menu —
+    /// nil while it plays normally. Frame-path detail stays in NSLog.
+    var menuMotionNote: String? {
+        guard sampler != nil else { return "no sampler" }
+        if plan?.isStatic == true { return "a still program" }
+        if reduceMotion { return "still under Reduce Motion" }
+        return nil
+    }
+
+    /// "keyframes (12 + 61 frames)" or "frame clock", for the log.
     var motionDescription: String {
         guard sampler != nil else { return "nothing" }
         if plan?.isStatic == true { return "static" }
@@ -135,7 +144,7 @@ final class ScreenBarController {
             let reason: String
             do {
                 _ = try LEDSProgram.parse(text, ledCount: ScreenBarGeometry.ledCount)
-                reason = compiled.reasons.joined(separator: ",")
+                reason = compiled.reasons.joined(separator: ", ")
             } catch {
                 reason = error.description
             }

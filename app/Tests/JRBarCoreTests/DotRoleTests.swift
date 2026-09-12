@@ -94,7 +94,7 @@ struct DotRoleTests {
         let extending = CoreLightSurface(program: "off", ledCount: 2, why: "idle", role: "extend")
         let pending = DotRoleReadout.make(chosen: .asks, includeCompletions: false, dot: extending)
         #expect(pending.settling)
-        #expect(pending.detail == "The core has not picked this up yet.")
+        #expect(pending.detail == "The monitor has not picked this up yet.")
         // The daemon reports `status` by leaving the key off, so the frame
         // with no role and the picker on Status agree.
         let own = CoreLightSurface(program: "off 200ms none", ledCount: 2)
@@ -122,8 +122,8 @@ struct DotRoleTests {
         // steady state, not a settling one.
         let noStrip = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
                                           link: CoreDotLink(state: "no_strip", role: "extend"), dot: dot)
-        #expect(noStrip.headline == "Nothing to extend")
-        #expect(noStrip.detail == "No strip is connected. Plug in the SidePulse, or pick Ask beacon or Status, which need no strip.")
+        #expect(noStrip.headline == "Nothing to mirror")
+        #expect(noStrip.detail == "No strip is connected. Plug in the SidePulse, or pick Alert beacon or On its own, which need no strip.")
         #expect(!noStrip.settling)
         // `failed`: the error class is the detail.
         let failed = DotRoleReadout.make(chosen: .extend, includeCompletions: false,
@@ -175,7 +175,7 @@ struct DotRoleTests {
         let dot = CoreLightSurface(program: "off 200ms none", ledCount: 2)
         let readout = DotRoleReadout.make(chosen: .asks, includeCompletions: false, linked: true, link: nil, dot: dot)
         #expect(readout.settling)
-        #expect(readout.detail == "The core has not picked this up yet.")
+        #expect(readout.detail == "The monitor has not picked this up yet.")
     }
 
     @Test("no dot surface at all says so instead of guessing")

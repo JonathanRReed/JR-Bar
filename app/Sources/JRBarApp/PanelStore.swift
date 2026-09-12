@@ -301,8 +301,8 @@ final class PanelStore {
     }
 
     var coreCrashDetail: String {
-        if case .crashed(let failures) = supervisorState { return "Core crashed \(failures)× in 2 min" }
-        return "Core crashed"
+        if case .crashed(let failures) = supervisorState { return "Monitor crashed \(failures)× in 2 min" }
+        return "Monitor crashed"
     }
 
     var connectionDot: ConnectionDot {

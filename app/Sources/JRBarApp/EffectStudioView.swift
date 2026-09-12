@@ -10,7 +10,7 @@ struct EffectStudioView: View {
     var body: some View {
         Group {
             if !store.isLive {
-                UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Core not connected",
+                UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                 text: "The effect registry, packs and assignments live in the core daemon. The studio fills in once the socket is live.")
             } else if store.catalog == nil {
                 VStack(spacing: 10) {
@@ -620,7 +620,7 @@ struct EffectAssignmentsPane: View {
                                 }
                             }
                         } header: {
-                            Text(group.scope == .global ? "Default" : group.scope.label)
+                            Text(group.scope == .global ? "Everywhere" : group.scope.label)
                         }
                     }
                 }
@@ -647,9 +647,6 @@ struct EffectAssignmentsPane: View {
                 }
                 .disabled(store.selected == nil)
                 Spacer()
-                if let generation = store.assignments?.generation {
-                    Text("gen \(generation)").font(.caption2.monospacedDigit()).foregroundStyle(.quaternary)
-                }
             }
             .controlSize(.small)
             .padding(10)
@@ -924,6 +921,10 @@ struct AssignSheet: View {
             Picker("State", selection: $store.draftTarget) {
                 ForEach(EffectSemantic.assignable) { Text($0.label).tag($0.rawValue) }
             }
+            Text("Needs-you and Failed keep their reserved alert on purpose — it is the one light you can never miss. Their colour is yours on Settings › Lighting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         case .scene:
             Picker("Scene", selection: $store.draftTarget) {
                 ForEach(EffectScene.allCases) { Text($0.label).tag($0.rawValue) }

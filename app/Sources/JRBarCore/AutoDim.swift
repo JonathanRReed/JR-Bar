@@ -167,7 +167,7 @@ public struct AutoDimSettings: Hashable, Sendable {
     }
 
     static func percent(_ fraction: Double) -> String {
-        "\(Int((fraction * 100).rounded())) %"
+        "\(Int((fraction * 100).rounded()))%"
     }
 
     static func luxText(_ lux: Double) -> String {

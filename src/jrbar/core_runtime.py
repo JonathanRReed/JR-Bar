@@ -63,7 +63,7 @@ from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import PendingHookDrainer, pending_hook_files
 from .state_paths import default_state_dir
 
-CORE_VERSION: Final = "0.9.2"
+CORE_VERSION: Final = "0.9.3"
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
@@ -2262,8 +2262,11 @@ def build_headless_controller_class() -> type:
             self._core_prev_asks: dict[str, Any] | None = None
             self._core_prev_devices: dict[str, bool] | None = None
             self._core_extras: dict[str, tuple[float, SessionExtras]] = {}
-            self._core_tty_by_pid: dict[int, str | None] = {}
-            self._core_terminal_by_pid: dict[int, dict[str, Any] | None] = {}
+            # Keyed by (pid, process start epoch), not pid alone: a reused
+            # pid must not inherit the previous owner's terminal. Entries
+            # die with the process; the dicts are pruned when they grow.
+            self._core_tty_by_pid: dict[tuple[int, float | None], str | None] = {}
+            self._core_terminal_by_pid: dict[tuple[int, float | None], dict[str, Any] | None] = {}
             self._core_started_at = time.time()
             self._core_pending_drainer = None
             self._core_last_clear_batch = None
@@ -4079,34 +4082,36 @@ def build_headless_controller_class() -> type:
             return name, cwd
 
         def _core_tty_for_pid(self, pid: int) -> str | None:
-            if pid in self._core_tty_by_pid:
-                return self._core_tty_by_pid[pid]
-            tty = None
-            try:
-                completed = subprocess.run(
-                    ["/bin/ps", "-o", "tty=", "-p", str(pid)],
-                    check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    timeout=1.5,
-                )
-                text = completed.stdout.strip()
-                if text and text not in ("??", "-"):
-                    tty = text if text.startswith("/dev/") else f"/dev/{text}"
-            except Exception:
-                tty = None
-            self._core_tty_by_pid[pid] = tty
+            from .process_registry import tty_and_start
+
+            tty, started = tty_and_start(pid)
+            if started is None:
+                # No start time means the process is already gone or
+                # unreadable; nothing safe to cache, and a reused pid
+                # could inherit it.
+                return tty
+            key = (pid, started)
+            if key in self._core_tty_by_pid:
+                return self._core_tty_by_pid[key]
+            if len(self._core_tty_by_pid) > 256:
+                self._core_tty_by_pid.clear()
+            self._core_tty_by_pid[key] = tty
             return tty
 
         def _core_terminal_for_pid(self, pid: int) -> dict[str, Any] | None:
-            if pid in self._core_terminal_by_pid:
-                return self._core_terminal_by_pid[pid]
             from .process_registry import list_processes
 
             terminal = None
+            started = None
             try:
                 table = list_processes()
+                entry = table.get(pid)
+                if entry is None:
+                    return None
+                started = entry.started_at_epoch
+                key = (pid, started)
+                if key in self._core_terminal_by_pid:
+                    return self._core_terminal_by_pid[key]
                 current = pid
                 for _ in range(12):
                     entry = table.get(current)
@@ -4118,8 +4123,10 @@ def build_headless_controller_class() -> type:
                         break
                     current = entry.ppid
             except Exception:
-                terminal = None
-            self._core_terminal_by_pid[pid] = terminal
+                return None
+            if len(self._core_terminal_by_pid) > 256:
+                self._core_terminal_by_pid.clear()
+            self._core_terminal_by_pid[key] = terminal
             return terminal
 
         def _core_device_facts(self) -> tuple[DeviceFacts, ...]:
@@ -4458,6 +4465,7 @@ def build_headless_controller_class() -> type:
 
         def _core_build_lights(self) -> dict[str, Any]:
             from ._led_status_legacy import delivered_brightness, led_count_for_target
+            from .colors import lift_program_luminance
             from .dot_role import normalize_dot_role
             from .presentation_policy import MotionClass
 
@@ -4474,6 +4482,10 @@ def build_headless_controller_class() -> type:
             ) / 1000.0
             surfaces: dict[str, SurfaceFacts] = {}
             hardware_anchor: float | None = None
+            # The program a LINKED Screen Bar presents: what the followed
+            # strip was asked to play. Set alongside the ``hardware``
+            # surface below.
+            hardware_mirror_program: str | None = None
             first_strip = True
             # Connectivity, tracked apart from surfaces: a connected device
             # with no program yet has no surface, but ``dot_link`` still has
@@ -4519,6 +4531,20 @@ def build_headless_controller_class() -> type:
                 if leds != 2 and first_strip:
                     first_strip = False
                     hardware_anchor = anchor
+                    # NOMINAL, not the surface's written bytes: last_program
+                    # has already been through the strip's write boundary
+                    # (die gains, the light-domain brightness decode), and
+                    # replaying those bytes on the Screen Bar would wear a
+                    # calibration the display does not have -- the linked
+                    # Dot replays the nominal text for the same reason
+                    # (_core_note_hardware_write). Under a preview the
+                    # surface entry IS the program, and it is what the
+                    # strip is actually showing.
+                    hardware_mirror_program = (
+                        program
+                        if previewing
+                        else getattr(controller, "last_nominal_program", None) or program
+                    )
                 surfaces[name] = SurfaceFacts(
                     program=program,
                     led_count=leds,
@@ -4612,23 +4638,46 @@ def build_headless_controller_class() -> type:
                 anchor = screen_bar_anchor(anchor, hardware_anchor, linked=linked)
                 if linked and hardware_anchor is not None:
                     anchor = hardware_anchor + bar_phase_offset
-                surfaces["screen_bar"] = SurfaceFacts(
-                    program=str(program),
-                    led_count=legacy.LED_COUNT,
-                    anchor=anchor,
-                    motion=motion.value if isinstance(motion, MotionClass) else None,
-                    static_fallback=kwargs.get("static_fallback_program"),
-                    brightness=bar_brightness,
-                    why=bar_why,
-                    override=override,
-                    why_detail=self._core_why_detail(bar_why, bar_facts, glance),
-                )
+                hardware = surfaces.get("hardware")
+                if linked and hardware is not None:
+                    # Linked means the bar FOLLOWS the strip: the strip's own
+                    # program on the strip's anchor, not the virtual render's
+                    # re-reading of the same state. The two renderers draw
+                    # from different palettes, which is how one anchor once
+                    # carried two programs that read as "blink different".
+                    # The lift is legibility only: codes the strip can show
+                    # as faint light read as "off" on a display.
+                    surfaces["screen_bar"] = SurfaceFacts(
+                        program=lift_program_luminance(
+                            hardware_mirror_program or hardware.program
+                        ),
+                        led_count=hardware.led_count,
+                        anchor=anchor,
+                        brightness=bar_brightness,
+                        why=hardware.why,
+                        override=override,
+                        why_detail=hardware.why_detail,
+                    )
+                else:
+                    surfaces["screen_bar"] = SurfaceFacts(
+                        program=str(program),
+                        led_count=legacy.LED_COUNT,
+                        anchor=anchor,
+                        motion=motion.value if isinstance(motion, MotionClass) else None,
+                        static_fallback=kwargs.get("static_fallback_program"),
+                        brightness=bar_brightness,
+                        why=bar_why,
+                        override=override,
+                        why_detail=self._core_why_detail(bar_why, bar_facts, glance),
+                    )
             elif linked and "hardware" in surfaces:
                 # The bar only mirrors the strip while the two are linked;
                 # unlinked and idle, it has no program of its own to claim.
                 hardware = surfaces["hardware"]
                 surfaces["screen_bar"] = SurfaceFacts(
-                    program=hardware.program,
+                    program=lift_program_luminance(
+                        hardware_mirror_program or hardware.program
+                    ),
                     led_count=hardware.led_count,
                     anchor=(
                         hardware.anchor + bar_phase_offset

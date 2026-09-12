@@ -142,6 +142,32 @@ def test_state_is_coalesced_latest_wins_and_bounded(server: CoreServer) -> None:
     client.close()
 
 
+def test_identical_documents_are_not_rebroadcast(server: CoreServer) -> None:
+    client = _connect(server)
+    _read_frames(client, 4)
+    server._min_interval["state"] = 0
+    document = {"generation": 9, "sessions": [{"id": "s1"}]}
+    server.publish_state(dict(document))
+    frames = _read_frames(client, 1)
+    assert frames[0]["generation"] == 9
+    # The same document again must not go back on the wire: the poke is
+    # encoded, seen identical, and counted, but no frame is fanned out.
+    server.publish_state(dict(document))
+    frames = _read_frames(client, 1, timeout=0.4)
+    assert frames == []
+    assert server.stats["deduped_frames"] == 1
+    # A changed document still publishes, and a fresh client still gets
+    # the server's current documents on connect (dedupe only affects the
+    # broadcast path, never the connect-time replay).
+    server.publish_state({"generation": 10})
+    assert _read_frames(client, 1)[0]["generation"] == 10
+    second = _connect(server)
+    greetings = _read_frames(second, 4)
+    assert [frame["t"] for frame in greetings] == ["hello", "state", "lights", "settings"]
+    client.close()
+    second.close()
+
+
 def test_events_and_logs_are_not_coalesced(server: CoreServer) -> None:
     client = _connect(server)
     _read_frames(client, 4)

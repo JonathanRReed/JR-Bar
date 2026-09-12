@@ -83,7 +83,7 @@ public enum AgentAggregateState: String, Equatable, Sendable, CaseIterable {
         switch self {
         case .idle: return "Idle"
         case .working: return "Working"
-        case .needsInput: return "Needs input"
+        case .needsInput: return "Needs you"
         case .completed: return "Done"
         case .failed: return "Failed"
         }

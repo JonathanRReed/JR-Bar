@@ -346,7 +346,7 @@ struct HistoryEmptyState: View {
         VStack(spacing: 8) {
             Image(systemName: store.isLive ? "clock.arrow.circlepath" : "antenna.radiowaves.left.and.right.slash")
                 .font(.system(size: 26, weight: .light)).foregroundStyle(.tertiary)
-            Text(store.isLive ? (store.loading ? "Loading history…" : "Nothing yet") : "Core not connected")
+            Text(store.isLive ? (store.loading ? "Loading history…" : "Nothing yet") : "Monitor not connected")
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
             if let error = store.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 360)

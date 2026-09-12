@@ -17,11 +17,11 @@ public struct AppState: Codable, Equatable, Sendable {
     public var loginItemRegistered: Bool
     /// The Screen Bar is shown under the notch.
     public var showScreenBar: Bool
-    /// `menu_bar_icon_style`, which the app owns rather than the daemon:
-    /// the core answers `set_setting` for this key with `ok` and then keeps
-    /// its own value (it is one of `SettingsKey.appIntroduced`, absent from
-    /// the Python settings dataclass), so a choice made in Settings only
-    /// sticks if it is written here. nil means the app's default.
+    /// `menu_bar_icon_style`: the daemon's settings dataclass carries the
+    /// field and round-trips it in the document, but the document only
+    /// exists after connect — so the app keeps a launch-time copy here
+    /// for the moments before the first frame. nil means the app's
+    /// default.
     public var menuBarIconStyle: String?
 
     public init(bundledHooksInstalledFor: String? = nil, loginItemRegistered: Bool = false, showScreenBar: Bool = true,

@@ -2,7 +2,42 @@
 
 All notable changes to JR-Bar are documented here.
 
-## 0.9.2 (unreleased)
+## 0.9.3 (unreleased)
+
+- Linked Screen Bar mirrors the strip's program, not a second rendering
+  of it. The bar and the SidePulse shared an anchor but drew from
+  different palettes (agent colours vs. mode colours), so the same beat
+  could read as two different lights. When linked, the bar now presents
+  the strip's nominal program — timing and hue identical — lifted to the
+  display legibility floor, hue and saturation intact. Drive bytes stay
+  on the strip: the bar never wears the die's calibration.
+- One word per thing, everywhere. "Needs you" is the same phrase in the
+  panel, the menu bar, and the effect targets; the Dot's roles read
+  Mirror the strip / Alert beacon / On its own (they were Extend /
+  Ask beacon / Status while the wire said linked / beacon / solo); the
+  two link toggles say what they do — "Mirror the hardware strip" and
+  "Dot follows the strip"; blend-mode names and descriptions now match
+  between the app and the daemon; "Everywhere" is one scope, one name;
+  percentages are "42%", window names match their menu items, and
+  internal words ("core", raw enum names like `command_confirmation`,
+  transfer-generation numbers) no longer leak into the UI.
+- The first-run card tells the truth about the light language — a beat,
+  not a strobe (nothing strobes), red means broke — plays a real
+  LEDStripPreview instead of a gradient, eases out instead of
+  vanishing, and points at the menu-bar icon.
+- Screen Bar settings live on one page: the General section moved to
+  Devices & Screen Bar; the Devices card no longer duplicates the
+  serve toggle (status stays, the switch lives in Remote).
+- Frame dedupe on the wire: identical state/lights/settings documents
+  are never broadcast twice — a poke that changes nothing costs one
+  encode instead of a full broadcast-and-redecode on every client.
+- Terminal and TTY lookups are keyed by (pid, process start) instead of
+  pid alone: a reused pid can no longer inherit the previous owner's
+  terminal, and both caches are bounded.
+- The status menu's Lights line says what the band is doing — "monitor ·
+  working · following Alcove" — instead of render-pipeline diagnostics.
+
+## 0.9.2
 
 - Auto-dim's ambient curve is calibrated for real rooms. The sensor that
   faces you reads ~50-150 lux in a normally lit space; the old defaults

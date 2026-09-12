@@ -313,7 +313,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func setCore(description: String) {
-        coreItem.attributedTitle = NSAttributedString(string: "Core: \(description)", attributes: [
+        coreItem.attributedTitle = NSAttributedString(string: "Monitor: \(description)", attributes: [
             .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.tertiaryLabelColor,
         ])

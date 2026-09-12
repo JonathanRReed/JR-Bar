@@ -3,7 +3,7 @@ import JRBarCore
 import SwiftUI
 
 /// The first-launch card: one small panel that says what the Screen Bar
-/// is and the three things worth knowing, then gets out of the way. It is
+/// is and the four things worth knowing, then gets out of the way. It is
 /// not a wizard and not a tour — "Got it" is the whole thing.
 ///
 /// Presented once, from `AppDelegate.completeFirstRun`, after the
@@ -104,8 +104,23 @@ final class FirstRunCard: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Out the way the panel and the Screen Bar tooltip leave: a short
+    /// ease-in fade with a small downward settle, then `close`. Reduce
+    /// Motion keeps a quicker fade and drops the settle.
     private func dismiss() {
-        panel?.close()
+        guard let panel else { return }
+        self.panel = nil
+        let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = reduced ? 0.08 : 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+            if !reduced {
+                panel.animator().setFrameOrigin(NSPoint(x: panel.frame.origin.x, y: panel.frame.origin.y - 6))
+            }
+        }, completionHandler: {
+            Task { @MainActor in panel.close() }
+        })
     }
 
     /// Written when the card is presented, not when it is dismissed: a
@@ -155,7 +170,7 @@ final class FirstRunCardPanel: NSPanel {
 }
 
 /// The card's content in the panel's own language: 13 pt type, colour only
-/// where it carries meaning (provider tiles, the waiting pulse, the done
+/// where it carries meaning (provider tiles, the ask beat, the done
 /// check), one row per fact.
 struct FirstRunCardView: View {
     let onGotIt: @MainActor () -> Void
@@ -163,15 +178,27 @@ struct FirstRunCardView: View {
 
     static let width: CGFloat = 344
 
+    /// What the mini band plays: a slow breathe in a provider's colour
+    /// handing off to the ask's hard amber beat, then quiet — the two
+    /// motions the copy names, through the same safety-compiled renderer
+    /// the band itself uses. A finite program: `LEDStripPreview` loops it
+    /// with a rest, which is the beat's "then quiet" for free. `#FF3A00`
+    /// is the ask amber (`ASK_AMBER`), `#2B8FFF` Codex's accent.
+    private static let demoProgram = """
+        #020204
+        #2B8FFF 2200ms pulse
+        #FF3A00 540ms pulse
+        #020204 1400ms none
+        """
+
     private var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // The thing itself, miniaturised: a thin strip in provider colours.
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(LinearGradient(colors: ["claude", "codex", "gemini"].map { ProviderStyle.style(for: $0).accent },
-                                     startPoint: .leading, endPoint: .trailing))
-                .frame(width: 96, height: 5)
+            // The thing itself, miniaturised and playing the vocabulary.
+            LEDStripPreview(program: Self.demoProgram, style: .band, dotSize: 5, showsBackground: false)
+                .frame(width: 96)
+                .accessibilityLabel("Screen Bar preview: a breathe, then an amber beat")
             VStack(alignment: .leading, spacing: 5) {
                 Text("The Screen Bar")
                     .font(.system(size: 15, weight: .semibold))
@@ -193,15 +220,23 @@ struct FirstRunCardView: View {
                 fact {
                     ActivityMark(activity: .waiting, accent: .orange, reduced: reduced)
                 } text: {
-                    Text("A pulse or a strobe means it is waiting on you.")
+                    Text("A hard amber beat — one swell, then quiet — means it's waiting on you.")
                 }
                 fact {
                     HStack(spacing: 8) {
+                        ActivityMark(activity: .failed, accent: .red, reduced: reduced)
                         ActivityMark(activity: .working, accent: ProviderStyle.style(for: "codex").accent, reduced: reduced)
                         ActivityMark(activity: .done, accent: .green, reduced: reduced)
                     }
                 } text: {
-                    Text("Everything else is working or done.")
+                    Text("Red means it broke — everything else is working or done.")
+                }
+                fact {
+                    Image(nsImage: StatusItemController.glyph())
+                        .renderingMode(.template)
+                        .foregroundStyle(.secondary)
+                } text: {
+                    Text("The menu-bar icon opens the panel — asks land there with Approve and Deny.")
                 }
             }
             HStack {

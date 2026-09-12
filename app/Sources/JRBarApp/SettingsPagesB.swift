@@ -104,7 +104,7 @@ struct LightingPage: View {
             SettingPicker(store, "Active scene", subtitle: "A presentation policy: brightness, motion and notification admission as one choice.",
                           path: "active_scene", options: Self.scenes, default: "calm")
             LabeledContent {
-                Button("Effects…") { store.onOpenEffects?() }
+                Button("Effect Studio…") { store.onOpenEffects?() }
             } label: {
                 SettingLabel(title: "Effect Studio", subtitle: "Browse the registry and packs, tune parameters with a live preview, and assign looks to states, scenes, providers and devices.")
             }
@@ -642,8 +642,8 @@ struct MachineList: View {
 }
 
 /// Settings › Devices & Screen Bar's Stream Deck card: the desk-side half
-/// of the loopback status endpoint, next to the other pads. The switch is
-/// the same `serve_enabled` Settings › Remote writes; the deck polls
+/// of the loopback status endpoint, next to the other pads. The switch
+/// itself is `serve_enabled` in Settings › Remote; the deck polls
 /// `GET /status.json` with the bearer the Copy button fetches.
 struct StreamDeckCard: View {
     @Bindable var store: SettingsStore
@@ -656,7 +656,7 @@ struct StreamDeckCard: View {
     private var enabled: Bool { store.document.bool("serve_enabled") ?? false }
 
     private var statusText: String {
-        guard store.core.isLive else { return "Core not connected" }
+        guard store.core.isLive else { return "Monitor not connected" }
         guard enabled else { return "Off — the endpoint is not serving" }
         switch running {
         case true: return "Serving on 127.0.0.1:8737"
@@ -672,8 +672,6 @@ struct StreamDeckCard: View {
 
     var body: some View {
         Section {
-            SettingToggle(store, "Serve status", subtitle: "Opens the loopback endpoint a deck polls; the same switch as Settings › Remote.",
-                          path: "serve_enabled")
             LabeledContent {
                 HStack(spacing: 6) {
                     Circle().fill(statusColor).frame(width: 7, height: 7)
@@ -699,7 +697,7 @@ struct StreamDeckCard: View {
         } header: {
             Text("Stream Deck")
         } footer: {
-            SectionNote("In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.")
+            SectionNote("The switch lives in Settings › Remote. In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.")
         }
         .task(id: enabled && store.core.isLive) { await refreshServeState() }
     }

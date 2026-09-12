@@ -1306,6 +1306,128 @@ def test_screen_bar_phase_offset_shifts_the_linked_anchor(headless) -> None:
     assert reply["value"] == 120.0 and controller.settings.screen_bar_phase_offset_ms == 120.0
 
 
+def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
+    """One anchor used to carry TWO programs: the strip's
+    ``program_for_snapshot`` render on the hardware and the bar's own
+    ``program_for_display_state`` render from the virtual device -- same
+    shape, different palette, and the pair read as "blink different".
+
+    Linked, the bar now presents the strip's program: the NOMINAL text the
+    strip was asked to play (never the written bytes -- the strip's die
+    gains and light-domain brightness decode belong to its PWM), with every
+    colour lifted to the screen legibility floor so codes the bezel reads
+    as faint light stop reading as "off" on a display.
+    """
+    import re
+    import time as _time
+
+    from jrbar._led_status_legacy import apply_strip_transform_to_program
+    from jrbar.colors import (
+        IDENTITY_LUMINANCE_FLOOR,
+        lift_program_luminance,
+        relative_luminance,
+    )
+
+    controller = headless
+    pro, _dot = _pro_and_dot(controller)
+    controller._core_hardware_anchor[pro.device_id] = 1000.0
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+
+    nominal = (
+        "brightness 200\n"
+        "#8899AA #22456C #122438 #08111A #000000 #03060A #08111A #122438 250ms cosine\n"
+        "roll right 2s\n"
+        "repeat"
+    )
+    pro_controller = controller.agent_led_controllers_by_device[pro.device_id]
+    # What the surface reports is the written (drive) text; the bar must
+    # mirror what that text MEANS, which is the nominal program.
+    pro_controller.last_program = apply_strip_transform_to_program(
+        nominal, resting_glow=0.0, gains=(1.0, 0.38, 1.0)
+    )
+    pro_controller.last_nominal_program = nominal
+    assert pro_controller.last_program != nominal  # the drive bytes really differ
+
+    virtual_program = "#FF3A00 1.6s pulse\nrepeat"
+    controller.virtual_status_device._live_program_call = (
+        virtual_program,
+        {"started_at": _time.monotonic(), "motion": None},
+    )
+
+    lights = controller._core_build_lights()
+    strip = lights["surfaces"]["hardware"]
+    bar = lights["surfaces"]["screen_bar"]
+    assert strip["program"] == pro_controller.last_program
+
+    # Same program: the directives and every non-colour byte are identical
+    # to the strip's; only the colour literals moved, and only upward.
+    assert bar["program"] == lift_program_luminance(nominal)
+    assert bar["program"] != virtual_program
+    hex_re = r"#[0-9A-Fa-f]{6}"
+    assert re.sub(hex_re, "@", bar["program"]) == re.sub(hex_re, "@", nominal)
+    for token in re.findall(hex_re, bar["program"]):
+        luminance = relative_luminance(token)
+        assert luminance == 0.0 or luminance >= IDENTITY_LUMINANCE_FLOOR - 0.005
+    # Codes already at or above the floor pass through untouched.
+    assert "#8899AA" in bar["program"]
+
+    # The strip's clock and the strip's explanation, not the bar's own.
+    assert bar["anchor"] == 1000.0
+    assert bar["why"] == strip["why"]
+    assert bar.get("why_detail") == strip.get("why_detail")
+    assert bar["led_count"] == strip["led_count"]
+
+    # Unlinked, the bar's own render is the program again.
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(False)
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["program"] == virtual_program
+    controller.settings = controller.settings.with_link_screen_bar_to_hardware(True)
+
+    # With no live call the mirror surface tells the same story.
+    controller.virtual_status_device._live_program_call = None
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["program"] == lift_program_luminance(nominal)
+
+    # A screen_bar preview still outranks everything.
+    preview_program = "#00FF00 1s\nrepeat"
+    controller._core_previews["screen_bar"] = core_runtime._Preview(
+        preview_program, _time.monotonic() + 30, _time.time(), (status_bar.VIRTUAL_DEVICE_ID,)
+    )
+    lights = controller._core_build_lights()
+    assert lights["surfaces"]["screen_bar"]["program"] == preview_program
+    assert lights["surfaces"]["screen_bar"]["why"] == "preview"
+    controller._core_previews.pop("screen_bar", None)
+
+
+def test_lift_program_luminance_lifts_only_colour_literals() -> None:
+    """The mirror transform: hue kept, floor enforced, everything that is
+    not a colour left byte-identical."""
+    from jrbar.colors import (
+        IDENTITY_LUMINANCE_FLOOR,
+        lift_program_luminance,
+        relative_luminance,
+    )
+
+    program = "brightness 90\n#000510 #8899AA 250ms cosine\noff 100ms\nrepeat"
+    lifted = lift_program_luminance(program)
+    lines = lifted.splitlines()
+    assert lines[0] == "brightness 90"
+    assert lines[2] == "off 100ms"
+    assert lines[3] == "repeat"
+    dim, bright = lines[1].split(" ")[0], lines[1].split(" ")[1]
+    assert relative_luminance(dim) >= IDENTITY_LUMINANCE_FLOOR - 0.005
+    assert bright == "#8899AA"  # already above the floor: untouched
+    # Hue is preserved: the lifted colour is the dim one scaled, so the
+    # channel ordering survives (blue still dominates, red still zero).
+    assert dim != "#000510"
+    assert int(dim[5:7], 16) > int(dim[3:5], 16) > int(dim[1:3], 16)
+    # Black stays black -- a dark beat is meant to be dark, and it has no
+    # hue to preserve anyway.
+    assert lift_program_luminance("#000000 1s\nrepeat").startswith("#000000")
+    # Not a program: handed back as-is.
+    assert lift_program_luminance("") == ""
+
+
 # --- calibration previews ----------------------------------------------------
 
 

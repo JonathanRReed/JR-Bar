@@ -102,11 +102,10 @@ final class SettingsStore {
     /// Bumped whenever the overlay changes so observers re-read.
     private var overlayVersion = 0
 
-    /// `menu_bar_icon_style`: an app-owned key. The daemon answers a write
-    /// of it with `ok` and then keeps its own value (the Python settings
-    /// dataclass has no field for it), so the app is the one that
-    /// remembers, in `app-state.json`. The write still goes out, so a
-    /// daemon that learns the key one day stays in step.
+    /// `menu_bar_icon_style`: the daemon's settings dataclass does carry
+    /// this field and round-trips it in the document, but the document
+    /// only exists after connect — so the app still keeps a launch-time
+    /// copy in `app-state.json` for the moments before the first frame.
     var menuBarIconStyle: String = StatusIconStyle.agents.rawValue {
         didSet {
             guard menuBarIconStyle != oldValue else { return }

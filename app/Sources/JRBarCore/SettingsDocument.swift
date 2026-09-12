@@ -176,11 +176,6 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             // General
             SettingsKey(.general, "menu_bar_icon_style", .string),
             SettingsKey(.general, "menu_bar_label_enabled", .bool),
-            SettingsKey(.general, "virtual_status_device_enabled", .bool),
-            SettingsKey(.general, "screen_bar_follow_alcove", .bool),
-            SettingsKey(.general, "screen_bar_show_in_full_screen", .bool),
-            SettingsKey(.general, "link_screen_bar_to_hardware", .bool),
-            SettingsKey(.general, "screen_bar_phase_offset_ms", .number),
             SettingsKey(.general, "global_brightness_scale", .number),
             // Agents
             SettingsKey(.agents, "subagent_asks_alert", .bool),
@@ -209,6 +204,11 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.devices, "linked_dot_scale", .number),
             SettingsKey(.devices, "dot_role", .string),
             SettingsKey(.devices, "dot_role_include_completions", .bool),
+            SettingsKey(.devices, "virtual_status_device_enabled", .bool),
+            SettingsKey(.devices, "screen_bar_follow_alcove", .bool),
+            SettingsKey(.devices, "screen_bar_show_in_full_screen", .bool),
+            SettingsKey(.devices, "link_screen_bar_to_hardware", .bool),
+            SettingsKey(.devices, "screen_bar_phase_offset_ms", .number),
             SettingsKey(.devices, "screen_bar_gap_width", .nullableNumber),
             SettingsKey(.devices, "screen_bar_wing_length", .nullableNumber),
             SettingsKey(.devices, "screen_bar_bracket_style", .string),
@@ -284,9 +284,12 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
 
     /// Keys with no Python field: the daemon is expected to add them. The
     /// mock document carries them so the pages can be exercised.
+    /// (`menu_bar_icon_style`, `devices_linked`, `devices[].resting_glow`
+    /// and `quota_alert_thresholds` all grew daemon fields; the app keeps
+    /// a launch-time copy of the first only because the document does not
+    /// exist before connect.)
     public static let appIntroduced: Set<String> = [
-        "menu_bar_icon_style", "devices_linked", "cloud_ingest_token_path",
-        "devices[].resting_glow", "quota_alert_thresholds",
+        "cloud_ingest_token_path",
     ]
 
     public static func keys(on page: Page) -> [SettingsKey] { all.filter { $0.page == page } }

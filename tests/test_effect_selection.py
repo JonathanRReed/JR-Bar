@@ -86,10 +86,10 @@ def test_effect_options_are_immutable_and_catalogs_pin_current_order_and_copy() 
             colors_module.BLEND_MODE_DESCRIPTIONS[value],
         )
         for value in (
-            "round_robin",
-            "relay",
-            "spatial_split",
             "color_blend",
+            "round_robin",
+            "spatial_split",
+            "relay",
             "cycle",
             "classic",
         )
@@ -252,7 +252,7 @@ def test_preview_scenario_validation_accepts_dict_subclasses() -> None:
 @pytest.mark.parametrize(
     "selector, options, key, value, expected_index",
     [
-        (settings_window_controls.select_blend_mode, BLEND_MODE_OPTIONS, "blend_mode", "relay", 1),
+        (settings_window_controls.select_blend_mode, BLEND_MODE_OPTIONS, "blend_mode", "relay", 3),
         (
             settings_window_controls.select_color_preset,
             COLOR_PRESET_OPTIONS,

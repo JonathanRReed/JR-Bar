@@ -21,9 +21,9 @@ public enum DotRole: String, CaseIterable, Codable, Hashable, Sendable, Identifi
 
     public var label: String {
         switch self {
-        case .extend: return "Extend"
-        case .asks: return "Ask beacon"
-        case .status: return "Status"
+        case .extend: return "Mirror the strip"
+        case .asks: return "Alert beacon"
+        case .status: return "On its own"
         }
     }
 
@@ -100,8 +100,8 @@ public struct DotRoleReadout: Equatable, Sendable {
                 return missing(chosen: chosen)
             case "no_strip":
                 return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
-                                      headline: "Nothing to extend",
-                                      detail: "No strip is connected. Plug in the SidePulse, or pick Ask beacon or Status, which need no strip.",
+                                      headline: "Nothing to mirror",
+                                      detail: "No strip is connected. Plug in the SidePulse, or pick Alert beacon or On its own, which need no strip.",
                                       settling: false)
             case "failed":
                 return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
@@ -143,7 +143,7 @@ public struct DotRoleReadout: Equatable, Sendable {
             detail = "Nothing is driving the Dot but the Dot."
         }
         if settling {
-            detail = "The core has not picked this up yet."
+            detail = "The monitor has not picked this up yet."
         }
         return DotRoleReadout(chosen: chosen, active: active, rendersItself: rendersItself,
                               headline: headline, detail: detail, settling: settling)
@@ -153,7 +153,7 @@ public struct DotRoleReadout: Equatable, Sendable {
     private static func missing(chosen: DotRole) -> DotRoleReadout {
         DotRoleReadout(chosen: chosen, active: nil, rendersItself: false,
                        headline: "No Dot in the lights frame",
-                       detail: "The core reports nothing for the Dot; plug it in or link it to see this.",
+                       detail: "The monitor reports nothing for the Dot; plug it in or link it to see this.",
                        settling: false)
     }
 

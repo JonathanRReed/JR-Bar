@@ -21,16 +21,6 @@ struct GeneralPage: View {
             }
         }
 
-        Section("Screen Bar") {
-            SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
-            SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
-            SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen")
-            SettingToggle(store, "Link to the hardware strip", subtitle: "The Screen Bar plays the same animation the SidePulse is running, restarting from the strip's write. Independent of Link Pro and Dot in Devices.", path: "link_screen_bar_to_hardware", default: true)
-            SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
-                          path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
-                .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
-        }
-
         Section("Brightness") {
             SettingSlider(store, "Global brightness", subtitle: "One dial over every surface; composes with each device's own brightness.",
                           path: "global_brightness_scale", in: 0.05...1.0, default: 1.0, format: SettingsStore.percent)
@@ -253,7 +243,7 @@ struct AgentsPage: View {
     @Bindable var store: SettingsStore
 
     static let openChoices: [(value: String, label: String)] = [
-        ("", "Automatic"), ("app", "App"), ("terminal", "Terminal"), ("vscode", "VS Code"),
+        ("", "Automatic"), ("app", "Its app"), ("terminal", "Terminal"), ("vscode", "VS Code"),
     ]
 
     var body: some View {
@@ -264,7 +254,7 @@ struct AgentsPage: View {
         } header: {
             Text("Providers")
         } footer: {
-            SectionNote("Hooks let each agent report its sessions to the core. \"Open in\" picks what is raised when you click a session.")
+            SectionNote("Hooks let each agent report its sessions to the monitor. \"Clicks open\" picks what a click on a session raises.")
         }
 
         Section("Transcripts") {
@@ -291,10 +281,10 @@ struct AgentRow: View {
 
     private var statusWord: String {
         switch status {
-        case "ok": return "Installed"
+        case "ok": return "Live"
         case "missing": return "Not installed"
-        case "stale": return "Needs reinstall"
-        case nil: return store.core.isLive ? "Unknown" : "Core offline"
+        case "stale": return "Quiet"
+        case nil: return store.core.isLive ? "Unknown" : "Monitor offline"
         case let other?: return other.capitalized
         }
     }
@@ -322,8 +312,8 @@ struct AgentRow: View {
                 }
             }
             Spacer()
-            Text("Open in").font(.callout).foregroundStyle(.tertiary)
-            Picker("Open in", selection: store.optionalString("session_open_preferences.\(provider)")) {
+            Text("Clicks open").font(.callout).foregroundStyle(.tertiary)
+            Picker("Clicks open", selection: store.optionalString("session_open_preferences.\(provider)")) {
                 ForEach(AgentsPage.openChoices, id: \.value) { choice in
                     Text(choice.label).tag(choice.value)
                 }
@@ -391,7 +381,7 @@ struct UsagePage: View {
                 (7, "7 days"), (30, "30 days"), (90, "90 days"), (365, "A year"),
             ], default: 7)
             LabeledContent {
-                Button("Open Usage Center") { store.onOpenUsageCenter?() }
+                Button("Usage Center…") { store.onOpenUsageCenter?() }
                     .help("The graphs live in the Usage Center (⌘U)")
             } label: {
                 SettingLabel(title: "Graphs", subtitle: "Per-provider history, cost and pace, for the range above.")
@@ -461,11 +451,11 @@ struct ThresholdRow: View {
         LabeledContent("Thresholds") {
             HStack(spacing: 14) {
                 HStack(spacing: 4) {
-                    ValueText(text: "Nudge at \(binding(0).wrappedValue) %", width: 100)
+                    ValueText(text: "Nudge at \(binding(0).wrappedValue)%", width: 100)
                     Stepper("", value: binding(0), in: 50...99).labelsHidden()
                 }
                 HStack(spacing: 4) {
-                    ValueText(text: "Warn at \(binding(1).wrappedValue) %", width: 92)
+                    ValueText(text: "Warn at \(binding(1).wrappedValue)%", width: 92)
                     Stepper("", value: binding(1), in: 50...100).labelsHidden()
                 }
             }
@@ -488,7 +478,7 @@ struct DevicesPage: View {
         if devices.isEmpty {
             Section("Devices") {
                 if store.hasDocument {
-                    Text("No SidePulse devices in the settings document.").foregroundStyle(.secondary)
+                    Text("No SidePulse hardware yet — plug in a Pro or Dot and it shows up here.").foregroundStyle(.secondary)
                 } else {
                     Text("Devices appear once the core is connected.").foregroundStyle(.secondary)
                 }
@@ -499,16 +489,16 @@ struct DevicesPage: View {
         }
 
         Section {
-            SettingToggle(store, "Link Pro and Dot", subtitle: "The Dot follows the strip instead of driving itself. Off, it always renders its own two-LED display, whatever its role says.",
+            SettingToggle(store, "Dot follows the strip", subtitle: "The Dot takes its cue from the Pro instead of driving itself — which cue is the role below. Off, it always renders its own two-LED display.",
                           path: "devices_linked", default: true)
-            SettingSlider(store, "Dot brightness", subtitle: "How bright the linked Dot runs next to the strip in the Extend role: two LEDs an arm's length away read much brighter than eight across a desk. The ask beacon is never dimmed.",
-                          path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded())) %" }
+            SettingSlider(store, "Dot brightness", subtitle: "How bright the linked Dot runs next to the strip while mirroring it: two LEDs an arm's length away read much brighter than eight across a desk. The alert beacon is never dimmed.",
+                          path: "linked_dot_scale", in: 0.05...1.0, step: 0.05, default: 0.3) { "\(Int(($0 * 100).rounded()))%" }
                 .disabled(!(store.document.bool("devices_linked") ?? true))
             DotRoleControls(store: store, inDeviceCard: false)
         } header: {
             Text("Pro + Dot")
         } footer: {
-            SectionNote("The role is what the Dot is for; the link is whether the core drives it at all. The Screen Bar has its own link, in General.")
+            SectionNote("The role is what the Dot is for; the link is whether the core drives it at all.")
         }
 
         CreatorMicroCard(store: store)
@@ -536,13 +526,13 @@ struct DeviceCard: View {
 
     private var state: CoreDevice? { store.stateDevice(device.id) }
     private var pinOptions: [(value: String, label: String)] {
-        [("", "Everyone")] + SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) }
+        [("", "All agents")] + SettingsKey.providers.map { ($0, ProviderStyle.style(for: $0).name) }
     }
 
     var body: some View {
         Section {
             SettingPicker(store, "Display", path: "\(device.prefix).led_display", options: DevicesPage.displayModes, default: "agent")
-            SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded())) %" }
+            SettingSlider(store, "Brightness", path: "\(device.prefix).brightness", in: 0...255, step: 1, default: 255) { "\(Int(($0 / 255 * 100).rounded()))%" }
             SettingToggle(store, "Auto-brightness", subtitle: "Follows the display's brightness: dim in a dark room, bright in daylight.",
                           path: "\(device.prefix).auto_brightness_enabled")
             Provided(store, "\(device.prefix).provider_pin") {
@@ -602,9 +592,9 @@ extension SettingsStore {
         let glow = document.double(SettingsPath("\(prefix).resting_glow")) ?? 0
         let brightness = document.double(SettingsPath("\(prefix).brightness")) ?? 255
         if r == 1, g == 1, b == 1, glow == 0, brightness >= 255 { return "Uncalibrated" }
-        var summary = String(format: "R %.2f · G %.2f · B %.2f · glow %d %%", r, g, b, Int((glow * 100).rounded()))
+        var summary = String(format: "R %.2f · G %.2f · B %.2f · glow %d%%", r, g, b, Int((glow * 100).rounded()))
         if brightness < 255 {
-            summary += String(format: " · %d %%", Int((brightness / 255 * 100).rounded()))
+            summary += String(format: " · %d%%", Int((brightness / 255 * 100).rounded()))
         }
         return summary
     }
@@ -628,8 +618,8 @@ struct CreatorMicroCard: View {
     }
 
     private var statusText: String {
-        guard store.core.isLive else { return "Core not connected" }
-        guard deck != nil else { return "Not provided by core" }
+        guard store.core.isLive else { return "Monitor not connected" }
+        guard deck != nil else { return "Not in this version" }
         guard let device, device.connected else { return "Not connected" }
         var parts: [String] = []
         if device.hasConflict { parts.append(DeckDevice.conflictText) }
@@ -700,7 +690,7 @@ struct CreatorMicroCard: View {
             HStack {
                 Text("Control Center")
                 Spacer()
-                Button("Open Control Center…") { store.onOpenControlCenter?() }
+                Button("Control Center…") { store.onOpenControlCenter?() }
                     .keyboardShortcut("k", modifiers: .command)
             }
         } header: {
@@ -720,6 +710,13 @@ struct ScreenBarCard: View {
     @Bindable var store: SettingsStore
 
     var body: some View {
+        SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
+        SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
+        SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen")
+        SettingToggle(store, "Mirror the hardware strip", subtitle: "The Screen Bar plays the strip's own program on the strip's clock. Off, it renders its own display. Independent of Dot follows the strip above.", path: "link_screen_bar_to_hardware", default: true)
+        SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
+                      path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
+            .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
         NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
         NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
         SettingPicker(store, "Bracket style", subtitle: "How the Alcove bracket colours itself.", path: "screen_bar_bracket_style", options: [

@@ -148,6 +148,11 @@ class CoreServer:
         self._pending: dict[str, dict[str, Any]] = {}
         self._queue: list[bytes] = []
         self._last_sent: dict[str, float] = {}
+        # The last frame actually fanned out per coalesced kind; identical
+        # documents are never put on the wire twice. A state poke that
+        # changes nothing visible costs one encode, not a full
+        # broadcast-and-redecode round on every client.
+        self._last_frame: dict[str, bytes] = {}
         self._min_interval = {
             "state": STATE_MIN_INTERVAL_SECONDS,
             "lights": LIGHTS_MIN_INTERVAL_SECONDS,
@@ -155,7 +160,8 @@ class CoreServer:
         }
         self._flusher: threading.Thread | None = None
         self._event_counter = 0
-        self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0, "refused_clients": 0}
+        self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0,
+                      "refused_clients": 0, "deduped_frames": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -327,6 +333,10 @@ class CoreServer:
                         self.stats["dropped_oversize"] += 1
                         self._log(f"core dropped oversize {kind} frame ({len(frame)} bytes)")
                         continue
+                    if frame == self._last_frame.get(kind):
+                        self.stats["deduped_frames"] += 1
+                        continue
+                    self._last_frame[kind] = frame
                     frames.append(frame)
             for frame in frames:
                 self._fan_out(frame)

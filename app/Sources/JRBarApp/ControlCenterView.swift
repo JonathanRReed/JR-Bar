@@ -14,7 +14,7 @@ struct ControlCenterView: View {
     var body: some View {
         Group {
             if !store.isLive {
-                DeckEmptyState(symbol: "bolt.horizontal.circle", title: "Core not connected",
+                DeckEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                text: "The Creator Micro 2 is driven by the core daemon. The pad appears here as soon as the socket is live.")
             } else {
                 content
@@ -903,8 +903,8 @@ struct RestoreKeymapSheet: View {
                     .font(.callout)
                     .foregroundStyle(.orange)
             }
-            if let generation = store.keymap.generation {
-                Text("Bound to transfer generation \(generation). A reconnect since then starts a new one; nothing resumes on its own.")
+            if store.keymap.generation != nil {
+                Text("The pad reconnected since this transfer — start over; nothing resumes on its own.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

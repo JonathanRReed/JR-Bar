@@ -828,11 +828,10 @@ def usage_history(provider: str, range_name: str, now: float, *, partial: bool =
 
 
 # The settings document, seeded from `AgentMonitorSettings().to_dict()` in
-# src/jrbar/_settings_legacy.py (captured 2026-09-09) plus the handful of
-# keys the native Settings window needs that the Python dataclass has no
-# field for yet (menu_bar_icon_style, devices_linked, cloud_ingest_token_path,
-# quota_alert_thresholds, devices[].resting_glow). `set_setting` writes into
-# a deep copy of this by dot path; `reset_settings` restores from it.
+# src/jrbar/_settings_legacy.py (captured 2026-09-09) plus the one key the
+# native Settings window needs that the Python dataclass has no field for
+# yet (cloud_ingest_token_path). `set_setting` writes into a deep copy of
+# this by dot path; `reset_settings` restores from it.
 def default_settings_document() -> dict:
     def device(device_id: str, name: str, path: str) -> dict:
         return {

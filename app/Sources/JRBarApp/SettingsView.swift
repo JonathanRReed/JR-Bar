@@ -80,8 +80,8 @@ struct SettingsPageContainer: View {
                 Section {
                     Label {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Core not connected").fontWeight(.semibold)
-                            Text("Settings are shown with defaults and cannot be changed until the core sends its settings document.")
+                            Text("Not connected").fontWeight(.semibold)
+                            Text("Settings are shown with defaults and cannot be changed until the monitor connects.")
                                 .foregroundStyle(.secondary)
                         }
                     } icon: {
@@ -143,7 +143,7 @@ struct Provided<Content: View>: View {
 
 struct NotProvidedHint: View {
     var body: some View {
-        Text("Not provided by core")
+        Text("Not in this version")
             .font(.caption)
             .foregroundStyle(.tertiary)
     }
@@ -477,7 +477,7 @@ struct SectionNote: View {
 }
 
 extension SettingsStore {
-    static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded())) %" }
+    static let percent: (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }
     static let seconds: (Double) -> String = { $0 == $0.rounded() ? "\(Int($0)) s" : String(format: "%.1f s", $0) }
     static let minutes: (Double) -> String = { "\(Int($0.rounded())) min" }
     static let points: (Double) -> String = { "\(Int($0.rounded())) pt" }
