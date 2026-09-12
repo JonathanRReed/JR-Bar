@@ -35,7 +35,7 @@ REQUIRED_COMMANDS = {
     "quiet", "list_history", "doctor", "quit", "open_legacy_window",
     # app-proposed extensions (app/README.md): Effect Studio and Usage Center
     "list_effects", "render_effect", "list_assignments", "set_assignment", "clear_assignment",
-    "import_effect_pack", "export_effect_pack", "usage_history",
+    "import_effect_pack", "export_effect_pack", "remove_effect_pack", "usage_history",
     # History/remote/Scene-pack extensions the app's stores already call.
     "mark_history_seen", "dismiss_session", "serve_token",
     "list_scene_packs", "import_scene_pack", "preview_scene_pack",
@@ -530,6 +530,55 @@ def test_provider_motion_assignment_writes_the_color_policy(headless, monkeypatc
     assert "devin" not in controller.settings.colors.provider_animation
     # The flash-path assignment for codex survives the devin motion clear.
     assert controller._core_dispatch("list_assignments", {})["assignments"] != []
+
+
+def test_remove_effect_pack_uninstalls(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The Studio calls ``remove_effect_pack``; a missing handler used to
+    answer unknown_command forever."""
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: tmp_path / "packs")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+
+    exported = controller._core_dispatch(
+        "export_effect_pack", {"ids": ["pulse"], "path": str(tmp_path / "pack.json"), "name": "Temp"}
+    )
+    controller._core_dispatch("import_effect_pack", {"path": exported["path"]})
+    assert "pack:temp:pulse" in {e["id"] for e in controller._core_dispatch("list_effects", {})["effects"]}
+
+    removed = controller._core_dispatch("remove_effect_pack", {"pack_id": "temp"})
+    assert removed["removed"] == {"id": "temp"}
+    assert "pack:temp:pulse" not in {e["id"] for e in removed["effects"]}
+
+    with pytest.raises(CommandError) as gone:
+        controller._core_dispatch("remove_effect_pack", {"pack_id": "temp"})
+    assert gone.value.code == "not_installed"
+
+
+def test_project_assignment_accepts_origin_labels(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A project target is the session's origin label ("Claude in VS
+    Code"); rejecting spaces made every real target unwritable."""
+    from jrbar import core_effects, effect_assignment_store, effect_pack_store
+    from jrbar.effect_assignment_store import EffectAssignmentCache
+    from jrbar.effect_registry import EFFECT_REGISTRY
+
+    monkeypatch.setattr(effect_assignment_store, "default_effect_assignment_path", lambda home=None: tmp_path / "assignments.json")
+    monkeypatch.setattr(effect_pack_store, "default_effect_pack_store_path", lambda home=None: tmp_path / "packs")
+    monkeypatch.setattr(core_effects, "default_state_dir", lambda *_: tmp_path)
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    monkeypatch.setattr(type(controller), "_effect_assignment_cache", EffectAssignmentCache(registry=EFFECT_REGISTRY), raising=False)
+
+    reply = controller._core_dispatch(
+        "set_assignment", {"effect_id": "pulse", "scope": "project", "target_id": "Claude in VS Code"}
+    )
+    assert reply["assignment"]["target_id"] == "Claude in VS Code"
 
 
 def test_serve_server_tracks_serve_enabled_and_the_token(headless, monkeypatch: pytest.MonkeyPatch) -> None:

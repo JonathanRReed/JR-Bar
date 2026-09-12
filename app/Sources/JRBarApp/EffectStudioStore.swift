@@ -39,10 +39,11 @@ final class EffectStudioStore {
     var hardwarePreviewUntil: Date?
     var now = Date()
 
-    /// The "Assign…" sheet.
+    /// The "Assign…" sheet. Defaults to Provider scope — the flagship
+    /// flow — with the first live provider as the target.
     var assigning = false
-    var draftScope: EffectScope = .semantic
-    var draftTarget: String = EffectSemantic.working.rawValue
+    var draftScope: EffectScope = .provider
+    var draftTarget: String = "claude"
     var draftUsesParameters = true
 
     @ObservationIgnored private var renderTask: Task<Void, Never>?
@@ -290,8 +291,15 @@ final class EffectStudioStore {
     func usage(of effect: EffectDefinition) -> [EffectAssignment] { assignments?.usage(of: effect.id) ?? [] }
 
     func beginAssigning(_ effect: EffectDefinition) {
-        if draftScope == .semantic, EffectSemantic(rawValue: draftTarget) == nil { draftTarget = EffectSemantic.working.rawValue }
+        draftTarget = defaultTarget(for: draftScope)
         assigning = true
+    }
+
+    /// The assignment already stored at the draft's (scope, target), if
+    /// any — the sheet shows it so a replace is never silent.
+    var existingAssignmentForDraft: EffectAssignment? {
+        guard let draft else { return nil }
+        return assignments?.assignment(scope: draft.scope, targetID: draft.targetID)
     }
 
     var draft: EffectAssignment? {
@@ -322,8 +330,16 @@ final class EffectStudioStore {
         Task { [weak self] in
             guard let self else { return }
             do {
-                self.assignments = try await self.core.setAssignment(draft)
-                self.show(status: "\(self.catalog?.effect(draft.effectID)?.label ?? draft.effectID) assigned to \(draft.scope.label.lowercased()) \(self.targetTitle(for: draft))")
+                let document = try await self.core.setAssignment(draft)
+                self.assignments = document
+                let effectName = self.catalog?.effect(draft.effectID)?.label ?? draft.effectID
+                let where_ = draft.scope == .global
+                    ? "everywhere"
+                    : "\(draft.scope.label.lowercased()) \(self.targetTitle(for: draft))"
+                self.show(status: "\(effectName) assigned to \(where_)")
+                if let warning = document.motionWarning, !warning.isEmpty {
+                    self.fail("Assigned, but the provider's motion did not change: \(warning)")
+                }
             } catch {
                 self.fail("Assignment refused: \(Self.describe(error))")
             }
@@ -341,37 +357,94 @@ final class EffectStudioStore {
         }
     }
 
-    /// Targets the draft can pick from, by scope. The Dot is not offered:
-    /// a device-scope assignment never reaches it (it only follows the
-    /// global look), so offering it would write a row that does nothing.
-    var deviceTargets: [(id: String, label: String)] {
-        core.devices.filter { $0.kind != "screen_bar" && $0.kind != "dot" }
-            .map { ($0.id, $0.name ?? $0.id) } + [("screen-bar", "Screen Bar")]
+    /// Providers that have actually been seen on this Mac: reporting a
+    /// session or a usage window, or detected by the daemon's health
+    /// probe. These lead the picker; every known provider follows.
+    var providerTargets: [(id: String, label: String, live: Bool)] {
+        var live: Set<String> = Set(core.state?.sessions.map(\.provider) ?? [])
+        live.formUnion((core.state?.usage?.providers ?? []).map(\.id))
+        let detected = core.state?.health?["detected"]
+        for provider in SettingsKey.providers where detected?[provider]?.boolValue == true {
+            live.insert(provider)
+        }
+        let liveFirst = SettingsKey.providers.filter { live.contains($0) }
+        let rest = SettingsKey.providers.filter { !live.contains($0) }
+        return (liveFirst + rest).map { ($0, ProviderStyle.style(for: $0).name, live.contains($0)) }
     }
 
-    /// A stored device assignment naming a Dot: it exists (written by an
-    /// older build or by hand) but the Dot never applies scoped effects.
+    /// `provider_instance` targets in the daemon's `provider:instance`
+    /// wire form — every non-default instance that reports usage. When
+    /// none exist the sheet falls back to a free-text field.
+    var instanceTargets: [(id: String, label: String)] {
+        (core.state?.usage?.providers ?? [])
+            .filter { $0.instance != nil && $0.instance != "default" && !$0.instance!.isEmpty }
+            .map { ("\($0.id):\($0.instance!)", "\(ProviderStyle.style(for: $0.id).name) · \($0.instance!)") }
+    }
+
+    /// `project` targets are the sessions' origin labels ("Claude in VS
+    /// Code") — that is what the daemon matches `project_id` against.
+    var projectTargets: [(id: String, label: String)] {
+        let labels = (core.state?.sessions ?? []).compactMap(\.origin?.label)
+        return Array(Set(labels)).sorted().map { ($0, $0) }
+    }
+
+    /// Real devices only. The Screen Bar is not a device-scope target:
+    /// its surface never resolves device assignments, so offering it
+    /// wrote a row that could never fire.
+    var deviceTargets: [(id: String, label: String)] {
+        core.devices.filter { $0.kind != "screen_bar" }
+            .map { device in
+                var label = device.name ?? device.id
+                if device.kind == "dot", device.linked == true || core.lights?.linked == true {
+                    label += " (follows the strip)"
+                }
+                return (device.id, label)
+            }
+    }
+
+    /// A stored device assignment naming a linked Dot: while it follows
+    /// the strip, the scoped effect is shadowed.
     func isUnreachableDot(_ assignment: EffectAssignment) -> Bool {
         assignment.scope == .device
+            && (core.lights?.linked == true)
             && core.devices.contains { $0.id == assignment.targetID && $0.kind == "dot" }
+    }
+
+    /// The row's second line: what the assignment actually does — a
+    /// provider-scope provider_animation writes the provider's working
+    /// motion (persistent), anything else is an event flash; a linked Dot
+    /// shadows its device row.
+    func assignmentNote(_ assignment: EffectAssignment) -> String? {
+        if isUnreachableDot(assignment) { return "the Dot follows the strip while linked" }
+        let effect = catalog?.effect(assignment.effectID)
+        if assignment.scope == .provider, effect?.catalog == "provider_animation" {
+            return "plays as \(ProviderStyle.style(for: assignment.targetID ?? "").name)'s motion while it works"
+        }
+        if assignment.scope == .semantic {
+            return "fires on \(assignment.targetLabel.lowercased()) events"
+        }
+        return nil
     }
 
     func defaultTarget(for scope: EffectScope) -> String {
         switch scope {
         case .global: return ""
-        case .semantic: return EffectSemantic.working.rawValue
+        case .semantic: return EffectSemantic.assignable.first?.rawValue ?? EffectSemantic.completion.rawValue
         case .scene: return EffectScene.calm.rawValue
-        case .provider: return "claude"
+        case .provider: return providerTargets.first { $0.live }?.id ?? providerTargets.first?.id ?? "claude"
         case .device: return deviceTargets.first?.id ?? ""
-        case .providerInstance, .project: return ""
+        case .providerInstance: return instanceTargets.first?.id ?? ""
+        case .project: return projectTargets.first?.id ?? ""
         }
     }
 
     // MARK: Packs
 
-    /// Installed scene packs and the pack whose preview is being shown
-    /// (nil from a core without `list_scene_packs`).
+    /// Installed scene packs and the pack whose preview is being shown.
+    /// `scenePacksSupported` is true once `list_scene_packs` answers — an
+    /// old core answering unknown_command hides the section entirely.
     private(set) var scenePacks: [ScenePackSummary] = []
+    private(set) var scenePacksSupported = false
     var scenePreview: (packID: String, preview: EffectPreview)?
 
     /// Set when an import was refused with `already_installed`: the view
@@ -382,10 +455,12 @@ final class EffectStudioStore {
     func loadScenePacks() async {
         do {
             self.scenePacks = try await self.core.listScenePacks()
+            self.scenePacksSupported = true
         } catch {
             // A core without scene-pack commands answers unknown_command;
             // the section simply does not render.
             self.scenePacks = []
+            self.scenePacksSupported = false
         }
     }
 
@@ -397,6 +472,32 @@ final class EffectStudioStore {
                 self.scenePreview = (pack.id, preview)
             } catch {
                 self.fail("Scene pack preview failed: \(Self.describe(error))")
+            }
+        }
+    }
+
+    /// `import_scene_pack {path}`: same data-only JSON file flow as effect
+    /// packs; the reply carries the pack list plus the catalog delta.
+    func importScenePack() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Scene Pack"
+        panel.message = "Scene packs are data-only JSON; the core validates the file."
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.importScenePack(path: url.path)
+                guard reply.ok else {
+                    self.fail("Scene pack import refused: \(reply.error?.message ?? reply.error?.code ?? "refused")")
+                    return
+                }
+                await self.loadScenePacks()
+                self.show(status: "Imported scenes from \(url.lastPathComponent)")
+            } catch {
+                self.fail("Scene pack import refused: \(Self.describe(error))")
             }
         }
     }

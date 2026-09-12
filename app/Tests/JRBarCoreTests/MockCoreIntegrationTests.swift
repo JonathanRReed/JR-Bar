@@ -92,7 +92,7 @@ struct MockCoreIntegrationTests {
         #expect(model.lights?.linked == true)
         #expect(model.settings?.schema == 3)
         #expect(model.settings?.document["virtual_status_device_enabled"]?.boolValue == true)
-        #expect(model.settings?.document["colors"]?["blend_mode"]?.stringValue == "round_robin")
+        #expect(model.settings?.document["colors"]?["blend_mode"]?.stringValue == "color_blend")
         #expect(events.isEmpty)
         #expect(model.lastDecodeFailure == nil)
 

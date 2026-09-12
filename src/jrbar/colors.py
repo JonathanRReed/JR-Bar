@@ -502,7 +502,11 @@ BLEND_MODE_CHOICES: tuple[str, ...] = (
     BLEND_MODE_CYCLE,
     BLEND_MODE_CLASSIC,
 )
-DEFAULT_BLEND_MODE = BLEND_MODE_ROUND_ROBIN
+# Smooth is the default: on a wide blended surface (the Screen Bar mixes
+# every LED with its neighbours) per-agent alternating LEDs average into a
+# shifting mid-grey mud, which is exactly what round_robin produced there.
+# One mixed colour stays one calm light no matter how many agents report.
+DEFAULT_BLEND_MODE = BLEND_MODE_COLOR
 
 # Names describe what you SEE, not how it is built. The old set was
 # scheduler jargon ("Round-Robin"), a mechanism ("Color Blend"), or a

@@ -577,11 +577,15 @@ struct EffectAssignmentsPane: View {
             }
             .padding(12)
             Divider()
-            if !store.scenePacks.isEmpty {
+            if store.scenePacksSupported {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(store.scenePacks) { pack in
                         ScenePackRow(pack: pack, store: store)
                     }
+                    Button("Import scene pack…") { store.importScenePack() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                        .help("Installs a data-only JSON scene pack; the core validates the file")
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -594,7 +598,7 @@ struct EffectAssignmentsPane: View {
                             ForEach(group.assignments) { assignment in
                                 AssignmentRow(assignment: assignment, title: store.targetTitle(for: assignment),
                                               effect: store.catalog?.effect(assignment.effectID),
-                                              note: store.isUnreachableDot(assignment) ? "the Dot only follows the global look" : nil,
+                                              note: store.assignmentNote(assignment),
                                               selected: store.selectedID == assignment.effectID) {
                                     store.remove(assignment)
                                 } select: {
@@ -766,6 +770,14 @@ struct AssignSheet: View {
                 Label(Self.describe(problem), systemImage: "xmark.circle")
                     .font(.caption)
                     .foregroundStyle(.red)
+            } else if let existing = store.existingAssignmentForDraft,
+                      let effect, existing.effectID != effect.id {
+                // One assignment per (scope, target): say what this replaces.
+                let name = store.catalog?.effect(existing.effectID)?.label ?? existing.effectID
+                Label("Replaces \(name) on \(draft?.scope.label.lowercased() ?? "") \(store.targetTitle(for: existing))",
+                      systemImage: "arrow.triangle.swap")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             HStack {
                 Spacer()
@@ -794,16 +806,35 @@ struct AssignSheet: View {
             }
         case .provider:
             Picker("Provider", selection: $store.draftTarget) {
-                ForEach(SettingsKey.providers, id: \.self) { Text(ProviderStyle.style(for: $0).name).tag($0) }
+                // Providers seen on this Mac lead; the rest follow a divider.
+                let targets = store.providerTargets
+                ForEach(targets.filter(\.live), id: \.id) { Text($0.label).tag($0.id) }
+                if targets.contains(where: { !$0.live }) {
+                    Divider()
+                    ForEach(targets.filter { !$0.live }, id: \.id) { Text($0.label).tag($0.id) }
+                }
             }
         case .device:
             Picker("Device", selection: $store.draftTarget) {
                 ForEach(store.deviceTargets, id: \.id) { Text($0.label).tag($0.id) }
             }
         case .providerInstance:
-            TextField("Instance id", text: $store.draftTarget, prompt: Text("e.g. claude:desktop"))
+            if store.instanceTargets.isEmpty {
+                TextField("Instance id", text: $store.draftTarget, prompt: Text("provider:instance, e.g. claude:work"))
+            } else {
+                Picker("Instance", selection: $store.draftTarget) {
+                    ForEach(store.instanceTargets, id: \.id) { Text($0.label).tag($0.id) }
+                }
+            }
         case .project:
-            TextField("Project", text: $store.draftTarget, prompt: Text("e.g. jr-bar"))
+            if store.projectTargets.isEmpty {
+                TextField("Project", text: $store.draftTarget,
+                          prompt: Text("The session's origin label, e.g. Claude in VS Code"))
+            } else {
+                Picker("Project", selection: $store.draftTarget) {
+                    ForEach(store.projectTargets, id: \.id) { Text($0.label).tag($0.id) }
+                }
+            }
         }
     }
 

@@ -793,6 +793,11 @@ def _assignment_target(scope: AssignmentScope, target_id: object) -> tuple[str |
         if scene is None or policy is None:
             raise EffectStudioError("scene target is unknown")
         return scene.value, policy
+    if scope is AssignmentScope.PROJECT:
+        # A project target is the session's origin *label* — "Claude in VS
+        # Code", "Devin Cloud" — so spaces are legal. `_bounded_text`
+        # already kept it bounded and printable.
+        return target, None
     if _OPAQUE_IDENTIFIER.fullmatch(target) is None:
         raise EffectStudioError("assignment target must be an opaque identifier")
     return target, None

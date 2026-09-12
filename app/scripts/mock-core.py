@@ -874,7 +874,7 @@ def default_settings_document() -> dict:
                 "devin": "#5C84B0", "gemini": "#34C759", "grok": "#636366", "hermes": "#FF9500",
                 "kiro": "#A00848", "openclaw": "#B23400", "opencode": "#AF52DE", "pi": "#007AFF",
             },
-            "blend_mode": "round_robin",
+            "blend_mode": "color_blend",
             "color_by_project": False,
             "cycle_speed_seconds": 2.2,
             "done_celebration_enabled": True,

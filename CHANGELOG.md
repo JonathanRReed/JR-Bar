@@ -2,6 +2,34 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.1
+
+- The default multi-agent look is Smooth (`color_blend`): one seamless
+  light mixed from every active agent's colour. On the Screen Bar —
+  which already blends each LED with its neighbours — Everyone's
+  alternating per-agent blocks averaged into a shifting grey seam; a
+  single mixed colour stays one calm band however many agents report.
+  Existing `colors.blend_mode` values are untouched; Everyone, Split,
+  Spotlight, One at a Time and Status Only remain in the picker.
+- The Assign sheet can no longer promise what the daemon won't deliver.
+  Its default draft is Provider scope aimed at a provider this Mac has
+  actually seen, the State picker only offers the routable targets
+  (Notification, Done), the Provider picker lists live providers first,
+  the Project target accepts real origin labels ("Claude in VS Code")
+  instead of demanding an identifier that can't exist, and the dead
+  "Screen Bar" device target is gone. The sheet also says when a draft
+  would replace an existing assignment, surfaces the daemon's
+  `motion_warning` when a provider-motion write fails, and stops toasting
+  "assigned to everywhere Everywhere".
+- `remove_effect_pack` exists on the daemon — the Studio's pack removal
+  no longer answers `unknown_command` — and scene packs can be imported
+  from the window. Assignment rows say what they do ("plays as Devin's
+  motion while it works", "fires on done events", "the Dot follows the
+  strip while linked").
+- Dead call sites removed: the fire-and-forget `applyCalibration` and
+  `previewCalibration` posts are gone; every calibration call awaits its
+  verdict.
+
 ## 0.9.0
 
 - Assigning an effect now does what the picker says. Provider-scope

@@ -175,7 +175,9 @@ struct EffectModelTests {
         #expect(EffectAssignment(effectID: "x", scope: .provider, targetID: " ").problem == .missingTarget)
         #expect(EffectAssignment(effectID: "x", scope: .semantic, targetID: "asking").problem == .urgentSemantic)
         #expect(EffectAssignment(effectID: "x", scope: .semantic, targetID: "working").problem == nil)
-        #expect(EffectSemantic.assignable.count == 8)
+        // Only completion/notification are routable non-urgent semantics;
+        // the rest would be refused `unroutable_semantic` by the daemon.
+        #expect(EffectSemantic.assignable == [.notification, .completion])
         #expect(EffectScope.precedence.first == .device)
         #expect(EffectScene.dnd.label == "Do Not Disturb")
 
