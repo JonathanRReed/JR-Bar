@@ -1884,6 +1884,54 @@ def test_a_process_killed_without_an_end_event_reads_ended_not_done(
     assert ended["stale"] is True and ended["pid"] is None
 
 
+def test_shared_host_process_record_cannot_vouch_for_a_session(
+    cleared, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Devin's hooks run inside a shared host (``devin acp``) that outlives
+    any session, so a live pid on the record is the host's, not the
+    session's. Reading it as liveness pinned a finished session on
+    "Working" for as long as the host stayed up. Only the record's own
+    end is session-level truth; liveness stays with the silence timer."""
+
+    from jrbar import process_registry
+
+    monkeypatch.setattr(
+        process_registry,
+        "load_record",
+        lambda provider, session_id: SimpleNamespace(
+            pid=424_242, cwd="/tmp/x", ended_at_epoch=None, end_reason=None
+        ),
+    )
+    monkeypatch.setattr(process_registry, "pid_exists", lambda pid: True)
+
+    devin = SimpleNamespace(
+        agent_id="devin:session:cubic",
+        provider="devin",
+        session_id="cubic",
+        event_name="PreToolUse",
+        origin=None,
+        updated_at=None,
+    )
+    extras = cleared._core_extras_for(devin)
+    assert extras.process_alive is None
+    assert extras.provider_ended is None
+    assert extras.pid is None
+    assert extras.cwd == "/tmp/x"
+
+    # A non-shared provider's record still answers the same way it did.
+    codex = SimpleNamespace(
+        agent_id="codex:session:cubic",
+        provider="codex",
+        session_id="cubic",
+        event_name="PreToolUse",
+        origin=None,
+        updated_at=None,
+    )
+    codex_extras = cleared._core_extras_for(codex)
+    assert codex_extras.process_alive is True
+    assert codex_extras.pid == 424_242
+
+
 def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.MonkeyPatch) -> None:
     """hidapi's IOHIDManager keeps the run loop of whichever thread first
     touched it. A fresh thread per probe leaves it holding a run loop that

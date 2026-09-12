@@ -392,7 +392,18 @@ def _snapshot_from_operator_state(
                 for status in supplemental_statuses
                 if (
                     (existing := projected_by_agent_id.get(status.agent_id)) is None
-                    or status.priority < existing.priority
+                    or (
+                        # Precedence decides only between observations of the
+                        # same moment. A supplemental row is seeded once -- by
+                        # the startup replay or a transcript read -- and never
+                        # touched by normalized ingest, so without the clock
+                        # bound an old PreToolUse outranks every newer
+                        # canonical truth for the rest of the process'
+                        # lifetime: a session that ended read "Working" until
+                        # the presence horizon removed the row outright.
+                        status.priority < existing.priority
+                        and status.updated_at >= existing.updated_at
+                    )
                     or (
                         status.updated_at > existing.updated_at
                         and (
@@ -1665,7 +1676,11 @@ def _state_to_document(
         "version": 2,
         "generation": state.generation,
         "works": [_work_to_payload(work) for work in state.works],
-        "requests": [_request_to_payload(request) for request in state.requests],
+        "requests": [
+            _request_to_payload(request)
+            for request in state.requests
+            if not _resolved_tombstone(request)
+        ],
         "source_watermarks": [
             _watermark_to_payload(watermark)
             for _source, watermark in state.source_watermarks
@@ -1756,6 +1771,15 @@ def _restored_request_eligibility(phase: RequestPhase) -> AcknowledgementEligibi
     if phase is RequestPhase.STALE_HOLD:
         return AcknowledgementEligibility.STALE_HOLD
     return AcknowledgementEligibility.NOT_ACTIONABLE
+
+
+def _resolved_tombstone(request: CanonicalRequestTruth) -> bool:
+    """A request that resolved without ever opening is a derived-id
+    tombstone, not history: nothing was ever asked, so nothing is worth
+    carrying in memory or on disk."""
+    return (
+        request.phase is RequestPhase.RESOLVED and request.opened_at_epoch is None
+    )
 
 
 def _request_from_payload(payload: object) -> CanonicalRequestTruth:
@@ -1882,7 +1906,25 @@ def _v2_state_from_document(document: object) -> CanonicalOperatorState:
     ):
         raise ValueError("invalid latest-state document")
     works = tuple(_work_from_payload(item) for item in works_payload)
-    requests = tuple(_request_from_payload(item) for item in requests_payload)
+    parsed_requests = [_request_from_payload(item) for item in requests_payload]
+    requests = tuple(
+        request for request in parsed_requests if not _resolved_tombstone(request)
+    )
+    # Dropped tombstones leave dangling keys on their works; those references
+    # name entries that were never real asks, so strip exactly them -- a work
+    # pointing at a request the document never contained is still corrupt.
+    tombstone_keys = {
+        request.key for request in parsed_requests if _resolved_tombstone(request)
+    }
+    works = tuple(
+        replace(
+            work,
+            request_keys=tuple(
+                key for key in work.request_keys if key not in tombstone_keys
+            ),
+        )
+        for work in works
+    )
     watermarks = tuple(_watermark_from_payload(item) for item in watermarks_payload)
     uncertain = tuple(_source_key_from_payload(item) for item in uncertain_payload)
     if any(item is None for item in watermarks) or any(item is None for item in uncertain):

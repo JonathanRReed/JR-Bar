@@ -3525,7 +3525,7 @@ def build_headless_controller_class() -> type:
             return stamp is not None and time.time() - stamp < UNSETTLED_EXTRAS_SECONDS
 
         def _core_lookup_extras(self, status) -> SessionExtras:
-            from .process_registry import load_record, pid_exists
+            from .process_registry import SHARED_HOST_PROVIDERS, load_record, pid_exists
 
             pid = None
             record = None
@@ -3545,14 +3545,26 @@ def build_headless_controller_class() -> type:
                     record = load_record(status.provider, session_id)
                 except Exception:
                     record = None
+                shared_host = str(getattr(status, "provider", "")) in SHARED_HOST_PROVIDERS
                 if record is not None:
                     cwd = record.cwd or None
-                    alive = record.ended_at_epoch is None and pid_exists(record.pid)
-                    process_alive = bool(alive)
-                    if record.ended_at_epoch is not None:
-                        provider_ended = record.end_reason == "hook"
-                    if alive:
-                        pid = record.pid
+                    if shared_host:
+                        # The pid on file is the shared host's (``devin
+                        # acp``), alive by design -- it can neither vouch
+                        # for the session nor prove it dead, and it must
+                        # not lend the row a terminal. Only the record's
+                        # own end is session-level truth; liveness stays
+                        # with the silence timer.
+                        if record.ended_at_epoch is not None:
+                            provider_ended = record.end_reason == "hook"
+                        record = None
+                    else:
+                        alive = record.ended_at_epoch is None and pid_exists(record.pid)
+                        process_alive = bool(alive)
+                        if record.ended_at_epoch is not None:
+                            provider_ended = record.end_reason == "hook"
+                        if alive:
+                            pid = record.pid
                 name, cwd = self._core_session_title(status.provider, session_id, pid or (record.pid if record else None), cwd)
             origin_label = getattr(status, "origin", None)
             origin = origin_document(origin_label if isinstance(origin_label, str) else None)

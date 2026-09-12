@@ -1591,6 +1591,14 @@ def reduce_operator_state(
     if semantic_allowed:
         for fact in batch.request_facts:
             existing = previous_requests.get(fact.key)
+            if fact.key not in requests and fact.state is ProviderRequestState.RESOLVED:
+                # Resolving a request nobody opened must not materialize a
+                # tombstone: every PostToolUse carries a derived request
+                # identity so it can close the ask its own tool call
+                # opened, and most calls never had one -- without this the
+                # entry sits resolved forever and every later reduce and
+                # snapshot pays to carry it.
+                continue
             order = (
                 WatermarkOrder.NEWER
                 if existing is None
