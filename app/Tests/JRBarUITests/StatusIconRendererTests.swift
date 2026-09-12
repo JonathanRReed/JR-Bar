@@ -365,6 +365,31 @@ struct StatusMetersTests {
         #expect(Self.pixels(warned) == Self.pixels(warnedPlain), "the warning colour is the warning colour")
     }
 
+    @Test("a snoozed ask draws dim and holds still, and is not read as 'needs you'")
+    func dimmedSessionDots() {
+        let renderer = StatusIconRenderer()
+        let snoozed = SessionDot(id: "claude:1", state: .ask, dimmed: true)
+        let live = SessionDot(id: "claude:1", state: .ask)
+        let still = StatusIconSpec(style: .agents, sessions: [snoozed], phase: 0.0)
+        let later = StatusIconSpec(style: .agents, sessions: [snoozed], phase: 0.9)
+        // Nothing animates, so the breathing phase is bucketed away: a
+        // muted mailbox must not make the strip twitch every frame.
+        #expect(still.cacheKey == later.cacheKey)
+        let moving = StatusIconSpec(style: .agents, sessions: [live], phase: 0.9)
+        #expect(still.cacheKey != moving.cacheKey)
+        // A dimmed dot is visibly quieter than a live ask at its bright
+        // quarter, but still there — ink, not absence.
+        let bright = StatusIconSpec(style: .agents, sessions: [live], phase: 0.25)
+        let dimmedInk = Self.ink(renderer.image(for: still))
+        #expect(dimmedInk > 0)
+        #expect(dimmedInk < Self.ink(renderer.image(for: bright)))
+        #expect(StatusIconRenderer.accessibilityLabel(still) == "JR-Bar · 1 snoozed")
+        #expect(StatusIconRenderer.accessibilityLabel(moving) == "JR-Bar · 1 needs you")
+        // A snoozed ask beside a live ask: one snoozed, one needs you.
+        let mixed = StatusIconSpec(style: .agents, sessions: [snoozed, SessionDot(id: "codex:2", state: .ask)])
+        #expect(StatusIconRenderer.accessibilityLabel(mixed) == "JR-Bar · 1 needs you · 1 snoozed")
+    }
+
     /// How much ink a strip carries: the fill is opaque, the track is not,
     /// so a taller fill is a bigger number. Enough to tell two levels apart
     /// without asserting pixels.

@@ -42,12 +42,16 @@ from .private_io import atomic_private_write, read_private_text
 from .providers import default_state_dir
 
 ACTIVITY_LEDGER_NAME: Final = "activity-ledger.json"
-_STORE_VERSION: Final = 1
+# Version 2 adds ``duration_seconds`` to every entry. A version-1 document
+# still loads -- its rows simply carry no measured span -- while anything
+# newer is refused as unsupported rather than guessed at.
+_STORE_VERSION: Final = 2
 _MAX_STORE_BYTES: Final = MAX_ACTIVITY_LEDGER_BYTES
 _DOCUMENT_FIELDS: Final = frozenset({"entries", "last_seen_epoch", "version"})
-_ENTRY_FIELDS: Final = frozenset(
+_ENTRY_FIELDS_V1: Final = frozenset(
     {"detail", "kind", "label", "occurred_at_epoch", "provider", "subject_id"}
 )
+_ENTRY_FIELDS: Final = _ENTRY_FIELDS_V1 | {"duration_seconds"}
 
 
 class _CorruptActivityStore(ValueError):
@@ -171,8 +175,9 @@ def _ledger_from_document(document: object) -> ActivityLedger:
     version = document["version"]
     if type(version) is not int:
         raise _CorruptActivityStore
-    if version != _STORE_VERSION:
+    if version not in (1, _STORE_VERSION):
         raise _UnsupportedActivityStore
+    entry_fields = _ENTRY_FIELDS if version == _STORE_VERSION else _ENTRY_FIELDS_V1
     entries = document["entries"]
     if type(entries) is not list or len(entries) > MAX_ACTIVITY_ENTRIES:
         raise _CorruptActivityStore
@@ -181,23 +186,30 @@ def _ledger_from_document(document: object) -> ActivityLedger:
         raise _CorruptActivityStore
     try:
         return ActivityLedger(
-            tuple(_entry_from_payload(item) for item in entries),
+            tuple(_entry_from_payload(item, entry_fields) for item in entries),
             float(last_seen),
         )
     except (TypeError, ValueError) as error:
         raise _CorruptActivityStore from error
 
 
-def _entry_from_payload(payload: object) -> ActivityEntry:
-    if not _has_exact_fields(payload, _ENTRY_FIELDS):
+def _entry_from_payload(payload: object, fields: frozenset[str]) -> ActivityEntry:
+    if not _has_exact_fields(payload, fields):
         raise _CorruptActivityStore
     kind = payload["kind"]
     subject_id = payload["subject_id"]
     detail = payload["detail"]
+    # Older documents never wrote the field; a missing span backfills to
+    # None, which the protocol already renders as "no measured duration".
+    duration = payload.get("duration_seconds")
     if not (
         type(kind) is str
         and (subject_id is None or type(subject_id) is str)
         and (detail is None or type(detail) is str)
+        and (
+            duration is None
+            or (type(duration) in {int, float} and not isinstance(duration, bool))
+        )
     ):
         raise _CorruptActivityStore
     return ActivityEntry(
@@ -207,6 +219,7 @@ def _entry_from_payload(payload: object) -> ActivityEntry:
         payload["provider"],
         subject_id,
         detail,
+        duration,
     )
 
 

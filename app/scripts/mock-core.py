@@ -561,7 +561,7 @@ def render_effect_program(effect: dict, values: dict, led_count: int = 8, color:
     """One LEDS program (≤ 20 lines, ≤ 512 bytes) for an effect and its parameters."""
     params = normalize_effect_parameters(effect, values)
     identifier = effect["id"]
-    n = max(2, min(8, led_count))
+    n = max(2, min(24, led_count))
     motion = identifier
     if effect.get("pack"):
         motion = params.get("motion", "breathe")
@@ -956,7 +956,7 @@ def default_settings_document() -> dict:
         "notification_policy_version": 1,
         "operator_history_retention_days": 0,
         "quota_alert_thresholds": [90.0, 95.0],
-        "quota_alerts_enabled": False,
+        "quota_alerts_enabled": True,
         "reminder_alerts_enabled": False,
         "remote_peers": {
             "enabled": False, "include_messages": False, "max_peers": 8, "muted_machines": [],
@@ -973,6 +973,7 @@ def default_settings_document() -> dict:
         "screen_bar_phase_offset_ms": 0.0,
         "screen_bar_show_in_full_screen": False,
         "screen_bar_wing_length": None,
+        "serve_enabled": False,
         "session_open_preferences": {},
         "setup_screen_completed": False,
         "signal_styles": {},
@@ -997,6 +998,10 @@ def default_settings_document() -> dict:
 
 HOOK_PROVIDERS = ("claude", "codex", "gemini", "pi", "grok", "devin", "opencode", "openclaw", "antigravity",
                   "cursor", "hermes", "kiro")
+
+# The daemon's SemanticFamily values — the only legal `semantic` targets.
+SEMANTIC_TARGETS = ("working", "asking", "completion", "failure", "recovery",
+                    "notification", "quota", "environment", "idle", "transition")
 
 
 def split_path(path: str) -> list:
@@ -1132,6 +1137,10 @@ class World:
         self.usage_refreshed_at = now - 45
         self.effects_generation = 1
         self.effect_packs: dict[str, dict] = {SAMPLE_PACK["id"]: validate_pack(SAMPLE_PACK)}
+        self.scene_packs: dict[str, dict] = {
+            "nightlab-scenes": {"id": "nightlab-scenes", "name": "Night Lab Scenes",
+                                "scenes": ["calm", "night"], "installed": True},
+        }
         self.assignments: list[dict] = [
             {"effect_id": "breathe", "scope": "global", "target_id": None, "parameters": {}},
             {"effect_id": "chase", "scope": "semantic", "target_id": "working", "parameters": {"duration_seconds": 1.6}},
@@ -1149,6 +1158,11 @@ class World:
         self.hooks = {"claude": "ok", "codex": "ok", "gemini": "ok", "pi": "missing", "grok": "missing",
                       "devin": "missing", "opencode": "stale", "openclaw": "missing", "antigravity": "missing",
                       "cursor": "ok", "hermes": "missing", "kiro": "missing"}
+        # Whether each agent's CLI was actually found on this Mac; installing
+        # hooks for an undetected one answers a per-provider error.
+        self.detected = {"claude": True, "codex": True, "gemini": True, "pi": True, "grok": False,
+                         "devin": True, "opencode": True, "openclaw": False, "antigravity": True,
+                         "cursor": True, "hermes": False, "kiro": False}
         self.previews: dict[str, float] = {}
         # Held calibration previews, surface -> {program, until, device,
         # companion_of}: the lights document shows the patch while held,
@@ -1194,6 +1208,12 @@ class World:
         # acknowledged; `list_history` still has them. The seed stands for
         # the runs that ended before this process started.
         self.hidden_count = 3
+        # `dismiss_session` receipts: sid -> the epoch the row was
+        # acknowledged at. state() skips a row while its `updated_at` has
+        # not moved past the stamp, so a dismissed session returns the
+        # moment `set_mode` hears it speak again -- the daemon's receipt
+        # semantics without the persistence.
+        self.dismissed: dict[str, float] = {}
         # `usage_history` scans: the first ask per (provider, range) is
         # answered partially and finished by an event, like the daemon's.
         self.history_scanned: set[tuple[str, str]] = set()
@@ -1203,6 +1223,10 @@ class World:
         self.quota_crossed: dict[str, set] = {}
         self.ask_opened_at: dict[str, float] = {}
         self._seed_history(now)
+        # The daemon's `last_seen` watermark: rows newer than it answer
+        # `unseen: true`. Sits between the seeded "while away" rows and the
+        # older ones so the window opens on an away banner.
+        self.history_seen_at = now - 3600
 
     def _seed_history(self, now: float) -> None:
         """Yesterday and earlier today, seen; the newest three happened while
@@ -1228,9 +1252,8 @@ class World:
     def record(self, kind: str, provider: str | None, session: str | None, label: str | None,
                detail: str | None = None, duration: float | None = None) -> None:
         with self.lock:
-            unseen = not any(c.alive for c in self.clients)
             self.history.append({"at": time.time(), "kind": kind, "provider": provider, "session": session,
-                                 "label": label, "detail": detail, "duration": duration, "unseen": unseen})
+                                 "label": label, "detail": detail, "duration": duration})
             if len(self.history) > 2000:
                 del self.history[: len(self.history) - 2000]
 
@@ -1244,6 +1267,7 @@ class World:
             "short_id": sid.rsplit(":", 1)[-1][:8], "cwd": cwd,
             "mode": mode, "lifecycle": lifecycle, "next_actor": next_actor, "since": since,
             "updated_at": since, "stale": False, "pid": pid, "origin": origin, "ask": None,
+            "remote": sid.startswith("remote:"),
             "terminal": terminal, "workers": 0, "snoozed_until": None,
         }
 
@@ -1283,20 +1307,36 @@ class World:
         for pid, u in self.usage.items():
             if u["h5"] is None:
                 providers.append({"id": pid, "windows": [], "fidelity": u["fidelity"], "state": u["state"],
+                                  "instance": "default", "quota_source": pid != "cursor",
                                   "account": USAGE_ACCOUNTS.get(pid)})
                 continue
+            rate = u["rate"]
+
+            def window(pct, resets_in):
+                # The daemon emits a per-window forecast, not only the
+                # primary window's; each extrapolates its own used_pct.
+                forecast = None
+                if pct is not None:
+                    exhausts = now + (100.0 - pct) / rate * 3600 if rate > 0 and pct < 100 else None
+                    forecast = {"exhausts_at": exhausts, "pace": u["pace"]}
+                row = {"used_pct": None if pct is None else round(pct, 1), "resets_at": now + resets_in}
+                if forecast is not None:
+                    row["forecast"] = forecast
+                return row
+
             windows = [
-                {"id": "five-hour", "name": "5h", "used_pct": round(u["h5"], 1), "resets_at": now + 2 * 3600 + 840},
-                {"id": "weekly", "name": "7d",
-                 "used_pct": None if u["d7"] is None else round(u["d7"], 1),
-                 "resets_at": now + 3 * 86400 + 5 * 3600},
+                dict(window(u["h5"], 2 * 3600 + 840), id="five-hour", name="5h"),
+                dict(window(u["d7"], 3 * 86400 + 5 * 3600), id="weekly", name="7d"),
             ]
             if u.get("d30") is not None:
-                windows.append({"name": "30d", "used_pct": round(u["d30"], 1), "resets_at": now + 19 * 86400 + 7 * 3600})
-            rate = u["rate"]
+                windows.append(dict(window(u["d30"], 19 * 86400 + 7 * 3600), name="30d"))
             exhausts_at = now + (100.0 - u["h5"]) / rate * 3600 if rate > 0 and u["h5"] < 100 else None
             providers.append({
                 "id": pid,
+                "instance": "default",
+                # False for a provider with no quota collector at all, so a
+                # "show meters" control can hide instead of drawing dead.
+                "quota_source": pid != "cursor",
                 "windows": windows,
                 "fidelity": u["fidelity"],
                 "state": "warning" if u["h5"] >= 85 else u["state"],
@@ -1314,14 +1354,21 @@ class World:
         return {
             "t": "state", "v": PROTOCOL_VERSION, "generation": self.generation, "now": now,
             "aggregate": self.aggregate(),
-            "sessions": list(self.sessions.values()),
+            # Dismissed rows stay out until their `updated_at` moves past
+            # the acknowledgement stamp (the row "next spoke").
+            "sessions": [
+                s for s in self.sessions.values()
+                if s.get("updated_at", 0.0) > self.dismissed.get(s["id"], float("-inf"))
+            ],
             "asks": list(self.asks),
             "devices": devices,
             "usage": {"refreshed_at": self.usage_refreshed_at, "providers": providers},
             "power": {"keep_awake": True, "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True}},
             "focus": self.focus,
             "escalation": self.escalation,
-            "health": {"hooks": dict(self.hooks), "sources": {"codex": {"fresh": True}}},
+            "health": {"hooks": dict(self.hooks), "detected": dict(self.detected),
+                       "sources": {"codex": {"fresh": True}}},
+            "catalog_generation": self.effects_generation,
             "settings_generation": self.settings_generation,
             "hidden_count": self.hidden_count,
             "deck": self.deck_state(),
@@ -1763,10 +1810,19 @@ class World:
 
     def open_ask(self, sid: str, summary: str, kind: str = "permission") -> None:
         with self.lock:
-            ask = {"session": sid, "kind": kind, "opened_at": time.time(), "summary": summary}
+            # `answerable`/`replyable` mirror the daemon's contract-derived
+            # flags: the mock's claude and codex rows stand in for the
+            # `answering` capability, and only an `input` ask takes a typed
+            # reply.
+            provider = sid.split(":", 1)[0]
+            answerable = provider in ("claude", "codex") and not sid.startswith("remote:")
+            replyable = answerable and kind == "input"
+            ask = {"session": sid, "kind": kind, "opened_at": time.time(), "summary": summary,
+                   "answerable": answerable, "replyable": replyable}
             self.asks = [a for a in self.asks if a["session"] != sid] + [ask]
             if sid in self.sessions:
-                self.sessions[sid]["ask"] = {"kind": kind, "opened_at": ask["opened_at"], "summary": summary}
+                self.sessions[sid]["ask"] = {"kind": kind, "opened_at": ask["opened_at"], "summary": summary,
+                                             "answerable": answerable, "replyable": replyable}
             self.ask_opened_at[sid] = ask["opened_at"]
             self.set_mode(sid, "waiting", "active", "user")
             self.escalation = {"stage": "none", "since": None}
@@ -2041,7 +2097,8 @@ class World:
 
     def assignment_document(self) -> dict:
         return {"assignments": [dict(a) for a in self.assignments], "active_scene": self.document.get("active_scene", "calm"),
-                "generation": self.effects_generation}
+                "generation": self.effects_generation,
+                "completion_banners_enabled": bool(self.document.get("completion_sweep_enabled", True))}
 
     # -- commands -------------------------------------------------------------
 
@@ -2121,13 +2178,42 @@ class World:
             self.push_lights(self.light_for_world())
             self.push_log("info", f"undid clear {batch}: {len(restored)} restored")
             result = {"batch": batch, "restored": restored}
+        elif name == "dismiss_session":
+            # Acknowledge a live or stuck row until it next speaks: the
+            # stamp in `dismissed` wins over the row's `updated_at` only
+            # until `set_mode` moves it, so a dismissed session returns on
+            # its next event. An open ask or a remote row is refused --
+            # the daemon's own gates.
+            sid = str(args.get("session") or "")
+            with self.lock:
+                s = self.sessions.get(sid)
+                if s is None:
+                    return self._error(cid, "not_found", "no such session")
+                if s.get("ask") or any(a["session"] == sid for a in self.asks):
+                    return self._error(cid, "refused", "the session has an open ask")
+                if sid.startswith("remote:"):
+                    return self._error(cid, "refused", "a remote session is the peer's to manage")
+                self.dismissed[sid] = time.time()
+            self.push_state()
+            self.push_log("info", f"dismissed {sid} until it next speaks")
+            result = {"session": sid, "dismissed": True}
         elif name == "list_history":
             limit = int(args.get("limit") or 500)
             since = args.get("since")
             with self.lock:
-                rows = [dict(r) for r in self.history if since is None or r["at"] >= float(since)]
+                # `unseen` is the watermark question — newer than
+                # `last_seen` — so `mark_history_seen` answers for every
+                # row at once without rewriting stored entries.
+                rows = [dict(r, unseen=r["at"] > self.history_seen_at)
+                        for r in self.history if since is None or r["at"] >= float(since)]
             rows.sort(key=lambda r: r["at"], reverse=True)
-            result = {"rows": rows[:limit], "total": len(rows)}
+            result = {"rows": rows[:limit], "total": len(rows), "last_seen": self.history_seen_at}
+        elif name == "mark_history_seen":
+            with self.lock:
+                self.history_seen_at = time.time()
+            result = {"last_seen": self.history_seen_at}
+        elif name == "serve_token":
+            result = {"token": "mock-serve-token-7f02"}
         elif name == "quiet":
             # A manual override, like the daemon's `dnd_override`: the
             # focus document carries the mode under source "override",
@@ -2167,8 +2253,19 @@ class World:
             result = {"sessions": applied, "until": until}
         elif name == "set_setting":
             path = str(args.get("path", ""))
+            value = args.get("value")
+            # The daemon normalises on write: the plan-limits flag only
+            # sticks with this build's consent stamp already in the
+            # document, and a webhook URL must be http(s) or empty.
+            if path == "claude_plan_limits_enabled" and value is True and \
+                    int(self.document.get("claude_plan_limits_consent_version") or 0) < 1:
+                value = False
+            if path == "escalation_webhook_url" and isinstance(value, str) \
+                    and value and not value.startswith(("http://", "https://")):
+                return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
+                        "error": {"code": "invalid_args", "message": "webhook URL must be http(s) or empty"}}
             with self.lock:
-                ok = set_path(self.document, path, args.get("value"))
+                ok = set_path(self.document, path, value)
             if not ok:
                 return {"t": "reply", "v": PROTOCOL_VERSION, "id": cid, "ok": False,
                         "error": {"code": "invalid_path", "message": f"cannot write {path!r}"}}
@@ -2178,7 +2275,10 @@ class World:
                     "link_screen_bar_to_hardware", "screen_bar_phase_offset_ms"):
                 self.push_lights(self.lights_semantic)
             self.push_log("info", f"setting {path} changed")
-            result = {"generation": self.settings_generation, "path": path}
+            # Like the daemon's reply: the value AS STORED, so a bounced
+            # write reads back as its normalised form, not the request.
+            result = {"generation": self.settings_generation, "path": path,
+                      "value": get_path(self.document, path)[0]}
         elif name == "reset_settings":
             defaults = default_settings_document()
             reset = []
@@ -2191,12 +2291,21 @@ class World:
             result = {"generation": self.settings_generation, "reset": reset}
         elif name in ("install_hooks", "uninstall_hooks"):
             providers = [p for p in (args.get("providers") or []) if p in HOOK_PROVIDERS]
+            results = {}
             with self.lock:
                 for p in providers:
+                    # A provider whose CLI was never found cannot be hooked;
+                    # the daemon reports that per provider, not as a failed reply.
+                    if name == "install_hooks" and not self.detected.get(p, True):
+                        results[p] = {"ok": False, "detected": False, "error": "no CLI found on PATH"}
+                        continue
+                    before = self.hooks[p]
                     self.hooks[p] = "ok" if name == "install_hooks" else "missing"
+                    results[p] = {"ok": True, "changed": self.hooks[p] != before,
+                                  "detected": self.detected.get(p)}
             self.push_state()
             self.push_log("info", f"{name} {','.join(providers)}")
-            result = {"providers": providers}
+            result = {"providers": providers, "results": results}
         elif name == "apply_calibration":
             device = args.get("device")
             profile = args.get("profile") or {}
@@ -2303,6 +2412,12 @@ class World:
         elif name == "preview_program":
             surface = str(args.get("surface", "hardware"))
             seconds = float(args.get("seconds", 3))
+            wanted = {"hardware": "pro", "dot": "dot"}.get(surface)
+            if wanted is not None and not any(
+                    d.get("kind") == wanted and d.get("connected") for d in self.devices.values()):
+                return self._error(cid, "not_found", "no such surface")
+            if surface in self.calibration_previews:
+                return self._error(cid, "busy", "a calibration preview holds this surface")
             with self.lock:
                 self.previews[surface] = time.time() + seconds
             result = {"surface": surface, "until": self.previews[surface]}
@@ -2372,19 +2487,19 @@ class World:
         elif name == "list_assignments":
             with self.lock:
                 result = self.assignment_document()
-        elif name == "apply_effect":
-            # Protocol 1: {effect, scope, target}; `effect` null removes the
-            # assignment. `parameters` is the app's extension (the daemon's
-            # EffectAssignmentRecord has none yet). The reply carries the
-            # assignment list the way the daemon shapes it, plus the fuller
-            # rows and the active scene the studio renders.
+        elif name in ("set_assignment", "clear_assignment", "apply_effect"):
+            # `set_assignment {effect_id, scope, target_id, parameters}` and
+            # `clear_assignment {scope, target_id}` are the current spelling;
+            # `apply_effect` is the protocol-1 alias whose `effect` null was
+            # the remove. All three answer the fuller assignment document.
             scope = str(args.get("scope") or "global")
             if scope not in ("global", "semantic", "scene", "provider", "provider_instance", "project", "device"):
-                return self._error(cid, "invalid_args", "unknown assignment scope")
-            target = args.get("target")
+                return self._error(cid, "invalid_scope", "unknown assignment scope")
+            target = args.get("target_id", args.get("target"))
             target = str(target).strip() or None if target is not None else None
-            effect_id = args.get("effect")
-            if effect_id in (None, "", "none"):
+            effect_id = args.get("effect_id", args.get("effect"))
+            removing = name == "clear_assignment" or (name == "apply_effect" and effect_id in (None, "", "none"))
+            if removing:
                 with self.lock:
                     before = len(self.assignments)
                     self.assignments = [a for a in self.assignments if (a["scope"], a["target_id"]) != (scope, target)]
@@ -2395,18 +2510,22 @@ class World:
                     result.update({"effect": None, "scope": scope, "target": target, "removed": removed})
                 if removed:
                     self.push_log("info", f"assignment {scope}:{target or '*'} removed")
+                    self.push_state()
             else:
                 effect = self.find_effect(str(effect_id))
                 if effect is None:
-                    return self._error(cid, "invalid_args", f"unknown effect {effect_id!r}")
+                    return self._error(cid, "unknown_effect", f"no such effect: {effect_id}")
                 if (scope == "global") != (not target):
-                    return self._error(cid, "invalid_args", "global assignments take no target; every other scope needs one")
-                if scope == "semantic" and target in ("asking", "failure"):
-                    return self._error(cid, "invalid_args", "asking and failure keep their reserved effects")
+                    return self._error(cid, "invalid_target", "global assignments take no target; every other scope needs one")
+                if scope == "semantic":
+                    if target not in SEMANTIC_TARGETS:
+                        return self._error(cid, "invalid_target", "semantic target is unknown")
+                    if target in ("asking", "failure") and effect["id"] != "alert":
+                        return self._error(cid, "reserved_semantic", "asking and failure keep their reserved effects")
                 if scope == "scene" and target not in ("calm", "focus", "night", "demo", "travel", "dnd"):
-                    return self._error(cid, "invalid_args", "unknown scene")
+                    return self._error(cid, "invalid_target", "scene target is unknown")
                 if target is not None and len(target) > 160:
-                    return self._error(cid, "invalid_args", "target too long")
+                    return self._error(cid, "invalid_target", "target too long")
                 row = {"effect_id": effect["id"], "scope": scope, "target_id": target,
                        "parameters": normalize_effect_parameters(effect, args.get("parameters") or {})}
                 with self.lock:
@@ -2416,6 +2535,46 @@ class World:
                     result = self.assignment_document()
                     result.update({"effect": effect["id"], "scope": scope, "target": target, "assignment": row})
                 self.push_log("info", f"assignment {scope}:{target or '*'} → {effect['id']}")
+            # The daemon refreshes state after every assignment write so
+            # `catalog_generation` reaches every connected client.
+            self.push_state()
+        elif name == "list_scene_packs":
+            with self.lock:
+                result = {"packs": [dict(p) for p in self.scene_packs.values()]}
+        elif name == "import_scene_pack":
+            path = Path(str(args.get("path", ""))).expanduser()
+            try:
+                if path.stat().st_size > 256_000:
+                    raise ValueError("pack exceeds size limit")
+                doc = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(doc, dict) or not isinstance(doc.get("scenes"), list):
+                    raise ValueError("a scene pack needs an id and a scenes list")
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                return self._error(cid, "invalid_pack", str(exc))
+            pack_id = str(doc.get("id") or path.stem)
+            with self.lock:
+                self.scene_packs[pack_id] = {"id": pack_id, "name": str(doc.get("name") or pack_id),
+                                             "scenes": [str(s) for s in doc["scenes"]], "installed": True}
+            self.push_log("info", f"imported scene pack {pack_id} from {path}")
+            result = {"pack_id": pack_id, "scenes": len(doc["scenes"])}
+        elif name == "preview_scene_pack":
+            pack_id = str(args.get("pack_id") or "")
+            with self.lock:
+                pack = self.scene_packs.get(pack_id)
+            if pack is None:
+                return self._error(cid, "not_found", f"no such scene pack: {pack_id}")
+            led_count = max(2, min(24, int(args.get("led_count", 8) or 8)))
+            result = {"pack_id": pack_id, "led_count": led_count,
+                      "program": "#0A84FF 800ms pulse\n#FF9F0A 800ms pulse\nrepeat"}
+        elif name == "remove_effect_pack":
+            pack_id = str(args.get("pack_id") or "")
+            with self.lock:
+                if pack_id not in self.effect_packs:
+                    return self._error(cid, "not_found", f"no such pack: {pack_id}")
+                del self.effect_packs[pack_id]
+                self.effects_generation += 1
+                result = self.effect_catalog()
+            self.push_log("info", f"removed effect pack {pack_id}")
         elif name == "import_effect_pack":
             path = Path(str(args.get("path", ""))).expanduser()
             try:
@@ -2425,8 +2584,10 @@ class World:
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 return self._error(cid, "invalid_pack", str(exc))
             with self.lock:
-                if pack["id"] in self.effect_packs and self.effect_packs[pack["id"]].get("_path") != str(path):
-                    return self._error(cid, "conflict", f"pack {pack['id']} is already loaded")
+                # `update` is the explicit replace the Studio offers after
+                # this refusal; without it an installed id is a conflict.
+                if pack["id"] in self.effect_packs and not args.get("update"):
+                    return self._error(cid, "conflict", f"pack {pack['id']} refused: already_installed")
                 pack["_path"] = str(path)
                 self.effect_packs[pack["id"]] = pack
                 self.effects_generation += 1

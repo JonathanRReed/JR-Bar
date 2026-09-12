@@ -316,6 +316,9 @@ struct AgentRow: View {
                 HStack(spacing: 5) {
                     Circle().fill(statusColor).frame(width: 6, height: 6)
                     Text(statusWord).font(.callout).foregroundStyle(.secondary)
+                    if store.hookDetected(provider) == false {
+                        Text("· CLI not found").font(.caption).foregroundStyle(.tertiary)
+                    }
                 }
             }
             Spacer()
@@ -330,16 +333,20 @@ struct AgentRow: View {
             .frame(width: 104)
             .disabled(!store.isProvided("session_open_preferences"))
             .help("What a click on one of this provider's sessions raises")
-            Button { store.core.installHooks(providers: [provider]) } label: {
-                Text(status == "ok" ? "Reinstall" : "Install").frame(width: 58)
+            Button { store.installHooks(provider) } label: {
+                if store.hookBusy.contains(provider) {
+                    ProgressView().controlSize(.mini).frame(width: 58)
+                } else {
+                    Text(status == "ok" ? "Reinstall" : "Install").frame(width: 58)
+                }
             }
             .controlSize(.small)
-            .disabled(!store.core.isLive)
-            Button { store.core.uninstallHooks(providers: [provider]) } label: {
+            .disabled(!store.core.isLive || store.hookBusy.contains(provider))
+            Button { store.uninstallHooks(provider) } label: {
                 Text("Remove").frame(width: 52)
             }
             .controlSize(.small)
-            .disabled(!store.core.isLive || status == "missing")
+            .disabled(!store.core.isLive || status == "missing" || store.hookBusy.contains(provider))
         }
         .padding(.vertical, 1)
     }
@@ -399,10 +406,9 @@ struct UsagePage: View {
             Provided(store, "claude_plan_limits_enabled") {
                 Toggle(isOn: Binding(
                     get: { store.document.bool("claude_plan_limits_enabled") ?? false },
-                    set: { on in
-                        store.set("claude_plan_limits_enabled", .bool(on))
-                        store.set("claude_plan_limits_consent_version", .number(on ? 1 : 0))
-                    }
+                    // Consent-stamped write: the consent version lands
+                    // first so a consent-aware core keeps the enable.
+                    set: { on in store.setClaudePlanLimits(on) }
                 )) {
                     SettingLabel(title: "Read Claude plan limits",
                                  subtitle: "Presents your own Claude subscription credential to api.anthropic.com to read the official 5-hour and 7-day windows. Off until you opt in.")

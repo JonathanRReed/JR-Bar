@@ -100,7 +100,10 @@ public enum EventPolicy {
 
         switch event.kind {
         case "completed":
-            let wanted = settings?.bool("completion_notification_enabled") ?? true
+            // The daemon's own default is off (`completion_notification_enabled`
+            // defaults False in the Python settings); an absent key must not
+            // read as yes, or a fresh install banners every completion.
+            let wanted = settings?.bool("completion_notification_enabled") ?? false
             var delivery = EventDelivery(sound: sound(completionSound))
             if notify, wanted {
                 delivery.notification = .init(identifier: "completed:\(event.session ?? event.id)", title: "\(label) finished",

@@ -36,14 +36,15 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Final
 
-MAX_ACTIVITY_ENTRIES: Final = 50
+MAX_ACTIVITY_ENTRIES: Final = 200
 # Both caps genuinely bind, which is the whole point of having two. A row is
-# ~150 bytes for a short session name and ~450 for a long one with a long
-# opaque agent id, so 50 rows is 7 KB or 23 KB depending on nothing the code
-# controls. At 16 KiB the count binds for ordinary rows and the byte budget
-# binds for fat ones -- exactly the situation audit.py describes, where a
-# 4,000-line cap left files anywhere between 1 MB and 22 MB.
-MAX_ACTIVITY_LEDGER_BYTES: Final = 16 * 1024
+# ~150 bytes for a short session name and ~500 for a long one with a long
+# opaque agent id and a duration, so 200 rows is 30 KB or 100 KB depending
+# on nothing the code controls. At 64 KiB the count binds for ordinary rows
+# and the byte budget binds for fat ones -- exactly the situation audit.py
+# describes, where a 4,000-line cap left files anywhere between 1 MB and
+# 22 MB.
+MAX_ACTIVITY_LEDGER_BYTES: Final = 64 * 1024
 MAX_ACTIVITY_LABEL_LENGTH: Final = 96
 MAX_ACTIVITY_SUBJECT_LENGTH: Final = 256
 MAX_ACTIVITY_DETAIL_LENGTH: Final = 32
@@ -133,6 +134,10 @@ class ActivityEntry:
     provider: str
     subject_id: str | None = None
     detail: str | None = None
+    # Seconds the session's stint ran when both ends were observed (the
+    # daemon saw it working before the transition fired); ``None`` is the
+    # honest answer for a session first seen already finished.
+    duration_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not (
@@ -148,9 +153,17 @@ class ActivityEntry:
                 self.detail is None
                 or _bounded_text(self.detail, MAX_ACTIVITY_DETAIL_LENGTH)
             )
+            and (
+                self.duration_seconds is None
+                or _finite_nonnegative(self.duration_seconds)
+            )
         ):
             raise ActivityValidationError("invalid activity entry")
         object.__setattr__(self, "occurred_at_epoch", float(self.occurred_at_epoch))
+        if self.duration_seconds is not None:
+            object.__setattr__(
+                self, "duration_seconds", float(self.duration_seconds)
+            )
 
     @property
     def identity(self) -> tuple[object, ...]:
@@ -218,6 +231,7 @@ def activity_entry_to_payload(entry: ActivityEntry) -> dict[str, object]:
         "provider": entry.provider,
         "subject_id": entry.subject_id,
         "detail": entry.detail,
+        "duration_seconds": entry.duration_seconds,
     }
 
 
@@ -239,9 +253,9 @@ def bounded_activity_entries(
     """Newest entries within BOTH the count cap and the byte budget.
 
     A count cap alone cannot bound this file: a row is ~140 bytes for a short
-    session name and ~330 for a long one with a project prefix, so 50 rows is
-    anywhere from 7 KB to 17 KB, and a future field would move that again.
-    Same reasoning, same shape, as ``audit._bounded_tail``.
+    session name and ~330 for a long one with a project prefix, so 200 rows
+    is anywhere from 28 KB to 68 KB, and a future field would move that
+    again. Same reasoning, same shape, as ``audit._bounded_tail``.
     """
     kept = tuple(sorted(entries, key=_entry_sort_key))[:MAX_ACTIVITY_ENTRIES]
     budget = MAX_ACTIVITY_LEDGER_BYTES - _ENVELOPE_RESERVE_BYTES

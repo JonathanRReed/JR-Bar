@@ -147,6 +147,7 @@ def test_assignment_document_merges_sidecar_parameters(tmp_path: Path) -> None:
         ],
         "active_scene": "calm",
         "generation": 2,
+        "completion_banners_enabled": True,
     }
     assert core_effects.load_assignment_parameters(tmp_path / "missing.json") == {}
 

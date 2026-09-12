@@ -46,6 +46,27 @@ struct LightExplanationTests {
         #expect(relay.motion == "Cyan relay")
     }
 
+    @Test("a long-task or unknown-mode live row still explains a working light")
+    func longTaskProgressIsWorking() throws {
+        // `long_task_progress` used to fall off the mode list here while
+        // the daemon counted it active — the explainer named nobody. The
+        // filter now goes through SessionActivity.reduce, the same read
+        // the panel makes.
+        let longTask = CoreSession(id: "claude:lt", provider: "claude", label: "big-build",
+                                   mode: "long_task_progress", lifecycle: "active",
+                                   since: Self.now.timeIntervalSince1970 - 1200)
+        let future = CoreSession(id: "codex:fm", provider: "codex", label: "deploy",
+                                 mode: "some_future_mode", lifecycle: "active",
+                                 since: Self.now.timeIntervalSince1970 - 60)
+        let state = Self.state(sessions: [longTask, future])
+        let explanation = try #require(LightExplainer.explain(
+            lights: Self.lights(why: "working", motion: "breathe", fallback: "#00E5FF"),
+            state: state, settings: nil, now: Self.now))
+        // The most recently started worker leads, and the other counts.
+        #expect(explanation.session == "codex:fm")
+        #expect(explanation.reason == "Codex deploy is working and 1 more")
+    }
+
     @Test("a completion says who finished and how long ago")
     func completed() throws {
         let state = Self.state(sessions: [Self.gemini, Self.claude])

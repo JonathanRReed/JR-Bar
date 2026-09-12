@@ -323,8 +323,12 @@ def _compile_runtime_dispatch(controller: object) -> None:
         getattr(controller, "_semantic_effect_selection", None),
         SemanticEffectSelection,
     )
+    semantic_program = getattr(controller, "_semantic_effect_program", None)
+    if type(semantic_program) is not str or not semantic_program:
+        semantic_program = None
     proposed = compile_ambient_effect_dispatch(
         semantic_selection=semantic_selection,
+        semantic_program=semantic_program,
         glance_light=_typed_plan(
             getattr(controller, "_glance_light_plan", None),
             GlanceLightPlan,
@@ -406,6 +410,7 @@ def _compile_runtime_dispatch(controller: object) -> None:
     setattr(controller, "_ambient_device_effect_route_pending", None)
     for attribute in (
         "_semantic_effect_selection",
+        "_semantic_effect_program",
         "_glance_light_plan",
         "_firefly_completion_decision",
         "_completion_meniscus_plans",
@@ -528,6 +533,12 @@ def active_device_ambient_surface_output(
         device_output = compile_ambient_effect_dispatch(
             semantic_selection=selection,
             semantic_colors=_ambient_colors(controller),
+            semantic_program=_assigned_effect_program(
+                controller,
+                context,
+                registry,
+                selection.registry_effect_identifier,
+            ),
         ).for_surface(surface)
     except (TypeError, ValueError):
         return global_output
@@ -767,6 +778,51 @@ def _assigned_effect_map(
         return DEFAULT_SEMANTIC_EFFECT_MAP, EFFECT_REGISTRY
 
 
+def _assigned_effect_program(
+    controller: object,
+    context: EffectAssignmentContext,
+    registry: EffectRegistry,
+    winner_id: str | None,
+) -> str | None:
+    """The winning assignment's own LEDS source, parameters applied.
+
+    ``_semantic_candidates`` maps the winning identifier onto a generic
+    swell; the assignment's actual program lives in the registry plus the
+    parameters sidecar, so it is rendered here (uncompiled -- the
+    dispatcher binds the LED count per surface). ``None`` means the
+    default program plays, exactly as before.
+    """
+    if winner_id is None:
+        return None
+    cache = getattr(controller, "_effect_assignment_cache", None)
+    if not isinstance(cache, EffectAssignmentCache):
+        return None
+    try:
+        record = resolve_effect_assignment(cache.snapshot(), context)
+    except Exception:
+        return None
+    if record is None or record.effect_id != winner_id:
+        return None
+    effect = registry.get(record.effect_id)
+    if effect is None:
+        return None
+    from . import core_effects
+    from .effect_assignment_store import _SEMANTIC_TARGETS
+
+    try:
+        parameters = (
+            core_effects.load_assignment_parameters().get(
+                core_effects.assignment_key(record.scope.value, record.target_id)
+            )
+            or {}
+        )
+        return core_effects.render_effect_source(
+            effect, parameters, semantic=_SEMANTIC_TARGETS.get(context.semantic)
+        )
+    except Exception:
+        return None
+
+
 def _record_delivery(
     controller: object,
     *,
@@ -800,6 +856,13 @@ def _record_delivery(
         registry=registry,
     )
     setattr(controller, "_semantic_effect_selection", selection)
+    setattr(
+        controller,
+        "_semantic_effect_program",
+        _assigned_effect_program(
+            controller, assignment_context, registry, selection.registry_effect_identifier
+        ),
+    )
     if selection.winner is None or selection.registry_effect_identifier is None:
         return
     setattr(

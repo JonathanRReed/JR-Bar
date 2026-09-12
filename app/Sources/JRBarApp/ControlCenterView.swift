@@ -189,6 +189,11 @@ struct DeckAbsentPad: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 460)
+                Text("JR-Bar's hardware pad is the Creator Micro 2. For Stream Deck, see Settings › Remote.")
+                    .multilineTextAlignment(.center)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: 460)
             }
         }
     }

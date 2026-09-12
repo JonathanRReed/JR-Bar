@@ -320,6 +320,8 @@ def _joined_text(*parts: str) -> str:
 def _semantic_candidates(
     selection: SemanticEffectSelection,
     colors: AmbientSemanticColors,
+    *,
+    program: str | None = None,
 ) -> tuple[AmbientEffectSurfaceOutput, ...]:
     if selection.winner is None:
         return ()
@@ -344,7 +346,15 @@ def _semantic_candidates(
         duration = 4_000
         hz = 1.0
     else:
-        dynamic = f"{_scale_color(color, 0.25)} 1s cosine\n{color} 1s cosine\nrepeat 5"
+        # An assignment's own program (parameters applied) wins over the
+        # generic swell -- but only when no reduce-motion substitution
+        # swapped the identity, since the program was rendered for the
+        # original effect.
+        dynamic = (
+            program
+            if program is not None and effective == identity
+            else f"{_scale_color(color, 0.25)} 1s cosine\n{color} 1s cosine\nrepeat 5"
+        )
         duration = 10_000
         hz = 0.5
     fallback = color
@@ -1029,6 +1039,7 @@ def compile_ambient_effect_dispatch(
     fleet_arrival_departure: FleetArrivalDepartureCue | None = None,
     courtesy_signature: CourtesySignaturePlan | None = None,
     semantic_colors: AmbientSemanticColors = AmbientSemanticColors(),
+    semantic_program: str | None = None,
 ) -> AmbientEffectDispatch:
     """Compile optional immutable plans into one safe program per surface."""
 
@@ -1051,10 +1062,16 @@ def compile_ambient_effect_dispatch(
         _typed(value, expected, name)
     if type(semantic_colors) is not AmbientSemanticColors:
         raise TypeError("semantic_colors must be AmbientSemanticColors")
+    if semantic_program is not None and type(semantic_program) is not str:
+        raise TypeError("semantic_program must be a str or None")
 
     generated: list[AmbientEffectSurfaceOutput] = []
     if semantic_selection is not None:
-        generated.extend(_semantic_candidates(semantic_selection, semantic_colors))
+        generated.extend(
+            _semantic_candidates(
+                semantic_selection, semantic_colors, program=semantic_program
+            )
+        )
     if glance_light is not None:
         generated.extend(_glance_candidates(glance_light, semantic_colors))
     if firefly_completion is not None:

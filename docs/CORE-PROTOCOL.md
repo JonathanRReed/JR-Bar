@@ -70,11 +70,12 @@ protocol 1. Timestamps are Unix epoch seconds.
     "mode":"tool_running","lifecycle":"active","next_actor":"provider",
     "since":1788982891.0,"updated_at":1788982891.0,"stale":false,
     "pid":9170,"origin":{"kind":"claude_app","label":"Claude App","bundle_id":"com.anthropic.claudefordesktop"},
-    "ask":null,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
+    "ask":null,"remote":false,"terminal":{"app":"Ghostty","bundle_id":"com.mitchellh.ghostty","tty":"/dev/ttys004"},
     "workers":1,"snoozed_until":null,"event":"PreToolUse","tool":"Bash","message":null}
  ],
  "hidden_count":3,
- "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build"}],
+ "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
+          "answerable":true,"replyable":false}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
             {"id":"screen-bar","kind":"screen_bar","name":"Screen Bar","leds":8,"enabled":true,"brightness":100,"linked":true,"error":null}],
@@ -89,11 +90,13 @@ protocol 1. Timestamps are Unix epoch seconds.
  "focus":{"mode":"dim","source":"schedule","until":…,"display":"all","brightness_factor":0.15,"banner_allowed":true,"audible_allowed":false,"summary":"Dim until 07:00"},
  "escalation":{"stage":"menu_bar","since":1788982800.0},
  "health":{"hooks":{"claude":"ok","codex":"stale","pi":"missing"},
+           "detected":{"claude":true,"codex":true,"pi":false},
            "sources":{"claude":{"fresh":true,"heard_age_seconds":1.4}},
            "intake":{"hook_state":"configured","source_health":"partial","silence_seconds":1.4}},
  "peers":[],
  "unseen_completions":["gemini:session:…"],
  "settings_generation":17,
+ "catalog_generation":42,
  "deck":{…}}
 ```
 
@@ -183,10 +186,21 @@ Vocabulary:
 - `ask.kind` is the canonical request kind (`permission`, `input`,
   `approval`, `review`) with a fallback from the hook event; `summary` is
   the hook's message or tool name; `opened_at` the request's opening epoch.
+  `answerable` means the `answer_ask` chain can actually deliver a decision
+  to this session -- the provider's negotiated contract declares the
+  `answering` capability, the invocation binds the reviewed local surface,
+  and a handler is registered; a provider that only declares
+  `actionable_requests` resolves to `false`, so the button is never offered
+  for what no daemon can type. `replyable` is the narrower "this ask takes
+  free text" (`input` asks only). Both are `false` on a remote row's ask.
 - `pid` is the process registry's live pid for that session (absent when
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
   walking the pid's ancestry for a known terminal or IDE, plus `ps`'s tty.
+  `remote` is true for a peer Mac's row (agent id
+  `remote:<machine>:provider:…`); nothing local can raise its window or
+  type its answer, so it is never offered `open_session`, `answer_ask` or
+  `dismiss_session`.
 - `aggregate` is a pure function of the rows this document carries, and
   nothing else. The counts are read off `sessions` and `asks` as the app
   receives them -- never off sessions the daemon remembers but did not
@@ -222,6 +236,10 @@ Vocabulary:
   provider usage lanes; `resets_at` is the lane's reset epoch whenever the
   lane knows it; `fidelity` is `stale` when the source is stale, else
   `official`; `state` is the `ProviderSourceState` value.
+- `usage.providers[].quota_source` is whether a quota collector exists for
+  the provider at all (read off `provider_usage_platform`'s descriptors,
+  not the snapshot's claims), so a "show meters" control can hide instead
+  of drawing dead.
 - `usage.providers[].forecast` is the CodexBar reading for the provider's
   primary window (the `5h` one when reported, else the first; `window_id`
   names it): `exhausts_at` (epoch, or null when nothing is burning),
@@ -252,6 +270,14 @@ Vocabulary:
   `since` is when the oldest unanswered ask started blocking.
 - `health.hooks[provider]`: `ok` (installed and delivering), `stale`
   (installed, running, nothing arriving), `missing` (not installed).
+  `health.detected[provider]` is whether the provider's CLI/surface was
+  actually found on this Mac (the installed-agent inventory), so the app
+  can say "not installed" instead of implying a dead hook.
+- `catalog_generation` is the effect catalog's content-derived generation
+  (the same derivation as `list_effects`' `generation`): it moves when the
+  registry, installed packs or assignments change, so a client can decide
+  to reload its catalog without reconnecting. Absent until the catalog has
+  been built once.
 
 #### The Creator Micro 2 deck (`state.deck`)
 
@@ -581,21 +607,27 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `preview_program` | surface (`screen_bar`, `hardware`, `dot` or a device id), program, seconds (0.2…30) | Writes the program to the matching strip(s) now and marks the surface `why: preview` in `lights`; after `seconds` the daemon refreshes and the live program returns. Refused with `busy` while a held `preview_calibration` owns the surface or any target device -- a 3 s flash cannot be allowed to paint over a 10-minute calibration hold. |
 | `preview_calibration` | device, gains {red, green, blue} (0.3…1.5, clamped), resting_glow? (0…0.35), brightness? (0…255, default the device's stored brightness), patch? (`white`/`red`/`green`/`blue`/`grey` or `#RRGGBB`, default `white`), companion? (default false) | Shows the nominal patch through the GIVEN values -- resting glow, channel gains and brightness applied once through the device's own write boundary, never the stored profile on top. Held daemon-side for 600 s (re-armed on every call) so the sheet can sit open while the eye decides; live writes for the held device(s) are suppressed meanwhile. For `virtual:status-bar` the transform is the Screen Bar's code-domain one and the hold lands on the `screen_bar` surface. `companion: true` on a Dot also lights the followed strip with the same patch through the strip's STORED profile, so the Dot can be matched to it by eye; the reply's `companion` names that strip (or null). `{device, surface, until, program, companion}`; `not_found`/`invalid_args` on errors. |
 | `end_calibration_preview` | device | Drops the held preview(s) that device owns -- its own and a companion strip's -- clears the dedupe identity the preview bytes left, and re-arms the live program. Idempotent: `{device, ended}`. |
-| `apply_effect` | effect, scope, target | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null removes the assignment. Returns the assignment list. |
+| `apply_effect` | effect, scope, target, parameters? | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null or `"none"` removes it. Protocol-1 alias of `set_assignment`/`clear_assignment`: answers the same fuller assignment document, parameters sidecar included. |
 | `refresh_usage` | providers[] | Forces a provider usage refresh; the next `state` carries the result. |
-| `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider (with the compiled shim when available and the Codex trust hash recomputed). `{providers, results{provider: {ok, changed, config_path, codex_trust, warning}}}`. |
+| `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider (with the compiled shim when available and the Codex trust hash recomputed). `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success. |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
-| `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `unseen` is newer than the last visit; the daemon marks everything seen when the last client disconnects, so what happens while the app is away stays flagged until it looks again. `{rows, total, last_seen}`. |
+| `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
+| `mark_history_seen` | | The user just looked at History: advances the ledger's `last_seen` to now, so `unseen` rows and the "while you were away" banner measure from the last look, not from an app restart. `{last_seen}`. |
+| `dismiss_session` | session | Acknowledges one live or stuck row until it next speaks — the same receipt `clear_completed` writes, aimed at a single session the batch clear would never touch; the row leaves `sessions` now and returns the moment a newer event lands. `not_found` for an unknown session, `refused` for a `remote:` row (the peer's to manage) or a session with an open ask (the ask is the point). |
 | `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}], memory, performance}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). `performance` is `{metrics{name: {count, p50_ms, p95_ms, max_ms, outcomes}}}` (the `PerformanceRegistry` timings the legacy Why panel renders), `cpu{user_s, system_s, percent_since_last}` (rusage deltas between doctor calls; `percent_since_last` is `null` on the first), and `frames{state_generation, lights_generation, state_per_minute, lights_per_minute}` (documents actually broadcast, counted over a rolling 60 s window). `jrbar doctor` appends these as a `performance:` section when a daemon answers (its `--socket` selects another daemon); `--json` carries it under `daemon.performance`. |
 | `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records}`. `tokens_in` counts input plus cache writes. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |
 | `list_effects` | | `{effects[], packs[], cadences[], generation}`: every effect in the runtime registry (builtins, the provider animations and installed packs) with typed `parameters[]`, a `preview {program, led_count}` rendered at the defaults, the blink `cadence` when one applies; `packs[]` is `{id, name, version, effects[ids], license?, path?}` from the pack store; `cadences[]` the three safe blink cadences. `generation` is derived from the catalog's own content -- every effect id and version, every installed pack's id, version and effect list, plus the assignment cache's save counter -- so it changes when the registry, the installed packs or the assignments change, and does not otherwise (`core_effects.catalog_generation`). It is stable across daemon restarts and never 0. |
 | `render_effect` | effect_id, parameters, led_count, color? | `{effect_id, program, led_count, parameters, cadence}`: the LEDS program the daemon would play for those parameters (unknown parameters dropped, bounds enforced), through the presentation safety compiler. Builtins use their registered shapes, provider animations the live solo renderer (`duration_seconds` sets the cycle), pack effects their `motion`/`color`/`cadence` data or a primitive for their meaning. |
 | `list_assignments` | | `{assignments[{effect_id, scope, target_id, parameters}], active_scene, generation}` from the effect assignment store; `parameters` come from the daemon's sidecar (`effect-assignment-parameters.json`). `generation` is derived from the assignments and the active scene (`core_effects.assignments_generation`). |
-| `set_assignment` | effect_id, scope, target_id?, parameters? | Validates through `effect_studio.plan_assignment` (global takes no target, `asking`/`failure` keep `alert`, scenes and semantic families are checked), saves the assignment document and the parameters sidecar, refreshes. Replies the assignment document plus `assignment`. |
-| `clear_assignment` | scope, target_id? | Removes that assignment; the document plus `removed`. |
+| `set_assignment` | effect_id, scope, target_id?, parameters? | Validates through `effect_studio.plan_assignment` (global takes no target, `asking`/`failure` keep `alert`, scenes and semantic families are checked), saves the assignment document and the parameters sidecar, refreshes. Semantic targets outside the four the event router can deliver (`asking`, `failure`, `completion`, `notification`) are refused `unroutable_semantic` — `working`, `idle`, `recovery`, `environment`, `transition` and `quota` are persistent states, not deliverable effects. A `provider_animation`-catalog effect assigned at `provider` scope also writes `colors.provider_animation[target]`, the persistent motion the live renderers read, and the reply gains `motion_warning` when that settings write fails. Replies the assignment document plus `assignment`. |
+| `clear_assignment` | scope, target_id? | Removes that assignment (and its parameters sidecar entry, and the `colors.provider_animation` entry when the removed row was a provider-scope motion); the document plus `removed`. |
 | `import_effect_pack` | path | `EffectPackStore.install` of a data-only JSON v2 pack (`invalid_pack` on anything the validator refuses, `conflict` when that pack id is installed), the registry rebuilt with every installed pack; replies the catalog plus `imported {id, name, effects}`. |
 | `export_effect_pack` | ids[], path, name? | Writes a data-only JSON v2 pack of those effects (pack effects keep their data, builtins become their motion plus parameter defaults, fallbacks kept only when exported too) through `write_private_export`; `{path, effects, bytes, id}`. |
+| `list_scene_packs` | | `{packs[{id, name, scenes[], installed}]}` — the installed Scene packs as the `ScenePackSummary` the app decodes; `scenes` lists the scene names each pack overrides. |
+| `import_scene_pack` | path, update? | Validates the pack file first (`preview_source`, so nothing writes before the plan exists — a version-1 pack is migrated in memory, `invalid_pack` when the validator refuses it), then `ScenePackStore.install` (or `update` with `update: true`). `{pack_id, name, scenes[], installed, migrated, status}`; `conflict` when the pack id is installed and no update was asked for. Scene packs are data-only, network-free and bounded, must declare reduced-motion / high-contrast / non-colour-cue support, and may only name the known scenes (`focus`, `calm`, `night`, `demo`, `travel`, `dnd`). |
+| `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
+| `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
 | `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this auxiliary control in Settings > Devices."; `input_check` while input check is on. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |

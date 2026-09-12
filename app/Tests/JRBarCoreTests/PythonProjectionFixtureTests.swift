@@ -25,6 +25,12 @@ struct PythonProjectionFixtureTests {
         #expect(!state.sessions.isEmpty)
         #expect(state.aggregate.mode == "needs_you")
         #expect(state.aggregate.needsYou == 1)
+        // The failed count the header shows is the daemon's own field.
+        #expect(state.aggregate.failed == 0)
+        // `waiting_for_input` is a real daemon mode: it must reduce to
+        // Waiting even without leaning on `next_actor`.
+        let waiting = try #require(state.sessions.first { $0.mode == "waiting_for_input" })
+        #expect(SessionActivity.reduce(waiting) == .waiting)
     }
 
     @Test("a window the daemon left unread arrives as unknown, not as zero")

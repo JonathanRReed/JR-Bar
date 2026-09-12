@@ -13,8 +13,11 @@ struct UsageCenterView: View {
                 UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Core not connected",
                                 text: "Usage comes from the core daemon. The cards fill in as soon as the socket is live.")
             } else if store.providers.isEmpty {
-                UsageEmptyState(symbol: "chart.bar", title: "No usage yet",
-                                text: "No provider has reported a quota window. Hooks are installed from Settings › Agents.")
+                VStack(spacing: 10) {
+                    UsageEmptyState(symbol: "chart.bar", title: "No usage yet",
+                                    text: "No provider has reported a quota window. Metering is turned on from Settings › Usage.")
+                    Button("Open Usage settings…") { store.openUsageSettings() }
+                }
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -22,7 +25,7 @@ struct UsageCenterView: View {
                             statusLine
                             ForEach(store.providers) { provider in
                                 ProviderUsageCard(provider: provider, store: store)
-                                    .id(provider.id)
+                                    .id(provider.identity)
                             }
                         }
                         .padding(18)
@@ -35,6 +38,9 @@ struct UsageCenterView: View {
                     .onChange(of: store.focusPulses) {
                         guard let target = store.focusProvider else { return }
                         store.focusProvider = nil
+                        // `focusProvider` is already an identity (see
+                        // UsageCenterStore.focus) so a duplicate provider
+                        // id scrolls to a real card either way.
                         if store.reduceMotion {
                             proxy.scrollTo(target)
                         } else {
@@ -144,19 +150,22 @@ struct ProviderUsageCard: View {
     @Bindable var store: UsageCenterStore
 
     private var style: ProviderStyle { ProviderStyle.style(for: provider.id, document: store.document) }
-    private var history: UsageHistory? { store.history(for: provider.id) }
+    private var history: UsageHistory? { store.history(for: provider) }
     private var celebrating: Bool { store.isCelebrating(provider.id) }
     /// The panel drilled straight here: the same accent flash as
     /// `quota_reset`, without the "Window reset" badge.
-    private var focused: Bool { store.isFocused(provider.id) }
+    private var focused: Bool { store.isFocused(provider) }
     private var flashing: Bool { celebrating || focused }
     private var primary: CoreUsageWindow? { UsageCenterStore.primaryWindow(of: provider) }
+    /// Two accounts of one provider get an instance badge so the cards
+    /// are not twins with no way to tell them apart.
+    private var duplicated: Bool { store.providers.filter { $0.id == provider.id }.count > 1 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if provider.isSignedOut {
-                SignedOutRow(provider: style.name)
+                SignedOutRow(provider: provider, name: style.name, store: store)
             } else if provider.windows.isEmpty {
                 Text(noWindowsLine).font(.callout).foregroundStyle(.secondary)
             } else {
@@ -212,6 +221,14 @@ struct ProviderUsageCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text(style.name).font(.title3.weight(.semibold))
+                    if duplicated, let instance = provider.instance, !instance.isEmpty, instance != "default" {
+                        Text(instance)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.primary.opacity(0.08), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
                     if let badge = stateBadge {
                         Text(badge.text)
                             .font(.caption2.weight(.semibold))
@@ -234,7 +251,7 @@ struct ProviderUsageCard: View {
                         .foregroundStyle(UsageColors.level(primary.usedPct, accent: style.accent))
                         .contentTransition(.numericText())
                         .help(primary.isUnknown ? "\(style.name) reports this window without a number" : "")
-                    Text("\(primary.name) window · \(PanelStore.countdown(to: primary.resetsAt, now: store.now) ?? "no reset time")")
+                    Text("\(primary.longName) window · \(PanelStore.countdown(to: primary.resetsAt, now: store.now) ?? "no reset time")")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .monospacedDigit()
@@ -342,16 +359,16 @@ struct ProviderUsageCard: View {
                     .monospacedDigit()
             }
         }
-        let scanning = store.isScanning(provider.id)
-        if let error = store.error(for: provider.id), history == nil {
+        let scanning = store.isScanning(provider)
+        if let error = store.error(for: provider), history == nil {
             HStack(spacing: 8) {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
                 Text(error).font(.callout).foregroundStyle(.secondary)
                 Spacer()
-                Button("Retry") { store.load(provider: provider.id, force: true) }.controlSize(.small)
+                Button("Retry") { store.load(provider: provider, force: true) }.controlSize(.small)
             }
             .padding(.vertical, 12)
-        } else if store.hasNoLocalRecords(provider.id) {
+        } else if store.hasNoLocalRecords(provider) {
             // The scan finished and found nothing to read on this Mac: say
             // so, rather than drawing thirty days of zero. (The daemon pads
             // its answer with a row per day either way, so this has to be
@@ -362,7 +379,7 @@ struct ProviderUsageCard: View {
                 .frame(height: 150)
             if scanning { ScanningNote() }
             costRow(history)
-        } else if store.isLoading(provider.id) || scanning || history == nil {
+        } else if store.isLoading(provider) || scanning || history == nil {
             UsageSkeleton(scanning: scanning)
         } else {
             Text("Nothing recorded in this range.")
@@ -419,7 +436,9 @@ struct ProviderUsageCard: View {
 }
 
 struct SignedOutRow: View {
-    let provider: String
+    let provider: CoreProviderUsage
+    let name: String
+    @Bindable var store: UsageCenterStore
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -427,12 +446,24 @@ struct SignedOutRow: View {
                 .font(.system(size: 22, weight: .light))
                 .foregroundStyle(.secondary)
                 .frame(width: 30)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Sign in via the CLI").font(.callout.weight(.medium))
-                Text("The core reads \(provider)'s quota from the CLI's own login. Run its login command in a terminal and the windows appear here on the next refresh.")
+                Text("The core reads \(name)'s quota from the CLI's own login. Run its login command in a terminal and the windows appear here on the next refresh.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    // Claude's plan-limit read is consent-gated in the
+                    // settings document, not behind a CLI login.
+                    if provider.id == "claude", !store.claudePlanLimitsEnabled {
+                        Button("Turn on plan limits") { store.enableClaudePlanLimits() }
+                            .controlSize(.small)
+                            .help("Writes claude_plan_limits_enabled so the core may read Claude's plan-limit source")
+                    }
+                    Button("Usage settings…") { store.openUsageSettings() }
+                        .controlSize(.small)
+                        .help("Opens Settings › Usage, where metering per provider lives")
+                }
             }
         }
         .padding(.vertical, 4)
@@ -475,7 +506,7 @@ struct QuotaRing: View {
                     .contentTransition(.numericText())
             }
             .frame(width: 66, height: 66)
-            Text(window.name)
+            Text(window.shortName)
                 .font(.caption.weight(.semibold))
             Text(PanelStore.countdown(to: window.resetsAt, now: now) ?? "no reset time")
                 .font(.caption2)
@@ -493,9 +524,9 @@ struct QuotaRing: View {
             }
         }
         .frame(width: 96)
-        .help(window.isUnknown ? "\(window.name): the provider reports this window without a number" : "\(window.name): \(window.spokenPercent)")
+        .help(window.isUnknown ? "\(window.longName) window: the provider reports it without a number" : "\(window.longName) window: \(window.spokenPercent)")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(window.name) window \(window.spokenPercent), \(PanelStore.countdown(to: window.resetsAt, now: now) ?? "")")
+        .accessibilityLabel("\(window.longName) window \(window.spokenPercent), \(PanelStore.countdown(to: window.resetsAt, now: now) ?? "")")
     }
 }
 

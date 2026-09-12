@@ -69,3 +69,27 @@ public enum SessionLabel {
         }
     }
 }
+
+extension CoreSession {
+    /// A session mirrored from a peer Mac (`remote:<machine>:<source id>`).
+    /// It describes work happening somewhere else: nothing in this process
+    /// can raise its window or type an answer into it, so no surface may
+    /// offer a local action for it.
+    public var isRemote: Bool { Self.isRemoteID(id) }
+
+    /// Whether a session id names a remote-peer row.
+    public static func isRemoteID(_ id: String) -> Bool { id.hasPrefix("remote:") }
+
+    /// The machine a remote id runs on (`remote:studio-mac:…` →
+    /// "studio-mac"), for the row's "on studio-mac" line; nil when the id
+    /// carries no machine segment.
+    public static func remoteMachine(inID id: String) -> String? {
+        guard isRemoteID(id) else { return nil }
+        let parts = id.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count > 1, !parts[1].isEmpty else { return nil }
+        return String(parts[1])
+    }
+
+    /// The machine a remote row runs on, for the "on studio-mac" line.
+    public var remoteMachine: String? { Self.remoteMachine(inID: id) }
+}

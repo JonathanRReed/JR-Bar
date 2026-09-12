@@ -178,7 +178,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   tintHex: tint?.statusHex,
                                   meters: iconStyle.isMeters ? meters : [],
                                   overflow: iconStyle.isMeters ? meterOverflow : 0,
-                                  dot: iconStyle.isMeters ? (isPulsing ? .ask : dotState) : .idle,
+                                  // A failure keeps its red even while the
+                                  // stage-2 escalation is pulsing: repainting
+                                  // a dead session's dot amber made it read
+                                  // as a live ask.
+                                  dot: iconStyle.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
                                   sessions: iconStyle == .agents ? sessionDots : [],
                                   phase: phase)
         // The meter strip and the session strip size themselves -- agents
@@ -249,7 +253,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// breathing.
     private func syncBreathing() {
         let moving = (iconStyle.isMeters && dotState.animates)
-            || (iconStyle == .agents && sessionDots.contains { $0.state.breathes })
+            || (iconStyle == .agents && sessionDots.contains { $0.state.breathes && !$0.dimmed })
         let wanted = moving && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if wanted, breathing == nil {
             phase = 0.5

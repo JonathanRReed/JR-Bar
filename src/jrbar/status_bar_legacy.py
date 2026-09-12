@@ -122,6 +122,7 @@ from .accessibility_display import (
     refresh_accessibility_display_preferences,
 )
 from .activity_ledger import (
+    MAX_ACTIVITY_DETAIL_LENGTH,
     MAX_ACTIVITY_LABEL_LENGTH,
     ActivityEntry,
     ActivityKind,
@@ -332,6 +333,7 @@ from .clear_agents_store import (
     save_clear_agents_state,
 )
 from .completions import (
+    _ACTIVE_MODES,
     canonical_current_statuses,
     detect_attention_transitions,
     detect_completion_batch,
@@ -1895,6 +1897,12 @@ class StatusBarController(NSObject):
         self.activity_ledger_path = default_activity_ledger_path()
         self._activity_ledger_loaded = False
         self._activity_ledger_revision = 0
+        # agent_id -> epoch this refresh loop first saw the session in a
+        # live mode. That is the only "start" the monitor observes, and it
+        # is what makes a ledger row's duration_seconds honest: written only
+        # when both ends of the stint were seen here, never guessed from the
+        # provider's own clock.
+        self._session_active_since: dict[str, float] = {}
         self._activity_quota_percents: dict[str, float] = {}
         self.operator_history_range_days = 1
         self.operator_history_reel: tuple[str, ...] = ()
@@ -7830,8 +7838,16 @@ class StatusBarController(NSObject):
         rule (display-name first, the short id dropped). `session_title_parts`
         is not used here on purpose: it stats the filesystem looking for a
         `.git` directory, which is not something a per-refresh recorder may
-        do.
+        do. The row's `detail` is the pure ``core_projection.session_label``
+        instead -- the same projected name the daemon's ``state.sessions``
+        rows carry, minus the extras cache.
+
+        `duration_seconds` is filled only when ``_session_active_since``
+        saw this session live before the transition: a run the monitor
+        first meets already finished has no measurable span and the field
+        stays null rather than reporting "0 seconds".
         """
+        active_since = getattr(self, "_session_active_since", None) or {}
         entries: list[ActivityEntry] = []
         for status in statuses:
             if getattr(status, "is_subagent", False):
@@ -7843,14 +7859,38 @@ class StatusBarController(NSObject):
             provider = safe_activity_text(status.provider, 32) or "unknown"
             if not label:
                 continue
+            occurred = status.updated_at.timestamp()
+            # Lazy: core_projection is a leaf, but this file is on every
+            # import path and the label costs nothing until a row exists.
+            from . import core_projection
+
+            detail = safe_activity_text(
+                core_projection.session_label(
+                    provider=status.provider,
+                    session_id=status.session_id,
+                    agent_id=status.agent_id,
+                    display_name=status.display_name,
+                    cwd=status.cwd,
+                    extras=None,
+                    is_worker=False,
+                    parent_label=None,
+                ),
+                MAX_ACTIVITY_DETAIL_LENGTH,
+            )
+            duration: float | None = None
+            began = active_since.get(status.agent_id)
+            if began is not None and occurred >= began:
+                duration = round(occurred - began, 1)
             try:
                 entries.append(
                     ActivityEntry(
                         kind,
-                        status.updated_at.timestamp(),
+                        occurred,
                         label,
                         provider,
                         safe_activity_text(status.agent_id, 256) or None,
+                        detail if detail != label else None,
+                        duration,
                     )
                 )
             except (ActivityValidationError, OSError, OverflowError, ValueError):
@@ -8028,6 +8068,34 @@ class StatusBarController(NSObject):
                 del attended[stale_id]
         self.last_agent_modes = current_modes
         observed_at = datetime.now(timezone.utc)
+        # Stint tracking for ledger durations: ``_session_active_since``
+        # remembers when this process first saw a session live. A session
+        # already running on the FIRST tick (a daemon restart behind work
+        # in progress) is never seeded -- we did not see it begin, so a
+        # duration would be a guess. From the second tick on, a session
+        # newly appearing live just started, and a ``SessionStart`` row
+        # seeds on its own event time either way.
+        observed_epoch = observed_at.timestamp()
+        active_since = self._session_active_since
+        warm = getattr(self, "_activity_tracking_warm", False)
+        for agent_id, status in statuses_by_id.items():
+            if getattr(status, "is_subagent", False):
+                continue
+            if status.mode in _ACTIVE_MODES and agent_id not in active_since:
+                if status.event_name == "SessionStart":
+                    try:
+                        active_since[agent_id] = status.updated_at.timestamp()
+                    except (OSError, OverflowError, ValueError):
+                        active_since[agent_id] = observed_epoch
+                elif warm:
+                    previous = previous_modes.get(agent_id)
+                    if previous is None or previous not in _ACTIVE_MODES:
+                        # New to this process, or seen last tick but not
+                        # live: the stint just began. A session live on BOTH
+                        # of the first two ticks was running before launch
+                        # and keeps its honest ``None`` duration.
+                        active_since[agent_id] = observed_epoch
+        self._activity_tracking_warm = True
         batch = detect_completion_batch(
             previous_modes,
             tuple(statuses_by_id.values()),
@@ -8058,6 +8126,15 @@ class StatusBarController(NSObject):
                 ),
             )
         )
+        # Retire stints that ended: a session that left the live modes gets
+        # a fresh clock next time it starts, and a session that vanished
+        # frees its row. The recorded entries above already read the map,
+        # so pruning here cannot rob a just-written row of its duration.
+        for agent_id, status in statuses_by_id.items():
+            if agent_id in active_since and status.mode not in _ACTIVE_MODES:
+                del active_since[agent_id]
+        for gone in [key for key in active_since if key not in statuses_by_id]:
+            del active_since[gone]
         if not batch:
             return
         log_status_bar(

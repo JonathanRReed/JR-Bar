@@ -494,6 +494,22 @@ struct RemotePage: View {
         }
 
         Section {
+            SettingToggle(store, "Serve status", subtitle: "Opens a loopback endpoint so local tools can read this desk's status.", path: "serve_enabled")
+            Provided(store, "serve_enabled") {
+                LabeledContent("Bearer token") {
+                    Button("Copy token") { store.copyServeToken() }
+                        .controlSize(.small)
+                        .disabled(!(store.document.bool("serve_enabled") ?? false) || !store.core.isLive)
+                        .help("Fetches the endpoint's bearer token from the core and copies it")
+                }
+            }
+        } header: {
+            Text("Serve")
+        } footer: {
+            SectionNote("The endpoint listens on loopback only; the token is fetched on demand and never stored by the app.")
+        }
+
+        Section {
             SettingToggle(store, "Cloud ingest", subtitle: "Opens a loopback port so off-machine agents can post their own lifecycle.", path: "cloud_ingest_enabled")
             Provided(store, "cloud_ingest_token_path") {
                 LabeledContent("Token") {

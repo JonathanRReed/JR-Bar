@@ -36,6 +36,19 @@ public enum UsageWindowLabel {
         }
     }
 
+    /// The spoken-length name: the daemon's own name when it is already a
+    /// word ("Weekly", "Daily"), else the short codes expanded ("5-hour",
+    /// "7-day"). For captions and tooltips where `5h` alone is cryptic.
+    public static func long(id: String?, name: String?) -> String {
+        let short = short(id: id, name: name)
+        if let name, !name.isEmpty, name != short { return name }
+        switch short {
+        case "5h": return "5-hour"
+        case "7d": return "7-day"
+        default: return short
+        }
+    }
+
     /// The two characters every surface uses for a window nobody measured.
     /// It is not "0", and it is not blank: a blank column reads as calm.
     public static let unknownPercent = "—"

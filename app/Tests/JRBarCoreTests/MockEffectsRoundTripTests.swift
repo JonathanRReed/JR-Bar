@@ -4,8 +4,8 @@ import Testing
 
 /// Runs the mock with a slow timeline and round-trips every app-proposed
 /// command through the real client: usage_history, refresh_usage,
-/// list_effects, render_effect, list_assignments, apply_effect (set and
-/// remove), export_effect_pack and import_effect_pack.
+/// list_effects, render_effect, list_assignments, set_assignment and
+/// clear_assignment, export_effect_pack and import_effect_pack.
 @Suite("Mock core round trips", .serialized)
 struct MockEffectsRoundTripTests {
     @MainActor
@@ -158,9 +158,14 @@ struct MockEffectsRoundTripTests {
         #expect(document.assignments.filter { $0.scope == .provider && $0.targetID == "codex" }.count == 1)
         #expect(document.assignment(scope: .provider, targetID: "codex")?.effectID == "drift")
 
-        // The reserved semantics and malformed targets are refused.
+        // The reserved semantics and malformed targets are refused —
+        // `alert` is the one effect the daemon allows onto asking/failure,
+        // so the refusal is tried with a different effect.
         await #expect(throws: CoreReplyError.self) {
-            _ = try await model.setAssignment(EffectAssignment(effectID: "alert", scope: .semantic, targetID: "asking"))
+            _ = try await model.setAssignment(EffectAssignment(effectID: "comet", scope: .semantic, targetID: "asking"))
+        }
+        await #expect(throws: CoreReplyError.self) {
+            _ = try await model.setAssignment(EffectAssignment(effectID: "comet", scope: .semantic, targetID: "partying"))
         }
         await #expect(throws: CoreReplyError.self) {
             _ = try await model.setAssignment(EffectAssignment(effectID: "alert", scope: .global, targetID: "claude"))

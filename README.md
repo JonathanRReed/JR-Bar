@@ -58,7 +58,10 @@ bundled inside it owns the facts.
   Gradient, Knight Rider, Comet, Twinkle, …) and data-only JSON packs,
   assignable by device, project, provider, scene or state, with parameters
   as native controls, a live strip preview, a 5 s preview on the real
-  hardware, and import/export. Every program is clamped by the presentation
+  hardware, and import/export. Scene packs — a data-only bundle that
+  re-themes every scene's effect policy at once — install, update and
+  preview through the same machinery, migrated forward from older schema
+  versions on the way in. Every program is clamped by the presentation
   compiler (2 Hz, 1 Hz for saturated red) before it reaches a strip or the
   screen.
 - **Lighting that knows the room.** Auto-dim by schedule, by display
@@ -79,10 +82,12 @@ bundled inside it owns the facts.
   banks, the dial and joystick, a compact rail on any screen edge, keymap
   apply and restore with a private backup of the pad's original. It works
   without the pad; the pad has so far been verified only powered off.
-- **History, doctor, updates.** An activity window grouped by day with an
-  "while you were away" banner; a Doctor checklist and `jrbar hooks doctor`;
-  Sparkle updates from this repository's releases, manual until you turn
-  automatic checks on, with a beta channel.
+- **History, doctor, updates.** An activity window grouped by day with a
+  "while you were away" banner that measures from when you last looked;
+  a stuck or finished row can be dismissed until its session next speaks;
+  a Doctor checklist and `jrbar hooks doctor`; Sparkle updates from this
+  repository's releases, manual until you turn automatic checks on, with a
+  beta channel.
 
 <p align="center">
   <img src="media/usage-center.png" alt="Usage Center: Claude's 5h, 7d and 30d rings, a comfortable forecast, tokens by day with cost and cache savings; Gemini near its limit with a run-out time" width="640">

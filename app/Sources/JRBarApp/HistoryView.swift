@@ -100,11 +100,12 @@ struct AwayBanner: View {
                 .foregroundStyle(Color.accentColor)
             VStack(alignment: .leading, spacing: 2) {
                 Text(summary.text).font(.system(size: 13, weight: .medium))
-                Text("Since \(HistoryStore.clock(summary.since)) · the Mac was asleep or locked")
+                Text("Since \(HistoryStore.clock(summary.since)) · newer than your last visit here")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer()
-            if let first = summary.rows.first(where: { $0.kind == "asked" }) ?? summary.rows.first, first.session != nil {
+            if let first = summary.rows.first(where: { $0.kind == "asked" && store.isLiveSession($0.session) })
+                ?? summary.rows.first(where: { store.isLiveSession($0.session) }) {
                 Button("Open latest") { store.open(first) }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -231,6 +232,7 @@ enum HistoryKindStyle {
         case "answered": return "arrowshape.turn.up.left.fill"
         case "failed": return "xmark"
         case "ended": return "stop.fill"
+        case "quota_crossed": return "percent"
         default: return "circle.fill"
         }
     }
@@ -241,6 +243,7 @@ enum HistoryKindStyle {
         case "asked": return .orange
         case "answered": return .blue
         case "failed": return .red
+        case "quota_crossed": return .purple
         case "started": return .secondary
         default: return .secondary
         }
@@ -259,6 +262,9 @@ struct HistoryRowView: View {
 
     private var style: ProviderStyle { ProviderStyle.style(for: row.provider ?? "", document: store.document) }
     private var selected: Bool { store.selectedID == row.id }
+    /// Only a session still live in the daemon's state can be opened; an
+    /// ended row keeps its history but loses the affordance.
+    private var openable: Bool { store.isLiveSession(row.session) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -269,13 +275,18 @@ struct HistoryRowView: View {
                 ProviderTile(style: style, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text(row.displayLabel).fontWeight(.medium).lineLimit(1)
+                        Text(row.displayTitle).fontWeight(.medium).lineLimit(1)
                         KindBadge(kind: row.kind)
+                        if row.kind == "started", store.isLiveSession(row.session) {
+                            Text("still running")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
                         if row.unseen {
-                            Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Happened while you were away")
+                            Circle().fill(Color.accentColor).frame(width: 5, height: 5).help("Newer than your last visit here")
                         }
                     }
-                    if let detail = row.detail, !detail.isEmpty {
+                    if let detail = row.detail, !detail.isEmpty, !row.detailIsTitle {
                         Text(detail).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     } else {
                         Text(style.name).font(.system(size: 11)).foregroundStyle(.tertiary)
@@ -288,14 +299,14 @@ struct HistoryRowView: View {
                     .help(row.duration.map { "Took \(Int($0.rounded())) s" } ?? "")
                 Image(systemName: "arrow.up.forward.square")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
-                    .opacity(hovering && row.session != nil ? 1 : 0)
+                    .opacity(hovering && openable ? 1 : 0)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(selected ? Color.accentColor.opacity(0.12)
-                                   : (hovering && row.session != nil ? Color.primary.opacity(0.05) : Color.clear))
+                                   : (hovering && openable ? Color.primary.opacity(0.05) : Color.clear))
             )
             .padding(.horizontal, 8)
             if !isLast {
@@ -305,12 +316,12 @@ struct HistoryRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         // A row whose session is gone from the daemon has nothing to open.
-        .onTapGesture { if row.session != nil { store.open(row) } }
-        .help(row.session == nil
-              ? "Ended; the session is gone from the daemon so there is nothing to open"
-              : "Open the session")
+        .onTapGesture { if openable { store.open(row) } }
+        .help(openable
+              ? "Open the session"
+              : "Ended; the session is gone from the daemon so there is nothing to open")
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(row.displayLabel) \(row.kindWord) at \(HistoryStore.clock(row.date))")
+        .accessibilityLabel("\(row.displayTitle) \(row.kindWord) at \(HistoryStore.clock(row.date))")
     }
 }
 
@@ -340,7 +351,7 @@ struct HistoryEmptyState: View {
             if let error = store.error {
                 Text(error).font(.system(size: 11)).foregroundStyle(.tertiary).multilineTextAlignment(.center).frame(maxWidth: 360)
             } else if store.isLive {
-                Text("Sessions that start, finish, fail or ask for you show up here.")
+                Text("Sessions that finish, fail or ask for you show up here")
                     .font(.system(size: 11)).foregroundStyle(.tertiary)
             }
         }

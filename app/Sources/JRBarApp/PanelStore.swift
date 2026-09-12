@@ -23,13 +23,23 @@ struct SessionRow: Identifiable, Equatable {
     let workers: Int
     let ask: CoreAsk?
     let stale: Bool
+    /// A peer's session mirrored onto this Mac (`remote:<machine>:…`):
+    /// informational only — nothing here can raise its window or type an
+    /// answer into it.
+    let isRemote: Bool
+    /// The machine a remote row runs on, for the "on studio-mac" line.
+    let remoteMachine: String?
 
     init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil) {
         id = session.id
         style = ProviderStyle.style(for: session.provider, document: document)
         label = session.displayLabel
-        cwd = session.cwd
-        cwdTail = session.cwd.map { Self.tail(of: $0) }
+        isRemote = session.isRemote
+        remoteMachine = session.remoteMachine
+        // A remote path is not this Mac's filesystem: copying or revealing
+        // it would lie, so remote rows carry no cwd at all.
+        cwd = session.isRemote ? nil : session.cwd
+        cwdTail = session.isRemote ? nil : session.cwd.map { Self.tail(of: $0) }
         terminalApp = session.terminal?.app
         snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
@@ -50,7 +60,11 @@ struct SessionRow: Identifiable, Equatable {
     /// id is all there is, and Approve / Deny still answer it.
     init(orphanAsk ask: CoreAsk, document: SettingsDocument? = nil) {
         let session = ask.session ?? ""
-        let provider = String(session.split(separator: ":").first ?? "")
+        // A remote ask's id is `remote:<machine>:<provider>:…`; taking the
+        // first segment would call its provider "remote".
+        let remote = CoreSession.isRemoteID(session)
+        let provider = remote ? String(session.split(separator: ":").dropFirst(2).first ?? "")
+                              : String(session.split(separator: ":").first ?? "")
         id = session.isEmpty ? ask.id : session
         style = ProviderStyle.style(for: provider, document: document)
         label = SessionLabel.display(label: nil, shortId: nil, id: session, provider: provider)
@@ -63,18 +77,61 @@ struct SessionRow: Identifiable, Equatable {
         workers = 0
         self.ask = ask
         stale = false
+        isRemote = remote
+        remoteMachine = CoreSession.remoteMachine(inID: session)
     }
 
-    /// The row's whole tooltip: the full working directory, the snooze
-    /// while one is in effect, and why a stale row is still listed.
+    /// The row's whole tooltip: where the session runs, the full working
+    /// directory, the snooze while one is in effect, why an ended row is
+    /// not a finished one, why a stale row is still listed, and how long a
+    /// live-but-quiet working row has been silent.
     func help(now: Date) -> String? {
         var parts: [String] = []
+        if isRemote {
+            parts.append(remoteMachine.map { "Runs on \($0) — a remote session; answer it there" }
+                         ?? "A remote session — answer it on the machine it runs on")
+        }
         if let cwd, !cwd.isEmpty { parts.append(cwd) }
         if isSnoozed(now: now), let until = snoozedUntil {
             parts.append("Snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
         }
+        if activity == .ended {
+            parts.append("Went away without confirming it finished — the agent may have been closed or killed")
+        }
         if stale { parts.append("No signal in a while — the session may have ended without a goodbye") }
+        if let quiet = quietText(now: now) {
+            parts.append("Listed as working and its process still vouches for it — but the last signal was \(quiet) ago")
+        }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
+    /// A working-shaped row whose last signal is older than
+    /// `PanelStore.quietAfter`: the daemon only marks `stale` when no
+    /// process vouches, so a live-but-silent run needs its own cue or a
+    /// stuck agent reads identically to a healthy long one.
+    func isQuiet(now: Date) -> Bool { quietText(now: now) != nil }
+
+    /// "quiet 43m" / "quiet 3h" when this is a quiet working row, else nil.
+    func quietText(now: Date) -> String? {
+        guard activity == .working, !stale, let since else { return nil }
+        let seconds = now.timeIntervalSince(since)
+        guard seconds >= PanelStore.quietAfter else { return nil }
+        return PanelStore.elapsed(since: since, now: now).map { "quiet \($0)" }
+    }
+
+    /// The elapsed column's text: the plain age, prefixed "quiet" once a
+    /// working row has been silent past the threshold.
+    func elapsedText(now: Date) -> String? {
+        quietText(now: now) ?? PanelStore.elapsed(since: since, now: now)
+    }
+
+    /// `dismiss_session` hides a row until it next speaks: offered for the
+    /// live-but-going-nowhere rows — idle, working, ended, stale. A row
+    /// pinned by an unanswered ask stays non-dismissible (the ask is the
+    /// point), and a mirrored remote row is the peer's to manage.
+    var isDismissible: Bool {
+        guard ask == nil, !isRemote else { return false }
+        return stale || activity == .idle || activity == .working || activity == .ended
     }
 
     /// The family mailbox's snooze still covers this session.
@@ -205,10 +262,12 @@ final class PanelStore {
 
     // MARK: Derived: layout
 
-    /// What the panel shows, counted for `PanelLayout`.
+    /// What the panel shows, counted for `PanelLayout`. The windowless
+    /// usage providers take a row each ("setup needed"), so they count
+    /// toward the section's height.
     var layoutContent: PanelLayout.Content {
         PanelLayout.Content(asks: askRows.count, sessions: plainRows.count, hasWhyRow: lightExplanation != nil,
-                            usageProviders: usage.count, hasHiddenFooter: hiddenCount > 0)
+                            usageProviders: usage.count + windowlessUsage.count, hasHiddenFooter: hiddenCount > 0)
     }
 
     /// `state.hidden_count`: sessions the daemon keeps out of `sessions`
@@ -283,14 +342,12 @@ final class PanelStore {
 
     var headerWord: String { aggregate.label }
 
-    /// "2 working · 1 needs you · 1 ready", or the file-feed detail line.
+    /// "1 needs you · 1 failed · 2 working · 1 ready", or the file-feed
+    /// detail line. The order is `CoreAggregate.countParts`' — the daemon's
+    /// precedence and the status icon's label agree.
     var headerCounts: String {
         guard core.isLive, let state = core.state else { return fallbackDetail }
-        var parts: [String] = []
-        let aggregate = state.aggregate
-        if aggregate.active > 0 { parts.append("\(aggregate.active) working") }
-        if aggregate.needsYou > 0 { parts.append(aggregate.needsYou == 1 ? "1 needs you" : "\(aggregate.needsYou) need you") }
-        if aggregate.ready > 0 { parts.append("\(aggregate.ready) ready") }
+        let parts = state.aggregate.countParts
         if parts.isEmpty {
             let total = state.mainSessions.count
             return total == 0 ? "No sessions" : (total == 1 ? "1 session, quiet" : "\(total) sessions, quiet")
@@ -305,8 +362,10 @@ final class PanelStore {
         core.settings.map { SettingsDocument($0.document) }
     }
 
-    /// Asks first (newest ask last, as the daemon lists them), then the
-    /// rest: waiting, working, done, idle; ties by most recent change.
+    /// Asks first, then waiting, failed, working, done, ended, idle. Among
+    /// asks the longest-unanswered leads — `openedAt` ascending — so the
+    /// ask that has been waiting longest is never buried under newer ones;
+    /// an undated ask sorts last among them. Other ties: most recent first.
     var rows: [SessionRow] {
         guard core.isLive else { return [] }
         let document = settingsDocument
@@ -317,21 +376,18 @@ final class PanelStore {
         let orphans = (core.state?.orphanAsks ?? []).map { SessionRow(orphanAsk: $0, document: document) }
         let rows = core.sessions.map { SessionRow(session: $0, pinnedAsk: pinned[$0.id], document: document) } + orphans
         func rank(_ row: SessionRow) -> Int {
-            if row.ask != nil { return 0 }
-            switch row.activity {
-            case .waiting: return 1
-            case .failed: return 2
-            case .working: return 3
-            case .done: return 4
-            // An ended run is over and nobody is waiting on it: it sits
-            // under the finished ones, above the merely idle.
-            case .ended: return 5
-            case .idle: return 6
-            }
+            row.ask != nil ? 0 : row.activity.sortRank
+        }
+        /// An ask's age: `openedAt` when the daemon sent one, the row's
+        /// `since` otherwise, and the far future when neither exists so an
+        /// undated ask does not pretend to be the oldest.
+        func askAge(_ row: SessionRow) -> Double {
+            row.ask?.openedAt ?? row.since?.timeIntervalSince1970 ?? .greatestFiniteMagnitude
         }
         return rows.sorted { a, b in
             let ra = rank(a), rb = rank(b)
             if ra != rb { return ra < rb }
+            if ra == 0 { return askAge(a) < askAge(b) }
             return (a.since ?? .distantPast) > (b.since ?? .distantPast)
         }
     }
@@ -346,7 +402,10 @@ final class PanelStore {
             ?? rows.first { $0.activity == .failed }
             ?? rows.first { $0.activity == .working }
             ?? rows.first { $0.activity == .done }
-        let clickable = rows.first { $0.ask != nil } ?? rows.first { $0.activity == .working }
+        // The click opens a local terminal; a mirrored remote row has none,
+        // so it can be the focus's subject but never its target.
+        let clickable = rows.first { $0.ask != nil && !$0.isRemote }
+            ?? rows.first { $0.activity == .working && !$0.isRemote }
         if let pick {
             let word = pick.ask != nil ? "Needs you" : pick.activity.word
             return ScreenBarFocus(style: pick.style, label: pick.label, word: word, clickSession: clickable?.id, explanation: lightExplanation?.headline)
@@ -357,7 +416,7 @@ final class PanelStore {
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }
     var plainRows: [SessionRow] { rows.filter { $0.ask == nil } }
-    /// What "Clear done" acknowledges: finished runs, ended ones and
+    /// What "Clear finished" acknowledges: finished runs, ended ones and
     /// anything the daemon has marked stale — the same rows
     /// `clear_completed {sessions: "all"}` clears daemon-side.
     var completedCount: Int { rows.filter { $0.activity.isClearable || $0.stale }.count }
@@ -429,6 +488,12 @@ final class PanelStore {
         default: return "Quiet"
         }
     }
+
+    /// How long a working-shaped row may go without a signal before the
+    /// panel says so ("quiet 43m"). Shorter than the daemon's stale sweep —
+    /// stale means nobody vouches; quiet means a live process just hasn't
+    /// spoken in a while.
+    nonisolated static let quietAfter: TimeInterval = 30 * 60
 
     /// `HH:mm` for "until 08:00" in the toast and the menu's preset label.
     nonisolated static func clockTime(_ date: Date) -> String {
@@ -504,6 +569,11 @@ final class PanelStore {
 
     func openExplainedSession() {
         guard let session = lightExplanation?.session else { return }
+        // A light about a peer's session has no local window to raise.
+        guard !CoreSession.isRemoteID(session) else {
+            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac")")
+            return
+        }
         core.openSession(session)
         onClose?()
     }
@@ -512,7 +582,21 @@ final class PanelStore {
 
     /// Providers with at least one window; signed-out ones are the Usage Center's business.
     var usage: [CoreProviderUsage] { core.isLive ? core.usage.filter { !$0.windows.isEmpty } : [] }
+    /// Providers that report in but carry no window at all (signed out,
+    /// the reader has no source configured): a compact "setup needed" row
+    /// each, so they vanish with a hint instead of silently.
+    var windowlessUsage: [CoreProviderUsage] { core.isLive ? core.usage.filter { $0.windows.isEmpty } : [] }
     var devices: [CoreDevice] { core.isLive ? core.devices : [] }
+
+    /// `state.health.hooks` providers the daemon reports as `missing`: the
+    /// empty state names them so "no sessions" is not mistaken for "quiet"
+    /// when nothing was ever wired up to report.
+    var missingHooks: [String] {
+        guard core.isLive, let hooks = core.state?.health?["hooks"]?.objectValue else { return [] }
+        return hooks.compactMap { provider, state in
+            state.stringValue == "missing" ? provider : nil
+        }.sorted()
+    }
 
     // MARK: Derived: the usage sparklines
 
@@ -593,28 +677,171 @@ final class PanelStore {
 
     // MARK: Actions
 
-    func approve(_ ask: CoreAsk) {
-        guard let session = ask.session else { return }
-        core.answerAsk(session: session, approve: true)
-        show(toast: "Approved · typed into the session's terminal")
+    /// Asks whose `answer_ask` is still on the wire, keyed by ask id:
+    /// while one is in flight (the daemon raises a terminal and types,
+    /// which can take a few seconds) the card's buttons are disabled so a
+    /// second click cannot post a second answer.
+    private(set) var pendingAnswers: Set<String> = []
+
+    func isAnswerPending(_ ask: CoreAsk) -> Bool { pendingAnswers.contains(ask.id) }
+
+    func approve(_ ask: CoreAsk) { answer(ask, approve: true) }
+    func deny(_ ask: CoreAsk) { answer(ask, approve: false) }
+
+    /// `answer_ask`, awaited: the toast reports the daemon's verdict, not a
+    /// guess — a refused answer leaves the ask open and says why.
+    private func answer(_ ask: CoreAsk, approve: Bool) {
+        guard let session = ask.session, !session.isEmpty else {
+            show(toast: "This ask has no session left to answer")
+            return
+        }
+        guard ask.canAnswer else {
+            // The daemon marked it unanswerable from here (no live target,
+            // a kind it cannot type into): the only honest path is the
+            // session's own window.
+            show(toast: "This one has to be answered in the session's window")
+            return
+        }
+        guard !pendingAnswers.contains(ask.id) else { return }
+        if CoreSession.isRemoteID(session) {
+            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
+            return
+        }
+        pendingAnswers.insert(ask.id)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.pendingAnswers.remove(ask.id) }
+            do {
+                let reply = try await self.core.answerAskNow(session: session, approve: approve)
+                if reply.ok {
+                    self.show(toast: approve ? "Approved · typed into the session's terminal" : "Denied")
+                } else {
+                    self.answerRefused(reply.error)
+                }
+            } catch {
+                self.show(toast: "No answer from the core — the ask is still open")
+            }
+        }
     }
 
-    func deny(_ ask: CoreAsk) {
-        guard let session = ask.session else { return }
-        core.answerAsk(session: session, approve: false)
-        show(toast: "Denied")
+    /// The free-text reply a `replyable` ask asks for, sent as
+    /// `reply_text` on the same `answer_ask` command. A daemon that cannot
+    /// take text for this ask (a remote row, a provider without an input
+    /// kind) refuses, and the refusal is the toast.
+    func reply(_ ask: CoreAsk, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let session = ask.session, !session.isEmpty else {
+            show(toast: "This ask has no session left to answer")
+            return
+        }
+        guard !pendingAnswers.contains(ask.id) else { return }
+        if CoreSession.isRemoteID(session) {
+            show(toast: "Runs on \(CoreSession.remoteMachine(inID: session) ?? "another Mac") — answer it there")
+            return
+        }
+        pendingAnswers.insert(ask.id)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.pendingAnswers.remove(ask.id) }
+            do {
+                let reply = try await self.core.answerAskNow(session: session, approve: true, replyText: trimmed)
+                if reply.ok {
+                    self.show(toast: "Reply sent · typed into the session's terminal")
+                } else {
+                    self.answerRefused(reply.error)
+                }
+            } catch {
+                self.show(toast: "No answer from the core — the ask is still open")
+            }
+        }
     }
 
+    /// A refused `answer_ask`: the daemon's own message, and for the one
+    /// refusal the user can fix a button into System Settings. The daemon
+    /// names its `jrbar-core` helper in the refusal; here that row reads
+    /// "JR-Bar's helper", the name the Accessibility pane shows.
+    private func answerRefused(_ error: CoreReplyError?) {
+        let message = error?.message ?? error?.code ?? "refused"
+        if error?.code == "accessibility_required" {
+            show(toast: "Answering needs Accessibility access for JR-Bar's helper", actionTitle: "Open Settings") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        } else {
+            show(toast: "Couldn't answer: \(message)")
+        }
+    }
+
+    /// `open_session`, awaited so its refusal is heard: an ended session
+    /// answers `not_found` and the panel must say so rather than closing
+    /// as if a window had just been raised. Success closes the panel as
+    /// the row's click always did.
     func open(_ row: SessionRow) {
         selectedID = row.id
         selectionByKeyboard = false
-        core.openSession(row.id)
-        onClose?()
+        if row.isRemote {
+            // A mirrored peer session has no local window to raise.
+            show(toast: row.remoteMachine.map { "Running on \($0) — open it there" }
+                         ?? "A remote session — open it on the machine it runs on")
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.send("open_session", args: ["session": .string(row.id)])
+                if reply.ok {
+                    self.onClose?()
+                } else {
+                    self.show(toast: reply.error?.message ?? "Could not open \(row.label)")
+                }
+            } catch {
+                self.show(toast: "The core is not answering — the panel stays open")
+            }
+        }
+    }
+
+    /// `dismiss_session {session}` for a stuck or quiet row: the daemon
+    /// hides it until it next speaks. Not offered where an ask is open —
+    /// `SessionRow.isDismissible` is the gate the menu and ⌘⌫ share.
+    func dismiss(_ row: SessionRow) {
+        guard row.isDismissible else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.dismissSession(row.id)
+                if reply.ok {
+                    self.show(toast: "Dismissed \(row.label) — it returns when it next speaks")
+                } else {
+                    self.show(toast: reply.error?.message ?? "Could not dismiss \(row.label)")
+                }
+            } catch {
+                self.show(toast: "The core is not answering")
+            }
+        }
+    }
+
+    /// ⌘⌫ on the selected row: dismiss what can be dismissed, clear what
+    /// is already finished/ended/stale. Returns false when the selection
+    /// is pinned by an ask or is a remote row — nothing to take back.
+    @discardableResult
+    func dismissSelected() -> Bool {
+        guard let row = rows.first(where: { $0.id == selectedID }) else { return false }
+        if row.isDismissible {
+            dismiss(row)
+            return true
+        }
+        if row.ask == nil && !row.isRemote && (row.activity.isClearable || row.stale) {
+            clear(row)
+            return true
+        }
+        return false
     }
 
     /// The batch the daemon's last `clear_completed` reply named, and when
     /// it landed: while it is inside `EventPolicy.undoWindow` the footer
-    /// offers Undo in place of "Clear done".
+    /// offers Undo beside "Clear finished".
     var undoOffer: (batch: String, at: Date, cleared: Int)?
 
     /// True while the offer stands (the clock ticks every second the panel
@@ -686,14 +913,17 @@ final class PanelStore {
     }
 
     /// The ask ⌘↩ / ⌘D answer: the keyboard-selected card when it is an
-    /// ask, else the first one. With two or more asks open, the selected
-    /// card is the target — the shortcuts never answer a card the user
-    /// is not looking at.
+    /// ask, else the first one the daemon says can be answered from here.
+    /// With two or more asks open, the selected card is the target — the
+    /// shortcuts never answer a card the user is not looking at.
     var selectedAsk: SessionRow? {
         askRows.first { $0.id == selectedID }
     }
 
-    var keyboardAsk: SessionRow? { selectedAsk ?? askRows.first }
+    var keyboardAsk: SessionRow? {
+        if let selectedAsk { return selectedAsk }
+        return askRows.first { $0.ask?.canAnswer == true && !($0.isRemote) } ?? askRows.first
+    }
 
     func approveSelectedAsk() {
         guard let ask = keyboardAsk?.ask else { return }
@@ -719,7 +949,7 @@ final class PanelStore {
     }
 
     /// `clear_completed {sessions: [id]}` for one finished, ended or stale
-    /// row. Same reply handling as "Clear done": the batch is the undo
+    /// row. Same reply handling as "Clear finished": the batch is the undo
     /// offer in the footer.
     func clear(_ row: SessionRow) {
         guard row.activity.isClearable || row.stale else { return }
@@ -821,12 +1051,30 @@ final class PanelStore {
 
     func quit() { onQuit?() }
 
+    /// The toast's optional action (a small button inside the capsule) —
+    /// set only by `show(toast:actionTitle:action:)`, cleared with the text.
+    var toastAction: (title: String, run: () -> Void)?
+
     func show(toast text: String) {
+        toastAction = nil
+        present(toast: text, life: 2.2)
+    }
+
+    /// A toast with a button (the refused-answer "Open Settings"); it stays
+    /// up long enough to be read and clicked.
+    func show(toast text: String, actionTitle: String, action: @escaping () -> Void) {
+        toastAction = (actionTitle, action)
+        present(toast: text, life: 6)
+    }
+
+    private func present(toast text: String, life: TimeInterval) {
         toast = text
         toastClear?.cancel()
-        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.toast = nil } }
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.toast = nil; self?.toastAction = nil }
+        }
         toastClear = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + life, execute: work)
     }
 
     // MARK: Keyboard
@@ -847,7 +1095,7 @@ final class PanelStore {
 
     // MARK: Formatting
 
-    static func elapsed(since date: Date?, now: Date) -> String? {
+    nonisolated static func elapsed(since date: Date?, now: Date) -> String? {
         guard let date else { return nil }
         let seconds = max(0, Int(now.timeIntervalSince(date)))
         if seconds < 60 { return "\(seconds)s" }
@@ -858,7 +1106,7 @@ final class PanelStore {
         return "\(hours / 24)d \(hours % 24)h"
     }
 
-    static func countdown(to epoch: Double?, now: Date) -> String? {
+    nonisolated static func countdown(to epoch: Double?, now: Date) -> String? {
         guard let epoch else { return nil }
         let seconds = Int(epoch - now.timeIntervalSince1970)
         if seconds <= 0 { return "resets now" }
@@ -869,26 +1117,36 @@ final class PanelStore {
         return "resets in \(hours / 24)d \(hours % 24)h"
     }
 
-    static func paceHint(_ pace: String?) -> String? {
+    /// The daemon's `forecast.pace` as the outcome it names, not the
+    /// race-course word it sends: "ahead of pace" used to read as headroom
+    /// when it means the window runs dry early. When the forecast also
+    /// names `exhausts_at` and the window a `resets_at`, the slack between
+    /// them is the line worth showing ("runs out ~2h before the reset").
+    nonisolated static func paceHint(_ pace: String?, exhaustsAt: Double? = nil, resetsAt: Double? = nil, now: Date = Date()) -> String? {
         switch pace?.lowercased() {
-        case "ahead": return "ahead of pace"
-        case "behind", "under": return "under pace"
+        case "ahead":
+            if let exhaustsAt, let resetsAt, resetsAt > exhaustsAt + 60 {
+                return "runs out ~\(shortGap(resetsAt - exhaustsAt)) before the reset"
+            }
+            if let exhaustsAt, exhaustsAt > now.timeIntervalSince1970 {
+                return "runs out \(UsageForecast.relative(to: exhaustsAt, now: now))"
+            }
+            return "runs out early"
+        case "behind", "under": return "resets first"
         case "on", "on_pace", "on-pace", "onpace", "steady": return "on pace"
         case "exhausted": return "used up"
         case nil, "": return nil
         case let other?: return other.replacingOccurrences(of: "_", with: " ")
         }
     }
-}
 
-extension AgentAggregateState {
-    /// `state.aggregate.mode` → the status item's five words.
-    static func from(aggregate: CoreAggregate) -> AgentAggregateState {
-        let mode = aggregate.mode.lowercased()
-        if aggregate.needsYou > 0 || mode.contains("need") || mode.contains("ask") || mode.contains("wait") { return .needsInput }
-        if mode.contains("fail") || mode.contains("error") || mode.contains("block") { return .failed }
-        if mode.contains("work") || mode.contains("active") || mode.contains("run") || aggregate.active > 0 { return .working }
-        if mode.contains("done") || mode.contains("complet") || mode.contains("ready") || aggregate.ready > 0 { return .completed }
-        return .idle
+    /// "2h", "45m", "1d": the gap between exhaustion and reset, rounded
+    /// so "~2h before the reset" never pretends to minutes it cannot see.
+    nonisolated static func shortGap(_ seconds: Double) -> String {
+        let minutes = Int((seconds + 30) / 60)
+        if minutes < 60 { return "\(max(1, minutes))m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
     }
 }
