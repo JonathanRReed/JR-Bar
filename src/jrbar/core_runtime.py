@@ -63,7 +63,7 @@ from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import PendingHookDrainer, pending_hook_files
 from .state_paths import default_state_dir
 
-CORE_VERSION: Final = "0.9.0"
+CORE_VERSION: Final = "0.9.1"
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0
@@ -1515,6 +1515,30 @@ def _cmd_import_effect_pack(self, args):
         "name": pack["name"] if pack else receipt.pack_id,
         "effects": len(pack["effects"]) if pack else 0,
     }
+    return catalog
+
+
+@command("remove_effect_pack")
+def _cmd_remove_effect_pack(self, args):
+    from .effect_pack_store import EffectPackStore, EffectPackStoreError, PackMutationStatus
+
+    raw = args.get("pack_id")
+    if not isinstance(raw, str) or not raw.strip():
+        raise CommandError("invalid_args", "pack_id is required")
+    try:
+        receipt = EffectPackStore().remove(raw.strip())
+    except EffectPackStoreError as error:
+        raise CommandError("remove_failed", str(error)) from error
+    if receipt.status is PackMutationStatus.REFUSED:
+        code = "not_installed" if receipt.reason == "not_installed" else "refused"
+        raise CommandError(code, f"pack {receipt.pack_id} refused: {receipt.reason}")
+    paths = getattr(self, "_core_pack_paths", None)
+    if type(paths) is dict:
+        paths.pop(receipt.pack_id, None)
+    _reload_effect_registry(self)
+    self.refresh_(None)
+    catalog = _effect_catalog(self)
+    catalog["removed"] = {"id": receipt.pack_id}
     return catalog
 
 

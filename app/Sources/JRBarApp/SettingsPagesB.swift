@@ -8,10 +8,12 @@ struct LightingPage: View {
     @Bindable var store: SettingsStore
 
     static let blendModes: [(value: String, label: String, detail: String)] = [
-        ("round_robin", "Everyone", "Every agent is lit at once, each in its own colour."),
-        ("relay", "Spotlight", "One agent flares bright at a time; the rest stay dim."),
-        ("spatial_split", "Split", "Each agent gets its own section, sized by how much it needs you."),
+        // Smooth first: it is the default, and on the Screen Bar's blended
+        // surface per-agent blocks average into mud.
         ("color_blend", "Smooth", "One seamless light. Everyone's colours blend across the strip."),
+        ("round_robin", "Everyone", "Every agent is lit at once, each in its own colour."),
+        ("spatial_split", "Split", "Each agent gets its own section, sized by how much it needs you."),
+        ("relay", "Spotlight", "One agent flares bright at a time; the rest stay dim."),
         ("cycle", "One at a Time", "The whole strip shows one agent, then the next."),
         ("classic", "Status Only", "One colour for whatever needs you most. Agents are not shown."),
     ]
@@ -36,7 +38,7 @@ struct LightingPage: View {
 
         Section {
             Provided(store, "colors.blend_mode") {
-                Picker(selection: store.string("colors.blend_mode", default: "round_robin")) {
+                Picker(selection: store.string("colors.blend_mode", default: "color_blend")) {
                     ForEach(Self.blendModes, id: \.value) { Text($0.label).tag($0.value) }
                 } label: {
                     SettingLabel(title: "Blend mode", subtitle: blendDetail)
@@ -112,7 +114,7 @@ struct LightingPage: View {
     }
 
     private var blendDetail: String {
-        let mode = store.document.string("colors.blend_mode") ?? "round_robin"
+        let mode = store.document.string("colors.blend_mode") ?? "color_blend"
         return Self.blendModes.first { $0.value == mode }?.detail ?? ""
     }
 
@@ -241,7 +243,7 @@ struct ProviderSwatch: View {
         let style = ProviderStyle.style(for: provider)
         let path = "colors.agent_colors.\(provider)"
         let hex = store.document.string(SettingsPath(path)) ?? style.accentHex
-        let blend = store.document.string("colors.blend_mode") ?? "round_robin"
+        let blend = store.document.string("colors.blend_mode") ?? "color_blend"
         let cycle = store.document.double(SettingsPath("colors.cycle_speed_seconds")) ?? 2.2
         HStack(spacing: 8) {
             ColorPicker("", selection: store.color(path, default: style.accentHex), supportsOpacity: false)

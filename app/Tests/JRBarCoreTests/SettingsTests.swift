@@ -128,7 +128,7 @@ struct SettingsMockTests {
         }
         // Spot checks on kinds the pages rely on.
         #expect(document.bool("tips_enabled") == true)
-        #expect(document.string("colors.blend_mode") == "round_robin")
+        #expect(document.string("colors.blend_mode") == "color_blend")
         // Strip, Dot and the remembered `virtual:status-bar` row the
         // daemon writes once the Screen Bar is enabled.
         #expect(document.deviceEntries.count == 3)
@@ -193,7 +193,7 @@ struct SettingsMockTests {
         // Hooks and calibration also round-trip through state and settings.
         model.installHooks(providers: ["pi"])
         #expect(await MockCoreIntegrationTests.wait { model.state?.health?["hooks"]?["pi"]?.stringValue == "ok" })
-        model.applyCalibration(device: "sidepulse:pro:B293A1", profile: ["red_gain": 0.8, "resting_glow": 0.05])
+        _ = try await model.applyCalibrationNow(device: "sidepulse:pro:B293A1", profile: ["red_gain": 0.8, "resting_glow": 0.05])
         #expect(await MockCoreIntegrationTests.wait { SettingsDocument(model.settings!.document).double("devices.0.red_gain") == 0.8 })
         let doctor = try await model.doctor()
         #expect(doctor.ok)

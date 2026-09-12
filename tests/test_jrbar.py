@@ -7536,6 +7536,7 @@ class ColorSettingsTests(unittest.TestCase):
         settings = (
             ColorSettings.defaults()
             .with_round_robin_urgency_alert(False)
+            .with_blend_mode(BLEND_MODE_SPATIAL)
             .with_fade_floor(colors_module.MODE_ASK, 0.0)
             .with_fade_floor(colors_module.MODE_WORKING, 0.2)
         )
@@ -7555,8 +7556,8 @@ class ColorSettingsTests(unittest.TestCase):
 
 
 class RoundRobinAndPaletteTests(unittest.TestCase):
-    def test_default_blend_mode_is_round_robin(self) -> None:
-        self.assertEqual(ColorSettings.defaults().blend_mode, BLEND_MODE_ROUND_ROBIN)
+    def test_default_blend_mode_is_color_blend(self) -> None:
+        self.assertEqual(ColorSettings.defaults().blend_mode, BLEND_MODE_COLOR)
 
     def test_curated_palette_skips_the_blue_adjacent_cluster(self) -> None:
         # Confirmed live: a teal agent color was mistaken for green next to
@@ -7673,14 +7674,17 @@ class RoundRobinAndPaletteTests(unittest.TestCase):
         self.assertLessEqual(len(arrival.encode("utf-8")), 512)
 
     def test_attention_takeover_absent_without_an_asker_or_when_disabled(self) -> None:
+        # The takeover vocabulary lives in Round-Robin/Cycle; pin it rather
+        # than inherit the default.
+        round_robin = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
         working = (_status("codex", AgentMode.WORKING), _status("devin", AgentMode.WORKING))
         _s, calm = colors_module.program_for_snapshot(
-            working, led_count=8, colors=ColorSettings.defaults(), brightness=255
+            working, led_count=8, colors=round_robin, brightness=255
         )
         self.assertTrue(calm.splitlines()[0].startswith("0:"))
 
         asking = (_status("claude", AgentMode.WAITING_FOR_INPUT), _status("codex", AgentMode.WORKING))
-        disabled = ColorSettings.defaults().with_round_robin_urgency_alert(False)
+        disabled = round_robin.with_round_robin_urgency_alert(False)
         _s, quiet = colors_module.program_for_snapshot(asking, led_count=8, colors=disabled, brightness=255)
         self.assertTrue(quiet.splitlines()[0].startswith("0:"))
 
@@ -8127,7 +8131,12 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
         self.assertTrue(restored.uses_global_speed(BLEND_MODE_ROUND_ROBIN))
 
     def test_round_robin_program_uses_its_own_override_not_global(self) -> None:
-        settings = ColorSettings.defaults().with_cycle_speed(5.0).with_speed_override(BLEND_MODE_ROUND_ROBIN, 0.5)
+        settings = (
+            ColorSettings.defaults()
+            .with_blend_mode(BLEND_MODE_ROUND_ROBIN)
+            .with_cycle_speed(5.0)
+            .with_speed_override(BLEND_MODE_ROUND_ROBIN, 0.5)
+        )
         statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WORKING))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         self.assertIn("500ms", program)
@@ -8164,7 +8173,11 @@ class SpeedOverrideAndUrgencyAlertTests(unittest.TestCase):
             self.assertNotIn(claude_own_color, program)
 
     def test_urgency_alert_disabled_keeps_agents_own_color(self) -> None:
-        settings = ColorSettings.defaults().with_round_robin_urgency_alert(False)
+        settings = (
+            ColorSettings.defaults()
+            .with_blend_mode(BLEND_MODE_ROUND_ROBIN)
+            .with_round_robin_urgency_alert(False)
+        )
         statuses = (_status("codex", AgentMode.WORKING), _status("claude", AgentMode.WAITING_FOR_INPUT))
         _, program = program_for_snapshot(statuses, led_count=8, colors=settings)
         _floor, ask_ceiling = settings.fade_range(colors_module.MODE_ASK)
@@ -8271,11 +8284,12 @@ class PreviewLedColorsTests(unittest.TestCase):
         self.assertEqual(len(modes), 3)
 
     def test_preview_matches_program_for_snapshot_agent_count_per_led(self) -> None:
-        settings = ColorSettings.defaults()
+        # Round-Robin paints each LED an agent's colour: one distinct
+        # colour per active agent.
+        settings = ColorSettings.defaults().with_blend_mode(BLEND_MODE_ROUND_ROBIN)
         demo = colors_module.demo_statuses_for_preview()
         preview = colors_module.preview_led_colors(demo, led_count=8, colors=settings)
         self.assertEqual(len(preview), 8)
-        # Spatial split -- same number of distinct colors as active agents.
         self.assertEqual(len(set(preview)), len(demo))
 
     def test_preview_color_blend_is_uniform_and_matches_weighted_blend(self) -> None:

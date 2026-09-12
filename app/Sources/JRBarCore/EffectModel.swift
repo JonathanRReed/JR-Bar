@@ -543,7 +543,11 @@ public enum EffectSemantic: String, CaseIterable, Sendable, Identifiable {
 
     public var isUrgent: Bool { self == .asking || self == .failure }
 
-    public static let assignable: [EffectSemantic] = allCases.filter { !$0.isUrgent }
+    /// The states an assignment can actually fire on. The daemon's event
+    /// router only arms completion and notification for non-urgent
+    /// semantics (asking/failure keep their reserved alert), so offering
+    /// Working/Idle/… here would write a row that can never play.
+    public static let assignable: [EffectSemantic] = [.notification, .completion]
 }
 
 public enum EffectScene: String, CaseIterable, Sendable, Identifiable {
@@ -624,21 +628,28 @@ public struct EffectAssignment: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
-/// The reply of `list_assignments`.
+/// The reply of `list_assignments`/`set_assignment`/`clear_assignment`.
 public struct EffectAssignmentDocument: Codable, Hashable, Sendable {
     public var assignments: [EffectAssignment]
     public var activeScene: String?
     public var generation: Int
+    /// `set_assignment` adds this when the row persisted but its
+    /// provider-motion write to settings failed — the assignment exists
+    /// yet the persistent animation did not land.
+    public var motionWarning: String?
 
-    public init(assignments: [EffectAssignment] = [], activeScene: String? = nil, generation: Int = 0) {
+    public init(assignments: [EffectAssignment] = [], activeScene: String? = nil, generation: Int = 0,
+                motionWarning: String? = nil) {
         self.assignments = assignments
         self.activeScene = activeScene
         self.generation = generation
+        self.motionWarning = motionWarning
     }
 
     enum CodingKeys: String, CodingKey {
         case assignments, generation
         case activeScene = "active_scene"
+        case motionWarning = "motion_warning"
     }
 
     public init(from decoder: Decoder) throws {
@@ -646,6 +657,7 @@ public struct EffectAssignmentDocument: Codable, Hashable, Sendable {
         assignments = try c.decodeIfPresent([EffectAssignment].self, forKey: .assignments) ?? []
         activeScene = try c.decodeIfPresent(String.self, forKey: .activeScene)
         generation = try c.decodeIfPresent(Int.self, forKey: .generation) ?? 0
+        motionWarning = try c.decodeIfPresent(String.self, forKey: .motionWarning)
     }
 
     public func assignment(scope: EffectScope, targetID: String?) -> EffectAssignment? {

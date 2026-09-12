@@ -228,10 +228,6 @@ public final class CoreModel {
         try await send("preview_program", args: ["surface": .string(surface), "program": .string(program), "seconds": .number(seconds)])
     }
 
-    public func applyCalibration(device: String, profile: [String: JSONValue]) {
-        post("apply_calibration", args: ["device": .string(device), "profile": .object(profile)])
-    }
-
     /// Awaited `apply_calibration`: the reply says whether the profile
     /// persisted (`not_found` when the device was never seen).
     @discardableResult
@@ -242,12 +238,8 @@ public final class CoreModel {
     /// A held calibration preview: the daemon keeps the patch lit on the
     /// device until `endCalibrationPreview` (or its ten-minute backstop),
     /// so the sheet re-sends only when the working values change.
-    public func previewCalibration(device: String, args: [String: JSONValue]) {
-        post("preview_calibration", args: args)
-    }
-
-    /// Awaited variant: `not_found` when the device is not connected —
-    /// the sheet must know rather than claim a lit patch.
+    /// Awaited: `not_found` when the device is not connected — the sheet
+    /// must know rather than claim a lit patch.
     @discardableResult
     public func previewCalibrationNow(args: [String: JSONValue]) async throws -> CoreReply {
         try await send("preview_calibration", args: args)

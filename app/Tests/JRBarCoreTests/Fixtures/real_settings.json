@@ -53,7 +53,7 @@
     "opencode": "#AF52DE",
     "pi": "#914130"
    },
-   "blend_mode": "round_robin",
+   "blend_mode": "color_blend",
    "color_by_project": false,
    "cycle_speed_seconds": 1.6,
    "done_celebration_enabled": true,
