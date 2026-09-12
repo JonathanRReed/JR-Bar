@@ -1,5 +1,6 @@
 import AppKit
 import JRBarCore
+import QuartzCore
 import SwiftUI
 
 /// The Rail: a thin glass strip of fourteen cells (the thirteen keys and a
@@ -69,18 +70,48 @@ final class DeckRailController {
             panel.hosting.rootView = DeckRailView(store: store, edge: geometry.edge, cellRects: geometry.cellRects, size: geometry.frame.size)
         }
         if !panel.isVisible {
+            // A 0.18 s alpha ease like the band tooltip's, not a hard
+            // snap; Reduce Motion gets the instant version.
+            panel.alphaValue = 0
             panel.orderFrontRegardless()
             store.railDidChange(shown: true)
+        }
+        if panel.alphaValue < 1 {
+            let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            if reduced {
+                panel.alphaValue = 1
+            } else {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.18
+                    context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+                    panel.animator().alphaValue = 1
+                }
+            }
         }
         updateLabel()
     }
 
     private func hide() {
         guard let panel, panel.isVisible else { return }
-        panel.orderOut(nil)
-        label?.orderOut(nil)
         store.railHoveredCell = nil
         store.railDidChange(shown: false)
+        label?.dismiss()
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            panel.alphaValue = 0
+            panel.orderOut(nil)
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.15
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                // A show during the fade put the alpha back up; it wins.
+                guard let self, let panel = self.panel, panel.alphaValue < 0.01 else { return }
+                panel.orderOut(nil)
+            }
+        })
     }
 
     private func makePanel() -> RailPanel {
@@ -91,7 +122,7 @@ final class DeckRailController {
     /// centre so it never leaves the edge.
     private func updateLabel() {
         guard let panel, let geometry, let cell = store.railHoveredCell, let rect = geometry.cellRects[safe: cell] else {
-            label?.orderOut(nil)
+            label?.dismiss()
             return
         }
         let onScreen = NSRect(x: geometry.frame.minX + rect.minX, y: geometry.frame.minY + rect.minY, width: rect.width, height: rect.height)
@@ -236,7 +267,39 @@ final class RailLabelPanel: NSPanel {
             origin.y = min(visible.maxY - height - 4, max(visible.minY + 4, origin.y))
         }
         setFrame(NSRect(x: origin.x.rounded(), y: origin.y.rounded(), width: width, height: height), display: true)
+        let wasVisible = isVisible && alphaValue > 0.01
+        if !wasVisible { alphaValue = 0 }
         orderFrontRegardless()
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            alphaValue = 1
+        } else if !wasVisible {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.15
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1.0)
+                animator().alphaValue = 1
+            }
+        }
+    }
+
+    /// Fades out and orders out. A re-present during the fade puts the
+    /// alpha back up and the completion then leaves the panel alone.
+    func dismiss() {
+        guard isVisible else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            alphaValue = 0
+            orderOut(nil)
+            return
+        }
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.12
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.alphaValue < 0.01 else { return }
+                self.orderOut(nil)
+            }
+        })
     }
 }
 

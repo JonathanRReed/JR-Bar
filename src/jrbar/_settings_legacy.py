@@ -65,10 +65,20 @@ LED_DISPLAY_CHOICES = (
     LED_DISPLAY_QUOTA_RUNWAY,
 )
 SETTINGS_SCHEMA_VERSION = 1
-#: ``menu_bar_icon_style``: the status item's picture. ``glyph`` alone,
-#: ``glyph_ring`` (the glyph inside a thin usage ring), ``glyph_label``
-#: (the glyph beside a short text).
-MENU_BAR_ICON_STYLES = ("glyph", "glyph_ring", "glyph_label")
+#: ``menu_bar_icon_style``: the status item's picture. The daemon does not
+#: draw it -- the native app does -- so the list simply has to hold every
+#: style the app can write: ``agents`` (a dot per live session),
+#: ``meters``/``meters_percent`` (a usage column per provider), ``glyph``
+#: alone, ``glyph_ring`` (the glyph inside a thin usage ring) and
+#: ``glyph_label`` (the glyph beside a short text).
+MENU_BAR_ICON_STYLES = (
+    "agents",
+    "meters",
+    "meters_percent",
+    "glyph",
+    "glyph_ring",
+    "glyph_label",
+)
 DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 # The consent generation the Claude plan-limits opt-in was granted under.
 # 0.2.1 shipped a build that PERSISTED `claude_plan_limits_enabled` while the

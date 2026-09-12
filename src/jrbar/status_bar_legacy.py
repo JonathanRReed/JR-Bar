@@ -12733,8 +12733,31 @@ class StatusBarController(NSObject):
         ).brightness
 
     def effective_brightness_for_device(self, device: StatusBarDevice) -> int:
-        """Compose current ambient brightness inputs for one device."""
-        return self.ambient_brightness_plan_for_device(device).brightness
+        """Compose current ambient brightness inputs for one device.
+
+        Deadbanded: the ambient sensor jitters a few lux tick to tick, and
+        every emitted change rewrites the strip's program text — which
+        re-anchors the animation on the hardware AND on a mirroring Screen
+        Bar. A sub-perceptible wobble should not restart a roll. Real moves
+        (a brightness slider's 5% steps, dim stages snapping in) all clear
+        the band in one go; only the noise floor is held.
+        """
+        wanted = self.ambient_brightness_plan_for_device(device).brightness
+        emitted_state = getattr(self, "_emitted_brightness", None)
+        if emitted_state is None or emitted_state[0] is not self.settings:
+            # A settings write (a slider move, a min-glow change) always
+            # re-emits -- the band only swallows drift between writes.
+            emitted_state = self._emitted_brightness = (self.settings, {})
+        emitted = emitted_state[1].get(device.device_id)
+        if (
+            emitted is not None
+            and wanted != 0
+            and emitted != 0
+            and abs(wanted - emitted) < self.BRIGHTNESS_DEADBAND
+        ):
+            return emitted
+        emitted_state[1][device.device_id] = wanted
+        return wanted
 
     def ambient_brightness_plan_for_device(self, device: StatusBarDevice):
         """The full brightness policy result (with its trace) for one
@@ -12780,6 +12803,13 @@ class StatusBarController(NSObject):
         )
 
     AUTO_DIM_CACHE_SECONDS = 1.0
+    # Hysteresis on the brightness code emitted into a program: the ambient
+    # sensor jitters a few lux tick to tick, and each emitted change would
+    # rewrite the program -- re-anchoring the animation on the strip and on
+    # a mirroring Screen Bar. ~3% of full scale swallows sensor noise while
+    # letting deliberate moves (5% slider steps, dim stages) straight
+    # through.
+    BRIGHTNESS_DEADBAND = 8
 
     def auto_dim_result(self):
         """The auto-dim decision (``auto_dim.AutoDimResult``) behind the

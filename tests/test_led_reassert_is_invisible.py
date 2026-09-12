@@ -63,6 +63,15 @@ def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:
     lines = content_lines()
     assert len(lines) == 2
     assert lines[-1].startswith("repeat")
+    # What the surfaces publish is what is RUNNING: after a reassert the
+    # device loops the steady-state variant (no approach frame), so the
+    # reported program is the variant -- a linked Screen Bar mirroring the
+    # full text would loop a span the strip is not running and drift off
+    # phase every lap.
+    assert [
+        line for line in controller.last_program.splitlines() if line and not line.startswith("brightness ")
+    ] == lines
+    assert controller.last_nominal_program == _steady_state_variant(program)
 
 
 def test_a_done_agent_rests_dark_beside_a_working_one() -> None:

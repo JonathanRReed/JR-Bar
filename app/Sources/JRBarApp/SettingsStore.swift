@@ -206,7 +206,7 @@ final class SettingsStore {
     private func settlePending(_ path: String, value: JSONValue, echoed: JSONValue? = nil) {
         if let echoed, !echoed.isNull, !Self.sameValue(echoed, value) {
             dropPending(path, ifStill: value)
-            report(error: "\(path): the core kept \(Self.describeValue(echoed)) instead")
+            report(error: "\(path): the monitor kept \(Self.describeValue(echoed)) instead")
             return
         }
         let inDocument = SettingsDocument(core.settings?.document ?? .object([:])).value(at: SettingsPath(path)) == value
@@ -474,7 +474,7 @@ final class SettingsStore {
                 }
                 if on, reply.result?["value"]?.boolValue != true {
                     self.dropPending("claude_plan_limits_enabled", ifStill: .bool(on))
-                    self.report(error: "Plan limits stayed off: the core applies its own consent stamp and did not keep the write")
+                    self.report(error: "Plan limits stayed off: the monitor applies its own consent stamp and did not keep the write")
                     return
                 }
                 self.settlePending("claude_plan_limits_enabled", value: .bool(on), echoed: reply.result?["value"])
@@ -507,7 +507,7 @@ final class SettingsStore {
                     NSPasteboard.general.setString(token, forType: .string)
                     self.show(status: "Serve token copied")
                 } else {
-                    self.report(error: "The core did not hand over a serve token")
+                    self.report(error: "The monitor did not hand over a serve token")
                 }
             } catch {
                 self.report(error: "serve_token: \(error)")

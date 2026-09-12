@@ -97,7 +97,7 @@ final class HistoryStore {
 
     func reload() {
         guard core.isLive else {
-            error = "History needs the core. Rows appear when it connects."
+            error = "History needs the monitor. Rows appear when it connects."
             return
         }
         guard !loading else { return }

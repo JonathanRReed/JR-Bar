@@ -315,7 +315,7 @@ final class UsageCenterStore {
         attempts[key] = (attempts[key] ?? 0) + 1
         guard (attempts[key] ?? 0) <= Self.coldRetries else {
             scanning.remove(key)
-            if histories[key] == nil { errors[key] = "The core is still scanning transcripts. Try Refresh in a moment." }
+            if histories[key] == nil { errors[key] = "The monitor is still scanning transcripts. Try Refresh in a moment." }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.coldRetryDelay) { [weak self] in

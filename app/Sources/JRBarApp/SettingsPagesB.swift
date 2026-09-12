@@ -101,7 +101,7 @@ struct LightingPage: View {
         AutoDimSection(store: store)
 
         Section {
-            SettingPicker(store, "Active scene", subtitle: "A presentation policy: brightness, motion and notification admission as one choice.",
+            SettingPicker(store, "Active scene", subtitle: "Chooses which scene-scoped effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
             LabeledContent {
                 Button("Effect Studio…") { store.onOpenEffects?() }
@@ -189,7 +189,7 @@ struct AutoDimSection: View {
                             .controlSize(.small)
                             .disabled(roomMarks == nil)
                             .help(roomMarks.map { "Writes “Dark below” \(Int($0.floor)) lux and “Bright above” \(Int($0.ceiling)) lux" }
-                                  ?? "Needs a live ambient reading; the core is not reporting one")
+                                  ?? "Needs a live ambient reading; the monitor is not reporting one")
                     } label: {
                         SettingLabel(title: "Marks from this room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.")
                     }
@@ -237,7 +237,7 @@ struct AutoDimReadoutRow: View {
     let result: CoreAutoDim?
     let settings: AutoDimSettings
 
-    private var line: String { AutoDimReadout.line(result, settings: settings) ?? "Waiting for the core's reading" }
+    private var line: String { AutoDimReadout.line(result, settings: settings) ?? "Waiting for the monitor's reading" }
     private var unavailable: Bool { result.map { !$0.available } ?? false }
 
     var body: some View {
@@ -471,8 +471,8 @@ struct NotificationsPage: View {
         let lid = store.core.state?.power?.closedLid
         switch lid?.helperInstalled {
         case true?: return "The sleep helper is installed; closed-lid holds are honoured." + (lid?.holding == true ? " Holding now." : "")
-        case false?: return "Needs the privileged sleep helper, which is not installed. The core will offer to install it."
-        default: return "Needs the privileged sleep helper; the core reports whether it is installed."
+        case false?: return "Needs the privileged sleep helper, which is not installed. The monitor will offer to install it."
+        default: return "Needs the privileged sleep helper; the monitor reports whether it is installed."
         }
     }
 }
@@ -539,7 +539,7 @@ struct RemotePage: View {
                     Button("Copy token") { store.copyServeToken() }
                         .controlSize(.small)
                         .disabled(!(store.document.bool("serve_enabled") ?? false) || !store.core.isLive)
-                        .help("Fetches the endpoint's bearer token from the core and copies it")
+                        .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             }
         } header: {
@@ -642,8 +642,8 @@ struct MachineList: View {
 }
 
 /// Settings › Devices & Screen Bar's Stream Deck card: the desk-side half
-/// of the loopback status endpoint, next to the other pads. The switch
-/// itself is `serve_enabled` in Settings › Remote; the deck polls
+/// of the loopback status endpoint, next to the other pads. The switch is
+/// the same `serve_enabled` Settings › Remote carries; the deck polls
 /// `GET /status.json` with the bearer the Copy button fetches.
 struct StreamDeckCard: View {
     @Bindable var store: SettingsStore
@@ -672,6 +672,8 @@ struct StreamDeckCard: View {
 
     var body: some View {
         Section {
+            SettingToggle(store, "Serve status", subtitle: "The loopback endpoint the deck polls; also on Settings › Remote.",
+                          path: "serve_enabled")
             LabeledContent {
                 HStack(spacing: 6) {
                     Circle().fill(statusColor).frame(width: 7, height: 7)
@@ -689,7 +691,7 @@ struct StreamDeckCard: View {
                     Button("Copy token") { store.copyServeToken() }
                         .controlSize(.small)
                         .disabled(!enabled || !store.core.isLive)
-                        .help("Fetches the endpoint's bearer token from the core and copies it")
+                        .help("Fetches the endpoint's bearer token from the monitor and copies it")
                 }
             } label: {
                 SettingLabel(title: "Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.")
@@ -697,7 +699,7 @@ struct StreamDeckCard: View {
         } header: {
             Text("Stream Deck")
         } footer: {
-            SectionNote("The switch lives in Settings › Remote. In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.")
+            SectionNote("In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.")
         }
         .task(id: enabled && store.core.isLive) { await refreshServeState() }
     }
@@ -764,7 +766,7 @@ struct AdvancedPage: View {
         } header: {
             Text("Reset to defaults")
         } footer: {
-            SectionNote("Each button puts that page's settings back to the core's defaults. Devices keep their identities.")
+            SectionNote("Each button puts that page's settings back to the monitor's defaults. Devices keep their identities.")
         }
     }
 

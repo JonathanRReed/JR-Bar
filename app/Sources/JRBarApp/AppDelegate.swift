@@ -771,6 +771,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshIconStyle()
         refreshLights()
         refreshAlcoveFollowing()
+        refreshScreenBarGlow()
         reconcileScreenBarSetting()
     }
 
@@ -780,6 +781,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let document = core?.settings.map { SettingsDocument($0.document) }
         let wanted = document?.bool(SettingsPath("screen_bar_follow_alcove")) ?? true
         alcove.enabled = wanted && appState.showScreenBar
+    }
+
+    /// `screen_bar_min_glow` — the housing rim's dial, live from the
+    /// settings document.
+    private func refreshScreenBarGlow() {
+        let document = core?.settings.map { SettingsDocument($0.document) }
+        if let glow = document?.double("screen_bar_min_glow") {
+            screenBar?.minGlow = CGFloat(glow)
+        }
     }
 
     private func refreshAggregate() {

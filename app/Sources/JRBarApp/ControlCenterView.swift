@@ -15,7 +15,7 @@ struct ControlCenterView: View {
         Group {
             if !store.isLive {
                 DeckEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
-                               text: "The Creator Micro 2 is driven by the core daemon. The pad appears here as soon as the socket is live.")
+                               text: "The Creator Micro 2 is driven by the monitor. The pad appears here as soon as the socket is live.")
             } else {
                 content
             }

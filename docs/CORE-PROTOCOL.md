@@ -376,10 +376,13 @@ end) and with every refresh.
   connected; unlinked it publishes nothing unless a live bar program is
   playing. When linked, `screen_bar.program` is the strip's NOMINAL
   program — the text the strip was asked to play, before the write
-  boundary's die gains and light-domain brightness decode — with every
-  `#rrggbb` token lifted to the display legibility floor
-  (`colors.lift_program_luminance`): hue, saturation, timing and
-  `brightness N` bytes pass through untouched. The strip's drive bytes
+  boundary's die gains and light-domain brightness decode — with each
+  `#rrggbb` token below the display legibility knee lifted on a
+  continuous power curve (`colors.lift_program_luminance`,
+  `floor * (Y / floor) ** 0.5`): hue, saturation, timing and
+  `brightness N` bytes pass through untouched, near-black stays
+  near-black, and `#000000` stays black — a dark beat never gains a
+  resting glow the strip does not have. The strip's drive bytes
   are never replayed on a display that has no die to calibrate.
 - `anchor` is epoch seconds: the strip's write-completion moment for
   hardware, the presentation's playback anchor for the Screen Bar; when

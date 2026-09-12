@@ -528,8 +528,8 @@ public enum EffectSemantic: String, CaseIterable, Sendable, Identifiable {
 
     public var label: String {
         switch self {
-        case .asking: return "Needs you"
-        case .failure: return "Failed"
+        case .asking: return "Ask — needs you"
+        case .failure: return "Error — failed"
         case .notification: return "Notification"
         case .transition: return "Hand-off"
         case .working: return "Working"

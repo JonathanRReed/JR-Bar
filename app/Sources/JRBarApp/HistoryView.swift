@@ -33,7 +33,7 @@ struct HistoryView: View {
             } else if store.filtered.isEmpty {
                 VStack(spacing: 6) {
                     Text("Nothing matches").font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
-                    Button("Clear filter") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 12))
+                    Button("Clear search") { store.clearFilter() }.buttonStyle(.link).font(.system(size: 12))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

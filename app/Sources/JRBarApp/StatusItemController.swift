@@ -151,7 +151,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     func update(state: AgentAggregateState, detail: String) {
-        headerItem.attributedTitle = NSAttributedString(string: "JR-Bar  ·  \(state.label)", attributes: [
+        headerItem.attributedTitle = NSAttributedString(string: "JR-Bar · \(state.label)", attributes: [
             .font: NSFont.menuBarFont(ofSize: 0).withWeight(.semibold),
             .foregroundColor: NSColor.labelColor,
         ])
