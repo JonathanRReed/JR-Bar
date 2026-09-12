@@ -58,6 +58,9 @@ final class ScreenBarView: NSView {
         bandLayer.masksToBounds = true
         bandLayer.cornerCurve = .continuous
 
+        // The halo reads through the mask's dim edges, so the layer needs
+        // more than the design constant to land at 0.16 perceived alpha —
+        // 2.4 was tuned by eye against the band's dark floor.
         haloLayer.opacity = Float(ScreenBarDesign.haloAlpha) * 2.4
         haloMask.startPoint = CGPoint(x: 0.5, y: 0)
         haloMask.endPoint = CGPoint(x: 0.5, y: 1)

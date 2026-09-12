@@ -10,7 +10,7 @@ struct UsageCenterView: View {
     var body: some View {
         Group {
             if !store.isLive {
-                UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Core not connected",
+                UsageEmptyState(symbol: "bolt.horizontal.circle", title: "Monitor not connected",
                                 text: "Usage comes from the core daemon. The cards fill in as soon as the socket is live.")
             } else if store.providers.isEmpty {
                 VStack(spacing: 10) {

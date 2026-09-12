@@ -248,6 +248,37 @@ def process_start_epoch(pid: int, runner=subprocess.run) -> float | None:
     return _parse_lstart(completed.stdout)
 
 
+def tty_and_start(pid: int, runner=subprocess.run) -> tuple[str | None, float | None]:
+    """``(tty, started_at_epoch)`` for one pid in a single ``ps`` fork.
+
+    The tty alone cannot be cached against pid reuse; the start epoch is
+    the reuse-defeating half of the key (see the module docstring). A
+    dead or unreadable process returns ``(None, None)``.
+    """
+    try:
+        completed = runner(
+            ["/bin/ps", "-o", "tty=,lstart=", "-p", str(pid)],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=PS_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return None, None
+    if completed.returncode != 0:
+        return None, None
+    tokens = completed.stdout.strip().split()
+    if not tokens:
+        return None, None
+    tty_raw = tokens[0]
+    tty = None
+    if tty_raw and tty_raw not in ("??", "-"):
+        tty = tty_raw if tty_raw.startswith("/dev/") else f"/dev/{tty_raw}"
+    started = _parse_lstart(" ".join(tokens[1:6])) if len(tokens) >= 6 else None
+    return tty, started
+
+
 def pid_exists(pid: int) -> bool:
     if pid <= 1:
         return False

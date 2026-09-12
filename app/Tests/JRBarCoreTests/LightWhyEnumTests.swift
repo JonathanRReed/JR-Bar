@@ -161,7 +161,7 @@ struct LightWhyEnumTests {
         let explicit = try #require(Self.explain("unknown", [Self.codexDone]))
         #expect(explicit.headline == "Breathing orange: Codex 01a08b62 finished")
         let nobody = try #require(Self.explain("unknown", []))
-        #expect(nobody.reason == "Core gave no reason")
+        #expect(nobody.reason == "No reason given")
         let asking = try #require(Self.explain("moon_phase", [Self.main], asks: [CoreAsk(session: Self.mainID, kind: "permission", openedAt: Self.now.timeIntervalSince1970 - 5, summary: "?")]))
         #expect(asking.reason == "Claude jr-bar-67 is waiting on you (moon phase)")
     }

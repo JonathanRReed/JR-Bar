@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -349,6 +350,48 @@ def readable_identity_hex(hex_color: str) -> str:
     return luminance_matched_hex(hex_color, IDENTITY_LUMINANCE_FLOOR)
 
 
+# --- The linked Screen Bar's legibility floor --------------------------------
+#
+# When the bar follows a strip it presents the strip's own program (see
+# ``core_runtime._core_build_lights``), but the palette that program carries
+# is tuned for a light sitting IN a dark bezel: codes down near black are
+# real, readable light on a die, and the strip's write boundary even lifts
+# chroma-intent colours that PWM quantization would lose. On a display, next
+# to full-bright UI, the same codes read as "off". So the mirror lifts every
+# colour token to a minimum luminance, hue and saturation intact.
+#
+# The floor is IDENTITY_LUMINANCE_FLOOR -- this module's existing calibrated
+# answer to "dim enough to read as unlit". Going higher would compress the
+# contrast of every fade and roll the program carries: a tail code at
+# Y ~= 0.02 lifted to 0.15 sits nearly as bright as a head code at 0.2, and
+# the wave the strip is playing flattens into a wash on screen.
+_PROGRAM_HEX_RE = re.compile(r"#[0-9A-Fa-f]{6}(?![0-9A-Fa-f])")
+
+
+def lift_program_luminance(
+    program: str, floor: float = IDENTITY_LUMINANCE_FLOOR
+) -> str:
+    """Every ``#rrggbb`` in a program lifted to at least ``floor`` luminance.
+
+    Only the colour literals move: timing, easing, ``roll``/``pulse``
+    directives, ``brightness N`` and ``off`` beats pass through
+    byte-for-byte. A code already at or above the floor keeps its exact
+    text, and ``#000000`` stays black -- it has no hue to preserve, and a
+    dark beat in the animation is meant to be dark.
+    """
+    if not isinstance(program, str) or not program:
+        return program
+    floor = max(0.0, float(floor))
+
+    def lift(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if floor <= 0.0 or relative_luminance(token) >= floor:
+            return token
+        return luminance_matched_hex(token, floor)
+
+    return _PROGRAM_HEX_RE.sub(lift, program)
+
+
 # --- Ask and Error must never be the same light -----------------------------
 #
 # Both mode colours are user-configurable, so no default -- however carefully
@@ -495,10 +538,12 @@ BLEND_MODE_CLASSIC = "classic"
 BLEND_MODE_ROUND_ROBIN = "round_robin"
 BLEND_MODE_RELAY = "relay"
 BLEND_MODE_CHOICES: tuple[str, ...] = (
-    BLEND_MODE_ROUND_ROBIN,
-    BLEND_MODE_RELAY,
-    BLEND_MODE_SPATIAL,
+    # Smooth first: it is the default, and the calmest reading of "more
+    # than one agent is live".
     BLEND_MODE_COLOR,
+    BLEND_MODE_ROUND_ROBIN,
+    BLEND_MODE_SPATIAL,
+    BLEND_MODE_RELAY,
     BLEND_MODE_CYCLE,
     BLEND_MODE_CLASSIC,
 )
@@ -523,12 +568,12 @@ BLEND_MODE_LABELS: dict[str, str] = {
 }
 
 BLEND_MODE_DESCRIPTIONS: dict[str, str] = {
-    BLEND_MODE_ROUND_ROBIN: "Every agent is lit at once, each in its own color.",
+    BLEND_MODE_ROUND_ROBIN: "Every agent is lit at once, each in its own colour.",
     BLEND_MODE_RELAY: "One agent flares bright at a time; the rest stay dim.",
     BLEND_MODE_SPATIAL: "Each agent gets its own section, sized by how much it needs you.",
-    BLEND_MODE_COLOR: "One seamless light. Everyone's colors blend across the strip.",
+    BLEND_MODE_COLOR: "One seamless light. Everyone's colours blend across the strip.",
     BLEND_MODE_CYCLE: "The whole strip shows one agent, then the next.",
-    BLEND_MODE_CLASSIC: "One color for whatever needs you most. Agents aren't shown.",
+    BLEND_MODE_CLASSIC: "One colour for whatever needs you most. Agents are not shown.",
 }
 
 # Longer versions for a tooltip, so the detail is available without

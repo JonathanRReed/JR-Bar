@@ -331,7 +331,7 @@ struct ConnectionDot: View {
             .onAppear { pulse() }
             .onChange(of: state) { pulse() }
             .onChange(of: active) { pulse() }
-            .accessibilityLabel(state == .live ? "Core connected" : (state == .connecting ? "Connecting to core" : (state == .crashed ? "Core crashed" : "Using file feeds")))
+            .accessibilityLabel(state == .live ? "Monitor connected" : (state == .connecting ? "Connecting to the monitor" : (state == .crashed ? "Monitor crashed" : "Using file feeds")))
     }
 
     private func pulse() {
@@ -516,7 +516,7 @@ struct SessionsEmptyState: View {
 
     private var headline: String {
         if live { return store.hiddenCount > 0 ? "All clear" : "No agents right now" }
-        return store.coreMayBeStarting ? "Core is starting" : "Core not connected"
+        return store.coreMayBeStarting ? "Starting…" : "Monitor not connected"
     }
 
     private var detail: String {
@@ -735,7 +735,7 @@ struct AskRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
-                        Text(row.ask?.kind?.capitalized ?? "Ask")
+                        Text(row.ask?.kind?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Ask")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(Color.orange)
                             .lineLimit(1)
@@ -1397,7 +1397,7 @@ struct PanelFooter: View {
             Menu {
                 Button { store.openControlCenter() } label: { Text("Control Center…") }
                     .keyboardShortcut("k", modifiers: .command)
-                Button { store.openEffects() } label: { Text("Effects…") }
+                Button { store.openEffects() } label: { Text("Effect Studio…") }
                 Button { store.openHistory() } label: { Text("History…") }
                     .keyboardShortcut("y", modifiers: .command)
                 Button { store.openUsageCenter() } label: { Text("Usage Center…") }

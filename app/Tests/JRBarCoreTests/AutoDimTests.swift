@@ -64,7 +64,7 @@ struct AutoDimTests {
         let partial = SettingsDocument(.object(["auto_dim": .object(["mode": .string("schedule")])]))
         let scheduled = AutoDimSettings(document: partial)
         #expect(scheduled.mode == .schedule && scheduled.scheduleFraction == 0.3)
-        #expect(scheduled.summary == "schedule 22:00–07:00 to 30 %")
+        #expect(scheduled.summary == "schedule 22:00–07:00 to 30%")
     }
 
     @Test("the schedule window may wrap midnight and an empty window never matches")
@@ -86,11 +86,11 @@ struct AutoDimTests {
         var settings = AutoDimSettings.defaults
         #expect(settings.summary == "off")
         settings.mode = .display
-        #expect(settings.summary == "follows display, floor 15 %")
+        #expect(settings.summary == "follows display, floor 15%")
         settings.mode = .ambient
-        #expect(settings.summary == "ambient 5–400 lux, floor 10 %")
+        #expect(settings.summary == "ambient 5–400 lux, floor 10%")
         settings.ambientLuxFloor = 2.5
-        #expect(settings.summary == "ambient 2.5–400 lux, floor 10 %")
+        #expect(settings.summary == "ambient 2.5–400 lux, floor 10%")
         for mode in AutoDimSettings.Mode.allCases {
             #expect(!mode.label.isEmpty && !mode.detail.isEmpty)
         }
@@ -127,19 +127,19 @@ struct AutoDimTests {
     @Test("the readout line: what was read and the factor chosen, per mode and source")
     func readout() {
         #expect(AutoDimReadout.line(nil) == nil)
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "off", source: "off", factor: 1.0)) == "Off → 100 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "ambient", factor: 0.45, available: true, reading: 12)) == "Ambient: 12 lux → 45 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "ambient", factor: 0.1, available: true, reading: 2.5)) == "Ambient: 2.5 lux → 10 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "display", factor: 0.62, available: false, reading: 0.62)) == "Sensor unavailable, following display: 62 % → 62 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "display", factor: 1.0, available: false, reading: nil)) == "Sensor unavailable, display unreadable → 100 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 0.62, available: true, reading: 0.62)) == "Display: 62 % → 62 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 0.15, available: true, reading: 0.05)) == "Display: 5 % → 15 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 1.0, available: false, reading: nil)) == "Display unreadable → 100 %")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "off", source: "off", factor: 1.0)) == "Off → 100%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "ambient", factor: 0.45, available: true, reading: 12)) == "Ambient: 12 lux → 45%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "ambient", factor: 0.1, available: true, reading: 2.5)) == "Ambient: 2.5 lux → 10%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "display", factor: 0.62, available: false, reading: 0.62)) == "Sensor unavailable, following display: 62% → 62%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "ambient", source: "display", factor: 1.0, available: false, reading: nil)) == "Sensor unavailable, display unreadable → 100%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 0.62, available: true, reading: 0.62)) == "Display: 62% → 62%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 0.15, available: true, reading: 0.05)) == "Display: 5% → 15%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "display", source: "display", factor: 1.0, available: false, reading: nil)) == "Display unreadable → 100%")
         let settings = AutoDimSettings.defaults
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390), settings: settings) == "Schedule: 23:10, inside the window → 30 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 1.0, available: true, reading: 600), settings: settings) == "Schedule: 10:00, outside the window → 100 %")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390)) == "Schedule: 23:10, inside the window → 30 %", "without the settings the factor says which side")
-        #expect(AutoDimReadout.line(CoreAutoDim(mode: "twilight", source: "twilight", factor: 0.5)) == "Twilight → 50 %", "a future mode still reads")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390), settings: settings) == "Schedule: 23:10, inside the window → 30%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 1.0, available: true, reading: 600), settings: settings) == "Schedule: 10:00, outside the window → 100%")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "schedule", source: "schedule", factor: 0.3, available: true, reading: 1390)) == "Schedule: 23:10, inside the window → 30%", "without the settings the factor says which side")
+        #expect(AutoDimReadout.line(CoreAutoDim(mode: "twilight", source: "twilight", factor: 0.5)) == "Twilight → 50%", "a future mode still reads")
     }
 
     @Test("the why popover says Auto-dim (mode) and lists the setting")
@@ -169,7 +169,7 @@ struct AutoDimTests {
         lights.surfaces["screen_bar"] = surface
         let dimmed = try #require(LightExplainer.explain(lights: lights, state: state, settings: document))
         #expect(dimmed.details.first { $0.label == "Dimming" }?.value == "Auto-dim (schedule) · 30%")
-        #expect(dimmed.details.first { $0.label == "Auto-dim" }?.value == "schedule 22:00–07:00 to 30 % · Schedule: 23:10, inside the window → 30 %")
+        #expect(dimmed.details.first { $0.label == "Auto-dim" }?.value == "schedule 22:00–07:00 to 30% · Schedule: 23:10, inside the window → 30%")
         #expect(dimmed.headline.hasPrefix("Cyan chase: Claude jr-bar-67 is working") || dimmed.headline.contains("is working"), "the headline is the working one: \(dimmed.headline)")
 
         // Every other word keeps the plain spelling.
@@ -210,7 +210,7 @@ struct AutoDimMockTests {
         #expect(await MockCoreIntegrationTests.wait { model.lights?.autoDim?.mode == "ambient" })
         let fallback = try #require(model.lights?.autoDim)
         #expect(fallback.source == "display" && !fallback.available && fallback.reading == 0.62)
-        #expect(AutoDimReadout.line(fallback) == "Sensor unavailable, following display: 62 % → 62 %")
+        #expect(AutoDimReadout.line(fallback) == "Sensor unavailable, following display: 62% → 62%")
         #expect(AutoDimReadout.dimmingWord(fallback) == "Auto-dim (ambient, following display)")
         #expect(model.lights?.screenBar?.whyDetail?.dimming == ["auto_dim"])
         #expect(model.lights?.screenBar?.whyDetail?.brightnessFactor == 0.62)
@@ -234,7 +234,7 @@ struct AutoDimMockTests {
         #expect(scheduled.source == "schedule" && scheduled.available)
         let settings = AutoDimSettings(document: SettingsDocument(try #require(model.settings).document))
         #expect(settings.mode == .schedule && settings.scheduleStartMinutes == 0 && settings.scheduleEndMinutes == 1439 && settings.scheduleFraction == 0.25)
-        #expect(AutoDimReadout.line(scheduled, settings: settings)?.hasSuffix("inside the window → 25 %") == true)
+        #expect(AutoDimReadout.line(scheduled, settings: settings)?.hasSuffix("inside the window → 25%") == true)
 
         for path in [AutoDimSettings.ambientMinFractionPath, AutoDimSettings.ambientLuxFloorPath, AutoDimSettings.ambientLuxCeilingPath] {
             let reply = try await model.setSetting(path, value: .number(7))
