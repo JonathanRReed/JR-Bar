@@ -513,6 +513,8 @@ struct DevicesPage: View {
 
         CreatorMicroCard(store: store)
 
+        StreamDeckCard(store: store)
+
         Section {
             ScreenBarCard(store: store)
         } header: {

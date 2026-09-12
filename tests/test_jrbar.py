@@ -125,7 +125,11 @@ from jrbar.navigation_policy import (
 from jrbar.operator_accessibility import status_item_accessibility
 from jrbar.operator_history_store import OperatorHistoryState
 from jrbar.operator_state import BootIdentifier, ClockSample, empty_operator_state
-from jrbar.origin import ProcessInfo, origin_from_processes
+from jrbar.origin import (
+    ProcessInfo,
+    clear_origin_cache,
+    origin_from_processes,
+)
 from jrbar.presentation_policy import (
     FiniteCue,
     GlanceOverrideReason,
@@ -1122,9 +1126,18 @@ for (const event of [
                 }
             )
 
+            # Origin detection consults the real process ancestry BEFORE the
+            # terminal env: any test run whose ancestors are a VS Code-family
+            # editor (Devin/Windsurf helpers carry "vscode" in their argv)
+            # detects "Grok in VS Code" here instead of "Grok CLI". An empty
+            # ancestry is the bare-terminal case this test asserts. The
+            # per-session origin cache is cleared too: other tests share the
+            # "grok-session" id and a stale entry would skip detection.
+            clear_origin_cache("grok-session")
             with (
                 patch("jrbar.hook.detect_log_path", return_value=grok),
                 patch.dict(os.environ, {"TERM_PROGRAM": "Apple_Terminal"}, clear=True),
+                patch("jrbar.origin.process_ancestry", return_value=()),
             ):
                 provider, path, line = routed_hook_payload("claude", claude, payload)
 
@@ -4272,12 +4285,19 @@ for (const event of [
                 full_charge_watts=140,
             )
 
+            # sync_snapshot samples the clock once per call AND once per
+            # LED-count probe (render path and write facade both memoize on
+            # monotonic), so a fixed side_effect list no longer covers the
+            # calls one sync makes. Drive one controllable clock instead.
+            fake_now = [0.0]
             with patch(
                 "jrbar.battery.time.monotonic",
-                side_effect=[0.0, 0.5, 2.0],
+                side_effect=lambda: fake_now[0],
             ):
                 first = controller.sync_snapshot(snapshot)
+                fake_now[0] = 0.5
                 second = controller.sync_snapshot(snapshot)
+                fake_now[0] = 2.0
                 third = controller.sync_snapshot(snapshot)
 
             self.assertTrue(first.changed)
@@ -4291,11 +4311,17 @@ for (const event of [
             controller = BatteryLedController(device_path=device)
             snapshot = BatterySnapshot(percent=50, is_plugged=False)
 
+            # See the charging-cadence test above: one sync samples the
+            # clock on the render path and the write path, so a fixed
+            # side_effect list cannot cover the calls. One clock, moved
+            # by hand between syncs.
+            fake_now = [0.0]
             with patch(
                 "jrbar.battery.time.monotonic",
-                side_effect=[0.0, 10.0],
+                side_effect=lambda: fake_now[0],
             ):
                 first = controller.sync_snapshot(snapshot)
+                fake_now[0] = 10.0
                 second = controller.sync_snapshot(snapshot)
 
             self.assertTrue(first.changed)

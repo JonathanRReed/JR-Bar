@@ -183,6 +183,17 @@ struct AutoDimSection: View {
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxFloor, unit: "lux")
                 SettingNumberField(store, "Bright above", subtitle: "Full brightness at this reading; must be above the dark mark.", path: AutoDimSettings.ambientLuxCeilingPath.description,
                                    in: 0...AutoDimSettings.maxLux, default: AutoDimSettings.defaults.ambientLuxCeiling, unit: "lux")
+                Provided(store, AutoDimSettings.ambientLuxFloorPath.description, AutoDimSettings.ambientLuxCeilingPath.description) {
+                    LabeledContent {
+                        Button("Use current light") { useRoomLight() }
+                            .controlSize(.small)
+                            .disabled(roomMarks == nil)
+                            .help(roomMarks.map { "Writes “Dark below” \(Int($0.floor)) lux and “Bright above” \(Int($0.ceiling)) lux" }
+                                  ?? "Needs a live ambient reading; the core is not reporting one")
+                    } label: {
+                        SettingLabel(title: "Marks from this room", subtitle: "Dark below a quarter of the live lux, bright above 1.6 times it.")
+                    }
+                }
             }
             if provided, mode != .off {
                 AutoDimReadoutRow(result: store.core.lights?.autoDim, settings: settings)
@@ -192,6 +203,32 @@ struct AutoDimSection: View {
         } footer: {
             SectionNote("Multiplies every light's brightness on top of idle and sleep dimming; the why popover names it when it is in effect.")
         }
+    }
+
+    /// `lights.auto_dim`'s live lux — only while the daemon is really
+    /// reading the ambient sensor; on the display fallback `reading` is a
+    /// brightness fraction, not lux.
+    private var roomLux: Double? {
+        guard let result = store.core.lights?.autoDim,
+              result.mode == "ambient", result.source == "ambient",
+              let lux = result.reading, lux.isFinite, lux > 0 else { return nil }
+        return lux
+    }
+
+    /// The marks "Use current light" would write: dark a quarter of the
+    /// room's lux, bright 1.6 times it, whole lux and a gap the daemon's
+    /// ceiling-above-floor check accepts.
+    private var roomMarks: (floor: Double, ceiling: Double)? {
+        guard let lux = roomLux else { return nil }
+        let floor = max(1, (lux * 0.25).rounded())
+        let ceiling = min(AutoDimSettings.maxLux, max(floor + 1, (lux * 1.6).rounded()))
+        return (floor, ceiling)
+    }
+
+    private func useRoomLight() {
+        guard let marks = roomMarks else { return }
+        store.set(AutoDimSettings.ambientLuxFloorPath.description, .number(marks.floor))
+        store.set(AutoDimSettings.ambientLuxCeilingPath.description, .number(marks.ceiling))
     }
 }
 
@@ -601,6 +638,84 @@ struct MachineList: View {
         if !list.contains(name) { list.append(name) }
         store.stringList(path).wrappedValue = list
         draft = ""
+    }
+}
+
+/// Settings › Devices & Screen Bar's Stream Deck card: the desk-side half
+/// of the loopback status endpoint, next to the other pads. The switch is
+/// the same `serve_enabled` Settings › Remote writes; the deck polls
+/// `GET /status.json` with the bearer the Copy button fetches.
+struct StreamDeckCard: View {
+    @Bindable var store: SettingsStore
+
+    /// `serve_token`'s `running` flag, refetched when the switch or the
+    /// connection flips; nil until the core answers (older and mock cores
+    /// return no flag at all).
+    @ViewState private var running: Bool?
+
+    private var enabled: Bool { store.document.bool("serve_enabled") ?? false }
+
+    private var statusText: String {
+        guard store.core.isLive else { return "Core not connected" }
+        guard enabled else { return "Off — the endpoint is not serving" }
+        switch running {
+        case true: return "Serving on 127.0.0.1:8737"
+        case false: return "Enabled, not serving"
+        case nil: return "Enabled"
+        }
+    }
+
+    private var statusColor: Color {
+        guard enabled, store.core.isLive else { return .secondary }
+        return running == true ? .green : .orange
+    }
+
+    var body: some View {
+        Section {
+            SettingToggle(store, "Serve status", subtitle: "Opens the loopback endpoint a deck polls; the same switch as Settings › Remote.",
+                          path: "serve_enabled")
+            LabeledContent {
+                HStack(spacing: 6) {
+                    Circle().fill(statusColor).frame(width: 7, height: 7)
+                    Text(statusText).foregroundStyle(.secondary)
+                }
+            } label: {
+                Text("Endpoint")
+            }
+            LabeledContent {
+                HStack(spacing: 8) {
+                    Text("http://127.0.0.1:8737/status.json")
+                        .font(.callout.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Button("Copy token") { store.copyServeToken() }
+                        .controlSize(.small)
+                        .disabled(!enabled || !store.core.isLive)
+                        .help("Fetches the endpoint's bearer token from the core and copies it")
+                }
+            } label: {
+                SettingLabel(title: "Status URL", subtitle: "GET it with the token as the Authorization: Bearer header; the reply carries redacted agent counts.")
+            }
+        } header: {
+            Text("Stream Deck")
+        } footer: {
+            SectionNote("In the Stream Deck software, add an action that requests the URL with header “Authorization: Bearer <token>”. A sideloadable plugin scaffold lives in integrations/streamdeck/.")
+        }
+        .task(id: enabled && store.core.isLive) { await refreshServeState() }
+    }
+
+    private func refreshServeState() async {
+        guard enabled, store.core.isLive else { running = nil; return }
+        let reply = try? await store.core.send("serve_token")
+        running = reply?.result?["running"]?.boolValue
+        // The core binds the socket on the settings echo; give it a beat
+        // before the card calls a just-enabled endpoint "not serving".
+        if enabled, running != true {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            let again = try? await store.core.send("serve_token")
+            running = again?.result?["running"]?.boolValue
+        }
     }
 }
 

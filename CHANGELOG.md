@@ -2,6 +2,39 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.2 (unreleased)
+
+- Auto-dim's ambient curve is calibrated for real rooms. The sensor that
+  faces you reads ~50-150 lux in a normally lit space; the old defaults
+  treated 400 lux as "bright" and 5 lux as "dark", so every indoor room
+  pinned the bar near its 10% floor. The defaults are now 15 lux → 35%
+  rising to full at 150 lux. Lighting › Auto-dim also gets a "use this
+  room" calibrator that sets the marks from the live reading.
+- A resolved ask can no longer hold a session on "waiting". The
+  canonical projection counted resolved request tombstones as open
+  requests, so a Codex permission prompt kept the row — and its share
+  of the light — waiting after you'd answered. Only live requests whose
+  next actor is the user pin a session now.
+- The four long-standing red tests are fixed, not skipped: the battery
+  LED tests get a controllable clock, the Grok-payload routing test
+  stops inheriting the host's process ancestry, and the Codex
+  permission test is the fix above. The Python suite is fully green.
+- Clock continuity heals: a freshness-only source loss used to pin the
+  daemon at "uncertain" forever; it now ages out after the timing lease
+  while a genuine source loss still requires two confirmations.
+- Effect Studio answers "what plays on Devin?" — a What plays where
+  section groups each live provider's motion, its instance and semantic
+  rows, and device rows in one place, and the assign sheet re-hydrates
+  parameters per (scope, target) instead of showing the last tuning.
+- Stream Deck is in the hardware section: a card on the Devices page
+  shows the status endpoint, copies the bearer token, toggles serving,
+  and a minimal polling plugin scaffold lives in `integrations/streamdeck/`.
+- First launch gets a one-card orientation — what the band is, what the
+  marks mean — hung under the band after the hook-install toast, once.
+- Reduce Motion now reaches the band: the Screen Bar holds a still frame
+  instead of animating, and the band, preview strips, and panel rows
+  speak VoiceOver — including which session the band is showing.
+
 ## 0.9.1
 
 - The default multi-agent look is Smooth (`color_blend`): one seamless

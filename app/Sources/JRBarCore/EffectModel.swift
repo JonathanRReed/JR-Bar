@@ -675,6 +675,28 @@ public struct EffectAssignmentDocument: Codable, Hashable, Sendable {
 
     /// The effects that any assignment uses, for "used by" badges.
     public func usage(of effectID: String) -> [EffectAssignment] { assignments.filter { $0.effectID == effectID } }
+
+    /// The parameters an assign draft should open with for (scope,
+    /// target): the pair's stored values when an assignment exists
+    /// there, else the effect's catalog defaults — never values tuned
+    /// for a different target. Stored values are normalized into the
+    /// effect's declared parameters, so unknown keys drop and missing
+    /// ones take their defaults.
+    public func draftParameters(for effect: EffectDefinition, scope: EffectScope, targetID: String?) -> [String: JSONValue] {
+        effect.normalizedParameters(assignment(scope: scope, targetID: targetID)?.parameters ?? [:])
+    }
+
+    /// What plays for one provider: its provider-scope row — the working
+    /// motion when that effect is a provider animation — the semantic
+    /// rows its routed events can fire, and the provider-instance rows
+    /// naming it (`provider:instance` wire form).
+    public func playback(forProvider provider: String) -> (provider: EffectAssignment?, semantics: [EffectAssignment], instances: [EffectAssignment]) {
+        (
+            provider: assignment(scope: .provider, targetID: provider),
+            semantics: assignments.filter { $0.scope == .semantic },
+            instances: assignments.filter { $0.scope == .providerInstance && $0.targetID?.hasPrefix(provider + ":") == true }
+        )
+    }
 }
 
 /// A scene pack as `list_scene_packs` reports it: an installable bundle of

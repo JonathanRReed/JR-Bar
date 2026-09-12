@@ -39,9 +39,14 @@ DEFAULT_SCHEDULE_START_MINUTES: Final = 22 * 60
 DEFAULT_SCHEDULE_END_MINUTES: Final = 7 * 60
 DEFAULT_SCHEDULE_FRACTION: Final = 0.3
 DEFAULT_DISPLAY_MIN_FRACTION: Final = 0.15
-DEFAULT_AMBIENT_MIN_FRACTION: Final = 0.1
-DEFAULT_AMBIENT_LUX_FLOOR: Final = 5.0
-DEFAULT_AMBIENT_LUX_CEILING: Final = 400.0
+# The ambient defaults are calibrated for real indoor light, not the
+# textbook 300-500 lux office: the Mac's user-facing sensor reads
+# ~50-150 lux in a normally lit room, so a 400 lux ceiling would dim
+# every indoor surface all day. 15 lux is a genuinely dark room; 150 is
+# "the lights are on".
+DEFAULT_AMBIENT_MIN_FRACTION: Final = 0.35
+DEFAULT_AMBIENT_LUX_FLOOR: Final = 15.0
+DEFAULT_AMBIENT_LUX_CEILING: Final = 150.0
 MIN_FRACTION: Final = 0.02
 MAX_LUX: Final = 200_000.0
 

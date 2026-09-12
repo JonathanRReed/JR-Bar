@@ -1,0 +1,53 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>JR-Bar Status</title></head>
+<body>
+<!--
+  Alpha scaffold property inspector. Stream Deck loads this when the key
+  is selected; the fields persist via the didReceiveSettings flow.
+-->
+<label>
+  Bearer token
+  <input id="token" type="password" placeholder="from Settings › Devices &amp; Screen Bar › Stream Deck">
+</label>
+<label>
+  Status URL
+  <input id="url" type="text" placeholder="http://127.0.0.1:8737/status.json">
+</label>
+<p>The endpoint is loopback only; the token is the file
+<code>~/.local/state/jrbar/serve-token</code> or Settings' Copy token button.</p>
+<script>
+  // Minimal Stream Deck property-inspector plumbing: the software injects
+  // connectElgatoStreamDeckSocket(port, uuid, event, info, actionInfo).
+  let websocket, uuid, actionContext;
+  function connectElgatoStreamDeckSocket(port, pluginUUID, event, info, actionInfo) {
+    uuid = pluginUUID;
+    try { actionContext = JSON.parse(actionInfo).context; } catch { actionContext = undefined; }
+    websocket = new WebSocket("ws://127.0.0.1:" + port);
+    websocket.onopen = () => websocket.send(JSON.stringify({ event, uuid }));
+    websocket.onmessage = (m) => {
+      let e; try { e = JSON.parse(m.data); } catch { return; }
+      if (e.event === "didReceiveSettings") fill(e.payload?.settings ?? {});
+    };
+    fill((() => { try { return JSON.parse(actionInfo).payload?.settings ?? {}; } catch { return {}; } })());
+  }
+  function fill(settings) {
+    document.getElementById("token").value = settings.token ?? "";
+    document.getElementById("url").value = settings.url ?? "";
+  }
+  function save() {
+    if (!websocket || websocket.readyState !== 1) return;
+    websocket.send(JSON.stringify({
+      event: "setSettings",
+      context: actionContext,
+      payload: {
+        token: document.getElementById("token").value,
+        url: document.getElementById("url").value,
+      },
+    }));
+  }
+  document.getElementById("token").addEventListener("change", save);
+  document.getElementById("url").addEventListener("change", save);
+</script>
+</body>
+</html>

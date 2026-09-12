@@ -224,6 +224,62 @@ struct EffectModelTests {
         #expect(both.targetID == "night")
     }
 
+    @Test("draft parameters hydrate from the pair's assignment, else catalog defaults")
+    func draftHydration() throws {
+        let document = try Self.assignments()
+        let catalog = try Self.catalog()
+        let chase = try #require(catalog.effect("chase"))
+
+        // (semantic, working) stores duration_seconds 1.6 in the fixture;
+        // the rest of chase's declared parameters take their defaults.
+        let hydrated = document.draftParameters(for: chase, scope: .semantic, targetID: "working")
+        #expect(hydrated["duration_seconds"] == .number(1.6))
+        #expect(hydrated["direction"] == .string("forward"))
+        #expect(hydrated["spacing"] == chase.defaultParameters["spacing"])
+
+        // A pair with no assignment returns the catalog defaults — not
+        // values tuned for a different target.
+        #expect(document.draftParameters(for: chase, scope: .provider, targetID: "gemini") == chase.defaultParameters)
+        #expect(document.draftParameters(for: chase, scope: .provider, targetID: "claude") == chase.defaultParameters)
+
+        // Stored values are normalized into the effect's bounds; keys the
+        // effect does not declare are dropped.
+        let tuned = EffectAssignmentDocument(assignments: [
+            EffectAssignment(effectID: "chase", scope: .provider, targetID: "devin",
+                             parameters: ["spacing": .number(99), "mystery": .string("x")]),
+        ])
+        let clamped = tuned.draftParameters(for: chase, scope: .provider, targetID: "devin")
+        #expect(clamped["spacing"] == .number(6))
+        #expect(clamped["mystery"] == nil)
+    }
+
+    @Test("playback groups a provider's scope, semantic and instance rows")
+    func providerPlayback() throws {
+        let document = EffectAssignmentDocument(assignments: [
+            EffectAssignment(effectID: "comet", scope: .provider, targetID: "devin"),
+            EffectAssignment(effectID: "strobe", scope: .semantic, targetID: "completion"),
+            EffectAssignment(effectID: "pulse", scope: .providerInstance, targetID: "devin:work"),
+            EffectAssignment(effectID: "kitt", scope: .providerInstance, targetID: "claude:home"),
+            EffectAssignment(effectID: "ember", scope: .device, targetID: "sidepulse:dot:1"),
+        ])
+
+        let devin = document.playback(forProvider: "devin")
+        #expect(devin.provider?.effectID == "comet")
+        #expect(devin.semantics.map(\.effectID) == ["strobe"])
+        #expect(devin.instances.map(\.targetID) == ["devin:work"])
+
+        // A provider with no scope of its own still reports the semantic
+        // rows its events fire — never another provider's instances.
+        let claude = document.playback(forProvider: "claude")
+        #expect(claude.provider == nil)
+        #expect(claude.semantics.map(\.effectID) == ["strobe"])
+        #expect(claude.instances.map(\.targetID) == ["claude:home"])
+
+        let unknown = document.playback(forProvider: "hermes")
+        #expect(unknown.provider == nil)
+        #expect(unknown.instances.isEmpty)
+    }
+
     @Test("the family line says what the meaning does not")
     func familyLine() throws {
         let catalog = try Self.catalog()

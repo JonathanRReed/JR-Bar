@@ -1522,3 +1522,95 @@ def test_quiescent_source_quarantines_expire_by_lease_on_any_reduction() -> None
         current = result.state
 
     assert current.clock_continuity.status is ClockContinuityStatus.STABLE
+
+
+def test_freshness_only_loss_releases_its_quarantine_at_the_lease() -> None:
+    """An inert or partially-read record is "loss" by freshness alone: it can
+    never satisfy _recovery_eligible (it is never FRESH) and used to
+    early-return ahead of the lease check, so a source whose whole stream
+    reads that way -- antigravity's unknown_event records did -- held its
+    timing entry, and the global "uncertain" report, forever. A full quiet
+    lease now releases it; genuine health loss still holds past the lease."""
+    source = _source("inert:01")
+    inert_mark = _watermark("event:inert:1", source=source)
+    inert = reduce_operator_state(
+        empty_operator_state(),
+        _batch(
+            source=source,
+            watermark=inert_mark,
+            health=SourceHealth.PARTIAL,
+            freshness=SourceFreshness.PARTIAL,
+        ),
+        clock=_clock(),
+    )
+    assert source in inert.state.timing_uncertain_sources
+    assert inert.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN
+
+    # More inert talk inside the lease keeps the hold.
+    inner_wall = 1_800_000_000.0 + 60.0
+    held = reduce_operator_state(
+        inert.state,
+        _batch(
+            source=source,
+            watermark=_watermark("event:inert:2", source=source, epoch=inner_wall),
+            health=SourceHealth.PARTIAL,
+            freshness=SourceFreshness.PARTIAL,
+        ),
+        clock=_clock(wall=inner_wall, monotonic=160.0),
+    )
+    assert source in held.state.timing_uncertain_sources
+
+    # Past a full quiet lease the same inert batch releases it: a record
+    # with no facts has nothing whose ordering could be distrusted.
+    outer_wall = 1_800_000_000.0 + TIMING_UNCERTAINTY_LEASE_SECONDS + 60.0
+    released = reduce_operator_state(
+        held.state,
+        _batch(
+            source=source,
+            watermark=_watermark("event:inert:3", source=source, epoch=outer_wall),
+            health=SourceHealth.PARTIAL,
+            freshness=SourceFreshness.PARTIAL,
+        ),
+        clock=_clock(
+            wall=outer_wall,
+            monotonic=100.0 + TIMING_UNCERTAINTY_LEASE_SECONDS + 60.0,
+        ),
+    )
+    assert source not in released.state.timing_uncertain_sources
+    assert released.state.clock_continuity.status is ClockContinuityStatus.STABLE
+
+
+def test_health_loss_still_holds_its_quarantine_past_the_lease() -> None:
+    """A source that is genuinely still losing (UNAVAILABLE, RATE_LIMITED, ...)
+    is not a freshness-only partial: the lease deliberately cannot release
+    it into live on the strength of another loss report."""
+    source = _source("unavailable:01")
+    loss_mark = _watermark("event:loss:1", source=source)
+    quarantined = reduce_operator_state(
+        empty_operator_state(),
+        _batch(
+            source=source,
+            watermark=loss_mark,
+            health=SourceHealth.UNAVAILABLE,
+            freshness=SourceFreshness.UNAVAILABLE,
+        ),
+        clock=_clock(),
+    )
+    assert source in quarantined.state.timing_uncertain_sources
+
+    outer_wall = 1_800_000_000.0 + TIMING_UNCERTAINTY_LEASE_SECONDS + 60.0
+    still_held = reduce_operator_state(
+        quarantined.state,
+        _batch(
+            source=source,
+            watermark=_watermark("event:loss:2", source=source, epoch=outer_wall),
+            health=SourceHealth.UNAVAILABLE,
+            freshness=SourceFreshness.UNAVAILABLE,
+        ),
+        clock=_clock(
+            wall=outer_wall,
+            monotonic=100.0 + TIMING_UNCERTAINTY_LEASE_SECONDS + 60.0,
+        ),
+    )
+    assert source in still_held.state.timing_uncertain_sources
+    assert still_held.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN

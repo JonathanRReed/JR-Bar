@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var updater: SparkleUpdater?
     private var hotkey: PanelHotkey?
     private var checkForUpdatesItem: NSMenuItem?
+    /// The one-shot onboarding card, alive only while it is on screen.
+    private var firstRunCard: FirstRunCard?
     private var wasLive = false
     private var lastFileProgram: (text: String, source: LEDFeed.Source)?
     private var lastLightsSource: String?
@@ -152,6 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             onOpen: { [weak core] session in core?.openSession(session) }
         )
         self.interaction = interaction
+        screenBar.focusProvider = { [weak store] in store?.screenBarFocus }
         screenBar.onGeometryChange = { [weak interaction] in interaction?.geometryChanged() }
         // Alcove: the band follows the capsule while the setting is on and Alcove is up.
         let alcove = AlcoveFollower()
@@ -424,6 +427,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// General turns it off.
     private func completeFirstRun(with bundled: CoreSupervisor.BundledCore, core: CoreModel) {
         let stamp = bundled.buildStamp
+        // True only on the launch that registers the login item below —
+        // the one launch the onboarding card may appear on. Read now,
+        // before that block sets the flag.
+        let isFirstLaunch = !appState.loginItemRegistered
         if appState.bundledHooksInstalledFor != stamp {
             core.appendLocalLog(level: "supervisor", "first launch of \(stamp): installing provider hooks for \(bundled.hookShim)")
             DispatchQueue.global(qos: .utility).async {
@@ -451,6 +458,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                             self?.settingsWindow?.show(page: .agents)
                         }
                     }
+                    // The onboarding card trails the toast rather than
+                    // racing it: it explains the bar the hooks just made
+                    // live. `wasShown` keeps it once-ever even when the
+                    // toast itself repeats (a failed install retries).
+                    if isFirstLaunch {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
+                            MainActor.assumeIsolated { self?.showFirstRunCard() }
+                        }
+                    }
                     NSLog("JR-Bar hooks: install all exited %d", result.status)
                 }
             }
@@ -473,6 +489,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             persistAppState()
         }
         NSLog("JR-Bar login item: %@", Self.describe(SMAppService.mainApp.status))
+    }
+
+    /// The one-card onboarding: a small glass panel hung under the band it
+    /// describes, shown after the first-launch hook-install toast. The
+    /// marker file (`FirstRunCard.wasShown`, beside `app-state.json`) is
+    /// written when it is presented, so it can never be shown twice.
+    private func showFirstRunCard() {
+        guard !FirstRunCard.wasShown else { return }
+        let card = FirstRunCard(anchorRect: { [weak self] in self?.screenBar?.bandScreenRect })
+        card.onOpenSettings = { [weak self] in self?.settingsWindow?.show() }
+        firstRunCard = card
+        card.show()
     }
 
     // MARK: App state
@@ -715,6 +743,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     private func coreDidChange() {
+        screenBar?.updateAccessibility()
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:

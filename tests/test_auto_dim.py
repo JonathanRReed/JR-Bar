@@ -91,7 +91,7 @@ def test_settings_document_round_trips_and_normalises_bad_values(tmp_path: Path)
         "mode": "off",
         "schedule": {"start_minutes": 1320, "end_minutes": 420, "fraction": 0.3},
         "display": {"min_fraction": 0.15},
-        "ambient": {"min_fraction": 0.1, "lux_floor": 5.0, "lux_ceiling": 400.0},
+        "ambient": {"min_fraction": 0.35, "lux_floor": 15.0, "lux_ceiling": 150.0},
     }
     document["auto_dim"] = {
         "mode": "ambient",
@@ -108,7 +108,7 @@ def test_settings_document_round_trips_and_normalises_bad_values(tmp_path: Path)
     assert loaded.auto_dim.display_min_fraction == 0.15
     assert loaded.auto_dim.ambient_min_fraction == 0.25
     # An inverted lux window falls back to the defaults instead of dividing by nothing.
-    assert (loaded.auto_dim.ambient_lux_floor, loaded.auto_dim.ambient_lux_ceiling) == (5.0, 400.0)
+    assert (loaded.auto_dim.ambient_lux_floor, loaded.auto_dim.ambient_lux_ceiling) == (15.0, 150.0)
     save_settings(loaded, target)
     assert load_settings(target).auto_dim == loaded.auto_dim
     assert AutoDimSettings.from_dict({"mode": "warm"}).mode == "off"

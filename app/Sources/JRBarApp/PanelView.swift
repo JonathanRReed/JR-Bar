@@ -156,6 +156,9 @@ struct ActivityMark: View {
         .onChange(of: activity) { animate() }
         .onChange(of: reduced) { animate() }
         .onChange(of: active) { animate() }
+        // The row's label already speaks the word; alone the mark would
+        // be an unlabeled dot VoiceOver has to step over.
+        .accessibilityHidden(true)
     }
 
     private func animate() {
@@ -653,6 +656,9 @@ struct SessionRowView: View {
                 ? "on \(row.remoteMachine ?? "a peer")"
                 : (row.cwdTail.map { "in \($0)" } ?? "no folder on record"),
         ].joined(separator: ", "))
+        .accessibilityHint(row.isRemote
+            ? "Remote session — manage it on \(row.remoteMachine ?? "the machine it runs on")"
+            : "Opens the session in its terminal")
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -835,6 +841,9 @@ struct AskRow: View {
         .contextMenu { SessionContextMenu(row: row, store: store) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(row.label) asks: \(row.ask?.summary ?? "")")
+        .accessibilityHint(row.ask?.canAnswer == true && !row.isRemote
+            ? "Approve with ⌘Return, deny with ⌘D"
+            : "Answer it in the session's own window")
     }
 
     private func send(_ ask: CoreAsk) {
@@ -953,6 +962,7 @@ struct UsageSetupRow: View {
         .onTapGesture { store.openUsageCenter(provider: usage.id) }
         .help("\(style.name) reports no usage windows — the Usage Center can set it up")
         .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens \(style.name) in the Usage Center")
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -1041,6 +1051,7 @@ struct UsageRow: View {
         .help("Open \(style.name) in the Usage Center")
         .animation(PanelMotion.crossfade(reduced: store.reduceMotion, armed: store.animationsArmed), value: primary?.usedPct)
         .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens \(style.name) in the Usage Center")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -1232,7 +1243,7 @@ struct DevicesSection: View {
                             .accessibilityHidden(true)
                     }
                     DeviceChip(name: chip.name, present: chip.present, dimmed: !store.isLive && chip.id != "screen_bar",
-                               action: chip.id == "screen_bar" ? nil : "opens Devices settings")
+                               action: chip.id == "screen_bar" ? "toggles the band" : "opens Devices settings")
                         .help(chip.help)
                         .onTapGesture {
                             if chip.id == "screen_bar" {
@@ -1258,6 +1269,8 @@ struct DevicesSection: View {
                 }
                 .controlSize(.mini)
                 .disabled(!store.isLive || !store.hasHardware)
+                .accessibilityLabel("Strip brightness")
+                .accessibilityValue("\(Int((store.brightness * 100).rounded())) percent")
                 Image(systemName: "sun.max").font(.system(size: 11)).foregroundStyle(.tertiary)
                 Text("\(Int((store.brightness * 100).rounded()))%")
                     .font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
@@ -1286,9 +1299,8 @@ struct DeviceChip: View {
     let name: String
     let present: Bool
     let dimmed: Bool
-    /// What a tap does, for VoiceOver ("opens Devices settings"); nil for
-    /// the Screen Bar chip, whose tap toggles the band rather than opening
-    /// a page.
+    /// What a tap does, for VoiceOver ("opens Devices settings" /
+    /// "toggles the band" for the Screen Bar chip).
     var action: String? = nil
 
     var body: some View {
@@ -1307,7 +1319,7 @@ struct DeviceChip: View {
         .opacity(dimmed ? 0.55 : 1)
         .contentShape(Capsule())
         .accessibilityLabel("\(name) \(present ? "connected" : "not connected")" + (action.map { " · \($0)" } ?? ""))
-        .accessibilityAddTraits(action == nil ? [] : .isButton)
+        .accessibilityAddTraits(.isButton)
     }
 }
 

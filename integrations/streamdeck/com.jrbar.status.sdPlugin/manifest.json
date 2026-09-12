@@ -1,0 +1,27 @@
+{
+  "Name": "JR-Bar Status",
+  "Description": "Alpha scaffold. Polls JR-Bar's loopback status endpoint and shows redacted agent counts on a key.",
+  "Version": "0.1.0",
+  "Author": "JR-Bar",
+  "Category": "JR-Bar",
+  "CategoryIcon": "imgs/category",
+  "Actions": [
+    {
+      "UUID": "com.jrbar.status.agents",
+      "Name": "Agent counts",
+      "Icon": "imgs/action",
+      "Tooltip": "Working / waiting / failed agent counts from JR-Bar.",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/key", "TitleAlignment": "middle" }
+      ],
+      "PropertyInspectorPath": "pi.html"
+    }
+  ],
+  "CodePath": "app.js",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "6.4" },
+  "OS": [
+    { "Platform": "mac", "MinimumVersion": "12" }
+  ]
+}

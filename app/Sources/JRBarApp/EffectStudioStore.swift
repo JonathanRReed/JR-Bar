@@ -40,11 +40,21 @@ final class EffectStudioStore {
     var now = Date()
 
     /// The "Assign…" sheet. Defaults to Provider scope — the flagship
-    /// flow — with the first live provider as the target.
+    /// flow — with the first live provider as the target. Changing scope
+    /// or target re-hydrates `draftParameters` for the new pair.
     var assigning = false
-    var draftScope: EffectScope = .provider
-    var draftTarget: String = "claude"
+    var draftScope: EffectScope = .provider {
+        didSet { hydrateDraftParameters() }
+    }
+    var draftTarget: String = "claude" {
+        didSet { hydrateDraftParameters() }
+    }
     var draftUsesParameters = true
+    /// The values the sheet's "keep the parameters" writes: the
+    /// parameters stored on the assignment at (draftScope, draftTarget)
+    /// when one exists, else the catalog defaults — never values tuned
+    /// for a different target.
+    private(set) var draftParameters: [String: JSONValue] = [:]
 
     @ObservationIgnored private var renderTask: Task<Void, Never>?
     @ObservationIgnored private var ticker: Timer?
@@ -167,9 +177,18 @@ final class EffectStudioStore {
     /// The program the preview strip plays: the daemon's render for the
     /// edited parameters when it has arrived, else the catalog's default.
     func previewProgram(for effect: EffectDefinition) -> String {
-        let values = values(for: effect)
+        previewProgram(for: effect, values: values(for: effect))
+    }
+
+    func previewProgram(for effect: EffectDefinition, values: [String: JSONValue]) -> String {
         if let render = renders[Self.renderKey(effect, values)] { return render.program }
         return effect.preview?.program ?? "off"
+    }
+
+    /// The assign sheet previews what the (scope, target) pair plays —
+    /// the hydrated draft values, not the inspector's tuning.
+    func draftPreviewProgram(for effect: EffectDefinition) -> String {
+        previewProgram(for: effect, values: draftParameters)
     }
 
     /// The LED count the on-screen strip renders at: the connected
@@ -192,8 +211,11 @@ final class EffectStudioStore {
 
     /// Re-renders 150 ms after the last change; the last request wins.
     private func scheduleRender(_ effect: EffectDefinition) {
+        scheduleRender(effect, values: values(for: effect))
+    }
+
+    private func scheduleRender(_ effect: EffectDefinition, values: [String: JSONValue]) {
         renderTask?.cancel()
-        let values = values(for: effect)
         let key = Self.renderKey(effect, values)
         guard renders[key] == nil, values != effect.defaultParameters else { return }
         renderTask = Task { [weak self] in
@@ -290,9 +312,24 @@ final class EffectStudioStore {
 
     func usage(of effect: EffectDefinition) -> [EffectAssignment] { assignments?.usage(of: effect.id) ?? [] }
 
-    func beginAssigning(_ effect: EffectDefinition) {
-        draftTarget = defaultTarget(for: draftScope)
+    func beginAssigning(_ effect: EffectDefinition, scope: EffectScope? = nil, target: String? = nil) {
+        if let scope { draftScope = scope }
+        draftTarget = target ?? defaultTarget(for: draftScope)
         assigning = true
+        hydrateDraftParameters(for: effect)
+    }
+
+    /// Re-reads the sheet's parameter values for the current (scope,
+    /// target): the stored assignment's own parameters when one exists,
+    /// else the catalog defaults. Runs when the sheet opens and whenever
+    /// scope or target changes, so "keep the parameters" means the
+    /// pair's tuning — not what was last edited for another target.
+    private func hydrateDraftParameters(for effect: EffectDefinition? = nil) {
+        guard let effect = effect ?? selected else { draftParameters = [:]; return }
+        let target = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
+        draftParameters = assignments?.draftParameters(for: effect, scope: draftScope, targetID: target)
+            ?? effect.defaultParameters
+        scheduleRender(effect, values: draftParameters)
     }
 
     /// The assignment already stored at the draft's (scope, target), if
@@ -306,7 +343,7 @@ final class EffectStudioStore {
         guard let effect = selected else { return nil }
         let target: String? = draftScope == .global ? nil : draftTarget.trimmingCharacters(in: .whitespaces)
         return EffectAssignment(effectID: effect.id, scope: draftScope, targetID: target,
-                                parameters: draftUsesParameters ? values(for: effect) : [:])
+                                parameters: draftUsesParameters ? draftParameters : [:])
     }
 
     /// The row title for an assignment: the device's name, the provider's
@@ -400,6 +437,49 @@ final class EffectStudioStore {
                 }
                 return (device.id, label)
             }
+    }
+
+    /// One row of the "what plays where" block: a live provider plus the
+    /// assignments it resolves to — its provider-scope row (the working
+    /// motion when the effect is a provider animation), the semantic
+    /// effects its routed events can fire, and its instance rows.
+    struct ProviderPlayback: Hashable, Identifiable {
+        var id: String { providerID }
+        let providerID: String
+        let name: String
+        let provider: EffectAssignment?
+        let semantics: [EffectAssignment]
+        let instances: [EffectAssignment]
+    }
+
+    /// The reverse lookup: one summary per provider the daemon has
+    /// actually seen — the same live set the assign sheet's provider
+    /// picker leads with.
+    var providerPlayback: [ProviderPlayback] {
+        providerTargets.filter(\.live).map { target in
+            let playback = assignments?.playback(forProvider: target.id)
+            return ProviderPlayback(providerID: target.id, name: target.label,
+                                    provider: playback?.provider,
+                                    semantics: playback?.semantics ?? [],
+                                    instances: playback?.instances ?? [])
+        }
+    }
+
+    /// The device-scope rows of the same block — only devices an
+    /// assignment names.
+    var devicePlayback: [EffectAssignment] {
+        assignments?.assignments.filter { $0.scope == .device } ?? []
+    }
+
+    /// Tapping a "what plays on X" row: jump to the effect the provider's
+    /// scope names, or — when it has no scope of its own — open the
+    /// assign sheet pre-filled for it.
+    func focusPlayback(_ playback: ProviderPlayback) {
+        if let assignment = playback.provider {
+            selectedID = assignment.effectID
+        } else if let effect = selected {
+            beginAssigning(effect, scope: .provider, target: playback.providerID)
+        }
     }
 
     /// A stored device assignment naming a linked Dot: while it follows

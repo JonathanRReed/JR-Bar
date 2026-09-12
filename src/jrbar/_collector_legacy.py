@@ -290,12 +290,31 @@ def agent_status_from_canonical_work(
     work: CanonicalWorkTruth,
     *,
     overlay: CanonicalStatusOverlay | None = None,
+    requests: Mapping[RequestKey, CanonicalRequestTruth] | None = None,
 ) -> AgentStatus:
     """Project one canonical work row into the temporary AgentStatus facade."""
     if type(work) is not CanonicalWorkTruth:
         raise ValueError("invalid canonical work truth")
     if overlay is not None and type(overlay) is not CanonicalStatusOverlay:
         raise ValueError("invalid canonical status overlay")
+    if requests is None:
+        # Without the request map the phase cannot be known, so any linked
+        # request reads as pending -- the same conservative rule the
+        # pre-canonical pending-signature tracker applied.
+        open_request = bool(work.request_keys)
+    else:
+        # An unanswered ask pins the session to waiting even while the
+        # agent keeps other tool calls moving: the prompt on screen is the
+        # fact the user has to act on, and lifecycle stays ACTIVE for the
+        # unrelated work. Resolved tombstones stay linked (a PostToolUse
+        # resolves by derived identity) but must not hold the ask open.
+        open_request = any(
+            request.phase
+            in {RequestPhase.LIVE_UNACKNOWLEDGED, RequestPhase.LIVE_ACKNOWLEDGED}
+            and request.next_actor is NextActor.USER
+            for key in work.request_keys
+            if (request := requests.get(key)) is not None
+        )
     mode, event_name = {
         WorkLifecycle.IDLE: (AgentMode.IDLE_READY, "SessionStart"),
         WorkLifecycle.ACTIVE: (AgentMode.WORKING, "UserPromptSubmit"),
@@ -315,13 +334,21 @@ def agent_status_from_canonical_work(
         >= _canonical_datetime(work.watermark.occurred_at_epoch)
     )
     projected_mode = (
-        mode
+        AgentMode.WAITING_FOR_INPUT
+        if open_request
+        else mode
         if work.request_keys
         else overlay.status.mode
         if matching_overlay
         else mode
     )
-    projected_event_name = overlay.status.event_name if matching_overlay else event_name
+    projected_event_name = (
+        "PermissionRequest"
+        if open_request
+        else overlay.status.event_name
+        if matching_overlay
+        else event_name
+    )
     projected_updated_at = (
         overlay.status.updated_at
         if matching_overlay
@@ -376,10 +403,12 @@ def _snapshot_from_operator_state(
     canonical_projected_uses_age_windows: bool,
     session_is_live: Callable[[AgentStatus], bool] | None = None,
 ) -> MonitorSnapshot:
+    requests_by_key = {request.key: request for request in state.requests}
     projected = tuple(
         agent_status_from_canonical_work(
             work,
             overlay=status_overlays.get(work.key),
+            requests=requests_by_key,
         )
         for work in state.works
     )

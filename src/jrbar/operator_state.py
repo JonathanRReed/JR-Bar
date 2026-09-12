@@ -1108,12 +1108,28 @@ def _determine_continuity(
         # Deliberately ahead of the lease: a source that is still losing is not
         # a source whose quarantine has expired. The lease below only ever
         # releases one on the strength of a healthy, fresh, direct observation.
+        # But "losing" by FRESHNESS alone -- an inert or partially-read record
+        # -- carries no facts whose ordering could be distrusted and can never
+        # satisfy _recovery_eligible (it is never FRESH), so it can neither
+        # confirm recovery nor reach the lease below: a source whose whole
+        # stream reads this way (antigravity's unknown_event records did)
+        # held its quarantine -- and the global "uncertain" report -- for as
+        # long as it kept talking. Freshness-only loss does not outlast a full
+        # quiet lease; genuine health loss still does.
+        if batch.source_health not in _SOURCE_LOSS_HEALTH and _timing_lease_expired(
+            source_entry, clock
+        ):
+            del source_timing[batch.source_key]
+            diagnostics["timing_quarantine_lease_expired"] = 1
         return _continuity_decision(
             source_timing,
             live_sources=live_sources,
             semantic_allowed=False,
             metadata_allowed=True,
             clock_quarantine=False,
+            stable_confirmations=(
+                TIMING_RECOVERY_CONFIRMATIONS if not source_timing else 0
+            ),
         )
     if _timing_lease_expired(source_entry, clock):
         del source_timing[batch.source_key]

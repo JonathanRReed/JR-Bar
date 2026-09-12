@@ -644,6 +644,31 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
 
+### Deprecated/internal commands
+
+The commands below stay registered and answered, but the current app build
+never sends them. They are protocol-compat surface, not dead code: removing
+one would break any older or third-party client still calling it (and the
+daemon's `REQUIRED_COMMANDS` registration test). None is reachable from the
+`jrbar` CLI.
+
+- `apply_effect` — the protocol-1 spelling of `set_assignment`/`clear_assignment`
+  (`effect: null` removes). Kept for older clients that predate the assignment
+  pair; the app only sends the newer names.
+- `set_device_display` — no app caller; the legacy PyObjC device menu calls the
+  controller method directly. It remains the only socket-level way to switch a
+  device's display mode (`agent`/`battery`/`studio`/`quota_runway`) on the
+  headless `jrbar core` daemon, which has no menu.
+- `set_closed_lid_policy` — no app caller; a typed, validated spelling of the
+  `closed_lid_awake_policy` write that `set_setting` already covers. Kept as a
+  stable contract for headless clients.
+- `open_legacy_window` — the migration bridge to the Python windows the app is
+  retiring one at a time (see `docs/ROADMAP.md`); still the manual escape
+  hatch for opening a Python window against a headless daemon.
+- `quit` — the app stops the daemon with SIGTERM (the daemon's signal handler
+  runs the same orderly `coreQuit:` path); the command remains so a socket
+  client can ask for a graceful shutdown in-band.
+
 ### answer_ask: the checks, and what each refusal means
 
 Answering means typing into a window the owner did not look at first, so every

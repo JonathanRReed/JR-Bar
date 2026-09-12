@@ -16,6 +16,9 @@ final class ScreenBarPanel: NSPanel {
         isExcludedFromWindowsMenu = true
         animationBehavior = .none
         isMovable = false
+        // Borderless panels draw no title; setting one names the window in
+        // the accessibility tree instead of leaving it "window".
+        title = "JR-Bar Screen Bar"
         // Set last: `isFloatingPanel` and friends rewrite the level. One above
         // NSStatusWindowLevel so the band rides over the Python Screen Bar
         // while both are alive during the migration.
