@@ -88,3 +88,22 @@ final class LidAngleSensor {
         return nil
     }
 }
+
+/// The real "is the lid shut" fact: `AppleClamshellState` on
+/// `IOPMrootDomain`, the same property `ioreg` reports. The daemon's
+/// `power.closed_lid.holding` is NOT it — that is the keep-awake
+/// caffeinate assertion, held whenever the policy is armed and agents
+/// are working, lid open or not.
+enum ClamshellState {
+    /// true lid closed, false lid open, nil when the registry does not
+    /// answer (a desktop Mac has no clamshell to close).
+    static func read() -> Bool? {
+        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard service != 0 else { return nil }
+        defer { IOObjectRelease(service) }
+        guard let property = IORegistryEntryCreateCFProperty(
+            service, "AppleClamshellState" as CFString, kCFAllocatorDefault, 0
+        )?.takeRetainedValue() else { return nil }
+        return (property as? Bool) ?? (property as? NSNumber)?.boolValue
+    }
+}

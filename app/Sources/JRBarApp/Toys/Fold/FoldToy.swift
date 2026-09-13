@@ -139,16 +139,17 @@ final class FoldToy: Toy {
     }
 
     /// Why the fold is parked right now, per the safety contract: closed
-    /// lid (sensor ≤ 5° or the daemon's closed-lid hold), no built-in
-    /// display, a mirrored one, or a sleeping screen.
+    /// lid (sensor ≤ 5° or real clamshell state), no built-in display,
+    /// a mirrored one, or a sleeping screen.
     private var pauseReason: String? {
         _ = displayVersion
         return FoldPause.reason(
             angle: effectiveAngle,
-            // `holding` is the daemon keeping the Mac awake through a
-            // closed lid — the only "is the lid shut" fact the state
-            // document carries.
-            closedLid: core.state?.power?.closedLid?.holding == true,
+            // The registry's own answer — the daemon's `closed_lid.holding`
+            // is the keep-awake assertion instead, which stays armed
+            // whenever agents are working and would park the fold on an
+            // open lid.
+            closedLid: ClamshellState.read() == true,
             builtInPresent: FoldOverlayWindow.builtinDisplayID() != nil,
             mirrored: FoldOverlayWindow.builtinIsMirrored(),
             screenAsleep: screenAsleep)
@@ -291,7 +292,6 @@ final class FoldToy: Toy {
     private func observe() {
         withObservationTracking {
             _ = store?.state.fold
-            _ = core.state?.power
             _ = sensor.available
             _ = filteredAngle
             _ = simulatedAngle
