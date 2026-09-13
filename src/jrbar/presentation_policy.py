@@ -326,6 +326,10 @@ def compose_presentation_program(
         "gradient",
         "marquee",
         "duotone",
+        "ember",
+        "bloom",
+        "frontier",
+        "glint",
     ):
         if motion_style == "steady":
             return _static_program(resolved, dsl=fallback)
@@ -612,6 +616,109 @@ def compose_presentation_program(
                 "repeat",
             )
             cycle_seconds = 0.16 + (2 * tone_ms) / 1000.0
+        elif motion_style == "ember":
+            # Upstream's centre-bright idle gradient (sidepulse #41):
+            # a fixed centre-hot profile swelling as one. The bed is a
+            # warm fraction of the peak -- coals never go dark -- and
+            # every LED keeps its own height at the crest, which is what
+            # separates it from breathe's uniform swell and aurora's
+            # detuned waves.
+            middle = (led_count - 1) / 2.0
+            weights = [
+                max(
+                    0.12,
+                    1.0 - (abs(index - middle) / max(middle, 1.0)) ** 1.5,
+                )
+                for index in range(led_count)
+            ]
+            bed_colors = " ".join(
+                _scaled_color(normalized_color, floor_fraction + 0.25 * weight)
+                for weight in weights
+            )
+            swell_ms, rest_ms = 1760, 1440
+            coals = "; ".join(
+                f"{index}:{_scaled_color(peak_color, 0.30 + 0.70 * weight)} "
+                f"{swell_ms}ms pulse"
+                for index, weight in enumerate(weights)
+            )
+            lines = (
+                f"{bed_colors} 320ms cosine",
+                coals,
+                f"{bed_colors} {rest_ms}ms cosine",
+                "repeat",
+            )
+            cycle_seconds = (320 + swell_ms + rest_ms) / 1000.0
+        elif motion_style == "bloom":
+            # The lid-open signature as a loop: paired LEDs rise
+            # centre-out, the outermost pair's rise finishing the line
+            # at full light, then one drain line pulls the whole strip
+            # back. Converge's heads meet and part; bloom arrives and
+            # stays -- an opening, not a meeting.
+            step_ms, rise_ms = 140, 280
+            middle = (led_count - 1) / 2.0
+            segments = [
+                f"{index}:{peak_color} {rise_ms}ms cosine "
+                f"{int(round(max(0.0, abs(index - middle) - 0.5) * step_ms))}ms"
+                for index in range(led_count)
+            ]
+            drain_ms = step_ms * 3
+            bloom_lines = [
+                settle_text,
+                "; ".join(segments),
+                f"{floor_color} {drain_ms}ms cosine",
+            ]
+            rest_ms = 0
+            if led_count <= 2:
+                # Two LEDs bloom in unison: ~0.86s of motion is under
+                # the safety envelope's 1s and fell to static (same
+                # Dot-length fix scanner/kitt/tide carry).
+                rest_ms = 320
+                bloom_lines.append(f"{floor_color} {rest_ms}ms none")
+            bloom_lines.append("repeat")
+            lines = tuple(bloom_lines)
+            farthest = int(round(max(0.0, middle - 0.5) * step_ms))
+            cycle_seconds = (
+                0.16 + (farthest + rise_ms + drain_ms + rest_ms) / 1000.0
+            )
+        elif motion_style == "frontier":
+            # The battery-bar read: a held fill at a fixed level while
+            # the first unfilled LED pulses into the dark -- a progress
+            # bar whose tip is alive, where stack's pile lets go.
+            filled = max(0, min(led_count, int(round(led_count * 0.625))))
+            tip = min(filled, led_count - 1)
+            pulse_ms = 1080
+            lit_color = _scaled_color(peak_color, 0.88)
+            segments = []
+            for index in range(led_count):
+                if index < tip:
+                    segments.append(
+                        f"{index}:{lit_color} {pulse_ms}ms cosine"
+                    )
+                elif index == tip:
+                    segments.append(
+                        f"{index}:{peak_color} {pulse_ms}ms pulse"
+                    )
+                else:
+                    segments.append(
+                        f"{index}:{floor_color} {pulse_ms}ms cosine"
+                    )
+            lines = (settle_text, "; ".join(segments), "repeat")
+            cycle_seconds = 0.16 + pulse_ms / 1000.0
+        elif motion_style == "glint":
+            # A thin specular pass over a strip that stays lit: marquee's
+            # roll machinery with a single sharp crest on a reading-light
+            # bed, instead of a rotating palette on a dark one.
+            roll_ms = 2400
+            paint_ms = 250
+            palette = [peak_color] + [
+                _scaled_color(peak_color, 0.62) for _ in range(led_count - 1)
+            ]
+            lines = (
+                f"{' '.join(palette)} {paint_ms}ms cosine",
+                f"roll {roll_ms}ms linear",
+                "repeat",
+            )
+            cycle_seconds = (paint_ms + roll_ms) / 1000.0
         else:
             # Flicker: frozen per-LED detune -- deterministic shimmer.
             base_ms = 1800

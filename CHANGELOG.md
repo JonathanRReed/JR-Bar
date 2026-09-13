@@ -2,6 +2,35 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.8 (unreleased)
+
+- Four new provider animations ported from the upstream SidePulse
+  animation catalog: **Ember** (a centre-hot idle swell — the upstream
+  idle-pulse gradient), **Bloom** (a centre-out spread — the lid-open
+  program as a loop), **Frontier** (a held fill whose tip breathes — the
+  battery-bar pattern, so a level can ride the strip) and **Glint** (a
+  thin specular pass over a lit bed). Each ships as a pure motion shape
+  rendered through the shared DSL, so it works identically on SidePulse
+  Pro, Dot, the Screen Bar and every preview — 2-LED and 8-LED, solo
+  and segmented — and every one is firmware-validated inside the
+  512-byte/20-line budget.
+- Effect Studio's gallery search now ranks an effect whose name or id
+  matches the query above description-only hits — searching "pulse"
+  finds Pulse, not whichever description happens to say "pulsing".
+- Fold fixes from review: the overlay no longer hard-cuts when the raw
+  angle crosses above activation (it eases home on the same glide), a
+  starved predictor can't leave the render angle led on a parked lid,
+  the vsync link stops being born and killed per parked sample, capture
+  can't revive after shutdown on a slow permission grant, the sensor's
+  rate reschedule can't mint a phantom slam, and the Metal view clamps
+  to a real frame-rate floor.
+- Aquarium: "is this a fry" now follows the panel's own `mainSessions`
+  rule — a main session that merely names a parent keeps its full fish,
+  and a parentless worker swims full-sized instead of schooling at a
+  ghost anchor.
+- Confetti's window lives 3.4 s — the slowest streamer was still
+  visibly falling when 2.6 s used to vanish it.
+
 ## 0.9.7 (unreleased)
 
 - Fold learned the last of the gesture. The fold is now a bounded 0…1

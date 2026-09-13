@@ -126,8 +126,11 @@ final class SensorPump: @unchecked Sendable {
                 guard self.timer == nil else { return }
                 self.refreshDevices()
                 self.rateClass = self.rateClassFor(rawAngle: self.lastRaw, velocity: self.lastVelocity)
+                // No direct beat() here: the fresh timer's deadline is
+                // .now, so it fires the first sample itself — a second
+                // one microseconds later would divide a real angle
+                // delta by a microsecond dt and read a phantom slam.
                 self.scheduleTimer()
-                self.beat()
             } else {
                 self.timer?.cancel()
                 self.timer = nil
@@ -149,6 +152,14 @@ final class SensorPump: @unchecked Sendable {
 
     private func scheduleTimer() {
         timer?.cancel()
+        // A fresh timer fires its first beat ~immediately — including
+        // right after a rate-class change inside a beat, where the old
+        // code let the next beat divide an angle delta by a microsecond
+        // dt and kick 120 Hz on a parked lid. Re-priming makes the
+        // first post-reschedule beat measure a clean interval instead.
+        lastRaw = nil
+        lastAt = nil
+        lastVelocity = 0
         let timer = DispatchSource.makeTimerSource(queue: io)
         timer.schedule(deadline: .now(), repeating: Self.intervals[rateClass],
                        leeway: .milliseconds(2))

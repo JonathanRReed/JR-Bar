@@ -664,6 +664,46 @@ _PROVIDER_PARAMETER_METADATA: dict[str, tuple[EffectParameter, ...]] = {
         _number("fill_floor", 0.15, "Minimum filled fraction before the tide rises.", 0.0, 0.8),
         _number("fill_range", 0.85, "Additional filled fraction at full tide.", 0.1, 1.0),
     ),
+    colors_module.MOTION_EMBER: (
+        _duration(minimum=1.0),
+        _number(
+            "bed",
+            0.30,
+            "Relative luminance the coals never sink below.",
+            0.05,
+            0.6,
+        ),
+    ),
+    colors_module.MOTION_BLOOM: (
+        _duration(minimum=0.5),
+        _number(
+            "hold_ratio",
+            0.3,
+            "Fraction of the cycle the strip rests lit before draining.",
+            0.0,
+            0.7,
+        ),
+    ),
+    colors_module.MOTION_FRONTIER: (
+        _duration(minimum=0.5),
+        _number(
+            "level",
+            0.625,
+            "Fraction of the strip held lit behind the breathing tip.",
+            0.0,
+            1.0,
+        ),
+    ),
+    colors_module.MOTION_GLINT: (
+        _duration(minimum=0.5),
+        _number(
+            "bed",
+            0.62,
+            "Relative luminance the strip holds while the glint passes.",
+            0.3,
+            0.9,
+        ),
+    ),
     colors_module.MOTION_MARQUEE: (
         _duration(minimum=0.5),
         _integer("spacing", 1, "LED spacing between palette bands.", 1, 8),
@@ -715,6 +755,10 @@ _PROVIDER_ROLES = {
     colors_module.MOTION_AURORA: "ambient",
     colors_module.MOTION_TIDE: "capacity",
     colors_module.MOTION_MARQUEE: "identity",
+    colors_module.MOTION_EMBER: "ambient",
+    colors_module.MOTION_BLOOM: "transition",
+    colors_module.MOTION_FRONTIER: "capacity",
+    colors_module.MOTION_GLINT: "identity",
     colors_module.MOTION_STEADY: "persistent",
     colors_module.MOTION_BLINK: "attention",
 }
@@ -737,6 +781,10 @@ _PROVIDER_ADAPTATION_MODES: dict[str, tuple[str, str]] = {
     colors_module.MOTION_AURORA: ("layered_waves", "layered_luminous_base"),
     colors_module.MOTION_TIDE: ("rising_fill", "full_segment_swell"),
     colors_module.MOTION_MARQUEE: ("rotating_palette", "narrow_flare"),
+    colors_module.MOTION_EMBER: ("weighted_unison_swell", "warm_bed_swell"),
+    colors_module.MOTION_BLOOM: ("center_out_spread", "full_segment_swell"),
+    colors_module.MOTION_FRONTIER: ("held_fill_breathing_tip", "lit_bed_tip_pulse"),
+    colors_module.MOTION_GLINT: ("thin_pass_lit_strip", "narrow_flare_lit_bed"),
     colors_module.MOTION_STEADY: ("persistent_hold", "persistent_hold"),
     colors_module.MOTION_BLINK: ("named_hard_blink", "named_hard_blink"),
 }

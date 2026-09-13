@@ -395,6 +395,153 @@ def drift(
     ]
 
 
+#: Ember's hottest rim: even the edge LEDs keep a faint coal, so the
+#: strip smoulders end to end instead of dying at the borders.
+EMBER_RIM_FRACTION = 0.12
+
+
+def ember(
+    color: str,
+    floor_color: str,
+    *,
+    led_count: int,
+    cycle_ms: int,
+) -> list[str]:
+    """Coals glowing: a centre-hot profile swelling as one.
+
+    The upstream idle signature (sidepulse's centre-bright gradient):
+    the middle pair burns hottest, the shoulders warm, the rim barely
+    smoulders -- but every LED swells together, so it reads as one bed
+    of coals breathing rather than eight lamps sharing a metronome.
+    Where ``breath`` lifts the whole strip to the same peak, ember
+    keeps a spatial shape *at* the peak, and where ``drift`` detunes
+    every swell, ember's is a single heartbeat the bed shares.
+    """
+    count = max(1, int(led_count))
+    total = max(2, int(cycle_ms))
+    middle = (count - 1) / 2.0
+    weights = [
+        max(
+            EMBER_RIM_FRACTION,
+            1.0 - (abs(index - middle) / max(middle, 1.0)) ** 1.5,
+        )
+        for index in range(count)
+    ]
+    bed = " ".join(
+        mix(floor_color, shade(color, 0.30), weight) for weight in weights
+    )
+    swell = max(MIN_STEP_MS * 2, int(total * 0.55))
+    rest = max(MIN_STEP_MS, total - swell)
+    coals = "; ".join(
+        f"{index}:{shade(color, 0.30 + 0.70 * weight)} {_time(swell)} pulse"
+        for index, weight in enumerate(weights)
+    )
+    return [
+        f"{bed} {_time(max(MIN_STEP_MS, total // 10))} cosine",
+        coals,
+        f"{bed} {_time(rest)} cosine",
+    ]
+
+
+def bloom(
+    color: str,
+    floor_color: str,
+    *,
+    led_count: int,
+    step_ms: int,
+) -> list[str]:
+    """Light opens from the centre outward, holds lit, then drains.
+
+    The lid-open signature run as a loop: paired LEDs rise with a
+    ``cosine`` at delays set by their distance from the middle, the
+    outermost pair's rise finishing the line at full light -- the hold
+    is that line-end dwell -- and one drain line eases the whole strip
+    back to the floor. ``converge`` throws two heads at each other and
+    they part; bloom *arrives and stays*, which is what makes it read
+    as an opening instead of a meeting.
+    """
+    count = max(2, int(led_count))
+    step = max(1, int(step_ms))
+    middle = (count - 1) / 2.0
+    rise = max(MIN_STEP_MS, step * 2)
+    segments = []
+    for index in range(count):
+        distance = abs(index - middle)
+        delay = int(round(max(0.0, distance - 0.5) * step))
+        tail = f" {_time(delay)}" if delay else ""
+        segments.append(f"{index}:{color} {_time(rise)} cosine{tail}")
+    return [
+        "; ".join(segments),
+        f"{floor_color} {_time(step * 3)} cosine",
+    ]
+
+
+def frontier(
+    color: str,
+    floor_color: str,
+    *,
+    led_count: int,
+    cycle_ms: int,
+    level: float = 0.625,
+) -> list[str]:
+    """A held fill whose leading edge pulses into the dark.
+
+    The battery-bar read: LEDs below the level sit lit and constant
+    while the first unfilled LED pulses floor-to-peak once per cycle --
+    a tip reaching forward, not a bar sweeping. ``stack`` piles on and
+    lets go; frontier *holds* its level, so it can carry a number
+    (charge, quota, progress) the way stack cannot.
+    """
+    count = max(1, int(led_count))
+    total = max(2, int(cycle_ms))
+    fraction = max(0.0, min(1.0, float(level)))
+    filled = max(0, min(count, int(round(count * fraction))))
+    tip = min(filled, count - 1)
+    lit = shade(color, 0.88)
+    pulse = max(MIN_STEP_MS * 2, int(total * 0.45))
+    # The line lasts exactly the tip's pulse: the fill's cosine holds
+    # ride it out, so the strip is steady except for the breathing tip.
+    hold = pulse
+    segments = []
+    for index in range(count):
+        if index < tip:
+            segments.append(f"{index}:{lit} {_time(hold)} cosine")
+        elif index == tip:
+            segments.append(f"{index}:{color} {_time(pulse)} pulse")
+        else:
+            segments.append(f"{index}:{floor_color} {_time(hold)} cosine")
+    return ["; ".join(segments)]
+
+
+#: One bright LED's worth of glint: a thin crest and a short shoulder,
+#: so the pass reads as light catching a rim, not as a comet with a tail.
+GLINT_TAIL: tuple[float, ...] = (1.0, 0.18, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def glint(
+    color: str,
+    *,
+    led_count: int,
+    lap_ms: int,
+    laps: int = 1,
+) -> list[str]:
+    """A thin bright pass sweeping a strip that stays lit.
+
+    Same roll machinery as the travelling wave, but the floor is held
+    at a reading-light level and the profile is a single sharp crest --
+    the difference between a specular highlight sliding over a lit
+    surface and a comet crossing a dark one.
+    """
+    return travelling_wave(
+        color,
+        led_count=led_count,
+        lap_ms=lap_ms,
+        tail=GLINT_TAIL,
+        laps=laps,
+        floor=0.62,
+    )
+
+
 def breath(
     color: str,
     floor_color: str,
@@ -479,13 +626,17 @@ __all__ = (
     "PROFILE_LEAD_MS",
     "SCATTER_STEPS",
     "TIDE_TAIL",
+    "bloom",
     "bounce",
     "breath",
     "converge",
     "crossfade",
     "drift",
+    "ember",
     "fill",
     "fits",
+    "frontier",
+    "glint",
     "gradient_wave",
     "lub_dub",
     "mix",

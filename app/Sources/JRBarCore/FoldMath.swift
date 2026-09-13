@@ -142,16 +142,30 @@ public struct AlphaBeta: Sendable {
     }
 
     /// Per-render-frame decay: a feed that goes quiet can't leave a lead
-    /// or a blur boost standing on a parked lid.
+    /// or a blur boost standing on a parked lid — and it can't leave the
+    /// *angle* standing either. Jitter-rejected samples never reach
+    /// `feed`, so a settling lid can starve the feed while `predicted`
+    /// still holds a lead; once stillness is confirmed the measurement
+    /// is the truth and the render angle rejoins it.
     public mutating func tick(dt: Double, at: TimeInterval) {
         guard dt.isFinite, dt > 0 else { return }
         if let last = lastFeedAt, at - last > Self.staleAfter {
             leadVelocity = 0
             velocity *= exp(-dt / 0.3)
             if abs(velocity) < 0.5 { velocity = 0 }
+            // Ease what is left of the lead home rather than freezing
+            // it mid-gesture — the stillness snap below lands it.
+            if let raw = previousRaw {
+                predicted += (raw - predicted) * (1 - exp(-dt / 0.2))
+                renderAngle = predicted
+            }
         }
         if let motion = lastMotionAt, at - motion > Self.stillConfirm {
             leadVelocity = 0
+            if let raw = previousRaw {
+                predicted = raw
+                renderAngle = raw
+            }
         }
     }
 }

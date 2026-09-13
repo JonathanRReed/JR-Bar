@@ -123,6 +123,20 @@ struct FoldMathTests {
         #expect(abs(p.velocity) < 1, "the boost source dies with the feed")
     }
 
+    @Test("a starved feed cannot leave the render angle led")
+    func predictorStaleAngle() {
+        var p = AlphaBeta()
+        p.feed(100, at: 0)
+        for i in 1...15 { p.feed(100 - Double(i), at: Double(i) / 60) }
+        // The lid settles; the jitter filter now rejects every sample,
+        // so `feed` never fires again. Ticks alone must walk the render
+        // angle back to the last measurement (85°) — before the fix a
+        // standing lead held forever, so a parked lid rendered ajar.
+        let quiet = 15.0 / 60
+        for i in 1...120 { p.tick(dt: 1.0 / 60, at: quiet + Double(i) / 60) }
+        #expect(p.renderAngle == 85)
+    }
+
     @Test("a non-finite sample cannot corrupt the predictor")
     func predictorGarbage() {
         var p = AlphaBeta()

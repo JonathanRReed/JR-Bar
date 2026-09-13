@@ -25,7 +25,9 @@ final class FoldOverlayWindow: NSPanel {
         // cadence. Ordered out it pauses: nothing to draw, nothing drawn.
         metalView.isPaused = true
         metalView.enableSetNeedsDisplay = false
-        metalView.preferredFramesPerSecond = min(120, Int(screen.maximumFramesPerSecond))
+        // A 0 maximum means "unspecified", not "freeze" — clamp to a
+        // real floor so the fold can't stall on an odd panel.
+        metalView.preferredFramesPerSecond = min(120, max(60, Int(screen.maximumFramesPerSecond)))
         metalView.delegate = renderer
         metalView.autoresizingMask = [.width, .height]
         contentView = metalView

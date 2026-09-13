@@ -233,18 +233,21 @@ public enum AquariumModel {
 
     /// The session set as fish, in the session list's order. A session
     /// that leaves the list takes its fish with it. Main sessions swim
-    /// as full fish; sub-agents (`session.isSubagent`) become fry
-    /// schooling around their parent's fish — or, when the parent
-    /// isn't listed, around the largest same-provider fish, or
-    /// free-swimming when there isn't one. A parent that sinks or
-    /// drifts off takes its school with it.
+    /// as full fish; workers with a named parent become fry schooling
+    /// around their parent's fish — or, when the parent isn't listed,
+    /// around the largest same-provider fish, or free-swimming when
+    /// there isn't one. A parent that sinks or drifts off takes its
+    /// school with it.
     public static func reduce(sessions: [CoreSession], previous: [Fish], now: Date) -> [Fish] {
         let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // Mains first, so a fry can anchor to its parent's fish even
-        // when the worker precedes it in the session list.
+        // when the worker precedes it in the session list. "Main" is
+        // the panel's own rule (`mainSessions`): `isSubagent` would
+        // wrongly fry a `kind == "main"` session that merely names a
+        // parent, or a worker with no parent to school under.
         var mainByID: [String: Fish] = [:]
         var mainsInOrder: [Fish] = []
-        for session in sessions where !session.isSubagent {
+        for session in sessions where isMain(session) {
             let fish = fishFor(session: session, previous: previousByID[session.id], now: now)
             mainByID[session.id] = fish
             mainsInOrder.append(fish)
@@ -254,7 +257,7 @@ public enum AquariumModel {
         var result: [Fish] = []
         result.reserveCapacity(sessions.count)
         for session in sessions {
-            guard session.isSubagent else {
+            guard !isMain(session) else {
                 result.append(mainByID[session.id] ?? fishFor(session: session, previous: previousByID[session.id], now: now))
                 continue
             }
@@ -291,6 +294,12 @@ public enum AquariumModel {
             result.append(fish)
         }
         return result
+    }
+
+    /// A full-sized fish, matching the panel's `mainSessions` rule:
+    /// `kind == "main"`, or a worker with no parent to swim under.
+    static func isMain(_ session: CoreSession) -> Bool {
+        session.kind == "main" || session.parent == nil
     }
 
     /// One session → fish, preserving the swim of the `previous` fish

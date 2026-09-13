@@ -208,9 +208,18 @@ MOTION_KITT = "kitt"
 MOTION_GRADIENT = "gradient"
 MOTION_MARQUEE = "marquee"
 MOTION_DUOTONE = "duotone"
+# The 2026-09-12 expansion, mined from upstream's own animation catalog:
+# ember is the centre-bright idle gradient (#41), bloom is the lid-open
+# centre-out spread as a loop, frontier is the battery bar's pulsing
+# leading edge, and glint is a thin specular pass over a lit strip.
+MOTION_EMBER = "ember"
+MOTION_BLOOM = "bloom"
+MOTION_FRONTIER = "frontier"
+MOTION_GLINT = "glint"
 PROVIDER_ANIMATION_CHOICES: tuple[str, ...] = (
     PROVIDER_ANIMATION_AUTO,
     MOTION_BREATHE,
+    MOTION_EMBER,
     MOTION_DUOTONE,
     MOTION_CHASE,
     MOTION_GRADIENT,
@@ -218,13 +227,16 @@ PROVIDER_ANIMATION_CHOICES: tuple[str, ...] = (
     MOTION_SCANNER,
     MOTION_KITT,
     MOTION_COMET,
+    MOTION_GLINT,
     MOTION_FLICKER,
     MOTION_STACK,
     MOTION_TWINKLE,
     MOTION_DRIFT,
     MOTION_CONVERGE,
+    MOTION_BLOOM,
     MOTION_AURORA,
     MOTION_TIDE,
+    MOTION_FRONTIER,
     MOTION_MARQUEE,
     MOTION_STEADY,
     MOTION_BLINK,
@@ -232,6 +244,7 @@ PROVIDER_ANIMATION_CHOICES: tuple[str, ...] = (
 PROVIDER_ANIMATION_LABELS: dict[str, str] = {
     PROVIDER_ANIMATION_AUTO: "Automatic",
     MOTION_BREATHE: "Breathe",
+    MOTION_EMBER: "Ember",
     MOTION_CHASE: "Chase",
     MOTION_HEARTBEAT: "Heartbeat",
     MOTION_SCANNER: "Scanner",
@@ -247,6 +260,9 @@ PROVIDER_ANIMATION_LABELS: dict[str, str] = {
     MOTION_GRADIENT: "Gradient",
     MOTION_MARQUEE: "Marquee",
     MOTION_DUOTONE: "Duotone",
+    MOTION_BLOOM: "Bloom",
+    MOTION_FRONTIER: "Frontier",
+    MOTION_GLINT: "Glint",
     MOTION_STEADY: "Steady",
     MOTION_BLINK: "Blink",
 }
@@ -268,6 +284,10 @@ PROVIDER_ANIMATION_DESCRIPTIONS: dict[str, str] = {
     MOTION_GRADIENT: "The travelling wave, but each LED carries its own shade of the color — a gradient rolling by. Shared strips keep the flare; Cycle turns keep the shades.",
     MOTION_MARQUEE: "A palette seeded from the color, endlessly rotating around the bar. Shared strips ride it as a narrow travelling flare.",
     MOTION_DUOTONE: "A slow swell that alternates between two tones of the color. Cycle turns keep both tones; interleaved strips breathe.",
+    MOTION_EMBER: "Coals glowing: the middle burns hottest, the rim barely smoulders, all as one slow swell. Shared strips ride it as a unison swell over a warm bed.",
+    MOTION_BLOOM: "Light opens from the center outward, holds lit, then fades — the lid-open signature as a loop. Shared strips ride it as the full swell.",
+    MOTION_FRONTIER: "A held fill whose leading edge pulses into the dark — a progress bar with a live tip. Shared strips pulse the tip over a raised bed.",
+    MOTION_GLINT: "One thin bright pass sweeping a lit strip, like light catching a rim. Shared strips ride it as a narrow flare over a lit bed.",
     MOTION_STEADY: "Holds its color. Never moves.",
     MOTION_BLINK: "Hard-edged on/off, no easing.",
 }
@@ -2107,6 +2127,7 @@ def _speed_safe_motion(motion: str, *, cycle_ms: int) -> str:
         MOTION_DRIFT,
         MOTION_AURORA,
         MOTION_DUOTONE,
+        MOTION_EMBER,
     ):
         return MOTION_BREATHE
     if motion == MOTION_BLINK:
@@ -2120,6 +2141,9 @@ def _speed_safe_motion(motion: str, *, cycle_ms: int) -> str:
         MOTION_TIDE,
         MOTION_MARQUEE,
         MOTION_GRADIENT,
+        MOTION_BLOOM,
+        MOTION_FRONTIER,
+        MOTION_GLINT,
     ):
         return MOTION_CHASE
     return motion
@@ -2324,6 +2348,32 @@ def _motion_segments(
             floor_segment,
             f"{led_index}:{peak} {duration}ms pulse {delay_ms + offset}ms",
         )
+    if motion == MOTION_EMBER:
+        # Coals never go dark: the bed is a warm fraction of the peak,
+        # so the shared-strip conversion is breathe-with-a-glowing-bed.
+        bed = scale_hex_brightness(peak, 0.30)
+        return (
+            f"{led_index}:{bed} {settle_ms}ms cosine",
+            f"{led_index}:{peak} {cycle_ms}ms pulse{tail}",
+        )
+    if motion == MOTION_FRONTIER:
+        # The fill is the bed and the tip breathes where it sits -- an
+        # edge pulsing in place, so it takes delay_ms, not chase_delay.
+        bed = scale_hex_brightness(peak, 0.45)
+        tip_ms = max(MIN_FLASH_CYCLE_MS, cycle_ms // 2)
+        return (
+            f"{led_index}:{bed} {settle_ms}ms cosine",
+            f"{led_index}:{peak} {tip_ms}ms pulse{tail}",
+        )
+    if motion == MOTION_GLINT:
+        # A thin flare that travels, over a bed that stays lit -- the
+        # flare class's offsets, but the strip never goes dark.
+        bed = scale_hex_brightness(peak, 0.62)
+        width_ms = max(MIN_FLASH_CYCLE_MS, cycle_ms // 3)
+        return (
+            f"{led_index}:{bed} {settle_ms}ms cosine",
+            f"{led_index}:{peak} {width_ms}ms pulse {delay_ms + chase_delay_ms}ms",
+        )
     if motion in (
         MOTION_CHASE,
         MOTION_SCANNER,
@@ -2334,6 +2384,7 @@ def _motion_segments(
         MOTION_TIDE,
         MOTION_MARQUEE,
         MOTION_GRADIENT,
+        MOTION_BLOOM,
     ):
         # In a MULTI-agent layout a provider's positional sweep rides
         # the travelling-wave conversion (delay = its share of the
@@ -2498,6 +2549,14 @@ def _motion_turn_lines(
             seed=5 if aurora else 3,
             stretch=2.0 if aurora else 1.6,
         )
+    if motion == MOTION_EMBER:
+        return shapes.ember(
+            peak, floor_color, led_count=led_count, cycle_ms=duration_ms
+        )
+    if motion == MOTION_FRONTIER:
+        return shapes.frontier(
+            peak, floor_color, led_count=led_count, cycle_ms=duration_ms
+        )
 
     laps = 1 if compact else MOTION_ROLL_LAPS
     if motion in _TRAVELLING_MOTIONS and not shapes.positional(led_count):
@@ -2522,6 +2581,12 @@ def _motion_turn_lines(
             lap_ms=max(1, int(duration_ms * 0.6)),
             tail=shapes.COMET_TAIL,
             laps=laps,
+        )
+    if motion == MOTION_GLINT:
+        # Glint keeps its lit bed on every strip length -- even the Dot,
+        # where the other travelling shapes degrade to a dark crossfade.
+        return shapes.glint(
+            peak, led_count=led_count, lap_ms=duration_ms, laps=laps
         )
     if motion == MOTION_MARQUEE:
         return shapes.travelling_wave(
@@ -2566,6 +2631,13 @@ def _motion_turn_lines(
         )
     if motion == MOTION_CONVERGE:
         return shapes.converge(
+            peak,
+            floor_color,
+            led_count=led_count,
+            step_ms=_travel_step_ms(duration_ms, led_count),
+        )
+    if motion == MOTION_BLOOM:
+        return shapes.bloom(
             peak,
             floor_color,
             led_count=led_count,

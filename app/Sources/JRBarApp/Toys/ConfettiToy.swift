@@ -85,8 +85,10 @@ private final class ConfettiWindow: NSPanel {
     private var closer: DispatchWorkItem?
 
     /// How long a burst runs before the window closes: long enough for
-    /// the last fluttering streamer to reach the band's fade-out.
-    static let life: TimeInterval = 2.6
+    /// the last fluttering streamer to reach the band's fade-out — the
+    /// slowest streamer needs ~3.1 s of runway, so 2.6 s used to
+    /// vanish pieces still visibly falling.
+    static let life: TimeInterval = 3.4
     /// The Reduce Motion bloom is shorter — it is one fade, not a burst.
     static let flashLife: TimeInterval = 0.9
 

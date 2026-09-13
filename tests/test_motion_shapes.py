@@ -99,6 +99,12 @@ ALL_SHAPES = {
     "breathe": lambda n: shapes.breath(COLOR, FLOOR, cycle_ms=2200),
     "duotone": lambda n: shapes.crossfade(COLOR, "#12E3B0", cycle_ms=2200),
     "heartbeat": lambda n: shapes.lub_dub(COLOR, FLOOR, cycle_ms=2200),
+    "ember": lambda n: shapes.ember(COLOR, FLOOR, led_count=n, cycle_ms=3200),
+    "bloom": lambda n: shapes.bloom(COLOR, FLOOR, led_count=n, step_ms=140),
+    "frontier": lambda n: shapes.frontier(
+        COLOR, FLOOR, led_count=n, cycle_ms=2400
+    ),
+    "glint": lambda n: shapes.glint(COLOR, led_count=n, lap_ms=2400, laps=6),
 }
 
 
@@ -121,7 +127,17 @@ MAX_FRAME_STEP = 0.16
 #: roll interpolates linearly in the firmware's drive codes, so its steepest
 #: step in RELATIVE LUMINANCE lands at the top of the gamma curve: the bar
 #: below is really a floor on how long a crest spends between neighbours.
-AMBIENT_SHAPES = ("breathe", "chase", "drift", "gradient", "marquee", "tide", "twinkle")
+AMBIENT_SHAPES = (
+    "breathe",
+    "chase",
+    "drift",
+    "ember",
+    "glint",
+    "gradient",
+    "marquee",
+    "tide",
+    "twinkle",
+)
 GENTLE_FRAME_STEP = 0.10
 
 
@@ -241,3 +257,50 @@ def test_a_profile_resamples_onto_a_shorter_strip() -> None:
     assert len(fitted) == 4
     assert fitted[0] == 1.0
     assert fitted[-1] < fitted[0]
+
+
+def test_ember_burns_hottest_in_the_middle() -> None:
+    """The centre pair crests well above the rim, and nothing goes dark."""
+    frames = sample(program(shapes.ember(COLOR, FLOOR, led_count=8, cycle_ms=3200)), 8,
+                    frames=200, start_ms=700)
+    peak_frame = max(luminance(frames), key=lambda frame: sum(frame))
+    centre = (peak_frame[3] + peak_frame[4]) / 2
+    rim = (peak_frame[0] + peak_frame[7]) / 2
+    assert centre > rim * 1.5
+    assert min(peak_frame) > 0.0  # coals never fully die
+
+
+def test_bloom_lights_the_centre_before_the_edges() -> None:
+    """At mid-rise the middle is lit while the rim still rests."""
+    frames = sample(program(shapes.bloom(COLOR, FLOOR, led_count=8, step_ms=140)), 8,
+                    frames=12, start_ms=400)
+    mid = luminance(frames)[6]  # ~500ms in: centres risen, rim still climbing
+    assert mid[3] > 0.3 and mid[4] > 0.3
+    assert mid[0] < mid[3] and mid[7] < mid[4]
+
+
+def test_frontier_holds_its_fill_while_the_tip_breathes() -> None:
+    """The fill sits constant across the cycle; the tip LED oscillates."""
+    # start_ms past the first rise: the fill eases up once, then holds.
+    frames = sample(program(shapes.frontier(COLOR, FLOOR, led_count=8, cycle_ms=2400)), 8,
+                    frames=150, start_ms=1400)
+    tracks = list(zip(*luminance(frames)))
+    # LEDs 0..4 hold (level 0.625 of 8): near-constant, well above floor.
+    for held in tracks[:5]:
+        assert min(held) > 0.4
+        assert max(held) - min(held) < 0.1
+    # LED 5 is the breathing tip: a real swing, touching both ends.
+    tip = tracks[5]
+    assert max(tip) - min(tip) > 0.4
+    # LEDs 6..7 stay in the dark past the frontier.
+    for dark in tracks[6:]:
+        assert max(dark) < 0.05
+
+
+def test_glint_sweeps_a_lit_strip() -> None:
+    """A travelling crest, but the bed never drops out from under it."""
+    frames = sample(program(shapes.glint(COLOR, led_count=8, lap_ms=2400)), 8,
+                    frames=200, start_ms=600)
+    assert min(min(frame) for frame in luminance(frames)) > 0.2
+    positions = head_positions(frames)
+    assert len(set(positions)) >= 6  # the crest actually crosses the strip

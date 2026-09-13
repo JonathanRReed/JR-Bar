@@ -303,7 +303,12 @@ final class FoldToy: Toy {
     private func refreshTick() {
         let armed = settings.enabled && settings.provider == .jrbar && !paused
             && !rendererFailed && FoldCapturePermission.granted && pauseReason == nil
-        if armed {
+        // The link exists only to move pixels: a parked fold — gate
+        // shut and the ease finished — runs no timer at all. Without
+        // this check the link was born and killed on every parked
+        // sensor sample.
+        let busy = targetTurn > 0 || displayedTurn > 0.002
+        if armed && busy {
             if tickLink == nil {
                 // On macOS the link comes from the screen it drives.
                 let link = (FoldOverlayWindow.builtinScreen() ?? NSScreen.main)?
@@ -433,20 +438,14 @@ final class FoldToy: Toy {
         Task { await capture.stop() }
     }
 
-    /// The raw reading always lands — the gate re-checks every sample so
-    /// a suppressed or predicted reading above the limit still hides the
-    /// overlay — then the filter and predictor decide what the fold does
-    /// with it.
+    /// The raw reading always lands — `targetTurn` gates on it every
+    /// tick, so a suppressed or predicted reading above the limit still
+    /// drives the turn to zero and the overlay eases home on the same
+    /// glide the simulate slider gets — then the filter and predictor
+    /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
         rawAngle = sample.angle
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
-        if simulatedAngle == nil,
-           !(sample.angle.map {
-               FoldMath.allows(rawAngle: $0, activation: settings.activationAngle)
-           } ?? true) {
-            displayedTurn = 0
-            overlay?.setVisible(false)
-        }
         guard let angle = sample.angle, simulatedAngle == nil,
               jitter.accept(angle) else { return }
         predictor.feed(angle, at: sample.at)

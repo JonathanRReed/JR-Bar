@@ -36,6 +36,10 @@ enum FoldCaptureError: LocalizedError {
 final class FoldCapture {
     private let sink = Sink()
     private var stream: SCStream?
+    /// Set by `stop` while `start` is still suspended inside an await —
+    /// the start re-checks it before keeping the stream it just opened,
+    /// so a pause can't orphan a live capture on a dropped FoldCapture.
+    private var stopRequested = false
     /// Called once per accepted frame so the overlay can push + redraw.
     var onFrame: (@MainActor (CVPixelBuffer) -> Void)?
     /// True once at least one complete frame has been delivered.
@@ -56,8 +60,10 @@ final class FoldCapture {
     /// again while running.
     func start() async throws {
         guard stream == nil else { return }
+        stopRequested = false
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
+        guard !stopRequested else { return }
         guard let display = content.displays.first(where: { CGDisplayIsBuiltin($0.displayID) != 0 }),
               let ownApp = content.applications.first(where: {
                   $0.processID == ProcessInfo.processInfo.processIdentifier })
@@ -77,10 +83,17 @@ final class FoldCapture {
         try stream.addStreamOutput(sink, type: .screen,
                                  sampleHandlerQueue: DispatchQueue(label: "jrbar.fold.capture"))
         try await stream.startCapture()
+        if stopRequested {
+            // A stop landed while start was suspended: close what just
+            // opened instead of storing it where nobody can reach it.
+            try? await stream.stopCapture()
+            return
+        }
         self.stream = stream
     }
 
     func stop() async {
+        stopRequested = true
         let stream = stream
         self.stream = nil
         hasFrame = false

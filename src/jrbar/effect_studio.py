@@ -415,12 +415,29 @@ def build_gallery_rows(
         sorted(
             rows,
             key=lambda row: (
+                _query_rank(row, needle),
                 _SEMANTIC_ORDER[row.semantic_family],
                 row.label.casefold(),
                 row.effect_id,
             ),
         )
     )
+
+
+def _query_rank(row: GalleryRow, needle: str) -> int:
+    """A search that names an effect should find that effect first.
+
+    Without this a description-only hit outranks the row whose id or
+    label literally matches the query — `frontier` ("a pulsing tip")
+    beat `pulse` for the query "pulse".
+    """
+    if not needle:
+        return 0
+    if needle == row.effect_id.casefold() or needle == row.label.casefold():
+        return 0
+    if needle in row.effect_id.casefold() or needle in row.label.casefold():
+        return 1
+    return 2
 
 
 @dataclass(frozen=True, slots=True)
