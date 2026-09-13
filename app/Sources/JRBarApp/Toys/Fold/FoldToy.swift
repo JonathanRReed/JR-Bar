@@ -2,6 +2,7 @@ import AppKit
 import CoreVideo
 import JRBarCore
 import Observation
+import QuartzCore
 import SwiftUI
 
 /// Fold (docs/TOYS.md): the desktop tilts, dims and blurs as the lid
@@ -24,6 +25,10 @@ final class FoldToy: Toy {
     /// The Simulate slider owns the angle while it is held, so the toy
     /// works on a Mac with no lid sensor at all.
     private(set) var simulatedAngle: Double?
+    /// The newest raw sensor reading, jitter unfiltered — the activation
+    /// gate checks this so a filtered straggler can never hold the
+    /// overlay open above the limit.
+    private(set) var rawAngle: Double?
     /// The last sensor reading the jitter filter let through.
     private(set) var filteredAngle: Double?
     /// Once Metal or the shader fails we stop trying: the chip keeps
@@ -43,6 +48,12 @@ final class FoldToy: Toy {
     @ObservationIgnored private var overlay: FoldOverlayWindow?
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    /// The smoothed radians past the anchor the renderer is showing —
+    /// sensor readings step at 30 Hz, the fold should glide.
+    @ObservationIgnored private var displayedDelta = 0.0
+    @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
+    /// The displayParameters version the overlay was last framed for.
+    @ObservationIgnored private var reframedVersion = -1
     /// Set when a safety input parked us; only a resume from here waits
     /// the half-second quiet — a first fold starts right away.
     @ObservationIgnored private var paused = false
@@ -155,19 +166,22 @@ final class FoldToy: Toy {
             screenAsleep: screenAsleep)
     }
 
-    private var effectiveAngle: Double? { simulatedAngle ?? filteredAngle }
+    /// The freshest truth for the activation gate: the simulation while
+    /// held, else the raw sensor reading — never the filtered one, so a
+    /// suppressed sample cannot hold the overlay open above the limit.
+    private var gateAngle: Double? { simulatedAngle ?? rawAngle }
 
-    private var currentFold: Double {
-        guard let angle = effectiveAngle else { return 0 }
-        return FoldMath.foldAmount(angle: angle, activation: settings.activationAngle)
-    }
+    /// What drives the fold amount: the simulation while held, else the
+    /// jitter-filtered reading.
+    private var effectiveAngle: Double? { simulatedAngle ?? filteredAngle }
 
     // MARK: Engine
 
     /// One place that reads every input and makes the machine match:
-    /// sensor polling while on and ours to render, capture + overlay only
-    /// while a fold is actually on screen, a half-second quiet before a
-    /// paused fold comes back.
+    /// sensor polling while on and ours to render, capture live while
+    /// unpaused (it survives the activation line — restarting the stream
+    /// on every threshold crossing was the stutter), a half-second quiet
+    /// before a paused fold comes back.
     private func reconcile() {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
@@ -175,6 +189,7 @@ final class FoldToy: Toy {
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
+            displayedDelta = 0
             standDown()
             sensor.setPolling(false)
             return
@@ -191,6 +206,7 @@ final class FoldToy: Toy {
             paused = true
             resumeWork?.cancel()
             resumeWork = nil
+            displayedDelta = 0
             standDown()
             return
         }
@@ -211,26 +227,46 @@ final class FoldToy: Toy {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
             return
         }
+        ensureCaptureRunning()
+        if displayVersion != reframedVersion {
+            overlay?.reframe()
+            reframedVersion = displayVersion
+        }
         updatePresentation()
     }
 
-    /// Shows, reshapes or hides the overlay to match `currentFold`.
+    /// Gates, smooths and presents the fold. The gate reads the raw
+    /// angle; the shader gets an eased delta so 30 Hz sensor steps glide
+    /// instead of clicking.
     private func updatePresentation() {
-        let fold = currentFold
-        guard fold > 0, pauseReason == nil else {
-            hideOverlay()
+        guard let gate = gateAngle,
+              FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),
+              pauseReason == nil else {
+            displayedDelta = 0
+            overlay?.setVisible(false)
+            return
+        }
+        let target = FoldMath.deltaRadians(
+            angle: effectiveAngle ?? gate, activation: settings.activationAngle)
+        let now = CACurrentMediaTime()
+        displayedDelta = FoldMath.smoothed(
+            current: displayedDelta, target: target, dt: now - lastDeltaTick)
+        lastDeltaTick = now
+        guard FoldMath.showsOverlay(
+            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false) else {
+            overlay?.setVisible(false)
             return
         }
         guard let overlay = ensureOverlay() else { return }
-        overlay.reframe()
         let settings = settings
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let f = Float(fold)
-        overlay.renderer.weights = FoldRenderer.Weights(
-            warp: f * Float(settings.perspective),
-            dim: settings.style == .tilt ? 0 : f * Float(settings.shade),
-            blur: settings.style == .fog && !reduceMotion ? f * Float(settings.blur) : 0)
-        ensureCaptureRunning()
+        let fold = Float(FoldMath.foldAmount(
+            angle: effectiveAngle ?? gate, activation: settings.activationAngle))
+        overlay.renderer.params = FoldRenderer.Params(
+            delta: Float(displayedDelta),
+            blur: settings.style == .fog && !reduceMotion ? Float(settings.blur) : 0,
+            persp: Float(settings.perspective),
+            dim: settings.style == .tilt ? 0 : fold * Float(settings.shade))
         overlay.setVisible(true)
         overlay.redraw()
     }
@@ -240,8 +276,8 @@ final class FoldToy: Toy {
         guard let screen = FoldOverlayWindow.builtinScreen() else { return nil }
         do {
             let overlay = try FoldOverlayWindow(screen: screen)
-            overlay.renderer.frameSource = { [weak self] in self?.capture?.latestPixelBuffer() }
             self.overlay = overlay
+            reframedVersion = -1
             return overlay
         } catch {
             rendererFailed = true
@@ -250,14 +286,23 @@ final class FoldToy: Toy {
         }
     }
 
+    /// The stream runs while the toy is enabled and unpaused — hiding
+    /// above the activation angle costs nothing but the frames.
     private func ensureCaptureRunning() {
         guard capture == nil else { return }
         let capture = FoldCapture()
         self.capture = capture
-        capture.onFrame = { [weak self] in self?.overlay?.redraw() }
+        capture.onFrame = { [weak self] buffer in
+            guard let self, let overlay = self.overlay else { return }
+            // Push once per delivered frame; a draw then costs one
+            // triangle, not a texture conversion.
+            if overlay.renderer.setDesktopFrame(buffer), overlay.isVisible {
+                overlay.redraw()
+            }
+        }
         Task { [weak self, weak capture] in
             do {
-                try await capture?.start(excluding: self?.overlay)
+                try await capture?.start()
             } catch {
                 guard let self, self.capture === capture else { return }
                 self.capture = nil
@@ -269,19 +314,22 @@ final class FoldToy: Toy {
     /// Overlay off, capture stopped. The sensor is the caller's choice —
     /// a pause keeps it, off/external stops it.
     private func standDown() {
-        hideOverlay()
-    }
-
-    private func hideOverlay() {
         overlay?.setVisible(false)
         guard let capture else { return }
         self.capture = nil
         Task { await capture.stop() }
     }
 
-    /// The sensor's raw reading through the jitter filter; accepted
-    /// readings drive the presentation.
+    /// The raw reading always lands — the gate re-checks every sample so
+    /// a jitter-suppressed reading above the limit still hides the
+    /// overlay — and the filter decides whether it moves the fold.
     private func noteSensorSample(_ angle: Double?) {
+        rawAngle = angle
+        if simulatedAngle == nil,
+           !(angle.map { FoldMath.allows(rawAngle: $0, activation: settings.activationAngle) } ?? true) {
+            displayedDelta = 0
+            overlay?.setVisible(false)
+        }
         guard let angle, jitter.accept(angle) else { return }
         filteredAngle = angle
         reconcile()
@@ -438,7 +486,7 @@ private struct FoldControlsView: View {
                     ValueText(text: percent(toy.settings.perspective))
                 }
             } label: {
-                SettingLabel(title: "Perspective", subtitle: "How far the screen tips.")
+                SettingLabel(title: "Perspective", subtitle: "How much the far edge tapers, like a real tilted plane.")
             }
 
             LabeledContent {

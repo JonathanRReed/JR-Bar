@@ -2,41 +2,68 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-/// FoldMath is the pure half of the Fold toy (docs/TOYS.md): how far the
-/// desktop is folded for a lid angle, which sensor readings are worth a
+/// FoldMath is the pure half of the Fold toy (docs/TOYS.md): the radians
+/// the lid has swung past its anchor, which sensor readings are worth a
 /// redraw, and which safety input names the pause. `#expect` cannot hold
 /// a mutating call, so the filter's answers are collected first.
 @Suite("Fold math")
 struct FoldMathTests {
-    @Test("at or above the activation angle nothing is folded")
-    func atActivation() {
+    @Test("at the anchor the delta is zero — the overlay is pixel-identical")
+    func atAnchor() {
+        #expect(FoldMath.deltaRadians(angle: 110, activation: 110) == 0)
         #expect(FoldMath.foldAmount(angle: 110, activation: 110) == 0)
-        #expect(FoldMath.foldAmount(angle: 130, activation: 110) == 0)
     }
 
-    @Test("the ramp is linear: twenty degrees below activation is half folded")
-    func ramp() {
-        #expect(FoldMath.foldAmount(angle: 90, activation: 110) == 0.5)
-        #expect(FoldMath.foldAmount(angle: 100, activation: 110) == 0.25)
+    @Test("delta is positive past the anchor and grows with the swing")
+    func deltaGrows() {
+        let ten = FoldMath.deltaRadians(angle: 100, activation: 110)
+        let forty = FoldMath.deltaRadians(angle: 70, activation: 110)
+        #expect(abs(ten - 10 * .pi / 180) < 1e-9)
+        #expect(abs(forty - 40 * .pi / 180) < 1e-9)
+        #expect(FoldMath.foldAmount(angle: 100, activation: 110) > 0)
+        #expect(FoldMath.foldAmount(angle: 70, activation: 110)
+                > FoldMath.foldAmount(angle: 100, activation: 110))
     }
 
-    @Test("forty degrees below activation is fully folded, and further clamps")
-    func fullFold() {
-        #expect(FoldMath.foldAmount(angle: 70, activation: 110) == 1)
-        #expect(FoldMath.foldAmount(angle: 0, activation: 110) == 1)
+    @Test("the delta saturates past the range and negative swings are allowed a little")
+    func deltaClamps() {
+        #expect(FoldMath.deltaRadians(angle: 0, activation: 110) == 1.25)
+        #expect(FoldMath.deltaRadians(angle: 160, activation: 110) == -0.65)
+        #expect(FoldMath.deltaRadians(angle: 115, activation: 110) < 0)
     }
 
-    @Test("the activation angle moves the whole ramp")
-    func movedActivation() {
-        #expect(FoldMath.foldAmount(angle: 120, activation: 160) == 1)
-        #expect(FoldMath.foldAmount(angle: 140, activation: 160) == 0.5)
-        #expect(FoldMath.foldAmount(angle: 55, activation: 60) == 0.125)
-    }
-
-    @Test("a nonsense angle folds nothing rather than exploding")
+    @Test("a nonsense angle gives a zero delta rather than exploding")
     func nonFinite() {
+        #expect(FoldMath.deltaRadians(angle: .nan, activation: 110) == 0)
+        #expect(FoldMath.deltaRadians(angle: .infinity, activation: 110) == 0)
         #expect(FoldMath.foldAmount(angle: .nan, activation: 110) == 0)
-        #expect(FoldMath.foldAmount(angle: .infinity, activation: 110) == 0)
+    }
+
+    @Test("the activation gate reads the raw angle, at or below the limit")
+    func activationGate() {
+        #expect(FoldMath.allows(rawAngle: 110, activation: 110))
+        #expect(FoldMath.allows(rawAngle: 60, activation: 110))
+        #expect(!FoldMath.allows(rawAngle: 110.5, activation: 110))
+        #expect(!FoldMath.allows(rawAngle: .nan, activation: 110))
+    }
+
+    @Test("the overlay only shows with a frame and a visible tilt")
+    func overlayGate() {
+        #expect(FoldMath.showsOverlay(delta: 0.01, hasFrame: true))
+        #expect(!FoldMath.showsOverlay(delta: 0.001, hasFrame: true),
+                "aligned paints nothing")
+        #expect(!FoldMath.showsOverlay(delta: 0.5, hasFrame: false),
+                "no captured frame, no overlay")
+    }
+
+    @Test("the eased delta approaches its target and snaps on bad input")
+    func smoothing() {
+        let stepped = FoldMath.smoothed(current: 0, target: 1, dt: 0.033)
+        #expect(stepped > 0 && stepped < 1, "one 30 Hz tick moves partway")
+        let more = FoldMath.smoothed(current: stepped, target: 1, dt: 0.5)
+        #expect(abs(more - 1) < 0.01, "half a second lands on the target")
+        #expect(FoldMath.smoothed(current: .nan, target: 1, dt: 0.1) == 1)
+        #expect(FoldMath.smoothed(current: 0, target: 1, dt: 0) == 1)
     }
 
     @Test("the first reading always passes the jitter filter")

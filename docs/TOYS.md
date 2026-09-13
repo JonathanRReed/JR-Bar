@@ -98,28 +98,41 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   `status = .unavailable("No lid-angle sensor on this Mac")` and the
   Simulate slider still works.
 - **Capture** `FoldCapture`: ScreenCaptureKit on the built-in display
-  (`CGDisplayIsBuiltin`), `SCContentFilter(display:excludingWindows:)`
-  excluding the overlay window(s); 30 fps; no audio. Permission via
+  (`CGDisplayIsBuiltin`), `SCContentFilter(display:excludingApplications:)`
+  excluding JR-Bar itself; 30 fps; BGRA sRGB; no audio, no cursor;
+  complete frames only; capped at 2560 px on the long edge. The stream
+  stays alive across the activation line — only the overlay hides — so
+  re-entering a fold never pays a capture restart. Permission via
   `CGPreflightScreenCaptureAccess()`; request with
   `CGRequestScreenCaptureAccess()`; deep link
   `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture`.
   Denied → `.needsPermission("Needs Screen Recording")` and nothing else
   runs.
-- **Render** `FoldOverlayWindow`: borderless `NSWindow`, `.screenSaver`
-  level, `ignoresMouseEvents = true`, `sharingType = .none`, covers the
-  built-in screen only, `MTKView` with one Metal pipeline. Fragment shader
-  takes `fold ∈ [0,1]` (0 at/above activation angle, 1 at 40° below it,
-  clamped) and the three style weights, and does: perspective warp about
-  the hinge (bottom) edge scaled by `perspective`; darken toward the top by
-  `shade` (Dusk, Fog); separable blur whose radius grows toward the top by
-  `blur` (Fog). Tilt = perspective only. The overlay is hidden entirely
-  when `fold == 0`, so at rest nothing runs.
+- **Render** `FoldOverlayWindow` + `FoldRenderer`: borderless `NSWindow`,
+  `.screenSaver` level, `ignoresMouseEvents = true`,
+  `sharingType = .none`, covers the built-in screen only, `MTKView` with
+  one Metal pipeline. The fragment shader treats the captured desktop as
+  a rigid plane still standing at the anchor angle: each pixel projects
+  back onto that plane — parallel projection, blended toward a finite-eye
+  perspective by `perspective` — so at delta 0 the render is
+  pixel-identical and activating is invisible. `delta` is radians past
+  the anchor (`(activation − angle)·π/180`, clamped −0.65…1.25), eased
+  with an ~80 ms exponential filter so sensor steps glide. Blur is a
+  4-level MPS Gaussian pyramid baked once per frame, mixed by a radius
+  that grows toward the far edge (`smoothstep(0.08,1,h)·|sin δ|·65`,
+  scaled by `blur`); the image boundary feathers out over the blur radius
+  into a dark surround; `shade` dims toward the top (Dusk, Fog). Tilt =
+  projection only. The overlay is ordered out whenever `|delta| ≤ 0.002`
+  or no frame has landed, so at rest nothing runs.
 - **Safety**: pause (hide overlay, stop capture, keep sensor) when the
-  lid reads ≤ 5°, when `core.state.power.closedLid` says closed, when the
-  built-in display is missing or mirrored, on screen sleep; resume 0.5 s
-  after all clear. Never pick an external display. Reduce Motion: the
-  fold still follows the lid (it's a function of angle, not an animation)
-  but the blur pass is skipped.
+  lid reads ≤ 5°, when `AppleClamshellState` on `IOPMrootDomain` says
+  closed — the daemon's `closed_lid.holding` is the keep-awake
+  assertion, NOT lid state — when the built-in display is missing or
+  mirrored, on screen sleep; resume 0.5 s after all clear. The
+  activation gate reads the raw angle so a jitter-suppressed sample can
+  never hold the overlay open. Never pick an external display. Reduce
+  Motion: the fold still follows the lid (it's a function of angle, not
+  an animation) but the blur pass is skipped.
 - **Swap**: `FoldProvider.bendy` / `.lidPlane`: detect via
   `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` (Lid Plane's
   bundle id is in its repo `Info.plist`; Bendy's is read from

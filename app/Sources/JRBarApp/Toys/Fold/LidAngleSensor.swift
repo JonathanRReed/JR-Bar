@@ -76,14 +76,16 @@ final class LidAngleSensor {
     }
 
     /// Report 1: byte 0 is the report id, bytes 1–2 are the angle as a
-    /// little-endian UInt16 of degrees.
+    /// little-endian UInt16 of degrees. A reading outside 0–180 is a
+    /// corrupt report, not a lid position — the hinge cannot be there.
     private func readAngle() -> Double? {
         for device in devices {
             var report = [UInt8](repeating: 0, count: 8)
             var length = CFIndex(report.count)
             let result = IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(1), &report, &length)
             guard result == kIOReturnSuccess, length >= 3 else { continue }
-            return Double(UInt16(report[1]) | (UInt16(report[2]) << 8))
+            let angle = Double(UInt16(report[1]) | (UInt16(report[2]) << 8))
+            if (0...180).contains(angle) { return angle }
         }
         return nil
     }

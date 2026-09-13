@@ -5,14 +5,48 @@ import Foundation
 /// pieces (`FoldToy`, `LidAngleSensor`, the overlay) only feed values in
 /// and act on what comes back.
 public enum FoldMath {
-    /// How folded the desktop looks for a lid angle: 0 at or above the
-    /// activation angle, ramping linearly to 1 forty degrees below it,
-    /// clamped to [0, 1]. A sensor reading makes no sense below ~0 or
-    /// above ~135 anyway; the clamp is what matters.
+    /// The renderer's delta saturates here: a lid more than ~72° past the
+    /// anchor reads the same as one at 72°, and above the anchor a small
+    /// negative swing is allowed before the overlay hides.
+    public static let deltaRange: ClosedRange<Double> = -0.65...1.25
+
+    /// Radians the lid has swung past the anchor — positive when closed
+    /// further than `activation`, zero when aligned. This, not a linear
+    /// "fold amount", drives the shader: at zero the projected image is
+    /// pixel-identical to the real desktop, so activating is invisible.
+    public static func deltaRadians(angle: Double, activation: Double) -> Double {
+        let delta = (activation - angle) * .pi / 180
+        guard delta.isFinite else { return 0 }
+        return min(deltaRange.upperBound, max(deltaRange.lowerBound, delta))
+    }
+
+    /// How folded the desktop reads, 0…1: the plane's recession,
+    /// `|sin delta|`. Feeds the dim and blur strength so both ease in
+    /// with the tilt instead of popping on at activation.
     public static func foldAmount(angle: Double, activation: Double) -> Double {
-        let fold = (activation - angle) / 40
-        guard fold.isFinite else { return 0 }
-        return min(1, max(0, fold))
+        abs(sin(deltaRadians(angle: angle, activation: activation)))
+    }
+
+    /// The activation gate, checked on the raw angle before any jitter
+    /// filtering: above the limit the overlay must be off no matter what
+    /// a filtered value still says.
+    public static func allows(rawAngle: Double, activation: Double) -> Bool {
+        rawAngle.isFinite && rawAngle <= activation
+    }
+
+    /// True when a delta is worth an overlay: aligned is invisible, so a
+    /// hair of tilt still paints nothing. `hasFrame` keeps the hidden
+    /// overlay honest while capture spins up.
+    public static func showsOverlay(delta: Double, hasFrame: Bool) -> Bool {
+        hasFrame && abs(delta) > 0.002
+    }
+
+    /// The easing the hinge needs: raw 30 Hz sensor readings step, the
+    /// fold should glide. Exponential approach with an ~80 ms time
+    /// constant — the same feel the reference toy gets from its lerp.
+    public static func smoothed(current: Double, target: Double, dt: Double) -> Double {
+        guard current.isFinite, target.isFinite, dt.isFinite, dt > 0 else { return target }
+        return current + (target - current) * (1 - exp(-dt / 0.08))
     }
 }
 

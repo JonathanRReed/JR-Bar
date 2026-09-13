@@ -21,6 +21,21 @@ All notable changes to JR-Bar are documented here.
   capsule JR-Bar is already following. Any .app on the Mac can join the
   shelf too: launch, quit, launch with JR-Bar, remove. Everything is off
   by default & remembered in the app's own state file.
+- Fold learned the real trick. The overlay now treats the captured
+  desktop as a rigid plane still standing at the anchor angle while the
+  lid swings under it — the hold-the-angle illusion instead of a warp —
+  so at the activation angle the render is pixel-identical and nothing
+  appears until the lid is meaningfully closed. The delta eases with an
+  ~80 ms exponential filter, blur is a real Gaussian pyramid baked once
+  per frame with a radius that grows toward the far edge, and the image
+  boundary feathers into the dark surround. Under the hood: capture is
+  capped at 2560 px, drops the cursor, only accepts complete frames and
+  excludes all of JR-Bar's windows; the stream stays alive across the
+  activation line instead of restarting on every crossing; and the
+  activation gate reads the raw sensor angle so jitter can never hold
+  the overlay open. A corrupt HID report outside 0–180° is dropped, and
+  "lid closed" now comes from the registry's clamshell state rather than
+  the keep-awake hold.
 - Every control does what it says. An audit found eight settings that
   wrote keys nothing read or described things the app couldn't do:
   Show in full screen, Gap width and Wing length now shape the Screen
