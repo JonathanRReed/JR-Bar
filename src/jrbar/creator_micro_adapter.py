@@ -110,6 +110,19 @@ class DeviceConflict:
     since: float | None = None
     clock: Callable[[], float] = time.monotonic
 
+    def forget(self, response_id: object) -> None:
+        """Retire an in-flight id we gave up on — it stays ours.
+
+        A timed-out or errored call can still be answered late over
+        Bluetooth, and that late reply must read as one of our ids, not
+        as a second controller. ``issued`` becomes unanswerable for THIS
+        call but the id moves to ``completed`` so the reply resolves to
+        a duplicate instead of an accusation.
+        """
+        if type(response_id) is int and response_id in self.issued_ids:
+            self.issued_ids.discard(response_id)
+            self.completed_ids.append(response_id)
+
     def observe(self, response_id: object) -> str | None:
         if type(response_id) is not int:
             return self._accuse()
@@ -432,6 +445,11 @@ class CreatorMicro2Adapter:
         self._conflict_streak = 0
         self.stale_replies_drained = 0
         self.stale_replies_ignored = 0
+        # Every id this process has issued, most recent last. Survives
+        # `conflict.reset()` and reconnects on purpose: a reply to one of
+        # OUR requests is never evidence of a second controller, no
+        # matter how late Bluetooth delivers it.
+        self._recent_issued: deque[int] = deque(maxlen=64)
 
     def discover(self) -> bool:
         return CreatorMicro2Framer.discover(self.info)
@@ -583,6 +601,7 @@ class CreatorMicro2Adapter:
         ident = self._next_id
         self._next_id = 0 if ident == 999 else ident + 1
         self.conflict.issued_ids.add(ident)
+        self._recent_issued.append(ident)
         request = {"jsonrpc": "2.0", "method": method, "params": params, "id": ident}
         try:
             for report in CreatorMicro2Framer.encode_request(request, max_bytes=self._rpc_max_bytes):
@@ -594,7 +613,7 @@ class CreatorMicro2Adapter:
             self.conflict.issued_ids.discard(ident)
             return Receipt("write_opt_in_required", str(exc)), None
         except OSError as exc:
-            self.conflict.issued_ids.discard(ident)
+            self.conflict.forget(ident)
             self._disconnect_for_retry()
             return Receipt("transport_unavailable", str(exc)), None
 
@@ -604,7 +623,7 @@ class CreatorMicro2Adapter:
             try:
                 report = self.transport.read(timeout_ms=remaining)
             except OSError as exc:
-                self.conflict.issued_ids.discard(ident)
+                self.conflict.forget(ident)
                 self._disconnect_for_retry()
                 return Receipt("transport_unavailable", str(exc)), None
             if not report:
@@ -612,7 +631,7 @@ class CreatorMicro2Adapter:
             try:
                 messages = self._decoder.feed(report)
             except ValueError as exc:
-                self.conflict.issued_ids.discard(ident)
+                self.conflict.forget(ident)
                 self._disconnect_for_retry()
                 return Receipt("malformed_report", str(exc)), None
             self._record_skipped_notifications()
@@ -645,7 +664,7 @@ class CreatorMicro2Adapter:
                 if "error" in response:
                     return Receipt("rpc_error", str(response["error"])), response
                 return Receipt("applied"), response
-        self.conflict.issued_ids.discard(ident)
+        self.conflict.forget(ident)
         self._disconnect_for_retry()
         return Receipt("timeout", f"timeout waiting for {method}"), None
 
@@ -663,6 +682,18 @@ class CreatorMicro2Adapter:
         outcome = self.conflict.observe(response_id)
         if outcome != "foreign_response_id":
             return outcome
+        if response_id in self._recent_issued:
+            # An id this process issued is our own late answer — the pad
+            # took longer than the timeout, or the reply outlived the
+            # connection that asked. It can never accuse a second
+            # controller, so the accusation observe() just made is undone.
+            if not was_active:
+                self.conflict.active = False
+                self.conflict.since = None
+            self.stale_replies_ignored += 1
+            if self.stale_replies_ignored == 1:
+                _log.info("Creator Micro 2: ignoring a late reply to one of our own requests")
+            return "stale_response_id"
         if self._clock() - self._connected_at < self.STARTUP_GRACE_SECONDS:
             if not was_active:
                 self.conflict.active = False

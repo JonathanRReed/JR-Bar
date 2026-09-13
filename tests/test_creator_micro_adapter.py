@@ -383,6 +383,47 @@ def test_timeout_disconnects_and_next_connect_honours_backoff():
     assert adapter.connect().code == "connected"
 
 
+def test_a_late_reply_to_a_timed_out_call_is_never_a_conflict():
+    """The pad answering after our timeout is our own reply arriving late,
+    not a second controller — same connection AND across a reconnect."""
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport,
+        INFO,
+        capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]),
+        clock=lambda: now[0],
+        rpc_timeout_ms=1,
+        reconnect_backoff_s=0,
+    )
+    adapter.connect()
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    assert adapter.apply(SemanticState.ACTIVE, [{"id": 1}]).code == "timeout"
+    adapter.close()
+    adapter.connect()
+    # The timed-out call's reply lands while the NEXT call waits — ours.
+    transport.reads.extend([rpc_result(1), rpc_result(2)])
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    assert adapter.apply(SemanticState.IDLE, [{"id": 2}]).code == "applied"
+    assert not adapter.conflict.active
+
+
+def test_an_id_we_never_issued_is_still_a_conflict_past_the_grace():
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport,
+        INFO,
+        capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]),
+        clock=lambda: now[0],
+    )
+    adapter.connect()
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.reads.extend([rpc_result(77), rpc_result(1)])
+    assert adapter.apply(SemanticState.ACTIVE, [{"id": 1}]).code == "device_conflict"
+    assert adapter.conflict.active
+
+
 def test_capability_probe_is_opt_in_and_falls_back_honestly_on_method_not_found():
     error = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}}
     transport = FakeTransport()
