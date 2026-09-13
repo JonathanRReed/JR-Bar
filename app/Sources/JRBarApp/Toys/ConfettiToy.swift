@@ -45,7 +45,7 @@ final class ConfettiToy: Toy {
     /// `EventCoordinator.apply` asks this before colouring the burst:
     /// true for `quota_reset` on the weekly lane only — five-hour and
     /// session resets stay quiet.
-    static func isWeeklyReset(_ event: CoreEvent) -> Bool {
+    nonisolated static func isWeeklyReset(_ event: CoreEvent) -> Bool {
         guard event.kind == "quota_reset", let lane = event.lane else { return false }
         return lane == "weekly" || lane.hasSuffix("-weekly")
     }

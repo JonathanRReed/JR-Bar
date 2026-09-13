@@ -183,3 +183,70 @@ def test_retry_delay_runs_independently_and_reaches_exact_expiry() -> None:
     assert next_reset_retry_delay(state, now=1_001.0) == 15.0
     assert next_reset_retry_delay(state, now=1_299.9) == pytest.approx(0.1)
     assert next_reset_retry_delay(state, now=1_300.0) is None
+
+
+def test_quota_reset_wire_event_carries_the_lane() -> None:
+    """The app's confetti fires on the weekly lane only -- dropping
+    ``lane`` from the publish would silence it, and conflating lanes
+    would fire it on the five-hour window."""
+    from types import SimpleNamespace
+
+    from jrbar.provider_usage_status_bar import _publish_reset_wire_events
+
+    sent = []
+    controller = SimpleNamespace(
+        _core_publish_event=lambda kind, **fields: sent.append((kind, fields))
+    )
+    events = (
+        _event(),
+        replace(_event("claude:acct:five-hour:boundary"), lane_id="five-hour"),
+    )
+    _publish_reset_wire_events(controller, events)
+
+    assert sent == [
+        (
+            "quota_reset",
+            {
+                "provider": "claude",
+                "instance": "acct",
+                "label": "Weekly reset",
+                "lane": "weekly",
+            },
+        ),
+        (
+            "quota_reset",
+            {
+                "provider": "claude",
+                "instance": "acct",
+                "label": "Weekly reset",
+                "lane": "five-hour",
+            },
+        ),
+    ]
+
+
+def test_reset_wire_events_skip_a_host_without_core_publish() -> None:
+    """The legacy menu host has no ``_core_publish_event`` -- nothing to send."""
+    from types import SimpleNamespace
+
+    from jrbar.provider_usage_status_bar import _publish_reset_wire_events
+
+    _publish_reset_wire_events(SimpleNamespace(), (_event(),))
+
+    # And one bad event must not block the rest.
+    sent = []
+    controller = SimpleNamespace(
+        _core_publish_event=lambda kind, **fields: sent.append((kind, fields))
+    )
+    class _Broken:
+        provider_id = "claude"
+        source_instance_id = "acct"
+        label = "Weekly reset"
+
+        @property
+        def lane_id(self):
+            raise RuntimeError("boom")
+
+    broken = _Broken()
+    _publish_reset_wire_events(controller, (broken, _event()))
+    assert [kind for kind, _fields in sent] == ["quota_reset"]

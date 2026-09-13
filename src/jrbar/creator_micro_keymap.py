@@ -238,23 +238,40 @@ def plan_keymap(raw: str, status: dict[str, Any], *, profile_index: int | None =
                     for row in encoders):
                 raise ValueError("unsupported encoder layout; nothing was changed")
             auxiliary = []
+            slot = 13
             for encoder, row in enumerate(encoders):
                 for position in range(3):
-                    auxiliary.append((row, position, f"Encoder {encoder + 1} input {position + 1}"))
+                    auxiliary.append((row, position, f"Encoder {encoder + 1} input {position + 1}", slot))
+                    slot += 1
             joystick = layout.get("joystick", {})
             if not isinstance(joystick, dict) or not isinstance(joystick.get("sectors", []), list):
                 raise ValueError("unsupported joystick layout; nothing was changed")
-            for index, sector in enumerate(joystick.get("sectors", [])):
+            sectors = joystick.get("sectors", [])
+            # The firmware has 20 AG slots and the dispatcher knows four
+            # joystick directions. A radial joystick with more sectors than
+            # that (the shipping pad has eight) folds adjacent sectors onto
+            # one code, so a push anywhere in a quadrant is that quadrant.
+            if len(sectors) > 4 and (len(sectors) % 4 or len(sectors) > 16):
+                raise ValueError("unsupported joystick sector count; nothing was changed")
+            per_direction = max(1, len(sectors) // 4)
+            for index, sector in enumerate(sectors):
                 if not isinstance(sector, dict) or type(sector.get("k")) is not str:
                     raise ValueError("unsupported joystick sector; nothing was changed")
-                auxiliary.append((sector, "k", f"Joystick sector {index + 1}"))
-            if 13 + len(auxiliary) > 20:
+                direction = index // per_direction
+                label = f"Joystick sector {direction + 1}" if per_direction == 1 else (
+                    f"Joystick sector {direction + 1} (sectors {direction * per_direction + 1}"
+                    f"-{(direction + 1) * per_direction})"
+                )
+                auxiliary.append((sector, "k", label, slot + direction))
+            if auxiliary and max(entry[3] for entry in auxiliary) >= 20:
                 raise ValueError(
                     "selected controls exceed the firmware's 20 AG slots; retain the auxiliary mappings"
                 )
-            for index, (parent, position, label) in enumerate(auxiliary, 13):
+            labelled: set[int] = set()
+            for parent, position, label, index in auxiliary:
                 code = f"KV_OAI_AG{index:02d}"
-                if target == targets[0]:
+                if target == targets[0] and index not in labelled:
+                    labelled.add(index)
                     labels.append((index, label))
                 if parent[position] != code:
                     layer_changes.append(

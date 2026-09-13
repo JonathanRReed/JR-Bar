@@ -147,6 +147,31 @@ def _settings_category_at_row(row: int):
     return None
 
 
+def _publish_reset_wire_events(controller, reset_events) -> None:
+    """Publish each reset as a ``quota_reset`` core event.
+
+    The app's Usage Center re-fetches on it, and Confetti fires only on
+    the weekly lane -- so ``lane`` (``weekly``, ``*-weekly``, the
+    five-hour window's own id) travels on every event, and a missing
+    ``_core_publish_event`` (the legacy menu host) simply publishes none.
+    A single bad event must not block the rest.
+    """
+    publish = getattr(controller, "_core_publish_event", None)
+    if not callable(publish):
+        return
+    for event in reset_events:
+        try:
+            publish(
+                "quota_reset",
+                provider=event.provider_id,
+                instance=event.source_instance_id,
+                label=event.label,
+                lane=event.lane_id,
+            )
+        except Exception:
+            pass
+
+
 _existing_controller = globals().get("JRProviderUsageStatusBarController")
 if isinstance(_existing_controller, type) and _existing_controller.__name__ == "JRProviderUsageStatusBarController":
     JRProviderUsageStatusBarController = _existing_controller
@@ -488,19 +513,7 @@ else:
                 # pulse the provider's card and re-fetch; the celebration
                 # channels above are a user preference, this wire event is
                 # not — a reset is a fact either way.
-                publish = getattr(self, "_core_publish_event", None)
-                if callable(publish):
-                    for event in reset_events:
-                        try:
-                            publish(
-                                "quota_reset",
-                                provider=event.provider_id,
-                                instance=event.source_instance_id,
-                                label=event.label,
-                                lane=event.lane_id,
-                            )
-                        except Exception:
-                            pass
+                _publish_reset_wire_events(self, reset_events)
             self._deliver_pending_reset_events()
             thresholds = {preference.identity: preference.threshold_remaining for preference in settings.providers}
             self._jrbar_provider_threshold_crossings = threshold_crossings(
