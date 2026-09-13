@@ -5,3 +5,5 @@ import JRBarUI
 /// site — including Toys, which imports only JRBarCore — unqualified.
 typealias ScreenBarDesign = JRBarUI.ScreenBarDesign
 typealias ScreenBarGeometry = JRBarUI.ScreenBarGeometry
+typealias ScreenBarWingGeometry = JRBarUI.ScreenBarWingGeometry
+typealias ScreenBarWingSide = JRBarUI.ScreenBarWingSide

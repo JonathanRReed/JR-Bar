@@ -148,8 +148,6 @@ public enum AlcoveIsland {
 public enum AlcoveIslandLayout {
     /// Points the idle capsule reaches past each shoulder of the notch.
     public static let shoulder: CGFloat = 12
-    /// The strip below the notch's bottom edge the idle content lives in.
-    public static let lip: CGFloat = 16
     public static let idleMinWidth: CGFloat = 96
     public static let expandedWidth: CGFloat = 300
     /// Room the frame leaves at the screen's side edges.
@@ -171,26 +169,25 @@ public enum AlcoveIslandLayout {
     }
 
     /// Points of dead space the island keeps under the notch while the
-    /// Screen Bar is live: the LED band ends ~8 pt below the notch (6 pt
-    /// of band plus the halo bleed) and the island's window sits one
-    /// level under the bar, so the strip draws across the island's top
-    /// dead zone and the island's own content starts below it. Both
-    /// stay readable and neither covers the other.
+    /// Screen Bar is live, on the faces that drop below the notch (the
+    /// notice capsule and the expanded card): the LED band ends ~8 pt
+    /// below the notch (6 pt of band plus the halo bleed) and the
+    /// island's window sits one level under the bar, so content clears
+    /// the strip. The idle face needs none — it tucks into the notch's
+    /// own depth, ending flush with the hardware's bottom edge.
     public static let ledBandClearance: CGFloat = 12
 
     /// The collapsed capsule: at least as wide as the notch plus a small
     /// shoulder each side — the island reads as the notch grown, not a
-    /// pill parked beside it — and a `lip` deep for the content strip.
+    /// pill parked beside it — and exactly the notch's depth, so at rest
+    /// nothing but the Screen Bar's band draws below the hardware.
     /// Notch-less screens get a floating pill sized to the content.
-    /// `ledClearance` is `ledBandClearance` while the Screen Bar draws
-    /// over the island's top zone, 0 otherwise.
-    public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat, contentWidth: CGFloat,
-                                ledClearance: CGFloat = 0) -> CGSize {
+    public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat, contentWidth: CGFloat) -> CGSize {
         guard notchDepth > 0 else {
             return CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
         }
         return CGSize(width: max(idleMinWidth, slotWidth + 2 * shoulder, contentWidth + 28),
-                      height: notchDepth + lip + ledClearance)
+                      height: notchDepth)
     }
 
     /// The expanded card's window height: the notch clearance (the card's

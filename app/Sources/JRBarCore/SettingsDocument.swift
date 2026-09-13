@@ -210,6 +210,7 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.devices, "screen_bar_phase_offset_ms", .number),
             SettingsKey(.devices, "screen_bar_gap_width", .nullableNumber),
             SettingsKey(.devices, "screen_bar_wing_length", .nullableNumber),
+            SettingsKey(.devices, "screen_bar_notch_wings", .bool),
             SettingsKey(.devices, "screen_bar_min_glow", .number),
             // Lighting
             SettingsKey(.lighting, "colors.blend_mode", .string),

@@ -478,16 +478,24 @@ final class PanelStore {
         }
     }
 
+    /// The row the Screen Bar names — a live ask first, then a failure,
+    /// then whoever is working, then an unseen completion. The tooltip's
+    /// words and the wing slot's tint read the same pick so they never
+    /// disagree about who is on top.
+    private var focusPick: SessionRow? {
+        rows.first { $0.ask != nil }
+            ?? rows.first { $0.activity == .failed }
+            ?? rows.first { $0.activity == .working }
+            ?? rows.first { $0.activity == .done }
+    }
+
     /// What the Screen Bar's tooltip names: a live ask first, then a failure,
     /// then whoever is working, then an unseen completion; with nothing live
     /// the aggregate word. The click target is stricter: an ask's session or
     /// the working one, else nothing.
     var screenBarFocus: ScreenBarFocus {
         let rows = rows
-        let pick = rows.first { $0.ask != nil }
-            ?? rows.first { $0.activity == .failed }
-            ?? rows.first { $0.activity == .working }
-            ?? rows.first { $0.activity == .done }
+        let pick = focusPick
         // The click opens a local terminal; a mirrored remote row has none,
         // so it can be the focus's subject but never its target.
         let clickable = rows.first { $0.ask != nil && !$0.isRemote }
@@ -498,6 +506,29 @@ final class PanelStore {
         }
         let word = core.isLive ? aggregate.label : (fallbackState == .idle ? "Idle" : fallbackState.label)
         return ScreenBarFocus(style: nil, label: "JR-Bar", word: word, clickSession: nil, explanation: lightExplanation?.headline)
+    }
+
+    /// The wing slots' content (`screen_bar_notch_wings`). Left is the
+    /// activity slot: the top-priority session's provider tile and state
+    /// word, with the open-ask count when there is more than one. Right is
+    /// the ambient slot: the headline usage meter — the first provider
+    /// window the daemon sent, the same pick the island's card makes. A
+    /// side with nothing to say is nil and collapses rather than holding
+    /// space open beside the notch.
+    var screenBarWings: ScreenBarWings {
+        var left: ScreenBarWingSlot?
+        if let pick = focusPick {
+            var text = pick.ask != nil ? "Needs you" : pick.activity.word
+            if pick.ask != nil, askRows.count > 1 { text += " ·\(askRows.count)" }
+            left = ScreenBarWingSlot(
+                text: text, provider: pick.style.id,
+                tone: pick.activity == .failed ? .alert
+                    : pick.ask != nil || pick.activity == .waiting ? .attention
+                    : .neutral)
+        }
+        let right = AlcoveIsland.meters(core.state?.usage).first
+            .map { ScreenBarWingSlot(text: $0.percentText, provider: $0.provider) }
+        return ScreenBarWings(left: left, right: right)
     }
 
     var askRows: [SessionRow] { rows.filter { $0.ask != nil } }

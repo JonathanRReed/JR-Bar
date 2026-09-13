@@ -161,8 +161,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         store.onToggleScreenBar = { [weak self] shown in self?.setScreenBar(shown: shown) }
         store.onQuit = { NSApp.terminate(nil) }
 
-        // Screen Bar hover and click: hit-tested against the band, never focus-stealing.
+        // Screen Bar hover and click: hit-tested against the band and the
+        // drawn wing chips, never focus-stealing.
         let interaction = ScreenBarInteraction(
+            hitRects: { [weak screenBar] in screenBar?.hoverScreenRects ?? [] },
             bandRect: { [weak screenBar] in screenBar?.bandScreenRect },
             focus: { [weak store] in store?.screenBarFocus },
             onOpen: { [weak core] session in core?.openSession(session) }
@@ -764,6 +766,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     private func coreDidChange() {
         screenBar?.updateAccessibility()
+        screenBar?.wings = store?.screenBarWings ?? .empty
         guard let core, let statusItem else { return }
         switch core.connection {
         case .connected where core.state != nil:
@@ -826,6 +829,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.wrapMenuBar = document?.bool("virtual_status_device_wraps_menu_bar") ?? true
         screenBar.gapWidth = document?.double("screen_bar_gap_width").map { CGFloat($0) }
         screenBar.wingLength = document?.double("screen_bar_wing_length").map { CGFloat($0) }
+        screenBar.notchWingsEnabled = document?.bool("screen_bar_notch_wings") ?? true
     }
 
     private func refreshAggregate() {

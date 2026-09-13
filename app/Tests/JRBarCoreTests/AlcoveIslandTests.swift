@@ -113,11 +113,12 @@ struct AlcoveIslandTests {
         #expect(AlcoveIslandLayout.slot(left: left, right: CGRect(x: 500, y: 0, width: 100, height: 32)) == nil)
     }
 
-    @Test("the idle capsule is the notch plus shoulders and a lip")
+    @Test("the idle capsule is the notch plus shoulders, tucked to its depth")
     func idleSize() {
         let size = AlcoveIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 30)
         #expect(size.width == 185 + 2 * AlcoveIslandLayout.shoulder)
-        #expect(size.height == 48)
+        // Tucked into the notch's own depth — nothing hangs below it.
+        #expect(size.height == 32)
         // Wide content widens the capsule past the shoulders.
         let busy = AlcoveIslandLayout.idleSize(slotWidth: 185, notchDepth: 32, contentWidth: 300)
         #expect(busy.width == 328)

@@ -39,6 +39,22 @@ final class ScreenBarController {
     var wingLength: CGFloat? {
         didSet { if wingLength != oldValue { reposition() } }
     }
+    /// `screen_bar_notch_wings` (absent = on): the status slots in the
+    /// menu-bar areas flanking the notch — the selected task and the
+    /// attention count on the left, the headline usage meter on the right.
+    var notchWingsEnabled = true {
+        didSet { if notchWingsEnabled != oldValue { reposition() } }
+    }
+    /// The slots' content, pushed from the panel store on each core
+    /// change. A nil slot collapses: the window claims no room for it.
+    var wings: ScreenBarWings = .empty {
+        didSet {
+            if wings != oldValue {
+                view.wings = wings
+                reposition()
+            }
+        }
+    }
     /// `JRBAR_LOG_MOTION=1` logs which path each program takes.
     private static let logsMotion = ProcessInfo.processInfo.environment["JRBAR_LOG_MOTION"] != nil
 
@@ -100,6 +116,17 @@ final class ScreenBarController {
     var bandScreenRect: NSRect? {
         guard isShown, panel.isVisible else { return nil }
         return panel.convertToScreen(view.convert(view.bandRect, to: nil))
+    }
+
+    /// The hover and click zones in screen coordinates: the band plus each
+    /// drawn wing chip. The panel is click-through, so these are only ever
+    /// read by `ScreenBarInteraction`'s monitors — and they are exactly the
+    /// drawn capsules, so a click on one is a click on something of ours.
+    var hoverScreenRects: [NSRect] {
+        guard isShown, panel.isVisible else { return [] }
+        return [view.bandRect, view.leftWingRect, view.rightWingRect]
+            .compactMap { $0 }
+            .map { panel.convertToScreen(view.convert($0, to: nil)) }
     }
 
     var onGeometryChange: (@MainActor () -> Void)?
@@ -186,16 +213,49 @@ final class ScreenBarController {
         present()
     }
 
+    /// Each side's content-wing claim: the measured flank room beside the
+    /// notch, or a fixed reach beside the band where there is no safe area
+    /// to measure. A side with no slot claims nothing, and while the band
+    /// follows an external capsule the flanks belong to it — both stand down.
+    private func wingExtents(on screen: NSScreen, notchWidth: CGFloat, notchDepth: CGFloat) -> (left: CGFloat, right: CGFloat) {
+        guard notchWingsEnabled, capsule == nil else { return (0, 0) }
+        if notchDepth <= 0 {
+            return (wings.left == nil ? 0 : ScreenBarGeometry.notchlessWingClaim,
+                    wings.right == nil ? 0 : ScreenBarGeometry.notchlessWingClaim)
+        }
+        return (wings.left == nil ? 0
+                    : ScreenBarGeometry.contentWingExtent(of: screen, side: .left, notchWidth: notchWidth),
+                wings.right == nil ? 0
+                    : ScreenBarGeometry.contentWingExtent(of: screen, side: .right, notchWidth: notchWidth))
+    }
+
     private func reposition() {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
+        let oldRects = (view.bandRect, view.leftWingRect, view.rightWingRect)
+        let depth = ScreenBarGeometry.notchDepth(of: screen)
+        let notchWidth = ScreenBarGeometry.resolvedNotchWidth(slotWidth: ScreenBarGeometry.slotWidth(of: screen),
+                                                            gapWidth: gapWidth)
+        let extents = wingExtents(on: screen, notchWidth: notchWidth, notchDepth: depth)
         let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
-                                                  gapWidth: gapWidth, wingLength: wingLength, capsule: capsule)
+                                                  gapWidth: gapWidth, wingLength: wingLength, capsule: capsule,
+                                                  contentExtent: max(extents.left, extents.right))
+        view.bandSpan = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
+                                                      gapWidth: gapWidth, wingLength: wingLength,
+                                                      capsule: capsule).width
+        view.wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
+                                                  bandSpan: view.bandSpan,
+                                                  leftExtent: extents.left, rightExtent: extents.right)
+        view.wings = wings
         if panel.frame != frame {
             panel.setFrame(frame, display: false)
             view.frame = NSRect(origin: .zero, size: frame.size)
-            view.relayout()
             lastCodes = []
             present()
+        }
+        view.relayout()
+        // Wing chips come and go without a frame change; the hit region
+        // follows the drawn capsules, not the window.
+        if (view.bandRect, view.leftWingRect, view.rightWingRect) != oldRects {
             onGeometryChange?()
         }
     }

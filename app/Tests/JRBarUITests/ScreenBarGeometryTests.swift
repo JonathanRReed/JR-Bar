@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import Testing
 @testable import JRBarUI
 
@@ -86,5 +87,90 @@ import Testing
         let empty = ScreenBarGeometry.bandRect(in: NSSize(width: 0, height: 0))
         #expect(empty.width == 0)
         #expect(empty.height == 1)
+    }
+
+    // MARK: Content wings (`screen_bar_notch_wings`)
+
+    static func wingedFrame(contentExtent: CGFloat, auxiliaryLeft: CGFloat = 300,
+                            auxiliaryRight: CGFloat = 300) -> CGRect {
+        ScreenBarGeometry.windowFrame(screenFrame: screen, slotWidth: 185, notchDepth: 32,
+                                      auxiliaryLeft: auxiliaryLeft, auxiliaryRight: auxiliaryRight,
+                                      hardwareSlot: 185, wrapMenuBar: true,
+                                      contentExtent: contentExtent)
+    }
+
+    @Test func contentWingExtentMeasuresEachFlank() {
+        // 300 pt area: 300 - 28 safety - 16 inner reserve - 6 outer inset
+        // = 250 usable → capped at the 132 pt max extent.
+        #expect(ScreenBarGeometry.contentWingExtent(auxiliaryWidth: 300, hardwareSlot: 185,
+                                                    notchWidth: 185) == 132)
+        // 70 pt of area leaves 70 - 28 - 22 = 20 usable — under the
+        // minimum, so the wing collapses rather than overdraw the menu.
+        #expect(ScreenBarGeometry.contentWingExtent(auxiliaryWidth: 70, hardwareSlot: 185,
+                                                    notchWidth: 185) == 0)
+        // 90 pt leaves 40 usable → extent 62.
+        #expect(ScreenBarGeometry.contentWingExtent(auxiliaryWidth: 90, hardwareSlot: 185,
+                                                    notchWidth: 185) == 62)
+        // A gap set wider than the hardware slot eats into the room.
+        #expect(ScreenBarGeometry.contentWingExtent(auxiliaryWidth: 300, hardwareSlot: 185,
+                                                    notchWidth: 300) == 132)
+        #expect(ScreenBarGeometry.contentWingExtent(auxiliaryWidth: 0, hardwareSlot: 185,
+                                                    notchWidth: 185) == 0)
+    }
+
+    @Test func contentExtentWidensTheWindowNotTheBand() {
+        let frame = Self.wingedFrame(contentExtent: 132)
+        #expect(frame.width == 449)
+        #expect(frame.midX == 756)
+        // The band keeps the span it would have had without the claim.
+        let band = ScreenBarGeometry.bandRect(in: frame.size, preferredSpan: 213)
+        #expect(band.width == 197)
+        // A followed capsule owns the flanks — the claim is ignored.
+        let capsule = AlcoveCapsule(centerX: 756, width: 320, depth: 40)
+        let followed = ScreenBarGeometry.windowFrame(screenFrame: Self.screen, slotWidth: 185, notchDepth: 32,
+                                                     auxiliaryLeft: 300, auxiliaryRight: 300,
+                                                     hardwareSlot: 185, wrapMenuBar: true,
+                                                     capsule: capsule, contentExtent: 132)
+        #expect(followed.width == 320)
+    }
+
+    @Test func wingSlotRectsSitAtMenuBarHeight() {
+        let size = NSSize(width: 185 + 2 * 132, height: 38)
+        let geometry = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
+                                             leftExtent: 132, rightExtent: 132)
+        let left = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry)
+        let right = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry)
+        // Left chip: inset 6 from the window edge, ending 16 short of the
+        // notch (the island shoulder reserve) → 132 - 22 = 110 usable.
+        #expect(left == CGRect(x: 6, y: 11, width: 110, height: 22))
+        #expect(right == CGRect(x: 449 - 6 - 110, y: 11, width: 110, height: 22))
+        // Unclaimed sides draw nothing.
+        let none = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32)
+        #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: none) == nil)
+        // A claim too small for the minimum collapses.
+        let tight = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
+                                          leftExtent: 50)
+        let tightSize = NSSize(width: 185 + 2 * 50, height: 38)
+        #expect(ScreenBarGeometry.wingSlotRect(.left, in: tightSize, geometry: tight) == nil)
+        // A manual wing length widening the window past the measured
+        // claim does not widen the chip into unmeasured menu-bar room.
+        let oversized = NSSize(width: 185 + 2 * 200, height: 38)
+        let measured = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
+                                             leftExtent: 62)
+        #expect(ScreenBarGeometry.wingSlotRect(.left, in: oversized, geometry: measured)
+            == CGRect(x: 6, y: 11, width: 40, height: 22))
+    }
+
+    @Test func notchlessSlotsFlankTheBand() {
+        // No notch: the window is the 260 pt fallback plus a fixed claim
+        // per populated side, and the chips hug the band's ends.
+        let geometry = ScreenBarWingGeometry(notchWidth: 260, notchDepth: 0, bandSpan: 260,
+                                             leftExtent: 120, rightExtent: 120)
+        let size = NSSize(width: 260 + 2 * 120, height: 22)
+        let left = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry)
+        let right = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry)
+        // Band: 500 - 16 = 244 centred → x 128...372; chips 84 wide, 5 pt off its ends.
+        #expect(left == CGRect(x: 39, y: 1, width: 84, height: 18))
+        #expect(right == CGRect(x: 377, y: 1, width: 84, height: 18))
     }
 }

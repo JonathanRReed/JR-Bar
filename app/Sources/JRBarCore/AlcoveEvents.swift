@@ -482,7 +482,7 @@ extension AlcoveIslandLayout {
     /// The notice face: wider than idle, deeper than idle, still hung
     /// from the notch — one window morphing, never a second panel.
     /// `ledClearance` keeps the capsule's copy below a live Screen Bar's
-    /// band the same way `idleSize` keeps the dots clear.
+    /// band (the idle face needs none — it tucks inside the notch).
     public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat,
                                   ledClearance: CGFloat = 0) -> CGSize {
         guard notchDepth > 0 else { return CGSize(width: noticeWidth, height: 36) }

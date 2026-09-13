@@ -41,8 +41,11 @@ fixtures / verified on macOS / live-provider verified / blocked**.
   below the notch; tooltip unreachable/click-through; 0.32 s delay),
   `AlcoveIsland*` (the hanging pill; `ledBandClearance` 12 pt couples it
   to the band), `NotchHUD.swift` (toast/buddy pill anchors).
-- Baseline test state: full `pytest tests` run in progress at baseline;
-  focused suites touched so far all pass (see per-package rows).
+- Baseline test state: `pytest tests -x -q` → **3392 passed** (170 s).
+  `make fast` is red at baseline on Ruff — 39 pre-existing lint errors in
+  test files (I001/F401/E731 drift); none in `src/` and none introduced
+  by this work. Swift: `swift build` clean; `swift test` → **475 passed**
+  (35 + 24 + 357 + 59 across the four targets).
 
 ## W01 — Exact-target approval + delivery reporting — verified with fixtures
 
@@ -78,14 +81,48 @@ fixtures / verified on macOS / live-provider verified / blocked**.
   end-to-end delivery on this Mac, and the announcer's legacy answerable
   check is mode/kind-level (delivery fence is the backstop there).
 
-## Geometry package (W10 pulled forward) — in progress
+## Geometry package (W10 pulled forward) — verified with fixtures
 
 Design confirmed with owner 2026-09-13: content wings flank the notch at
 menu-bar height sized by measured free space (right side first); nothing
 but the 6 pt band draws below the notch at rest; the island tucks into the
 notch depth; hover-peek is a real clickable card hugging the notch
-(180 ms intent) with click to expand/pin; notchless displays get a compact
-centered pill at menu-bar height.
+(180 ms intent) with click to expand/pin; notchless displays get compact
+slot chips flanking the band.
+
+- `screen_bar_notch_wings` setting end to end: Python schema field
+  (`_settings_legacy.py`, default `true`, `with_screen_bar_notch_wings`,
+  serialized and tolerantly parsed), `SettingsKey` catalogue entry,
+  mock-core document, Settings › Screen Bar toggle, live-applied in
+  `AppDelegate.refreshScreenBarGeometry` → `ScreenBarController
+  .notchWingsEnabled`. `set_setting` round-trip verified.
+- `ScreenBarGeometry` (JRBarUI): `contentWingExtent` measures each
+  flank's `auxiliaryTopArea` minus the 28 pt safety margin, inner
+  reserve and outer inset — 0 collapses the side, 132 pt caps it;
+  `notchlessWingClaim` (120 pt) for screens without a safe area;
+  `windowFrame(contentExtent:)` widens the window, never the band;
+  `wingSlotRect` returns each chip's rect at menu-bar height and is
+  capped by the measured extent so a manual `wing_length` cannot widen
+  a chip into unmeasured menu space. Right wing is the first claimant;
+  a followed Alcove capsule claims the flanks entirely.
+- `ScreenBarWings.swift` + `PanelStore.screenBarWings`: left slot =
+  focus pick's tile + state word (+ `·N` for multiple asks, amber/red
+  tones for waiting/failed); right slot = headline usage meter. Empty
+  slots are nil and claim no room. Hosted lazily in `ScreenBarView`;
+  the drawn capsule and the hit-tested rect are the same.
+- Island tuck: `idleSize` is exactly `notchDepth` tall (lip removed);
+  notice/expanded keep `ledBandClearance` below the band.
+- `ScreenBarInteraction`: hit region = band + drawn wing chips + the
+  peek card itself; 0.18 s intent delay; 0.30 s close grace; 4 s max
+  life extended while the pointer reads the card; click opens the
+  focus session; panel stays `ignoresMouseEvents` (click-through).
+- Verified: `swift build` clean; `swift test` 475 passed incl. 14
+  `ScreenBarGeometryTests` (extents, caps, notchless chips, manual-wing
+  cap) and the island clearance suite; `pytest` 3392 passed.
+- Not covered (recorded, not claimed): on-screen visual confirmation
+  on the owner's display — the geometry is fixture-verified, the
+  pixel-level look (chip legibility at menu-bar height, overlap with
+  a crowded menu bar) awaits real-runtime smoke.
 
 (Remaining packages W02+ proceed in the spec's dependency order; rows are
 added as work lands.)

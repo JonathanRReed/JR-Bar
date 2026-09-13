@@ -26,14 +26,28 @@ struct ScreenBarFocus: Equatable {
 /// under the band, clicking opens the session.
 @MainActor
 final class ScreenBarInteraction {
-    static let hoverDelay: TimeInterval = 0.32
+    /// Deliberate-intent delay: long enough that a pointer cutting across
+    /// the notch never arms a peek, short enough that aiming at one feels
+    /// immediate.
+    static let hoverDelay: TimeInterval = 0.18
     /// Pointer moves are needed at ~20 Hz for hover; the raw stream is far
     /// denser than that.
     nonisolated static let moveInterval: TimeInterval = 0.05
-    /// The tooltip is a glance, not a label: it leaves on its own even if
-    /// the pointer parks on the band.
+    /// The peek is a glance, not a label: it leaves on its own while the
+    /// pointer is away…
     static let maxTooltipLife: TimeInterval = 4.0
+    /// …but a pointer parked on the card or the band keeps it — the card
+    /// is reachable, so leaving must not make it vanish mid-crossing.
+    static let lifeExtension: TimeInterval = 2.0
+    /// Leaving the hit region gets this long to come back before the peek
+    /// really goes — covers the dead pixel or two between the band, the
+    /// chips and the card.
+    static let closeGrace: TimeInterval = 0.30
 
+    /// The hover zones in screen coordinates: the band plus each drawn
+    /// wing chip — the drawn capsules, so hovering them is hovering us.
+    var hitRects: @MainActor () -> [NSRect]
+    /// The band's rect for anchoring the peek card (nil while hidden).
     var bandRect: @MainActor () -> NSRect?
     var focus: @MainActor () -> ScreenBarFocus?
     var onOpen: @MainActor (String) -> Void
@@ -50,11 +64,16 @@ final class ScreenBarInteraction {
     private var hovering = false
     private var showWork: DispatchWorkItem?
     private var hideWork: DispatchWorkItem?
+    private var lifeWork: DispatchWorkItem?
     private let tooltip = ScreenBarTooltipPanel()
     private(set) var isTooltipShown = false
     private var lastFocus: ScreenBarFocus?
 
-    init(bandRect: @escaping @MainActor () -> NSRect?, focus: @escaping @MainActor () -> ScreenBarFocus?, onOpen: @escaping @MainActor (String) -> Void) {
+    init(hitRects: @escaping @MainActor () -> [NSRect],
+         bandRect: @escaping @MainActor () -> NSRect?,
+         focus: @escaping @MainActor () -> ScreenBarFocus?,
+         onOpen: @escaping @MainActor (String) -> Void) {
+        self.hitRects = hitRects
         self.bandRect = bandRect
         self.focus = focus
         self.onOpen = onOpen
@@ -117,38 +136,51 @@ final class ScreenBarInteraction {
         }
     }
 
-    private func pointerInsideBand() -> Bool {
-        guard let rect = bandRect() else { return false }
-        // The band is 6 pt tall; give the pointer a little slack below it so
-        // it is reachable without pixel hunting, but never above the notch.
-        let target = NSRect(x: rect.minX, y: rect.minY - 3, width: rect.width, height: rect.height + 3)
-        return target.contains(NSEvent.mouseLocation)
+    /// Inside = the union of the band, the drawn wing chips, and — once it
+    /// is up — the peek card itself. The slack around each chip is a
+    /// couple of points so the edge is not a pixel hunt; the card gets a
+    /// point too, so brushing its frame does not count as leaving.
+    private func pointerInHitRegion() -> Bool {
+        let point = NSEvent.mouseLocation
+        if hitRects().contains(where: { $0.insetBy(dx: -2, dy: -3).contains(point) }) { return true }
+        return isTooltipShown && tooltip.frame.insetBy(dx: -1, dy: -1).contains(point)
     }
 
     private func pointerMoved() {
-        let inside = pointerInsideBand()
+        let inside = pointerInHitRegion()
         guard inside != hovering else {
             if inside, isTooltipShown, let current = focus(), current != lastFocus { showTooltip(current) }
             return
         }
         hovering = inside
         showWork?.cancel()
+        showWork = nil
+        hideWork?.cancel()
+        hideWork = nil
         if inside {
-            let work = DispatchWorkItem { [weak self] in
-                MainActor.assumeIsolated {
-                    guard let self, self.hovering, let focus = self.focus() else { return }
-                    self.showTooltip(focus)
+            if isTooltipShown {
+                // Back inside before the grace fired — the peek never went
+                // anywhere; refresh it if the focus moved on.
+                if let current = focus(), current != lastFocus { showTooltip(current) }
+            } else {
+                let work = DispatchWorkItem { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.hovering, let focus = self.focus() else { return }
+                        self.showTooltip(focus)
+                    }
                 }
+                showWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
             }
-            showWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
-        } else {
-            hideTooltip()
+        } else if isTooltipShown {
+            let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
+            hideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeGrace, execute: work)
         }
     }
 
     private func pointerClicked() {
-        guard pointerInsideBand() else { return }
+        guard pointerInHitRegion() else { return }
         hideTooltip()
         if let session = focus()?.clickSession {
             onOpen(session)
@@ -158,21 +190,41 @@ final class ScreenBarInteraction {
     // MARK: Tooltip
 
     private func showTooltip(_ focus: ScreenBarFocus) {
-        guard let rect = bandRect() else { return }
+        guard let rect = bandRect() ?? hitRects().first else { return }
         lastFocus = focus
         tooltip.present(focus, under: rect)
         isTooltipShown = true
-        hideWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
-        hideWork = work
+        lifeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.tooltipLifeExpired() }
+        }
+        lifeWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.maxTooltipLife, execute: work)
+    }
+
+    /// The life timer firing: a pointer still on the card or the band
+    /// means someone is reading it — extend rather than yank it away.
+    private func tooltipLifeExpired() {
+        lifeWork = nil
+        guard isTooltipShown else { return }
+        if pointerInHitRegion() {
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.tooltipLifeExpired() }
+            }
+            lifeWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.lifeExtension, execute: work)
+        } else {
+            hideTooltip()
+        }
     }
 
     func hideTooltip() {
         showWork?.cancel()
         hideWork?.cancel()
+        lifeWork?.cancel()
         showWork = nil
         hideWork = nil
+        lifeWork = nil
         guard isTooltipShown else { return }
         isTooltipShown = false
         tooltip.dismiss()

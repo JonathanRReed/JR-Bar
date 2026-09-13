@@ -3,9 +3,10 @@ import JRBarCore
 import SwiftUI
 
 /// The island's face — three of them on one window. At rest a black
-/// capsule hugging the notch: the `lip` strip under the hardware carries
-/// the working providers' dots and the live count, breathing slowly
-/// while anything works, and the Now Playing strip when media is up.
+/// capsule hugging the notch: exactly the hardware's depth, so nothing
+/// hangs below it — the working providers' dots and the live count sit
+/// centred inside, breathing slowly while anything works, with the Now
+/// Playing strip when media is up.
 /// Hover (`expandOnHover`) grows the same shape into the session card:
 /// live rows in the panel's precedence, then the providers' headline
 /// usage meters when `showUsage` is on and the daemon sent windows. A
@@ -108,9 +109,9 @@ struct AlcoveIslandView: View {
                 }
             }
             .opacity(0.75 + 0.25 * breath)
-            .frame(maxWidth: .infinity, maxHeight: .infinity,
-                   alignment: toy.notchDepth > 0 ? .bottom : .center)
-            .padding(.bottom, toy.notchDepth > 0 ? 4 : 0)
+            // The idle capsule is exactly the notch's depth, so the dots
+            // centre inside it — the silhouette is the hardware's own.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         }
     }
 

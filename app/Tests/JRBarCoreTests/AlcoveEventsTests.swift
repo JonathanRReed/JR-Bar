@@ -297,12 +297,13 @@ struct AlcoveEventsTests {
         #expect(with - without == 40)
     }
 
-    @Test("a live Screen Bar's band raises every face's content by the same clearance")
+    @Test("a live Screen Bar's band raises the drop-down faces; idle tucks into the notch")
     func ledClearance() {
         let c = AlcoveIslandLayout.ledBandClearance
+        // The resting capsule is exactly the notch's depth — the band
+        // hangs below it, so no clearance is owed.
         #expect(AlcoveIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
-                                            contentWidth: 20, ledClearance: c).height
-                == 32 + AlcoveIslandLayout.lip + c)
+                                            contentWidth: 20).height == 32)
         #expect(AlcoveIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
                                               ledClearance: c).height
                 == 32 + AlcoveIslandLayout.noticeLip + c)
@@ -310,8 +311,7 @@ struct AlcoveEventsTests {
                                                   overflow: false, ledClearance: c)
                 == 32 + AlcoveIslandLayout.expandedNotchInset + c + 20 + 22 + 12)
         // No notch, no band — a floating pill never grows.
-        #expect(AlcoveIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 20,
-                                            ledClearance: c).height == 24)
+        #expect(AlcoveIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 20).height == 24)
         let notchless: CGFloat = 8 + 20 + 12
         #expect(AlcoveIslandLayout.expandedHeight(notchDepth: 0, rows: 0, meters: 0,
                                                   overflow: false, ledClearance: c) == notchless)

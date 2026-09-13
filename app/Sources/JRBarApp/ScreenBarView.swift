@@ -1,6 +1,7 @@
 import AppKit
 import JRBarLEDS
 import QuartzCore
+import SwiftUI
 
 /// The Screen Bar's drawing surface: three layers composited by the window
 /// server and nothing rasterised in this process.
@@ -27,6 +28,25 @@ final class ScreenBarView: NSView {
     private var lastStops: [BandStop] = []
     private var lastBandWidth: CGFloat = -1
     private(set) var bandRect: NSRect = .zero
+    /// The width the window would have without the content wings' claim —
+    /// the band hugs the notch (plus the glow wings) rather than growing
+    /// into the flanks the slots widened the window for.
+    var bandSpan: CGFloat = 0
+    /// The slots' content, pushed by the controller on each core change;
+    /// nil slots collapse — they claim no room and draw nothing.
+    var wings: ScreenBarWings = .empty {
+        didSet { if wings != oldValue { updateWingChips() } }
+    }
+    /// The claim `windowFrame` was built with — where each side's chip may
+    /// sit. `relayout` resolves it to the rects the view draws and the
+    /// interaction hit-tests.
+    var wingGeometry = ScreenBarWingGeometry() {
+        didSet { if wingGeometry != oldValue { updateWingChips() } }
+    }
+    private(set) var leftWingRect: NSRect?
+    private(set) var rightWingRect: NSRect?
+    private let wingsModel = ScreenBarWingsModel()
+    private var wingsHosting: NSHostingView<ScreenBarWingsView>?
     /// Settings › Screen Bar › Minimum glow, pushed in live: it scales the
     /// housing rim and nothing else. A band showing no light gets no rim —
     /// a black program under a lit outline is a resting glow the strip
@@ -122,7 +142,7 @@ final class ScreenBarView: NSView {
 
     func relayout() {
         let size = bounds.size
-        let rect = ScreenBarGeometry.bandRect(in: size)
+        let rect = ScreenBarGeometry.bandRect(in: size, preferredSpan: bandSpan > 0 ? bandSpan : nil)
         bandRect = rect
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -141,6 +161,34 @@ final class ScreenBarView: NSView {
             lastBandWidth = rect.width
             lastStops = []
         }
+        leftWingRect = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: wingGeometry)
+        rightWingRect = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: wingGeometry)
+        updateWingChips()
+    }
+
+    /// Positions the slot chips: a side draws only where the geometry
+    /// claimed room AND the store gave it something to say. The hosting
+    /// view is created lazily so a bar that never shows wings never pays
+    /// for a SwiftUI tree.
+    private func updateWingChips() {
+        let left = leftWingRect.flatMap { rect in wings.left.map { (slot: $0, rect: rect) } }
+        let right = rightWingRect.flatMap { rect in wings.right.map { (slot: $0, rect: rect) } }
+        guard left != nil || right != nil else {
+            wingsModel.left = nil
+            wingsModel.right = nil
+            wingsHosting?.isHidden = true
+            return
+        }
+        if wingsHosting == nil {
+            let hosting = NSHostingView(rootView: ScreenBarWingsView(model: wingsModel))
+            addSubview(hosting)
+            wingsHosting = hosting
+        }
+        wingsModel.viewHeight = bounds.height
+        wingsModel.left = left
+        wingsModel.right = right
+        wingsHosting?.frame = bounds
+        wingsHosting?.isHidden = false
     }
 
     // MARK: Keyframes (Core Animation owns the motion)

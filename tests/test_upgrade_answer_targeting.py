@@ -169,7 +169,9 @@ def test_answerable_display_follows_the_provable_host():
         request_kind=RequestKind.PERMISSION,
     )
     contracts = {source.source_key: source.contract}
-    handler = lambda _invocation: True
+
+    def handler(_invocation):
+        return True
 
     assert _answer_flags(request, contracts, handler, {"com.apple.Terminal"}) == (
         True,

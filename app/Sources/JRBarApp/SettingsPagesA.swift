@@ -717,6 +717,7 @@ struct ScreenBarCard: View {
         SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
+        SettingToggle(store, "Notch wings", subtitle: "Status slots in the menu-bar space beside the notch — who's working or needs you on the left, the headline usage meter on the right. Off, the bar keeps to its light strip.", path: "screen_bar_notch_wings", default: true)
         SettingToggle(store, "Mirror the hardware strip", subtitle: "The Screen Bar plays the strip's own program on the strip's clock. Off, it renders its own display. Independent of Dot follows the strip above.", path: "link_screen_bar_to_hardware", default: true)
         SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
                       path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }

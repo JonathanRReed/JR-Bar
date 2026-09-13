@@ -376,6 +376,13 @@ class AgentMonitorSettings:
     # wing length is each horizontal stroke's reach beyond the gap.
     screen_bar_gap_width: float | None = None
     screen_bar_wing_length: float | None = None
+    # The native app's notch wings: status slots drawn in the menu-bar
+    # areas beside the notch (the selected task and attention count on
+    # the left, the headline usage meter on the right). The daemon never
+    # reads it -- it carries the value so the setting survives restarts,
+    # syncs to other clients, and resets like its siblings, the same role
+    # menu_bar_icon_style plays for the status item.
+    screen_bar_notch_wings: bool = True
     # How the Alcove bracket colors itself: "auto" mirrors the physical
     # LEDs whenever at least two are lit and collapses to one identity
     # hue otherwise; "spatial" always mirrors; "identity" always
@@ -1348,6 +1355,9 @@ class AgentMonitorSettings:
             length = max(0.0, min(400.0, float(length)))
         return replace(self, screen_bar_wing_length=length)
 
+    def with_screen_bar_notch_wings(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, screen_bar_notch_wings=bool(enabled))
+
     def with_screen_bar_bracket_style(self, style: str) -> AgentMonitorSettings:
         if style not in BRACKET_STYLE_CHOICES:
             raise ValueError(f"Unknown bracket style: {style}")
@@ -1616,6 +1626,7 @@ class AgentMonitorSettings:
             "virtual_status_device_wraps_menu_bar": self.virtual_status_device_wraps_menu_bar,
             "screen_bar_gap_width": self.screen_bar_gap_width,
             "screen_bar_wing_length": self.screen_bar_wing_length,
+            "screen_bar_notch_wings": self.screen_bar_notch_wings,
             "screen_bar_bracket_style": self.screen_bar_bracket_style,
             "agent_keep_awake_enabled": self.agent_keep_awake_enabled,
             "keep_display_awake": self.keep_display_awake,
@@ -1941,6 +1952,7 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         screen_bar_gap_width=_optional_dimension(data.get("screen_bar_gap_width"), 120.0, 1200.0),
         screen_bar_wing_length=_optional_dimension(data.get("screen_bar_wing_length"), 0.0, 400.0),
+        screen_bar_notch_wings=_bool_setting(data.get("screen_bar_notch_wings"), True),
         screen_bar_bracket_style=(
             data.get("screen_bar_bracket_style")
             if data.get("screen_bar_bracket_style") in BRACKET_STYLE_CHOICES

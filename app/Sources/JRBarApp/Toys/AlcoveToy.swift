@@ -362,8 +362,7 @@ final class AlcoveToy: Toy {
         case .idle:
             size = AlcoveIslandLayout.idleSize(
                 slotWidth: slot?.width ?? 0, notchDepth: depth,
-                contentWidth: AlcoveIsland.idleContentWidth(islandSummary, media: idleMedia),
-                ledClearance: ledClearance)
+                contentWidth: AlcoveIsland.idleContentWidth(islandSummary, media: idleMedia))
         }
         return AlcoveIslandLayout.frame(
             screenFrame: screen.frame, centerX: centerX, size: size,
