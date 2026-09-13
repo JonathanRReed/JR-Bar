@@ -57,6 +57,12 @@ final class AlcoveToy: Toy {
     /// The Now Playing source; exists only while the island is ours,
     /// shown, and `mediaEnabled`. A parked island holds no listener.
     @ObservationIgnored private var mediaMonitor: AlcoveMediaMonitor?
+    /// The battery poller; exists only while the island is ours, shown,
+    /// and `capsuleNotifications` + `capsuleKinds.charging` are on.
+    @ObservationIgnored private var powerMonitor: AlcovePowerMonitor?
+    /// The hover-leave timer — a short delay so a cursor grazing the
+    /// island's edge doesn't ping-pong the morph.
+    @ObservationIgnored private var collapseWork: DispatchWorkItem?
     @ObservationIgnored private var island: AlcoveIslandWindow?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -228,7 +234,26 @@ final class AlcoveToy: Toy {
     /// The clearance the expanded card's content keeps under the notch —
     /// `AlcoveIslandLayout.expandedHeight` counts the same inset.
     var islandTopInset: CGFloat {
-        notchDepth > 0 ? notchDepth + AlcoveIslandLayout.expandedNotchInset : 8
+        notchDepth > 0 ? notchDepth + AlcoveIslandLayout.expandedNotchInset + ledClearance : 8
+    }
+
+    /// Points of dead space the island keeps under the notch while the
+    /// Screen Bar's band is live: the island's window sits one level
+    /// under the bar, so the LED strip draws across the island's top
+    /// dead zone and the island's own content starts below it — neither
+    /// covers the other. The flag is the daemon's
+    /// `virtual_status_device_enabled`, which the delegate keeps in
+    /// step with the Screen Bar's visibility.
+    var ledClearance: CGFloat {
+        guard screenBarLive, notchDepth > 0 else { return 0 }
+        return AlcoveIslandLayout.ledBandClearance
+    }
+
+    /// Whether the Screen Bar is up — read off the settings document the
+    /// delegate syncs with the window's visibility.
+    var screenBarLive: Bool {
+        SettingsDocument(core.settings?.document ?? .object([:]))
+            .bool("virtual_status_device_enabled") ?? false
     }
 
     /// True while Fold's overlay is covering the screen — the island is
@@ -236,17 +261,45 @@ final class AlcoveToy: Toy {
     var foldEngaged: Bool { store?.fold?.overlayOnScreen ?? false }
 
     /// The hover path: grow while the cursor is over the capsule, shrink
-    /// when it leaves. "Grow on hover" off still lets the *shrink* half
-    /// through — otherwise a capsule expanded when the toggle flipped
-    /// could never collapse. A showing notification capsule owns the
-    /// island, so the hover is only remembered then — it lands as an
-    /// expand when the capsule steps down.
+    /// when it leaves — the shrink rides a short delay, so a cursor that
+    /// grazes the island's edge on its way past never fires the morph at
+    /// all and a brief leave-and-return doesn't ping-pong it. "Grow on
+    /// hover" off still lets the *shrink* half through — otherwise a
+    /// capsule expanded when the toggle flipped could never collapse.
+    /// A showing notification capsule owns the island, so the hover is
+    /// only remembered then — it lands as an expand when the capsule
+    /// steps down.
+    private static let collapseDelay: TimeInterval = 0.18
+
     func setHovered(_ hovering: Bool) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled else { return }
         hoverHeld = hovering
+        collapseWork?.cancel()
+        collapseWork = nil
         guard activeCapsule == nil else { return }
-        let want = hovering && s.expandOnHover
+        if hovering {
+            applyHover()
+        } else if islandExpanded {
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.collapseTimerFired() }
+            }
+            collapseWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.collapseDelay, execute: work)
+        }
+    }
+
+    /// The leave timer's landing: only collapses if the cursor stayed
+    /// away — a re-hover cancels the work before it fires.
+    private func collapseTimerFired() {
+        collapseWork = nil
+        guard !hoverHeld else { return }
+        applyHover()
+    }
+
+    /// Apply `hoverHeld` to the expanded flag and reframe on a change.
+    private func applyHover() {
+        let want = hoverHeld && settings.expandOnHover
         guard want != islandExpanded else { return }
         islandExpanded = want
         reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -261,10 +314,17 @@ final class AlcoveToy: Toy {
 
     /// Resize the window to `face`'s frame — the island morphs in place;
     /// there is never a second panel. A request already in flight is not
-    /// re-issued: the second applyFrame would snap the ease.
+    /// re-issued: the second applyFrame would snap the ease. A nudge too
+    /// small to see (a session row's label settling by a point) applies
+    /// without animation — animating a sub-2 pt delta reads as jitter.
     private func reframe(_ face: AlcoveIslandFace, animated: Bool) {
         guard let frame = islandFrame(face: face) else { return }
         guard frame != desiredFrame else { return }
+        var animated = animated
+        if let last = desiredFrame,
+           abs(last.height - frame.height) < 2, abs(last.width - frame.width) < 2 {
+            animated = false
+        }
         desiredFrame = frame
         island?.applyFrame(frame, animated: animated)
     }
@@ -293,14 +353,17 @@ final class AlcoveToy: Toy {
                               rows: min(summary.rows.count, AlcoveIsland.rowLimit),
                               meters: islandMeters.count,
                               overflow: summary.rows.count > AlcoveIsland.rowLimit,
-                              media: cardMedia != nil))
+                              media: cardMedia != nil,
+                              ledClearance: ledClearance))
         case .notice:
             size = AlcoveIslandLayout.noticeSize(slotWidth: slot?.width ?? 0,
-                                                 notchDepth: depth)
+                                                 notchDepth: depth,
+                                                 ledClearance: ledClearance)
         case .idle:
             size = AlcoveIslandLayout.idleSize(
                 slotWidth: slot?.width ?? 0, notchDepth: depth,
-                contentWidth: AlcoveIsland.idleContentWidth(islandSummary, media: idleMedia))
+                contentWidth: AlcoveIsland.idleContentWidth(islandSummary, media: idleMedia),
+                ledClearance: ledClearance)
         }
         return AlcoveIslandLayout.frame(
             screenFrame: screen.frame, centerX: centerX, size: size,
@@ -336,6 +399,7 @@ final class AlcoveToy: Toy {
         }
         islandVisible = true
         syncMediaMonitor()
+        syncPowerMonitor()
     }
 
     /// Ordered out and collapsed. The window object stays — a re-show is
@@ -347,11 +411,14 @@ final class AlcoveToy: Toy {
         activeCapsule = nil
         capsuleWork?.cancel()
         capsuleWork = nil
+        collapseWork?.cancel()
+        collapseWork = nil
         capsuleQueue.clear()
         desiredFrame = nil
         islandVisible = false
         island?.orderOut(nil)
         syncMediaMonitor()
+        syncPowerMonitor()
     }
 
     // MARK: Event capsules
@@ -359,14 +426,34 @@ final class AlcoveToy: Toy {
     /// `EventCoordinator.apply` hands every daemon event here, next to
     /// the confetti call. `AlcoveEventPolicy` decides whether it earns a
     /// capsule; the queue's cooldown keeps a burst of asks from strobing
-    /// the notch.
+    /// the notch. While the card is open the event is already visible in
+    /// its rows — a capsule over it would only blink — so expanded eats
+    /// them quietly.
     func noteEvent(_ event: CoreEvent) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
-              s.capsuleNotifications, islandVisible else { return }
+              s.capsuleNotifications, islandVisible, !islandExpanded else { return }
         let session = event.session.flatMap { core.state?.session(withID: $0) }
         guard let notice = AlcoveEventPolicy.notice(for: event, session: session,
                                                     kinds: s.capsuleKinds) else { return }
+        offer(notice)
+    }
+
+    /// A battery transition the power monitor saw — `AlcovePower.notice`
+    /// shapes it; the same queue and gate as daemon events.
+    private func notePowerTransition(from old: AlcovePowerState, to new: AlcovePowerState) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled,
+              s.capsuleNotifications, islandVisible, !islandExpanded else { return }
+        guard let notice = AlcovePower.notice(from: old, to: new,
+                                              id: UUID().uuidString,
+                                              kinds: s.capsuleKinds) else { return }
+        offer(notice)
+    }
+
+    /// Every capsule enters through here — daemon event or synthesized —
+    /// so the cooldown and the single pending slot police them equally.
+    private func offer(_ notice: AlcoveNotice) {
         switch capsuleQueue.offer(notice, at: Date()) {
         case .now: showCurrentCapsule()
         case .after(let delay): scheduleCapsuleShow(after: delay)
@@ -482,6 +569,28 @@ final class AlcoveToy: Toy {
     func mediaNextTrack() { mediaMonitor?.send(.nextTrack) }
     func mediaPreviousTrack() { mediaMonitor?.send(.previousTrack) }
 
+    // MARK: Power
+
+    /// The battery poller lives exactly as long as the island is shown
+    /// with both capsule switches on; `reconcile`/`parkIsland` land here.
+    private func syncPowerMonitor() {
+        let s = settings
+        let want = islandVisible && s.capsuleNotifications && s.capsuleKinds.charging
+        if want {
+            if powerMonitor == nil {
+                let monitor = AlcovePowerMonitor()
+                monitor.onTransition = { [weak self] old, new in
+                    self?.notePowerTransition(from: old, to: new)
+                }
+                powerMonitor = monitor
+            }
+            powerMonitor?.start()
+        } else {
+            powerMonitor?.stop()
+            powerMonitor = nil
+        }
+    }
+
     // MARK: Swipe
 
     /// A two-finger swipe on the island, read off the hosting view's
@@ -513,6 +622,7 @@ final class AlcoveToy: Toy {
             _ = store?.state.alcove
             _ = core.sessions
             _ = core.state?.usage
+            _ = core.settings?.document   // virtual_status_device_enabled → ledClearance
             _ = displayVersion
             // islandExpanded is deliberately NOT tracked: `setHovered`
             // reframes the window itself, and a reconcile re-fired off
@@ -616,6 +726,9 @@ private struct AlcoveControlsView: View {
                 }
                 Toggle(isOn: toy.bind(\.capsuleKinds.quotaReset)) {
                     SettingLabel(title: "Quota resets", subtitle: "A provider's usage window refills.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.charging)) {
+                    SettingLabel(title: "Power", subtitle: "Plugging in, switching to battery, fully charged.")
                 }
             }
             Toggle(isOn: toy.bind(\.mediaEnabled)) {

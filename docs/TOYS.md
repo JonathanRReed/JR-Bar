@@ -51,7 +51,7 @@ public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true;
 public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
                                    buddyName: String = ""; care: BuddyCare;
                                    freePosition: BuddySpot?; tucked: Bool = false;
-                                   showCaption: Bool = true }
+                                   showCaption: Bool = true; scale: Double = 1.0 /* 1…3, floating only */ }
 public struct BuddySpot { x: Double; y: Double }                    // parked screen point
 public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime,
                                      axolotl, crab, mushroom, ufo }
@@ -71,7 +71,8 @@ public struct AlcoveSettings { enabled: Bool = false; provider: AlcoveProvider =
                                expandOnHover: Bool = true; capsuleNotifications: Bool = true;
                                mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds }
 public struct AlcoveCapsuleKinds { ask: Bool = true; completed: Bool = true;
-                                   failed: Bool = true; quotaReset: Bool = true }
+                                   failed: Bool = true; quotaReset: Bool = true;
+                                   charging: Bool = true }
 public enum AlcoveProvider: String { case jrbar, alcove, boringNotch }  // who owns the notch
 public struct ExternalToyApp: Identifiable { id: String /* bundle id */; name: String; launchWithJRBar: Bool }
 ```
@@ -240,13 +241,15 @@ piece sits on the dune line under a soft pooled shadow. A jellyfish
 pulses through the mid-water every ~40 s (and stays on as the
 resident drifter while the tank is empty, under a small quiet caption
 low on the left) and a snail inches along the sand. Behind it all: a
-multi-stop gradient from a bright green surface band to a deep indigo
-floor, five soft god rays breathing a couple of degrees, animated
-caustic bands and a bright meniscus at the waterline, plankton motes
-in two parallax layers, wobbling ambient bubbles off the chest and
-the sand, a dune floor of overlapping rounded humps with a
-light-catching crest, faint ripple contours down the face and seeded
-grains, a corner vignette and a faint diagonal glass highlight.
+multi-stop gradient from a bright green surface band to a deep
+blue-green floor, five soft god rays breathing a couple of degrees
+and pooling as wandering caustic light on the dune crest, a slow
+sheen drift through the column, animated caustic bands and a bright
+meniscus at the waterline, plankton motes in two parallax layers,
+wobbling ambient bubbles off the chest and the sand, a dune floor of
+overlapping rounded humps with a light-catching crest, faint ripple
+contours down the face and seeded grains, a corner vignette and a
+faint diagonal glass highlight.
 
 Deeper lanes hold smaller, dimmer, slower fish. Fish ease into curved
 U-turns at the glass instead of mirror-flipping, and new sessions swim
@@ -260,13 +263,17 @@ the sand, rolls onto its side for a beat, then fades. A completion
 corkscrews up and out the top-right, dropping two or three food
 pellets behind it: the nearest live fish dart over to eat them while a
 gold star glints at the spot. Three or more finishes inside five
-seconds pop the treasure chest in a fast bubble plume. Hovering or
-tapping a fish floats a name tag above it — fry included, which is how
-a worker's name shows. A slow day/night wash deepens the water on a
-four-minute cycle. The tank is a resizable window
-(`AquariumWindowController`), `TimelineView(.animation)` capped at 30
-fps + `Canvas`, reads `core.state.sessions` (mains AND workers), and
-stops its timeline while occluded. Controls: On/Off (opens/closes the
+seconds pop the treasure chest in a fast bubble plume off its lid.
+Hovering or tapping a fish floats a name tag above it — fry included,
+which is how a worker's name shows. A slow day/night wash deepens the
+water on a four-minute cycle. The tank is a resizable window
+(`AquariumWindowController`) drawn in three passes: the still bed
+(water, sand, every decor piece that doesn't sway) renders on a slow
+tick into a `.drawingGroup` bitmap, an additive `Canvas` carries the
+rays, caustic pools & sheen, and a `TimelineView(.animation)` capped
+at 30 fps + `Canvas` draws only what moves — fish labels resolve once
+and are cached. It reads `core.state.sessions` (mains AND workers) and
+stops its timelines while occluded. Controls: On/Off (opens/closes the
 window), Show labels, Density (how much plankton/bubbles/decor), "Fill
 screen" button (borderless full-screen, Esc leaves). Reduce Motion:
 rays, shimmer & kelp hold still, tails don't wag, the jellyfish &
@@ -345,6 +352,15 @@ can wear a quiet one-line caption naming what it is watching —
 "Claude · rename-the-fish — working", or "… — waiting on you" — the
 `BuddyFocus` pick: an open ask first, then failed, then the freshest
 working session, a done row only when nothing live remains.
+
+The floating pet is sizable: the card's Size slider sets
+`NotchBuddySettings.scale` (1…3, default 1), which the free panel reads
+as a `scaleEffect` on the 18pt figure — vector all the way down, so
+strokes, eyes and the badge stay crisp — with padding, caption (up to
+~11pt) and the capsule's corner radius growing with it. The panel
+re-measures off the hosting view on every present, so the slider drags
+the pet bigger live and a parked 3× buddy still clamps fully on-screen;
+the docked pill ignores the dial entirely — the notch slot is fixed.
 
 The skeleton is a soft body, two pupils under lids, a mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
@@ -431,11 +447,16 @@ dots (plus amber for asks, red for failures) and a live count —
 "3 working · 1 waiting" — breathing slowly while anything works.
 Hover grows it into a card: live session rows in the panel's
 precedence, then the providers' headline usage meters when `showUsage`
-is on. The window (`AlcoveIslandWindow`) is a non-activating panel one
-level above the menu bar, `sharingType = .none` so Fold's desktop
-capture never sees it, and its frame is always exactly the drawn shape
-— nothing invisible swallows a menu-bar click; while Fold's overlay is
-up, the island lets clicks fall through it.
+is on. The window (`AlcoveIslandWindow`) is a non-activating panel at
+`statusBar` level — one step under the Screen Bar's `statusBar + 1`,
+so while the band is up its LED strip draws across the island's dead
+top zone instead of the island's black face covering it; the layout
+adds `ledBandClearance` under the notch so the island's own content
+sits below the band, and the bar's click-through window never steals a
+hover. `sharingType = .none` so Fold's desktop capture never sees it,
+and its frame is always exactly the drawn shape — nothing invisible
+swallows a menu-bar click; while Fold's overlay is up, the island lets
+clicks fall through it.
 
 "Render with" picks who owns the notch, Fold-style: **JR-Bar** draws
 the island itself (settings: Show the island, Grow on hover, Usage
@@ -461,14 +482,29 @@ island settles back. `AlcoveEventPolicy` shapes the notice and
 `AlcoveCapsuleQueue` owns the pipeline — one showing, at most one
 waiting (newest wins), a 30 s cooldown per kind+session, a 1.2 s
 minimum gap — all pure and covered by `AlcoveEventsTests`; the toy only
-runs the timers. A capsule outranks the card: an open card folds away
-for it and a hover during one lands as the expand when it steps down.
+runs the timers. A capsule outranks a closed card, but while the card
+is open its rows already tell the story, so events then earn nothing;
+a hover during a capsule still lands its expand when it steps down.
+A fifth kind, `charging`, is synthesized locally: `AlcovePowerMonitor`
+polls IOKit's power-source list every 5 s (only while the island is
+shown and both capsule switches are on) and `AlcovePower.notice` turns
+a real transition — charger in, on battery, fully charged — into a
+bolt-tinted "Power · Charging · 84%" capsule. The first poll is a
+baseline and percent drift never speaks.
 **Now Playing** (`mediaEnabled`): while a track is up, the idle capsule
 carries the artwork, "Title — Artist" and three visualizer bars
 (animated only while actually playing — dressing, not a spectrum), and
-the card gains a transport row; the data path is the private
-MediaRemote.framework through dlopen + dlsym in `MediaRemote.swift` —
-absent framework or empty info simply means no strip, never an error.
+the card gains a transport row. Since macOS 15.4 `mediaremoted`
+refuses unentitled readers, so the data path is a child process:
+`/usr/bin/perl` (a platform binary with the now-playing entitlement)
+loads the embedded `jrbar_mediaremote` dylib — built once and shipped
+as bytes in `AlcoveMediaAdapterAsset.swift` — which calls MediaRemote
+inside that process and streams JSON lines (`AlcoveMediaAdapter`).
+If the helper can't run, the in-process MediaRemote bridge covers the
+older releases where reads were never gated, and Music's own
+`com.apple.Music.playerInfo` payload fills in wherever it posts.
+Transport commands go through `MRMediaRemoteSendCommand`, which was
+never gated, and down the helper's stdin for good measure.
 **Swipes**: a horizontal two-finger swipe on the capsule is
 next/previous while media shows; a downward swipe dismisses the capsule
 or folds the card — read off the hosting view's scroll phases,

@@ -60,17 +60,16 @@ def _decide(glance, projection) -> bool:
     return StatusBarController.should_render_multi_agent(None, glance, projection)
 
 
-def test_two_active_agents_render_as_a_crowd() -> None:
+def test_two_active_agents_render_as_a_crowd__and_2_more() -> None:
+    # --- scenario: two_active_agents_render_as_a_crowd
     projection = _projection(_row("codex:session:a", "codex"), _row("claude:session:b", "claude"))
     assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is True
 
-
-def test_a_single_agent_keeps_the_single_color_path() -> None:
+    # --- scenario: a_single_agent_keeps_the_single_color_path
     projection = _projection(_row("codex:session:a", "codex"))
     assert _decide(_glance(GlanceSemantic.ACTIVE), projection) is False
 
-
-def test_whole_strip_moments_are_never_buried_under_a_crowd() -> None:
+    # --- scenario: whole_strip_moments_are_never_buried_under_a_crowd
     """Attention, failures, completions, capacity and rest are designed
     as one unmistakable signal -- a crowd of colors would hide them."""
     projection = _projection(_row("codex:session:a", "codex"), _row("claude:session:b", "claude"))
@@ -83,6 +82,7 @@ def test_whole_strip_moments_are_never_buried_under_a_crowd() -> None:
         GlanceSemantic.REST,
     ):
         assert _decide(_glance(semantic), projection) is False, semantic
+
 
 
 def test_no_projection_falls_back() -> None:

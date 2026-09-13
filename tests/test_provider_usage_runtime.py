@@ -117,7 +117,8 @@ def test_default_incident_lookup_starts_only_the_requested_provider(monkeypatch)
     assert starts == [("codex",)]
 
 
-def test_incident_lookup_is_deduplicated_across_provider_instances(tmp_path):
+def test_incident_lookup_is_deduplicated_across_provider_instances__and_2_more(tmp_path) -> None:
+    # --- scenario: incident_lookup_is_deduplicated_across_provider_instances
     settings = default_provider_usage_settings()
     settings = settings.with_instance(
         dataclass_replace(settings.preference("claude"), source_instance_id="work")
@@ -147,8 +148,7 @@ def test_incident_lookup_is_deduplicated_across_provider_instances(tmp_path):
     assert lookups == [("claude", 1000.0)]
     assert {item.incident for item in result.snapshots} == {"Anthropic: API errors"}
 
-
-def test_disabled_provider_performs_no_incident_lookup(tmp_path):
+    # --- scenario: disabled_provider_performs_no_incident_lookup
     settings = default_provider_usage_settings().with_enabled("grok", False)
 
     def forbidden(*_args):
@@ -167,8 +167,7 @@ def test_disabled_provider_performs_no_incident_lookup(tmp_path):
 
     assert result.by_provider("grok").state is ProviderSourceState.DISABLED
 
-
-def test_attempted_collector_failure_still_gets_incident_context(tmp_path):
+    # --- scenario: attempted_collector_failure_still_gets_incident_context
     settings = default_provider_usage_settings()
 
     def broken(*_args):
@@ -189,7 +188,9 @@ def test_attempted_collector_failure_still_gets_incident_context(tmp_path):
     assert result.by_provider("codex").incident == "OpenAI: API errors"
 
 
-def test_partial_refresh_preserves_untouched_provider_incident(tmp_path):
+
+def test_partial_refresh_preserves_untouched_provider_incident__and_2_more(tmp_path) -> None:
+    # --- scenario: partial_refresh_preserves_untouched_provider_incident
     settings = default_provider_usage_settings()
     decisions = {
         "codex": "OpenAI: first incident",
@@ -227,8 +228,7 @@ def test_partial_refresh_preserves_untouched_provider_incident(tmp_path):
     assert result.by_provider("codex").incident is None
     assert result.by_provider("claude").incident == "Anthropic: preserved incident"
 
-
-def test_superseded_incident_lookup_cannot_publish(tmp_path):
+    # --- scenario: superseded_incident_lookup_cannot_publish
     settings = default_provider_usage_settings()
     first_lookup_started = threading.Event()
     release_first_lookup = threading.Event()
@@ -275,8 +275,7 @@ def test_superseded_incident_lookup_cannot_publish(tmp_path):
     assert service.snapshot().by_provider("codex").incident == "OpenAI: current incident"
     service.close()
 
-
-def test_refresh_preserves_registry_order_and_disabled_state(tmp_path):
+    # --- scenario: refresh_preserves_registry_order_and_disabled_state
     settings = default_provider_usage_settings().with_enabled("grok", False)
     collectors = {
         preference.provider_id: (
@@ -301,6 +300,7 @@ def test_refresh_preserves_registry_order_and_disabled_state(tmp_path):
     )
     assert state.by_provider("grok").state is ProviderSourceState.DISABLED
     assert state.refreshing is False
+
 
 
 def test_disabled_provider_skips_collector_and_credential_filesystem_probe(
@@ -329,7 +329,8 @@ def test_disabled_provider_skips_collector_and_credential_filesystem_probe(
     assert result.by_provider("grok").state is ProviderSourceState.DISABLED
 
 
-def test_last_known_good_is_retained_when_refresh_fails(tmp_path):
+def test_last_known_good_is_retained_when_refresh_fails__and_2_more(tmp_path) -> None:
+    # --- scenario: last_known_good_is_retained_when_refresh_fails
     settings = default_provider_usage_settings()
     calls = {"codex": 0}
 
@@ -358,8 +359,7 @@ def test_last_known_good_is_retained_when_refresh_fails(tmp_path):
     assert stale.state is ProviderSourceState.STALE
     assert stale.lanes[0].remaining_percent == 20
 
-
-def test_collector_exception_becomes_actionable_error(tmp_path):
+    # --- scenario: collector_exception_becomes_actionable_error
     settings = default_provider_usage_settings()
 
     def broken(*_args):
@@ -377,8 +377,7 @@ def test_collector_exception_becomes_actionable_error(tmp_path):
     assert result.reason_code == "collector_failed"
     assert result.action_label == "Retry"
 
-
-def test_a_low_meter_is_not_a_reason_to_poll_harder(tmp_path):
+    # --- scenario: a_low_meter_is_not_a_reason_to_poll_harder
     """Quota level must not drive cadence. A nearly-empty meter is not a
     reason to poll every 30s -- it is a reason the number matters. The
     ladder keys off ATTENTION instead (2026-08-27, mined from CodexBar,
@@ -403,6 +402,7 @@ def test_a_low_meter_is_not_a_reason_to_poll_harder(tmp_path):
     assert state.next_refresh_at == 1000 + 120.0, "just looked: the fast rung"
 
 
+
 def test_the_cadence_ladder_is_pure_and_ordered():
     from jrbar.provider_usage_runtime import _interval_for
 
@@ -416,7 +416,8 @@ def test_the_cadence_ladder_is_pure_and_ordered():
     ), "Low Power Mode outranks a fresh visit"
 
 
-def test_an_imminent_reset_is_still_watched_closely(tmp_path):
+def test_an_imminent_reset_is_still_watched_closely__and_2_more(tmp_path) -> None:
+    # --- scenario: an_imminent_reset_is_still_watched_closely
     """Our one deliberate divergence: we celebrate resets, so we have to
     see the boundary cross -- 120s, not the old 30s hammer."""
     from jrbar.provider_usage_runtime import _interval_for
@@ -430,8 +431,7 @@ def test_an_imminent_reset_is_still_watched_closely(tmp_path):
     )
     assert _interval_for((soon,), 1000.0, menu_last_opened_at=None) == 120.0
 
-
-def test_request_runs_off_caller_thread_and_coalesces(tmp_path):
+    # --- scenario: request_runs_off_caller_thread_and_coalesces
     settings = default_provider_usage_settings()
     gate = threading.Event()
     collector_threads = []
@@ -481,8 +481,7 @@ def test_request_runs_off_caller_thread_and_coalesces(tmp_path):
     assert callbacks and callbacks[0].refreshing is False
     service.close()
 
-
-def test_replacement_refresh_publishes_first_and_older_generation_cannot_publish(tmp_path):
+    # --- scenario: replacement_refresh_publishes_first_and_older_generation_cannot_publish
     settings = default_provider_usage_settings()
     first_started = threading.Event()
     release_first = threading.Event()
@@ -551,7 +550,9 @@ def test_replacement_refresh_publishes_first_and_older_generation_cannot_publish
     service.close()
 
 
-def test_refresh_now_replaces_async_work_and_delivers_its_pending_callback(tmp_path):
+
+def test_refresh_now_replaces_async_work_and_delivers_its_pending_callback__and_2_more(tmp_path) -> None:
+    # --- scenario: refresh_now_replaces_async_work_and_delivers_its_pending_callback
     settings = default_provider_usage_settings()
     async_started = threading.Event()
     release_async = threading.Event()
@@ -603,8 +604,7 @@ def test_refresh_now_replaces_async_work_and_delivers_its_pending_callback(tmp_p
     release_async.set()
     service.close()
 
-
-def test_close_refuses_late_publication_and_callback(tmp_path):
+    # --- scenario: close_refuses_late_publication_and_callback
     settings = default_provider_usage_settings()
     started = threading.Event()
     release = threading.Event()
@@ -643,8 +643,7 @@ def test_close_refuses_late_publication_and_callback(tmp_path):
     assert callbacks == []
     assert service.snapshot().snapshots == initial.snapshots
 
-
-def test_request_uses_the_service_clock_for_refresh_gating(tmp_path):
+    # --- scenario: request_uses_the_service_clock_for_refresh_gating
     settings = default_provider_usage_settings()
     clock = {"now": 1000.0}
     service = ProviderUsageService(
@@ -667,7 +666,9 @@ def test_request_uses_the_service_clock_for_refresh_gating(tmp_path):
     assert service.snapshot().refreshing is False
 
 
-def test_service_exposes_the_exact_settings_snapshot_used_for_collection(tmp_path):
+
+def test_service_exposes_the_exact_settings_snapshot_used_for_collection__and_2_more(tmp_path) -> None:
+    # --- scenario: service_exposes_the_exact_settings_snapshot_used_for_collection
     settings = default_provider_usage_settings().with_enabled("grok", False)
     service = ProviderUsageService(
         settings_loader=lambda: settings,
@@ -682,8 +683,7 @@ def test_service_exposes_the_exact_settings_snapshot_used_for_collection(tmp_pat
 
     assert service.settings_snapshot() is settings
 
-
-def test_collectors_receive_only_the_typed_collection_projection(tmp_path):
+    # --- scenario: collectors_receive_only_the_typed_collection_projection
     settings = default_provider_usage_settings()
     observed_preferences = []
 
@@ -707,8 +707,7 @@ def test_collectors_receive_only_the_typed_collection_projection(tmp_path):
 
     assert len(observed_preferences) == 1
 
-
-def test_same_provider_instances_collect_and_remain_exactly_addressable(tmp_path):
+    # --- scenario: same_provider_instances_collect_and_remain_exactly_addressable
     settings = default_provider_usage_settings()
     settings = settings.with_instance(
         dataclass_replace(
@@ -739,6 +738,7 @@ def test_same_provider_instances_collect_and_remain_exactly_addressable(tmp_path
     assert state.by_instance("claude", "work").lanes[0].remaining_percent == 20
     with pytest.raises(ValueError, match="ambiguous"):
         state.by_provider("claude")
+
 
 
 def test_explicit_settings_update_outlives_an_older_worker_load(tmp_path):
@@ -789,7 +789,8 @@ def test_provider_usage_apply_rejects_mixed_or_untyped_payloads():
         ProviderUsageApply(state, object())
 
 
-def test_service_restores_and_persists_last_known_good(tmp_path):
+def test_service_restores_and_persists_last_known_good__and_2_more(tmp_path) -> None:
+    # --- scenario: service_restores_and_persists_last_known_good
     settings = default_provider_usage_settings()
     initial = ProviderUsageState(
         (snapshot("codex", remaining=17, observed=900),),
@@ -819,8 +820,7 @@ def test_service_restores_and_persists_last_known_good(tmp_path):
     assert refreshed.by_provider("codex").lanes[0].remaining_percent == 17
     assert saved == [refreshed]
 
-
-def test_a_stale_but_real_reading_is_not_replaced_by_the_last_known_good(tmp_path):
+    # --- scenario: a_stale_but_real_reading_is_not_replaced_by_the_last_known_good
     """Reported as "why does it say codex ... 48 percent, it should be
     around 96". The collector correctly marked a three-day-old Codex
     quota STALE, and this substitution handed the OLDER ready snapshot
@@ -851,8 +851,7 @@ def test_a_stale_but_real_reading_is_not_replaced_by_the_last_known_good(tmp_pat
     assert codex.state is ProviderSourceState.STALE, "last_known_good masked a stale reading"
     assert codex.lanes[0].remaining_percent == 48
 
-
-def test_rate_limited_provider_backs_off_instead_of_hammering(tmp_path):
+    # --- scenario: rate_limited_provider_backs_off_instead_of_hammering
     """The Claude usage endpoint 429s; before the failure gate the
     service asked again every refresh, which is how one STAYS rate
     limited. A gated provider serves its previous snapshot; a forced
@@ -887,7 +886,9 @@ def test_rate_limited_provider_backs_off_instead_of_hammering(tmp_path):
     assert len(calls) == 3
 
 
-def test_terminal_gate_lifts_when_the_credential_file_changes(tmp_path):
+
+def test_terminal_gate_lifts_when_the_credential_file_changes__and_2_more(tmp_path) -> None:
+    # --- scenario: terminal_gate_lifts_when_the_credential_file_changes
     """A signed-out provider is not worth re-asking every two minutes;
     it IS worth re-asking the moment the user signs in somewhere. The
     gate watches the provider's own credential file for that."""
@@ -927,8 +928,7 @@ def test_terminal_gate_lifts_when_the_credential_file_changes(tmp_path):
     service.refresh_now(providers=("grok",))
     assert len(calls) == 2, "a credential change must lift the gate"
 
-
-def test_ready_without_lanes_does_not_clobber_a_real_reading(tmp_path):
+    # --- scenario: ready_without_lanes_does_not_clobber_a_real_reading
     """A lane-less READY says "the scan found no quota evidence" -- the
     absence of a reading, not a newer one. It must neither replace the
     last known good numbers nor render as a bare card with no number."""
@@ -964,8 +964,7 @@ def test_ready_without_lanes_does_not_clobber_a_real_reading(tmp_path):
     third = service.refresh_now(providers=("codex",))
     assert third.by_provider("codex").state is ProviderSourceState.READY
 
-
-def test_forced_request_during_callback_delivery_is_not_swallowed(tmp_path):
+    # --- scenario: forced_request_during_callback_delivery_is_not_swallowed
     """Hostile-review regression: the worker used to exit its rerun
     loop and only THEN deliver callbacks, still alive -- a forced
     request landing in that window piggybacked on a thread that would
@@ -1008,6 +1007,7 @@ def test_forced_request_during_callback_delivery_is_not_swallowed(tmp_path):
     service.close()
 
 
+
 def test_a_visible_quota_strip_counts_as_attention():
     """Our one adaptation of CodexBar's ladder: they only have a menu,
     we can be showing the number on the LED bar the whole time."""
@@ -1038,7 +1038,8 @@ def test_a_visible_quota_strip_counts_as_attention():
     )
 
 
-def test_stale_refresh_is_superseded_then_worker_reruns_latest_settings(tmp_path):
+def test_stale_refresh_is_superseded_then_worker_reruns_latest_settings__and_1_more(tmp_path) -> None:
+    # --- scenario: stale_refresh_is_superseded_then_worker_reruns_latest_settings
     initial = default_provider_usage_settings().with_enabled("grok", True)
     updated = initial.with_enabled("grok", False)
     load_started = threading.Event()
@@ -1081,8 +1082,7 @@ def test_stale_refresh_is_superseded_then_worker_reruns_latest_settings(tmp_path
     assert any(item.outcome is RefreshPublicationOutcome.ACCEPTED for item in receipts)
     service.close()
 
-
-def test_settings_update_after_persistence_suppresses_old_callback(tmp_path):
+    # --- scenario: settings_update_after_persistence_suppresses_old_callback
     initial = default_provider_usage_settings().with_enabled("grok", True)
     updated = initial.with_enabled("grok", False)
     current = {"settings": initial}
@@ -1137,3 +1137,4 @@ def test_settings_update_after_persistence_suppresses_old_callback(tmp_path):
     assert callbacks[-1].by_provider("grok").state is ProviderSourceState.DISABLED
     assert len(callbacks) == 1
     service.close()
+

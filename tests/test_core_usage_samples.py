@@ -24,8 +24,8 @@ def climb(start_pct: float, rate_per_hour: float, *, minutes: int = 60, step: in
     return rows
 
 
-def test_a_steady_climb_that_beats_the_reset_is_ahead() -> None:
-    # 20 %/h from 40 %: 60 % left runs out in three hours; the reset is five away.
+def test_a_steady_climb_that_beats_the_reset_is_ahead__and_2_more() -> None:
+    # --- scenario: a_steady_climb_that_beats_the_reset_is_ahead
     rows = climb(40.0, 20.0)
     rate, used = linear_rate(rows, now=NOW)
     assert rate == pytest.approx(20.0) and used == len(rows)
@@ -35,8 +35,7 @@ def test_a_steady_climb_that_beats_the_reset_is_ahead() -> None:
     assert forecast["window_id"] == "five-hour" and forecast["remaining_pct"] == 40.0
     assert forecast["rate_pct_per_hour"] == pytest.approx(20.0, abs=0.01) and forecast["samples"] == len(rows)
 
-
-def test_a_reset_before_exhaustion_is_under_and_within_ten_percent_is_on() -> None:
+    # --- scenario: a_reset_before_exhaustion_is_under_and_within_ten_percent_is_on
     rows = climb(40.0, 20.0)
     # Two hours to exhaustion; the reset comes in one: under.
     assert forecast_window(rows, window_id="five-hour", used_pct=60.0, resets_at=NOW + HOUR, now=NOW)["pace"] == "under"
@@ -48,8 +47,7 @@ def test_a_reset_before_exhaustion_is_under_and_within_ten_percent_is_on() -> No
     # Without a known reset a window heading for 100 % is ahead.
     assert forecast_window(rows, window_id="five-hour", used_pct=60.0, resets_at=None, now=NOW)["pace"] == "ahead"
 
-
-def test_no_movement_is_under_with_no_exhaustion() -> None:
+    # --- scenario: no_movement_is_under_with_no_exhaustion
     flat = climb(37.0, 0.0)
     forecast = forecast_window(flat, window_id="weekly", used_pct=37.0, resets_at=NOW + 3 * 86400, now=NOW)
     assert forecast == {
@@ -60,15 +58,16 @@ def test_no_movement_is_under_with_no_exhaustion() -> None:
     assert forecast_window(climb(37.0, 0.02), window_id="weekly", used_pct=37.0, resets_at=None, now=NOW)["pace"] == "under"
 
 
-def test_exhausted_needs_no_history() -> None:
+
+def test_exhausted_needs_no_history__and_2_more() -> None:
+    # --- scenario: exhausted_needs_no_history
     forecast = forecast_window([], window_id="five-hour", used_pct=99.6, resets_at=NOW + HOUR, now=NOW)
     assert forecast["pace"] == "exhausted" and forecast["exhausts_at"] == NOW and forecast["remaining_pct"] == 0.4
     assert forecast_window([], window_id="five-hour", used_pct=100.0, resets_at=None, now=NOW)["pace"] == "exhausted"
     # A falling line into an exhausted window is still exhausted.
     assert forecast_window(climb(99.0, 1.0), window_id="five-hour", used_pct=99.9, resets_at=None, now=NOW)["pace"] == "exhausted"
 
-
-def test_not_enough_history_means_no_forecast() -> None:
+    # --- scenario: not_enough_history_means_no_forecast
     assert forecast_window([], window_id="five-hour", used_pct=50.0, resets_at=None, now=NOW) is None
     assert forecast_window(climb(40.0, 20.0, minutes=20), window_id="five-hour", used_pct=46.0, resets_at=None, now=NOW) is None
     assert forecast_window(climb(40.0, 20.0), window_id="five-hour", used_pct=None, resets_at=None, now=NOW) is None
@@ -76,16 +75,16 @@ def test_not_enough_history_means_no_forecast() -> None:
     stale = climb(40.0, 20.0, end=NOW - 4 * HOUR)
     assert linear_rate(stale, now=NOW) is None
 
-
-def test_a_reset_drop_restarts_the_fit() -> None:
-    # Climbing to 90 %, the window resets to 2 %, then climbs slowly.
+    # --- scenario: a_reset_drop_restarts_the_fit
     before = climb(60.0, 30.0, end=NOW - 40 * 60)
     after = climb(2.0, 6.0, minutes=40, end=NOW)
     rate, used = linear_rate(before + after, now=NOW)
     assert rate == pytest.approx(6.0, abs=0.01) and used == len(after)
 
 
-def test_buffer_records_on_change_or_heartbeat_and_stays_bounded(tmp_path: Path) -> None:
+
+def test_buffer_records_on_change_or_heartbeat_and_stays_bounded__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: buffer_records_on_change_or_heartbeat_and_stays_bounded
     buffer = UsageSampleBuffer(tmp_path / "usage-samples.json")
     assert buffer.is_empty
     assert buffer.record("claude", "five-hour", 10.0, at=NOW) is True
@@ -106,8 +105,7 @@ def test_buffer_records_on_change_or_heartbeat_and_stays_bounded(tmp_path: Path)
     buffer.record("gemini", "daily", 140.0, at=NOW)
     assert buffer.samples("gemini", "daily")[0].used_pct == 100.0
 
-
-def test_buffer_round_trips_through_the_state_file(tmp_path: Path) -> None:
+    # --- scenario: buffer_round_trips_through_the_state_file
     path = tmp_path / "state" / "usage-samples.json"
     buffer = UsageSampleBuffer(path)
     # 30 %/h in five-minute steps: 2.5-point moves, exact through the
@@ -134,8 +132,7 @@ def test_buffer_round_trips_through_the_state_file(tmp_path: Path) -> None:
     # No path: nothing to save.
     assert UsageSampleBuffer().save() is False
 
-
-def test_save_if_due_throttles_writes(tmp_path: Path) -> None:
+    # --- scenario: save_if_due_throttles_writes
     path = tmp_path / "usage-samples.json"
     buffer = UsageSampleBuffer(path)
     assert buffer.save_if_due(now=100.0) is False  # nothing recorded
@@ -145,6 +142,7 @@ def test_save_if_due_throttles_writes(tmp_path: Path) -> None:
     assert buffer.save_if_due(now=100.0 + 10) is False
     assert buffer.save_if_due(now=100.0 + samples_module.SAVE_INTERVAL_SECONDS) is True
     assert buffer.save_if_due(now=100.0 + 2 * samples_module.SAVE_INTERVAL_SECONDS) is False
+
 
 
 def test_record_state_reads_every_lane_of_a_provider_usage_state() -> None:

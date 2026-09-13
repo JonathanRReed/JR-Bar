@@ -59,7 +59,8 @@ def test_notch_probe_schedules_one_capture_and_serves_the_cached_result() -> Non
     assert tasks == []
 
 
-def test_macos_15_notch_capture_uses_screen_capture_kit_only(monkeypatch) -> None:
+def test_macos_15_notch_capture_uses_screen_capture_kit_only__and_1_more(monkeypatch) -> None:
+    # --- scenario: macos_15_notch_capture_uses_screen_capture_kit_only
     from jrbar import virtual_device
 
     image = object()
@@ -82,8 +83,8 @@ def test_macos_15_notch_capture_uses_screen_capture_kit_only(monkeypatch) -> Non
 
     assert _capture_notch_runs(_request()) == (("sck", image), 2.0, 0.0)
 
-
-def test_pre_macos_15_notch_capture_keeps_the_legacy_fallback(monkeypatch) -> None:
+    # --- scenario: pre_macos_15_notch_capture_keeps_the_legacy_fallback
+    monkeypatch.undo()
     from jrbar import virtual_device
 
     image = object()
@@ -101,6 +102,7 @@ def test_pre_macos_15_notch_capture_keeps_the_legacy_fallback(monkeypatch) -> No
     )
 
     assert _capture_notch_runs(_request()) == (("legacy", image), 2.0, 0.0)
+
 
 
 def test_screen_capture_kit_display_capture_targets_display_and_excludes_own_window() -> None:
@@ -196,7 +198,8 @@ def _notch_runs(top_width_pt=186.0, depth=32, radius=10, left_pt=663.0):
     return runs
 
 
-def test_a_real_notch_shape_validates_and_narrows_toward_the_bottom() -> None:
+def test_a_real_notch_shape_validates_and_narrows_toward_the_bottom__and_2_more() -> None:
+    # --- scenario: a_real_notch_shape_validates_and_narrows_toward_the_bottom
     result = _validated_notch_silhouette(_notch_runs(), SCALE, FRAME_X, max_width=191.0)
     assert result is not None
     x, top_width, insets = result
@@ -209,8 +212,7 @@ def test_a_real_notch_shape_validates_and_narrows_toward_the_bottom() -> None:
     for (al, ar), (bl, br) in pairwise(insets):
         assert bl >= al and br >= ar
 
-
-def test_an_alcove_wide_impostor_is_rejected_by_the_slot_ceiling() -> None:
+    # --- scenario: an_alcove_wide_impostor_is_rejected_by_the_slot_ceiling
     runs = _notch_runs(top_width_pt=266.0, left_pt=623.0)
     # Passes the generic sanity band (120-320)...
     assert _validated_notch_silhouette(runs, SCALE, FRAME_X) is not None
@@ -219,21 +221,21 @@ def test_an_alcove_wide_impostor_is_rejected_by_the_slot_ceiling() -> None:
         _validated_notch_silhouette(runs, SCALE, FRAME_X, max_width=191.0) is None
     )
 
-
-def test_a_row_wider_than_the_top_row_is_not_a_notch() -> None:
+    # --- scenario: a_row_wider_than_the_top_row_is_not_a_notch
     runs = _notch_runs()
     left, right = runs[10]
     runs[10] = (left - 6.0 * SCALE, right)
     assert _validated_notch_silhouette(runs, SCALE, FRAME_X, max_width=191.0) is None
 
 
-def test_a_vanishing_row_is_not_a_notch() -> None:
+
+def test_a_vanishing_row_is_not_a_notch__and_2_more() -> None:
+    # --- scenario: a_vanishing_row_is_not_a_notch
     runs = _notch_runs()
     runs[20] = None
     assert _validated_notch_silhouette(runs, SCALE, FRAME_X, max_width=191.0) is None
 
-
-def test_the_measured_body_never_pokes_past_the_real_corner_curve() -> None:
+    # --- scenario: the_measured_body_never_pokes_past_the_real_corner_curve
     result = _validated_notch_silhouette(_notch_runs(), SCALE, FRAME_X, max_width=191.0)
     assert result is not None
     _x, top_width, insets = result
@@ -260,10 +262,10 @@ def test_the_measured_body_never_pokes_past_the_real_corner_curve() -> None:
     assert not path.containsPoint_((inset_left - 1.0, band_y))
     assert path.containsPoint_((top_width / 2.0, 0.5))
 
-
-def test_no_insets_falls_back_to_the_parametric_shape() -> None:
+    # --- scenario: no_insets_falls_back_to_the_parametric_shape
     path = notch_bar_path_from_insets(((0.0, 0.0), (186.0, 37.0)), ())
     assert path.containsPoint_((93.0, 18.0))
+
 
 
 def test_classic_draw_is_contained_and_feathers_to_black_at_the_corners() -> None:

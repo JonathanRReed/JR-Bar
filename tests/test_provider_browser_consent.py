@@ -13,7 +13,8 @@ from jrbar.provider_browser_consent import (
 )
 
 
-def test_browser_access_is_denied_until_exact_scope_is_granted():
+def test_browser_access_is_denied_until_exact_scope_is_granted__and_2_more() -> None:
+    # --- scenario: browser_access_is_denied_until_exact_scope_is_granted
     store = BrowserConsentStore.empty()
     assert not store.allows(
         provider_id="devin",
@@ -55,8 +56,7 @@ def test_browser_access_is_denied_until_exact_scope_is_granted():
         field="auth1_session",
     )
 
-
-def test_revoke_removes_only_one_provider_profile_scope():
+    # --- scenario: revoke_removes_only_one_provider_profile_scope
     store = BrowserConsentStore.empty().grant(
         provider_id="devin",
         browser="chrome",
@@ -78,8 +78,7 @@ def test_revoke_removes_only_one_provider_profile_scope():
     assert len(updated.consents) == 1
     assert updated.consents[0].provider_id == "cursor"
 
-
-def test_same_provider_consents_are_scoped_to_the_exact_source_instance():
+    # --- scenario: same_provider_consents_are_scoped_to_the_exact_source_instance
     store = BrowserConsentStore.empty().grant(
         provider_id="devin",
         source_instance_id="work",
@@ -107,6 +106,7 @@ def test_same_provider_consents_are_scoped_to_the_exact_source_instance():
         domain="app.devin.ai",
         field="auth1_session",
     )
+
 
 
 def test_same_provider_consents_round_trip_without_collapsing(tmp_path):
@@ -162,7 +162,8 @@ def test_same_provider_consents_round_trip_without_collapsing(tmp_path):
     } == {"personal"}
 
 
-def test_legacy_consent_documents_migrate_to_default_source_instance():
+def test_legacy_consent_documents_migrate_to_default_source_instance__and_2_more() -> None:
+    # --- scenario: legacy_consent_documents_migrate_to_default_source_instance
     loaded = load_browser_consents(
         reader=lambda _path: json.dumps(
             {
@@ -192,8 +193,7 @@ def test_legacy_consent_documents_migrate_to_default_source_instance():
     assert writes[0]["settings_schema_version"] == BROWSER_CONSENT_SCHEMA_VERSION
     assert writes[0]["consents"][0]["source_instance_id"] == "default"
 
-
-def test_settings_round_trip_preserves_unknown_fields():
+    # --- scenario: settings_round_trip_preserves_unknown_fields
     loaded = load_browser_consents(
         reader=lambda _path: json.dumps(
             {
@@ -220,8 +220,7 @@ def test_settings_round_trip_preserves_unknown_fields():
     assert writes[0]["future_extension"] == {"keep": True}
     assert writes[0]["consents"][0]["background_repair"] is True
 
-
-def test_chromium_local_storage_decoder_keeps_latest_live_record():
+    # --- scenario: chromium_local_storage_decoder_keeps_latest_live_record
     records = (
         ChromiumRecord(1, "live", b"_https://app.devin.ai\x00\x01auth1_session", b"\x01old"),
         ChromiumRecord(2, "live", b"_https://app.devin.ai\x00\x01auth1_session", b"\x01new"),
@@ -234,6 +233,7 @@ def test_chromium_local_storage_decoder_keeps_latest_live_record():
         allowed_keys=("auth1_session",),
     )
     assert result == {"auth1_session": "new"}
+
 
 
 def test_devin_session_extraction_is_bounded_and_known_key_only():

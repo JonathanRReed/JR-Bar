@@ -117,24 +117,18 @@ def client(center: FakeCenter) -> MacOSNotificationClient:
     )
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
+def test_authorization_state_maps_only_documented_macos_values__and_2_more() -> None:
+    # --- scenario: authorization_state_maps_only_documented_macos_values
+    for raw, expected in [
         (0, NotificationAuthorizationState.NOT_DETERMINED),
         (1, NotificationAuthorizationState.DENIED),
         (2, NotificationAuthorizationState.AUTHORIZED),
         (3, NotificationAuthorizationState.PROVISIONAL),
         (99, NotificationAuthorizationState.UNAVAILABLE),
-    ],
-)
-def test_authorization_state_maps_only_documented_macos_values(
-    raw: int,
-    expected: NotificationAuthorizationState,
-) -> None:
-    assert client(FakeCenter(raw)).authorization_state() is expected
+    ]:
+        assert client(FakeCenter(raw)).authorization_state() is expected
 
-
-def test_delivery_requires_authorized_or_provisional_state() -> None:
+    # --- scenario: delivery_requires_authorized_or_provisional_state
     denied = FakeCenter(1)
     not_determined = FakeCenter(0)
     denied_client = client(denied)
@@ -159,35 +153,34 @@ def test_delivery_requires_authorized_or_provisional_state() -> None:
     assert denied.notification_requests == []
     assert not_determined.notification_requests == []
 
+    # --- scenario: authorized_delivery_uses_stable_identifier_and_opaque_metadata
+    for raw in [2, 3]:
+        center = FakeCenter(raw)
+        notification_client = client(center)
+        assert notification_client.authorization_state() is {
+            2: NotificationAuthorizationState.AUTHORIZED,
+            3: NotificationAuthorizationState.PROVISIONAL,
+        }[raw]
 
-@pytest.mark.parametrize("raw", [2, 3])
-def test_authorized_delivery_uses_stable_identifier_and_opaque_metadata(
-    raw: int,
-) -> None:
-    center = FakeCenter(raw)
-    notification_client = client(center)
-    assert notification_client.authorization_state() is {
-        2: NotificationAuthorizationState.AUTHORIZED,
-        3: NotificationAuthorizationState.PROVISIONAL,
-    }[raw]
+        assert notification_client.deliver(
+            "completion.semantic-01",
+            "JR-Bar",
+            "A Codex session finished",
+            {"action_token": "A" * 43},
+        )
 
-    assert notification_client.deliver(
-        "completion.semantic-01",
-        "JR-Bar",
-        "A Codex session finished",
-        {"action_token": "A" * 43},
-    )
-
-    assert notification_client.wait_idle(timeout_seconds=1.0)
-    request = center.notification_requests[0]
-    assert request.identifier == "completion.semantic-01"
-    assert request.trigger is None
-    assert request.content.title == "JR-Bar"
-    assert request.content.body == "A Codex session finished"
-    assert request.content.user_info == {"action_token": "A" * 43}
+        assert notification_client.wait_idle(timeout_seconds=1.0)
+        request = center.notification_requests[0]
+        assert request.identifier == "completion.semantic-01"
+        assert request.trigger is None
+        assert request.content.title == "JR-Bar"
+        assert request.content.body == "A Codex session finished"
+        assert request.content.user_info == {"action_token": "A" * 43}
 
 
-def test_delivery_uses_cached_authorization_without_blocking_the_caller() -> None:
+
+def test_delivery_uses_cached_authorization_without_blocking_the_caller__and_2_more() -> None:
+    # --- scenario: delivery_uses_cached_authorization_without_blocking_the_caller
     center = AsyncFakeCenter(2)
     notification_client = MacOSNotificationClient(
         center=center,
@@ -225,8 +218,7 @@ def test_delivery_uses_cached_authorization_without_blocking_the_caller() -> Non
     assert center.delivery_thread_ids != [caller_thread]
     assert notification_client.close(timeout_seconds=1.0) is True
 
-
-def test_async_delivery_stays_active_until_duplicate_safe_completion_callback() -> None:
+    # --- scenario: async_delivery_stays_active_until_duplicate_safe_completion_callback
     center = AsyncFakeCenter(2)
     notification_client = client(center)
     assert (
@@ -249,8 +241,7 @@ def test_async_delivery_stays_active_until_duplicate_safe_completion_callback() 
     assert notification_client.wait_idle(timeout_seconds=1.0) is True
     assert notification_client.close(timeout_seconds=1.0) is True
 
-
-def test_close_uses_its_deadline_to_wait_for_async_completion() -> None:
+    # --- scenario: close_uses_its_deadline_to_wait_for_async_completion
     center = AsyncFakeCenter(2)
     notification_client = client(center)
     assert (
@@ -288,7 +279,9 @@ def test_close_uses_its_deadline_to_wait_for_async_completion() -> None:
     assert close_results == [True]
 
 
-def test_request_authorization_is_explicit_and_alert_only() -> None:
+
+def test_request_authorization_is_explicit_and_alert_only__and_2_more() -> None:
+    # --- scenario: request_authorization_is_explicit_and_alert_only
     center = FakeCenter(0)
     notification_client = client(center)
 
@@ -296,8 +289,7 @@ def test_request_authorization_is_explicit_and_alert_only() -> None:
     assert notification_client.request_authorization() is True
     assert center.authorization_requests == [1 << 2]
 
-
-def test_delegate_registration_never_requests_authorization() -> None:
+    # --- scenario: delegate_registration_never_requests_authorization
     center = FakeCenter(0)
     notification_client = client(center)
     delegate = object()
@@ -307,8 +299,7 @@ def test_delegate_registration_never_requests_authorization() -> None:
     assert center.delegate is delegate
     assert center.authorization_requests == []
 
-
-def test_explicit_request_reports_the_resolved_authorization_state() -> None:
+    # --- scenario: explicit_request_reports_the_resolved_authorization_state
     center = FakeCenter(2)
     notification_client = client(center)
     resolved: list[NotificationAuthorizationState] = []
@@ -318,30 +309,23 @@ def test_explicit_request_reports_the_resolved_authorization_state() -> None:
     assert resolved == [NotificationAuthorizationState.AUTHORIZED]
 
 
-@pytest.mark.parametrize(
-    ("identifier", "title", "body", "metadata"),
-    [
+
+def test_delivery_rejects_private_or_unbounded_inputs__and_2_more() -> None:
+    # --- scenario: delivery_rejects_private_or_unbounded_inputs
+    for identifier, title, body, metadata in [
         ("completion.a", "JR-Bar", "Finished", {"agent_id": "private"}),
         ("completion.a", "Bearer secret", "Finished", {}),
         ("completion.a", "SidePulse", "Finished", {}),
         ("completion.a", "JR-Bar", "/Users/private/session", {}),
         ("completion private", "JR-Bar", "Finished", {}),
         ("completion.a", "JR-Bar", "Finished", {"action_token": "too-short"}),
-    ],
-)
-def test_delivery_rejects_private_or_unbounded_inputs(
-    identifier: str,
-    title: str,
-    body: str,
-    metadata: dict[str, str],
-) -> None:
-    center = FakeCenter(2)
+    ]:
+        center = FakeCenter(2)
 
-    assert client(center).deliver(identifier, title, body, metadata) is False
-    assert center.notification_requests == []
+        assert client(center).deliver(identifier, title, body, metadata) is False
+        assert center.notification_requests == []
 
-
-def test_delivery_failure_exposes_only_product_owned_diagnostic() -> None:
+    # --- scenario: delivery_failure_exposes_only_product_owned_diagnostic
     center = FakeCenter(2)
     center.delivery_error = RuntimeError("/Users/private token=secret")
     notification_client = client(center)
@@ -360,8 +344,7 @@ def test_delivery_failure_exposes_only_product_owned_diagnostic() -> None:
     assert notification_client.last_diagnostic == "Notification delivery failed"
     assert "private" not in repr(notification_client)
 
-
-def test_missing_runtime_bridge_reports_unavailable_without_prompt() -> None:
+    # --- scenario: missing_runtime_bridge_reports_unavailable_without_prompt
     notification_client = MacOSNotificationClient(
         center=None,
         content_factory=None,
@@ -372,3 +355,4 @@ def test_missing_runtime_bridge_reports_unavailable_without_prompt() -> None:
 
     assert notification_client.authorization_state() is NotificationAuthorizationState.UNAVAILABLE
     assert notification_client.request_authorization() is False
+

@@ -103,7 +103,8 @@ def _receipt_state(
     )
 
 
-def test_key_is_exact_source_bound_content_free_and_immutable() -> None:
+def test_key_is_exact_source_bound_content_free_and_immutable__and_2_more() -> None:
+    # --- scenario: key_is_exact_source_bound_content_free_and_immutable
     status = _status("codex:session:one")
 
     key = completion_presentation_key(status)
@@ -119,10 +120,8 @@ def test_key_is_exact_source_bound_content_free_and_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         key.agent_id = "changed"  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    "status",
-    (
+    # --- scenario: only_exact_local_completed_events_produce_keys
+    for status in (
         _status("codex:session:working", mode=AgentMode.WORKING),
         _status("codex:session:closed", event_name="SessionEnd"),
         _status("codex:session:unkeyed", keyed=False),
@@ -131,13 +130,10 @@ def test_key_is_exact_source_bound_content_free_and_immutable() -> None:
             provider="codex",
             source=_source("claude"),
         ),
-    ),
-)
-def test_only_exact_local_completed_events_produce_keys(status: AgentStatus) -> None:
-    assert completion_presentation_key(status) is None
+    ):
+        assert completion_presentation_key(status) is None
 
-
-def test_preview_is_deterministic_bounded_and_reports_protected_reasons() -> None:
+    # --- scenario: preview_is_deterministic_bounded_and_reports_protected_reasons
     clear_b = _status("codex:session:b", updated_at=NOW + timedelta(seconds=2))
     clear_a = _status("codex:session:a", updated_at=NOW + timedelta(seconds=1))
     active = _status("codex:session:active", mode=AgentMode.WORKING)
@@ -182,7 +178,9 @@ def test_preview_is_deterministic_bounded_and_reports_protected_reasons() -> Non
     assert all("/" not in fact for fact in preview.preservation_facts)
 
 
-def test_preview_label_falls_back_instead_of_rendering_a_raw_path() -> None:
+
+def test_preview_label_falls_back_instead_of_rendering_a_raw_path__and_1_more() -> None:
+    # --- scenario: preview_label_falls_back_instead_of_rendering_a_raw_path
     preview = project_clear_agents_preview(
         (_status("codex:session:path", display_name="/Users/person/private"),),
         state=ClearAgentsState(),
@@ -191,8 +189,7 @@ def test_preview_label_falls_back_instead_of_rendering_a_raw_path() -> None:
 
     assert preview.items[0].safe_label == "Codex"
 
-
-def test_commit_adds_only_exact_new_receipts_and_records_five_minute_undo() -> None:
+    # --- scenario: commit_adds_only_exact_new_receipts_and_records_five_minute_undo
     first = _status("codex:session:first")
     second = _status("codex:session:second", updated_at=NOW + timedelta(seconds=1))
 
@@ -212,9 +209,9 @@ def test_commit_adds_only_exact_new_receipts_and_records_five_minute_undo() -> N
     assert plan.next_state.latest_batch == plan.batch_receipt
 
 
-def test_commit_evicts_old_acknowledgements_when_receipt_cap_is_full(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+
+def test_commit_evicts_old_acknowledgements_when_receipt_cap_is_full__and_2_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: commit_evicts_old_acknowledgements_when_receipt_cap_is_full
     old = _status("codex:session:old", updated_at=NOW - timedelta(seconds=3))
     middle = _status("codex:session:middle", updated_at=NOW - timedelta(seconds=2))
     newest = _status("codex:session:newest", updated_at=NOW - timedelta(seconds=1))
@@ -230,10 +227,8 @@ def test_commit_evicts_old_acknowledgements_when_receipt_cap_is_full(
     assert completion_presentation_key(newest) in retained
     assert completion_presentation_key(incoming) in retained
 
-
-def test_commit_never_evicts_a_current_new_target_even_when_older_by_time(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: commit_never_evicts_a_current_new_target_even_when_older_by_time
+    monkeypatch.undo()
     first = _status("codex:session:first", updated_at=NOW - timedelta(seconds=2))
     second = _status("codex:session:second", updated_at=NOW - timedelta(seconds=1))
     state = _receipt_state(((first, 100.0), (second, 90.0)))
@@ -247,10 +242,8 @@ def test_commit_never_evicts_a_current_new_target_even_when_older_by_time(
     assert completion_presentation_key(first) in retained
     assert completion_presentation_key(second) not in retained
 
-
-def test_commit_never_evicts_keys_from_latest_live_undo_batch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: commit_never_evicts_keys_from_latest_live_undo_batch
+    monkeypatch.undo()
     protected = _status("codex:session:protected", updated_at=NOW - timedelta(seconds=3))
     newest = _status("codex:session:newest", updated_at=NOW - timedelta(seconds=2))
     middle = _status("codex:session:middle", updated_at=NOW - timedelta(seconds=1))
@@ -280,9 +273,9 @@ def test_commit_never_evicts_keys_from_latest_live_undo_batch(
     assert completion_presentation_key(middle) not in retained
 
 
-def test_eviction_tie_break_and_persisted_order_are_deterministic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+
+def test_eviction_tie_break_and_persisted_order_are_deterministic__and_1_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: eviction_tie_break_and_persisted_order_are_deterministic
     rows = tuple(
         _status(f"codex:session:{name}", updated_at=NOW - timedelta(seconds=index))
         for index, name in enumerate(("a", "b", "c"), start=1)
@@ -303,10 +296,8 @@ def test_eviction_tie_break_and_persisted_order_are_deterministic(
         sorted(receipt.key for receipt in state.receipts)
     )[-2:]
 
-
-def test_commit_refuses_when_protected_targets_and_live_undo_cannot_fit(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: commit_refuses_when_protected_targets_and_live_undo_cannot_fit
+    monkeypatch.undo()
     first = _status("codex:session:first", updated_at=NOW - timedelta(seconds=2))
     second = _status("codex:session:second", updated_at=NOW - timedelta(seconds=1))
     first_key = completion_presentation_key(first)
@@ -342,7 +333,9 @@ def test_commit_refuses_when_protected_targets_and_live_undo_cannot_fit(
     assert raised.value.reason is ClearAgentsRefusal.INVALID
 
 
-def test_receipt_hides_only_same_event_newer_event_reappears() -> None:
+
+def test_receipt_hides_only_same_event_newer_event_reappears__and_2_more() -> None:
+    # --- scenario: receipt_hides_only_same_event_newer_event_reappears
     original = _status("codex:session:same")
     committed = _commit((original,)).next_state
     same = project_clear_agents_preview(
@@ -358,8 +351,7 @@ def test_receipt_hides_only_same_event_newer_event_reappears() -> None:
     assert newer.clearable_count == 1
     assert newer.clearable_keys[0] not in committed.acknowledged_keys
 
-
-def test_acknowledged_row_is_neither_clearable_nor_reclassified_as_protected() -> None:
+    # --- scenario: acknowledged_row_is_neither_clearable_nor_reclassified_as_protected
     done = _status("codex:session:acknowledged")
     committed = _commit((done,)).next_state
 
@@ -371,8 +363,7 @@ def test_acknowledged_row_is_neither_clearable_nor_reclassified_as_protected() -
     assert preview.protected_counts.total == 0
     assert preview.fence.protected_signatures == ()
 
-
-def test_type_valid_source_mismatch_stays_protected_instead_of_clearing() -> None:
+    # --- scenario: type_valid_source_mismatch_stays_protected_instead_of_clearing
     mismatch = _status(
         "codex:session:mismatch",
         provider="codex",
@@ -388,7 +379,9 @@ def test_type_valid_source_mismatch_stays_protected_instead_of_clearing() -> Non
     assert preview.fence.protected_signatures[0].source_key == _source("claude")
 
 
-def test_same_agent_and_event_on_another_source_is_untouched() -> None:
+
+def test_same_agent_and_event_on_another_source_is_untouched__and_2_more() -> None:
+    # --- scenario: same_agent_and_event_on_another_source_is_untouched
     original = _status("codex:session:same", source=_source(source_instance="one"))
     committed = _commit((original,)).next_state
     collision = _status(
@@ -402,8 +395,7 @@ def test_same_agent_and_event_on_another_source_is_untouched() -> None:
     assert preview.clearable_count == 1
     assert preview.clearable_keys[0].source_key.source_instance_id == "two"
 
-
-def test_commit_refuses_changed_targets_protected_lifecycle_and_generation() -> None:
+    # --- scenario: commit_refuses_changed_targets_protected_lifecycle_and_generation
     done = _status("codex:session:done")
     original = project_clear_agents_preview(
         (done,),
@@ -449,8 +441,7 @@ def test_commit_refuses_changed_targets_protected_lifecycle_and_generation() -> 
             )
         assert raised.value.reason is ClearAgentsRefusal.STALE_PREVIEW
 
-
-def test_empty_and_oversized_commits_fail_closed() -> None:
+    # --- scenario: empty_and_oversized_commits_fail_closed
     empty = project_clear_agents_preview(
         (), state=ClearAgentsState(), now_epoch=NOW_EPOCH
     )
@@ -478,7 +469,9 @@ def test_empty_and_oversized_commits_fail_closed() -> None:
     assert oversized_error.value.reason is ClearAgentsRefusal.INVALID
 
 
-def test_explicitly_queued_completed_row_is_protected_from_stale_completion() -> None:
+
+def test_explicitly_queued_completed_row_is_protected_from_stale_completion__and_2_more() -> None:
+    # --- scenario: explicitly_queued_completed_row_is_protected_from_stale_completion
     queued = _status("codex:session:queued-completion")
 
     preview = project_clear_agents_preview(
@@ -491,8 +484,7 @@ def test_explicitly_queued_completed_row_is_protected_from_stale_completion() ->
     assert preview.clearable_count == 0
     assert preview.protected_counts.queued == 1
 
-
-def test_undo_removes_only_latest_batch_additions() -> None:
+    # --- scenario: undo_removes_only_latest_batch_additions
     preserved = _status("codex:session:preserved")
     first = _commit((preserved,), batch_id="first").next_state
     added = _status("codex:session:added", updated_at=NOW + timedelta(seconds=1))
@@ -517,8 +509,7 @@ def test_undo_removes_only_latest_batch_additions() -> None:
     assert undo.next_state.latest_batch is not None
     assert undo.next_state.latest_batch.undone
 
-
-def test_undo_refuses_expired_wrong_repeated_and_stale_batches() -> None:
+    # --- scenario: undo_refuses_expired_wrong_repeated_and_stale_batches
     committed = _commit((_status("codex:session:done"),)).next_state
 
     with pytest.raises(ClearAgentsPlanError) as wrong:
@@ -552,7 +543,9 @@ def test_undo_refuses_expired_wrong_repeated_and_stale_batches() -> None:
     assert stale_error.value.reason is ClearAgentsRefusal.STALE_UNDO
 
 
-def test_projection_never_mutates_mailbox_receipts_or_unrelated_state() -> None:
+
+def test_projection_never_mutates_mailbox_receipts_or_unrelated_state__and_2_more() -> None:
+    # --- scenario: projection_never_mutates_mailbox_receipts_or_unrelated_state
     state = ClearAgentsState()
     before = repr(state)
 
@@ -566,14 +559,7 @@ def test_projection_never_mutates_mailbox_receipts_or_unrelated_state() -> None:
     assert not hasattr(state, "mailbox_retained_order")
     assert not hasattr(state, "mailbox_seen_completion_ids")
 
-
-# --- widened eligibility ----------------------------------------------------
-#
-# "Clear done" has to empty the list, so it acknowledges every row the panel
-# shows as over -- not only the completions that were fresh enough to badge.
-
-
-def test_a_widened_clear_keys_every_finished_or_stale_row() -> None:
+    # --- scenario: a_widened_clear_keys_every_finished_or_stale_row
     completed = _status("codex:session:done")
     closed = _status("codex:session:closed", event_name="SessionEnd")
     unconfirmed = _status("codex:session:crashed", mode=AgentMode.ENDED_UNCONFIRMED, event_name="PostToolUse")
@@ -586,8 +572,7 @@ def test_a_widened_clear_keys_every_finished_or_stale_row() -> None:
     assert completion_presentation_key(unconfirmed) is None
     assert completion_presentation_key(quiet) is None
 
-
-def test_a_widened_clear_still_refuses_live_rows() -> None:
+    # --- scenario: a_widened_clear_still_refuses_live_rows
     for mode in (AgentMode.WORKING, AgentMode.TOOL_RUNNING, AgentMode.WAITING_FOR_INPUT, AgentMode.BLOCKED_ERROR, AgentMode.IDLE_READY):
         status = _status(f"codex:session:{mode.value}", mode=mode, event_name="PreToolUse")
         assert clearable_presentation_key(status) is None, mode
@@ -595,7 +580,9 @@ def test_a_widened_clear_still_refuses_live_rows() -> None:
     assert clearable_presentation_key(_status("codex:session:unkeyed", keyed=False)) is None
 
 
-def test_the_widened_preview_clears_the_rows_the_narrow_one_refused() -> None:
+
+def test_the_widened_preview_clears_the_rows_the_narrow_one_refused__and_1_more() -> None:
+    # --- scenario: the_widened_preview_clears_the_rows_the_narrow_one_refused
     closed = _status("codex:session:closed", event_name="SessionEnd")
     quiet = dataclasses.replace(_status("codex:session:quiet", mode=AgentMode.IDLE_READY, event_name="SessionStart"), stale=True)
     working = _status("codex:session:working", mode=AgentMode.WORKING, event_name="PostToolUse")
@@ -609,8 +596,7 @@ def test_the_widened_preview_clears_the_rows_the_narrow_one_refused() -> None:
     # The live row is fenced, not cleared.
     assert [signature.agent_id for signature in widened.fence.protected_signatures] == ["codex:session:working"]
 
-
-def test_a_widened_batch_commits_and_undoes_like_any_other() -> None:
+    # --- scenario: a_widened_batch_commits_and_undoes_like_any_other
     closed = _status("codex:session:closed", event_name="SessionEnd")
     quiet = dataclasses.replace(_status("codex:session:quiet", mode=AgentMode.IDLE_READY, event_name="SessionStart"), stale=True)
     state = ClearAgentsState()
@@ -629,3 +615,4 @@ def test_a_widened_batch_commits_and_undoes_like_any_other() -> None:
     with pytest.raises(ClearAgentsPlanError) as expired:
         plan_clear_agents_undo(plan.next_state, batch_id="batch-widened", now_epoch=NOW_EPOCH + 301.0)
     assert expired.value.reason is ClearAgentsRefusal.EXPIRED
+

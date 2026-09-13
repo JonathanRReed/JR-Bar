@@ -103,7 +103,8 @@ def _lane(
     )
 
 
-def test_used_first_evidence_converts_once_and_preserves_observed_zero() -> None:
+def test_used_first_evidence_converts_once_and_preserves_observed_zero__and_2_more() -> None:
+    # --- scenario: used_first_evidence_converts_once_and_preserves_observed_zero
     result = normalize_supported_quota_evidence(
         _descriptor(),
         _evidence(
@@ -125,29 +126,24 @@ def test_used_first_evidence_converts_once_and_preserves_observed_zero() -> None
     assert long.value.state is ObservationState.OBSERVED_ZERO
     assert result.diagnostics == ("converted_percent_used",)
 
-
-@pytest.mark.parametrize(
-    ("state", "percent"),
-    (
+    # --- scenario: missing_partial_and_stale_values_remain_distinct
+    for state, percent in (
         (ObservationState.NULL, None),
         (ObservationState.UNAVAILABLE, None),
         (ObservationState.PARTIAL, None),
         (ObservationState.STALE, 42),
-    ),
-)
-def test_missing_partial_and_stale_values_remain_distinct(state, percent) -> None:
-    result = normalize_supported_quota_evidence(
-        _descriptor(),
-        _evidence(_lane(SHORT_KEY, percent, state=state)),
-        observed_at=100.0,
-    )
+    ):
+        result = normalize_supported_quota_evidence(
+            _descriptor(),
+            _evidence(_lane(SHORT_KEY, percent, state=state)),
+            observed_at=100.0,
+        )
 
-    value = result.snapshot.lanes[0].value
-    assert value.state is state
-    assert value.remaining == percent
+        value = result.snapshot.lanes[0].value
+        assert value.state is state
+        assert value.remaining == percent
 
-
-def test_reset_unknown_and_source_partial_remain_independent_facts() -> None:
+    # --- scenario: reset_unknown_and_source_partial_remain_independent_facts
     result = normalize_supported_quota_evidence(
         _descriptor(),
         _evidence(
@@ -164,7 +160,9 @@ def test_reset_unknown_and_source_partial_remain_independent_facts() -> None:
     assert lane.source_health.reason_code == "source_partial"
 
 
-def test_static_descriptor_owns_model_scope_semantics_and_unknown_effect() -> None:
+
+def test_static_descriptor_owns_model_scope_semantics_and_unknown_effect__and_2_more() -> None:
+    # --- scenario: static_descriptor_owns_model_scope_semantics_and_unknown_effect
     result = normalize_supported_quota_evidence(
         _descriptor(),
         _evidence(_lane(MODEL_KEY, 35), _lane(UNKNOWN_KEY, 20)),
@@ -178,8 +176,7 @@ def test_static_descriptor_owns_model_scope_semantics_and_unknown_effect() -> No
     assert unknown.semantic_name == "Other limit"
     assert unknown.key.effect is QuotaEffect.UNKNOWN
 
-
-def test_supported_normalization_performs_no_io() -> None:
+    # --- scenario: supported_normalization_performs_no_io
     def unexpected(*_args, **_kwargs):
         raise AssertionError("capacity normalization crossed an I/O boundary")
 
@@ -196,15 +193,15 @@ def test_supported_normalization_performs_no_io() -> None:
 
     assert result.snapshot.lanes[0].value.remaining == 60.0
 
+    # --- scenario: invalid_percent_evidence_fails_closed
+    for percent in (-0.01, 100.01, float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            normalize_supported_quota_evidence(
+                _descriptor(),
+                _evidence(_lane(SHORT_KEY, percent)),
+                observed_at=100.0,
+            )
 
-@pytest.mark.parametrize("percent", (-0.01, 100.01, float("nan"), float("inf")))
-def test_invalid_percent_evidence_fails_closed(percent: float) -> None:
-    with pytest.raises(ValueError):
-        normalize_supported_quota_evidence(
-            _descriptor(),
-            _evidence(_lane(SHORT_KEY, percent)),
-            observed_at=100.0,
-        )
 
 
 def test_undeclared_or_duplicate_lanes_fail_closed() -> None:

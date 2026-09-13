@@ -150,7 +150,8 @@ def _contract(source: SourceKey) -> NegotiatedProviderContract:
     )
 
 
-def test_answer_controller_module_is_appkit_free() -> None:
+def test_answer_controller_module_is_appkit_free__and_2_more() -> None:
+    # --- scenario: answer_controller_module_is_appkit_free
     source = (
         Path(__file__).parents[1] / "src" / "jrbar" / "answer_controller.py"
     ).read_text(encoding="utf-8")
@@ -159,8 +160,7 @@ def test_answer_controller_module_is_appkit_free() -> None:
     assert "import objc" not in source
     assert "agent_browser_window" not in source
 
-
-def test_controller_projects_exact_capability_and_dispatches_exact_handler() -> None:
+    # --- scenario: controller_projects_exact_capability_and_dispatches_exact_handler
     source, _work, _request, operator_state, status, row = _truth()
     refreshes = []
     opened = []
@@ -211,8 +211,7 @@ def test_controller_projects_exact_capability_and_dispatches_exact_handler() -> 
     assert opened == []
     controller.runtime.close(timeout_seconds=1.0)
 
-
-def test_stack_and_browser_jump_return_or_open_only_the_exact_route() -> None:
+    # --- scenario: stack_and_browser_jump_return_or_open_only_the_exact_route
     source, work, request, operator_state, status, row = _truth()
     opened = []
     controller = AnswerController(
@@ -248,6 +247,7 @@ def test_stack_and_browser_jump_return_or_open_only_the_exact_route() -> None:
     ) is True
     assert opened == [status]
     controller.runtime.close(timeout_seconds=1.0)
+
 
 
 def test_request_attempt_survives_ui_generation_changes_across_surfaces() -> None:

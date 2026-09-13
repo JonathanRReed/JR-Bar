@@ -38,49 +38,50 @@ def wire_payload(reports: list[bytes]) -> bytes:
     return b"".join(report[3:3 + report[2]] for report in reports)
 
 
-@pytest.mark.parametrize("text", ["", "x" * 200, "🙂é" * 50, 'line\nquote"brace}\\'])
-def test_request_uses_crlf_boundaries_on_the_actual_wire(text):
-    request = {"jsonrpc": "2.0", "method": "device.status", "params": {"text": text}, "id": 1}
-    payload = wire_payload(CreatorMicro2Framer.encode_request(request))
-    expected = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode()
-    assert payload == b"\r\n" + expected + b"\r\n"
+def test_request_uses_crlf_boundaries_on_the_actual_wire__and_2_more() -> None:
+    # --- scenario: request_uses_crlf_boundaries_on_the_actual_wire
+    for text in ["", "x" * 200, "🙂é" * 50, 'line\nquote"brace}\\']:
+        request = {"jsonrpc": "2.0", "method": "device.status", "params": {"text": text}, "id": 1}
+        payload = wire_payload(CreatorMicro2Framer.encode_request(request))
+        expected = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode()
+        assert payload == b"\r\n" + expected + b"\r\n"
 
-
-def test_request_wire_boundaries_are_included_in_the_byte_budget():
+    # --- scenario: request_wire_boundaries_are_included_in_the_byte_budget
     request = {"jsonrpc": "2.0", "method": "x", "params": None, "id": 1}
     size = len(json.dumps(request, separators=(",", ":")).encode())
     with pytest.raises(ValueError, match="report limit"):
         CreatorMicro2Framer.encode_request(request, max_bytes=size + 3)
     assert len(wire_payload(CreatorMicro2Framer.encode_request(request, max_bytes=size + 4))) == size + 4
 
-
-@pytest.mark.parametrize("size", [0, 1, 59, 60, 61, 62, 120, 121, 122, 123, 700])
-def test_framed_requests_still_decode_across_fragment_boundaries(size):
-    request = {"jsonrpc": "2.0", "method": "x", "params": {"text": "x" * size}, "id": 7}
-    decoder = RpcStreamDecoder()
-    received = [item for report in CreatorMicro2Framer.encode_request(request) for item in decoder.feed(report)]
-    assert received == [request]
-    assert decoder.pending_bytes == 0
-
-
-@pytest.mark.parametrize("report_id", [True, False])
-@pytest.mark.parametrize("code", [-32601, 404, -32602])
-def test_method_tagged_firmware_error_decodes_without_weakening_validation(report_id, code):
-    response = {"id": 1, "method": "device.status", "error": {"code": code, "message": "test error"}}
-    decoder = RpcStreamDecoder()
-    received = [item for report in raw_reports(response, include_report_id=report_id) for item in decoder.feed(report)]
-    assert received == [response]
-    assert decoder.pending_bytes == 0
+    # --- scenario: framed_requests_still_decode_across_fragment_boundaries
+    for size in [0, 1, 59, 60, 61, 62, 120, 121, 122, 123, 700]:
+        request = {"jsonrpc": "2.0", "method": "x", "params": {"text": "x" * size}, "id": 7}
+        decoder = RpcStreamDecoder()
+        received = [item for report in CreatorMicro2Framer.encode_request(request) for item in decoder.feed(report)]
+        assert received == [request]
+        assert decoder.pending_bytes == 0
 
 
-@pytest.mark.parametrize("changes", [
+
+def test_method_tagged_firmware_error_decodes_without_weakening_validation__and_1_more() -> None:
+    # --- scenario: method_tagged_firmware_error_decodes_without_weakening_validation
+    for report_id in [True, False]:
+        for code in [-32601, 404, -32602]:
+            response = {"id": 1, "method": "device.status", "error": {"code": code, "message": "test error"}}
+            decoder = RpcStreamDecoder()
+            received = [item for report in raw_reports(response, include_report_id=report_id) for item in decoder.feed(report)]
+            assert received == [response]
+            assert decoder.pending_bytes == 0
+
+    # --- scenario: malformed_or_ambiguous_firmware_errors_remain_rejected
+    for changes in [
     {"error": "not an object"}, {"result": {}}, {"params": {}},
     {"extra": 1}, {"id": True}, {"id": 1000}, {"method": None},
-])
-def test_malformed_or_ambiguous_firmware_errors_remain_rejected(changes):
-    response = {"id": 1, "method": "device.status", "error": {"code": 404}, **changes}
-    with pytest.raises(ValueError):
-        CreatorMicro2Framer.validate_incoming(response)
+]:
+        response = {"id": 1, "method": "device.status", "error": {"code": 404}, **changes}
+        with pytest.raises(ValueError):
+            CreatorMicro2Framer.validate_incoming(response)
+
 
 
 class ScriptedTransport:
@@ -102,7 +103,8 @@ class ScriptedTransport:
         self.closed = True
 
 
-def test_adapter_reports_firmware_error_instead_of_malformed_wire():
+def test_adapter_reports_firmware_error_instead_of_malformed_wire__and_2_more() -> None:
+    # --- scenario: adapter_reports_firmware_error_instead_of_malformed_wire
     response = {"id": 1, "method": "device.status", "error": {"code": 404, "message": "not found"}}
     transport = ScriptedTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
@@ -114,8 +116,7 @@ def test_adapter_reports_firmware_error_instead_of_malformed_wire():
     assert actual == response
     assert adapter.connected
 
-
-def test_method_mismatch_still_disconnects():
+    # --- scenario: method_mismatch_still_disconnects
     response = {"id": 1, "method": "fs.read", "error": {"code": 404}}
     transport = ScriptedTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
@@ -125,8 +126,7 @@ def test_method_mismatch_still_disconnects():
     assert receipt.code == "malformed_report" and actual is None
     assert not adapter.connected and transport.closed
 
-
-def test_foreign_response_still_revokes_input():
+    # --- scenario: foreign_response_still_revokes_input
     response = {"id": 999, "method": "device.status", "error": {"code": 404}}
     now = [10.0]
     transport = ScriptedTransport()
@@ -138,6 +138,7 @@ def test_foreign_response_still_revokes_input():
     receipt, _ = adapter._call("device.status", None)
     assert receipt.code == "device_conflict"
     assert adapter.conflict.active and adapter.poll_inputs() == []
+
 
 
 class WouldBlock(AssertionError):
@@ -197,20 +198,21 @@ def open_transport(monkeypatch, **kwargs):
     return transport, device
 
 
-def test_zero_timeout_poll_cannot_block_on_an_empty_queue(monkeypatch):
+def test_zero_timeout_poll_cannot_block_on_an_empty_queue__and_2_more(monkeypatch) -> None:
+    # --- scenario: zero_timeout_poll_cannot_block_on_an_empty_queue
     transport, device = open_transport(monkeypatch)
     assert transport.read(timeout_ms=0) is None
     assert device.nonblocking is True
 
+    # --- scenario: positive_timeouts_remain_bounded
+    monkeypatch.undo()
+    for requested, expected in [(1, 1), (250, 250), (8000, 8000), (9999, 8000)]:
+        transport, device = open_transport(monkeypatch)
+        assert transport.read(timeout_ms=requested) is None
+        assert device.read_args == [(64, expected)]
 
-@pytest.mark.parametrize(("requested", "expected"), [(1, 1), (250, 250), (8000, 8000), (9999, 8000)])
-def test_positive_timeouts_remain_bounded(monkeypatch, requested, expected):
-    transport, device = open_transport(monkeypatch)
-    assert transport.read(timeout_ms=requested) is None
-    assert device.read_args == [(64, expected)]
-
-
-def test_adapter_empty_input_poll_returns_and_owner_can_close(monkeypatch):
+    # --- scenario: adapter_empty_input_poll_returns_and_owner_can_close
+    monkeypatch.undo()
     transport, device = open_transport(monkeypatch)
     adapter = CreatorMicro2Adapter(transport, INFO)
     adapter.connect()
@@ -219,26 +221,29 @@ def test_adapter_empty_input_poll_returns_and_owner_can_close(monkeypatch):
     assert device.closed and not adapter.connected
 
 
-@pytest.mark.parametrize("result", [-1, 0, 1, 63, 65, None])
-def test_short_or_failed_hid_writes_raise(monkeypatch, result):
-    transport, _ = open_transport(monkeypatch, write_result=result)
-    transport.enable_writes()
-    with pytest.raises(OSError, match="HID write"):
-        transport.write(bytes(64))
 
+def test_short_or_failed_hid_writes_raise__and_2_more(monkeypatch) -> None:
+    # --- scenario: short_or_failed_hid_writes_raise
+    for result in [-1, 0, 1, 63, 65, None]:
+        transport, _ = open_transport(monkeypatch, write_result=result)
+        transport.enable_writes()
+        with pytest.raises(OSError, match="HID write"):
+            transport.write(bytes(64))
 
-def test_full_hid_write_succeeds(monkeypatch):
+    # --- scenario: full_hid_write_succeeds
+    monkeypatch.undo()
     transport, device = open_transport(monkeypatch)
     transport.enable_writes()
     transport.write(bytes(64))
     assert device.writes == [bytes(64)]
 
-
-def test_write_opt_in_is_not_weakened(monkeypatch):
+    # --- scenario: write_opt_in_is_not_weakened
+    monkeypatch.undo()
     transport, device = open_transport(monkeypatch)
     with pytest.raises(PermissionError, match="opt-in"):
         transport.write(bytes(64))
     assert device.writes == []
+
 
 
 def test_failed_write_propagates_to_adapter_and_disconnects(monkeypatch):
@@ -252,12 +257,13 @@ def test_failed_write_propagates_to_adapter_and_disconnects(monkeypatch):
     assert device.read_args == [(64, 0)]  # the connect-time stale-input drain
 
 
-def test_approved_device_identity_is_still_required():
+def test_approved_device_identity_is_still_required__and_1_more() -> None:
+    # --- scenario: approved_device_identity_is_still_required
     with pytest.raises(PermissionError, match="approved device"):
         HidApiTransport(FakeHid(FakeHidDevice())).open()
 
-
-def test_no_device_is_not_silently_replaced_by_another_identity():
+    # --- scenario: no_device_is_not_silently_replaced_by_another_identity
     transport = HidApiTransport(FakeHid(FakeHidDevice()), approved_serial="different-fixture")
     with pytest.raises(NoDeviceError):
         transport.open()
+

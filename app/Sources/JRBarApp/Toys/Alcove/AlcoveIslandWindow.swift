@@ -3,11 +3,15 @@ import QuartzCore
 import SwiftUI
 
 /// The island's panel: a borderless, non-activating panel pinned to the
-/// screen's top edge over the notch, one level above the menu bar —
-/// `NotchHUD`'s level, high enough to own the notch, short of pop-ups
-/// and the Fold overlay's screen-saver tier. `sharingType = .none`
-/// keeps it out of Fold's desktop capture so a warped screen never
-/// shows the island twice.
+/// screen's top edge over the notch, at `statusBar` level — high enough
+/// to own the notch, short of pop-ups and the Fold overlay's
+/// screen-saver tier, and one step under the Screen Bar's `statusBar+1`
+/// so when both are up the bar's LED strip draws across the island's
+/// dead top zone instead of the island's black face covering it (the
+/// layout's `ledClearance` keeps the island's own content below the
+/// band; the bar's window is click-through, so hover and swipes still
+/// land). `sharingType = .none` keeps it out of Fold's desktop capture
+/// so a warped screen never shows the island twice.
 ///
 /// Unlike `FoldOverlayWindow` it takes mouse events — hover is what
 /// grows the capsule — so its frame is always exactly the drawn shape:
@@ -98,7 +102,7 @@ final class AlcoveIslandWindow: NSPanel {
         animationBehavior = .none
         isMovable = false
         collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
-        level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
+        level = .statusBar
         sharingType = .none
         hosting.acceptsClicks = { [weak toy] in !(toy?.foldEngaged ?? false) }
         hosting.onSwipe = { [weak toy] swipe in toy?.islandSwipe(swipe) }

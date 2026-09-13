@@ -155,7 +155,8 @@ class _MultiHeaders:
 # ---------------------------------------------------------------------------
 
 
-def test_ingest_is_off_until_explicitly_enabled():
+def test_ingest_is_off_until_explicitly_enabled__and_2_more() -> None:
+    # --- scenario: ingest_is_off_until_explicitly_enabled
     """Deletion: drop the `if not self.config.enabled` gate in `_admit`."""
     off = CloudIngest(token=TOKEN, config=CloudIngestConfig())
     response = _post(off)
@@ -163,16 +164,13 @@ def test_ingest_is_off_until_explicitly_enabled():
     assert response.status == 503
     assert off.drain() == ()
 
-
-def test_server_refuses_to_start_while_disabled():
+    # --- scenario: server_refuses_to_start_while_disabled
     """Deletion: drop the `if not self.config.enabled: raise` in the ctor."""
     with pytest.raises(ValueError):
         CloudIngestServer(lambda _event: None, token=TOKEN, config=CloudIngestConfig())
 
-
-@pytest.mark.parametrize(
-    "value,expected",
-    [
+    # --- scenario: env_opt_in_is_explicit
+    for value, expected in [
         (None, False),
         ("", False),
         ("0", False),
@@ -182,11 +180,10 @@ def test_server_refuses_to_start_while_disabled():
         ("true", True),
         ("YES", True),
         ("on", True),
-    ],
-)
-def test_env_opt_in_is_explicit(value, expected):
-    env = {} if value is None else {cloud_ingest.CLOUD_INGEST_ENV_VAR: value}
-    assert cloud_ingest_enabled(env) is expected
+    ]:
+        env = {} if value is None else {cloud_ingest.CLOUD_INGEST_ENV_VAR: value}
+        assert cloud_ingest_enabled(env) is expected
+
 
 
 def test_start_cloud_ingest_returns_none_without_opt_in(tmp_path):
@@ -205,26 +202,22 @@ def test_start_cloud_ingest_returns_none_without_opt_in(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "host",
-    ["0.0.0.0", "::", "192.168.1.20", "evil.example.com", "jrbar.io", ""],
-)
-def test_server_refuses_non_loopback_host(host):
-    """Deletion: drop the `is_loopback_host(self.config.host)` ctor guard."""
-    with pytest.raises(ValueError):
-        CloudIngestServer(
-            lambda _event: None,
-            token=TOKEN,
-            config=_config(host=host),
-        )
+def test_server_refuses_non_loopback_host__and_2_more() -> None:
+    # --- scenario: server_refuses_non_loopback_host
+    for host in ["0.0.0.0", "::", "192.168.1.20", "evil.example.com", "jrbar.io", ""]:
+        """Deletion: drop the `is_loopback_host(self.config.host)` ctor guard."""
+        with pytest.raises(ValueError):
+            CloudIngestServer(
+                lambda _event: None,
+                token=TOKEN,
+                config=_config(host=host),
+            )
 
+    # --- scenario: loopback_hosts_are_recognised
+    for host in ["127.0.0.1", "127.0.0.5", "::1", "localhost"]:
+        assert is_loopback_host(host) is True
 
-@pytest.mark.parametrize("host", ["127.0.0.1", "127.0.0.5", "::1", "localhost"])
-def test_loopback_hosts_are_recognised(host):
-    assert is_loopback_host(host) is True
-
-
-def test_non_loopback_peer_is_refused():
+    # --- scenario: non_loopback_peer_is_refused
     """Deletion: drop the `is_loopback_host(peer_host)` check in `_admit`."""
     ingest = _ingest()
     response = _post(ingest, peer_host="203.0.113.9")
@@ -233,7 +226,9 @@ def test_non_loopback_peer_is_refused():
     assert ingest.drain() == ()
 
 
-def test_non_loopback_host_header_is_refused():
+
+def test_non_loopback_host_header_is_refused__and_2_more() -> None:
+    # --- scenario: non_loopback_host_header_is_refused
     """A DNS-rebinding page resolves its own name to 127.0.0.1 and arrives
     from a loopback peer; only the Host header still names the attacker.
 
@@ -243,20 +238,19 @@ def test_non_loopback_host_header_is_refused():
     assert response.reason is IngestReason.FORBIDDEN_HOST
     assert ingest.drain() == ()
 
-
-def test_browser_origin_is_refused():
+    # --- scenario: browser_origin_is_refused
     """Deletion: drop the `lookup.get("origin")` check in `_admit`."""
     ingest = _ingest()
     response = _post(ingest, Origin="https://example.com")
     assert response.reason is IngestReason.FORBIDDEN_ORIGIN
     assert ingest.drain() == ()
 
-
-def test_wrong_method_and_path_never_reach_the_queue():
+    # --- scenario: wrong_method_and_path_never_reach_the_queue
     ingest = _ingest()
     assert _post(ingest, method="GET").reason is IngestReason.METHOD_NOT_ALLOWED
     assert _post(ingest, path="/").reason is IngestReason.NOT_FOUND
     assert ingest.drain() == ()
+
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +258,9 @@ def test_wrong_method_and_path_never_reach_the_queue():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "authorization",
-    [
+def test_missing_or_wrong_token_is_refused__and_2_more() -> None:
+    # --- scenario: missing_or_wrong_token_is_refused
+    for authorization in [
         None,
         "",
         "Bearer ",
@@ -274,24 +268,20 @@ def test_wrong_method_and_path_never_reach_the_queue():
         f"Bearer {TOKEN}x",
         TOKEN,
         f"Basic {TOKEN}",
-    ],
-)
-def test_missing_or_wrong_token_is_refused(authorization):
-    """Deletion: make `_authenticated` return True unconditionally."""
-    ingest = _ingest()
-    response = _post(ingest, Authorization=authorization)
-    assert response.reason is IngestReason.UNAUTHENTICATED
-    assert response.status == 401
-    assert ingest.drain() == ()
+    ]:
+        """Deletion: make `_authenticated` return True unconditionally."""
+        ingest = _ingest()
+        response = _post(ingest, Authorization=authorization)
+        assert response.reason is IngestReason.UNAUTHENTICATED
+        assert response.status == 401
+        assert ingest.drain() == ()
 
-
-def test_correct_token_is_accepted_case_insensitively_on_the_scheme():
+    # --- scenario: correct_token_is_accepted_case_insensitively_on_the_scheme
     ingest = _ingest()
     assert _post(ingest, Authorization=f"bearer {TOKEN}").reason is IngestReason.ACCEPTED
     assert len(ingest.drain()) == 1
 
-
-def test_unauthenticated_request_body_is_never_read():
+    # --- scenario: unauthenticated_request_body_is_never_read
     """Auth precedes the body read, so an unauthenticated caller cannot make
     this process consume its bytes.
 
@@ -302,7 +292,9 @@ def test_unauthenticated_request_body_is_never_read():
     assert response.reads == []
 
 
-def test_token_is_written_privately_and_survives_restart(tmp_path):
+
+def test_token_is_written_privately_and_survives_restart__and_1_more(tmp_path) -> None:
+    # --- scenario: token_is_written_privately_and_survives_restart
     """Deletion: replace `atomic_private_write`/`ensure_private_file` in
     `rotate_ingest_token` with `mkdir` + `write_text`."""
     path = tmp_path / "state" / "cloud-ingest.token"
@@ -319,8 +311,7 @@ def test_token_is_written_privately_and_survives_restart(tmp_path):
     assert read_ingest_token(path) == token
     assert ensure_ingest_token(path) == token
 
-
-def test_token_rotation_invalidates_the_old_secret(tmp_path):
+    # --- scenario: token_rotation_invalidates_the_old_secret
     path = tmp_path / "cloud-ingest.token"
     first = ensure_ingest_token(path)
     second = rotate_ingest_token(path)
@@ -330,6 +321,7 @@ def test_token_rotation_invalidates_the_old_secret(tmp_path):
     ingest = CloudIngest(token=second, config=_config())
     assert _post(ingest, token=first).reason is IngestReason.UNAUTHENTICATED
     assert _post(ingest, token=second).reason is IngestReason.ACCEPTED
+
 
 
 def test_secret_never_appears_in_repr_or_responses():
@@ -348,7 +340,8 @@ def test_default_token_path_lives_in_the_private_state_dir(tmp_path, monkeypatch
     assert path.name == cloud_ingest.TOKEN_FILE_NAME
 
 
-def test_duplicate_security_headers_are_refused():
+def test_duplicate_security_headers_are_refused__and_2_more() -> None:
+    # --- scenario: duplicate_security_headers_are_refused
     """Two Authorization headers is a parser-disagreement attack, not a request.
 
     Deletion: drop the `has_duplicate_security_header` check in `_admit`."""
@@ -366,13 +359,7 @@ def test_duplicate_security_headers_are_refused():
     assert response.reason is IngestReason.MALFORMED
     assert ingest.drain() == ()
 
-
-# ---------------------------------------------------------------------------
-# Hard bounds
-# ---------------------------------------------------------------------------
-
-
-def test_oversize_body_is_refused_without_reading_it():
+    # --- scenario: oversize_body_is_refused_without_reading_it
     """Deletion: drop the `length > max_body_bytes` check in `_admit`."""
     ingest = _ingest(limits=_limits(max_body_bytes=64))
     body = b"x" * 4096
@@ -381,15 +368,16 @@ def test_oversize_body_is_refused_without_reading_it():
     assert response.status == 413
     assert response.reads == []
 
-
-def test_missing_content_length_is_refused():
+    # --- scenario: missing_content_length_is_refused
     """Deletion: drop the `declared is None` branch in `_admit`."""
     ingest = _ingest()
     response = _post(ingest, **{"Content-Length": None})
     assert response.reason is IngestReason.LENGTH_REQUIRED
 
 
-def test_short_body_is_refused():
+
+def test_short_body_is_refused__and_2_more() -> None:
+    # --- scenario: short_body_is_refused
     """A Content-Length that lies about the body must not be interpreted.
 
     Deletion: drop the `len(body) != length` check in `_admit`."""
@@ -397,8 +385,7 @@ def test_short_body_is_refused():
     response = _post(ingest, **{"Content-Length": "1500"})
     assert response.reason is IngestReason.MALFORMED
 
-
-def test_rate_limit_rejects_a_burst_and_refills_over_time():
+    # --- scenario: rate_limit_rejects_a_burst_and_refills_over_time
     """Deletion: make `_TokenBucket.take` return True unconditionally."""
     ingest = _ingest(limits=_limits(max_events_per_second=5.0, burst_events=3))
     start = 1_000.0
@@ -415,8 +402,7 @@ def test_rate_limit_rejects_a_burst_and_refills_over_time():
     later = _post(ingest, _document(session_id="s9"), now=start + 1.0)
     assert later.reason is IngestReason.ACCEPTED
 
-
-def test_distinct_session_cap_rejects_rather_than_evicting():
+    # --- scenario: distinct_session_cap_rejects_rather_than_evicting
     """Deletion: make `_SessionTable.admit` return True unconditionally."""
     ingest = _ingest(limits=_limits(max_sessions=2, burst_events=100))
     now = 5_000.0
@@ -431,7 +417,9 @@ def test_distinct_session_cap_rejects_rather_than_evicting():
     assert _post(ingest, _document(session_id="a"), now=now).reason is IngestReason.ACCEPTED
 
 
-def test_idle_sessions_expire_so_the_cap_is_not_permanent():
+
+def test_idle_sessions_expire_so_the_cap_is_not_permanent__and_2_more() -> None:
+    # --- scenario: idle_sessions_expire_so_the_cap_is_not_permanent
     """Deletion: drop the idle-expiry loop in `_SessionTable.admit`."""
     ingest = _ingest(
         limits=_limits(max_sessions=1, session_idle_seconds=60.0, burst_events=100)
@@ -446,8 +434,7 @@ def test_idle_sessions_expire_so_the_cap_is_not_permanent():
         is IngestReason.ACCEPTED
     )
 
-
-def test_full_queue_rejects_rather_than_growing():
+    # --- scenario: full_queue_rejects_rather_than_growing
     """Deletion: replace the bounded `queue.Queue(maxsize=...)` with an
     unbounded one."""
     ingest = _ingest(limits=_limits(max_queue_events=2, burst_events=100))
@@ -462,8 +449,7 @@ def test_full_queue_rejects_rather_than_growing():
 
     assert _post(ingest, _document(session_id="c"), now=now).reason is IngestReason.ACCEPTED
 
-
-def test_limits_reject_nonsense_configuration():
+    # --- scenario: limits_reject_nonsense_configuration
     for bad in (
         {"max_body_bytes": 0},
         {"max_events_per_second": 0.0},
@@ -476,12 +462,14 @@ def test_limits_reject_nonsense_configuration():
             CloudIngestLimits(**bad)
 
 
+
 # ---------------------------------------------------------------------------
 # Content discipline
 # ---------------------------------------------------------------------------
 
 
-def test_unknown_fields_are_refused_not_ignored():
+def test_unknown_fields_are_refused_not_ignored__and_2_more() -> None:
+    # --- scenario: unknown_fields_are_refused_not_ignored
     """The whole point of a content-free app is that a future sender cannot
     quietly start shipping transcripts through this door.
 
@@ -492,8 +480,7 @@ def test_unknown_fields_are_refused_not_ignored():
         assert response.reason is IngestReason.UNKNOWN_FIELD, extra
     assert ingest.drain() == ()
 
-
-def test_display_name_is_sanitised_and_truncated():
+    # --- scenario: display_name_is_sanitised_and_truncated
     """Deletion: return the raw string from `_sanitized_label`."""
     ingest = _ingest()
     noisy = "Review PR\n\n 412  " + "x" * 400
@@ -504,17 +491,17 @@ def test_display_name_is_sanitised_and_truncated():
     assert event.display_name.startswith("Review PR 412 x")
     assert len(event.display_name) <= cloud_ingest.MAX_DISPLAY_NAME_CHARS
 
-
-def test_origin_defaults_to_a_cloud_label():
+    # --- scenario: origin_defaults_to_a_cloud_label
     ingest = _ingest()
     assert _post(ingest).reason is IngestReason.ACCEPTED
     (event,) = ingest.drain()
     assert event.origin == "Claude Cloud"
 
 
-@pytest.mark.parametrize(
-    "overrides,reason",
-    [
+
+def test_invalid_documents_are_refused__and_2_more() -> None:
+    # --- scenario: invalid_documents_are_refused
+    for overrides, reason in [
         ({"provider": "not-a-provider"}, IngestReason.UNKNOWN_PROVIDER),
         ({"provider": 7}, IngestReason.UNKNOWN_PROVIDER),
         ({"event": "DefinitelyNotAHookEvent"}, IngestReason.UNKNOWN_EVENT),
@@ -528,33 +515,28 @@ def test_origin_defaults_to_a_cloud_label():
         ({"version": True}, IngestReason.MALFORMED),
         ({"occurred_at": "not-a-time"}, IngestReason.INVALID_TIME),
         ({"occurred_at": 17}, IngestReason.INVALID_TIME),
-    ],
-)
-def test_invalid_documents_are_refused(overrides, reason):
-    """Deletion: drop the matching validation branch in `parse_cloud_event`."""
-    ingest = _ingest(limits=_limits(burst_events=200))
-    assert _post(ingest, _document(**overrides)).reason is reason
-    assert ingest.drain() == ()
+    ]:
+        """Deletion: drop the matching validation branch in `parse_cloud_event`."""
+        ingest = _ingest(limits=_limits(burst_events=200))
+        assert _post(ingest, _document(**overrides)).reason is reason
+        assert ingest.drain() == ()
 
-
-def test_missing_required_fields_are_refused():
+    # --- scenario: missing_required_fields_are_refused
     ingest = _ingest()
     for missing in ("version", "provider", "session_id", "event"):
         document = _document()
         del document[missing]
         assert _post(ingest, document).reason is IngestReason.MALFORMED
 
-
-@pytest.mark.parametrize(
-    "body",
-    [b"", b"not json", b"[]", b'"text"', b"123", b'{"version": NaN}'],
-)
-def test_malformed_bodies_are_refused(body):
-    ingest = _ingest()
-    assert _post(ingest, body=body).reason is IngestReason.MALFORMED
+    # --- scenario: malformed_bodies_are_refused
+    for body in [b"", b"not json", b"[]", b'"text"', b"123", b'{"version": NaN}']:
+        ingest = _ingest()
+        assert _post(ingest, body=body).reason is IngestReason.MALFORMED
 
 
-def test_duplicate_json_keys_are_refused():
+
+def test_duplicate_json_keys_are_refused__and_2_more() -> None:
+    # --- scenario: duplicate_json_keys_are_refused
     """Deletion: drop the `object_pairs_hook` from `decode_cloud_document`."""
     ingest = _ingest()
     body = (
@@ -563,8 +545,7 @@ def test_duplicate_json_keys_are_refused():
     )
     assert _post(ingest, body=body).reason is IngestReason.MALFORMED
 
-
-def test_far_future_timestamps_cannot_pin_a_row():
+    # --- scenario: far_future_timestamps_cannot_pin_a_row
     """Deletion: drop the skew comparison in `_event_time`."""
     ingest = _ingest(limits=_limits(burst_events=100))
     now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
@@ -588,13 +569,7 @@ def test_far_future_timestamps_cannot_pin_a_row():
         is IngestReason.ACCEPTED
     )
 
-
-# ---------------------------------------------------------------------------
-# One event model, not two
-# ---------------------------------------------------------------------------
-
-
-def test_cloud_event_becomes_the_app_s_own_hook_event():
+    # --- scenario: cloud_event_becomes_the_app_s_own_hook_event
     """Deletion: have `hook_event_from_cloud_event` return a bespoke dataclass
     instead of `models.HookEvent`."""
     event = CloudAgentEvent(
@@ -628,7 +603,9 @@ def test_cloud_event_becomes_the_app_s_own_hook_event():
     assert normalized.provider_work_id.value == "cloud-1"
 
 
-def test_explicit_status_uses_the_existing_mode_channel():
+
+def test_explicit_status_uses_the_existing_mode_channel__and_2_more() -> None:
+    # --- scenario: explicit_status_uses_the_existing_mode_channel
     """A cloud agent says "blocked" through `sidepulse_status`, the same
     channel a local hook uses -- no second mode vocabulary.
 
@@ -644,8 +621,7 @@ def test_explicit_status_uses_the_existing_mode_channel():
     status = status_from_event(record)
     assert status.mode is AgentMode.BLOCKED_ERROR
 
-
-def test_cloud_origin_reaches_the_status_row():
+    # --- scenario: cloud_origin_reaches_the_status_row
     """Deletion: stop writing `agent_origin` in
     `hook_event_from_cloud_event`."""
     ingest = _ingest()
@@ -656,8 +632,7 @@ def test_cloud_origin_reaches_the_status_row():
     status = status_from_event(hook_event_from_cloud_event(event))
     assert status.origin == "Claude Cloud Review"
 
-
-def test_cloud_payload_round_trips_through_the_log_parser():
+    # --- scenario: cloud_payload_round_trips_through_the_log_parser
     """The raw payload must be a *self-describing* canonical hook line.
 
     It matters because two existing paths re-parse lines rather than trusting
@@ -694,6 +669,7 @@ def test_cloud_payload_round_trips_through_the_log_parser():
     restored = status_from_event(reparsed, metadata)
     assert restored.mode is AgentMode.BLOCKED_ERROR
     assert restored.origin == "Claude Cloud Review"
+
 
 
 def test_sub_agents_arrive_as_sub_agents():
@@ -762,13 +738,13 @@ def _await(predicate, wake: threading.Event, *, timeout: float = 3.0):
     return predicate()
 
 
-def test_server_binds_loopback_on_an_ephemeral_port(running_server):
+def test_server_binds_loopback_on_an_ephemeral_port__and_1_more(running_server) -> None:
+    # --- scenario: server_binds_loopback_on_an_ephemeral_port
     _server, _monitor, host, port, _delivered = running_server
     assert host == cloud_ingest.LOOPBACK_HOST
     assert port > 0
 
-
-def test_cloud_agent_reaches_the_ledger_over_a_real_socket(running_server):
+    # --- scenario: cloud_agent_reaches_the_ledger_over_a_real_socket
     """The end-to-end proof: an HTTP POST from another host's agent becomes a
     row in the same `LiveAgentMonitor` the local hooks feed.
 
@@ -814,6 +790,7 @@ def test_cloud_agent_reaches_the_ledger_over_a_real_socket(running_server):
     assert completed.origin == "Claude Cloud"
 
 
+
 def test_display_name_reaches_the_collector_though_canonical_rows_self_label():
     """Two halves, both pinned, because only one of them ships today.
 
@@ -846,7 +823,8 @@ def test_display_name_reaches_the_collector_though_canonical_rows_self_label():
     assert row.display_name == "Claude named-1"
 
 
-def test_real_socket_rejects_a_wrong_token(running_server):
+def test_real_socket_rejects_a_wrong_token__and_2_more(running_server) -> None:
+    # --- scenario: real_socket_rejects_a_wrong_token
     _server, monitor, host, port, _delivered = running_server
     status, payload = _http_post(
         host, port, _document(session_id="intruder"), token="wrong-token-wrong-token"
@@ -855,16 +833,14 @@ def test_real_socket_rejects_a_wrong_token(running_server):
     assert payload["accepted"] is False
     assert "claude:session:intruder" not in monitor.current_statuses_by_key()
 
-
-def test_real_socket_rejects_an_oversize_body(running_server):
+    # --- scenario: real_socket_rejects_an_oversize_body
     _server, _monitor, host, port, _delivered = running_server
     document = _document(session_id="big", display_name="x" * 8192)
     status, payload = _http_post(host, port, document)
     assert status == 413
     assert payload["reason"] == "body_too_large"
 
-
-def test_real_socket_answers_no_cors_preflight(running_server):
+    # --- scenario: real_socket_answers_no_cors_preflight
     _server, _monitor, host, port, _delivered = running_server
     connection = http.client.HTTPConnection(host, port, timeout=5)
     try:
@@ -877,7 +853,9 @@ def test_real_socket_answers_no_cors_preflight(running_server):
         connection.close()
 
 
-def test_server_stop_is_deterministic_and_releases_the_port(tmp_path):
+
+def test_server_stop_is_deterministic_and_releases_the_port__and_2_more(tmp_path) -> None:
+    # --- scenario: server_stop_is_deterministic_and_releases_the_port
     """Deletion: drop `server.server_close()` (or the thread joins) in `stop`."""
     server = CloudIngestServer(
         lambda _event: None, token=TOKEN, config=_config(port=0)
@@ -897,8 +875,7 @@ def test_server_stop_is_deterministic_and_releases_the_port(tmp_path):
         connection.getresponse()
     connection.close()
 
-
-def test_server_refuses_to_start_twice(tmp_path):
+    # --- scenario: server_refuses_to_start_twice
     server = CloudIngestServer(
         lambda _event: None, token=TOKEN, config=_config(port=0)
     )
@@ -909,8 +886,7 @@ def test_server_refuses_to_start_twice(tmp_path):
     finally:
         server.stop()
 
-
-def test_start_cloud_ingest_honours_the_env_opt_in(tmp_path):
+    # --- scenario: start_cloud_ingest_honours_the_env_opt_in
     """Deletion: make `start_cloud_ingest` ignore `env`."""
     token_path = tmp_path / "cloud-ingest.token"
     server = start_cloud_ingest(
@@ -925,6 +901,7 @@ def test_start_cloud_ingest_honours_the_env_opt_in(tmp_path):
         assert read_ingest_token(token_path) is not None
     finally:
         server.stop()
+
 
 
 def test_handler_never_logs_request_lines(capsys):

@@ -33,7 +33,8 @@ def _event(event_id: str = "claude:acct:weekly:boundary") -> ResetEvent:
     )
 
 
-def test_each_channel_is_independently_enabled_and_receipted() -> None:
+def test_each_channel_is_independently_enabled_and_receipted__and_2_more() -> None:
+    # --- scenario: each_channel_is_independently_enabled_and_receipted
     state = begin_reset_delivery(
         ResetDeliveryState(),
         _event(),
@@ -56,8 +57,7 @@ def test_each_channel_is_independently_enabled_and_receipted() -> None:
         (ResetChannel.SOUND, ResetChannelOutcome.SUPPRESSED, "disabled"),
     ]
 
-
-def test_suppressed_and_failed_enabled_channels_retry_through_299_seconds() -> None:
+    # --- scenario: suppressed_and_failed_enabled_channels_retry_through_299_seconds
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -86,8 +86,7 @@ def test_suppressed_and_failed_enabled_channels_retry_through_299_seconds() -> N
     )
     assert not reset_event_is_terminal(state, _event().event_id)
 
-
-def test_pending_channels_are_discarded_at_exactly_300_seconds() -> None:
+    # --- scenario: pending_channels_are_discarded_at_exactly_300_seconds
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -105,7 +104,9 @@ def test_pending_channels_are_discarded_at_exactly_300_seconds() -> None:
     )
 
 
-def test_duplicate_provider_account_window_boundary_is_not_reopened() -> None:
+
+def test_duplicate_provider_account_window_boundary_is_not_reopened__and_2_more() -> None:
+    # --- scenario: duplicate_provider_account_window_boundary_is_not_reopened
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -116,8 +117,7 @@ def test_duplicate_provider_account_window_boundary_is_not_reopened() -> None:
 
     assert state2 == state
 
-
-def test_pending_delivery_survives_a_persistence_round_trip() -> None:
+    # --- scenario: pending_delivery_survives_a_persistence_round_trip
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -126,8 +126,7 @@ def test_pending_delivery_survives_a_persistence_round_trip() -> None:
     assert restored == state
     assert pending_reset_channels(restored, _event().event_id, now=1_299.0)
 
-
-def test_visual_suppression_leaves_nonvisual_fallback_pending() -> None:
+    # --- scenario: visual_suppression_leaves_nonvisual_fallback_pending
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -151,7 +150,9 @@ def test_visual_suppression_leaves_nonvisual_fallback_pending() -> None:
     )
 
 
-def test_seen_requires_terminal_delivery_or_expiry_not_an_attempt() -> None:
+
+def test_seen_requires_terminal_delivery_or_expiry_not_an_attempt__and_2_more() -> None:
+    # --- scenario: seen_requires_terminal_delivery_or_expiry_not_an_attempt
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -166,8 +167,7 @@ def test_seen_requires_terminal_delivery_or_expiry_not_an_attempt() -> None:
 
     assert not reset_event_is_terminal(state, _event().event_id)
 
-
-def test_reset_delivery_priority_has_the_required_ordering() -> None:
+    # --- scenario: reset_delivery_priority_has_the_required_ordering
     assert RESET_DELIVERY_PRIORITY["input"] > RESET_DELIVERY_PRIORITY["reset"]
     assert RESET_DELIVERY_PRIORITY["failure"] > RESET_DELIVERY_PRIORITY["reset"]
     assert RESET_DELIVERY_PRIORITY["quota_exhaustion"] > RESET_DELIVERY_PRIORITY["reset"]
@@ -175,8 +175,7 @@ def test_reset_delivery_priority_has_the_required_ordering() -> None:
     assert RESET_DELIVERY_PRIORITY["reset"] > RESET_DELIVERY_PRIORITY["quota_warning"]
     assert RESET_DELIVERY_PRIORITY["reset"] > RESET_DELIVERY_PRIORITY["idle"]
 
-
-def test_retry_delay_runs_independently_and_reaches_exact_expiry() -> None:
+    # --- scenario: retry_delay_runs_independently_and_reaches_exact_expiry
     state = begin_reset_delivery(
         ResetDeliveryState(), _event(), ResetDeliverySettings(), now=1_000.0
     )
@@ -185,7 +184,9 @@ def test_retry_delay_runs_independently_and_reaches_exact_expiry() -> None:
     assert next_reset_retry_delay(state, now=1_300.0) is None
 
 
-def test_quota_reset_wire_event_carries_the_lane() -> None:
+
+def test_quota_reset_wire_event_carries_the_lane__and_1_more() -> None:
+    # --- scenario: quota_reset_wire_event_carries_the_lane
     """The app's confetti fires on the weekly lane only -- dropping
     ``lane`` from the publish would silence it, and conflating lanes
     would fire it on the five-hour window."""
@@ -224,8 +225,7 @@ def test_quota_reset_wire_event_carries_the_lane() -> None:
         ),
     ]
 
-
-def test_reset_wire_events_skip_a_host_without_core_publish() -> None:
+    # --- scenario: reset_wire_events_skip_a_host_without_core_publish
     """The legacy menu host has no ``_core_publish_event`` -- nothing to send."""
     from types import SimpleNamespace
 
@@ -250,3 +250,4 @@ def test_reset_wire_events_skip_a_host_without_core_publish() -> None:
     broken = _Broken()
     _publish_reset_wire_events(controller, (broken, _event()))
     assert [kind for kind, _fields in sent] == ["quota_reset"]
+

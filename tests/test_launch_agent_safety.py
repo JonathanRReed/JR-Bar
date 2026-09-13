@@ -14,7 +14,8 @@ def test_launch_agent_declares_restart_throttle_and_exit_timeout() -> None:
     assert plist["ProcessType"] == "Interactive"
 
 
-def test_all_launchctl_operations_have_strict_timeouts(monkeypatch) -> None:
+def test_all_launchctl_operations_have_strict_timeouts__and_1_more(monkeypatch) -> None:
+    # --- scenario: all_launchctl_operations_have_strict_timeouts
     calls = []
 
     def run(argv, **kwargs):
@@ -40,8 +41,8 @@ def test_all_launchctl_operations_have_strict_timeouts(monkeypatch) -> None:
     )
     assert all(call[1]["stdin"] is subprocess.DEVNULL for call in calls)
 
-
-def test_launch_agent_running_fails_closed_on_timeout(monkeypatch) -> None:
+    # --- scenario: launch_agent_running_fails_closed_on_timeout
+    monkeypatch.undo()
     monkeypatch.setattr(
         status_bar_launch,
         "_launchctl_run",
@@ -51,3 +52,4 @@ def test_launch_agent_running_fails_closed_on_timeout(monkeypatch) -> None:
     )
 
     assert status_bar_launch.launch_agent_running() is False
+

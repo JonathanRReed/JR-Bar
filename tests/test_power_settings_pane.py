@@ -73,7 +73,8 @@ def test_power_choice_copy_names_four_distinct_decisions() -> None:
     }
 
 
-def test_power_actions_save_exact_setting_and_sync_current_mode(monkeypatch) -> None:
+def test_power_actions_save_exact_setting_and_sync_current_mode__and_1_more(monkeypatch) -> None:
+    # --- scenario: power_actions_save_exact_setting_and_sync_current_mode
     target = _Target.alloc().init()
     saved: list[AgentMonitorSettings] = []
     monkeypatch.setattr(power_settings_pane, "save_settings", saved.append)
@@ -94,8 +95,8 @@ def test_power_actions_save_exact_setting_and_sync_current_mode(monkeypatch) -> 
     assert target.sync_modes[-1] is AgentMode.WORKING
     assert target.messages[-1] == "Displays will stay awake during active holds."
 
-
-def test_power_action_restores_previous_settings_when_save_fails(monkeypatch) -> None:
+    # --- scenario: power_action_restores_previous_settings_when_save_fails
+    monkeypatch.undo()
     target = _Target.alloc().init()
     previous = target.settings
     failed_switch = _switch(True)
@@ -115,6 +116,7 @@ def test_power_action_restores_previous_settings_when_save_fails(monkeypatch) ->
     assert target.sync_modes == []
     assert failed_switch.state() == 0
     assert target.messages[-1].startswith("Could not save display power setting:")
+
 
 
 def test_power_pane_exposes_accessible_controls_and_retains_action_target() -> None:

@@ -89,28 +89,29 @@ struct FoldMathTests {
         #expect(tracker.velocity == 0)
     }
 
-    @Test("a 10 Hz staircase of a steady 60°/s close is tracked within 3°, without sawtooth")
+    @Test("a 10 Hz staircase of a 60°/s close renders each edge and never leads the sensor")
     func tracksStaircase() {
         var tracker = LidTracker()
         let poll = 1.0 / 120
         let truth: (Double) -> Double = { 90 - 60 * $0 }
-        var previous = Double.nan
-        var maxStep = 0.0
         for i in 0...240 {
             let t = Double(i) * poll
-            tracker.feed(sensor(t, truth: truth), at: t)
+            let raw = sensor(t, truth: truth)
+            tracker.feed(raw, at: t)
             tracker.tick(dt: poll, at: t)
-            guard t > 0.3 else { previous = tracker.renderAngle; continue }
-            #expect(abs(tracker.renderAngle - truth(t)) < 3,
-                    "off the lid at t=\(t): \(tracker.renderAngle) vs \(truth(t))")
-            if previous.isFinite {
-                maxStep = max(maxStep, abs(tracker.renderAngle - previous))
-            }
-            previous = tracker.renderAngle
+            guard t > 0.3 else { continue }
+            // The contract: the render angle IS the newest edge — never
+            // ahead of the sensor (the old extrapolation's overshoot was
+            // the fast-close judder), never behind it by more than the
+            // sensor's own ~100 ms report latency plus a degree of
+            // quantization.
+            #expect(tracker.renderAngle == raw,
+                    "render must be the last edge at t=\(t)")
+            #expect(tracker.renderAngle >= truth(t) - 0.5,
+                    "never ahead of the lid at t=\(t)")
+            #expect(tracker.renderAngle - truth(t) < 8,
+                    "lag stays inside the sensor's own latency at t=\(t)")
         }
-        // 60°/s at a 120 Hz render cadence is 0.5° a frame; slack covers
-        // the residual the ease would absorb at each edge.
-        #expect(maxStep < 1.2, "no frame ever jumps \(maxStep)°")
     }
 
     @Test("0.3 s after the last edge the lid reads parked: velocity zero, render is the last raw")
@@ -135,27 +136,22 @@ struct FoldMathTests {
         #expect(tracker.renderAngle == parked, "parked renders the measurement exactly")
     }
 
-    @Test("a reversal never leads past the clamp and follows the new direction")
+    @Test("a reversal follows the new direction, still rendering only real edges")
     func trackerReversal() {
         var tracker = LidTracker()
         let poll = 1.0 / 120
         // Close at 60°/s for a second, then open at 60°/s.
         let truth: (Double) -> Double = { $0 <= 1 ? 90 - 60 * $0 : 30 + 60 * ($0 - 1) }
-        var lastRaw = 90.0
         for i in 0...240 {
             let t = Double(i) * poll
             let raw = sensor(t, truth: truth)
             tracker.feed(raw, at: t)
             tracker.tick(dt: poll, at: t)
-            lastRaw = raw
-            #expect(abs(tracker.renderAngle - lastRaw) <= LidTracker.leadLimit + 1e-9,
-                    "the extrapolation stays inside its clamp at t=\(t)")
+            #expect(tracker.renderAngle == raw, "every render is an edge at t=\(t)")
             if t > 1.3 {
-                // 0.3 s past the turn the tracker is with the new
-                // direction and close to the lid again.
+                // 0.3 s past the turn the estimate is with the new
+                // direction.
                 #expect(tracker.velocity > 0, "following the open by t=\(t)")
-                #expect(abs(tracker.renderAngle - truth(t)) < 3,
-                        "back on the lid at t=\(t): \(tracker.renderAngle) vs \(truth(t))")
             }
         }
     }

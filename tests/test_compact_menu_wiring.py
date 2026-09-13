@@ -63,7 +63,8 @@ def _source() -> str:
     return STATUS_BAR.read_text(encoding="utf-8")
 
 
-def test_status_bar_wires_cached_device_identity_without_diskutil_on_menu_thread() -> None:
+def test_status_bar_wires_cached_device_identity_without_diskutil_on_menu_thread__and_2_more() -> None:
+    # --- scenario: status_bar_wires_cached_device_identity_without_diskutil_on_menu_thread
     source = _source()
     tree = ast.parse(source)
     build_menu = next(
@@ -83,8 +84,7 @@ def test_status_bar_wires_cached_device_identity_without_diskutil_on_menu_thread
     assert "subprocess" not in source
     assert "run" not in calls
 
-
-def test_root_menu_groups_devices_and_removes_permanent_tip() -> None:
+    # --- scenario: root_menu_groups_devices_and_removes_permanent_tip
     source = _source()
     # 2026-08-21: the group grew from devices-only into the whole
     # physical concern -- one "Hardware" root row.
@@ -97,8 +97,7 @@ def test_root_menu_groups_devices_and_removes_permanent_tip() -> None:
     assert 'item.setTitle_("Diagnostics…")' in source
     assert 'plan_by_key["devices"].title' in source
 
-
-def test_quick_settings_groups_screen_bar_lighting_dnd_and_all_settings() -> None:
+    # --- scenario: quick_settings_groups_screen_bar_lighting_dnd_and_all_settings
     source = _source()
 
     assert "_install_quick_settings_menu(menu, target, inputs, plan_by_key)" in source
@@ -110,7 +109,9 @@ def test_quick_settings_groups_screen_bar_lighting_dnd_and_all_settings() -> Non
     assert "_install_effect_studio_action" not in source
 
 
-def test_compact_adapter_carries_typed_dnd_state_and_removes_legacy_quiet() -> None:
+
+def test_compact_adapter_carries_typed_dnd_state_and_removes_legacy_quiet__and_2_more() -> None:
+    # --- scenario: compact_adapter_carries_typed_dnd_state_and_removes_legacy_quiet
     source = _source()
 
     assert "DndMode" in source
@@ -125,8 +126,7 @@ def test_compact_adapter_carries_typed_dnd_state_and_removes_legacy_quiet() -> N
     assert 'title.startswith("End Quiet")' in source
     assert "target_quiet_active" not in source
 
-
-def test_compact_dnd_submenu_routes_through_retained_controller_selectors() -> None:
+    # --- scenario: compact_dnd_submenu_routes_through_retained_controller_selectors
     source = MENU_PROJECTION.read_text(encoding="utf-8")
     for selector in (
         "setDndMuteForHour:",
@@ -140,8 +140,7 @@ def test_compact_dnd_submenu_routes_through_retained_controller_selectors() -> N
     ):
         assert selector in source
 
-
-def test_compact_menu_projects_one_safe_clear_agents_action() -> None:
+    # --- scenario: compact_menu_projects_one_safe_clear_agents_action
     source = _source()
 
     assert "_legacy.clearable_presented_count(snapshot, target)" in source
@@ -151,7 +150,9 @@ def test_compact_menu_projects_one_safe_clear_agents_action() -> None:
     assert "_unseen_finished_count" not in source
 
 
-def test_clearable_presented_count_adapter_is_exception_safe(monkeypatch) -> None:
+
+def test_clearable_presented_count_adapter_is_exception_safe__and_1_more(monkeypatch) -> None:
+    # --- scenario: clearable_presented_count_adapter_is_exception_safe
     from jrbar import status_bar
 
     monkeypatch.setattr(
@@ -173,8 +174,8 @@ def test_clearable_presented_count_adapter_is_exception_safe(monkeypatch) -> Non
     )
     assert status_bar._clearable_presented_count(object(), object()) == 0
 
-
-def test_clear_agents_compaction_replaces_duplicate_rows_once(monkeypatch) -> None:
+    # --- scenario: clear_agents_compaction_replaces_duplicate_rows_once
+    monkeypatch.undo()
     from jrbar import status_bar
 
     monkeypatch.setattr(status_bar._legacy, "NSMenuItem", _FakeMenuItem)
@@ -198,6 +199,7 @@ def test_clear_agents_compaction_replaces_duplicate_rows_once(monkeypatch) -> No
     )
 
 
+
 def test_clear_agents_compaction_removes_action_when_nothing_is_clearable(
     monkeypatch,
 ) -> None:
@@ -214,7 +216,8 @@ def test_clear_agents_compaction_removes_action_when_nothing_is_clearable(
     assert [item.title() for item in menu.items] == ["Quit JR-BAR"]
 
 
-def test_compact_adapter_prefers_manual_override_mode_and_exact_expiry() -> None:
+def test_compact_adapter_prefers_manual_override_mode_and_exact_expiry__and_2_more() -> None:
+    # --- scenario: compact_adapter_prefers_manual_override_mode_and_exact_expiry
     from jrbar import status_bar
 
     now = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc).timestamp()
@@ -254,8 +257,7 @@ def test_compact_adapter_prefers_manual_override_mode_and_exact_expiry() -> None
     assert override_active is True
     assert resume_available is True
 
-
-def test_compact_adapter_fails_closed_without_the_typed_controller_protocol() -> None:
+    # --- scenario: compact_adapter_fails_closed_without_the_typed_controller_protocol
     from jrbar import status_bar
 
     assert status_bar._dnd_menu_fields(SimpleNamespace()) == (
@@ -268,8 +270,7 @@ def test_compact_adapter_fails_closed_without_the_typed_controller_protocol() ->
         False,
     )
 
-
-def test_compact_adapter_preserves_scheduled_and_focus_summary() -> None:
+    # --- scenario: compact_adapter_preserves_scheduled_and_focus_summary
     from jrbar import status_bar
 
     now = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc).timestamp()
@@ -293,7 +294,9 @@ def test_compact_adapter_preserves_scheduled_and_focus_summary() -> None:
     assert fields[6] is True
 
 
-def test_compact_adapter_preserves_manual_and_focus_summary() -> None:
+
+def test_compact_adapter_preserves_manual_and_focus_summary__and_1_more() -> None:
+    # --- scenario: compact_adapter_preserves_manual_and_focus_summary
     from jrbar import status_bar
 
     now = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc).timestamp()
@@ -320,11 +323,11 @@ def test_compact_adapter_preserves_manual_and_focus_summary() -> None:
     assert fields[3] == "DND: Manual Dim + macOS Focus Pause"
     assert fields[4] is not None and fields[4].timestamp() == now + 600.0
 
-
-def test_menu_compaction_does_not_define_another_objc_controller() -> None:
+    # --- scenario: menu_compaction_does_not_define_another_objc_controller
     classes = {
         node.name
         for node in ast.walk(ast.parse(_source()))
         if isinstance(node, ast.ClassDef)
     }
     assert classes == {"_StatusBarFacade"}
+

@@ -83,14 +83,14 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.lstat().st_mode)
 
 
-def test_default_store_uses_sidepulse_application_support(tmp_path: Path) -> None:
+def test_default_store_uses_sidepulse_application_support__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: default_store_uses_sidepulse_application_support
     """Capacity metadata belongs in the private application-support area."""
     assert default_capacity_history_path(tmp_path) == (
         tmp_path / "Library" / "Application Support" / "JR-Bar" / "capacity-history.json"
     )
 
-
-def test_round_trip_uses_exact_v1_allowlists_and_owner_only_modes(tmp_path: Path) -> None:
+    # --- scenario: round_trip_uses_exact_v1_allowlists_and_owner_only_modes
     """Serialization must not gain undeclared payload fields or broad activity data."""
     target = tmp_path / "state" / "capacity-history.json"
     state = CapacityHistoryState((_capacity(),), (_activity(),))
@@ -126,6 +126,7 @@ def test_round_trip_uses_exact_v1_allowlists_and_owner_only_modes(tmp_path: Path
         "session_count",
         "source_key",
     }
+
 
 
 @pytest.mark.parametrize(
@@ -298,7 +299,8 @@ def test_oversize_store_is_degraded_and_replaced_by_content_free_diagnostic(
     assert not target.exists()
 
 
-def test_store_batches_once_per_minute_and_avoids_idle_writes(tmp_path: Path) -> None:
+def test_store_batches_once_per_minute_and_avoids_idle_writes__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: store_batches_once_per_minute_and_avoids_idle_writes
     """Duplicates, reads, and countdown-like flush calls cannot rewrite the store."""
     target = tmp_path / "capacity-history.json"
     store = CapacityHistoryStore(target, retention_days=7)
@@ -321,8 +323,7 @@ def test_store_batches_once_per_minute_and_avoids_idle_writes(tmp_path: Path) ->
     assert not store.flush(now=NOW + 59.0)
     assert store.flush(now=NOW + 60.0)
 
-
-def test_store_refuses_account_change_on_an_existing_lane(tmp_path: Path) -> None:
+    # --- scenario: store_refuses_account_change_on_an_existing_lane
     """An account switch cannot silently start cross-account longitudinal history."""
     store = CapacityHistoryStore(tmp_path / "capacity-history.json", retention_days=7)
     first = _capacity(observed_at=NOW)
@@ -340,8 +341,7 @@ def test_store_refuses_account_change_on_an_existing_lane(tmp_path: Path) -> Non
     assert result.refusal_code == "identity_changed"
     assert store.state.capacity_samples == (first,)
 
-
-def test_orderly_shutdown_flushes_pending_samples(tmp_path: Path) -> None:
+    # --- scenario: orderly_shutdown_flushes_pending_samples
     """Shutdown is the only deliberate exception to the one-minute batching window."""
     target = tmp_path / "capacity-history.json"
     store = CapacityHistoryStore(target, retention_days=7)
@@ -350,6 +350,7 @@ def test_orderly_shutdown_flushes_pending_samples(tmp_path: Path) -> None:
 
     assert store.shutdown(now=NOW)
     assert load_capacity_history(target).state == CapacityHistoryState((_capacity(),), (_activity(),))
+
 
 
 def test_exact_deletion_clears_disk_pending_calibration_and_summary_cache(

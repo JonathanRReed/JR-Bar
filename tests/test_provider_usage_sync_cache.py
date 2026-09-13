@@ -50,7 +50,8 @@ def test_cached_merge_is_refreshed_once_then_reused_by_logical_snapshot_value(
     assert loads == [first]
 
 
-def test_cached_merge_never_reuses_another_logical_snapshot(monkeypatch) -> None:
+def test_cached_merge_never_reuses_another_logical_snapshot__and_2_more(monkeypatch) -> None:
+    # --- scenario: cached_merge_never_reuses_another_logical_snapshot
     monkeypatch.setattr(sync_cache, "_memo", None)
     first = ProviderUsageState((_snapshot(1000.0),), 1000.0, 1100.0, False)
     changed = ProviderUsageState((_snapshot(1001.0),), 1001.0, 1101.0, False)
@@ -59,8 +60,8 @@ def test_cached_merge_never_reuses_another_logical_snapshot(monkeypatch) -> None
 
     assert sync_cache.cached_merged_sync(changed) is None
 
-
-def test_mismatched_lookup_does_not_evict_fresh_matching_evidence(monkeypatch) -> None:
+    # --- scenario: mismatched_lookup_does_not_evict_fresh_matching_evidence
+    monkeypatch.undo()
     monkeypatch.setattr(sync_cache, "_memo", None)
     first = ProviderUsageState((_snapshot(1000.0),), 1000.0, 1100.0, False)
     changed = ProviderUsageState((_snapshot(1001.0),), 1001.0, 1101.0, False)
@@ -74,8 +75,8 @@ def test_mismatched_lookup_does_not_evict_fresh_matching_evidence(monkeypatch) -
     assert sync_cache.cached_merged_sync(changed, monotonic=lambda: 100.0) is None
     assert sync_cache.cached_merged_sync(first, monotonic=lambda: 100.0) is merged
 
-
-def test_cached_merge_expires_without_reusing_identical_snapshots(monkeypatch) -> None:
+    # --- scenario: cached_merge_expires_without_reusing_identical_snapshots
+    monkeypatch.undo()
     """A memo must be revalidated before remote packet freshness can drift."""
 
     monkeypatch.setattr(sync_cache, "_memo", None)
@@ -90,6 +91,7 @@ def test_cached_merge_expires_without_reusing_identical_snapshots(monkeypatch) -
 
     assert sync_cache.cached_merged_sync(state, monotonic=lambda: 129.999) is merged
     assert sync_cache.cached_merged_sync(state, monotonic=lambda: 130.0) is None
+
 
 
 def test_policy_invalidation_drops_worker_result_that_finishes_late(monkeypatch) -> None:

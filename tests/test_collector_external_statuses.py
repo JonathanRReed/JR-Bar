@@ -35,7 +35,8 @@ def _direct_status(agent_id: str) -> AgentStatus:
     )
 
 
-def test_external_status_projection_is_reachable_in_the_canonical_snapshot() -> None:
+def test_external_status_projection_is_reachable_in_the_canonical_snapshot__and_2_more() -> None:
+    # --- scenario: external_status_projection_is_reachable_in_the_canonical_snapshot
     monitor = LiveAgentMonitor()
     status = _status("codex:session:t3-thread")
 
@@ -46,8 +47,7 @@ def test_external_status_projection_is_reachable_in_the_canonical_snapshot() -> 
     assert snapshot.aggregate.mode is AgentMode.WAITING_FOR_INPUT
     assert snapshot.aggregate.active_count == 1
 
-
-def test_replacing_or_disabling_one_external_source_is_atomic() -> None:
+    # --- scenario: replacing_or_disabling_one_external_source_is_atomic
     monitor = LiveAgentMonitor()
     first = _status("codex:session:first")
     second = _status("codex:session:second")
@@ -59,8 +59,7 @@ def test_replacing_or_disabling_one_external_source_is_atomic() -> None:
     monitor.replace_external_statuses("t3code", ())
     assert monitor.current_statuses_by_key() == {}
 
-
-def test_stale_external_last_known_good_stays_visible_as_stale() -> None:
+    # --- scenario: stale_external_last_known_good_stays_visible_as_stale
     monitor = LiveAgentMonitor()
     status = _status("codex:session:stale", stale=True)
 
@@ -71,7 +70,9 @@ def test_stale_external_last_known_good_stays_visible_as_stale() -> None:
     assert snapshot.stale_statuses == (status,)
 
 
-def test_stale_external_row_cannot_override_a_fresh_direct_provider_row() -> None:
+
+def test_stale_external_row_cannot_override_a_fresh_direct_provider_row__and_2_more() -> None:
+    # --- scenario: stale_external_row_cannot_override_a_fresh_direct_provider_row
     monitor = LiveAgentMonitor()
     agent_id = "codex:session:shared"
     direct = _direct_status(agent_id)
@@ -87,8 +88,7 @@ def test_stale_external_row_cannot_override_a_fresh_direct_provider_row() -> Non
     assert snapshot.stale_statuses == ()
     assert snapshot.aggregate.mode is AgentMode.WORKING
 
-
-def test_external_status_boundary_rejects_duplicate_or_unbounded_rows() -> None:
+    # --- scenario: external_status_boundary_rejects_duplicate_or_unbounded_rows
     monitor = LiveAgentMonitor()
     status = _status("codex:session:duplicate")
 
@@ -105,8 +105,7 @@ def test_external_status_boundary_rejects_duplicate_or_unbounded_rows() -> None:
             ),
         )
 
-
-def test_external_status_iterable_is_consumed_only_through_the_limit() -> None:
+    # --- scenario: external_status_iterable_is_consumed_only_through_the_limit
     monitor = LiveAgentMonitor()
     consumed = 0
 
@@ -120,3 +119,4 @@ def test_external_status_iterable_is_consumed_only_through_the_limit() -> None:
         monitor.replace_external_statuses("t3code", rows())
 
     assert consumed == 1_025
+

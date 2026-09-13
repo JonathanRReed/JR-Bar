@@ -33,7 +33,8 @@ class FakeWorkspace:
         return self._read("differentiate_without_color", 3)
 
 
-def test_preferences_default_to_standard_display_behavior_and_are_frozen() -> None:
+def test_preferences_default_to_standard_display_behavior_and_are_frozen__and_1_more() -> None:
+    # --- scenario: preferences_default_to_standard_display_behavior_and_are_frozen
     preferences = AccessibilityDisplayPreferences()
 
     assert preferences == AccessibilityDisplayPreferences(
@@ -45,8 +46,7 @@ def test_preferences_default_to_standard_display_behavior_and_are_frozen() -> No
     with pytest.raises(FrozenInstanceError):
         preferences.reduce_motion = True  # type: ignore[misc]
 
-
-def test_reader_maps_each_workspace_selector_once() -> None:
+    # --- scenario: reader_maps_each_workspace_selector_once
     workspace = FakeWorkspace((True, False, True, False))
 
     preferences = read_accessibility_display_preferences(workspace)
@@ -65,6 +65,7 @@ def test_reader_maps_each_workspace_selector_once() -> None:
     ]
 
 
+
 class MissingSelectorWorkspace:
     def accessibilityDisplayShouldReduceMotion(self) -> bool:
         return False
@@ -80,45 +81,38 @@ class NonBooleanSelectorWorkspace(FakeWorkspace):
         return 1
 
 
-@pytest.mark.parametrize(
-    "workspace",
-    [
+def test_initial_read_failure_uses_conservative_preferences__and_2_more() -> None:
+    # --- scenario: initial_read_failure_uses_conservative_preferences
+    for workspace in [
         MissingSelectorWorkspace(),
         ThrowingSelectorWorkspace((False, False, False, False)),
         NonBooleanSelectorWorkspace((False, False, False, False)),
-    ],
-)
-def test_initial_read_failure_uses_conservative_preferences(workspace: object) -> None:
-    assert refresh_accessibility_display_preferences(None, workspace) == (
-        AccessibilityDisplayPreferences(
-            reduce_motion=True,
+    ]:
+        assert refresh_accessibility_display_preferences(None, workspace) == (
+            AccessibilityDisplayPreferences(
+                reduce_motion=True,
+                reduce_transparency=True,
+                increase_contrast=True,
+                differentiate_without_color=True,
+            )
+        )
+
+    # --- scenario: later_read_failure_retains_last_known_preferences
+    for workspace in [
+        MissingSelectorWorkspace(),
+        ThrowingSelectorWorkspace((False, False, False, False)),
+        NonBooleanSelectorWorkspace((False, False, False, False)),
+    ]:
+        previous = AccessibilityDisplayPreferences(
+            reduce_motion=False,
             reduce_transparency=True,
-            increase_contrast=True,
+            increase_contrast=False,
             differentiate_without_color=True,
         )
-    )
 
+        assert refresh_accessibility_display_preferences(previous, workspace) is previous
 
-@pytest.mark.parametrize(
-    "workspace",
-    [
-        MissingSelectorWorkspace(),
-        ThrowingSelectorWorkspace((False, False, False, False)),
-        NonBooleanSelectorWorkspace((False, False, False, False)),
-    ],
-)
-def test_later_read_failure_retains_last_known_preferences(workspace: object) -> None:
-    previous = AccessibilityDisplayPreferences(
-        reduce_motion=False,
-        reduce_transparency=True,
-        increase_contrast=False,
-        differentiate_without_color=True,
-    )
-
-    assert refresh_accessibility_display_preferences(previous, workspace) is previous
-
-
-def test_successful_refresh_returns_the_new_snapshot() -> None:
+    # --- scenario: successful_refresh_returns_the_new_snapshot
     previous = AccessibilityDisplayPreferences(reduce_motion=True)
 
     refreshed = refresh_accessibility_display_preferences(
@@ -132,4 +126,5 @@ def test_successful_refresh_returns_the_new_snapshot() -> None:
         increase_contrast=True,
         differentiate_without_color=False,
     )
+
 

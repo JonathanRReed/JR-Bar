@@ -64,7 +64,8 @@ def _unavailable_context(why):
     )
 
 
-def test_context_is_immutable_and_accepts_only_bounded_typed_state() -> None:
+def test_context_is_immutable_and_accepts_only_bounded_typed_state__and_2_more() -> None:
+    # --- scenario: context_is_immutable_and_accepts_only_bounded_typed_state
     """A mutable or stringly context could retain content-bearing runtime data."""
     why = _why()
     context = _available_context(why)
@@ -85,8 +86,7 @@ def test_context_is_immutable_and_accepts_only_bounded_typed_state() -> None:
             renderer_timing=context.renderer_timing,
         )
 
-
-def test_context_rejects_content_bearing_subclasses() -> None:
+    # --- scenario: context_rejects_content_bearing_subclasses
     """A subclass must not smuggle an extra prompt, id, name, path, URL, or payload field."""
     why = _why()
     context = _available_context(why)
@@ -110,8 +110,7 @@ def test_context_rejects_content_bearing_subclasses() -> None:
             renderer_timing=context.renderer_timing,
         )
 
-
-def test_all_context_enums_are_finite_and_include_explicit_unavailable_states() -> None:
+    # --- scenario: all_context_enums_are_finite_and_include_explicit_unavailable_states
     """An open-ended string state could leak names, ids, paths, URLs, or payloads."""
     why = _why()
 
@@ -166,7 +165,9 @@ def test_all_context_enums_are_finite_and_include_explicit_unavailable_states() 
     }
 
 
-def test_formatter_has_a_fixed_content_free_shape_for_available_state() -> None:
+
+def test_formatter_has_a_fixed_content_free_shape_for_available_state__and_2_more() -> None:
+    # --- scenario: formatter_has_a_fixed_content_free_shape_for_available_state
     """Variable formatter sections could expand with arbitrary runtime content."""
     why = _why()
 
@@ -186,8 +187,7 @@ def test_formatter_has_a_fixed_content_free_shape_for_available_state() -> None:
         "p95 4.8 ms; samples 8"
     )
 
-
-def test_formatter_keeps_every_fact_row_readable_at_the_fixed_panel_width() -> None:
+    # --- scenario: formatter_keeps_every_fact_row_readable_at_the_fixed_panel_width
     """A very long logical row soft-wraps into an ambiguous count block."""
     why = _why()
 
@@ -195,8 +195,7 @@ def test_formatter_keeps_every_fact_row_readable_at_the_fixed_panel_width() -> N
 
     assert max(map(len, lines)) <= 88
 
-
-def test_formatter_adds_bounded_dnd_facts_without_changing_the_fixed_shape() -> None:
+    # --- scenario: formatter_adds_bounded_dnd_facts_without_changing_the_fixed_shape
     why = _why()
     context = _available_context(why)
     focus = why.FocusDNDDecision(
@@ -230,7 +229,9 @@ def test_formatter_adds_bounded_dnd_facts_without_changing_the_fixed_shape() -> 
     )
 
 
-def test_formatter_honestly_formats_every_unavailable_value() -> None:
+
+def test_formatter_honestly_formats_every_unavailable_value__and_2_more() -> None:
+    # --- scenario: formatter_honestly_formats_every_unavailable_value
     """An unavailable observation must never be presented as inactive or off."""
     why = _why()
 
@@ -249,120 +250,101 @@ def test_formatter_honestly_formats_every_unavailable_value() -> None:
         "Output timing: Unavailable"
     )
 
-
-@pytest.mark.parametrize(
-    ("observation", "policy", "outcome", "expected"),
-    [
+    # --- scenario: focus_formatter_distinguishes_observation_policy_and_actual_decision
+    """Collapsing Focus state would misreport unreadable or policy-exempt decisions."""
+    for observation, policy, outcome, expected in [
         ("INACTIVE", "SUPPRESS", "ALLOWED", "Inactive; policy Suppress; decision Allowed"),
         ("ACTIVE", "ALLOW", "ALLOWED", "Active; policy Allow; decision Allowed"),
         ("ACTIVE", "SUPPRESS", "ALLOWED", "Active; policy Suppress; decision Allowed"),
         ("ACTIVE", "SUPPRESS", "SUPPRESSED", "Active; policy Suppress; decision Suppressed"),
-    ],
-)
-def test_focus_formatter_distinguishes_observation_policy_and_actual_decision(
-    observation: str,
-    policy: str,
-    outcome: str,
-    expected: str,
-) -> None:
-    """Collapsing Focus state would misreport unreadable or policy-exempt decisions."""
-    why = _why()
-    context = _available_context(why)
-    focus = why.FocusDNDDecision(
-        observation=why.FocusObservation[observation],
-        policy=why.FocusPolicy[policy],
-        outcome=why.FocusOutcome[outcome],
-    )
+    ]:
+        why = _why()
+        context = _available_context(why)
+        focus = why.FocusDNDDecision(
+            observation=why.FocusObservation[observation],
+            policy=why.FocusPolicy[policy],
+            outcome=why.FocusOutcome[outcome],
+        )
 
-    updated = why.WhyLightContext(
-        selected_semantic=context.selected_semantic,
-        winning_priority=context.winning_priority,
-        source_age=context.source_age,
-        suppressions=context.suppressions,
-        scene_availability=context.scene_availability,
-        surface_role=context.surface_role,
-        focus_dnd=focus,
-        reduce_motion=context.reduce_motion,
-        renderer_timing=context.renderer_timing,
-    )
+        updated = why.WhyLightContext(
+            selected_semantic=context.selected_semantic,
+            winning_priority=context.winning_priority,
+            source_age=context.source_age,
+            suppressions=context.suppressions,
+            scene_availability=context.scene_availability,
+            surface_role=context.surface_role,
+            focus_dnd=focus,
+            reduce_motion=context.reduce_motion,
+            renderer_timing=context.renderer_timing,
+        )
 
-    focus_line = next(
-        line
-        for line in why.format_why_light_context(updated).splitlines()
-        if line.startswith("Focus/DND:")
-    )
-    assert focus_line == f"Focus/DND: {expected}"
+        focus_line = next(
+            line
+            for line in why.format_why_light_context(updated).splitlines()
+            if line.startswith("Focus/DND:")
+        )
+        assert focus_line == f"Focus/DND: {expected}"
 
-
-@pytest.mark.parametrize(
-    ("decision", "expected"),
-    [
+    # --- scenario: reduce_motion_never_claims_substitution_when_no_motion_was_requested
+    """No-motion output must remain distinct from a static accessibility substitute."""
+    for decision, expected in [
         ("NO_MOTION_REQUESTED", "No motion requested"),
         ("MOTION_UNCHANGED", "Motion requested; no substitution"),
         ("STATIC_SUBSTITUTED", "Static signal substituted"),
         ("UNAVAILABLE", "Unavailable"),
-    ],
-)
-def test_reduce_motion_never_claims_substitution_when_no_motion_was_requested(
-    decision: str,
-    expected: str,
-) -> None:
-    """No-motion output must remain distinct from a static accessibility substitute."""
-    why = _why()
-    context = _available_context(why)
-    updated = why.WhyLightContext(
-        selected_semantic=context.selected_semantic,
-        winning_priority=context.winning_priority,
-        source_age=context.source_age,
-        suppressions=context.suppressions,
-        scene_availability=context.scene_availability,
-        surface_role=context.surface_role,
-        focus_dnd=context.focus_dnd,
-        reduce_motion=why.ReduceMotionDecision[decision],
-        renderer_timing=context.renderer_timing,
-    )
+    ]:
+        why = _why()
+        context = _available_context(why)
+        updated = why.WhyLightContext(
+            selected_semantic=context.selected_semantic,
+            winning_priority=context.winning_priority,
+            source_age=context.source_age,
+            suppressions=context.suppressions,
+            scene_availability=context.scene_availability,
+            surface_role=context.surface_role,
+            focus_dnd=context.focus_dnd,
+            reduce_motion=why.ReduceMotionDecision[decision],
+            renderer_timing=context.renderer_timing,
+        )
 
-    motion_line = next(
-        line
-        for line in why.format_why_light_context(updated).splitlines()
-        if line.startswith("Reduce Motion:")
-    )
-    assert motion_line == f"Reduce Motion: {expected}"
+        motion_line = next(
+            line
+            for line in why.format_why_light_context(updated).splitlines()
+            if line.startswith("Reduce Motion:")
+        )
+        assert motion_line == f"Reduce Motion: {expected}"
 
 
-@pytest.mark.parametrize(
-    ("factory", "arguments"),
-    [
+
+def test_numeric_context_rejects_out_of_bounds_values__and_2_more() -> None:
+    # --- scenario: numeric_context_rejects_out_of_bounds_values
+    """Unbounded ages, counts, or timings would break the bounded snapshot contract."""
+    for factory, arguments in [
         ("SourceAge", (-0.1,)),
         ("SourceAge", (2_592_000.1,)),
         ("RendererTiming", (0, 1.0, 1.0, 1.0)),
         ("RendererTiming", (1, -0.1, 1.0, 1.0)),
         ("RendererTiming", (1, 1.0, 2.0, 1.0)),
-    ],
-)
-def test_numeric_context_rejects_out_of_bounds_values(factory: str, arguments: tuple[object, ...]) -> None:
-    """Unbounded ages, counts, or timings would break the bounded snapshot contract."""
-    why = _why()
+    ]:
+        why = _why()
 
-    with pytest.raises(ValueError):
-        if factory == "SourceAge":
-            why.SourceAge.available(*arguments)
-        else:
-            why.RendererTiming.available(
-                *arguments,
-                source=why.OutputTimingSource.SCREEN_BAR_RENDERER,
-            )
+        with pytest.raises(ValueError):
+            if factory == "SourceAge":
+                why.SourceAge.available(*arguments)
+            else:
+                why.RendererTiming.available(
+                    *arguments,
+                    source=why.OutputTimingSource.SCREEN_BAR_RENDERER,
+                )
 
-
-def test_suppression_counts_reject_out_of_bounds_values() -> None:
+    # --- scenario: suppression_counts_reject_out_of_bounds_values
     """No current suppression category may grow beyond the fixed display bound."""
     why = _why()
 
     with pytest.raises(ValueError):
         why.SuppressionCounts(attention=why.MAX_SUPPRESSION_COUNT + 1)
 
-
-def test_focus_decision_rejects_inconsistent_unknown_and_suppressed_states() -> None:
+    # --- scenario: focus_decision_rejects_inconsistent_unknown_and_suppressed_states
     """Unavailable or inactive Focus observations cannot honestly claim suppression."""
     why = _why()
 
@@ -384,6 +366,7 @@ def test_focus_decision_rejects_inconsistent_unknown_and_suppressed_states() -> 
             policy=why.FocusPolicy.ALLOW,
             outcome=why.FocusOutcome.SUPPRESSED,
         )
+
 
 
 def test_context_import_is_appkit_free() -> None:

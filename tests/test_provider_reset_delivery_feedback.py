@@ -5,7 +5,8 @@ from jrbar.provider_usage_feedback import deliver_reset_channels
 from jrbar.provider_usage_qol import ResetEvent
 
 
-def test_quiet_visuals_do_not_block_notification_fallback() -> None:
+def test_quiet_visuals_do_not_block_notification_fallback__and_1_more() -> None:
+    # --- scenario: quiet_visuals_do_not_block_notification_fallback
     delivered = []
     controller = SimpleNamespace(
         quiet_active=lambda: True,
@@ -34,8 +35,7 @@ def test_quiet_visuals_do_not_block_notification_fallback() -> None:
     assert by_channel[ResetChannel.NOTIFICATION].outcome is ResetChannelOutcome.DELIVERED
     assert len(delivered) == 1
 
-
-def test_common_effect_only_receipts_surfaces_that_exist() -> None:
+    # --- scenario: common_effect_only_receipts_surfaces_that_exist
     controller = SimpleNamespace(
         quiet_active=lambda: False,
         settings=SimpleNamespace(virtual_status_device_enabled=False),
@@ -57,3 +57,4 @@ def test_common_effect_only_receipts_surfaces_that_exist() -> None:
         (ResetChannel.OVERLAY, ResetChannelOutcome.SUPPRESSED, "surface_unavailable"),
         (ResetChannel.HARDWARE, ResetChannelOutcome.DELIVERED, "effect_scheduled"),
     ]
+

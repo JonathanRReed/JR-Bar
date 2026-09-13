@@ -269,7 +269,8 @@ def test_incremental_tail_uses_cached_endpoint_for_repeated_snapshot(
     assert _scan(tmp_path, root, cache).codex_tokens == 100
 
 
-def test_json_list_with_token_marker_is_malformed_not_fatal(tmp_path: Path) -> None:
+def test_json_list_with_token_marker_is_malformed_not_fatal__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: json_list_with_token_marker_is_malformed_not_fatal
     root = tmp_path / "codex"
     _write(root / "bad.jsonl", [["token_count"]])
 
@@ -278,8 +279,7 @@ def test_json_list_with_token_marker_is_malformed_not_fatal(tmp_path: Path) -> N
     assert totals.codex_tokens == 0
     assert totals.source_coverage["codex"].malformed_lines == 1
 
-
-def test_fork_counts_inherited_events_once_and_child_work_once(tmp_path: Path) -> None:
+    # --- scenario: fork_counts_inherited_events_once_and_child_work_once
     root = tmp_path / "codex"
     inherited = _tokens(100, 100, "2026-08-13T10:00:00Z")
     _write(root / "parent.jsonl", [_meta("parent"), inherited])
@@ -297,8 +297,7 @@ def test_fork_counts_inherited_events_once_and_child_work_once(tmp_path: Path) -
     assert totals.codex_tokens == 140
     assert len(totals.records) == 2
 
-
-def test_nested_fork_counts_each_branches_new_work_once(tmp_path: Path) -> None:
+    # --- scenario: nested_fork_counts_each_branches_new_work_once
     root = tmp_path / "codex"
     parent = _tokens(100, 100, "2026-08-13T10:00:00Z")
     child = _tokens(140, 40, "2026-08-13T10:01:00Z")
@@ -314,6 +313,7 @@ def test_nested_fork_counts_each_branches_new_work_once(tmp_path: Path) -> None:
     )
 
     assert _scan(tmp_path, root).codex_tokens == 170
+
 
 
 def test_nested_fork_keeps_unresolved_intermediate_work_when_file_is_missing(

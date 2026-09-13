@@ -41,7 +41,8 @@ from jrbar.provider_facts import (
 from jrbar.settings import AgentMonitorSettings
 
 
-def test_future_clock_skew_is_clamped_only_through_explicit_boundary() -> None:
+def test_future_clock_skew_is_clamped_only_through_explicit_boundary__and_2_more() -> None:
+    # --- scenario: future_clock_skew_is_clamped_only_through_explicit_boundary
     """Removing the future-skew bound would make far-future state actionable."""
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
 
@@ -65,8 +66,7 @@ def test_future_clock_skew_is_clamped_only_through_explicit_boundary() -> None:
     )
     assert not is_recent(now, now + timedelta(minutes=10), 120.0)
 
-
-def test_age_window_is_inclusive_and_negative_windows_are_never_recent() -> None:
+    # --- scenario: age_window_is_inclusive_and_negative_windows_are_never_recent
     """Changing the inclusive boundary or accepting negatives breaks one policy."""
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
 
@@ -74,8 +74,7 @@ def test_age_window_is_inclusive_and_negative_windows_are_never_recent() -> None
     assert not is_recent(now, now - timedelta(seconds=120.001), 120.0)
     assert not is_recent(now, now, -0.001)
 
-
-def test_naive_and_aware_datetimes_share_utc_policy_without_crashing() -> None:
+    # --- scenario: naive_and_aware_datetimes_share_utc_policy_without_crashing
     """Removing datetime normalization would crash or compare different zones."""
     aware_now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     naive_stamp = datetime(2026, 8, 12, 11, 59, 0)
@@ -83,6 +82,7 @@ def test_naive_and_aware_datetimes_share_utc_policy_without_crashing() -> None:
 
     assert bounded_age_seconds(aware_now, naive_stamp) == 60.0
     assert bounded_age_seconds(aware_now.replace(tzinfo=None), aware_offset_stamp) == 60.0
+
 
 
 def _status(
@@ -103,7 +103,8 @@ def _status(
     )
 
 
-def test_all_completion_surfaces_reject_same_implausible_future_time() -> None:
+def test_all_completion_surfaces_reject_same_implausible_future_time__and_2_more() -> None:
+    # --- scenario: all_completion_surfaces_reject_same_implausible_future_time
     """A future row must not celebrate, badge, or enter recent menu rows."""
     from jrbar.status_bar import recent_statuses, unseen_completions
 
@@ -125,8 +126,7 @@ def test_all_completion_surfaces_reject_same_implausible_future_time() -> None:
     assert unseen_completions(snapshot, SimpleNamespace()) == []
     assert recent_statuses(snapshot) == []
 
-
-def test_collector_staleness_rejects_implausibly_future_status() -> None:
+    # --- scenario: collector_staleness_rejects_implausibly_future_status
     """Replacing bounded age with a clamped negative would pin live state."""
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     future = _status(
@@ -145,8 +145,7 @@ def test_collector_staleness_rejects_implausibly_future_status() -> None:
         idle_visible_seconds=0.0,
     )
 
-
-def test_attention_projection_rejects_future_permission_outside_collector() -> None:
+    # --- scenario: attention_projection_rejects_future_permission_outside_collector
     """A direct projection caller must not turn future input into attention."""
     from jrbar.attention import project_attention
     from jrbar.collector import MonitorSnapshot, aggregate_status
@@ -172,7 +171,9 @@ def test_attention_projection_rejects_future_permission_outside_collector() -> N
     assert projection.click_target_agent_id is None
 
 
-def test_attention_projection_excludes_implausibly_future_active_row() -> None:
+
+def test_attention_projection_excludes_implausibly_future_active_row__and_2_more() -> None:
+    # --- scenario: attention_projection_excludes_implausibly_future_active_row
     """Filtering only actionable rows would still let future work dominate."""
     from jrbar.attention import LifecycleMode, project_attention
     from jrbar.collector import MonitorSnapshot, aggregate_status
@@ -197,8 +198,7 @@ def test_attention_projection_excludes_implausibly_future_active_row() -> None:
     assert projection.visible_rows == ()
     assert projection.lifecycle_mode is LifecycleMode.IDLE
 
-
-def test_attention_projection_excludes_future_failure_signal_but_accepts_small_skew() -> None:
+    # --- scenario: attention_projection_excludes_future_failure_signal_but_accepts_small_skew
     """Warm replay cannot pulse future failures, while small skew stays usable."""
     from jrbar.attention import project_attention
     from jrbar.collector import MonitorSnapshot, aggregate_status
@@ -234,8 +234,7 @@ def test_attention_projection_excludes_future_failure_signal_but_accepts_small_s
         skewed_ask.agent_id,
     )
 
-
-def test_failed_latest_state_replace_keeps_dirty_state_and_write_time() -> None:
+    # --- scenario: failed_latest_state_replace_keeps_dirty_state_and_write_time
     """Clearing dirty before replace succeeds would silently lose persistence."""
     with tempfile.TemporaryDirectory() as tmp:
         state_path = Path(tmp) / "latest.json"
@@ -255,6 +254,7 @@ def test_failed_latest_state_replace_keeps_dirty_state_and_write_time() -> None:
         assert monitor._latest_state_dirty is True
         assert monitor._latest_state_written_at == 123.0
         assert not state_path.exists()
+
 
 
 _RESTORE_SOURCE = SourceKey("codex", "hooks", "global", "live_agent_events")
@@ -306,9 +306,8 @@ def _restore_batch(
     )
 
 
-def test_wall_rollback_after_v2_restore_quarantines_new_truth_without_edges(
-    tmp_path: Path,
-) -> None:
+def test_wall_rollback_after_v2_restore_quarantines_new_truth_without_edges__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: wall_rollback_after_v2_restore_quarantines_new_truth_without_edges
     state_path = tmp_path / "latest.json"
     original = LiveAgentMonitor(
         latest_state_path=state_path,
@@ -345,10 +344,7 @@ def test_wall_rollback_after_v2_restore_quarantines_new_truth_without_edges(
         SourceFreshness.TIMING_UNCERTAIN
     )
 
-
-def test_warm_identical_current_snapshot_never_replays_restored_edge(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: warm_identical_current_snapshot_never_replays_restored_edge
     state_path = tmp_path / "latest.json"
     batch = _restore_batch(WorkLifecycle.ACTIVE, 1)
     original = LiveAgentMonitor(
@@ -377,6 +373,7 @@ def test_warm_identical_current_snapshot_never_replays_restored_edge(
     assert first.operator_state.works[0].lifecycle is WorkLifecycle.ACTIVE
 
 
+
 def _write_codex_transcript(root: Path, index: int, *, mtime: float) -> Path:
     session_id = f"00000000-0000-7000-8000-{index:012x}"
     path = root / f"rollout-2026-08-12T12-00-00-{session_id}.jsonl"
@@ -399,7 +396,8 @@ def _write_codex_transcript(root: Path, index: int, *, mtime: float) -> Path:
     return path
 
 
-def test_transcript_rotation_is_bounded_without_cross_root_eviction() -> None:
+def test_transcript_rotation_is_bounded_without_cross_root_eviction__and_2_more() -> None:
+    # --- scenario: transcript_rotation_is_bounded_without_cross_root_eviction
     """Global path pruning would incorrectly discard another active root."""
     with tempfile.TemporaryDirectory() as tmp:
         root_a = Path(tmp) / "a"
@@ -426,8 +424,7 @@ def test_transcript_rotation_is_bounded_without_cross_root_eviction() -> None:
         assert newest in cached_paths
         assert set(a_paths[:2]).isdisjoint(cached_paths)
 
-
-def test_transcript_file_list_cache_has_deterministic_count_bound() -> None:
+    # --- scenario: transcript_file_list_cache_has_deterministic_count_bound
     """Removing file-list eviction would grow one entry per discovered root."""
     with tempfile.TemporaryDirectory() as tmp:
         roots = [Path(tmp) / str(index) for index in range(3)]
@@ -449,8 +446,7 @@ def test_transcript_file_list_cache_has_deterministic_count_bound() -> None:
             (CODEX_TRANSCRIPT_PROVIDER, str(roots[2]), 1),
         ]
 
-
-def test_transcript_file_list_cache_is_scoped_by_provider() -> None:
+    # --- scenario: transcript_file_list_cache_is_scoped_by_provider
     """Sharing one root/limit key would skip pruning for the second provider."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -468,6 +464,7 @@ def test_transcript_file_list_cache_is_scoped_by_provider() -> None:
         )
 
         assert len(monitor._transcript_file_list_cache) == 2
+
 
 
 def _usage_row(message_id: str, timestamp: str, tokens: int = 1) -> dict:
@@ -495,7 +492,8 @@ def _write_usage_file(root: Path, name: str, rows: list[dict], *, mtime: float) 
     return path
 
 
-def test_usage_cache_rotation_is_bounded_without_changing_current_totals() -> None:
+def test_usage_cache_rotation_is_bounded_without_changing_current_totals__and_2_more() -> None:
+    # --- scenario: usage_cache_rotation_is_bounded_without_changing_current_totals
     """Applying the cache cap before aggregation would undercount this scan."""
     from jrbar.usage_stats import scan_usage
 
@@ -531,8 +529,7 @@ def test_usage_cache_rotation_is_bounded_without_changing_current_totals() -> No
         assert len(cached_paths) == 3
         assert str(paths[-1]) not in cached_paths
 
-
-def test_usage_cache_preserves_unwalked_roots_without_counting_them() -> None:
+    # --- scenario: usage_cache_preserves_unwalked_roots_without_counting_them
     """Treating an unwalked root as deleted loses valid warm cache state."""
     from jrbar.usage_stats import scan_usage
 
@@ -562,8 +559,7 @@ def test_usage_cache_preserves_unwalked_roots_without_counting_them() -> None:
         assert str(root_a) not in cache.read_text()
         assert str(root_b) not in cache.read_text()
 
-
-def test_usage_totals_records_exclude_rows_before_since_epoch() -> None:
+    # --- scenario: usage_totals_records_exclude_rows_before_since_epoch
     """Filtering totals but retaining old records bloats every downstream view."""
     from jrbar.usage_stats import scan_usage
 
@@ -588,7 +584,9 @@ def test_usage_totals_records_exclude_rows_before_since_epoch() -> None:
         assert totals.records[0][8] != "new"
 
 
-def test_pre_window_duplicate_does_not_suppress_in_window_usage() -> None:
+
+def test_pre_window_duplicate_does_not_suppress_in_window_usage__and_2_more() -> None:
+    # --- scenario: pre_window_duplicate_does_not_suppress_in_window_usage
     """Adding old dedupe keys to seen would undercount the requested window."""
     from jrbar.usage_stats import scan_usage
 
@@ -613,8 +611,7 @@ def test_pre_window_duplicate_does_not_suppress_in_window_usage() -> None:
             2026, 8, 12, 13, 0, tzinfo=timezone.utc
         ).timestamp()
 
-
-def test_usage_records_match_cross_file_deduped_totals() -> None:
+    # --- scenario: usage_records_match_cross_file_deduped_totals
     """Returning duplicate records would disagree with deduped totals."""
     from jrbar.usage_stats import scan_usage
 
@@ -630,8 +627,7 @@ def test_usage_records_match_cross_file_deduped_totals() -> None:
         assert totals.input_tokens == 7
         assert len(totals.records) == 1
 
-
-def test_failed_usage_read_does_not_cache_a_durable_empty_result() -> None:
+    # --- scenario: failed_usage_read_does_not_cache_a_durable_empty_result
     """A failed read must not look like a valid empty warm cache on the next scan."""
     import jrbar.usage_stats as usage_stats
 
@@ -660,6 +656,7 @@ def test_failed_usage_read_does_not_cache_a_durable_empty_result() -> None:
         assert recovered.input_tokens == 7
         assert recovered.source_coverage["claude"].files_read == 1
         assert recovered.source_coverage["claude"].cache_hits == 0
+
 
 
 def test_bare_session_starts_never_reach_the_recent_fallback() -> None:

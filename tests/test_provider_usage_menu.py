@@ -64,7 +64,8 @@ def snapshot(
     )
 
 
-def test_summary_shows_only_the_tightest_quota_and_reset():
+def test_summary_shows_only_the_tightest_quota_and_reset__and_2_more() -> None:
+    # --- scenario: summary_shows_only_the_tightest_quota_and_reset
     state = ProviderUsageState(
         (
             snapshot("codex", "Weekly", 71),
@@ -82,8 +83,7 @@ def test_summary_shows_only_the_tightest_quota_and_reset():
     assert projection.rows[0].title.startswith("Codex")
     assert projection.rows[1].title.startswith("Claude")
 
-
-def test_actionable_missing_source_is_named_instead_of_no_reading():
+    # --- scenario: actionable_missing_source_is_named_instead_of_no_reading
     state = ProviderUsageState(
         (
             snapshot(
@@ -108,8 +108,7 @@ def test_actionable_missing_source_is_named_instead_of_no_reading():
     assert projection.rows[0].action_label == "Connect Claude usage"
     assert "no reading" not in repr(projection).lower()
 
-
-def test_detail_row_includes_reset_tokens_models_and_estimate():
+    # --- scenario: detail_row_includes_reset_tokens_models_and_estimate
     state = ProviderUsageState(
         (snapshot("claude", "Weekly", 36),),
         1000,
@@ -121,21 +120,21 @@ def test_detail_row_includes_reset_tokens_models_and_estimate():
     assert row.usage_detail == "175 tokens · 2 models · est. $1.25"
 
 
-def test_refreshing_state_has_stable_title():
+
+def test_refreshing_state_has_stable_title__and_2_more() -> None:
+    # --- scenario: refreshing_state_has_stable_title
     state = ProviderUsageState((), None, None, True)
     projection = project_usage_menu(state, now=1000)
     assert projection.title == "Usage · refreshing…"
 
-
-def test_lane_lines_render_codebar_style_meters():
+    # --- scenario: lane_lines_render_codebar_style_meters
     row = project_usage_menu(
         ProviderUsageState((snapshot("claude", "5-hour", 74),), 1000, 1100, False),
         now=1000,
     ).rows[0]
     assert row.lane_lines == ("▰▰▰▰▰▰▱▱  5-hour · 74% left · resets in 33m · surplus",)
 
-
-def test_lane_meter_never_shows_empty_while_something_remains():
+    # --- scenario: lane_meter_never_shows_empty_while_something_remains
     from jrbar.provider_usage_qol import format_lane_meter as _lane_meter
 
     assert _lane_meter(100.0) == "▰▰▰▰▰▰▰▰"
@@ -144,12 +143,9 @@ def test_lane_meter_never_shows_empty_while_something_remains():
     assert _lane_meter(0.0) == "▱▱▱▱▱▱▱▱"
 
 
-def test_lane_without_percent_still_lists_its_reset():
-    # The 2026-08-20 live failure shape: the OAuth fetch succeeded and
-    # lanes existed with real reset times, but every remaining_percent
-    # was None (parse_claude_usage read "used_percent" while
-    # claude_quota emits "utilization") -- the menu said only "ready".
-    # Even in that degraded shape the lanes must say SOMETHING.
+
+def test_lane_without_percent_still_lists_its_reset__and_2_more() -> None:
+    # --- scenario: lane_without_percent_still_lists_its_reset
     row = project_usage_menu(
         ProviderUsageState(
             (snapshot("claude", "Weekly", None, state=ProviderSourceState.READY),),
@@ -162,8 +158,7 @@ def test_lane_without_percent_still_lists_its_reset():
     assert row.lane_lines == ()  # snapshot() builds no lanes when remaining is None
     assert row.title == "Claude · ready"
 
-
-def test_display_flags_curate_meters_totals_cost_and_detail_lanes():
+    # --- scenario: display_flags_curate_meters_totals_cost_and_detail_lanes
     from jrbar.provider_usage_settings import MenuUsageDisplay
 
     state = ProviderUsageState((snapshot("claude", "5-hour", 74),), 1000, 1100, False)
@@ -184,8 +179,7 @@ def test_display_flags_curate_meters_totals_cost_and_detail_lanes():
     ).rows[0]
     assert no_cost.usage_detail == "175 tokens · 2 models"
 
-
-def test_hidden_providers_leave_the_rows_and_the_title():
+    # --- scenario: hidden_providers_leave_the_rows_and_the_title
     state = ProviderUsageState(
         (snapshot("claude", "5-hour", 36), snapshot("codex", "Weekly", 71)),
         1000,
@@ -199,7 +193,9 @@ def test_hidden_providers_leave_the_rows_and_the_title():
     assert projection.title == "Usage · Codex 71% · resets in 33m"
 
 
-def test_hidden_instances_hide_only_the_matching_source_instance():
+
+def test_hidden_instances_hide_only_the_matching_source_instance__and_2_more() -> None:
+    # --- scenario: hidden_instances_hide_only_the_matching_source_instance
     state = ProviderUsageState(
         (
             snapshot(
@@ -231,8 +227,7 @@ def test_hidden_instances_hide_only_the_matching_source_instance():
     assert projection.rows[0].title == "Claude · 36% left"
     assert "personal@example.invalid" not in repr(projection)
 
-
-def test_lanes_past_their_threshold_are_flagged_for_alert_rendering():
+    # --- scenario: lanes_past_their_threshold_are_flagged_for_alert_rendering
     projection = project_usage_menu(
         ProviderUsageState(
             (snapshot("claude", "5-hour", 12), snapshot("codex", "Weekly", 80)),
@@ -247,8 +242,7 @@ def test_lanes_past_their_threshold_are_flagged_for_alert_rendering():
     assert by_provider["claude"].alert_lane_indexes == (0,)
     assert by_provider["codex"].alert_lane_indexes == ()
 
-
-def test_menu_renders_distinct_same_provider_instance_labels():
+    # --- scenario: menu_renders_distinct_same_provider_instance_labels
     state = ProviderUsageState(
         (
             snapshot("claude", "Weekly", 36, account_label="personal@example.invalid", source_instance_id="personal"),
@@ -266,7 +260,9 @@ def test_menu_renders_distinct_same_provider_instance_labels():
     assert {row.source_instance_id for row in projection.rows} == {"personal", "work"}
 
 
-def test_menu_uses_exact_profile_labels_in_rows_and_aggregate_title():
+
+def test_menu_uses_exact_profile_labels_in_rows_and_aggregate_title__and_2_more() -> None:
+    # --- scenario: menu_uses_exact_profile_labels_in_rows_and_aggregate_title
     state = ProviderUsageState(
         (
             snapshot(
@@ -297,8 +293,7 @@ def test_menu_uses_exact_profile_labels_in_rows_and_aggregate_title():
     assert projection.title == "Usage · Claude 36% · resets in 33m"
     assert "· work" not in projection.title
 
-
-def test_menu_omits_raw_instance_fallback_for_a_single_visible_account():
+    # --- scenario: menu_omits_raw_instance_fallback_for_a_single_visible_account
     state = ProviderUsageState(
         (
             snapshot(
@@ -328,8 +323,7 @@ def test_menu_omits_raw_instance_fallback_for_a_single_visible_account():
     assert projection.rows[0].title == "Claude · 36% left"
     assert "personal" not in repr(projection)
 
-
-def test_menu_never_exposes_opaque_account_or_internal_source_ids():
+    # --- scenario: menu_never_exposes_opaque_account_or_internal_source_ids
     raw_account = "your-organization-7535461b-2b9a-4371-b335-3928397be5cd"
     raw_source = "profile:work-machine:8f14e45fceea167a5a36dedd4bea2543"
     projection = project_usage_menu(
@@ -355,7 +349,9 @@ def test_menu_never_exposes_opaque_account_or_internal_source_ids():
     assert projection.rows[0].title == "Codex · 42% left"
 
 
-def test_single_account_email_is_absent_from_the_compact_projection():
+
+def test_single_account_email_is_absent_from_the_compact_projection__and_2_more() -> None:
+    # --- scenario: single_account_email_is_absent_from_the_compact_projection
     email = "jonathan@example.com"
     projection = project_usage_menu(
         ProviderUsageState(
@@ -378,8 +374,7 @@ def test_single_account_email_is_absent_from_the_compact_projection():
     assert projection.rows[0].title == "Grok · 95% left"
     assert email not in repr(projection)
 
-
-def test_multiple_accounts_use_user_aliases_without_exposing_account_labels():
+    # --- scenario: multiple_accounts_use_user_aliases_without_exposing_account_labels
     visual = ProviderInstanceVisualProjection(
         (
             ProviderInstanceVisualPolicy("claude", "personal", "Personal", None),
@@ -418,8 +413,7 @@ def test_multiple_accounts_use_user_aliases_without_exposing_account_labels():
     ]
     assert "@example.com" not in repr(projection)
 
-
-def test_privacy_mode_suppresses_email_and_alias_everywhere():
+    # --- scenario: privacy_mode_suppresses_email_and_alias_everywhere
     visual = ProviderInstanceVisualProjection(
         (
             ProviderInstanceVisualPolicy(
@@ -455,7 +449,9 @@ def test_privacy_mode_suppresses_email_and_alias_everywhere():
     assert projection.rows[0].title.startswith("Claude ·")
 
 
-def test_privacy_mode_keeps_multiple_aliased_accounts_distinguishable():
+
+def test_privacy_mode_keeps_multiple_aliased_accounts_distinguishable__and_2_more() -> None:
+    # --- scenario: privacy_mode_keeps_multiple_aliased_accounts_distinguishable
     visual = ProviderInstanceVisualProjection(
         (
             ProviderInstanceVisualPolicy("claude", "personal", "Personal", None),
@@ -480,8 +476,7 @@ def test_privacy_mode_keeps_multiple_aliased_accounts_distinguishable():
     assert "Personal" not in repr(projection)
     assert "Work" not in repr(projection)
 
-
-def test_dense_account_menu_orders_quota_and_collapses_only_healthy_rows():
+    # --- scenario: dense_account_menu_orders_quota_and_collapses_only_healthy_rows
     accounts = (
         snapshot("claude", "Weekly", 88, account_label="one@example.com", source_instance_id="one"),
         snapshot("claude", "Weekly", 5, account_label="low@example.com", source_instance_id="low"),
@@ -517,8 +512,7 @@ def test_dense_account_menu_orders_quota_and_collapses_only_healthy_rows():
     assert all(row.usage_detail == "175 tokens · 2 models · est. $1.25" for row in projection.account_rows)
     assert all("tokens" not in line for row in projection.account_rows for line in row.lane_lines)
 
-
-def test_menu_bar_glance_prefers_running_providers_then_tightest():
+    # --- scenario: menu_bar_glance_prefers_running_providers_then_tightest
     from jrbar.provider_usage_menu import menu_bar_quota_glance
 
     state = ProviderUsageState(
@@ -570,7 +564,9 @@ def test_menu_bar_glance_prefers_running_providers_then_tightest():
     assert menu_bar_quota_glance(empty, now=1000) is None
 
 
-def test_pace_verdicts_cover_fast_surplus_on_pace_and_critical():
+
+def test_pace_verdicts_cover_fast_surplus_on_pace_and_critical__and_2_more() -> None:
+    # --- scenario: pace_verdicts_cover_fast_surplus_on_pace_and_critical
     from jrbar.usage_pace import lane_pace, pace_phrase
 
     hour = 3600.0
@@ -601,18 +597,14 @@ def test_pace_verdicts_cover_fast_surplus_on_pace_and_critical():
         is None
     )
 
-
-def test_lane_lines_carry_the_pace_tag():
-    # snapshot() builds a weekly lane resetting at t=3000; at now=1000
-    # the window is ~100% elapsed with 64% used -- ratio ~0.64, on pace.
+    # --- scenario: lane_lines_carry_the_pace_tag
     row = project_usage_menu(
         ProviderUsageState((snapshot("claude", "Weekly", 36),), 1000, 1100, False),
         now=1000,
     ).rows[0]
     assert row.lane_lines[0].endswith("· on pace")
 
-
-def test_a_lane_alerts_once_per_reset_window_when_it_turns_critical():
+    # --- scenario: a_lane_alerts_once_per_reset_window_when_it_turns_critical
     from jrbar.usage_pace import critical_pace_transitions
 
     hour = 3600.0
@@ -671,6 +663,7 @@ def test_a_lane_alerts_once_per_reset_window_when_it_turns_critical():
     ) == ()
 
 
+
 def test_one_heavy_evening_cannot_condemn_a_fresh_weekly_window():
     """'Why is it red for codex' (2026-08-21): ~5% into a 7-day window,
     one heavy session extrapolated to runs-dry-before-reset and painted
@@ -711,7 +704,8 @@ def _titles(*snapshots):
     return [row.title for row in project_usage_menu(state, now=1000).rows]
 
 
-def test_a_stale_reading_says_so_on_the_row_itself():
+def test_a_stale_reading_says_so_on_the_row_itself__and_2_more() -> None:
+    # --- scenario: a_stale_reading_says_so_on_the_row_itself
     """The title IS the glance -- "Codex · 48% left" is a claim about
     right now. Marking only the submenu detail hid staleness one level
     down: reported as "am i on the latest version its out of date for
@@ -721,8 +715,7 @@ def test_a_stale_reading_says_so_on_the_row_itself():
     )
     assert _titles(stale) == ["Codex · 48% left · stale"]
 
-
-def test_a_broken_sign_in_says_reconnect_not_stale():
+    # --- scenario: a_broken_sign_in_says_reconnect_not_stale
     """Both mean "last-known, not live", but the owner can act on
     reconnect and cannot act on stale."""
     import dataclasses
@@ -735,13 +728,14 @@ def test_a_broken_sign_in_says_reconnect_not_stale():
     )
     assert _titles(expired) == ["Claude · 71% left · reconnect"]
 
-
-def test_a_live_reading_carries_no_marker():
+    # --- scenario: a_live_reading_carries_no_marker
     fresh = snapshot("devin", "Weekly", 100)
     assert _titles(fresh) == ["Devin · 100% left"]
 
 
-def test_jr_plane_owns_the_usage_menu_row() -> None:
+
+def test_jr_plane_owns_the_usage_menu_row__and_2_more() -> None:
+    # --- scenario: jr_plane_owns_the_usage_menu_row
     """The legacy build used to construct its usage card only for the JR
     facade's build_menu wrapper to remove it and insert its own row --
     full card construction as dead weight in every rebuild (fixed
@@ -766,8 +760,7 @@ def test_jr_plane_owns_the_usage_menu_row() -> None:
     body = facade.split(marker, 1)[1].split("def ", 1)[0]
     assert "return True" in body
 
-
-def test_native_base_keeps_its_usage_menu_row() -> None:
+    # --- scenario: native_base_keeps_its_usage_menu_row
     from types import SimpleNamespace
 
     import pytest
@@ -777,8 +770,7 @@ def test_native_base_keeps_its_usage_menu_row() -> None:
 
     assert StatusBarController.jr_plane_owns_usage_menu_item(SimpleNamespace()) is False
 
-
-def test_a_provider_with_no_usable_number_says_what_would_fix_it():
+    # --- scenario: a_provider_with_no_usable_number_says_what_would_fix_it
     """'Grok · stale' is true and useless; the row is the whole glance.
 
     Shaped from the live Grok snapshot: a retained lane that carries a
@@ -806,3 +798,4 @@ def test_a_provider_with_no_usable_number_says_what_would_fix_it():
     row = project_usage_menu(state, now=1000).rows[0]
     assert row.title == "Grok · Run grok login"
     assert "stale" in (row.detail or "")
+

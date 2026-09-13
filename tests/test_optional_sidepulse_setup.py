@@ -5,13 +5,13 @@ from unittest.mock import patch
 from jrbar import cli
 
 
-def test_bare_setup_does_not_request_the_sd_eject_guard() -> None:
+def test_bare_setup_does_not_request_the_sd_eject_guard__and_2_more() -> None:
+    # --- scenario: bare_setup_does_not_request_the_sd_eject_guard
     args = cli.build_jrbar_parser().parse_args(["setup"])
 
     assert args.sd_eject_guard is False
 
-
-def test_existing_guard_configuration_flags_remain_explicit_opt_ins() -> None:
+    # --- scenario: existing_guard_configuration_flags_remain_explicit_opt_ins
     parser = cli.build_jrbar_parser()
 
     assert parser.parse_args(["setup", "--sd-eject-guard"]).sd_eject_guard is True
@@ -22,8 +22,7 @@ def test_existing_guard_configuration_flags_remain_explicit_opt_ins() -> None:
         ["setup", "--sd-eject-guard-volume-uuid", "A1B2-C3D4"]
     ).sd_eject_guard is True
 
-
-def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> None:
+    # --- scenario: bare_setup_starts_status_bar_without_installing_sd_eject_guard
     args = cli.build_jrbar_parser().parse_args(["setup"])
     hook_result = SimpleNamespace(
         provider="codex",
@@ -51,6 +50,7 @@ def test_bare_setup_starts_status_bar_without_installing_sd_eject_guard() -> Non
     assert result == 0
     guard.assert_not_called()
     launch.assert_called_once_with(start=True)
+
 
 
 def test_no_sd_eject_guard_still_overrides_an_explicit_guard_request() -> None:

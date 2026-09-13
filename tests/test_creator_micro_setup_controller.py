@@ -76,7 +76,8 @@ def _target(calls, runtime=None):
     return target
 
 
-def test_inspection_revokes_and_stops_runtime_before_opening_setup_owner(tmp_path):
+def test_inspection_revokes_and_stops_runtime_before_opening_setup_owner__and_2_more(tmp_path) -> None:
+    # --- scenario: inspection_revokes_and_stops_runtime_before_opening_setup_owner
     calls = []
     target = _target(calls)
     target._jrbar_optional_integration_runtime = _Runtime(calls)
@@ -97,8 +98,7 @@ def test_inspection_revokes_and_stops_runtime_before_opening_setup_owner(tmp_pat
     assert result.preview.plan is _plan() or result.preview.plan == _plan()
     assert target._jrbar_optional_integration_runtime is None
 
-
-def test_inspection_never_opens_setup_owner_when_runtime_does_not_stop(tmp_path):
+    # --- scenario: inspection_never_opens_setup_owner_when_runtime_does_not_stop
     calls = []
     target = _target(calls, _Runtime(calls, stopped=False))
 
@@ -113,8 +113,7 @@ def test_inspection_never_opens_setup_owner_when_runtime_does_not_stop(tmp_path)
     assert "opened" not in calls
     assert calls[-1][1].code == "previous_owner_stopping"
 
-
-def test_inspection_refuses_disabled_connection(tmp_path):
+    # --- scenario: inspection_refuses_disabled_connection
     for loaded in (_loaded(enabled=False),):
         calls = []
         target = _target(calls, _Runtime(calls))
@@ -130,7 +129,9 @@ def test_inspection_refuses_disabled_connection(tmp_path):
         assert calls[-1][1].code == "connection_required"
 
 
-def test_superseded_or_terminating_work_does_not_dispatch_success(tmp_path):
+
+def test_superseded_or_terminating_work_does_not_dispatch_success__and_1_more(tmp_path) -> None:
+    # --- scenario: superseded_or_terminating_work_does_not_dispatch_success
     calls = []
     target = _target(calls)
 
@@ -150,8 +151,7 @@ def test_superseded_or_terminating_work_does_not_dispatch_success(tmp_path):
     assert "connect-setup" not in calls
     assert "close-setup" in calls
 
-
-def test_adapter_closes_before_restart_lock_can_open_another_owner(tmp_path):
+    # --- scenario: adapter_closes_before_restart_lock_can_open_another_owner
     import threading
 
     calls = []
@@ -173,6 +173,7 @@ def test_adapter_closes_before_restart_lock_can_open_another_owner(tmp_path):
     )
     thread.join(1)
     assert calls.index("close-setup") < next(index for index, item in enumerate(calls) if isinstance(item, tuple))
+
 
 
 def test_stale_deck_generation_callback_only_clears_busy_state():
@@ -253,7 +254,8 @@ def test_apply_consent_check_observes_settings_revocation_before_flash(tmp_path)
     assert "cancelled-before-write" in calls
 
 
-def test_preview_text_names_exact_changes_and_apply_dispatches_bound_preview():
+def test_preview_text_names_exact_changes_and_apply_dispatches_bound_preview__and_1_more() -> None:
+    # --- scenario: preview_text_names_exact_changes_and_apply_dispatches_bound_preview
     calls = []
     target = _target(calls)
     target.reconfigureDeckRuntime_ = lambda sender: calls.append("restart")
@@ -280,8 +282,7 @@ def test_preview_text_names_exact_changes_and_apply_dispatches_bound_preview():
     assert "restart" not in calls
     assert target._creator_micro_setup_runtime_needs_restart is True
 
-
-def test_cancelled_preview_does_not_start_apply():
+    # --- scenario: cancelled_preview_does_not_start_apply
     calls = []
     target = _target(calls)
     target.deck_settings_pane = SimpleNamespace(set_setup_pending=lambda value: None, set_status=lambda value: None)
@@ -300,7 +301,9 @@ def test_cancelled_preview_does_not_start_apply():
     assert "apply" not in calls
 
 
-def test_restore_requires_confirmation_before_starting_background_work(tmp_path):
+
+def test_restore_requires_confirmation_before_starting_background_work__and_2_more(tmp_path) -> None:
+    # --- scenario: restore_requires_confirmation_before_starting_background_work
     calls = []
     target = _target(calls)
     thread = begin_creator_micro_restore(
@@ -313,8 +316,7 @@ def test_restore_requires_confirmation_before_starting_background_work(tmp_path)
     assert thread is None
     assert "opened" not in calls
 
-
-def test_setup_resumes_enabled_runtime_even_when_it_took_over_a_pending_start(tmp_path):
+    # --- scenario: setup_resumes_enabled_runtime_even_when_it_took_over_a_pending_start
     calls = []
     target = _target(calls)
     target._deck_runtime_generation = object()
@@ -329,8 +331,7 @@ def test_setup_resumes_enabled_runtime_even_when_it_took_over_a_pending_start(tm
     assert result.code == "inspection_ready"
     assert result.runtime_was_stopped
 
-
-def test_rejected_setup_does_not_cancel_an_unstarted_normal_runtime_forever(tmp_path):
+    # --- scenario: rejected_setup_does_not_cancel_an_unstarted_normal_runtime_forever
     calls = []
     target = _target(calls)
     target._deck_runtime_generation = object()
@@ -341,3 +342,4 @@ def test_rejected_setup_does_not_cancel_an_unstarted_normal_runtime_forever(tmp_
     result = calls[-1][1]
     assert result.code == "connection_required"
     assert result.runtime_was_stopped
+

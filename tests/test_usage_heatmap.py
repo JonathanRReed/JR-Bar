@@ -19,7 +19,8 @@ def record(provider: str, session: str, stamp: datetime, *, tokens=(0, 0, 0, 0),
     return (provider, session, "model", stamp.timestamp(), *tokens, dedupe)
 
 
-def test_totals_match_usage_stats_record_semantics_exactly():
+def test_totals_match_usage_stats_record_semantics_exactly__and_1_more() -> None:
+    # --- scenario: totals_match_usage_stats_record_semantics_exactly
     now = datetime(2026, 9, 4, 12, tzinfo=CHICAGO)
     records = [
         record("claude", "s1", now, tokens=(10, 20, 30, 40), dedupe="a"),
@@ -35,8 +36,7 @@ def test_totals_match_usage_stats_record_semantics_exactly():
         for provider in ("claude", "codex")
     )
 
-
-def test_local_calendar_handles_midnight_and_dst_boundaries():
+    # --- scenario: local_calendar_handles_midnight_and_dst_boundaries
     now = datetime(2026, 11, 2, 0, 30, tzinfo=CHICAGO)
     records = [
         record("claude", "before", datetime(2026, 11, 1, 5, 30, tzinfo=UTC), tokens=(1, 0, 0, 0), dedupe="a"),
@@ -47,6 +47,7 @@ def test_local_calendar_handles_midnight_and_dst_boundaries():
     assert result.providers["claude"].cells[-2].day.isoformat() == "2026-11-01"
     assert result.providers["claude"].cells[-2].tokens == 7
     assert result.providers["claude"].cells[-2].sessions == 3
+
 
 
 def test_omitted_timezone_uses_system_local_calendar(monkeypatch: pytest.MonkeyPatch):
@@ -69,7 +70,8 @@ def test_omitted_timezone_uses_system_local_calendar(monkeypatch: pytest.MonkeyP
         time.tzset()
 
 
-def test_selected_missing_provider_is_distinct_from_zero_activity_day():
+def test_selected_missing_provider_is_distinct_from_zero_activity_day__and_2_more() -> None:
+    # --- scenario: selected_missing_provider_is_distinct_from_zero_activity_day
     now = datetime(2026, 9, 4, 12, tzinfo=UTC)
     result = build_usage_heatmap(
         [record("claude", "s", now, tokens=(10, 0, 0, 0))],
@@ -83,8 +85,7 @@ def test_selected_missing_provider_is_distinct_from_zero_activity_day():
     assert result.providers["codex"].cells[-1].accessibility_label.endswith("data unavailable")
     assert result.providers["claude"].cells[-2].accessibility_label.endswith("zero activity")
 
-
-def test_dedupe_is_global_but_sessions_are_provider_scoped():
+    # --- scenario: dedupe_is_global_but_sessions_are_provider_scoped
     now = datetime(2026, 9, 4, 12, tzinfo=UTC)
     records = [
         record("claude", "same", now, tokens=(10, 0, 0, 0), dedupe="copied"),
@@ -97,10 +98,8 @@ def test_dedupe_is_global_but_sessions_are_provider_scoped():
     assert result.providers["claude"].totals.sessions == 1
     assert result.providers["codex"].totals.sessions == 1
 
-
-@pytest.mark.parametrize(
-    "bad_record",
-    [
+    # --- scenario: malformed_records_are_skipped_without_marking_data_available
+    for bad_record in [
         (),
         ("claude",),
         ("claude", "s", "m", "bad", 1, 0, 0, 0, "x"),
@@ -108,17 +107,17 @@ def test_dedupe_is_global_but_sessions_are_provider_scoped():
         ("claude", "s", "m", 0, True, 0, 0, 0, "x"),
         ("claude", "s", "m", 0, -1, 0, 0, 0, "x"),
         ("claude", "s", "m", 0, 1, 0, 0, 0, ""),
-    ],
-)
-def test_malformed_records_are_skipped_without_marking_data_available(bad_record: tuple):
-    result = build_usage_heatmap(
-        [bad_record], provider_ids=("claude",), days=7, now=datetime(2026, 9, 4, tzinfo=UTC), timezone=UTC
-    )
-    assert result.providers["claude"].data_status == "unavailable"
-    assert result.aggregate.data_status == "unavailable"
+    ]:
+        result = build_usage_heatmap(
+            [bad_record], provider_ids=("claude",), days=7, now=datetime(2026, 9, 4, tzinfo=UTC), timezone=UTC
+        )
+        assert result.providers["claude"].data_status == "unavailable"
+        assert result.aggregate.data_status == "unavailable"
 
 
-def test_outputs_are_deeply_immutable_and_provider_order_is_explicit():
+
+def test_outputs_are_deeply_immutable_and_provider_order_is_explicit__and_2_more() -> None:
+    # --- scenario: outputs_are_deeply_immutable_and_provider_order_is_explicit
     result = build_usage_heatmap(
         [], provider_ids=("codex", "claude"), days=7, now=datetime(2026, 9, 4, tzinfo=UTC), timezone=UTC
     )
@@ -127,8 +126,7 @@ def test_outputs_are_deeply_immutable_and_provider_order_is_explicit():
     with pytest.raises(TypeError):
         result.providers["other"] = result.aggregate  # type: ignore[index]
 
-
-def test_intensity_has_a_stable_floor_so_one_tiny_event_is_not_maximum():
+    # --- scenario: intensity_has_a_stable_floor_so_one_tiny_event_is_not_maximum
     now = datetime(2026, 9, 4, tzinfo=UTC)
     tiny = build_usage_heatmap(
         [record("claude", "s", now, tokens=(1, 0, 0, 0))], provider_ids=("claude",), days=7, now=now, timezone=UTC
@@ -139,8 +137,7 @@ def test_intensity_has_a_stable_floor_so_one_tiny_event_is_not_maximum():
     assert tiny.providers["claude"].cells[-1].intensity == 1
     assert substantial.providers["claude"].cells[-1].intensity == 4
 
-
-def test_finite_input_and_output_bounds_are_enforced():
+    # --- scenario: finite_input_and_output_bounds_are_enforced
     now = datetime(2026, 9, 4, tzinfo=UTC)
     with pytest.raises(ValueError, match="providers"):
         build_usage_heatmap([], provider_ids=tuple(f"p{i}" for i in range(33)), now=now)
@@ -148,6 +145,7 @@ def test_finite_input_and_output_bounds_are_enforced():
         build_usage_heatmap(iter(()), provider_ids=("claude",), now=now)
     with pytest.raises(ValueError, match="days"):
         build_usage_heatmap([], provider_ids=("claude",), days=8, now=now)
+
 
 
 def test_large_admitted_history_keeps_exact_totals_in_a_bounded_grid():

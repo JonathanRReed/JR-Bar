@@ -113,9 +113,9 @@ def _route(event: CanonicalOperatorEvent) -> InterruptionRoute:
     return InterruptionRoute(event.key, event.interruption_class, None)
 
 
-@pytest.mark.parametrize(
-    ("route_factory", "expected_body"),
-    (
+def test_generic_notification_copy_contains_only_product_owned_provider_semantics__and_2_more() -> None:
+    # --- scenario: generic_notification_copy_contains_only_product_owned_provider_semantics
+    for route_factory, expected_body in (
         (_request_route, "A Codex session needs you"),
         (
             lambda: _route(_work_event(TransitionKind.COMPLETED)),
@@ -125,18 +125,12 @@ def _route(event: CanonicalOperatorEvent) -> InterruptionRoute:
             lambda: _route(_work_event(TransitionKind.FAILED)),
             "A Codex session finished",
         ),
-    ),
-)
-def test_generic_notification_copy_contains_only_product_owned_provider_semantics(
-    route_factory,
-    expected_body: str,
-) -> None:
-    copy = generic_notification_copy(route_factory())
+    ):
+        copy = generic_notification_copy(route_factory())
 
-    assert copy == GenericNotificationCopy("JR-Bar", expected_body)
+        assert copy == GenericNotificationCopy("JR-Bar", expected_body)
 
-
-def test_notification_copy_never_echoes_opaque_or_private_shaped_source_values() -> None:
+    # --- scenario: notification_copy_never_echoes_opaque_or_private_shaped_source_values
     sentinel = "prompt:Users:jonathan:project-secret"
     event = _work_event(
         TransitionKind.COMPLETED,
@@ -152,10 +146,8 @@ def test_notification_copy_never_echoes_opaque_or_private_shaped_source_values()
     assert sentinel not in rendered
     assert "secret" not in rendered.lower()
 
-
-@pytest.mark.parametrize(
-    "sentinel",
-    (
+    # --- scenario: generic_copy_excludes_the_full_grammar_compatible_private_corpus
+    for sentinel in (
         "prompt:delete-files",
         "path:Users:jonathan:Documents:secret",
         "email:jonathan.example.com",
@@ -163,30 +155,27 @@ def test_notification_copy_never_echoes_opaque_or_private_shaped_source_values()
         "session:abc123",
         "url:https:example.com:private",
         "raw-error:permission-denied",
-    ),
-)
-def test_generic_copy_excludes_the_full_grammar_compatible_private_corpus(
-    sentinel: str,
-) -> None:
-    event = _work_event(
-        TransitionKind.COMPLETED,
-        source_instance=sentinel,
-    )
+    ):
+        event = _work_event(
+            TransitionKind.COMPLETED,
+            source_instance=sentinel,
+        )
 
-    copy = generic_notification_copy(_route(event))
+        copy = generic_notification_copy(_route(event))
 
-    assert sentinel not in f"{copy.title} {copy.body}"
+        assert sentinel not in f"{copy.title} {copy.body}"
 
 
-def test_route_fails_closed_on_a_request_key_that_is_not_the_events_subject() -> None:
+
+def test_route_fails_closed_on_a_request_key_that_is_not_the_events_subject__and_2_more() -> None:
+    # --- scenario: route_fails_closed_on_a_request_key_that_is_not_the_events_subject
     event = _work_event(TransitionKind.COMPLETED)
     foreign = _request_route(suffix="02").request_key
 
     with pytest.raises(InterruptionPolicyValidationError):
         InterruptionRoute(event.key, event.interruption_class, foreign)
 
-
-def test_action_token_payload_is_opaque_bounded_and_contains_no_navigation_identity() -> None:
+    # --- scenario: action_token_payload_is_opaque_bounded_and_contains_no_navigation_identity
     event = _work_event(
         TransitionKind.COMPLETED,
         suffix="private",
@@ -209,8 +198,7 @@ def test_action_token_payload_is_opaque_bounded_and_contains_no_navigation_ident
     assert not hasattr(binding, "event_key")
     assert binding.expires_at_epoch == NOW + 120.0
 
-
-def test_action_token_notification_metadata_contains_only_the_opaque_token() -> None:
+    # --- scenario: action_token_notification_metadata_contains_only_the_opaque_token
     event = _work_event(TransitionKind.COMPLETED)
     binding = issue_action_token(
         randomness=b"m" * 32,
@@ -237,7 +225,9 @@ def test_action_token_notification_metadata_contains_only_the_opaque_token() -> 
     }.intersection(metadata)
 
 
-def test_action_token_value_is_bound_to_event_generation_and_expiry_metadata() -> None:
+
+def test_action_token_value_is_bound_to_event_generation_and_expiry_metadata__and_2_more() -> None:
+    # --- scenario: action_token_value_is_bound_to_event_generation_and_expiry_metadata
     event = _work_event(TransitionKind.COMPLETED)
     other = _work_event(TransitionKind.COMPLETED, suffix="02")
 
@@ -282,8 +272,7 @@ def test_action_token_value_is_bound_to_event_generation_and_expiry_metadata() -
         == 4
     )
 
-
-def test_action_token_reresolves_only_one_exact_current_generation_candidate() -> None:
+    # --- scenario: action_token_reresolves_only_one_exact_current_generation_candidate
     event = _work_event(TransitionKind.COMPLETED)
     other = _work_event(TransitionKind.COMPLETED, suffix="02")
     binding = issue_action_token(
@@ -345,8 +334,7 @@ def test_action_token_reresolves_only_one_exact_current_generation_candidate() -
         is None
     )
 
-
-def test_action_token_resolver_fails_closed_for_duplicate_candidates() -> None:
+    # --- scenario: action_token_resolver_fails_closed_for_duplicate_candidates
     event = _work_event(TransitionKind.COMPLETED)
     binding = issue_action_token(
         randomness=b"d" * 32,
@@ -365,3 +353,4 @@ def test_action_token_resolver_fails_closed_for_duplicate_candidates() -> None:
         )
         is None
     )
+

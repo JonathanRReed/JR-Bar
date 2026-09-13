@@ -23,13 +23,13 @@ def hertz(program: str, led_count: int = 8) -> float:
 # --- things that really flash ------------------------------------------------
 
 
-def test_a_whole_bar_blink_reports_its_real_rate() -> None:
+def test_a_whole_bar_blink_reports_its_real_rate__and_2_more() -> None:
+    # --- scenario: a_whole_bar_blink_reports_its_real_rate
     assert hertz("#FFFFFF 100ms none\noff 100ms none\nrepeat") == pytest.approx(
         5.0, abs=0.2
     )
 
-
-def test_a_strobe_hidden_inside_a_long_loop_is_still_a_strobe() -> None:
+    # --- scenario: a_strobe_hidden_inside_a_long_loop_is_still_a_strobe
     """The hole the text-based rule left open.
 
     Ten 60 ms lines make a 600 ms loop, which clears every cadence floor the
@@ -38,32 +38,28 @@ def test_a_strobe_hidden_inside_a_long_loop_is_still_a_strobe() -> None:
     program = "\n".join(["#FFFFFF 60ms none", "off 60ms none"] * 5 + ["repeat"])
     assert hertz(program) > 8.0
 
-
-def test_a_fast_whole_strip_breath_counts_even_though_it_eases() -> None:
+    # --- scenario: a_fast_whole_strip_breath_counts_even_though_it_eases
     """Smoothness is not a defence: a 4 Hz full-field swing is a hazard."""
     assert hertz("#FFFFFF 250ms pulse\nrepeat") == pytest.approx(4.0, abs=0.3)
 
 
-def test_a_quarter_of_the_strip_is_enough_area() -> None:
+
+def test_a_quarter_of_the_strip_is_enough_area__and_2_more() -> None:
+    # --- scenario: a_quarter_of_the_strip_is_enough_area
     two_of_eight = (
         "0:#FFFFFF 100ms none; 1:#FFFFFF 100ms none\n"
         "0:#000000 100ms none; 1:#000000 100ms none\nrepeat"
     )
     assert hertz(two_of_eight) > 2.0
 
-
-# --- things that do not -------------------------------------------------------
-
-
-def test_one_led_blinking_is_below_the_area_rule() -> None:
+    # --- scenario: one_led_blinking_is_below_the_area_rule
     """One of eight is 12.5% of the field: under the 25% area rule."""
     one_of_eight = (
         "0:#FFFFFF 100ms none\n0:#000000 100ms none\nrepeat"
     )
     assert hertz(one_of_eight) == 0.0
 
-
-def test_a_travelling_head_is_not_a_flash_however_fast_it_travels() -> None:
+    # --- scenario: a_travelling_head_is_not_a_flash_however_fast_it_travels
     """A head stepping one LED every 60 ms is motion, not a strobe."""
     segments = "; ".join(
         f"{index}:#00E5FF 120ms pulse" + (f" {index * 60}ms" if index else "")
@@ -72,7 +68,9 @@ def test_a_travelling_head_is_not_a_flash_however_fast_it_travels() -> None:
     assert hertz(f"{segments}\nrepeat") <= 2.0
 
 
-def test_a_roll_never_counts() -> None:
+
+def test_a_roll_never_counts__and_2_more() -> None:
+    # --- scenario: a_roll_never_counts
     """A roll repaints nothing: it slides the field and ends where it began."""
     program = "\n".join(
         [
@@ -83,29 +81,25 @@ def test_a_roll_never_counts() -> None:
     )
     assert hertz(program) == 0.0
 
-
-def test_the_working_relay_is_not_a_flash() -> None:
+    # --- scenario: the_working_relay_is_not_a_flash
     lines = shapes.travelling_wave("#00E5FF", led_count=8, lap_ms=2000, laps=6)
     assert hertz("\n".join([*lines, "repeat"])) <= 2.0
 
-
-def test_knight_rider_is_not_a_flash() -> None:
+    # --- scenario: knight_rider_is_not_a_flash
     lines = shapes.bounce("#00E5FF", "#000305", led_count=8, step_ms=140)
     assert hertz("\n".join([*lines, "repeat"])) <= 2.0
 
 
-def test_the_idle_breath_is_not_a_flash() -> None:
+
+def test_the_idle_breath_is_not_a_flash__and_2_more() -> None:
+    # --- scenario: the_idle_breath_is_not_a_flash
     program = (
         "off 160ms cosine\n#020204 1900ms cosine\noff 2550ms cosine\n"
         "off 850ms none\nrepeat"
     )
     assert hertz(program) < 1.0
 
-
-# --- the model itself ---------------------------------------------------------
-
-
-def test_none_jumps_at_its_delay_not_at_the_end_of_its_duration() -> None:
+    # --- scenario: none_jumps_at_its_delay_not_at_the_end_of_its_duration
     """Measured against the firmware; modelling it the other way halved every
     hard blink's reported rate."""
     frames, interval = flash_analysis.render_luminance(
@@ -115,14 +109,14 @@ def test_none_jumps_at_its_delay_not_at_the_end_of_its_duration() -> None:
     assert at(0) == 0.0
     assert at(200) > 0.9
 
-
-def test_a_line_keeps_only_the_last_segment_for_an_led() -> None:
+    # --- scenario: a_line_keeps_only_the_last_segment_for_an_led
     """The firmware drops the earlier assignment outright, so the model does."""
     frames, _ = flash_analysis.render_luminance(
         parse_animation("0:#FFFFFF 100ms none; 0:#000000 100ms none"),
         led_count=8,
     )
     assert max(frame[0] for frame in frames) == 0.0
+
 
 
 def test_brightness_alone_never_reverses_the_field() -> None:

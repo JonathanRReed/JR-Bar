@@ -19,14 +19,13 @@ from jrbar.signals import (
 )
 
 
-def test_defaults_are_the_owners_numbers() -> None:
+def test_defaults_are_the_owners_numbers__and_2_more() -> None:
+    # --- scenario: defaults_are_the_owners_numbers
     assert DEFAULT_QUOTA_THRESHOLDS == (90.0, 95.0)
     assert DEFAULT_ALERT_BURST == 3
 
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
+    # --- scenario: threshold_normalization
+    for raw, expected in [
         (None, DEFAULT_QUOTA_THRESHOLDS),
         ((), DEFAULT_QUOTA_THRESHOLDS),
         ("90,95", DEFAULT_QUOTA_THRESHOLDS),
@@ -36,18 +35,13 @@ def test_defaults_are_the_owners_numbers() -> None:
         ((10, 20, 30, 40, 50, 60), (10.0, 20.0, 30.0, 40.0)),
         ((float("nan"), 90), (90.0,)),
         ((True, 90), (90.0,)),
-    ],
-)
-def test_threshold_normalization(raw: object, expected: tuple) -> None:
-    assert normalize_quota_thresholds(raw) == expected
+    ]:
+        assert normalize_quota_thresholds(raw) == expected
 
+    # --- scenario: burst_normalization
+    for raw, expected in [(None, 3), (0, 3), (-4, 3), (1, 1), (5, 5), (999, 10), (True, 3)]:
+        assert normalize_alert_burst(raw) == expected
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [(None, 3), (0, 3), (-4, 3), (1, 1), (5, 5), (999, 10), (True, 3)],
-)
-def test_burst_normalization(raw: object, expected: int) -> None:
-    assert normalize_alert_burst(raw) == expected
 
 
 def test_the_existing_detector_fires_on_the_edge_at_the_new_defaults() -> None:

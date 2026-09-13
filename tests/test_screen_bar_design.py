@@ -13,21 +13,20 @@ from jrbar.screen_bar_design import (
 )
 
 
-def test_screen_bar_is_centered_and_bounded_on_wide_surfaces() -> None:
+def test_screen_bar_is_centered_and_bounded_on_wide_surfaces__and_2_more() -> None:
+    # --- scenario: screen_bar_is_centered_and_bounded_on_wide_surfaces
     left, right = rounded_band_bounds(1400.0)
     assert math.isclose((left + right) / 2.0, 700.0)
     assert math.isclose(right - left, MAX_BAND_WIDTH)
     assert left > 0.0
 
-
-def test_screen_bar_uses_safe_available_width_on_narrow_surfaces() -> None:
+    # --- scenario: screen_bar_uses_safe_available_width_on_narrow_surfaces
     left, right = rounded_band_bounds(170.0)
     assert left == 8.0
     assert right == 162.0
     assert right - left < MIN_BAND_WIDTH
 
-
-def test_screen_bar_semantics_differ_by_motion_or_shape_not_only_color() -> None:
+    # --- scenario: screen_bar_semantics_differ_by_motion_or_shape_not_only_color
     assert visual_for_semantic(ScreenBarSemantic.SILENT).outline_only is True
     assert visual_for_semantic(ScreenBarSemantic.WORKING).motion == "travel"
     assert visual_for_semantic(ScreenBarSemantic.NEEDS_INPUT).finite is True
@@ -38,6 +37,7 @@ def test_screen_bar_semantics_differ_by_motion_or_shape_not_only_color() -> None
         ScreenBarSemantic.FAILED,
         reduce_motion=True,
     ).motion == "steady"
+
 
 
 def test_screen_bar_geometry_rejects_non_finite_values() -> None:

@@ -15,7 +15,8 @@ def _classes(source: str) -> set[str]:
     }
 
 
-def test_native_provider_host_installs_settings_and_screen_bar_before_launch() -> None:
+def test_native_provider_host_installs_settings_and_screen_bar_before_launch__and_2_more() -> None:
+    # --- scenario: native_provider_host_installs_settings_and_screen_bar_before_launch
     source = (SRC / "provider_usage_status_bar.py").read_text(encoding="utf-8")
     composition = (SRC / "application_composition.py").read_text(encoding="utf-8")
 
@@ -28,8 +29,7 @@ def test_native_provider_host_installs_settings_and_screen_bar_before_launch() -
     assert "selectSettingsCategoryPage_" in source
     assert "openProviderUsageCenter_" in source
 
-
-def test_screen_bar_installer_does_not_rebind_objective_c_classes() -> None:
+    # --- scenario: screen_bar_installer_does_not_rebind_objective_c_classes
     source = (SRC / "screen_bar_runtime.py").read_text(encoding="utf-8")
 
     assert "VirtualLedView._draw_compact_accent = _draw_compact_accent" in source
@@ -43,8 +43,7 @@ def test_screen_bar_installer_does_not_rebind_objective_c_classes() -> None:
     assert "finally:" in source
     assert "outline_alpha" in source
 
-
-def test_settings_runtime_reuses_retained_pane_builders_without_a_controller() -> None:
+    # --- scenario: settings_runtime_reuses_retained_pane_builders_without_a_controller
     source = (SRC / "settings_category_runtime.py").read_text(encoding="utf-8")
 
     assert "settings_window._build_settings_pane(target, page_key)" in source
@@ -52,3 +51,4 @@ def test_settings_runtime_reuses_retained_pane_builders_without_a_controller() -
     assert "Open Usage Center…" in source
     assert "selector.setTag_" in source
     assert not _classes(source)
+

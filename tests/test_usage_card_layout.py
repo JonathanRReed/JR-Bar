@@ -75,26 +75,24 @@ _LONG = (
 _HUGE = _LONG * 6
 
 
-@pytest.mark.parametrize("window_count", [0, 1, 2, 4, 6])
-@pytest.mark.parametrize("text", ["", _SHORT, _LONG, _HUGE])
-def test_no_two_rows_ever_intersect_and_none_escapes_the_card(
-    window_count, text
-) -> None:
+def test_no_two_rows_ever_intersect_and_none_escapes_the_card__and_2_more() -> None:
+    # --- scenario: no_two_rows_ever_intersect_and_none_escapes_the_card
     """The exact property the owner saw violated, over the card's whole range."""
-    rows = capacity_card_rows(
-        (
-            ("codex", text, text, tuple(text for _ in range(window_count))),
-            ("claude", text, text, tuple(text for _ in range(window_count))),
-        )
-    )
-    layout = usage_card_layout(rows, measure=_measurer())
+    for window_count in [0, 1, 2, 4, 6]:
+        for text in ["", _SHORT, _LONG, _HUGE]:
+            rows = capacity_card_rows(
+                (
+                    ("codex", text, text, tuple(text for _ in range(window_count))),
+                    ("claude", text, text, tuple(text for _ in range(window_count))),
+                )
+            )
+            layout = usage_card_layout(rows, measure=_measurer())
 
-    _assert_sound(layout)
-    assert len(layout.rows) == 1 + 2 * (2 + window_count)
-    assert layout.height >= usage_card.CARD_TOP_PADDING + usage_card.CARD_BOTTOM_PADDING
+            _assert_sound(layout)
+            assert len(layout.rows) == 1 + 2 * (2 + window_count)
+            assert layout.height >= usage_card.CARD_TOP_PADDING + usage_card.CARD_BOTTOM_PADDING
 
-
-def test_every_row_is_tall_enough_for_the_lines_it_was_measured_to_need() -> None:
+    # --- scenario: every_row_is_tall_enough_for_the_lines_it_was_measured_to_need
     """The height must come from the content, not from a per-row literal."""
     measure = _measurer()
     rows = capacity_card_rows((("codex", _LONG, _LONG, (_LONG,)),))
@@ -107,8 +105,7 @@ def test_every_row_is_tall_enough_for_the_lines_it_was_measured_to_need() -> Non
         assert placed.rect.height >= drawn
         assert placed.lines > 1 or placed.rect.height == placed.style.min_height
 
-
-def test_a_wrapping_row_costs_a_whole_line_and_the_card_grows_by_it() -> None:
+    # --- scenario: a_wrapping_row_costs_a_whole_line_and_the_card_grows_by_it
     """One extra line of text is one extra line of card, never zero."""
     measure = _measurer()
     one_line = usage_card_layout(
@@ -124,7 +121,9 @@ def test_a_wrapping_row_costs_a_whole_line_and_the_card_grows_by_it() -> None:
     assert two_lines.row("codex:primary").lines == 2
 
 
-def test_text_past_the_line_bound_is_truncated_rather_than_overflowing() -> None:
+
+def test_text_past_the_line_bound_is_truncated_rather_than_overflowing__and_2_more() -> None:
+    # --- scenario: text_past_the_line_bound_is_truncated_rather_than_overflowing
     """A row cannot buy unbounded height, and must not clip to buy less."""
     layout = usage_card_layout(
         capacity_card_rows((("codex", _HUGE, _HUGE, ()),)),
@@ -139,8 +138,7 @@ def test_text_past_the_line_bound_is_truncated_rather_than_overflowing() -> None
     assert primary.rect.height >= primary.lines * 14
     assert secondary.rect.height >= secondary.lines * 13
 
-
-def test_the_card_spends_horizontal_room_before_it_spends_vertical_room() -> None:
+    # --- scenario: the_card_spends_horizontal_room_before_it_spends_vertical_room
     """264pt of field inside a menu with room to spare is wasted height."""
     narrow = usage_card_layout(
         capacity_card_rows((("codex", "x" * 10, "x", ()),)), measure=_measurer()
@@ -159,8 +157,7 @@ def test_the_card_spends_horizontal_room_before_it_spends_vertical_room() -> Non
     )
     assert huge.width == usage_card.CARD_MAX_WIDTH
 
-
-def test_rows_read_downward_in_the_order_they_were_given() -> None:
+    # --- scenario: rows_read_downward_in_the_order_they_were_given
     rows = capacity_card_rows(
         (
             ("codex", "a", "b", ("c", "d")),
@@ -178,7 +175,9 @@ def test_rows_read_downward_in_the_order_they_were_given() -> None:
     ]
 
 
-def test_an_empty_card_is_still_a_valid_rectangle() -> None:
+
+def test_an_empty_card_is_still_a_valid_rectangle__and_1_more() -> None:
+    # --- scenario: an_empty_card_is_still_a_valid_rectangle
     layout = usage_card_layout((), measure=_measurer())
     assert layout.rows == ()
     assert layout.height == (
@@ -186,8 +185,7 @@ def test_an_empty_card_is_still_a_valid_rectangle() -> None:
     )
     _assert_sound(layout)
 
-
-def test_the_layout_refuses_shapes_it_cannot_lay_out_honestly() -> None:
+    # --- scenario: the_layout_refuses_shapes_it_cannot_lay_out_honestly
     with pytest.raises(UsageCardLayoutError):
         usage_card_layout((CardRow("a", "x", usage_card.PRIMARY_STYLE),), measure=None)
     with pytest.raises(UsageCardLayoutError):
@@ -208,6 +206,7 @@ def test_the_layout_refuses_shapes_it_cannot_lay_out_honestly() -> None:
         )
     with pytest.raises(UsageCardLayoutError):
         TextMetrics(natural_width=1.0, wrapped_height=1.0, line_height=0.0)
+
 
 
 # --------------------------------------------------------------------------
@@ -241,7 +240,8 @@ def _real_layout(blocks):
     )
 
 
-def test_the_owners_card_fits_the_text_appkit_actually_draws() -> None:
+def test_the_owners_card_fits_the_text_appkit_actually_draws__and_2_more() -> None:
+    # --- scenario: the_owners_card_fits_the_text_appkit_actually_draws
     """The screenshot's own strings, measured by the framework that clipped them.
 
     Under the literal geometry the three long rows were short by 10, 24 and 10
@@ -265,8 +265,7 @@ def test_the_owners_card_fits_the_text_appkit_actually_draws() -> None:
             f"for {bounded}pt of text"
         )
 
-
-def test_the_built_card_hosts_every_label_inside_its_own_view() -> None:
+    # --- scenario: the_built_card_hosts_every_label_inside_its_own_view
     """Frames on the real NSView, not just numbers from the pure function."""
     target = _Target(_OWNERS_CARD)
     item = status_bar.build_usage_menu_item(target)
@@ -296,8 +295,7 @@ def test_the_built_card_hosts_every_label_inside_its_own_view() -> None:
         )
         assert not overlaps, f"{first_key} overlaps {second_key}"
 
-
-def test_no_row_leaves_a_clipped_sliver_against_its_own_bottom_edge() -> None:
+    # --- scenario: no_row_leaves_a_clipped_sliver_against_its_own_bottom_edge
     """Render the card and read the pixels, the way the defect was reproduced.
 
     A clipped line does not draw OUTSIDE its frame -- AppKit cuts it at the
@@ -343,7 +341,9 @@ def test_no_row_leaves_a_clipped_sliver_against_its_own_bottom_edge() -> None:
         )
 
 
-def test_a_refresh_regrows_the_card_for_longer_copy_in_place() -> None:
+
+def test_a_refresh_regrows_the_card_for_longer_copy_in_place__and_1_more() -> None:
+    # --- scenario: a_refresh_regrows_the_card_for_longer_copy_in_place
     """New text on frames measured for the old text is the defect in miniature."""
     target = _Target((("codex", "Codex · 5h 62% left", "resets in 2h", ()),))
     status_bar.build_usage_menu_item(target)
@@ -358,8 +358,7 @@ def test_a_refresh_regrows_the_card_for_longer_copy_in_place() -> None:
     field = target._usage_menu_fields["codex:primary"]
     assert field.frame().size.height >= 28
 
-
-def test_a_refresh_that_needs_a_new_row_asks_for_a_rebuild() -> None:
+    # --- scenario: a_refresh_that_needs_a_new_row_asks_for_a_rebuild
     """A row that does not exist cannot be given a frame; ask for the card back."""
     target = _Target((("codex", "a", "b", ()),))
     status_bar.build_usage_menu_item(target)
@@ -369,6 +368,7 @@ def test_a_refresh_that_needs_a_new_row_asks_for_a_rebuild() -> None:
     status_bar.refresh_usage_menu_card(target, now=0.0, reset_now=0.0)
 
     assert target._menu_signature is None
+
 
 
 class _Target:

@@ -53,9 +53,8 @@ def _legacy_codex_line(*, sequence: int = 1) -> str:
     )
 
 
-def test_hint_before_publication_cannot_create_state_then_log_reconciles_once(
-    tmp_path: Path,
-) -> None:
+def test_hint_before_publication_cannot_create_state_then_log_reconciles_once__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: hint_before_publication_cannot_create_state_then_log_reconciles_once
     log = tmp_path / "codex.jsonl"
     monitor = LiveAgentMonitor()
 
@@ -74,10 +73,7 @@ def test_hint_before_publication_cannot_create_state_then_log_reconciles_once(
     assert len(created.operator_events) == 1
     assert repeated.operator_events == ()
 
-
-def test_first_hint_after_restore_skips_already_reduced_log_history(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: first_hint_after_restore_skips_already_reduced_log_history
     state_path = tmp_path / "latest.json"
     log = tmp_path / "codex.jsonl"
     log.write_text(_legacy_codex_line(sequence=1) + "\n")
@@ -101,10 +97,7 @@ def test_first_hint_after_restore_skips_already_reduced_log_history(
     watermark = dict(restored.operator_state.source_watermarks)[SOURCE]
     assert watermark.sequence == 2
 
-
-def test_equal_watermark_after_restore_confirms_live_source_freshness(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: equal_watermark_after_restore_confirms_live_source_freshness
     state_path = tmp_path / "latest.json"
     log = tmp_path / "codex.jsonl"
     log.write_text(_legacy_codex_line(sequence=1) + "\n")
@@ -121,9 +114,9 @@ def test_equal_watermark_after_restore_confirms_live_source_freshness(
     assert confirmed.source_freshness.value == "fresh"
 
 
-def test_restore_drops_works_whose_process_ran_in_a_verify_sandbox(
-    tmp_path: Path,
-) -> None:
+
+def test_restore_drops_works_whose_process_ran_in_a_verify_sandbox__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: restore_drops_works_whose_process_ran_in_a_verify_sandbox
     """Live provider drills run real CLIs out of ``jrbar-verify-*``
     temp dirs -- real while they run, never user work. A drill corpse in
     latest.json must not resurrect after a restart."""
@@ -160,10 +153,7 @@ def test_restore_drops_works_whose_process_ran_in_a_verify_sandbox(
     restored_real = LiveAgentMonitor(latest_state_path=state_path)
     assert len(restored_real.operator_state.works) == 1
 
-
-def test_duplicate_out_of_order_and_forged_hints_never_author_truth(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: duplicate_out_of_order_and_forged_hints_never_author_truth
     empty_log = tmp_path / "empty.jsonl"
     empty_log.write_text("")
     monitor = LiveAgentMonitor()
@@ -176,6 +166,7 @@ def test_duplicate_out_of_order_and_forged_hints_never_author_truth(
     assert snapshot.operator_state.works == ()
     assert snapshot.operator_events == ()
     assert snapshot.statuses == ()
+
 
 
 def test_invalid_hint_classes_recover_when_a_valid_hint_follows() -> None:

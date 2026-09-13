@@ -71,12 +71,12 @@ def test_uninstall_removes_only_the_managed_file(tmp_path: Path) -> None:
     assert not config.exists()
 
 
-def test_kiro_native_names_normalize_to_canonical_events() -> None:
+def test_kiro_native_names_normalize_to_canonical_events__and_1_more() -> None:
+    # --- scenario: kiro_native_names_normalize_to_canonical_events
     for canonical, native in KIRO_NATIVE_EVENT_NAMES.items():
         assert canonical_event_name(native) == canonical
 
-
-def test_kiro_log_lines_reach_the_collector_with_working_semantics() -> None:
+    # --- scenario: kiro_log_lines_reach_the_collector_with_working_semantics
     from jrbar.collector import mode_for_event
 
     line = json.dumps(
@@ -91,3 +91,4 @@ def test_kiro_log_lines_reach_the_collector_with_working_semantics() -> None:
     assert record.provider == "kiro"
     assert record.event_name == "SessionStart"
     assert mode_for_event(record) is AgentMode.IDLE_READY
+

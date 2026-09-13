@@ -211,9 +211,9 @@ def _all_text(value: object) -> str:
     return ""
 
 
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [
+def test_remaining_copy_preserves_every_typed_truth_state__and_2_more() -> None:
+    # --- scenario: remaining_copy_preserves_every_typed_truth_state
+    for value, expected in [
         (
             CapacityValue(CapacityUnit.PERCENT_REMAINING, 0.0, ObservationState.OBSERVED_ZERO),
             "0% left",
@@ -250,19 +250,13 @@ def _all_text(value: object) -> str:
             CapacityValue(CapacityUnit.PERCENT_REMAINING, 45.0, ObservationState.LAST_KNOWN_GOOD),
             "45% left",
         ),
-    ],
-)
-def test_remaining_copy_preserves_every_typed_truth_state(
-    value: CapacityValue,
-    expected: str,
-) -> None:
-    text = format_remaining(value)
+    ]:
+        text = format_remaining(value)
 
-    assert text == expected
-    assert "used" not in text.lower()
+        assert text == expected
+        assert "used" not in text.lower()
 
-
-def test_unavailable_capacity_never_renders_as_observed_zero() -> None:
+    # --- scenario: unavailable_capacity_never_renders_as_observed_zero
     unavailable = format_remaining(CapacityValue(CapacityUnit.PERCENT_REMAINING, None, ObservationState.UNAVAILABLE))
     null = format_remaining(CapacityValue(CapacityUnit.PERCENT_REMAINING, None, ObservationState.NULL))
 
@@ -271,10 +265,8 @@ def test_unavailable_capacity_never_renders_as_observed_zero() -> None:
     assert "0%" not in unavailable
     assert "0%" not in null
 
-
-@pytest.mark.parametrize(
-    ("reset", "now", "expected"),
-    [
+    # --- scenario: reset_copy_uses_typed_state_and_injected_clock
+    for reset, now, expected in [
         (_reset(ResetState.FUTURE), NOW, "Resets in 1h 3m"),
         (_reset(ResetState.FUTURE, reset_epoch=NOW + 1.0), NOW + 2.0, "Resets now"),
         (_reset(ResetState.DUE), NOW, "Resets now"),
@@ -282,17 +274,13 @@ def test_unavailable_capacity_never_renders_as_observed_zero() -> None:
         (_reset(ResetState.UNAVAILABLE), NOW, "Reset unavailable"),
         (_reset(ResetState.DISPUTED), NOW, "Reset disputed"),
         (_reset(ResetState.STALE), NOW, "Reset stale"),
-    ],
-)
-def test_reset_copy_uses_typed_state_and_injected_clock(
-    reset: ResetFact,
-    now: float,
-    expected: str,
-) -> None:
-    assert format_reset(reset, now) == expected
+    ]:
+        assert format_reset(reset, now) == expected
 
 
-def test_freshness_copy_is_relative_bounded_and_marks_stale_truth() -> None:
+
+def test_freshness_copy_is_relative_bounded_and_marks_stale_truth__and_2_more() -> None:
+    # --- scenario: freshness_copy_is_relative_bounded_and_marks_stale_truth
     source = _source()
     healthy = _health(source, observed_at=NOW - 125.0, last_attempt_at=NOW - 30.0)
     stale = _health(
@@ -307,8 +295,7 @@ def test_freshness_copy_is_relative_bounded_and_marks_stale_truth() -> None:
     assert format_freshness(stale.observed_at, stale, NOW) == "Updated 2h ago, stale"
     assert format_freshness(NOW + 1.0, healthy, NOW) == "Update time unavailable"
 
-
-def test_card_preserves_provider_window_remaining_reset_and_stale_marker() -> None:
+    # --- scenario: card_preserves_provider_window_remaining_reset_and_stale_marker
     short = _lane(remaining=0.0, value_state=ObservationState.OBSERVED_ZERO)
     long = _lane(
         provider_id="claude",
@@ -342,19 +329,7 @@ def test_card_preserves_provider_window_remaining_reset_and_stale_marker() -> No
     assert card.rows[1].freshness_text == "Updated 2h ago, stale"
     assert "used" not in _all_text(card).lower()
 
-
-@pytest.mark.parametrize(
-    "health_kind",
-    (
-        SourceHealthKind.FAILED,
-        SourceHealthKind.TIMED_OUT,
-        SourceHealthKind.ACCESS_DENIED,
-        SourceHealthKind.SIGN_IN_REQUIRED,
-    ),
-)
-def test_a_source_that_could_not_be_read_never_headlines_the_card(
-    health_kind: SourceHealthKind,
-) -> None:
+    # --- scenario: a_source_that_could_not_be_read_never_headlines_the_card
     """A retained reading is a memory, and a memory does not get to speak.
 
     `_value_refusal` forgives an unreachable source that still holds a
@@ -362,32 +337,40 @@ def test_a_source_that_could_not_be_read_never_headlines_the_card(
     forgiveness used to make the lane bindable too, so a source that had just
     answered ACCESS_DENIED headlined the card exactly like a live one.
     """
-    unreachable = _lane(
-        provider_id="claude",
-        source_instance_id="remote:primary",
-        window="weekly",
-        semantic_name="Weekly window",
-        horizon=QuotaHorizon.LONG,
-        remaining=82.0,
-        value_state=ObservationState.LAST_KNOWN_GOOD,
-        health_kind=health_kind,
-        health_observed_at=NOW - 7_200.0,
-        last_attempt_at=NOW - 60.0,
-    )
+    for health_kind in (
+        SourceHealthKind.FAILED,
+        SourceHealthKind.TIMED_OUT,
+        SourceHealthKind.ACCESS_DENIED,
+        SourceHealthKind.SIGN_IN_REQUIRED,
+    ):
+        unreachable = _lane(
+            provider_id="claude",
+            source_instance_id="remote:primary",
+            window="weekly",
+            semantic_name="Weekly window",
+            horizon=QuotaHorizon.LONG,
+            remaining=82.0,
+            value_state=ObservationState.LAST_KNOWN_GOOD,
+            health_kind=health_kind,
+            health_observed_at=NOW - 7_200.0,
+            last_attempt_at=NOW - 60.0,
+        )
 
-    projection = _projection(unreachable, _lane(remaining=25.0))
-    card = build_capacity_card(projection, NOW)
+        projection = _projection(unreachable, _lane(remaining=25.0))
+        card = build_capacity_card(projection, NOW)
 
-    assert [row.provider for row in card.rows] == ["Codex"]
-    # It is still carried for detail, with the reason attached.
-    withheld = next(
-        row for row in projection.detail_lanes if row.lane.key == unreachable.key
-    )
-    assert withheld.bindable is False
-    assert withheld.refusal_code == f"source_{health_kind.value}"
+        assert [row.provider for row in card.rows] == ["Codex"]
+        # It is still carried for detail, with the reason attached.
+        withheld = next(
+            row for row in projection.detail_lanes if row.lane.key == unreachable.key
+        )
+        assert withheld.bindable is False
+        assert withheld.refusal_code == f"source_{health_kind.value}"
 
 
-def test_card_has_distinct_no_source_null_partial_and_unavailable_status() -> None:
+
+def test_card_has_distinct_no_source_null_partial_and_unavailable_status__and_2_more() -> None:
+    # --- scenario: card_has_distinct_no_source_null_partial_and_unavailable_status
     empty = build_capacity_card(CapacityProjection((), ()), NOW)
     null = build_capacity_card(_projection(_lane(remaining=None, value_state=ObservationState.NULL)), NOW)
     partial = build_capacity_card(
@@ -406,8 +389,7 @@ def test_card_has_distinct_no_source_null_partial_and_unavailable_status() -> No
     assert unavailable.status_text == "Capacity unavailable"
     assert "0%" not in " | ".join(item.status_text or "" for item in (empty, null, partial, unavailable))
 
-
-def test_card_model_refuses_a_third_root_row_even_when_constructed_directly() -> None:
+    # --- scenario: card_model_refuses_a_third_root_row_even_when_constructed_directly
     row = CapacityCardRowModel(
         provider="Codex",
         semantic_name="Session window",
@@ -421,8 +403,7 @@ def test_card_model_refuses_a_third_root_row_even_when_constructed_directly() ->
         CapacityCardModel("Capacity", (row, row, row), None)
     assert MAX_CAPACITY_CARD_ROWS == 2
 
-
-def test_card_refuses_a_hand_built_nonbinding_root_row() -> None:
+    # --- scenario: card_refuses_a_hand_built_nonbinding_root_row
     lane = _lane(remaining=None, value_state=ObservationState.UNAVAILABLE)
     projection = _projection(lane)
     authority = projection.detail_lanes[0]
@@ -434,7 +415,9 @@ def test_card_refuses_a_hand_built_nonbinding_root_row() -> None:
         )
 
 
-def test_card_rows_are_deterministic_across_snapshot_input_permutations() -> None:
+
+def test_card_rows_are_deterministic_across_snapshot_input_permutations__and_2_more() -> None:
+    # --- scenario: card_rows_are_deterministic_across_snapshot_input_permutations
     lanes = (
         _lane(window="alpha", remaining=25.0),
         _lane(
@@ -463,8 +446,7 @@ def test_card_rows_are_deterministic_across_snapshot_input_permutations() -> Non
         )
     }
 
-
-def test_detail_groups_every_lane_by_provider_and_applicability() -> None:
+    # --- scenario: detail_groups_every_lane_by_provider_and_applicability
     codex = _lane(window="session", remaining=20.0)
     ambiguous = _lane(
         window="model-weekly",
@@ -515,8 +497,7 @@ def test_detail_groups_every_lane_by_provider_and_applicability() -> None:
     assert any(row.applicability_text == "Execution context needed" for row in rows)
     assert "used" not in _all_text(detail).lower()
 
-
-def test_detail_projects_source_success_attempt_cooldown_and_typed_health() -> None:
+    # --- scenario: detail_projects_source_success_attempt_cooldown_and_typed_health
     lane = _lane(
         health_kind=SourceHealthKind.COOLDOWN,
         health_observed_at=NOW - 3_600.0,
@@ -538,7 +519,9 @@ def test_detail_projects_source_success_attempt_cooldown_and_typed_health() -> N
     assert health.has_last_known_good is True
 
 
-def test_detail_uses_refresh_event_times_against_the_injected_render_clock() -> None:
+
+def test_detail_uses_refresh_event_times_against_the_injected_render_clock__and_2_more() -> None:
+    # --- scenario: detail_uses_refresh_event_times_against_the_injected_render_clock
     lane = _lane()
     snapshot = _snapshot(lane)
     refresh_key = RefreshSourceKey(lane.key.source, lane.key.pool, lane.account_discriminator)
@@ -576,8 +559,7 @@ def test_detail_uses_refresh_event_times_against_the_injected_render_clock() -> 
     assert health.last_attempt_text == "Last attempt 2m ago"
     assert health.cooldown_text == "Cooldown ends now"
 
-
-def test_detail_refuses_refresh_sources_outside_the_capacity_snapshot() -> None:
+    # --- scenario: detail_refuses_refresh_sources_outside_the_capacity_snapshot
     lane = _lane()
     snapshot = _snapshot(lane)
     foreign_source = _source("claude", "remote:primary")
@@ -609,49 +591,45 @@ def test_detail_refuses_refresh_sources_outside_the_capacity_snapshot() -> None:
     with pytest.raises(ValueError, match="refresh source does not match capacity snapshot"):
         build_capacity_detail(detail_snapshot, _projection(lane), None, NOW)
 
-
-@pytest.mark.parametrize(
-    "refresh_key",
-    (
+    # --- scenario: detail_refuses_refresh_scope_that_does_not_match_a_capacity_lane
+    for refresh_key in (
         RefreshSourceKey(_source(), "alternate", "account-a"),
         RefreshSourceKey(_source(), "general", "account-b"),
-    ),
-)
-def test_detail_refuses_refresh_scope_that_does_not_match_a_capacity_lane(
-    refresh_key: RefreshSourceKey,
-) -> None:
-    lane = _lane()
-    snapshot = _snapshot(lane)
-    state = RefreshSourceState(
-        key=refresh_key,
-        enabled=True,
-        supported=True,
-        generation=0,
-        in_flight=False,
-        active_cause=None,
-        deadline=None,
-        queued_manual=False,
-        status=RefreshStatusKind.IDLE,
-        last_attempt_at=None,
-        last_success_at=None,
-        retry_at=None,
-        retry_schedule=None,
-        consecutive_failures=0,
-        last_failure=None,
-        last_known_good=None,
-        has_last_known_good=False,
-    )
-    detail_snapshot = CapacityDetailSnapshot(
-        snapshot,
-        RefreshCoordinatorSnapshot(NOW, (state,)),
-        NOW,
-    )
+    ):
+        lane = _lane()
+        snapshot = _snapshot(lane)
+        state = RefreshSourceState(
+            key=refresh_key,
+            enabled=True,
+            supported=True,
+            generation=0,
+            in_flight=False,
+            active_cause=None,
+            deadline=None,
+            queued_manual=False,
+            status=RefreshStatusKind.IDLE,
+            last_attempt_at=None,
+            last_success_at=None,
+            retry_at=None,
+            retry_schedule=None,
+            consecutive_failures=0,
+            last_failure=None,
+            last_known_good=None,
+            has_last_known_good=False,
+        )
+        detail_snapshot = CapacityDetailSnapshot(
+            snapshot,
+            RefreshCoordinatorSnapshot(NOW, (state,)),
+            NOW,
+        )
 
-    with pytest.raises(ValueError, match="refresh source does not match capacity snapshot"):
-        build_capacity_detail(detail_snapshot, _projection(lane), None, NOW)
+        with pytest.raises(ValueError, match="refresh source does not match capacity snapshot"):
+            build_capacity_detail(detail_snapshot, _projection(lane), None, NOW)
 
 
-def test_detail_snapshot_requires_a_current_clock_for_refresh_state() -> None:
+
+def test_detail_snapshot_requires_a_current_clock_for_refresh_state__and_2_more() -> None:
+    # --- scenario: detail_snapshot_requires_a_current_clock_for_refresh_state
     snapshot = _snapshot(_lane())
     refresh = RefreshCoordinatorSnapshot(100.0, ())
 
@@ -662,8 +640,7 @@ def test_detail_snapshot_requires_a_current_clock_for_refresh_state() -> None:
     with pytest.raises(ValueError, match="precedes snapshot"):
         CapacityDetailSnapshot(snapshot, refresh, 99.0)
 
-
-def test_detail_accepts_refresh_health_for_an_explicit_empty_source_snapshot() -> None:
+    # --- scenario: detail_accepts_refresh_health_for_an_explicit_empty_source_snapshot
     source = _source()
     health = _health(source)
     snapshot = CapacitySnapshot(NOW, (), (health,))
@@ -702,8 +679,7 @@ def test_detail_accepts_refresh_health_for_an_explicit_empty_source_snapshot() -
     assert detail.providers == ()
     assert [(row.provider, row.status_text) for row in detail.source_health] == [("Codex", "Healthy")]
 
-
-def test_detail_refuses_multiple_refresh_scopes_for_one_health_only_source() -> None:
+    # --- scenario: detail_refuses_multiple_refresh_scopes_for_one_health_only_source
     source = _source()
     snapshot = CapacitySnapshot(NOW, (), (_health(source),))
 
@@ -743,7 +719,9 @@ def test_detail_refuses_multiple_refresh_scopes_for_one_health_only_source() -> 
         )
 
 
-def test_detail_renders_only_bounded_metadata_history_summaries_when_enabled() -> None:
+
+def test_detail_renders_only_bounded_metadata_history_summaries_when_enabled__and_2_more() -> None:
+    # --- scenario: detail_renders_only_bounded_metadata_history_summaries_when_enabled
     lane = _lane()
     snapshot = _snapshot(lane)
     history = CapacityHistoryPresentation(
@@ -769,8 +747,7 @@ def test_detail_renders_only_bounded_metadata_history_summaries_when_enabled() -
     ]
     assert "used" not in _all_text(detail).lower()
 
-
-def test_history_presentation_is_bounded_to_three_unique_ranges() -> None:
+    # --- scenario: history_presentation_is_bounded_to_three_unique_ranges
     summary = CapacityHistorySummary(0, 0, NO_OBSERVATION, NO_OBSERVATION, ())
     duplicate = CapacityHistorySummaryInput(HistoryInterval.DAY, summary)
 
@@ -785,10 +762,8 @@ def test_history_presentation_is_bounded_to_three_unique_ranges() -> None:
             ),
         )
 
-
-@pytest.mark.parametrize(
-    ("decision", "expected", "can_request"),
-    [
+    # --- scenario: manual_refresh_outcomes_are_typed_distinct_and_actionable_only_when_accepted
+    for decision, expected, can_request in [
         (
             RefreshDecision(
                 RefreshDecisionKind.START,
@@ -861,18 +836,13 @@ def test_history_presentation_is_bounded_to_three_unique_ranges() -> None:
             "Capacity refresh unsupported",
             False,
         ),
-    ],
-)
-def test_manual_refresh_outcomes_are_typed_distinct_and_actionable_only_when_accepted(
-    decision: RefreshDecision,
-    expected: str,
-    can_request: bool,
-) -> None:
-    assert format_refresh_outcome(decision, NOW) == expected
-    status = build_manual_refresh_status(decision, NOW)
-    assert status.text == expected
-    assert status.can_request is can_request
-    assert status.announcement_minute == int(NOW // 60)
+    ]:
+        assert format_refresh_outcome(decision, NOW) == expected
+        status = build_manual_refresh_status(decision, NOW)
+        assert status.text == expected
+        assert status.can_request is can_request
+        assert status.announcement_minute == int(NOW // 60)
+
 
 
 def test_copy_projection_does_no_filesystem_subprocess_or_network_work(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -893,7 +863,8 @@ def test_copy_projection_does_no_filesystem_subprocess_or_network_work(monkeypat
     assert detail.providers[0].groups[0].rows[0].remaining_text == "50% left"
 
 
-def test_untrusted_diagnostic_fields_never_enter_copy() -> None:
+def test_untrusted_diagnostic_fields_never_enter_copy__and_2_more() -> None:
+    # --- scenario: untrusted_diagnostic_fields_never_enter_copy
     lane = _lane(
         semantic_name="/Users/private/Bearer token raw-error",
         reason_code="raw-error",
@@ -917,19 +888,18 @@ def test_untrusted_diagnostic_fields_never_enter_copy() -> None:
     assert "private:source" not in copy
     assert "short window" in copy
 
-
-def test_detail_rejects_projection_from_another_snapshot() -> None:
+    # --- scenario: detail_rejects_projection_from_another_snapshot
     first = _lane(window="first")
     second = _lane(window="second")
 
     with pytest.raises(ValueError, match="projection does not match snapshot"):
         build_capacity_detail(_snapshot(first), _projection(second), None, NOW)
 
-
-def test_card_refuses_nonfinite_clock() -> None:
+    # --- scenario: card_refuses_nonfinite_clock
     projection = _projection(_lane())
 
     with pytest.raises(ValueError, match="finite nonnegative"):
         build_capacity_card(projection, float("nan"))
     with pytest.raises(ValueError, match="finite nonnegative"):
         format_reset(_reset(), -1.0)
+

@@ -16,24 +16,25 @@ from jrbar.effect_registry import (
 )
 
 
-def test_catalog_is_deterministic_and_lookup_is_exact() -> None:
+def test_catalog_is_deterministic_and_lookup_is_exact__and_2_more() -> None:
+    # --- scenario: catalog_is_deterministic_and_lookup_is_exact
     effects = list_effects()
     assert tuple(item.identifier for item in effects) == tuple(sorted(item.identifier for item in effects))
     assert get_effect("pulse").meaning == "periodic activity"
     assert get_effect("missing") is None
 
-
-def test_surface_and_safety_filters() -> None:
+    # --- scenario: surface_and_safety_filters
     assert all("status_bar" in effect.surfaces for effect in list_effects(surface="status_bar"))
     assert all(effect.safety == "attention" for effect in list_effects(safety="attention"))
 
-
-def test_reduced_motion_uses_declared_fallback() -> None:
+    # --- scenario: reduced_motion_uses_declared_fallback
     assert reduced_motion_effect("rainbow").identifier == "none"
     assert reduced_motion_effect("none").identifier == "none"
 
 
-def test_provider_animation_catalog_is_authoritative_and_keeps_ui_order() -> None:
+
+def test_provider_animation_catalog_is_authoritative_and_keeps_ui_order__and_2_more() -> None:
+    # --- scenario: provider_animation_catalog_is_authoritative_and_keeps_ui_order
     effects = provider_animation_effects()
 
     assert tuple(effect.identifier for effect in effects) == (
@@ -48,14 +49,12 @@ def test_provider_animation_catalog_is_authoritative_and_keeps_ui_order() -> Non
         for identifier in colors_module.PROVIDER_ANIMATION_CHOICES
     )
 
-
-def test_provider_animation_reduced_motion_fallback_is_steady() -> None:
+    # --- scenario: provider_animation_reduced_motion_fallback_is_steady
     for effect in provider_animation_effects():
         assert effect.reduce_motion_fallback == colors_module.MOTION_STEADY
         assert reduced_motion_effect(effect.identifier).identifier == "steady"
 
-
-def test_provider_animation_metadata_is_structured_and_deterministic() -> None:
+    # --- scenario: provider_animation_metadata_is_structured_and_deterministic
     effects = provider_animation_effects()
 
     assert all(effect.role != "general" for effect in effects)
@@ -75,7 +74,9 @@ def test_provider_animation_metadata_is_structured_and_deterministic() -> None:
     assert get_effect("steady").energy == "low"
 
 
-def test_parameter_normalization_applies_defaults_in_schema_order() -> None:
+
+def test_parameter_normalization_applies_defaults_in_schema_order__and_2_more() -> None:
+    # --- scenario: parameter_normalization_applies_defaults_in_schema_order
     normalized = normalize_effect_parameters(
         "chase",
         {"direction": "reverse", "duration_seconds": 3},
@@ -94,28 +95,19 @@ def test_parameter_normalization_applies_defaults_in_schema_order() -> None:
         "softness",
     )
 
-
-@pytest.mark.parametrize(
-    ("effect_id", "parameters", "message"),
-    [
+    # --- scenario: parameter_normalization_rejects_unknown_or_unsafe_values
+    for effect_id, parameters, message in [
         ("chase", {"unknown": 1}, "unknown parameters"),
         ("chase", {"duration_seconds": True}, "number"),
         ("chase", {"spacing": 0}, "at least"),
         ("chase", {"direction": "sideways"}, "one of"),
         ("gradient", {"palette": ["#112233"]}, "at least"),
         ("gradient", {"palette": ["#112233", "bad"]}, "hex color"),
-    ],
-)
-def test_parameter_normalization_rejects_unknown_or_unsafe_values(
-    effect_id: str,
-    parameters: dict[str, object],
-    message: str,
-) -> None:
-    with pytest.raises(EffectRegistryError, match=message):
-        normalize_effect_parameters(effect_id, parameters)
+    ]:
+        with pytest.raises(EffectRegistryError, match=message):
+            normalize_effect_parameters(effect_id, parameters)
 
-
-def test_palette_normalization_is_immutable_and_canonical() -> None:
+    # --- scenario: palette_normalization_is_immutable_and_canonical
     palette = ["#aabbcc", "#123456"]
 
     normalized = normalize_effect_parameters("gradient", {"palette": palette})
@@ -124,7 +116,9 @@ def test_palette_normalization_is_immutable_and_canonical() -> None:
     assert normalized["palette"] == ("#AABBCC", "#123456")
 
 
-def test_blink_uses_only_named_cadences_below_the_existing_flash_ceiling() -> None:
+
+def test_blink_uses_only_named_cadences_below_the_existing_flash_ceiling__and_2_more() -> None:
+    # --- scenario: blink_uses_only_named_cadences_below_the_existing_flash_ceiling
     assert tuple(cadence.identifier for cadence in SAFE_BLINK_CADENCES) == (
         "calm",
         "deliberate",
@@ -136,8 +130,7 @@ def test_blink_uses_only_named_cadences_below_the_existing_flash_ceiling() -> No
     with pytest.raises(KeyError):
         blink_cadence("custom")
 
-
-def test_parameter_definition_rejects_invalid_schema_defaults() -> None:
+    # --- scenario: parameter_definition_rejects_invalid_schema_defaults
     with pytest.raises(EffectRegistryError, match="default"):
         EffectParameter(
             "direction",
@@ -156,15 +149,15 @@ def test_parameter_definition_rejects_invalid_schema_defaults() -> None:
             maximum=1.0,
         )
 
-
-def test_duplicate_identifiers_must_not_conflict() -> None:
+    # --- scenario: duplicate_identifiers_must_not_conflict
     item = EffectDefinition("x", "X", "x", "x")
     assert EffectRegistry((item, item)).get("x") == item
     with pytest.raises(EffectRegistryError):
         EffectRegistry((item, EffectDefinition("x", "Other", "x", "x")))
 
 
-@pytest.mark.parametrize("kwargs", [{"safety": "danger"}, {"energy": "extreme"}, {"version": 0}])
-def test_definition_validates_contract(kwargs: dict[str, object]) -> None:
-    with pytest.raises(EffectRegistryError):
-        EffectDefinition("x", "X", "x", "x", **kwargs)
+
+def test_definition_validates_contract() -> None:
+    for kwargs in [{"safety": "danger"}, {"energy": "extreme"}, {"version": 0}]:
+        with pytest.raises(EffectRegistryError):
+            EffectDefinition("x", "X", "x", "x", **kwargs)

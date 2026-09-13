@@ -10,11 +10,11 @@ import pytest
 from jrbar import sparkle_updater
 
 
-def test_sparkle_runtime_boundary_exists() -> None:
+def test_sparkle_runtime_boundary_exists__and_1_more() -> None:
+    # --- scenario: sparkle_runtime_boundary_exists
     assert importlib.util.find_spec("jrbar.sparkle_updater") is not None
 
-
-def test_sparkle_runtime_boundary_exposes_the_reviewed_contract() -> None:
+    # --- scenario: sparkle_runtime_boundary_exposes_the_reviewed_contract
     assert all(
         hasattr(sparkle_updater, name)
         for name in (
@@ -25,6 +25,7 @@ def test_sparkle_runtime_boundary_exposes_the_reviewed_contract() -> None:
             "inject_software_update_submenu",
         )
     )
+
 
 
 VALID_PUBLIC_KEY = sparkle_updater.EXPECTED_PUBLIC_ED_KEY

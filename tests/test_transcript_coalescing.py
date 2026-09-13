@@ -28,7 +28,8 @@ class _BlockingMonitor:
         return iter((_Record(datetime.now(timezone.utc)),))
 
 
-def test_identical_inflight_requests_share_one_scan_and_all_callbacks() -> None:
+def test_identical_inflight_requests_share_one_scan_and_all_callbacks__and_1_more() -> None:
+    # --- scenario: identical_inflight_requests_share_one_scan_and_all_callbacks
     monitor = _BlockingMonitor()
     service = TranscriptFallbackService()
     completed = threading.Event()
@@ -55,8 +56,7 @@ def test_identical_inflight_requests_share_one_scan_and_all_callbacks() -> None:
     assert callbacks == [("first", "changed"), ("second", "changed")]
     service.close()
 
-
-def test_close_suppresses_an_inflight_callback() -> None:
+    # --- scenario: close_suppresses_an_inflight_callback
     monitor = _BlockingMonitor()
     service = TranscriptFallbackService()
     called = threading.Event()
@@ -70,3 +70,4 @@ def test_close_suppresses_an_inflight_callback() -> None:
     monitor.release.set()
 
     assert not called.wait(0.2)
+

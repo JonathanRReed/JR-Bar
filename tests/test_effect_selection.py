@@ -75,7 +75,8 @@ class _FakePopup:
         self.selected_index = index
 
 
-def test_effect_options_are_immutable_and_catalogs_pin_current_order_and_copy() -> None:
+def test_effect_options_are_immutable_and_catalogs_pin_current_order_and_copy__and_2_more() -> None:
+    # --- scenario: effect_options_are_immutable_and_catalogs_pin_current_order_and_copy
     with pytest.raises(FrozenInstanceError):
         EffectOption("value", "Label").value = "changed"  # type: ignore[misc]
 
@@ -144,15 +145,13 @@ def test_effect_options_are_immutable_and_catalogs_pin_current_order_and_copy() 
         for value in colors_module.PROVIDER_ANIMATION_CHOICES
     ]
 
-
-def test_provider_animation_options_are_projected_from_the_shared_registry() -> None:
+    # --- scenario: provider_animation_options_are_projected_from_the_shared_registry
     assert _option_rows(PROVIDER_ANIMATION_OPTIONS) == [
         (effect.identifier, effect.label, effect.description)
         for effect in provider_animation_effects()
     ]
 
-
-def test_data_only_pack_projects_to_namespaced_preview_options() -> None:
+    # --- scenario: data_only_pack_projects_to_namespaced_preview_options
     options = effect_pack_options(
         {
             "id": "ambient",
@@ -176,6 +175,7 @@ def test_data_only_pack_projects_to_namespaced_preview_options() -> None:
     assert _option_rows(options) == [
         ("pack:ambient:slow-wave", "Slow Wave", "A quiet travelling glow.")
     ]
+
 
 
 def test_effect_popup_construction_uses_the_shared_catalogs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,41 +221,35 @@ def test_effect_popup_construction_uses_the_shared_catalogs(monkeypatch: pytest.
     ]
 
 
-@pytest.mark.parametrize("value, expected", [("b", 1), ("missing", None)])
-def test_selected_option_index_returns_first_known_match_or_none(
-    value: str, expected: int | None
-) -> None:
-    options = (
-        EffectOption("a", "First"),
-        EffectOption("b", "Second"),
-        EffectOption("b", "Duplicate"),
-    )
-    assert selected_option_index(options, value) == expected
+def test_selected_option_index_returns_first_known_match_or_none__and_2_more() -> None:
+    # --- scenario: selected_option_index_returns_first_known_match_or_none
+    for value, expected in [("b", 1), ("missing", None)]:
+        options = (
+            EffectOption("a", "First"),
+            EffectOption("b", "Second"),
+            EffectOption("b", "Duplicate"),
+        )
+        assert selected_option_index(options, value) == expected
 
+    # --- scenario: preview_scenario_validation_fails_closed
+    for payload in [None, "live", [], {}, {"scenario": None}, {"scenario": 1}, {"scenario": "other"}]:
+        assert preview_scenario_from_payload(payload) is None
 
-@pytest.mark.parametrize(
-    "payload",
-    [None, "live", [], {}, {"scenario": None}, {"scenario": 1}, {"scenario": "other"}],
-)
-def test_preview_scenario_validation_fails_closed(payload: object) -> None:
-    assert preview_scenario_from_payload(payload) is None
-
-
-def test_preview_scenario_validation_returns_value_without_touching_settings() -> None:
+    # --- scenario: preview_scenario_validation_returns_value_without_touching_settings
     colors = colors_module.ColorSettings.defaults()
     before = colors.to_dict()
     assert preview_scenario_from_payload({"scenario": "one_working"}) == "one_working"
     assert colors.to_dict() == before
 
 
-def test_preview_scenario_validation_accepts_dict_subclasses() -> None:
+
+def test_preview_scenario_validation_accepts_dict_subclasses__and_2_more() -> None:
+    # --- scenario: preview_scenario_validation_accepts_dict_subclasses
     payload = _DictSubclass(scenario="one_working")
     assert preview_scenario_from_payload(payload) == "one_working"
 
-
-@pytest.mark.parametrize(
-    "selector, options, key, value, expected_index",
-    [
+    # --- scenario: effect_popup_selection_helpers_round_trip_known_values
+    for selector, options, key, value, expected_index in [
         (settings_window_controls.select_blend_mode, BLEND_MODE_OPTIONS, "blend_mode", "relay", 3),
         (
             settings_window_controls.select_color_preset,
@@ -271,51 +265,36 @@ def test_preview_scenario_validation_accepts_dict_subclasses() -> None:
             "full_team",
             6,
         ),
-    ],
-)
-def test_effect_popup_selection_helpers_round_trip_known_values(
-    selector,
-    options: tuple[EffectOption, ...],
-    key: str,
-    value: str,
-    expected_index: int,
-) -> None:
-    popup = _FakePopup(selected_index=0)
-    for option in options:
-        popup.addItemWithTitle_(option.label)
-        popup.lastItem().setRepresentedObject_({key: option.value})
+    ]:
+        popup = _FakePopup(selected_index=0)
+        for option in options:
+            popup.addItemWithTitle_(option.label)
+            popup.lastItem().setRepresentedObject_({key: option.value})
 
-    selector(popup, value)
+        selector(popup, value)
 
-    assert popup.selected_index == expected_index
+        assert popup.selected_index == expected_index
 
-
-@pytest.mark.parametrize(
-    "selector, options, key",
-    [
+    # --- scenario: effect_popup_selection_helpers_ignore_unknown_values
+    for selector, options, key in [
         (settings_window_controls.select_blend_mode, BLEND_MODE_OPTIONS, "blend_mode"),
         (settings_window_controls.select_color_preset, COLOR_PRESET_OPTIONS, "preset"),
         (settings_window_controls.select_preview_scenario, PREVIEW_SCENARIO_OPTIONS, "scenario"),
-    ],
-)
-def test_effect_popup_selection_helpers_ignore_unknown_values(
-    selector,
-    options: tuple[EffectOption, ...],
-    key: str,
-) -> None:
-    popup = _FakePopup(selected_index=2)
-    for option in options:
-        popup.addItemWithTitle_(option.label)
-        popup.lastItem().setRepresentedObject_({key: option.value})
+    ]:
+        popup = _FakePopup(selected_index=2)
+        for option in options:
+            popup.addItemWithTitle_(option.label)
+            popup.lastItem().setRepresentedObject_({key: option.value})
 
-    selector(popup, "missing")
+        selector(popup, "missing")
 
-    assert popup.selected_index == 2
+        assert popup.selected_index == 2
 
 
-@pytest.mark.parametrize(
-    "planner, payload",
-    [
+
+def test_selection_plans_fail_closed_on_malformed_payloads__and_2_more() -> None:
+    # --- scenario: selection_plans_fail_closed_on_malformed_payloads
+    for planner, payload in [
         (plan_color_preset_selection, None),
         (plan_color_preset_selection, "calm"),
         (plan_color_preset_selection, {}),
@@ -339,18 +318,15 @@ def test_effect_popup_selection_helpers_ignore_unknown_values(
         (plan_provider_animation_selection, {"provider": "claude", "motion": None}),
         (plan_provider_animation_selection, {"provider": "claude", "motion": 1}),
         (plan_provider_animation_selection, {"provider": "claude", "motion": "other"}),
-    ],
-)
-def test_selection_plans_fail_closed_on_malformed_payloads(planner, payload: object) -> None:
-    colors = colors_module.ColorSettings.defaults()
-    plan = planner(colors, payload)
-    assert plan.disposition is EffectSelectionDisposition.INVALID
-    assert plan.value is None
-    assert plan.provider is None
-    assert plan.colors is colors
+    ]:
+        colors = colors_module.ColorSettings.defaults()
+        plan = planner(colors, payload)
+        assert plan.disposition is EffectSelectionDisposition.INVALID
+        assert plan.value is None
+        assert plan.provider is None
+        assert plan.colors is colors
 
-
-def test_custom_preset_is_valid_no_change_while_real_preset_applies() -> None:
+    # --- scenario: custom_preset_is_valid_no_change_while_real_preset_applies
     colors = colors_module.ColorSettings.defaults()
 
     custom = plan_color_preset_selection(colors, {"preset": "custom"})
@@ -364,8 +340,7 @@ def test_custom_preset_is_valid_no_change_while_real_preset_applies() -> None:
     assert calm.colors == colors_module.apply_preset(colors, "calm")
     assert calm.colors is not colors
 
-
-def test_valid_blend_and_provider_animation_plans_apply_immutable_settings() -> None:
+    # --- scenario: valid_blend_and_provider_animation_plans_apply_immutable_settings
     colors = colors_module.ColorSettings.defaults()
 
     blend = plan_blend_mode_selection(colors, {"blend_mode": "relay"})
@@ -383,6 +358,7 @@ def test_valid_blend_and_provider_animation_plans_apply_immutable_settings() -> 
     assert motion.colors == colors.with_agent_animation("claude", "chase")
     assert motion.colors is not colors
     assert colors.agent_animation("claude") == colors_module.PROVIDER_ANIMATION_AUTO
+
 
 
 def test_provider_animation_plan_accepts_dict_subclasses() -> None:

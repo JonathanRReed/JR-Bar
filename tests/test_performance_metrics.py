@@ -1,7 +1,8 @@
 from jrbar.performance_metrics import PerformanceRegistry
 
 
-def test_registry_reports_bounded_percentiles_and_error_counts() -> None:
+def test_registry_reports_bounded_percentiles_and_error_counts__and_2_more() -> None:
+    # --- scenario: registry_reports_bounded_percentiles_and_error_counts
     registry = PerformanceRegistry(maximum_samples=5, monotonic=lambda: 100.0)
     for value in (1, 2, 3, 4, 100, 200):
         registry.record(
@@ -23,8 +24,7 @@ def test_registry_reports_bounded_percentiles_and_error_counts() -> None:
     assert metric.error_count == 1
     assert dict(metric.outcomes) == {"error": 1, "ok": 4}
 
-
-def test_non_error_outcomes_do_not_become_false_failures() -> None:
+    # --- scenario: non_error_outcomes_do_not_become_false_failures
     registry = PerformanceRegistry()
     registry.record("hardware", 1, outcome="unchanged")
     registry.record("hardware", 2, outcome="changed")
@@ -35,8 +35,7 @@ def test_non_error_outcomes_do_not_become_false_failures() -> None:
     assert metric.error_count == 0
     assert dict(metric.outcomes) == {"changed": 1, "unchanged": 1}
 
-
-def test_registry_bounds_metric_cardinality_by_recency() -> None:
+    # --- scenario: registry_bounds_metric_cardinality_by_recency
     now = [0.0]
     registry = PerformanceRegistry(maximum_metrics=2, monotonic=lambda: now[0])
     registry.record("oldest", 1)
@@ -48,6 +47,7 @@ def test_registry_bounds_metric_cardinality_by_recency() -> None:
     names = tuple(metric.name for metric in registry.snapshot().metrics)
 
     assert names == ("middle", "newest")
+
 
 
 def test_measure_context_records_errors_without_swallowing_them() -> None:

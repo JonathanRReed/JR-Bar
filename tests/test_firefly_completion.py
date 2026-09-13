@@ -91,7 +91,8 @@ def _stable_fleet() -> FleetPlan:
     )
 
 
-def test_travelling_firefly_freezes_source_and_releases_at_stable_band() -> None:
+def test_travelling_firefly_freezes_source_and_releases_at_stable_band__and_2_more() -> None:
+    # --- scenario: travelling_firefly_freezes_source_and_releases_at_stable_band
     decision = plan_firefly_completion(_evidence(), _stable_fleet())
 
     assert decision.accepted is True
@@ -120,8 +121,7 @@ def test_travelling_firefly_freezes_source_and_releases_at_stable_band() -> None
     assert max(frame.intensity for frame in plan.keyframes) == 1.0
     assert plan.keyframes[-1].intensity == 0.0
 
-
-def test_reduce_motion_substitutes_one_static_finite_highlight() -> None:
+    # --- scenario: reduce_motion_substitutes_one_static_finite_highlight
     decision = plan_firefly_completion(
         _evidence(),
         _stable_fleet(),
@@ -138,8 +138,7 @@ def test_reduce_motion_substitutes_one_static_finite_highlight() -> None:
     assert "Reduce Motion" in plan.accessibility.help
     assert "travels" not in plan.accessibility.help
 
-
-def test_shared_fleet_uses_private_sticky_slot_not_the_shared_full_width_band() -> None:
+    # --- scenario: shared_fleet_uses_private_sticky_slot_not_the_shared_full_width_band
     shared = plan_fleet_bands(
         (
             FleetMember(identity="project:alpha", semantic="working"),
@@ -168,7 +167,9 @@ def test_shared_fleet_uses_private_sticky_slot_not_the_shared_full_width_band() 
     assert decision.plan.stable_fleet_band.led_end == 8
 
 
-def test_completion_is_refused_when_explicit_identity_is_not_in_stable_fleet() -> None:
+
+def test_completion_is_refused_when_explicit_identity_is_not_in_stable_fleet__and_2_more() -> None:
+    # --- scenario: completion_is_refused_when_explicit_identity_is_not_in_stable_fleet
     fleet = plan_fleet_bands(
         (FleetMember(identity="project:beta", semantic="working"),),
         screen_bar_width=80.0,
@@ -179,8 +180,7 @@ def test_completion_is_refused_when_explicit_identity_is_not_in_stable_fleet() -
     assert decision.plan is None
     assert decision.refusal is FireflyCompletionRefusal.IDENTITY_NOT_IN_FLEET
 
-
-def test_refused_or_malformed_fleet_never_produces_a_cue() -> None:
+    # --- scenario: refused_or_malformed_fleet_never_produces_a_cue
     refused = FleetPlan(mode="refused", refusal="fleet_member_overflow")
 
     decision = plan_firefly_completion(_evidence(), refused)
@@ -188,8 +188,7 @@ def test_refused_or_malformed_fleet_never_produces_a_cue() -> None:
     assert decision.plan is None
     assert decision.refusal is FireflyCompletionRefusal.INVALID_FLEET
 
-
-def test_invalid_reduce_motion_input_fails_closed() -> None:
+    # --- scenario: invalid_reduce_motion_input_fails_closed
     decision = plan_firefly_completion(
         _evidence(),
         _stable_fleet(),
@@ -200,7 +199,9 @@ def test_invalid_reduce_motion_input_fails_closed() -> None:
     assert decision.refusal is FireflyCompletionRefusal.INVALID_PREFERENCE
 
 
-def test_evidence_requires_an_exact_identity_bound_nonshared_active_segment() -> None:
+
+def test_evidence_requires_an_exact_identity_bound_nonshared_active_segment__and_2_more() -> None:
+    # --- scenario: evidence_requires_an_exact_identity_bound_nonshared_active_segment
     with pytest.raises(ValueError, match="invalid Firefly Completion evidence"):
         FireflyCompletionEvidence(
             completion_key=_completion(),
@@ -214,8 +215,7 @@ def test_evidence_requires_an_exact_identity_bound_nonshared_active_segment() ->
             ),
         )
 
-
-def test_exact_completion_events_remain_distinct_even_for_same_fleet_identity() -> None:
+    # --- scenario: exact_completion_events_remain_distinct_even_for_same_fleet_identity
     first = plan_firefly_completion(
         _evidence(completed_at=100.0),
         _stable_fleet(),
@@ -230,8 +230,7 @@ def test_exact_completion_events_remain_distinct_even_for_same_fleet_identity() 
     assert first.completion_key != second.completion_key
     assert first.evidence != second.evidence
 
-
-def test_accessibility_copy_is_content_free_and_explains_the_release() -> None:
+    # --- scenario: accessibility_copy_is_content_free_and_explains_the_release
     plan = plan_firefly_completion(_evidence(), _stable_fleet()).plan
 
     assert plan is not None
@@ -242,3 +241,4 @@ def test_accessibility_copy_is_content_free_and_explains_the_release() -> None:
     assert "project:alpha" not in (
         plan.accessibility.label + plan.accessibility.value + plan.accessibility.help
     )
+

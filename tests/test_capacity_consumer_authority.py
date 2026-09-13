@@ -179,9 +179,10 @@ def controller(request):
     return case.controller, case.status_bar
 
 
-@pytest.mark.parametrize(
-    "case_name",
-    (
+def test_unauthoritative_capacity_cannot_reach_any_consumer__and_2_more(controller) -> None:
+    # --- scenario: unauthoritative_capacity_cannot_reach_any_consumer
+    """Legacy raw capacity cannot escape even when old preferences were enabled."""
+    for case_name in (
         "raw_percent",
         "stale_last_known_good",
         "model_inapplicable",
@@ -189,76 +190,68 @@ def controller(request):
         "missing_reset",
         "partial_observation",
         "healthy_control",
-    ),
-)
-def test_unauthoritative_capacity_cannot_reach_any_consumer(
-    case_name: str,
-    controller,
-) -> None:
-    """Legacy raw capacity cannot escape even when old preferences were enabled."""
-    target, status_bar = controller
-    snapshot, context = _canonical_case(case_name)
-    if snapshot is not None:
-        projection = select_binding_lanes(
-            snapshot, context, NOW, allow_unbound_legacy=True
+    ):
+        target, status_bar = controller
+        snapshot, context = _canonical_case(case_name)
+        if snapshot is not None:
+            projection = select_binding_lanes(
+                snapshot, context, NOW, allow_unbound_legacy=True
+            )
+            (authority,) = projection.detail_lanes
+            expected = _EXPECTED_REFUSAL[case_name]
+
+            assert authority.refusal_code == expected
+            assert authority.presentable is _EXPECTED_PRESENTABLE[case_name]
+            assert projection.binding_lanes == (() if expected else (authority,))
+
+        target.settings = replace(
+            AgentMonitorSettings(),
+            quota_alerts_enabled=True,
+            quota_alert_thresholds=(50.0, 90.0),
+            escalation_webhook_url="https://example.invalid/capacity",
+            webhook_events=("quota_threshold", "quota_sunrise"),
         )
-        (authority,) = projection.detail_lanes
-        expected = _EXPECTED_REFUSAL[case_name]
+        target.post_webhook = MagicMock()
+        target.post_completion_notification = MagicMock()
+        before_queue = target._capacity_refresh_coordinator.snapshot_state(NOW)
 
-        assert authority.refusal_code == expected
-        assert authority.presentable is _EXPECTED_PRESENTABLE[case_name]
-        assert projection.binding_lanes == (() if expected else (authority,))
+        with patch.object(target, "refresh_") as refresh:
+            target.track_quota_thresholds({f"{case_name} window": 40.0})
+            target.track_quota_thresholds({f"{case_name} window": 95.0})
 
-    target.settings = replace(
-        AgentMonitorSettings(),
-        quota_alerts_enabled=True,
-        quota_alert_thresholds=(50.0, 90.0),
-        escalation_webhook_url="https://example.invalid/capacity",
-        webhook_events=("quota_threshold", "quota_sunrise"),
-    )
-    target.post_webhook = MagicMock()
-    target.post_completion_notification = MagicMock()
-    before_queue = target._capacity_refresh_coordinator.snapshot_state(NOW)
+        assert target.post_completion_notification.call_count == 0
+        assert target.post_webhook.call_count == 0
+        assert target._capacity_refresh_coordinator.snapshot_state(NOW) == before_queue
+        assert target.quota_blink_until == 0.0
+        assert target.completion_sweep_until == 0.0
+        refresh.assert_not_called()
+        # The LEGACY capacity plane still cannot feed the runway LED: this
+        # base controller's producer stays None. Since 2026-08-26 the
+        # provider-usage facade overrides it with the JR plane's gated
+        # lanes (quota_runway.py) -- a different, authoritative producer,
+        # exactly what this test's contract demanded.
+        assert target.quota_runway_state() is None
+        runway_factory = target.signal_display_entries()[LED_DISPLAY_QUOTA_RUNWAY][0]
+        assert runway_factory(255, 8) is None
 
-    with patch.object(target, "refresh_") as refresh:
-        target.track_quota_thresholds({f"{case_name} window": 40.0})
-        target.track_quota_thresholds({f"{case_name} window": 95.0})
+        device = status_bar.StatusBarDevice(
+            device_id="isolated-capacity-device",
+            name="Isolated Capacity Device",
+            root=Path("/private/tmp/isolated-capacity-device"),
+            target=Path("/private/tmp/isolated-capacity-device/LEDS.LED"),
+            connected=True,
+            display=LED_DISPLAY_QUOTA_RUNWAY,
+        )
+        assert target.active_led_display_kind_for_device(device, None) != LED_DISPLAY_QUOTA_RUNWAY
 
-    assert target.post_completion_notification.call_count == 0
-    assert target.post_webhook.call_count == 0
-    assert target._capacity_refresh_coordinator.snapshot_state(NOW) == before_queue
-    assert target.quota_blink_until == 0.0
-    assert target.completion_sweep_until == 0.0
-    refresh.assert_not_called()
-    # The LEGACY capacity plane still cannot feed the runway LED: this
-    # base controller's producer stays None. Since 2026-08-26 the
-    # provider-usage facade overrides it with the JR plane's gated
-    # lanes (quota_runway.py) -- a different, authoritative producer,
-    # exactly what this test's contract demanded.
-    assert target.quota_runway_state() is None
-    runway_factory = target.signal_display_entries()[LED_DISPLAY_QUOTA_RUNWAY][0]
-    assert runway_factory(255, 8) is None
-
-    device = status_bar.StatusBarDevice(
-        device_id="isolated-capacity-device",
-        name="Isolated Capacity Device",
-        root=Path("/private/tmp/isolated-capacity-device"),
-        target=Path("/private/tmp/isolated-capacity-device/LEDS.LED"),
-        connected=True,
-        display=LED_DISPLAY_QUOTA_RUNWAY,
-    )
-    assert target.active_led_display_kind_for_device(device, None) != LED_DISPLAY_QUOTA_RUNWAY
-
-
-def test_raw_percentage_cannot_become_a_presentation_capacity_glance(controller) -> None:
+    # --- scenario: raw_percentage_cannot_become_a_presentation_capacity_glance
     """The shared presentation resolver cannot receive a legacy used percent."""
     target, _status_bar = controller
     target.quota_last_percents = {"Codex weekly": 99.0}
 
     assert target.presentation_capacity_glance() is None
 
-
-def test_raw_percentage_cannot_populate_screen_bar_capacity_gauge(controller) -> None:
+    # --- scenario: raw_percentage_cannot_populate_screen_bar_capacity_gauge
     """The completion gauge remains usable while the capacity side stays empty."""
     target, status_bar = controller
     virtual = SimpleNamespace(
@@ -297,6 +290,7 @@ def test_raw_percentage_cannot_populate_screen_bar_capacity_gauge(controller) ->
         target.sync_virtual_status_device(status_bar.AgentMode.IDLE_READY, None)
 
     virtual.set_standing_gauges.assert_called_once_with(0.0, False)
+
 
 
 def test_raw_percentage_cannot_populate_peek_hardware_program(controller) -> None:

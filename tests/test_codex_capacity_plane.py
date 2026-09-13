@@ -114,7 +114,8 @@ def controller(request):
 # --------------------------------------------------------------------------
 
 
-def test_only_the_two_declared_codex_ceilings_become_lanes() -> None:
+def test_only_the_two_declared_codex_ceilings_become_lanes__and_2_more() -> None:
+    # --- scenario: only_the_two_declared_codex_ceilings_become_lanes
     """An undeclared Codex window must be dropped, not borrow a declared lane."""
     lanes = _observations(
         {
@@ -139,8 +140,7 @@ def test_only_the_two_declared_codex_ceilings_become_lanes() -> None:
         QuotaHorizon.LONG,
     )
 
-
-def test_a_payload_with_no_declared_window_produces_no_lane_at_all() -> None:
+    # --- scenario: a_payload_with_no_declared_window_produces_no_lane_at_all
     """`windows[0]` was the ceiling, and it is not always a ceiling.
 
     Codex may publish only model-specific sub-caps -- and did publish no
@@ -162,8 +162,7 @@ def test_a_payload_with_no_declared_window_produces_no_lane_at_all() -> None:
 
     assert lanes == ()
 
-
-def test_the_plans_own_window_outranks_a_same_named_extra_allowance() -> None:
+    # --- scenario: the_plans_own_window_outranks_a_same_named_extra_allowance
     """An extra allowance must not displace the ceiling it shares a name with."""
     lanes = _observations(
         {
@@ -178,14 +177,15 @@ def test_the_plans_own_window_outranks_a_same_named_extra_allowance() -> None:
     assert lanes[0].value.remaining == 75.0
 
 
-def test_used_percent_is_inverted_exactly_once() -> None:
+
+def test_used_percent_is_inverted_exactly_once__and_2_more() -> None:
+    # --- scenario: used_percent_is_inverted_exactly_once
     lanes = _observations({"primary": {"used_percent": 88.0, "window_minutes": 300}})
 
     assert lanes[0].value.unit is CapacityUnit.PERCENT_REMAINING
     assert lanes[0].value.remaining == 12.0
 
-
-def test_a_codex_window_with_no_credible_reset_stays_reset_less() -> None:
+    # --- scenario: a_codex_window_with_no_credible_reset_stays_reset_less
     """Nothing may render a countdown that was never observed."""
     lanes = _observations(
         {
@@ -200,8 +200,7 @@ def test_a_codex_window_with_no_credible_reset_stays_reset_less() -> None:
     assert lanes[0].reset.state is ResetState.UNKNOWN
     assert lanes[0].reset.reset_epoch is None
 
-
-def test_the_producer_only_speaks_for_its_own_declared_source() -> None:
+    # --- scenario: the_producer_only_speaks_for_its_own_declared_source
     from jrbar import claude_quota
 
     claude_descriptor = next(
@@ -217,6 +216,7 @@ def test_the_producer_only_speaks_for_its_own_declared_source() -> None:
             [{"label": "primary", "used_percent": 10.0}],
             observed_at=NOW,
         )
+
 
 
 # --------------------------------------------------------------------------
@@ -347,9 +347,8 @@ def test_a_codex_refresh_publishes_contract_stamped_observations(controller) -> 
     assert len(state.last_known_good.lanes) == 2
 
 
-def test_every_codex_ceiling_reaches_the_dropdown_named_and_numbered(
-    controller,
-) -> None:
+def test_every_codex_ceiling_reaches_the_dropdown_named_and_numbered__and_2_more(controller,) -> None:
+    # --- scenario: every_codex_ceiling_reaches_the_dropdown_named_and_numbered
     target, status_bar = controller
 
     _run_codex_refresh(target, status_bar, _live_limits())
@@ -369,10 +368,7 @@ def test_every_codex_ceiling_reaches_the_dropdown_named_and_numbered(
     ) == ("Weekly 30% left · resets in 1d 1h",)
     assert model.settings_text == "5h 75% left · 7d 30% left"
 
-
-def test_a_drifted_codex_payload_renders_nothing_rather_than_raw_percentages(
-    controller,
-) -> None:
+    # --- scenario: a_drifted_codex_payload_renders_nothing_rather_than_raw_percentages
     """The provider in daily use must not publish an unauthorised percentage.
 
     Before the producer existed, `applyUsageSummary_` took
@@ -407,10 +403,7 @@ def test_a_drifted_codex_payload_renders_nothing_rather_than_raw_percentages(
     assert "Fable" not in rendered
     assert "resets in" not in rendered.lower()
 
-
-def test_one_refused_lane_is_counted_beside_the_one_that_survived(
-    controller,
-) -> None:
+    # --- scenario: one_refused_lane_is_counted_beside_the_one_that_survived
     """A row that vanishes silently is worse than a row that says why."""
     target, status_bar = controller
     descriptor = _descriptor()
@@ -484,6 +477,7 @@ def test_one_refused_lane_is_counted_beside_the_one_that_survived(
     assert "70" not in model.settings_text
 
 
+
 def test_turning_codex_percent_off_is_not_reported_as_a_fault(controller) -> None:
     """An opt-out and an unusable source both authorise nothing, and differ.
 
@@ -506,9 +500,8 @@ def test_turning_codex_percent_off_is_not_reported_as_a_fault(controller) -> Non
     assert status_bar.CAPACITY_UNAUTHORISED_COPY not in model.settings_text
 
 
-def test_the_publish_path_refuses_a_result_that_still_carries_raw_windows(
-    controller,
-) -> None:
+def test_the_publish_path_refuses_a_result_that_still_carries_raw_windows__and_1_more(controller,) -> None:
+    # --- scenario: the_publish_path_refuses_a_result_that_still_carries_raw_windows
     """The contract is the only route in, for every provider.
 
     A result carrying a raw window list is refused outright rather than
@@ -560,10 +553,7 @@ def test_the_publish_path_refuses_a_result_that_still_carries_raw_windows(
     assert model.windows == ()
     assert "3%" not in model.settings_text
 
-
-def test_a_capacity_result_with_no_observations_key_never_publishes(
-    controller,
-) -> None:
+    # --- scenario: a_capacity_result_with_no_observations_key_never_publishes
     """A producer that never ran is not a producer that authorised nothing."""
     target, _status_bar = controller
     target.rebuild_capacity_refresh_coordinator()
@@ -592,6 +582,7 @@ def test_a_capacity_result_with_no_observations_key_never_publishes(
         )
 
     assert target._usage_provider_states["codex"].consecutive_failures == 1
+
 
 
 # --------------------------------------------------------------------------
@@ -628,7 +619,8 @@ def _forgiven_observations(*, health_kind, has_last_known_good, observed_at):
     ).snapshot.lanes
 
 
-def test_the_display_gate_carries_the_freshness_it_decided(controller) -> None:
+def test_the_display_gate_carries_the_freshness_it_decided__and_2_more(controller) -> None:
+    # --- scenario: the_display_gate_carries_the_freshness_it_decided
     """`LaneAuthority.freshness` was computed and then dropped on the floor."""
     _target, status_bar = controller
     lanes = _forgiven_observations(
@@ -645,8 +637,7 @@ def test_the_display_gate_carries_the_freshness_it_decided(controller) -> None:
     assert authorised.freshness == (("5-hour", ObservationState.LAST_KNOWN_GOOD),)
     assert authorised.stale is True
 
-
-def test_a_fresh_reading_is_not_marked_stale(controller) -> None:
+    # --- scenario: a_fresh_reading_is_not_marked_stale
     """The marker has to mean something, so it must not be on by default."""
     _target, status_bar = controller
     lanes = _forgiven_observations(
@@ -661,20 +652,7 @@ def test_a_fresh_reading_is_not_marked_stale(controller) -> None:
     assert authorised.freshness == (("5-hour", ObservationState.OBSERVED),)
     assert authorised.stale is False
 
-
-@pytest.mark.parametrize(
-    ("health_kind", "has_last_known_good"),
-    (
-        (SourceHealthKind.ACCESS_DENIED, True),
-        (SourceHealthKind.FAILED, True),
-        (SourceHealthKind.STALE, False),
-    ),
-)
-def test_a_forgiven_reading_renders_with_the_cards_stale_marker(
-    controller,
-    health_kind,
-    has_last_known_good,
-) -> None:
+    # --- scenario: a_forgiven_reading_renders_with_the_cards_stale_marker
     """A number the layer called old rendered identically to a fresh one.
 
     `_value_refusal` forgives an unreachable source that still holds a
@@ -685,59 +663,65 @@ def test_a_forgiven_reading_renders_with_the_cards_stale_marker(
     answered ACCESS_DENIED published a percentage, a live countdown and
     "updated just now" with no marker anywhere.
     """
-    target, status_bar = controller
-    target.rebuild_capacity_refresh_coordinator()
-    refresh_key = target._capacity_refresh_keys_by_provider["codex"]
-    monotonic_now = time.monotonic()
-    decision = target._capacity_refresh_coordinator.request_refresh(
-        refresh_key,
-        RefreshCause.MANUAL,
-        monotonic_now,
-    )
-    target._capacity_refresh_coordinator.register_started(
-        refresh_key,
-        decision.generation,
-        monotonic_now + 30.0,
-    )
-    observed_at = time.time()
-
-    with patch.object(target, "schedule_capacity_timers"):
-        target.applyUsageSummary_(
-            {
-                "requests": {refresh_key.source: decision.generation},
-                "results": {
-                    refresh_key.source: {
-                        "provider_id": "codex",
-                        "title": "Codex",
-                        "capacity_observations": _forgiven_observations(
-                            health_kind=health_kind,
-                            has_last_known_good=has_last_known_good,
-                            observed_at=observed_at,
-                        ),
-                        "capacity_requested": True,
-                        "source_generation": 1,
-                    }
-                },
-                "failures": {},
-            }
+    for health_kind, has_last_known_good in (
+        (SourceHealthKind.ACCESS_DENIED, True),
+        (SourceHealthKind.FAILED, True),
+        (SourceHealthKind.STALE, False),
+    ):
+        target, status_bar = controller
+        target.rebuild_capacity_refresh_coordinator()
+        refresh_key = target._capacity_refresh_keys_by_provider["codex"]
+        monotonic_now = time.monotonic()
+        decision = target._capacity_refresh_coordinator.request_refresh(
+            refresh_key,
+            RefreshCause.MANUAL,
+            monotonic_now,
         )
+        target._capacity_refresh_coordinator.register_started(
+            refresh_key,
+            decision.generation,
+            monotonic_now + 30.0,
+        )
+        observed_at = time.time()
 
-    model = target._usage_provider_models["codex"]
-    # The number survives -- forgiveness is the point.
-    assert model.windows[0].percent_remaining == 60.0
-    # And it is visibly old, in the card's own existing vocabulary.
-    assert model.stale is True
-    assert "stale" in model.menu_line
-    assert "Stale" in model.settings_text
-    # A countdown taken from a reading the source can no longer stand behind
-    # is exactly the thing the stale reset state exists to suppress.
-    assert model.windows[0].reset_state is ResetState.STALE
-    assert model.windows[0].reset_known is False
+        with patch.object(target, "schedule_capacity_timers"):
+            target.applyUsageSummary_(
+                {
+                    "requests": {refresh_key.source: decision.generation},
+                    "results": {
+                        refresh_key.source: {
+                            "provider_id": "codex",
+                            "title": "Codex",
+                            "capacity_observations": _forgiven_observations(
+                                health_kind=health_kind,
+                                has_last_known_good=has_last_known_good,
+                                observed_at=observed_at,
+                            ),
+                            "capacity_requested": True,
+                            "source_generation": 1,
+                        }
+                    },
+                    "failures": {},
+                }
+            )
 
-    status_bar.build_usage_menu_item(target)
-    secondary = target._usage_menu_secondary_labels["codex"].stringValue()
-    assert "stale" in secondary
-    assert "resets" not in secondary
+        model = target._usage_provider_models["codex"]
+        # The number survives -- forgiveness is the point.
+        assert model.windows[0].percent_remaining == 60.0
+        # And it is visibly old, in the card's own existing vocabulary.
+        assert model.stale is True
+        assert "stale" in model.menu_line
+        assert "Stale" in model.settings_text
+        # A countdown taken from a reading the source can no longer stand behind
+        # is exactly the thing the stale reset state exists to suppress.
+        assert model.windows[0].reset_state is ResetState.STALE
+        assert model.windows[0].reset_known is False
+
+        status_bar.build_usage_menu_item(target)
+        secondary = target._usage_menu_secondary_labels["codex"].stringValue()
+        assert "stale" in secondary
+        assert "resets" not in secondary
+
 
 
 def test_a_healthy_reading_publishes_without_the_stale_marker(controller) -> None:
@@ -785,7 +769,8 @@ def _foreign_lane(source: SourceKey) -> QuotaLaneObservation:
     )
 
 
-def test_the_production_context_names_whole_source_identities(controller) -> None:
+def test_the_production_context_names_whole_source_identities__and_2_more(controller) -> None:
+    # --- scenario: the_production_context_names_whole_source_identities
     _target, status_bar = controller
     context = status_bar.capacity_execution_context()
 
@@ -797,10 +782,9 @@ def test_the_production_context_names_whole_source_identities(controller) -> Non
     # independent claim.
     assert context.source_scopes == (("claude", "oauth"), ("codex", "local"))
 
-
-@pytest.mark.parametrize(
-    ("provider_id", "adapter_id", "instance", "capability_id"),
-    (
+    # --- scenario: a_source_differing_in_any_component_is_out_of_context
+    """A SourceKey has four components and two of them were compared."""
+    for provider_id, adapter_id, instance, capability_id in (
         # Right provider, right instance, an adapter never registered for
         # capacity. Two of four fields matched, so this was APPLICABLE.
         ("claude", "transcripts", "oauth", "remote_quota_windows"),
@@ -812,29 +796,19 @@ def test_the_production_context_names_whole_source_identities(controller) -> Non
         # And the pairs that were already refused stay refused.
         ("codex", "quota", "oauth", "remote_quota_windows"),
         ("claude", "quota", "local", "remote_quota_windows"),
-    ),
-)
-def test_a_source_differing_in_any_component_is_out_of_context(
-    controller,
-    provider_id,
-    adapter_id,
-    instance,
-    capability_id,
-) -> None:
-    """A SourceKey has four components and two of them were compared."""
-    _target, status_bar = controller
-    foreign = _foreign_lane(
-        SourceKey(provider_id, adapter_id, instance, capability_id)
-    )
-    snapshot = CapacitySnapshot(NOW, (foreign,), (foreign.source_health,))
+    ):
+        _target, status_bar = controller
+        foreign = _foreign_lane(
+            SourceKey(provider_id, adapter_id, instance, capability_id)
+        )
+        snapshot = CapacitySnapshot(NOW, (foreign,), (foreign.source_health,))
 
-    authorised = status_bar.authorised_capacity_lanes(snapshot, now=NOW)
+        authorised = status_bar.authorised_capacity_lanes(snapshot, now=NOW)
 
-    assert authorised.lanes == ()
-    assert authorised.withheld == (("Borrowed window", "source_out_of_context"),)
+        assert authorised.lanes == ()
+        assert authorised.withheld == (("Borrowed window", "source_out_of_context"),)
 
-
-def test_a_registered_source_is_still_authorised(controller) -> None:
+    # --- scenario: a_registered_source_is_still_authorised
     """The exact-identity match must not refuse the real sources too."""
     _target, status_bar = controller
     lanes = _observations(
@@ -847,6 +821,7 @@ def test_a_registered_source_is_still_authorised(controller) -> None:
 
     assert tuple(lane.semantic_name for lane in authorised.lanes) == ("5-hour",)
     assert authorised.withheld == ()
+
 
 
 def test_a_context_cannot_name_pairs_that_contradict_its_identities() -> None:

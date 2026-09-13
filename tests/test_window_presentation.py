@@ -23,7 +23,8 @@ _TAKEOVER_CALLS = re.compile(
 )
 
 
-def test_no_direct_desktop_takeover_calls_outside_the_gate() -> None:
+def test_no_direct_desktop_takeover_calls_outside_the_gate__and_2_more() -> None:
+    # --- scenario: no_direct_desktop_takeover_calls_outside_the_gate
     offenders: list[str] = []
     for path in sorted(SRC.glob("*.py")):
         if path.name == "window_presentation.py":
@@ -38,13 +39,10 @@ def test_no_direct_desktop_takeover_calls_outside_the_gate() -> None:
         f"it: {offenders}"
     )
 
-
-def test_takeover_is_suppressed_inside_the_test_sandbox() -> None:
-    # conftest exports SIDEPULSE_TESTING=1 for every test process.
+    # --- scenario: takeover_is_suppressed_inside_the_test_sandbox
     assert window_presentation.desktop_takeover_suppressed()
 
-
-def test_present_window_is_inert_while_suppressed() -> None:
+    # --- scenario: present_window_is_inert_while_suppressed
     class Window:
         def __init__(self) -> None:
             self.calls: list[str] = []
@@ -60,3 +58,4 @@ def test_present_window_is_inert_while_suppressed() -> None:
     window_presentation.present_window(window, key=False)
     window_presentation.activate_app()
     assert window.calls == []
+

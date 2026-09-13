@@ -44,7 +44,8 @@ def test_scale_round_trips_and_clamps(tmp_path) -> None:
     assert AgentMonitorSettings().with_global_brightness_scale(9.0).global_brightness_scale == 1.0
 
 
-def test_the_dial_scales_both_brightness_paths(request) -> None:
+def test_the_dial_scales_both_brightness_paths__and_2_more(request) -> None:
+    # --- scenario: the_dial_scales_both_brightness_paths
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -59,8 +60,7 @@ def test_the_dial_scales_both_brightness_paths(request) -> None:
     assert controller.effective_brightness_for_device(device) <= full_ambient * 0.55
     assert controller.effective_signal_brightness_for_device(device) <= full_signal * 0.55
 
-
-def test_small_ambient_drift_does_not_re_emit(request) -> None:
+    # --- scenario: small_ambient_drift_does_not_re_emit
     """The deadband: lux noise under the perceptible step must not rewrite
     the program (each rewrite restarts the animation), while a deliberate
     settings change or a real move always passes through."""
@@ -86,8 +86,7 @@ def test_small_ambient_drift_does_not_re_emit(request) -> None:
     controller.settings = controller.settings.with_global_brightness_scale(0.5)
     assert emit(121) == 121  # a settings write re-emits under the band
 
-
-def test_the_menu_action_persists_the_preset(request) -> None:
+    # --- scenario: the_menu_action_persists_the_preset
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -102,3 +101,4 @@ def test_the_menu_action_persists_the_preset(request) -> None:
     # And nonsense from a stale menu is refused, not crashed on.
     controller.setGlobalBrightness_(SimpleNamespace(representedObject=lambda: None))
     assert abs(controller.settings.global_brightness_scale - value) < 0.001
+

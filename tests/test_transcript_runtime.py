@@ -37,7 +37,8 @@ def _record(value: int) -> _Record:
     return _Record(datetime.fromtimestamp(value, timezone.utc), value)
 
 
-def test_scan_runs_off_caller_and_sorts_records() -> None:
+def test_scan_runs_off_caller_and_sorts_records__and_2_more() -> None:
+    # --- scenario: scan_runs_off_caller_and_sorts_records
     completed = threading.Event()
     batches = []
     monitor = _Monitor("changed", [_record(3), _record(1), _record(2)])
@@ -53,8 +54,7 @@ def test_scan_runs_off_caller_and_sorts_records() -> None:
     assert tuple(record.value for record in batches[0].records) == (1, 2, 3)
     assert all(name == "JRBarTranscriptFallback" for name in monitor.thread_names)
 
-
-def test_unchanged_signature_skips_record_iteration() -> None:
+    # --- scenario: unchanged_signature_skips_record_iteration
     completed = threading.Event()
     monitor = _Monitor("same", [_record(1)])
     service = TranscriptFallbackService()
@@ -70,8 +70,7 @@ def test_unchanged_signature_skips_record_iteration() -> None:
     assert batches[0].records == ()
     assert monitor.thread_names == ["JRBarTranscriptFallback"]
 
-
-def test_inflight_requests_collapse_to_the_latest_monitor() -> None:
+    # --- scenario: inflight_requests_collapse_to_the_latest_monitor
     release = threading.Event()
     completed = threading.Event()
     first = _Monitor("first", [_record(1)], release=release)
@@ -94,7 +93,9 @@ def test_inflight_requests_collapse_to_the_latest_monitor() -> None:
     assert middle.thread_names == []
 
 
-def test_batch_is_bounded_to_the_newest_records() -> None:
+
+def test_batch_is_bounded_to_the_newest_records__and_1_more() -> None:
+    # --- scenario: batch_is_bounded_to_the_newest_records
     completed = threading.Event()
     records = [_record(index) for index in range(MAX_TRANSCRIPT_BATCH_RECORDS + 10)]
     monitor = _Monitor("changed", records)
@@ -111,8 +112,7 @@ def test_batch_is_bounded_to_the_newest_records() -> None:
     assert len(batches[0].records) == MAX_TRANSCRIPT_BATCH_RECORDS
     assert batches[0].records[0].value == 10
 
-
-def test_invalid_monitor_fails_with_a_closed_reason_code() -> None:
+    # --- scenario: invalid_monitor_fails_with_a_closed_reason_code
     completed = threading.Event()
     batches = []
     service = TranscriptFallbackService()
@@ -125,3 +125,4 @@ def test_invalid_monitor_fails_with_a_closed_reason_code() -> None:
 
     assert completed.wait(1.0)
     assert batches[0].reason == TRANSCRIPT_REASON_INVALID_MONITOR
+

@@ -126,7 +126,8 @@ def _capacity_descriptor(
     )
 
 
-def test_static_registration_builds_the_exact_v1_contract_document() -> None:
+def test_static_registration_builds_the_exact_v1_contract_document__and_2_more() -> None:
+    # --- scenario: static_registration_builds_the_exact_v1_contract_document
     """A widened or non-built-in declaration could bypass the v1 negotiator boundary."""
     registration = ProviderSourceRegistration(
         provider_id=ProviderIdentifier("codex"),
@@ -186,8 +187,7 @@ def test_static_registration_builds_the_exact_v1_contract_document() -> None:
     assert type(document["capabilities"]) is list
     assert all(type(row) is dict for row in document["capabilities"])
 
-
-def test_product_capabilities_require_explicit_yes_no_and_exact_binding() -> None:
+    # --- scenario: product_capabilities_require_explicit_yes_no_and_exact_binding
     declarations = (
         ProductCapabilityDeclaration(
             ProductCapability.LIFECYCLE,
@@ -215,8 +215,7 @@ def test_product_capabilities_require_explicit_yes_no_and_exact_binding() -> Non
         {"id": "answering", "supported": False, "binding": None},
     ]
 
-
-def test_product_capability_support_is_not_inferred_from_questions() -> None:
+    # --- scenario: product_capability_support_is_not_inferred_from_questions
     result = negotiate_provider_contract(
         _document(
             capabilities=[_capability("actionable_requests", (1, 0))],
@@ -234,7 +233,9 @@ def test_product_capability_support_is_not_inferred_from_questions() -> None:
     assert result.product_capability(ProductCapability.ANSWERING).binding is None
 
 
-def test_absent_product_capabilities_are_visible_and_inert() -> None:
+
+def test_absent_product_capabilities_are_visible_and_inert__and_2_more() -> None:
+    # --- scenario: absent_product_capabilities_are_visible_and_inert
     result = negotiate_provider_contract(_document())
 
     assert tuple(declaration.capability for declaration in result.product_capabilities) == (
@@ -251,8 +252,7 @@ def test_absent_product_capabilities_are_visible_and_inert() -> None:
     assert all(not declaration.supported for declaration in result.product_capabilities)
     assert all(declaration.binding is None for declaration in result.product_capabilities)
 
-
-def test_product_capability_binding_must_be_negotiated_or_named_local_surface() -> None:
+    # --- scenario: product_capability_binding_must_be_negotiated_or_named_local_surface
     result = negotiate_provider_contract(
         _document(
             product_capabilities=[
@@ -271,8 +271,7 @@ def test_product_capability_binding_must_be_negotiated_or_named_local_surface() 
     assert result.product_capability(ProductCapability.USAGE).binding is None
     assert result.product_capability(ProductCapability.REMOTE_OBSERVATION).supported is True
 
-
-def test_product_invocation_preserves_exact_source_and_version_identity() -> None:
+    # --- scenario: product_invocation_preserves_exact_source_and_version_identity
     result = negotiate_provider_contract(
         _document(
             source_instance_id="opaque:a-b",
@@ -294,7 +293,9 @@ def test_product_invocation_preserves_exact_source_and_version_identity() -> Non
     assert invocation.capability_version == SchemaVersion(1, 1)
 
 
-def test_product_declaration_rejects_implicit_or_ambiguous_support() -> None:
+
+def test_product_declaration_rejects_implicit_or_ambiguous_support__and_2_more() -> None:
+    # --- scenario: product_declaration_rejects_implicit_or_ambiguous_support
     with pytest.raises(ContractValidationError, match="product support must be a boolean"):
         ProductCapabilityDeclaration(ProductCapability.USAGE, 1)  # type: ignore[arg-type]
     with pytest.raises(ContractValidationError, match="requires a binding"):
@@ -308,8 +309,7 @@ def test_product_declaration_rejects_implicit_or_ambiguous_support() -> None:
     with pytest.raises(ContractValidationError, match="exactly one surface"):
         ProductCapabilityBinding()
 
-
-def test_answering_cannot_bind_account_switching_mutation() -> None:
+    # --- scenario: answering_cannot_bind_account_switching_mutation
     result = negotiate_provider_contract(
         _document(
             capabilities=[_capability("account_switching", (1, 0))],
@@ -328,8 +328,7 @@ def test_answering_cannot_bind_account_switching_mutation() -> None:
     with pytest.raises(ContractValidationError, match="not supported"):
         result.product_invocation_for("answering")
 
-
-def test_answering_supports_only_exact_local_answer_surface_and_preserves_identity() -> None:
+    # --- scenario: answering_supports_only_exact_local_answer_surface_and_preserves_identity
     result = negotiate_provider_contract(
         _document(
             provider_id="claude",
@@ -365,7 +364,9 @@ def test_answering_supports_only_exact_local_answer_surface_and_preserves_identi
     assert invocation.capability_version is None
 
 
-def test_answering_rejects_non_exact_local_surface_name() -> None:
+
+def test_answering_rejects_non_exact_local_surface_name__and_2_more() -> None:
+    # --- scenario: answering_rejects_non_exact_local_surface_name
     result = negotiate_provider_contract(
         _document(
             product_capabilities=[
@@ -384,41 +385,33 @@ def test_answering_rejects_non_exact_local_surface_name() -> None:
     assert result.product_capability(ProductCapability.ANSWERING).supported is False
     assert result.product_capability(ProductCapability.ANSWERING).binding is None
 
-
-@pytest.mark.parametrize(
-    ("product_id", "low_level_id"),
-    [
+    # --- scenario: product_capability_bindings_must_use_exact_semantic_low_level_id
+    for product_id, low_level_id in [
         ("lifecycle", "actionable_requests"),
         ("questions", "live_agent_events"),
         ("usage", "account_switching"),
-    ],
-)
-def test_product_capability_bindings_must_use_exact_semantic_low_level_id(
-    product_id: str,
-    low_level_id: str,
-) -> None:
-    result = negotiate_provider_contract(
-        _document(
-            capabilities=[_capability(low_level_id, (1, 0))],
-            product_capabilities=[
-                {
-                    "id": product_id,
-                    "supported": True,
-                    "binding": {
-                        "kind": "low_level",
-                        "id": low_level_id,
-                        "version": _version(1, 0),
-                    },
-                }
-            ],
+    ]:
+        result = negotiate_provider_contract(
+            _document(
+                capabilities=[_capability(low_level_id, (1, 0))],
+                product_capabilities=[
+                    {
+                        "id": product_id,
+                        "supported": True,
+                        "binding": {
+                            "kind": "low_level",
+                            "id": low_level_id,
+                            "version": _version(1, 0),
+                        },
+                    }
+                ],
+            )
         )
-    )
 
-    assert result.product_capability(product_id).supported is False
-    assert result.product_capability(product_id).binding is None
+        assert result.product_capability(product_id).supported is False
+        assert result.product_capability(product_id).binding is None
 
-
-def test_transcript_fallback_requires_transcript_adapter_and_usage_capability() -> None:
+    # --- scenario: transcript_fallback_requires_transcript_adapter_and_usage_capability
     unsupported_adapter = negotiate_provider_contract(
         _document(
             adapter_id="hooks",
@@ -458,7 +451,9 @@ def test_transcript_fallback_requires_transcript_adapter_and_usage_capability() 
     assert supported_adapter.product_capability("transcript_fallback").supported is True
 
 
-def test_transcript_fallback_cannot_bypass_usage_source_with_local_binding() -> None:
+
+def test_transcript_fallback_cannot_bypass_usage_source_with_local_binding__and_2_more() -> None:
+    # --- scenario: transcript_fallback_cannot_bypass_usage_source_with_local_binding
     result = negotiate_provider_contract(
         _document(
             adapter_id="transcripts",
@@ -474,8 +469,7 @@ def test_transcript_fallback_cannot_bypass_usage_source_with_local_binding() -> 
 
     assert result.product_capability("transcript_fallback").supported is False
 
-
-def test_invocation_monitoring_requires_an_explicit_local_surface() -> None:
+    # --- scenario: invocation_monitoring_requires_an_explicit_local_surface
     result = negotiate_provider_contract(
         _document(
             capabilities=[_capability("live_agent_events", (1, 0))],
@@ -498,8 +492,7 @@ def test_invocation_monitoring_requires_an_explicit_local_surface() -> None:
     assert invocation.capability_id is None
     assert invocation.local_runtime_surface is not None
 
-
-def test_product_invocation_cannot_represent_mutation_authority() -> None:
+    # --- scenario: product_invocation_cannot_represent_mutation_authority
     with pytest.raises(ContractValidationError, match="not allowed"):
         ProductCapabilityInvocation(
             product_capability=ProductCapability.ANSWERING,
@@ -511,7 +504,9 @@ def test_product_invocation_cannot_represent_mutation_authority() -> None:
         )
 
 
-def test_each_capability_negotiates_its_highest_exact_version() -> None:
+
+def test_each_capability_negotiates_its_highest_exact_version__and_1_more() -> None:
+    # --- scenario: each_capability_negotiates_its_highest_exact_version
     """Using one contract-wide version would select an unsupported capability."""
     result = negotiate_provider_contract(
         _document(
@@ -535,8 +530,7 @@ def test_each_capability_negotiates_its_highest_exact_version() -> None:
         for capability in (*result.discovery_capabilities, *result.observation_capabilities)
     )
 
-
-def test_declared_mutation_never_grants_observation_invocation() -> None:
+    # --- scenario: declared_mutation_never_grants_observation_invocation
     """Treating any compatible flag as read authority would invoke mutation-only sources."""
     result = negotiate_provider_contract(
         _document(capabilities=[_capability("account_switching", (1, 0))])
@@ -550,6 +544,7 @@ def test_declared_mutation_never_grants_observation_invocation() -> None:
         result.action_identity_for("account_switching")
 
 
+
 class _ExplodingCapabilities:
     def __iter__(self) -> Iterator[object]:
         raise AssertionError("unsupported-major capabilities were traversed")
@@ -560,7 +555,8 @@ class _ExplodingList(list):
         raise AssertionError("custom collection was traversed")
 
 
-def test_unsupported_schema_major_stays_visible_and_invokes_nothing() -> None:
+def test_unsupported_schema_major_stays_visible_and_invokes_nothing__and_1_more() -> None:
+    # --- scenario: unsupported_schema_major_stays_visible_and_invokes_nothing
     """Parsing an unknown major could accidentally activate incompatible behavior."""
     result = negotiate_provider_contract(
         _document(schema_major=2, capabilities=_ExplodingCapabilities())
@@ -578,29 +574,23 @@ def test_unsupported_schema_major_stays_visible_and_invokes_nothing() -> None:
         "unsupported_schema_major",
     )
 
-
-@pytest.mark.parametrize(
-    ("overrides", "expected_status"),
-    [
+    # --- scenario: only_static_first_party_provider_and_adapter_pairs_are_eligible
+    for overrides, expected_status in [
         ({"provider_id": "future-provider"}, ContractStatus.UNSUPPORTED_PROVIDER),
         ({"adapter_id": "future-adapter"}, ContractStatus.UNSUPPORTED_ADAPTER),
-    ],
-)
-def test_only_static_first_party_provider_and_adapter_pairs_are_eligible(
-    overrides: dict[str, str],
-    expected_status: ContractStatus,
-) -> None:
-    """Accepting a valid-looking unknown identifier would create a plugin loader."""
-    result = negotiate_provider_contract(
-        _document(
-            **overrides,
-            capabilities=_ExplodingCapabilities(),
+    ]:
+        """Accepting a valid-looking unknown identifier would create a plugin loader."""
+        result = negotiate_provider_contract(
+            _document(
+                **overrides,
+                capabilities=_ExplodingCapabilities(),
+            )
         )
-    )
 
-    assert result.status is expected_status
-    assert result.observation_capabilities == ()
-    assert result.observation_invocation_allowed is False
+        assert result.status is expected_status
+        assert result.observation_capabilities == ()
+        assert result.observation_invocation_allowed is False
+
 
 
 class _Poison:
@@ -614,7 +604,8 @@ class _Poison:
         raise AssertionError("unknown value was traversed")
 
 
-def test_same_major_unknown_fields_and_capabilities_are_inert_and_counted() -> None:
+def test_same_major_unknown_fields_and_capabilities_are_inert_and_counted__and_2_more() -> None:
+    # --- scenario: same_major_unknown_fields_and_capabilities_are_inert_and_counted
     """Additive data must not be interpreted, retained, or copied into diagnostics."""
     result = negotiate_provider_contract(
         _document(
@@ -635,8 +626,7 @@ def test_same_major_unknown_fields_and_capabilities_are_inert_and_counted() -> N
     assert result.diagnostics[1].count == 1
     assert len(result.diagnostics) <= MAX_DIAGNOSTICS
 
-
-def test_absent_capability_remains_absent_without_inference() -> None:
+    # --- scenario: absent_capability_remains_absent_without_inference
     """Defaulting related capabilities would fabricate unsupported provider facts."""
     result = negotiate_provider_contract(
         _document(capabilities=[_capability("reset_metadata", (1, 0))])
@@ -647,8 +637,7 @@ def test_absent_capability_remains_absent_without_inference() -> None:
     assert result.discovery_capabilities == ()
     assert result.compatible_mutation_capabilities == ()
 
-
-def test_known_capability_with_no_exact_version_is_inert_and_partial() -> None:
+    # --- scenario: known_capability_with_no_exact_version_is_inert_and_partial
     """Matching by major or choosing the nearest version would violate exact negotiation."""
     result = negotiate_provider_contract(
         _document(capabilities=[_capability("live_agent_events", (1, 2), (2, 0))])
@@ -663,7 +652,9 @@ def test_known_capability_with_no_exact_version_is_inert_and_partial() -> None:
     assert result.diagnostics[0].count == 1
 
 
-def test_action_identity_includes_the_opaque_source_instance() -> None:
+
+def test_action_identity_includes_the_opaque_source_instance__and_2_more() -> None:
+    # --- scenario: action_identity_includes_the_opaque_source_instance
     """Dropping or splitting source identity could route an action to a sibling source."""
     first = negotiate_provider_contract(
         _document(
@@ -691,8 +682,7 @@ def test_action_identity_includes_the_opaque_source_instance() -> None:
     assert first.source_instance_id.value == "opaque:a-b"
     assert second.source_instance_id.value == "opaque-a:b"
 
-
-def test_action_identity_rejects_capabilities_not_negotiated_for_that_source() -> None:
+    # --- scenario: action_identity_rejects_capabilities_not_negotiated_for_that_source
     """Constructing a target for an absent capability would bypass negotiation."""
     result = negotiate_provider_contract(
         _document(capabilities=[_capability("live_agent_events", (1, 1))])
@@ -701,10 +691,8 @@ def test_action_identity_rejects_capabilities_not_negotiated_for_that_source() -
     with pytest.raises(ContractValidationError, match="capability is not negotiated"):
         result.action_identity_for("direct_navigation")
 
-
-@pytest.mark.parametrize(
-    ("identifier_type", "value"),
-    [
+    # --- scenario: identifier_types_reject_unbounded_or_ambiguous_values
+    for identifier_type, value in [
         (ProviderIdentifier, ""),
         (ProviderIdentifier, "UPPERCASE"),
         (AdapterIdentifier, "has/slash"),
@@ -713,30 +701,22 @@ def test_action_identity_rejects_capabilities_not_negotiated_for_that_source() -
         (SourceInstanceIdentifier, "line\nbreak"),
         (SourceInstanceIdentifier, "/Users/private/path"),
         (ProviderIdentifier, "x" * (MAX_IDENTIFIER_LENGTH + 1)),
-    ],
-)
-def test_identifier_types_reject_unbounded_or_ambiguous_values(
-    identifier_type,
-    value: str,
-) -> None:
-    """Loose strings could leak paths, controls, or oversized attacker labels."""
-    with pytest.raises(ContractValidationError, match="invalid identifier"):
-        identifier_type(value)
+    ]:
+        """Loose strings could leak paths, controls, or oversized attacker labels."""
+        with pytest.raises(ContractValidationError, match="invalid identifier"):
+            identifier_type(value)
 
 
-@pytest.mark.parametrize(
-    "field_value",
-    [None, True, 1, b"codex", [], {}],
-)
-def test_contract_identifier_fields_require_strings(field_value: object) -> None:
-    """Coercing non-strings could collapse unrelated source identities."""
-    with pytest.raises(ContractValidationError, match="invalid identifier"):
-        negotiate_provider_contract(_document(source_instance_id=field_value))
 
+def test_contract_identifier_fields_require_strings__and_2_more() -> None:
+    # --- scenario: contract_identifier_fields_require_strings
+    for field_value in [None, True, 1, b"codex", [], {}]:
+        """Coercing non-strings could collapse unrelated source identities."""
+        with pytest.raises(ContractValidationError, match="invalid identifier"):
+            negotiate_provider_contract(_document(source_instance_id=field_value))
 
-@pytest.mark.parametrize(
-    "bad_version",
-    [
+    # --- scenario: versions_reject_booleans_nonintegers_and_out_of_range_values
+    for bad_version in [
         {"major": True, "minor": 0},
         {"major": 1, "minor": False},
         {"major": 0, "minor": 0},
@@ -744,33 +724,27 @@ def test_contract_identifier_fields_require_strings(field_value: object) -> None
         {"major": 65_536, "minor": 0},
         {"major": 1, "minor": 65_536},
         {"major": "1", "minor": 0},
-    ],
-)
-def test_versions_reject_booleans_nonintegers_and_out_of_range_values(
-    bad_version: dict[str, object],
-) -> None:
-    """Python booleans and unbounded integers must not masquerade as versions."""
-    document = _document()
-    document["schema_version"] = bad_version
+    ]:
+        """Python booleans and unbounded integers must not masquerade as versions."""
+        document = _document()
+        document["schema_version"] = bad_version
 
-    with pytest.raises(ContractValidationError, match="invalid version"):
-        negotiate_provider_contract(document)
+        with pytest.raises(ContractValidationError, match="invalid version"):
+            negotiate_provider_contract(document)
 
+    # --- scenario: capability_collection_requires_a_json_array
+    for capabilities in [None, {}, (), "live_agent_events", b"live_agent_events"]:
+        """Accepting arbitrary iterables would permit surprising or unbounded traversal."""
+        document = _document()
+        document["capabilities"] = capabilities
 
-@pytest.mark.parametrize(
-    "capabilities",
-    [None, {}, (), "live_agent_events", b"live_agent_events"],
-)
-def test_capability_collection_requires_a_json_array(capabilities: object) -> None:
-    """Accepting arbitrary iterables would permit surprising or unbounded traversal."""
-    document = _document()
-    document["capabilities"] = capabilities
-
-    with pytest.raises(ContractValidationError, match="capabilities must be a list"):
-        negotiate_provider_contract(document)
+        with pytest.raises(ContractValidationError, match="capabilities must be a list"):
+            negotiate_provider_contract(document)
 
 
-def test_same_major_rejects_custom_collection_types_without_traversing_them() -> None:
+
+def test_same_major_rejects_custom_collection_types_without_traversing_them__and_2_more() -> None:
+    # --- scenario: same_major_rejects_custom_collection_types_without_traversing_them
     """A list subclass could execute provider code during otherwise pure validation."""
     document = _document()
     document["capabilities"] = _ExplodingList()
@@ -778,8 +752,7 @@ def test_same_major_rejects_custom_collection_types_without_traversing_them() ->
     with pytest.raises(ContractValidationError, match="capabilities must be a list"):
         negotiate_provider_contract(document)
 
-
-def test_capability_and_version_collection_bounds_fail_closed() -> None:
+    # --- scenario: capability_and_version_collection_bounds_fail_closed
     """Unlimited declaration fan-out would defeat the bounded pure foundation."""
     too_many_capabilities = [
         _capability(f"future_capability_{index}", (1, 0))
@@ -801,8 +774,7 @@ def test_capability_and_version_collection_bounds_fail_closed() -> None:
             )
         )
 
-
-def test_unknown_field_budget_includes_nested_capability_and_version_fields() -> None:
+    # --- scenario: unknown_field_budget_includes_nested_capability_and_version_fields
     """Counting only top-level drift would leave nested additive data unbounded."""
     capability = _capability("live_agent_events", (1, 1))
     version = capability["versions"][0]
@@ -814,7 +786,9 @@ def test_unknown_field_budget_includes_nested_capability_and_version_fields() ->
         negotiate_provider_contract(_document(capabilities=[capability]))
 
 
-def test_duplicate_capability_identifier_fails_closed() -> None:
+
+def test_duplicate_capability_identifier_fails_closed__and_2_more() -> None:
+    # --- scenario: duplicate_capability_identifier_fails_closed
     """Merging duplicates could make input order change negotiated authority."""
     with pytest.raises(ContractValidationError, match="duplicate capability"):
         negotiate_provider_contract(
@@ -826,8 +800,7 @@ def test_duplicate_capability_identifier_fails_closed() -> None:
             )
         )
 
-
-def test_diagnostic_identifiers_and_counts_remain_static_and_bounded() -> None:
+    # --- scenario: diagnostic_identifiers_and_counts_remain_static_and_bounded
     """Diagnostics must not echo arbitrary capability identifiers or create one row each."""
     capabilities = [
         _capability(f"future_capability_{index}", (1, 0))
@@ -850,8 +823,7 @@ def test_diagnostic_identifiers_and_counts_remain_static_and_bounded() -> None:
         for capability in capabilities
     )
 
-
-def test_public_records_cannot_bypass_bounded_identifier_and_count_types() -> None:
+    # --- scenario: public_records_cannot_bypass_bounded_identifier_and_count_types
     """Dataclass annotations alone would allow unvalidated action targets and counts."""
     with pytest.raises(ContractValidationError, match="invalid action identity"):
         ActionIdentity(
@@ -868,7 +840,9 @@ def test_public_records_cannot_bypass_bounded_identifier_and_count_types() -> No
         )
 
 
-def test_capacity_descriptor_supplies_semantic_name_and_horizon() -> None:
+
+def test_capacity_descriptor_supplies_semantic_name_and_horizon__and_2_more() -> None:
+    # --- scenario: capacity_descriptor_supplies_semantic_name_and_horizon
     """Provider labels or reset duration must not author window semantics."""
     key = _capacity_lane_key(window="provider-window-300")
     descriptor = _capacity_descriptor(
@@ -912,8 +886,7 @@ def test_capacity_descriptor_supplies_semantic_name_and_horizon() -> None:
     assert observation.reset.window_minutes == 10_080.0
     assert observation.key.window == "provider-window-300"
 
-
-def test_unknown_effect_cannot_be_declared_bindable() -> None:
+    # --- scenario: unknown_effect_cannot_be_declared_bindable
     """Unknown scope authority must never become eligible through a descriptor flag."""
     unknown_key = _capacity_lane_key(effect=QuotaEffect.UNKNOWN)
 
@@ -933,8 +906,7 @@ def test_unknown_effect_cannot_be_declared_bindable() -> None:
     )
     assert descriptor.bindable is False
 
-
-def test_capacity_source_descriptor_uses_exact_contract_identity_and_capability_version() -> None:
+    # --- scenario: capacity_source_descriptor_uses_exact_contract_identity_and_capability_version
     """Dropping capability or source-instance identity would merge sibling quota sources."""
     lane = CapacityLaneDescriptor(
         key=_capacity_lane_key(),
@@ -949,12 +921,14 @@ def test_capacity_source_descriptor_uses_exact_contract_identity_and_capability_
     assert descriptor.lanes == (lane,)
 
 
+
 class _ExplodingCapacityLanes:
     def __iter__(self) -> Iterator[object]:
         raise AssertionError("unsupported capacity lanes were traversed")
 
 
-def test_unsupported_capacity_capability_major_fails_before_lane_traversal() -> None:
+def test_unsupported_capacity_capability_major_fails_before_lane_traversal__and_2_more() -> None:
+    # --- scenario: unsupported_capacity_capability_major_fails_before_lane_traversal
     """An unsupported major must stay inert without touching adapter-supplied lane data."""
     with pytest.raises(ContractValidationError, match="unsupported capacity capability version"):
         CapacitySourceDescriptor(
@@ -966,8 +940,7 @@ def test_unsupported_capacity_capability_major_fails_before_lane_traversal() -> 
             lanes=_ExplodingCapacityLanes(),  # type: ignore[arg-type]
         )
 
-
-def test_capacity_source_descriptor_caps_and_deduplicates_lane_keys() -> None:
+    # --- scenario: capacity_source_descriptor_caps_and_deduplicates_lane_keys
     """Unbounded or duplicate declarations could make adapter order author truth."""
     duplicate = CapacityLaneDescriptor(
         key=_capacity_lane_key(),
@@ -990,8 +963,7 @@ def test_capacity_source_descriptor_caps_and_deduplicates_lane_keys() -> None:
     with pytest.raises(ContractValidationError, match="too many capacity lanes"):
         _capacity_descriptor(*too_many)
 
-
-def test_capacity_descriptor_rejects_lane_from_another_exact_source() -> None:
+    # --- scenario: capacity_descriptor_rejects_lane_from_another_exact_source
     """A lane from a sibling source must not be stamped with this source's semantics."""
     other_key = QuotaLaneKey(
         source=SourceKey("codex", "quota", "source:other", "remote_quota_windows"),
@@ -1013,7 +985,9 @@ def test_capacity_descriptor_rejects_lane_from_another_exact_source() -> None:
         )
 
 
-def test_capacity_descriptor_keeps_distinct_feature_scopes() -> None:
+
+def test_capacity_descriptor_keeps_distinct_feature_scopes__and_1_more() -> None:
+    # --- scenario: capacity_descriptor_keeps_distinct_feature_scopes
     """A descriptor must preserve each declared feature's independent lane identity."""
     fable_key = QuotaLaneKey(
         source=_capacity_source_key(),
@@ -1052,8 +1026,7 @@ def test_capacity_descriptor_keeps_distinct_feature_scopes() -> None:
         "deep-research",
     )
 
-
-def test_capacity_descriptor_refuses_undeclared_lane_observation() -> None:
+    # --- scenario: capacity_descriptor_refuses_undeclared_lane_observation
     """A source must not inject arbitrary lane labels through a declared descriptor."""
     declared = CapacityLaneDescriptor(
         key=_capacity_lane_key(),
@@ -1090,3 +1063,4 @@ def test_capacity_descriptor_refuses_undeclared_lane_observation() -> None:
             ),
             account_discriminator=None,
         )
+

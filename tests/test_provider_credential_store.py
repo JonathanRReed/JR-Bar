@@ -20,7 +20,8 @@ class FakeBackend:
         del self.values[(service, account)]
 
 
-def test_secret_round_trip_uses_provider_scoped_keychain_service() -> None:
+def test_secret_round_trip_uses_provider_scoped_keychain_service__and_2_more() -> None:
+    # --- scenario: secret_round_trip_uses_provider_scoped_keychain_service
     backend = FakeBackend()
     store = ProviderCredentialStore(backend=backend)
 
@@ -32,8 +33,7 @@ def test_secret_round_trip_uses_provider_scoped_keychain_service() -> None:
     assert ("com.jonathanreed.jrbar.provider.devin", "token") in backend.values
     assert "auth1_secret" not in repr(result)
 
-
-def test_delete_is_idempotent() -> None:
+    # --- scenario: delete_is_idempotent
     backend = FakeBackend()
     store = ProviderCredentialStore(backend=backend)
 
@@ -42,8 +42,7 @@ def test_delete_is_idempotent() -> None:
     assert store.delete("openai-api", "admin-key") is True
     assert store.delete("openai-api", "admin-key") is False
 
-
-def test_invalid_provider_or_empty_secret_is_rejected() -> None:
+    # --- scenario: invalid_provider_or_empty_secret_is_rejected
     store = ProviderCredentialStore(backend=FakeBackend())
     for provider, secret in (("CodexBar", "x"), ("devin", "")):
         try:
@@ -54,7 +53,9 @@ def test_invalid_provider_or_empty_secret_is_rejected() -> None:
             raise AssertionError("invalid credential accepted")
 
 
-def test_same_provider_credentials_are_scoped_to_the_exact_source_instance() -> None:
+
+def test_same_provider_credentials_are_scoped_to_the_exact_source_instance__and_2_more() -> None:
+    # --- scenario: same_provider_credentials_are_scoped_to_the_exact_source_instance
     backend = FakeBackend()
     store = ProviderCredentialStore(backend=backend)
     work = ProviderInstanceKey("devin", "work")
@@ -74,8 +75,7 @@ def test_same_provider_credentials_are_scoped_to_the_exact_source_instance() -> 
         "token",
     ) in backend.values
 
-
-def test_default_instance_credential_methods_reuse_legacy_keychain_identity() -> None:
+    # --- scenario: default_instance_credential_methods_reuse_legacy_keychain_identity
     backend = FakeBackend()
     store = ProviderCredentialStore(backend=backend)
     default = ProviderInstanceKey("devin", "default")
@@ -84,8 +84,7 @@ def test_default_instance_credential_methods_reuse_legacy_keychain_identity() ->
 
     assert store.get_for_instance(default, "token").secret == "legacy-secret"
 
-
-def test_read_miss_falls_back_to_the_pre_rename_service_and_copies_forward() -> None:
+    # --- scenario: read_miss_falls_back_to_the_pre_rename_service_and_copies_forward
     backend = FakeBackend()
     backend.values[("io.sidepulse.provider.devin", "token")] = "old-secret"
     store = ProviderCredentialStore(backend=backend)
@@ -99,7 +98,9 @@ def test_read_miss_falls_back_to_the_pre_rename_service_and_copies_forward() -> 
     assert backend.values[("io.sidepulse.provider.devin", "token")] == "old-secret"
 
 
-def test_instance_read_miss_falls_back_to_the_pre_rename_service() -> None:
+
+def test_instance_read_miss_falls_back_to_the_pre_rename_service__and_2_more() -> None:
+    # --- scenario: instance_read_miss_falls_back_to_the_pre_rename_service
     backend = FakeBackend()
     backend.values[("io.sidepulse.provider.devin.work", "token")] = "work-secret"
     store = ProviderCredentialStore(backend=backend)
@@ -109,8 +110,7 @@ def test_instance_read_miss_falls_back_to_the_pre_rename_service() -> None:
     assert result.secret == "work-secret"
     assert backend.values[("com.jonathanreed.jrbar.provider.devin.work", "token")] == "work-secret"
 
-
-def test_current_service_wins_over_a_stale_pre_rename_item() -> None:
+    # --- scenario: current_service_wins_over_a_stale_pre_rename_item
     backend = FakeBackend()
     backend.values[("io.sidepulse.provider.devin", "token")] = "stale"
     backend.values[("com.jonathanreed.jrbar.provider.devin", "token")] = "current"
@@ -118,8 +118,7 @@ def test_current_service_wins_over_a_stale_pre_rename_item() -> None:
 
     assert store.get("devin", "token").secret == "current"
 
-
-def test_copy_forward_failure_still_returns_the_secret() -> None:
+    # --- scenario: copy_forward_failure_still_returns_the_secret
     class ReadOnlyBackend(FakeBackend):
         def set_password(self, service, account, secret) -> None:
             raise RuntimeError("keychain is read-only")
@@ -129,3 +128,4 @@ def test_copy_forward_failure_still_returns_the_secret() -> None:
     store = ProviderCredentialStore(backend=backend)
 
     assert store.get("devin", "token").secret == "old-secret"
+

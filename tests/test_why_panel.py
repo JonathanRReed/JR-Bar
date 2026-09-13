@@ -130,7 +130,8 @@ class _StringValueTextDouble:
         self.text = text
 
 
-def test_refresh_preserves_selection_scroll_and_reader_configuration_for_longer_text() -> None:
+def test_refresh_preserves_selection_scroll_and_reader_configuration_for_longer_text__and_2_more() -> None:
+    # --- scenario: refresh_preserves_selection_scroll_and_reader_configuration_for_longer_text
     old_text = "\n".join(f"old line {index}" for index in range(12))
     new_text = "\n".join(f"new line {index}" for index in range(24))
     control = _TextView(
@@ -148,8 +149,7 @@ def test_refresh_preserves_selection_scroll_and_reader_configuration_for_longer_
     assert control.selectable is True
     assert control.editable is False
 
-
-def test_refresh_clamps_selection_and_vertical_scroll_for_shorter_text() -> None:
+    # --- scenario: refresh_clamps_selection_and_vertical_scroll_for_shorter_text
     old_text = "\n".join(f"old line {index}" for index in range(20))
     control = _TextView(
         old_text,
@@ -164,8 +164,7 @@ def test_refresh_clamps_selection_and_vertical_scroll_for_shorter_text() -> None
     assert control.selectedRange() == (5, 0)
     assert control.scroll_view.contentView().bounds().origin.y == 0.0
 
-
-def test_refresh_clamps_selection_length_when_start_remains_valid() -> None:
+    # --- scenario: refresh_clamps_selection_length_when_start_remains_valid
     control = _SelectionOnlyTextView("a longer old value", (2, 12))
 
     set_text_preserving_position(control, "short")
@@ -174,7 +173,9 @@ def test_refresh_clamps_selection_length_when_start_remains_valid() -> None:
     assert control.selectedRange() == (2, 3)
 
 
-def test_refresh_without_scroll_container_still_updates_and_restores_selection() -> None:
+
+def test_refresh_without_scroll_container_still_updates_and_restores_selection__and_2_more() -> None:
+    # --- scenario: refresh_without_scroll_container_still_updates_and_restores_selection
     control = _SelectionOnlyTextView("old value", (1, 3))
 
     set_text_preserving_position(control, "new longer value")
@@ -182,15 +183,14 @@ def test_refresh_without_scroll_container_still_updates_and_restores_selection()
     assert control.text == "new longer value"
     assert control.selectedRange() == (1, 3)
 
+    # --- scenario: refresh_supports_simple_text_control_doubles
+    for control_type in [_StringTextDouble, _StringValueTextDouble]:
+        control = control_type()
 
-@pytest.mark.parametrize("control_type", [_StringTextDouble, _StringValueTextDouble])
-def test_refresh_supports_simple_text_control_doubles(control_type) -> None:
-    control = control_type()
+        set_text_preserving_position(control, "new")
 
-    set_text_preserving_position(control, "new")
+        assert control.text == "new"
 
-    assert control.text == "new"
-
-
-def test_refresh_with_none_control_is_a_noop() -> None:
+    # --- scenario: refresh_with_none_control_is_a_noop
     set_text_preserving_position(None, "new")
+

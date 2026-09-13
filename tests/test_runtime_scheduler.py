@@ -126,7 +126,8 @@ def _command(
     )
 
 
-def test_timer_intents_reject_invalid_or_ambiguous_schedules() -> None:
+def test_timer_intents_reject_invalid_or_ambiguous_schedules__and_2_more() -> None:
+    # --- scenario: timer_intents_reject_invalid_or_ambiguous_schedules
     clock = _Clock()
     factory = _FakeAppKitFactory()
     registry = AppKitTimerRegistry(
@@ -163,8 +164,7 @@ def test_timer_intents_reject_invalid_or_ambiguous_schedules() -> None:
         registry.reconcile((duplicate, duplicate), target=target)
     assert factory.created == []
 
-
-def test_timer_reconcile_is_idempotent_and_common_mode_registration_is_stable() -> None:
+    # --- scenario: timer_reconcile_is_idempotent_and_common_mode_registration_is_stable
     clock = _Clock()
     factory = _FakeAppKitFactory()
     callbacks: list[str] = []
@@ -191,8 +191,7 @@ def test_timer_reconcile_is_idempotent_and_common_mode_registration_is_stable() 
     assert factory.created[0].tolerance == 0.25
     assert factory.registrations == [(factory.created[0], True)]
 
-
-def test_timer_withdrawal_invalidates_only_the_withdrawn_feature() -> None:
+    # --- scenario: timer_withdrawal_invalidates_only_the_withdrawn_feature
     clock = _Clock()
     factory = _FakeAppKitFactory()
     first = RuntimeFeature.LID_OBSERVATION
@@ -219,6 +218,7 @@ def test_timer_withdrawal_invalidates_only_the_withdrawn_feature() -> None:
     assert factory.created[0].invalidations == 1
     assert factory.created[1].invalidations == 0
     assert registry.snapshot().active_features == (second,)
+
 
 
 @pytest.mark.parametrize(("callback_offset", "counter"), [(-0.25, "early"), (0.25, "late")])
@@ -258,7 +258,8 @@ def test_one_shot_is_removed_before_early_or_late_handler_reconciliation(
     assert len(factory.created) == 2
 
 
-def test_timer_public_operations_fail_off_main_before_touching_appkit() -> None:
+def test_timer_public_operations_fail_off_main_before_touching_appkit__and_2_more() -> None:
+    # --- scenario: timer_public_operations_fail_off_main_before_touching_appkit
     clock = _Clock()
     factory = _FakeAppKitFactory()
     feature = RuntimeFeature.CORE_REFRESH_FALLBACK
@@ -303,8 +304,7 @@ def test_timer_public_operations_fail_off_main_before_touching_appkit() -> None:
     registry.reconcile((_intent(feature),), target=target)
     assert factory.touched_threads == [threading.get_ident(), threading.get_ident()]
 
-
-def test_runtime_work_command_rejects_private_or_unbounded_keys() -> None:
+    # --- scenario: runtime_work_command_rejects_private_or_unbounded_keys
     domain = RuntimeWorkerDomain.SCREEN_BAR_SAMPLER
     invalid_keys = (
         "",
@@ -334,8 +334,7 @@ def test_runtime_work_command_rejects_private_or_unbounded_keys() -> None:
     with pytest.raises(ValueError, match="coalescing"):
         _command(domain, "main", 1, coalesce_key="private/path")
 
-
-def test_latest_wins_worker_preserves_priority_slot_and_final_trailing_state() -> None:
+    # --- scenario: latest_wins_worker_preserves_priority_slot_and_final_trailing_state
     started = threading.Event()
     release = threading.Event()
     executions: list[str] = []
@@ -405,7 +404,9 @@ def test_latest_wins_worker_preserves_priority_slot_and_final_trailing_state() -
     assert worker.close(timeout_seconds=1.0)
 
 
-def test_latest_wins_worker_replaces_only_matching_priority_slot() -> None:
+
+def test_latest_wins_worker_replaces_only_matching_priority_slot__and_2_more() -> None:
+    # --- scenario: latest_wins_worker_replaces_only_matching_priority_slot
     started = threading.Event()
     release = threading.Event()
     executions: list[str] = []
@@ -467,8 +468,7 @@ def test_latest_wins_worker_replaces_only_matching_priority_slot() -> None:
     assert executions == ["blocker", "new-ask", "final"]
     assert worker.close(timeout_seconds=1.0)
 
-
-def test_latest_wins_worker_can_discard_one_resource_prefix_before_preview() -> None:
+    # --- scenario: latest_wins_worker_can_discard_one_resource_prefix_before_preview
     started = threading.Event()
     release = threading.Event()
     executions: list[str] = []
@@ -516,8 +516,7 @@ def test_latest_wins_worker_can_discard_one_resource_prefix_before_preview() -> 
     assert executions == ["blocker", "device-b:latest"]
     assert worker.close(timeout_seconds=1.0)
 
-
-def test_latest_wins_worker_admits_urgent_work_by_evicting_one_lower_priority_slot() -> None:
+    # --- scenario: latest_wins_worker_admits_urgent_work_by_evicting_one_lower_priority_slot
     started = threading.Event()
     release = threading.Event()
     executions: list[str] = []
@@ -579,7 +578,9 @@ def test_latest_wins_worker_admits_urgent_work_by_evicting_one_lower_priority_sl
     assert worker.close(timeout_seconds=1.0)
 
 
-def test_latest_wins_worker_refuses_lower_priority_replacement_of_protected_slot() -> None:
+
+def test_latest_wins_worker_refuses_lower_priority_replacement_of_protected_slot__and_1_more() -> None:
+    # --- scenario: latest_wins_worker_refuses_lower_priority_replacement_of_protected_slot
     started = threading.Event()
     release = threading.Event()
     executions: list[str] = []
@@ -634,8 +635,7 @@ def test_latest_wins_worker_refuses_lower_priority_replacement_of_protected_slot
     assert executions == ["blocker", "protected"]
     assert worker.close(timeout_seconds=1.0)
 
-
-def test_hardware_result_mailbox_keeps_protected_and_trailing_receipts_under_stall() -> None:
+    # --- scenario: hardware_result_mailbox_keeps_protected_and_trailing_receipts_under_stall
     started = threading.Event()
     release = threading.Event()
     callbacks: list[Callable[[], None]] = []
@@ -703,6 +703,7 @@ def test_hardware_result_mailbox_keeps_protected_and_trailing_receipts_under_sta
     assert "final" in delivered
     assert delivered.index("protected") < delivered.index("final")
     assert worker.close(timeout_seconds=1.0)
+
 
 
 def test_latest_wins_worker_idle_wait_uses_injected_clock(monkeypatch) -> None:
@@ -1010,7 +1011,8 @@ class _RegistryWorker:
         return True
 
 
-def test_worker_registry_rejects_duplicates_and_closes_reverse_under_shared_budget() -> None:
+def test_worker_registry_rejects_duplicates_and_closes_reverse_under_shared_budget__and_2_more() -> None:
+    # --- scenario: worker_registry_rejects_duplicates_and_closes_reverse_under_shared_budget
     clock = _Clock()
     order: list[RuntimeWorkerDomain] = []
     registry = RuntimeWorkerRegistry(monotonic=clock)
@@ -1036,8 +1038,7 @@ def test_worker_registry_rejects_duplicates_and_closes_reverse_under_shared_budg
             _RegistryWorker(RuntimeWorkerDomain.OS_POLL, order, clock),
         )
 
-
-def test_worker_registry_close_refuses_late_submissions() -> None:
+    # --- scenario: worker_registry_close_refuses_late_submissions
     worker = LatestWinsWorker(
         RuntimeWorkerDomain.ALCOVE_OBSERVER,
         executor=lambda command: command.payload,
@@ -1050,8 +1051,7 @@ def test_worker_registry_close_refuses_late_submissions() -> None:
     assert registry.close_all(timeout_seconds=1.0)
     assert worker.submit(_command(RuntimeWorkerDomain.ALCOVE_OBSERVER, "alcove", 1)) is SubmissionDisposition.REFUSED
 
-
-def test_ten_thousand_commands_and_reconciliations_stay_bounded() -> None:
+    # --- scenario: ten_thousand_commands_and_reconciliations_stay_bounded
     clock = _Clock()
     factory = _FakeAppKitFactory()
     feature = RuntimeFeature.POINTER_PEEK
@@ -1099,3 +1099,4 @@ def test_ten_thousand_commands_and_reconciliations_stay_bounded() -> None:
 
     release.set()
     assert worker.close(timeout_seconds=1.0)
+

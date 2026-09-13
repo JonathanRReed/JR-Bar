@@ -88,7 +88,8 @@ def test_inventory_rejects_mount_replaced_during_identity_probe(tmp_path: Path) 
     assert inventory_mounts(tmp_path, runner=runner) == ()
 
 
-def test_identity_cache_returns_last_snapshot_without_blocking(tmp_path: Path) -> None:
+def test_identity_cache_returns_last_snapshot_without_blocking__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: identity_cache_returns_last_snapshot_without_blocking
     root = tmp_path / "Volumes"
     mount = root / "SidePulseDot"
     mount.mkdir(parents=True)
@@ -114,8 +115,7 @@ def test_identity_cache_returns_last_snapshot_without_blocking(tmp_path: Path) -
     assert cache.identity_for_mount(mount).key.startswith("sidepulse:dot:")
     cache.close()
 
-
-def test_refresh_requests_are_latest_wins(tmp_path: Path) -> None:
+    # --- scenario: refresh_requests_are_latest_wins
     calls = 0
     started = threading.Event()
     release = threading.Event()
@@ -138,8 +138,7 @@ def test_refresh_requests_are_latest_wins(tmp_path: Path) -> None:
     assert calls == 2
     cache.close()
 
-
-def test_a_pulsedot_volume_is_a_dot_with_two_leds(tmp_path: Path) -> None:
+    # --- scenario: a_pulsedot_volume_is_a_dot_with_two_leds
     """First-batch Dots mount as ``PulseDot``: no ``SidePulse`` prefix, and
     an old STATUS.TXT may not carry a serial. Every classifier must still
     call it a 2-LED Dot, keyed by the volume UUID when no serial exists."""
@@ -169,6 +168,7 @@ def test_a_pulsedot_volume_is_a_dot_with_two_leds(tmp_path: Path) -> None:
     assert led_count_for_target(Path("/Volumes/PulseDot/LEDS.LED")) == 2
     assert is_device_name("PulseDot")
     assert device_display_name("PulseDot") == "SidePulse Dot"
+
 
 
 def test_led_count_follows_the_serial_not_the_volume_label(tmp_path: Path) -> None:

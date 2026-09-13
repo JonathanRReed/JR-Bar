@@ -123,7 +123,8 @@ def test_a_mid_line_snapshot_never_splits_the_line(tmp_path, counting_full_parse
     assert len(counting_full_parse) == 1
 
 
-def test_codex_tail_total_replaces_the_cached_cumulative(tmp_path):
+def test_codex_tail_total_replaces_the_cached_cumulative__and_1_more(tmp_path) -> None:
+    # --- scenario: codex_tail_total_replaces_the_cached_cumulative
     codex_root = tmp_path / "codex"
     claude_root = tmp_path / "claude"
     claude_root.mkdir()
@@ -157,8 +158,7 @@ def test_codex_tail_total_replaces_the_cached_cumulative(tmp_path):
     second = usage_stats.scan_usage(claude_root, cache, codex_root=codex_root)
     assert second.codex_tokens == 255
 
-
-def test_a_file_growing_mid_scan_is_parsed_not_skipped(tmp_path):
+    # --- scenario: a_file_growing_mid_scan_is_parsed_not_skipped
     """The live pin: the scan works from a frozen inventory, and the
     hottest file always grew between its stat and its open -- the strict
     verifier refused it as 'changed while opening' on EVERY scan, so
@@ -178,3 +178,4 @@ def test_a_file_growing_mid_scan_is_parsed_not_skipped(tmp_path):
     assert result.read_ok, "a grown file is the same file with more history"
     assert len(result.records) == 2  # exactly the snapshot's two lines
     assert result.parsed_size == frozen.st_size
+

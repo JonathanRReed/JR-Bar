@@ -125,7 +125,8 @@ def _zone_offset(zone: ZoneInfo):
     return resolve
 
 
-def test_history_models_expose_only_the_metadata_allowlist() -> None:
+def test_history_models_expose_only_the_metadata_allowlist__and_2_more() -> None:
+    # --- scenario: history_models_expose_only_the_metadata_allowlist
     """Adding retained identity or content fields would violate the storage boundary."""
     assert tuple(field.name for field in fields(RuntimeHistoryEvent)) == (
         "semantic_event_key",
@@ -164,10 +165,9 @@ def test_history_models_expose_only_the_metadata_allowlist() -> None:
         "health_label",
     )
 
-
-@pytest.mark.parametrize(
-    "forbidden",
-    (
+    # --- scenario: daily_constructor_rejects_every_forbidden_field
+    """No undeclared content or identity category may enter a retained day."""
+    for forbidden in (
         "source_key",
         "work_key",
         "request_key",
@@ -186,17 +186,13 @@ def test_history_models_expose_only_the_metadata_allowlist() -> None:
         "cookie",
         "url",
         "navigation_target",
-    ),
-)
-def test_daily_constructor_rejects_every_forbidden_field(forbidden: str) -> None:
-    """No undeclared content or identity category may enter a retained day."""
-    values: dict[str, object] = {field.name: getattr(_day(), field.name) for field in fields(OperatorHistoryDay)}
-    values[forbidden] = "PRIVATE SENTINEL"
-    with pytest.raises(TypeError):
-        OperatorHistoryDay(**values)  # type: ignore[arg-type]
+    ):
+        values: dict[str, object] = {field.name: getattr(_day(), field.name) for field in fields(OperatorHistoryDay)}
+        values[forbidden] = "PRIVATE SENTINEL"
+        with pytest.raises(TypeError):
+            OperatorHistoryDay(**values)  # type: ignore[arg-type]
 
-
-def test_runtime_identity_is_discarded_after_duplicate_transition_collapse() -> None:
+    # --- scenario: runtime_identity_is_discarded_after_duplicate_transition_collapse
     """Repeated observation of one semantic edge contributes exactly once."""
     terminal = _event(
         "token.sentinel",
@@ -217,7 +213,9 @@ def test_runtime_identity_is_discarded_after_duplicate_transition_collapse() -> 
     assert not hasattr(rows[0], "semantic_event_key")
 
 
-def test_runtime_identity_sentinel_corpus_is_discarded_before_daily_output() -> None:
+
+def test_runtime_identity_sentinel_corpus_is_discarded_before_daily_output__and_2_more() -> None:
+    # --- scenario: runtime_identity_sentinel_corpus_is_discarded_before_daily_output
     """Every allowed opaque runtime identity is transient, regardless of its word shape."""
     sentinels = (
         "prompt.sentinel",
@@ -239,8 +237,7 @@ def test_runtime_identity_sentinel_corpus_is_discarded_before_daily_output() -> 
     for sentinel in sentinels:
         assert sentinel not in retained
 
-
-def test_out_of_order_input_produces_the_same_transition_only_day() -> None:
+    # --- scenario: out_of_order_input_produces_the_same_transition_only_day
     """Poll arrival order must not change retained daily facts."""
     events = (
         _event("003", HistoryEventKind.COMPLETED, occurred_at=NOW + 30),
@@ -252,8 +249,7 @@ def test_out_of_order_input_produces_the_same_transition_only_day() -> None:
     row = aggregate_operator_history(events)[0]
     assert (row.started, row.needs_user, row.completed) == (1, 1, 1)
 
-
-def test_acknowledgement_is_local_and_request_resume_is_not_provider_resolution() -> None:
+    # --- scenario: acknowledgement_is_local_and_request_resume_is_not_provider_resolution
     """Only a SidePulse acknowledgement transition increments acknowledged."""
     rows = aggregate_operator_history(
         (
@@ -266,7 +262,9 @@ def test_acknowledgement_is_local_and_request_resume_is_not_provider_resolution(
     assert rows[0].sample_count == 2
 
 
-def test_duration_and_attention_bands_use_exact_fixed_boundaries() -> None:
+
+def test_duration_and_attention_bands_use_exact_fixed_boundaries__and_2_more() -> None:
+    # --- scenario: duration_and_attention_bands_use_exact_fixed_boundaries
     """Exact durations must collapse into four count bands before persistence."""
     boundaries = (0.0, 299.999, 300.0, 1_799.999, 1_800.0, 7_199.999, 7_200.0)
     events = tuple(
@@ -284,10 +282,9 @@ def test_duration_and_attention_bands_use_exact_fixed_boundaries() -> None:
     assert row.active_duration_bands == (2, 2, 2, 1)
     assert row.attention_wait_bands == (2, 2, 2, 1)
 
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
+    # --- scenario: runtime_events_reject_nonfinite_negative_and_unbounded_values
+    """Malformed numeric metadata must fail before bucketing or persistence."""
+    for field, value in (
         ("occurred_at", nan),
         ("occurred_at", inf),
         ("active_seconds", nan),
@@ -296,22 +293,15 @@ def test_duration_and_attention_bands_use_exact_fixed_boundaries() -> None:
         ("attention_wait_seconds", -0.1),
         ("primary_count", -1),
         ("worker_count", 1_001),
-    ),
-)
-def test_runtime_events_reject_nonfinite_negative_and_unbounded_values(
-    field: str,
-    value: object,
-) -> None:
-    """Malformed numeric metadata must fail before bucketing or persistence."""
-    good = _event("valid", HistoryEventKind.STARTED)
-    values = {item.name: getattr(good, item.name) for item in fields(RuntimeHistoryEvent)}
-    values[field] = value
+    ):
+        good = _event("valid", HistoryEventKind.STARTED)
+        values = {item.name: getattr(good, item.name) for item in fields(RuntimeHistoryEvent)}
+        values[field] = value
 
-    with pytest.raises(HistoryValidationError):
-        RuntimeHistoryEvent(**values)  # type: ignore[arg-type]
+        with pytest.raises(HistoryValidationError):
+            RuntimeHistoryEvent(**values)  # type: ignore[arg-type]
 
-
-def test_provider_id_must_match_the_semantic_subject_source() -> None:
+    # --- scenario: provider_id_must_match_the_semantic_subject_source
     """A cross-provider tag cannot move one provider event into another provider day."""
     key = _event_key("cross", provider="codex")
     with pytest.raises(HistoryValidationError):
@@ -327,7 +317,9 @@ def test_provider_id_must_match_the_semantic_subject_source() -> None:
         )
 
 
-def test_provider_failure_marks_only_its_provider_day() -> None:
+
+def test_provider_failure_marks_only_its_provider_day__and_2_more() -> None:
+    # --- scenario: provider_failure_marks_only_its_provider_day
     """A failed Codex observation cannot erase a healthy Claude observation."""
     rows = aggregate_operator_history(
         (
@@ -341,8 +333,7 @@ def test_provider_failure_marks_only_its_provider_day() -> None:
     assert by_provider["claude"].coverage is HistoryCoverage.COMPLETE
     assert by_provider["claude"].started == 1
 
-
-def test_mixed_observation_and_source_failure_is_partial() -> None:
+    # --- scenario: mixed_observation_and_source_failure_is_partial
     """Useful facts plus a source outage form a partial day, not complete or failed."""
     row = aggregate_operator_history(
         (
@@ -355,8 +346,7 @@ def test_mixed_observation_and_source_failure_is_partial() -> None:
     assert row.coverage is HistoryCoverage.PARTIAL
     assert row.source_recoveries == 1
 
-
-def test_primary_and_worker_counts_are_daily_high_watermarks() -> None:
+    # --- scenario: primary_and_worker_counts_are_daily_high_watermarks
     """Lifecycle transitions cannot repeatedly add the same live family census."""
     row = aggregate_operator_history(
         (
@@ -372,7 +362,9 @@ def test_primary_and_worker_counts_are_daily_high_watermarks() -> None:
     assert row.failed == 1
 
 
-def test_terminal_worker_duplicate_contributes_once() -> None:
+
+def test_terminal_worker_duplicate_contributes_once__and_2_more() -> None:
+    # --- scenario: terminal_worker_duplicate_contributes_once
     """One worker terminal edge must not become repeated progress history."""
     worker_terminal = _event(
         "worker-terminal",
@@ -388,8 +380,7 @@ def test_terminal_worker_duplicate_contributes_once() -> None:
     assert row.worker_count == 1
     assert row.sample_count == 1
 
-
-def test_local_midnight_assigns_each_utc_event_to_exactly_one_day() -> None:
+    # --- scenario: local_midnight_assigns_each_utc_event_to_exactly_one_day
     """Half-open local dates prevent a midnight edge from entering two rows."""
     before = datetime(2027, 1, 15, 5, 59, 59, tzinfo=timezone.utc).timestamp()
     midnight = datetime(2027, 1, 15, 6, 0, 0, tzinfo=timezone.utc).timestamp()
@@ -406,8 +397,7 @@ def test_local_midnight_assigns_each_utc_event_to_exactly_one_day() -> None:
         ("2027-01-15", 1),
     ]
 
-
-def test_dst_gap_and_fold_preserve_utc_identity_and_stored_offset() -> None:
+    # --- scenario: dst_gap_and_fold_preserve_utc_identity_and_stored_offset
     """Nonexistent and repeated wall times cannot drop or duplicate semantic events."""
     central = ZoneInfo("America/Chicago")
     epochs = (
@@ -432,7 +422,9 @@ def test_dst_gap_and_fold_preserve_utc_identity_and_stored_offset() -> None:
     }
 
 
-def test_timezone_change_keeps_each_event_in_one_locally_assigned_row() -> None:
+
+def test_timezone_change_keeps_each_event_in_one_locally_assigned_row__and_2_more() -> None:
+    # --- scenario: timezone_change_keeps_each_event_in_one_locally_assigned_row
     """Travel changes future assignment without rewriting UTC semantic identity."""
     boundary = NOW + 60.0
 
@@ -450,8 +442,7 @@ def test_timezone_change_keeps_each_event_in_one_locally_assigned_row() -> None:
     assert sum(row.sample_count for row in rows) == 2
     assert {row.timezone_offset_minutes for row in rows} == {-360, 60}
 
-
-def test_merge_is_commutative_and_preserves_partial_coverage() -> None:
+    # --- scenario: merge_is_commutative_and_preserves_partial_coverage
     """Concurrent batches for one row must merge without losing facts or claiming complete."""
     complete = _day(completed=2, sample_count=2)
     failed = _day(coverage=HistoryCoverage.FAILED, completed=0, failed=1)
@@ -465,8 +456,7 @@ def test_merge_is_commutative_and_preserves_partial_coverage() -> None:
     assert left[0].sample_count == 3
     assert left[0].coverage is HistoryCoverage.PARTIAL
 
-
-def test_empty_projection_distinguishes_no_observation_from_zero() -> None:
+    # --- scenario: empty_projection_distinguishes_no_observation_from_zero
     """An empty ledger is missing evidence, never an observed zero-work day."""
     projection = project_operator_history(
         (),
@@ -482,7 +472,9 @@ def test_empty_projection_distinguishes_no_observation_from_zero() -> None:
     assert projection.summary_sentences == ("No operator history was observed in this range.",)
 
 
-def test_explicit_no_observation_rows_never_claim_observed_provider_days() -> None:
+
+def test_explicit_no_observation_rows_never_claim_observed_provider_days__and_2_more() -> None:
+    # --- scenario: explicit_no_observation_rows_never_claim_observed_provider_days
     """Stored missing-evidence markers must use the same neutral empty projection copy."""
     marker = OperatorHistoryDay(
         "2027-01-15",
@@ -509,8 +501,7 @@ def test_explicit_no_observation_rows_never_claim_observed_provider_days() -> No
     assert projection.health_label == "No Observation"
     assert projection.summary_sentences == ("No operator history was observed in this range.",)
 
-
-def test_projection_filters_range_and_counts_distinct_local_days() -> None:
+    # --- scenario: projection_filters_range_and_counts_distinct_local_days
     """Multiple providers and offsets on one date count as one observed local day."""
     today = datetime.fromtimestamp(NOW, timezone.utc).date()
     today_key = today.isoformat()
@@ -533,8 +524,7 @@ def test_projection_filters_range_and_counts_distinct_local_days() -> None:
     assert len(projection.rows) == 3
     assert projection.health_label == "Partial observation"
 
-
-def test_summary_counts_one_provider_day_across_split_timezone_offsets() -> None:
+    # --- scenario: summary_counts_one_provider_day_across_split_timezone_offsets
     """DST or travel offset rows for one provider and date remain one provider-day."""
     today_key = datetime.fromtimestamp(NOW, timezone.utc).date().isoformat()
     projection = project_operator_history(
@@ -549,7 +539,9 @@ def test_summary_counts_one_provider_day_across_split_timezone_offsets() -> None
     assert projection.summary_sentences[0] == "Observed 1 provider-days across 1 local days."
 
 
-def test_neutral_summary_is_bounded_deterministic_and_nonjudgmental() -> None:
+
+def test_neutral_summary_is_bounded_deterministic_and_nonjudgmental__and_2_more() -> None:
+    # --- scenario: neutral_summary_is_bounded_deterministic_and_nonjudgmental
     """Reflect copy may describe facts but cannot grade, rank, target, or infer causality."""
     rows = (
         _day(completed=3, failed=1, needs_user=2, sample_count=7),
@@ -577,8 +569,7 @@ def test_neutral_summary_is_bounded_deterministic_and_nonjudgmental() -> None:
     ):
         assert forbidden not in combined
 
-
-def test_no_observation_row_requires_zero_counts() -> None:
+    # --- scenario: no_observation_row_requires_zero_counts
     """A missing-evidence marker cannot carry fabricated observed counters."""
     with pytest.raises(HistoryValidationError):
         _day(
@@ -587,8 +578,8 @@ def test_no_observation_row_requires_zero_counts() -> None:
             sample_count=0,
         )
 
-
-def test_observed_row_rejects_counters_that_exceed_its_sample_count() -> None:
+    # --- scenario: observed_row_rejects_counters_that_exceed_its_sample_count
     """A corrupt retained row cannot inflate transition facts beyond admitted samples."""
     with pytest.raises(HistoryValidationError):
         _day(completed=2, sample_count=1)
+

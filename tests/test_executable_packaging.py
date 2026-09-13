@@ -204,9 +204,8 @@ def test_checksum_manifest_is_sorted_exact_and_cli_executable(tmp_path: Path) ->
     assert stat.S_IMODE(output.stat().st_mode) == 0o644
 
 
-def test_checksum_manifest_fails_closed_for_a_missing_artifact(
-    tmp_path: Path,
-) -> None:
+def test_checksum_manifest_fails_closed_for_a_missing_artifact__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: checksum_manifest_fails_closed_for_a_missing_artifact
     output = tmp_path / "SHA256SUMS"
 
     with pytest.raises(
@@ -221,10 +220,7 @@ def test_checksum_manifest_fails_closed_for_a_missing_artifact(
 
     assert not output.exists()
 
-
-def test_checksum_manifest_rejects_duplicate_outside_and_output_aliases(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: checksum_manifest_rejects_duplicate_outside_and_output_aliases
     artifact = tmp_path / "artifact.pkg"
     artifact.write_bytes(b"pkg")
     outside = tmp_path.parent / f"{tmp_path.name}-outside.pkg"
@@ -267,10 +263,7 @@ def test_checksum_manifest_rejects_duplicate_outside_and_output_aliases(
     finally:
         outside.unlink(missing_ok=True)
 
-
-def test_checksum_manifest_rejects_assets_changed_after_release_evidence(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: checksum_manifest_rejects_assets_changed_after_release_evidence
     artifact = tmp_path / "dist" / "JR-Bar-0.5.0.pkg"
     artifact.parent.mkdir()
     artifact.write_bytes(b"candidate")
@@ -303,6 +296,7 @@ def test_checksum_manifest_rejects_assets_changed_after_release_evidence(
             artifacts=(artifact, evidence),
             evidence_manifest=evidence,
         )
+
 
 
 @pytest.mark.parametrize(

@@ -140,9 +140,10 @@ def _host(presenter: ClearAgentsPopoverPresenter) -> NSWindow:
     return window
 
 
-@pytest.mark.parametrize(
-    ("presentation", "title", "summary_fragment", "buttons"),
-    [
+def test_every_state_projects_explicit_copy_and_native_actions__and_2_more() -> None:
+    # --- scenario: every_state_projects_explicit_copy_and_native_actions
+    """A missing state branch or reused generic result would make this fail."""
+    for presentation, title, summary_fragment, buttons in [
         (
             _presentation(ClearAgentsPopoverState.PREVIEW),
             "Clear Agents?",
@@ -200,25 +201,16 @@ def _host(presenter: ClearAgentsPopoverPresenter) -> NSWindow:
             "2 completion receipts were removed",
             ("Done",),
         ),
-    ],
-)
-def test_every_state_projects_explicit_copy_and_native_actions(
-    presentation: ClearAgentsPopoverPresentation,
-    title: str,
-    summary_fragment: str,
-    buttons: tuple[str, ...],
-) -> None:
-    """A missing state branch or reused generic result would make this fail."""
-    presenter = _presenter(presentation)
+    ]:
+        presenter = _presenter(presentation)
 
-    assert presenter.title_field.stringValue() == title
-    assert summary_fragment in presenter.summary_field.stringValue()
-    assert tuple(button.title() for button in _visible_buttons(presenter)) == buttons
-    assert all(button.isEnabled() for button in _visible_buttons(presenter))
-    assert presenter.preservation_field.stringValue() == CLEAR_AGENTS_PRESERVATION_TEXT
+        assert presenter.title_field.stringValue() == title
+        assert summary_fragment in presenter.summary_field.stringValue()
+        assert tuple(button.title() for button in _visible_buttons(presenter)) == buttons
+        assert all(button.isEnabled() for button in _visible_buttons(presenter))
+        assert presenter.preservation_field.stringValue() == CLEAR_AGENTS_PRESERVATION_TEXT
 
-
-def test_preview_lists_only_bounded_agent_labels_and_explicit_protected_counts() -> None:
+    # --- scenario: preview_lists_only_bounded_agent_labels_and_explicit_protected_counts
     """Unbounded agent copy or a lost protection category would make this fail."""
     presentation = _presentation(
         ClearAgentsPopoverState.PREVIEW,
@@ -239,8 +231,7 @@ def test_preview_lists_only_bounded_agent_labels_and_explicit_protected_counts()
     assert presenter.items_field.maximumNumberOfLines() == 7
     assert presenter.items_field.accessibilityValue() == presenter.items_field.stringValue()
 
-
-def test_typed_preview_adapter_caps_labels_and_preserves_every_protected_bucket() -> None:
+    # --- scenario: typed_preview_adapter_caps_labels_and_preserves_every_protected_bucket
     """Bypassing the pure preview or dropping queued and unsafe rows would fail."""
     presentation = ClearAgentsPopoverPresentation.from_preview(_typed_preview(8))
 
@@ -257,7 +248,9 @@ def test_typed_preview_adapter_caps_labels_and_preserves_every_protected_bucket(
     assert "+2 more completed agents" in _presenter(presentation).items_field.stringValue()
 
 
-def test_typed_commit_and_undo_adapters_use_exact_plan_counts() -> None:
+
+def test_typed_commit_and_undo_adapters_use_exact_plan_counts__and_2_more() -> None:
+    # --- scenario: typed_commit_and_undo_adapters_use_exact_plan_counts
     """Using cached UI counts instead of the pure commit plans would make this fail."""
     preview = _typed_preview(2)
     commit = plan_clear_agents_commit(
@@ -293,31 +286,24 @@ def test_typed_commit_and_undo_adapters_use_exact_plan_counts() -> None:
         2,
     )
 
-
-@pytest.mark.parametrize(
-    "labels",
-    [
+    # --- scenario: presentation_refuses_unbounded_or_content_unsafe_agent_labels
+    """Accepting paths, URLs, multiline text, or oversized lists would fail."""
+    for labels in [
         ("",),
         ("a" * 81,),
         ("ask\ntext",),
         ("/Users/private/transcript.json",),
         ("https://example.invalid/agent",),
         tuple(f"Agent {index}" for index in range(7)),
-    ],
-)
-def test_presentation_refuses_unbounded_or_content_unsafe_agent_labels(
-    labels: tuple[str, ...],
-) -> None:
-    """Accepting paths, URLs, multiline text, or oversized lists would fail."""
-    with pytest.raises(ValueError, match="agent labels"):
-        _presentation(
-            ClearAgentsPopoverState.PREVIEW,
-            clearable_count=max(1, len(labels)),
-            labels=labels,
-        )
+    ]:
+        with pytest.raises(ValueError, match="agent labels"):
+            _presentation(
+                ClearAgentsPopoverState.PREVIEW,
+                clearable_count=max(1, len(labels)),
+                labels=labels,
+            )
 
-
-def test_native_group_labels_help_values_and_buttons_have_exact_ax_metadata() -> None:
+    # --- scenario: native_group_labels_help_values_and_buttons_have_exact_ax_metadata
     """Dropping spoken state, help, or native button roles would make this fail."""
     presenter = _presenter()
 
@@ -340,7 +326,9 @@ def test_native_group_labels_help_values_and_buttons_have_exact_ax_metadata() ->
     assert all(str(button.accessibilityHelp() or "").strip() for button in presenter.buttons)
 
 
-def test_refresh_reuses_controls_and_rebuilds_closed_key_loop_for_each_state() -> None:
+
+def test_refresh_reuses_controls_and_rebuilds_closed_key_loop_for_each_state__and_2_more() -> None:
+    # --- scenario: refresh_reuses_controls_and_rebuilds_closed_key_loop_for_each_state
     """Replacing the surface or leaving hidden controls in Tab order would fail."""
     presenter = _presenter()
     controls = (
@@ -389,10 +377,9 @@ def test_refresh_reuses_controls_and_rebuilds_closed_key_loop_for_each_state() -
                 assert current.nextKeyView() is following
             assert focusable[-1].nextKeyView() is focusable[0]
 
-
-@pytest.mark.parametrize(
-    ("state", "summary"),
-    [
+    # --- scenario: single_receipt_states_use_clear_native_copy
+    """Plural-only result copy would make a one-agent receipt read incorrectly."""
+    for state, summary in [
         (
             ClearAgentsPopoverState.EXPIRED_UNDO,
             "1 completed-agent receipt remains acknowledged. "
@@ -402,28 +389,21 @@ def test_refresh_reuses_controls_and_rebuilds_closed_key_loop_for_each_state() -
             ClearAgentsPopoverState.UNDONE,
             "1 completion receipt was removed. Current canonical work decides what appears.",
         ),
-    ],
-)
-def test_single_receipt_states_use_clear_native_copy(
-    state: ClearAgentsPopoverState,
-    summary: str,
-) -> None:
-    """Plural-only result copy would make a one-agent receipt read incorrectly."""
-    presenter = _presenter(
-        _presentation(
-            state,
-            clearable_count=0,
-            cleared_count=1,
-            labels=(),
+    ]:
+        presenter = _presenter(
+            _presentation(
+                state,
+                clearable_count=0,
+                cleared_count=1,
+                labels=(),
+            )
         )
-    )
 
-    assert presenter.summary_field.stringValue() == summary
-    only_button = _visible_buttons(presenter)[0]
-    assert only_button.frame().origin.x + only_button.frame().size.width == 400.0
+        assert presenter.summary_field.stringValue() == summary
+        only_button = _visible_buttons(presenter)[0]
+        assert only_button.frame().origin.x + only_button.frame().size.width == 400.0
 
-
-def test_root_and_buttons_route_return_tab_shift_tab_and_escape_deterministically() -> None:
+    # --- scenario: root_and_buttons_route_return_tab_shift_tab_and_escape_deterministically
     """A default AppKit traversal dependency or wrong key mapping would fail."""
     received: list[ClearAgentsPopoverAction] = []
     closed: list[None] = []
@@ -447,7 +427,9 @@ def test_root_and_buttons_route_return_tab_shift_tab_and_escape_deterministicall
         window.close()
 
 
-def test_button_actions_emit_typed_intents_and_terminal_actions_close() -> None:
+
+def test_button_actions_emit_typed_intents_and_terminal_actions_close__and_1_more() -> None:
+    # --- scenario: button_actions_emit_typed_intents_and_terminal_actions_close
     """Stringly typed actions or a receipt that cannot close would make this fail."""
     received: list[ClearAgentsPopoverAction] = []
     closed: list[None] = []
@@ -463,8 +445,7 @@ def test_button_actions_emit_typed_intents_and_terminal_actions_close() -> None:
     ]
     assert closed == [None]
 
-
-def test_saving_state_cannot_be_dismissed_before_undo_receipt_exists() -> None:
+    # --- scenario: saving_state_cannot_be_dismissed_before_undo_receipt_exists
     received: list[ClearAgentsPopoverAction] = []
     closed: list[None] = []
     presenter = _presenter(
@@ -502,6 +483,7 @@ def test_saving_state_cannot_be_dismissed_before_undo_receipt_exists() -> None:
     assert closed == [None]
 
 
+
 class _RecordingWindow:
     def __init__(self) -> None:
         self.events: list[tuple[str, object | None]] = []
@@ -522,7 +504,8 @@ class _RecordingApplication:
         self.events.append(("activate", flag))
 
 
-def test_after_show_focus_contract_activates_keys_and_installs_first_responder() -> None:
+def test_after_show_focus_contract_activates_keys_and_installs_first_responder__and_1_more() -> None:
+    # --- scenario: after_show_focus_contract_activates_keys_and_installs_first_responder
     """Wrong activation order or missing explicit focus installation would fail."""
     presenter = _presenter()
     window = _RecordingWindow()
@@ -541,8 +524,7 @@ def test_after_show_focus_contract_activates_keys_and_installs_first_responder()
     assert presenter.popover.delegate() is presenter.close_delegate
     assert presenter.close_delegate is not presenter.action_target
 
-
-def test_visible_buttons_follow_native_order_and_fit_their_titles() -> None:
+    # --- scenario: visible_buttons_follow_native_order_and_fit_their_titles
     presenter = _presenter()
     cancel, primary = _visible_buttons(presenter)
 
@@ -554,3 +536,4 @@ def test_visible_buttons_follow_native_order_and_fit_their_titles() -> None:
         button.intrinsicContentSize().width <= button.frame().size.width
         for button in (cancel, primary)
     )
+

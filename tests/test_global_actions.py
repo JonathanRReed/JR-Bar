@@ -32,7 +32,8 @@ def chord(
     )
 
 
-def test_action_and_modifier_identifiers_are_exact() -> None:
+def test_action_and_modifier_identifiers_are_exact__and_2_more() -> None:
+    # --- scenario: action_and_modifier_identifiers_are_exact
     assert tuple(action.value for action in GlobalActionID) == ("reveal_current_ask",)
     assert tuple(modifier.value for modifier in ShortcutModifier) == (
         "control",
@@ -41,22 +42,20 @@ def test_action_and_modifier_identifiers_are_exact() -> None:
         "command",
     )
 
+    # --- scenario: chord_refuses_out_of_range_or_non_integer_key_codes
+    for key_code in [-1, 128, True, 1.5]:
+        with pytest.raises(ValueError, match="key code"):
+            chord(key_code=key_code)  # type: ignore[arg-type]
 
-@pytest.mark.parametrize("key_code", [-1, 128, True, 1.5])
-def test_chord_refuses_out_of_range_or_non_integer_key_codes(key_code: object) -> None:
-    with pytest.raises(ValueError, match="key code"):
-        chord(key_code=key_code)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize("key_label", ["", "x" * 17, "line\nbreak", 42])
-def test_chord_refuses_empty_long_non_printable_or_non_string_labels(
-    key_label: object,
-) -> None:
-    with pytest.raises(ValueError, match="key label"):
-        chord(key_label=key_label)  # type: ignore[arg-type]
+    # --- scenario: chord_refuses_empty_long_non_printable_or_non_string_labels
+    for key_label in ["", "x" * 17, "line\nbreak", 42]:
+        with pytest.raises(ValueError, match="key label"):
+            chord(key_label=key_label)  # type: ignore[arg-type]
 
 
-def test_chord_is_immutable_and_requires_exact_modifier_values() -> None:
+
+def test_chord_is_immutable_and_requires_exact_modifier_values__and_2_more() -> None:
+    # --- scenario: chord_is_immutable_and_requires_exact_modifier_values
     value = chord()
 
     with pytest.raises(FrozenInstanceError):
@@ -64,10 +63,8 @@ def test_chord_is_immutable_and_requires_exact_modifier_values() -> None:
     with pytest.raises(ValueError, match="modifiers"):
         ShortcutChord(40, "K", frozenset({"command"}))  # type: ignore[arg-type]
 
-
-@pytest.mark.parametrize(
-    ("modifiers", "code"),
-    [
+    # --- scenario: shortcut_requires_a_modifier_and_command_or_control
+    for modifiers, code in [
         (frozenset(), ShortcutValidationCode.NO_MODIFIERS),
         (
             frozenset({ShortcutModifier.OPTION, ShortcutModifier.SHIFT}),
@@ -81,21 +78,14 @@ def test_chord_is_immutable_and_requires_exact_modifier_values() -> None:
             frozenset({ShortcutModifier.OPTION}),
             ShortcutValidationCode.COMMAND_OR_CONTROL_REQUIRED,
         ),
-    ],
-)
-def test_shortcut_requires_a_modifier_and_command_or_control(
-    modifiers: frozenset[ShortcutModifier],
-    code: ShortcutValidationCode,
-) -> None:
-    with pytest.raises(ShortcutValidationError) as raised:
-        validate_shortcut(ShortcutChord(40, "K", modifiers))
+    ]:
+        with pytest.raises(ShortcutValidationError) as raised:
+            validate_shortcut(ShortcutChord(40, "K", modifiers))
 
-    assert raised.value.code is code
+        assert raised.value.code is code
 
-
-@pytest.mark.parametrize(
-    ("key_code", "key_label", "modifiers"),
-    [
+    # --- scenario: reserved_jr_bar_menu_equivalents_are_refused
+    for key_code, key_label, modifiers in [
         (12, "Q", (ShortcutModifier.COMMAND,)),
         (13, "W", (ShortcutModifier.COMMAND,)),
         (43, ",", (ShortcutModifier.COMMAND,)),
@@ -105,20 +95,16 @@ def test_shortcut_requires_a_modifier_and_command_or_control(
         (0, "A", (ShortcutModifier.COMMAND,)),
         (6, "Z", (ShortcutModifier.COMMAND,)),
         (6, "Z", (ShortcutModifier.COMMAND, ShortcutModifier.SHIFT)),
-    ],
-)
-def test_reserved_jr_bar_menu_equivalents_are_refused(
-    key_code: int,
-    key_label: str,
-    modifiers: tuple[ShortcutModifier, ...],
-) -> None:
-    with pytest.raises(ShortcutValidationError) as raised:
-        validate_shortcut(chord(key_code, key_label, *modifiers))
+    ]:
+        with pytest.raises(ShortcutValidationError) as raised:
+            validate_shortcut(chord(key_code, key_label, *modifiers))
 
-    assert raised.value.code is ShortcutValidationCode.RESERVED_MENU_EQUIVALENT
+        assert raised.value.code is ShortcutValidationCode.RESERVED_MENU_EQUIVALENT
 
 
-def test_binding_validation_detects_duplicate_normalized_chords() -> None:
+
+def test_binding_validation_detects_duplicate_normalized_chords__and_2_more() -> None:
+    # --- scenario: binding_validation_detects_duplicate_normalized_chords
     reveal = chord(40, "K", ShortcutModifier.CONTROL, ShortcutModifier.SHIFT)
     future_action = "future_action"
     duplicate_with_different_label = chord(
@@ -139,8 +125,7 @@ def test_binding_validation_detects_duplicate_normalized_chords() -> None:
     assert raised.value.code is ShortcutValidationCode.DUPLICATE_BINDING
     assert raised.value.conflicting_action == GlobalActionID.REVEAL_CURRENT_ASK.value
 
-
-def test_modifier_symbol_formatting_is_deterministic() -> None:
+    # --- scenario: modifier_symbol_formatting_is_deterministic
     value = chord(
         40,
         "K",
@@ -152,8 +137,7 @@ def test_modifier_symbol_formatting_is_deterministic() -> None:
 
     assert format_shortcut(value) == "⌃⌥⇧⌘K"
 
-
-def test_known_binding_parses_and_serializes_only_known_fields() -> None:
+    # --- scenario: known_binding_parses_and_serializes_only_known_fields
     raw = {
         "reveal_current_ask": {
             "key_code": 40,
@@ -180,9 +164,10 @@ def test_known_binding_parses_and_serializes_only_known_fields() -> None:
     }
 
 
-@pytest.mark.parametrize(
-    ("raw", "refused_key", "code"),
-    [
+
+def test_unknown_or_malformed_persisted_entry_is_refused_individually__and_2_more() -> None:
+    # --- scenario: unknown_or_malformed_persisted_entry_is_refused_individually
+    for raw, refused_key, code in [
         (
             {
                 "unknown_action": {
@@ -239,21 +224,14 @@ def test_known_binding_parses_and_serializes_only_known_fields() -> None:
             "reveal_current_ask",
             ShortcutValidationCode.OPTION_SHIFT_ONLY,
         ),
-    ],
-)
-def test_unknown_or_malformed_persisted_entry_is_refused_individually(
-    raw: object,
-    refused_key: str,
-    code: ShortcutValidationCode,
-) -> None:
-    parsed = parse_global_action_shortcuts(raw)
+    ]:
+        parsed = parse_global_action_shortcuts(raw)
 
-    assert parsed.bindings == ()
-    assert parsed.refusals[0].action_key == refused_key
-    assert parsed.refusals[0].code is code
+        assert parsed.bindings == ()
+        assert parsed.refusals[0].action_key == refused_key
+        assert parsed.refusals[0].code is code
 
-
-def test_one_bad_persisted_entry_does_not_discard_a_valid_known_binding() -> None:
+    # --- scenario: one_bad_persisted_entry_does_not_discard_a_valid_known_binding
     parsed = parse_global_action_shortcuts(
         {
             "unknown_action": {"unexpected": True},
@@ -272,10 +250,8 @@ def test_one_bad_persisted_entry_does_not_discard_a_valid_known_binding() -> Non
         "unknown_action",
     )
 
-
-@pytest.mark.parametrize(
-    ("state", "value_text"),
-    [
+    # --- scenario: binding_state_projection_is_bounded_and_truthful
+    for state, value_text in [
         (GlobalActionBindingState.UNASSIGNED, "Not set"),
         (GlobalActionBindingState.ACTIVE, "⌃K"),
         (GlobalActionBindingState.LOCAL_CONFLICT, "Already used by JR-Bar"),
@@ -285,25 +261,21 @@ def test_one_bad_persisted_entry_does_not_discard_a_valid_known_binding() -> Non
             "macOS refused shortcut",
         ),
         (GlobalActionBindingState.CLOSED, "Unavailable"),
-    ],
-)
-def test_binding_state_projection_is_bounded_and_truthful(
-    state: GlobalActionBindingState,
-    value_text: str,
-) -> None:
-    projection = project_global_action_status(
-        GlobalActionID.REVEAL_CURRENT_ASK,
-        state,
-        chord=chord(40, "K", ShortcutModifier.CONTROL)
-        if state is GlobalActionBindingState.ACTIVE
-        else None,
-    )
+    ]:
+        projection = project_global_action_status(
+            GlobalActionID.REVEAL_CURRENT_ASK,
+            state,
+            chord=chord(40, "K", ShortcutModifier.CONTROL)
+            if state is GlobalActionBindingState.ACTIVE
+            else None,
+        )
 
-    assert projection.state is state
-    assert projection.value_text == value_text
-    assert "current ask or Agent Browser" in projection.help_text
-    assert len(projection.value_text) <= 64
-    assert len(projection.help_text) <= 256
+        assert projection.state is state
+        assert projection.value_text == value_text
+        assert "current ask or Agent Browser" in projection.help_text
+        assert len(projection.value_text) <= 64
+        assert len(projection.help_text) <= 256
+
 
 
 def test_active_projection_refuses_to_claim_success_without_a_chord() -> None:

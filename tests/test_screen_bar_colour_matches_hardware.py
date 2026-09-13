@@ -60,7 +60,8 @@ class _Probe:
         )
 
 
-def test_the_screen_bar_never_inherits_the_strips_calibration() -> None:
+def test_the_screen_bar_never_inherits_the_strips_calibration__and_2_more() -> None:
+    # --- scenario: the_screen_bar_never_inherits_the_strips_calibration
     """The regression this file exists to prevent.
 
     A green x0.38 die correction belongs to one physical strip. Applying it
@@ -72,8 +73,7 @@ def test_the_screen_bar_never_inherits_the_strips_calibration() -> None:
     assert gains == NEUTRAL_CHANNEL_GAINS
     assert gains != HARDWARE_GAINS
 
-
-def test_linking_still_does_not_leak_calibration() -> None:
+    # --- scenario: linking_still_does_not_leak_calibration
     """Linking couples ANIMATION, not calibration.
 
     "One light language, two places" is about the two surfaces telling the
@@ -86,12 +86,12 @@ def test_linking_still_does_not_leak_calibration() -> None:
             == NEUTRAL_CHANNEL_GAINS
         )
 
-
-def test_a_screen_bar_with_its_own_calibration_keeps_it() -> None:
+    # --- scenario: a_screen_bar_with_its_own_calibration_keeps_it
     """Someone tuning the notch on its own must not be overridden."""
     own = (1.0, 0.9, 1.0)
     probe = _Probe(linked=True, screen_gains=own)
     assert StatusBarController.screen_bar_channel_gains(probe, probe.virtual) == own
+
 
 
 def test_both_surfaces_emit_matching_light_without_borrowing() -> None:

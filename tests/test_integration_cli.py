@@ -9,7 +9,8 @@ from jrbar.integration_cli import build_parser
 from jrbar.integration_settings import IntegrationSettings
 
 
-def test_integration_cli_exposes_t3_configuration_and_probe_commands() -> None:
+def test_integration_cli_exposes_t3_configuration_and_probe_commands__and_2_more() -> None:
+    # --- scenario: integration_cli_exposes_t3_configuration_and_probe_commands
     parser = build_parser()
 
     enabled = parser.parse_args(["enable", "t3code"])
@@ -34,16 +35,14 @@ def test_integration_cli_exposes_t3_configuration_and_probe_commands() -> None:
     assert probed.integration == "t3code"
     assert probed.json is True
 
-
-def test_integration_cli_exposes_creator_micro_settings() -> None:
+    # --- scenario: integration_cli_exposes_creator_micro_settings
     parser = build_parser()
 
     creator = parser.parse_args(["enable", "creator-micro"])
 
     assert creator.integration == "creator-micro"
 
-
-def test_integration_cli_help_describes_the_shared_compatibility_surface() -> None:
+    # --- scenario: integration_cli_help_describes_the_shared_compatibility_surface
     help_text = build_parser().format_help()
 
     assert "JR-Bar compatibility integrations" in help_text
@@ -53,42 +52,36 @@ def test_integration_cli_help_describes_the_shared_compatibility_surface() -> No
     assert "Enable T3 Code" not in help_text
 
 
-@pytest.mark.parametrize(
-    ("integration", "field"),
-    [
+
+def test_disable_routes_to_the_selected_integration(monkeypatch) -> None:
+    for integration, field in [
         ("creator-micro", "creator_micro_enabled"),
         ("t3code", "t3code_enabled"),
-    ],
-)
-def test_disable_routes_to_the_selected_integration(
-    monkeypatch,
-    integration: str,
-    field: str,
-) -> None:
-    settings = IntegrationSettings(
-        t3code_enabled=True,
-        creator_micro_enabled=True,
-        creator_micro_device_serial="CM2-123",
-    )
-    loaded = type("Loaded", (), {"settings": settings})()
-    saved = []
-    monkeypatch.setattr(integration_cli, "load_integration_settings", lambda: loaded)
-    monkeypatch.setattr(
-        integration_cli,
-        "_save_updated",
-        lambda _loaded, updated: saved.append(updated) or 0,
-    )
+    ]:
+        settings = IntegrationSettings(
+            t3code_enabled=True,
+            creator_micro_enabled=True,
+            creator_micro_device_serial="CM2-123",
+        )
+        loaded = type("Loaded", (), {"settings": settings})()
+        saved = []
+        monkeypatch.setattr(integration_cli, "load_integration_settings", lambda: loaded)
+        monkeypatch.setattr(
+            integration_cli,
+            "_save_updated",
+            lambda _loaded, updated: saved.append(updated) or 0,
+        )
 
-    assert integration_cli.cmd_enabled(
-        Namespace(integration=integration, enabled=False)
-    ) == 0
+        assert integration_cli.cmd_enabled(
+            Namespace(integration=integration, enabled=False)
+        ) == 0
 
-    updated = saved.pop()
-    assert getattr(updated, field) is False
-    for other in {"t3code_enabled", "creator_micro_enabled"} - {
-        field
-    }:
-        assert getattr(updated, other) is True
+        updated = saved.pop()
+        assert getattr(updated, field) is False
+        for other in {"t3code_enabled", "creator_micro_enabled"} - {
+            field
+        }:
+            assert getattr(updated, other) is True
 
 
 def test_creator_micro_enable_approves_the_only_connected_stable_identity(
@@ -119,13 +112,13 @@ def test_creator_micro_enable_approves_the_only_connected_stable_identity(
     assert saved[0].creator_micro_device_serial == "CM2-123"
 
 
-def test_integration_cli_rejects_codexbar() -> None:
+def test_integration_cli_rejects_codexbar__and_1_more() -> None:
+    # --- scenario: integration_cli_rejects_codexbar
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["enable", "codexbar"])
 
-
-def test_status_document_exposes_only_t3_compatibility_window() -> None:
+    # --- scenario: status_document_exposes_only_t3_compatibility_window
     from jrbar.integration_cli import _status_document
     from jrbar.integration_settings import load_integration_settings
 
@@ -141,6 +134,7 @@ def test_status_document_exposes_only_t3_compatibility_window() -> None:
         == "hidapi-explicit-identity-bound-output"
     )
     assert "codexbar" not in document
+
 
 
 def test_disabled_t3_probe_does_not_resolve_or_read_the_t3_database(

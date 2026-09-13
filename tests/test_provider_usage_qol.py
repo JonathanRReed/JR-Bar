@@ -48,7 +48,8 @@ def snapshot(observed, lanes, *, state=ProviderSourceState.READY):
     )
 
 
-def test_reset_event_requires_boundary_crossing_and_fresh_replenishment():
+def test_reset_event_requires_boundary_crossing_and_fresh_replenishment__and_2_more() -> None:
+    # --- scenario: reset_event_requires_boundary_crossing_and_fresh_replenishment
     before = snapshot(990, (lane(5, 1000),))
     after = snapshot(1001, (lane(100, 2000),))
     events = detect_reset_events((before,), (after,), seen_event_ids=frozenset())
@@ -57,8 +58,7 @@ def test_reset_event_requires_boundary_crossing_and_fresh_replenishment():
     assert events[0].label == "Weekly reset"
     assert events[0].event_id.startswith("claude:weekly:")
 
-
-def test_reset_event_is_not_reannounced_or_emitted_from_stale_data():
+    # --- scenario: reset_event_is_not_reannounced_or_emitted_from_stale_data
     before = snapshot(990, (lane(5, 1000),))
     after = snapshot(1001, (lane(100, 2000),))
     first = detect_reset_events((before,), (after,), seen_event_ids=frozenset())
@@ -70,15 +70,16 @@ def test_reset_event_is_not_reannounced_or_emitted_from_stale_data():
     stale = snapshot(1001, (lane(100, 2000),), state=ProviderSourceState.STALE)
     assert detect_reset_events((before,), (stale,), seen_event_ids=frozenset()) == ()
 
-
-def test_countdown_copy_is_exact_and_human_readable():
+    # --- scenario: countdown_copy_is_exact_and_human_readable
     assert format_reset_countdown(1000, now=1000) == "resetting now"
     assert format_reset_countdown(1061, now=1000) == "resets in 1m"
     assert format_reset_countdown(4700, now=1000) == "resets in 1h 1m"
     assert format_reset_countdown(200000, now=1000) == "resets in 2d 7h"
 
 
-def test_threshold_crossing_only_fires_downward_across_configured_boundary():
+
+def test_threshold_crossing_only_fires_downward_across_configured_boundary__and_2_more() -> None:
+    # --- scenario: threshold_crossing_only_fires_downward_across_configured_boundary
     before = snapshot(900, (lane(25, 2000),))
     after = snapshot(1000, (lane(19, 2000),))
     crossings = threshold_crossings((before,), (after,), {"claude": 20})
@@ -86,8 +87,7 @@ def test_threshold_crossing_only_fires_downward_across_configured_boundary():
     assert crossings[0].remaining_percent == 19
     assert threshold_crossings((after,), (snapshot(1100, (lane(18, 2000),)),), {"claude": 20}) == ()
 
-
-def test_usage_totals_add_machine_local_usage_without_summing_quota_lanes():
+    # --- scenario: usage_totals_add_machine_local_usage_without_summing_quota_lanes
     first = snapshot(1000, (lane(40, 2000),))
     second = ProviderUsageSnapshot(
         provider_id="codex",
@@ -114,8 +114,7 @@ def test_usage_totals_add_machine_local_usage_without_summing_quota_lanes():
     assert totals.estimated_cost_usd == 5.5
     assert totals.cache_savings_usd == 1.0
 
-
-def test_codex_banked_credits_ride_evidence_into_the_snapshot():
+    # --- scenario: codex_banked_credits_ride_evidence_into_the_snapshot
     """rollout rate_limits carries {"credits": ...}; it must surface as
     credits_remaining, never as a phantom usage lane."""
     from jrbar.provider_usage_parsers import parse_codex_usage
@@ -148,7 +147,9 @@ def test_codex_banked_credits_ride_evidence_into_the_snapshot():
     assert all("credits_balance" not in window for window in empty)
 
 
-def test_reset_event_fires_on_a_replenishment_jump_despite_poisoned_clocks():
+
+def test_reset_event_fires_on_a_replenishment_jump_despite_poisoned_clocks__and_2_more() -> None:
+    # --- scenario: reset_event_fires_on_a_replenishment_jump_despite_poisoned_clocks
     """The live 2026-08-26 miss: one failed poll re-stamped observed_at
     past the reset boundary (select_authoritative_snapshot), so the
     timing detector could never see the crossing. A >= 50-point upward
@@ -164,8 +165,7 @@ def test_reset_event_fires_on_a_replenishment_jump_despite_poisoned_clocks():
     small = snapshot(2100, (lane(40, 19500),))
     assert detect_reset_events((before,), (small,), seen_event_ids=frozenset()) == ()
 
-
-def test_reconnect_outcome_reporter_tells_the_truth():
+    # --- scenario: reconnect_outcome_reporter_tells_the_truth
     """The click's banner can only describe the attempt; the OUTCOME
     arrives with the forced refresh. The reporter must say ready when
     ready and name the fix when the server still rejects."""
@@ -209,8 +209,7 @@ def test_reconnect_outcome_reporter_tells_the_truth():
     report_reconnect_outcome(controller, state, log=logs.append)
     assert controller._jrbar_reconnect_watch == ("grok", 100.0)
 
-
-def test_degraded_interlude_does_not_wipe_the_reset_baseline():
+    # --- scenario: degraded_interlude_does_not_wipe_the_reset_baseline
     """A vendor incident's degraded snapshot, published between two good
     readings, must not swallow the reset crossing (the owner's Codex
     refill went uncelebrated behind exactly that interlude)."""
@@ -234,6 +233,7 @@ def test_degraded_interlude_does_not_wipe_the_reset_baseline():
         baseline.snapshots, (recovered,), seen_event_ids=frozenset()
     )
     assert len(events) == 1, "the crossing survives the incident"
+
 
 
 def test_comparable_publish_replaces_the_baseline_and_absent_rows_persist():

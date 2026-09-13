@@ -457,9 +457,8 @@ def test_reveal_current_ask_fallback_preserves_in_flight_answer_attempt(
         release.set()
 
 
-def test_reveal_current_ask_reconciles_new_identity_without_action_side_effects(
-    controller,
-) -> None:
+def test_reveal_current_ask_reconciles_new_identity_without_action_side_effects__and_2_more(controller,) -> None:
+    # --- scenario: reveal_current_ask_reconciles_new_identity_without_action_side_effects
     first_work = _work("work:stale")
     first_request = _request("request:stale", first_work)
     first_status = _status(first_work, request=first_request)
@@ -514,10 +513,7 @@ def test_reveal_current_ask_reconciles_new_identity_without_action_side_effects(
     controller.sync_leds.assert_not_called()
     controller._hardware_write_worker.submit.assert_not_called()
 
-
-def test_controller_uses_only_current_snapshot_truth_and_projection_none_is_empty(
-    controller,
-) -> None:
+    # --- scenario: controller_uses_only_current_snapshot_truth_and_projection_none_is_empty
     work = _work("work:one")
     first = _request("request:first", work)
     second = _request("request:second", work)
@@ -538,10 +534,7 @@ def test_controller_uses_only_current_snapshot_truth_and_projection_none_is_empt
     assert plan.total_actionable_count == 1
     assert plan.alerts[0].question == "Current question"
 
-
-def test_controller_keeps_stable_order_and_selects_new_permission_without_reordering(
-    controller,
-) -> None:
+    # --- scenario: controller_keeps_stable_order_and_selects_new_permission_without_reordering
     work_a = _work("work:a")
     work_b = _work("work:b")
     work_c = _work("work:c")
@@ -576,6 +569,7 @@ def test_controller_keeps_stable_order_and_selects_new_permission_without_reorde
         status_b.agent_id,
     ]
     assert refreshed.alerts[refreshed.selected_index].agent_id == status_b.agent_id
+
 
 
 def test_one_work_owns_multiple_requests_and_exact_current_status_route_wins(
@@ -618,7 +612,8 @@ def test_one_work_owns_multiple_requests_and_exact_current_status_route_wins(
     controller.open_session.assert_called_once_with(exact_status, None, remember=False)
 
 
-def test_open_falls_back_to_current_owning_work_status_or_is_disabled(controller) -> None:
+def test_open_falls_back_to_current_owning_work_status_or_is_disabled__and_2_more(controller) -> None:
+    # --- scenario: open_falls_back_to_current_owning_work_status_or_is_disabled
     work = _work("work:one")
     request = _request("request:one", work)
     canonical = _canonical(((request, RequestKind.PERMISSION),))
@@ -651,8 +646,7 @@ def test_open_falls_back_to_current_owning_work_status_or_is_disabled(controller
     assert controller._announcer_stack_state.generation == before + 1
     controller.open_session.assert_called_once()
 
-
-def test_open_fallback_rejects_another_agent_with_the_same_work_key(controller) -> None:
+    # --- scenario: open_fallback_rejects_another_agent_with_the_same_work_key
     work = _work("work:shared")
     request = _request("request:one", work)
     canonical = _canonical(((request, RequestKind.PERMISSION),))
@@ -674,8 +668,7 @@ def test_open_fallback_rejects_another_agent_with_the_same_work_key(controller) 
     )
     controller.open_session.assert_not_called()
 
-
-def test_open_fallback_rejects_non_actionable_current_status_for_owner(controller) -> None:
+    # --- scenario: open_fallback_rejects_non_actionable_current_status_for_owner
     work = _work("work:one")
     request = _request("request:one", work)
     canonical = _canonical(((request, RequestKind.PERMISSION),))
@@ -701,6 +694,7 @@ def test_open_fallback_rejects_non_actionable_current_status_for_owner(controlle
         )
     )
     controller.open_session.assert_not_called()
+
 
 
 @pytest.mark.parametrize(
@@ -745,9 +739,8 @@ def test_open_fallback_accepts_current_owning_plan_and_review_asks(
     )
 
 
-def test_presentation_intents_resync_only_typed_announcer_and_stale_intent_is_noop(
-    controller,
-) -> None:
+def test_presentation_intents_resync_only_typed_announcer_and_stale_intent_is_noop__and_1_more(controller,) -> None:
+    # --- scenario: presentation_intents_resync_only_typed_announcer_and_stale_intent_is_noop
     work_a = _work("work:a")
     work_b = _work("work:b")
     request_a = _request("request:a", work_a)
@@ -801,10 +794,7 @@ def test_presentation_intents_resync_only_typed_announcer_and_stale_intent_is_no
     controller.sync_leds.assert_not_called()
     controller._hardware_write_worker.submit.assert_not_called()
 
-
-def test_mark_seen_is_screen_bar_local_then_resolution_and_new_request_reconcile(
-    controller,
-) -> None:
+    # --- scenario: mark_seen_is_screen_bar_local_then_resolution_and_new_request_reconcile
     work_a = _work("work:a")
     work_b = _work("work:b")
     request_a = _request("request:a", work_a)
@@ -885,6 +875,7 @@ def test_mark_seen_is_screen_bar_local_then_resolution_and_new_request_reconcile
     controller.sync_leds.assert_called_once()
 
 
+
 def test_screen_bar_receives_current_capability_gated_answer_plan(controller) -> None:
     work = _work("work:answer")
     request = _request("request:answer", work)
@@ -932,9 +923,8 @@ def test_missing_live_answer_handler_fails_closed_to_jump(controller) -> None:
     assert answer_plan.status_text == "Answer handler unavailable"
 
 
-def test_screen_bar_answer_runs_exact_route_without_acknowledgement_side_effects(
-    controller,
-) -> None:
+def test_screen_bar_answer_runs_exact_route_without_acknowledgement_side_effects__and_2_more(controller,) -> None:
+    # --- scenario: screen_bar_answer_runs_exact_route_without_acknowledgement_side_effects
     work = _work("work:isolated")
     request = _request("request:isolated", work)
     status = _status(work, request=request)
@@ -976,10 +966,7 @@ def test_screen_bar_answer_runs_exact_route_without_acknowledgement_side_effects
     controller.sync_leds.assert_not_called()
     controller._hardware_write_worker.submit.assert_not_called()
 
-
-def test_agent_browser_answer_payload_uses_identity_generation_and_capability_fences(
-    controller,
-) -> None:
+    # --- scenario: agent_browser_answer_payload_uses_identity_generation_and_capability_fences
     work = _work("work:browser")
     request = _request("request:browser", work)
     status = _status(work, request=request)
@@ -1024,10 +1011,7 @@ def test_agent_browser_answer_payload_uses_identity_generation_and_capability_fe
         (invocation, RequestKind.PERMISSION, AnswerActionKind.APPROVE, None)
     ]
 
-
-def test_agent_browser_jump_opens_exact_route_without_scheduling_answer_work(
-    controller,
-) -> None:
+    # --- scenario: agent_browser_jump_opens_exact_route_without_scheduling_answer_work
     work = _work("work:jump")
     request = _request("request:jump", work)
     status = _status(work, request=request)
@@ -1053,6 +1037,7 @@ def test_agent_browser_jump_opens_exact_route_without_scheduling_answer_work(
     controller.answer_runtime.submit.assert_not_called()
     controller.answer_runtime.retry.assert_not_called()
     controller.answer_runtime.cancel.assert_not_called()
+
 
 
 def test_canonical_resolution_clears_answer_before_late_provider_completion(
@@ -1094,7 +1079,8 @@ def test_canonical_resolution_clears_answer_before_late_provider_completion(
     release.set()
 
 
-def test_noop_screen_refresh_and_browser_share_one_request_attempt(controller) -> None:
+def test_noop_screen_refresh_and_browser_share_one_request_attempt__and_1_more(controller) -> None:
+    # --- scenario: noop_screen_refresh_and_browser_share_one_request_attempt
     work = _work("work:stable-attempt")
     request = _request("request:stable-attempt", work)
     status = _status(work, request=request)
@@ -1174,8 +1160,7 @@ def test_noop_screen_refresh_and_browser_share_one_request_attempt(controller) -
     ).state is AnswerAttemptState.CANCELLED
     release.set()
 
-
-def test_shutdown_closes_answer_runtime_before_virtual_surface(controller) -> None:
+    # --- scenario: shutdown_closes_answer_runtime_before_virtual_surface
     order: list[str] = []
     controller.answer_runtime.close = MagicMock(
         side_effect=lambda **_kwargs: order.append("answer-runtime") or True
@@ -1195,6 +1180,7 @@ def test_shutdown_closes_answer_runtime_before_virtual_surface(controller) -> No
 
     controller.answer_runtime.close.assert_called_once_with(timeout_seconds=1.0)
     assert order.index("answer-runtime") < order.index("virtual-device")
+
 
 
 def test_shutdown_logs_when_answer_handler_outlives_close_budget(

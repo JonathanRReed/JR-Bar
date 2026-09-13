@@ -14,7 +14,8 @@ def _unexpected_boundary(*_args, **_kwargs):
     raise AssertionError("trusted Claude quota normalization crossed an I/O boundary")
 
 
-def test_remote_claude_quota_fails_closed_without_credentials_or_network() -> None:
+def test_remote_claude_quota_fails_closed_without_credentials_or_network__and_2_more() -> None:
+    # --- scenario: remote_claude_quota_fails_closed_without_credentials_or_network
     with (
         patch.object(Path, "read_text", side_effect=_unexpected_boundary),
         patch.object(subprocess, "run", side_effect=_unexpected_boundary),
@@ -26,8 +27,7 @@ def test_remote_claude_quota_fails_closed_without_credentials_or_network() -> No
         ):
             claude_quota.fetch_windows()
 
-
-def test_remote_claude_quota_has_no_hidden_access_token_route() -> None:
+    # --- scenario: remote_claude_quota_has_no_hidden_access_token_route
     with (
         patch.object(Path, "read_text", side_effect=_unexpected_boundary),
         patch.object(subprocess, "run", side_effect=_unexpected_boundary),
@@ -36,8 +36,7 @@ def test_remote_claude_quota_has_no_hidden_access_token_route() -> None:
         with pytest.raises(TypeError):
             claude_quota.fetch_windows(token="must-not-be-accepted")
 
-
-def test_explicit_claude_evidence_normalization_is_pure_and_bounded() -> None:
+    # --- scenario: explicit_claude_evidence_normalization_is_pure_and_bounded
     payload = {
         "five_hour": {"utilization": 25, "resets_at": "2026-08-12T18:00:00Z"},
         "seven_day": {"utilization": 50},
@@ -62,6 +61,7 @@ def test_explicit_claude_evidence_normalization_is_pure_and_bounded() -> None:
         "weekly",
         "Opus only",
     ]
+
 
 
 def test_untrusted_claude_labels_and_unbounded_lanes_are_not_forwarded() -> None:

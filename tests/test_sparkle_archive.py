@@ -149,7 +149,8 @@ def test_package_archive_surfaces_missing_tool_failure_and_missing_output(
     assert not output.exists()
 
 
-def test_package_archive_cli_accepts_exact_builder_contract(tmp_path: Path) -> None:
+def test_package_archive_cli_accepts_exact_builder_contract__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: package_archive_cli_accepts_exact_builder_contract
     app = _app_bundle(tmp_path)
     output = tmp_path / "dist" / "JR-Bar-0.5.0.zip"
     output.parent.mkdir()
@@ -172,8 +173,7 @@ def test_package_archive_cli_accepts_exact_builder_contract(tmp_path: Path) -> N
     assert result.stdout.strip() == str(output)
     assert output.is_file()
 
-
-def test_validate_archive_rejects_an_escaping_symlink_target(tmp_path: Path) -> None:
+    # --- scenario: validate_archive_rejects_an_escaping_symlink_target
     package_sparkle_archive = _module()
     archive = tmp_path / "JR-Bar-0.5.0.zip"
     with zipfile.ZipFile(archive, mode="w") as bundle_zip:
@@ -188,3 +188,4 @@ def test_validate_archive_rejects_an_escaping_symlink_target(tmp_path: Path) -> 
 
     with pytest.raises(package_sparkle_archive.SparkleArchiveError, match="escaping symlink"):
         package_sparkle_archive.validate_archive(archive=archive)
+

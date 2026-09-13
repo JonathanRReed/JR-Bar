@@ -159,7 +159,8 @@ def test_grok_missing_login_is_actionable(tmp_path: Path):
     assert result.action_label == "Run grok login"
 
 
-def test_antigravity_uses_configured_loopback_endpoint():
+def test_antigravity_uses_configured_loopback_endpoint__and_2_more() -> None:
+    # --- scenario: antigravity_uses_configured_loopback_endpoint
     http = FixtureHttp(
         [
             {
@@ -189,8 +190,7 @@ def test_antigravity_uses_configured_loopback_endpoint():
     assert result.lanes[0].label == "Gemini Weekly"
     assert "RetrieveUserQuotaSummary" in http.calls[0][1]
 
-
-def test_antigravity_allows_http_loopback_and_discovers_dynamically():
+    # --- scenario: antigravity_allows_http_loopback_and_discovers_dynamically
     payload = {
         "response": {
             "groups": [
@@ -242,8 +242,7 @@ def test_antigravity_allows_http_loopback_and_discovers_dynamically():
     assert "http://127.0.0.1:44556" in http2.calls[0][1]
     assert http2.calls[0][2]["X-Codeium-Csrf-Token"] == "testcsrf123"
 
-
-def test_antigravity_multi_port_discovery_tries_candidate_ports():
+    # --- scenario: antigravity_multi_port_discovery_tries_candidate_ports
     payload = {
         "response": {
             "groups": [
@@ -312,7 +311,9 @@ def test_antigravity_multi_port_discovery_tries_candidate_ports():
     assert "Claude + GPT 5-Hour" in labels
 
 
-def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process():
+
+def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process__and_2_more() -> None:
+    # --- scenario: antigravity_endpoint_cache_reuses_only_the_same_verified_process
     import jrbar.provider_usage_collectors as puc
 
     puc._cached_antigravity_connection.clear()
@@ -357,8 +358,7 @@ def test_antigravity_endpoint_cache_reuses_only_the_same_verified_process():
     assert "http://127.0.0.1:9999" in called_urls[0]
     puc._cached_antigravity_connection.clear()
 
-
-def test_antigravity_discovery_rejects_process_name_spoof_before_http():
+    # --- scenario: antigravity_discovery_rejects_process_name_spoof_before_http
     def runner(args, _timeout):
         if args[0] == "ps":
             return "12345 /tmp/language_server --csrf_token attacker\n"
@@ -379,8 +379,7 @@ def test_antigravity_discovery_rejects_process_name_spoof_before_http():
     assert result.state.value == "source_not_found"
     assert http_calls == []
 
-
-def test_antigravity_cache_is_dropped_when_pid_identity_changes():
+    # --- scenario: antigravity_cache_is_dropped_when_pid_identity_changes
     import jrbar.provider_usage_collectors as puc
 
     old_identity = (
@@ -414,7 +413,9 @@ def test_antigravity_cache_is_dropped_when_pid_identity_changes():
     assert puc._cached_antigravity_connection == {}
 
 
-def test_openai_admin_usage_uses_official_organization_endpoints():
+
+def test_openai_admin_usage_uses_official_organization_endpoints__and_2_more() -> None:
+    # --- scenario: openai_admin_usage_uses_official_organization_endpoints
     http = FixtureHttp(
         [
             {
@@ -442,8 +443,7 @@ def test_openai_admin_usage_uses_official_organization_endpoints():
     assert "/v1/organization/usage/completions" in http.calls[0][1]
     assert "/v1/organization/costs" in http.calls[1][1]
 
-
-def test_http_unauthorized_maps_to_sign_in_required():
+    # --- scenario: http_unauthorized_maps_to_sign_in_required
     result = collect_devin(
         preference("devin", options={"organization": "org_fixture"}),
         observed_at=1000,
@@ -453,8 +453,7 @@ def test_http_unauthorized_maps_to_sign_in_required():
     assert result.state.value == "needs_sign_in"
     assert result.reason_code == "authentication_required"
 
-
-def test_devin_sends_the_org_header_the_endpoint_actually_requires():
+    # --- scenario: devin_sends_the_org_header_the_endpoint_actually_requires
     """A valid session token alone returns 401. Confirmed live against a
     real account: the request only authenticates when it also carries
     x-cog-org-id, which is why "Import" could appear to succeed and the
@@ -479,7 +478,9 @@ def test_devin_sends_the_org_header_the_endpoint_actually_requires():
     assert "%2F" not in url
 
 
-def test_devin_browser_setting_requires_an_explicit_import_before_collection():
+
+def test_devin_browser_setting_requires_an_explicit_import_before_collection__and_2_more() -> None:
+    # --- scenario: devin_browser_setting_requires_an_explicit_import_before_collection
     http = FixtureHttp([])
     result = collect_devin(
         preference("devin", browser_sources=True),
@@ -491,8 +492,7 @@ def test_devin_browser_setting_requires_an_explicit_import_before_collection():
     assert result.action_label == "Import Devin browser session"
     assert http.calls == []
 
-
-def test_devin_without_browser_access_still_asks_for_consent_first():
+    # --- scenario: devin_without_browser_access_still_asks_for_consent_first
     result = collect_devin(
         preference("devin", browser_sources=False),
         observed_at=1000,
@@ -502,8 +502,7 @@ def test_devin_without_browser_access_still_asks_for_consent_first():
     assert result.state.value == "needs_consent"
     assert result.action_label == "Enable Devin browser access"
 
-
-def test_devin_uses_only_the_explicitly_imported_stored_session():
+    # --- scenario: devin_uses_only_the_explicitly_imported_stored_session
     http = FixtureHttp([{"daily_percentage": 10}])
     result = collect_devin(
         preference(
@@ -519,7 +518,9 @@ def test_devin_uses_only_the_explicitly_imported_stored_session():
     assert http.calls[0][2]["Authorization"] == "Bearer auth1_exact_import"
 
 
-def test_devin_uses_a_manual_stored_token_when_browser_sources_are_enabled():
+
+def test_devin_uses_a_manual_stored_token_when_browser_sources_are_enabled__and_2_more() -> None:
+    # --- scenario: devin_uses_a_manual_stored_token_when_browser_sources_are_enabled
     http = FixtureHttp([{"daily_percentage": 10}])
     result = collect_devin(
         preference(
@@ -534,8 +535,7 @@ def test_devin_uses_a_manual_stored_token_when_browser_sources_are_enabled():
     assert result.state.value == "ready"
     assert http.calls[0][2]["Authorization"] == "Bearer pasted-key"
 
-
-def test_codex_reading_that_stopped_moving_is_reported_stale():
+    # --- scenario: codex_reading_that_stopped_moving_is_reported_stale
     """Reported live as "why does it say 48 percent, it should be around
     96": the 48 was computed from a rollout written three days earlier.
     Codex quota is only as fresh as the newest rollout, and usage burned
@@ -564,8 +564,7 @@ def test_codex_reading_that_stopped_moving_is_reported_stale():
     assert result.lanes[0].remaining_percent == 48.0
     assert "ago" in result.action_label
 
-
-def test_a_fresh_codex_reading_is_not_flagged():
+    # --- scenario: a_fresh_codex_reading_is_not_flagged
     from jrbar.provider_usage_codex_claude import collect_codex
 
     now = 1_000_000.0
@@ -585,7 +584,9 @@ def test_a_fresh_codex_reading_is_not_flagged():
     assert result.action_label is None
 
 
-def test_antigravity_cli_fallback_when_server_not_running(tmp_path: Path):
+
+def test_antigravity_cli_fallback_when_server_not_running__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: antigravity_cli_fallback_when_server_not_running
     gemini_dir = tmp_path / ".gemini"
     gemini_dir.mkdir(parents=True)
     creds_file = gemini_dir / "oauth_creds.json"
@@ -602,8 +603,7 @@ def test_antigravity_cli_fallback_when_server_not_running(tmp_path: Path):
     assert len(result.lanes) == 1
     assert result.lanes[0].label == "Antigravity CLI"
 
-
-def test_opencode_collector_detects_free_tier_and_tokens(tmp_path: Path):
+    # --- scenario: opencode_collector_detects_free_tier_and_tokens
     root = tmp_path / ".local" / "share" / "opencode"
     root.mkdir(parents=True)
     auth_file = root / "auth.json"
@@ -630,3 +630,4 @@ def test_opencode_collector_detects_free_tier_and_tokens(tmp_path: Path):
     assert result.input_tokens == 500
     assert result.output_tokens == 100
     assert result.lanes[0].remaining_percent < 100.0
+

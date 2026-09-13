@@ -3,7 +3,8 @@ from __future__ import annotations
 from jrbar.core_state import CoreDomain, CoreStateStore, stable_digest
 
 
-def test_stable_digest_is_independent_of_mapping_and_set_order() -> None:
+def test_stable_digest_is_independent_of_mapping_and_set_order__and_1_more() -> None:
+    # --- scenario: stable_digest_is_independent_of_mapping_and_set_order
     first = {
         "mapping": {"z": 3, "a": 1, "m": 2},
         "set": {"codex", "claude", "cursor"},
@@ -15,8 +16,7 @@ def test_stable_digest_is_independent_of_mapping_and_set_order() -> None:
 
     assert stable_digest(first) == stable_digest(second)
 
-
-def test_equivalent_reordered_observation_does_not_advance_generation() -> None:
+    # --- scenario: equivalent_reordered_observation_does_not_advance_generation
     store = CoreStateStore()
     first = store.observe(
         {
@@ -39,3 +39,4 @@ def test_equivalent_reordered_observation_does_not_advance_generation() -> None:
     assert second.changed_domains == frozenset()
     assert second.from_generation == first.to_generation
     assert second.to_generation == first.to_generation
+

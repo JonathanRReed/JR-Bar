@@ -177,7 +177,8 @@ def _activity_item(menu):
 # --------------------------------------------------------------------------
 
 
-def test_the_ledger_is_bounded_by_entry_count_and_by_bytes() -> None:
+def test_the_ledger_is_bounded_by_entry_count_and_by_bytes__and_2_more() -> None:
+    # --- scenario: the_ledger_is_bounded_by_entry_count_and_by_bytes
     """A count cap alone cannot bound a file whose rows vary in size."""
     ledger = ActivityLedger()
     for index in range(400):
@@ -213,8 +214,7 @@ def test_the_ledger_is_bounded_by_entry_count_and_by_bytes() -> None:
     # oldest thing still on file".
     assert ledger.entries[0].occurred_at_epoch == NOW
 
-
-def test_a_small_ledger_is_bounded_by_the_entry_count() -> None:
+    # --- scenario: a_small_ledger_is_bounded_by_the_entry_count
     ledger = ActivityLedger()
     for index in range(400):
         ledger = record_activity(ledger, _entry(index, label="s"))
@@ -222,14 +222,15 @@ def test_a_small_ledger_is_bounded_by_the_entry_count() -> None:
     assert len(ledger.entries) == MAX_ACTIVITY_ENTRIES
     assert ledger.entries[0].occurred_at_epoch == NOW
 
-
-def test_the_same_fact_is_recorded_once() -> None:
+    # --- scenario: the_same_fact_is_recorded_once
     ledger = record_activity(ActivityLedger(), _entry())
     assert record_activity(ledger, _entry()) is ledger
     assert len(ledger.entries) == 1
 
 
-def test_two_facts_at_the_same_instant_both_survive() -> None:
+
+def test_two_facts_at_the_same_instant_both_survive__and_2_more() -> None:
+    # --- scenario: two_facts_at_the_same_instant_both_survive
     """Same timestamp, different sessions -- two events, not one."""
     ledger = record_activities(
         ActivityLedger(),
@@ -240,8 +241,7 @@ def test_two_facts_at_the_same_instant_both_survive() -> None:
     )
     assert len(ledger.entries) == 2
 
-
-def test_the_seen_watermark_only_moves_forward() -> None:
+    # --- scenario: the_seen_watermark_only_moves_forward
     """A clock that steps backwards must not mark read rows unread again."""
     ledger = mark_activity_seen(record_activity(ActivityLedger(), _entry()), NOW)
     assert ledger.unseen == ()
@@ -251,8 +251,7 @@ def test_the_seen_watermark_only_moves_forward() -> None:
     assert rewound.last_seen_epoch == NOW
     assert rewound.unseen == ()
 
-
-def test_unseen_is_strictly_after_the_watermark() -> None:
+    # --- scenario: unseen_is_strictly_after_the_watermark
     ledger = record_activities(
         ActivityLedger(),
         (_entry(60.0, subject_id="a"), _entry(0.0, subject_id="b")),
@@ -262,15 +261,16 @@ def test_unseen_is_strictly_after_the_watermark() -> None:
     assert [entry.subject_id for entry in marked.unseen] == ["b"]
 
 
-def test_relative_times_read_the_way_the_rest_of_the_menu_does() -> None:
+
+def test_relative_times_read_the_way_the_rest_of_the_menu_does__and_2_more() -> None:
+    # --- scenario: relative_times_read_the_way_the_rest_of_the_menu_does
     assert relative_age_label(0.0) == "just now"
     assert relative_age_label(59.0) == "just now"
     assert relative_age_label(4 * 60.0) == "4m ago"
     assert relative_age_label(2 * 3_600.0) == "2h ago"
     assert relative_age_label(3 * 24 * 3_600.0) == "3d ago"
 
-
-def test_a_row_names_the_session_what_happened_and_when() -> None:
+    # --- scenario: a_row_names_the_session_what_happened_and_when
     assert (
         activity_row_text(_entry(4 * 60.0), NOW)
         == "sidepulse-manager · finished · 4m ago"
@@ -297,13 +297,13 @@ def test_a_row_names_the_session_what_happened_and_when() -> None:
         == "Claude 5-hour · passed 90% · just now"
     )
 
-
-def test_a_display_name_with_control_characters_cannot_reach_a_row() -> None:
+    # --- scenario: a_display_name_with_control_characters_cannot_reach_a_row
     """Hook-supplied names have already arrived with newlines in them."""
     cleaned = safe_activity_text("evil\nname\twith\x00junk", 96)
 
     assert cleaned == "evil name with junk"
     assert ActivityEntry(ActivityKind.COMPLETED, NOW, cleaned, "claude").label == cleaned
+
 
 
 def test_an_unprintable_label_is_refused_rather_than_stored() -> None:
@@ -435,14 +435,14 @@ def test_trimming_activity_can_never_evict_a_delivery_receipt(
 # --------------------------------------------------------------------------
 
 
-def test_a_first_observation_is_never_news() -> None:
+def test_a_first_observation_is_never_news__and_2_more() -> None:
+    # --- scenario: a_first_observation_is_never_news
     """Launching the app must not manufacture a while-you-were-away list."""
     waiting = _status("claude:session:one", AgentMode.WAITING_FOR_INPUT)
 
     assert detect_attention_transitions({}, (waiting,), datetime.now(timezone.utc)) == ()
 
-
-def test_entering_an_ask_or_an_error_is_recorded_once() -> None:
+    # --- scenario: entering_an_ask_or_an_error_is_recorded_once
     now = datetime.now(timezone.utc)
     waiting = _status("claude:session:one", AgentMode.WAITING_FOR_INPUT, updated_at=now)
     blocked = _status("codex:session:two", AgentMode.BLOCKED_ERROR, updated_at=now)
@@ -463,8 +463,7 @@ def test_entering_an_ask_or_an_error_is_recorded_once() -> None:
     }
     assert detect_attention_transitions(settled, (waiting, blocked), now) == ()
 
-
-def test_a_sub_agent_asking_is_never_a_transition() -> None:
+    # --- scenario: a_sub_agent_asking_is_never_a_transition
     """Locked rule: sub-agents are never shown. 100+ per parent is normal."""
     now = datetime.now(timezone.utc)
     worker = _status(
@@ -481,6 +480,7 @@ def test_a_sub_agent_asking_is_never_a_transition() -> None:
     )
 
     assert fired == ()
+
 
 
 def test_an_ancient_transition_is_not_replayed_as_fresh() -> None:
@@ -705,7 +705,8 @@ def test_a_row_whose_session_is_gone_stays_visible_and_disabled(
     assert row.action() is None
 
 
-def test_the_ledger_survives_a_restart(controller) -> None:
+def test_the_ledger_survives_a_restart__and_1_more(controller) -> None:
+    # --- scenario: the_ledger_survives_a_restart
     """Persistence is the whole point: "while I was gone" outlives a relaunch."""
     target, status_bar, path = controller
     working = _status("claude:session:one", AgentMode.WORKING, event_name="PreToolUse")
@@ -723,8 +724,7 @@ def test_the_ledger_survives_a_restart(controller) -> None:
     ]
     assert restarted.activity_ledger.entries[0].label == "sidepulse-manager"
 
-
-def test_the_menu_rebuilds_when_the_ledger_changes(controller) -> None:
+    # --- scenario: the_menu_rebuilds_when_the_ledger_changes
     """Otherwise the section renders once and then freezes for 30 seconds."""
     target, status_bar, _path = controller
     target.status_bar_devices = lambda *args, **kwargs: []
@@ -750,9 +750,9 @@ def test_the_menu_rebuilds_when_the_ledger_changes(controller) -> None:
     assert after != seen
 
 
-def test_a_ledger_that_cannot_be_read_is_an_empty_section_not_a_crash(
-    controller,
-) -> None:
+
+def test_a_ledger_that_cannot_be_read_is_an_empty_section_not_a_crash__and_1_more(controller,) -> None:
+    # --- scenario: a_ledger_that_cannot_be_read_is_an_empty_section_not_a_crash
     target, status_bar, path = controller
     path.write_text("{not json", encoding="utf-8")
 
@@ -761,10 +761,7 @@ def test_a_ledger_that_cannot_be_read_is_an_empty_section_not_a_crash(
     assert _activity_item(menu) is None
     assert target.activity_ledger == ActivityLedger()
 
-
-def test_malformed_away_summary_input_falls_back_to_legacy_activity_menu(
-    controller,
-) -> None:
+    # --- scenario: malformed_away_summary_input_falls_back_to_legacy_activity_menu
     target, status_bar, _path = controller
     target.settings = replace(target.settings, operator_history_retention_days=7)
     target.operator_history_store = SimpleNamespace(state="not-history")
@@ -778,6 +775,7 @@ def test_malformed_away_summary_input_falls_back_to_legacy_activity_menu(
 
     assert item is not None
     assert item.title() == "Since you left · 1"
+
 
 
 # --------------------------------------------------------------------------

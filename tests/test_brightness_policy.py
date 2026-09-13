@@ -19,7 +19,8 @@ def _names(trace: tuple[BrightnessTraceStep, ...]) -> tuple[str, ...]:
     return tuple(step.name for step in trace)
 
 
-def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer() -> None:
+def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer__and_2_more() -> None:
+    # --- scenario: brightness_policy_import_does_not_pull_the_legacy_led_renderer
     probe = (
         "import json, sys\n"
         "import jrbar.brightness_policy\n"
@@ -37,8 +38,7 @@ def test_brightness_policy_import_does_not_pull_the_legacy_led_renderer() -> Non
     assert '"jrbar._led_status_legacy"' not in result.stdout
     assert '"jrbar.led_status"' not in result.stdout
 
-
-def test_ambient_brightness_preserves_the_current_factor_order() -> None:
+    # --- scenario: ambient_brightness_preserves_the_current_factor_order
     result = plan_ambient_brightness(
         base_brightness=200,
         idle_factor=0.5,
@@ -73,8 +73,7 @@ def test_ambient_brightness_preserves_the_current_factor_order() -> None:
         ),
     )
 
-
-def test_ambient_brightness_applies_escalation_floor_before_screen_bar_floor() -> None:
+    # --- scenario: ambient_brightness_applies_escalation_floor_before_screen_bar_floor
     result = plan_ambient_brightness(
         base_brightness=10,
         idle_factor=0.1,
@@ -121,7 +120,9 @@ def test_ambient_brightness_applies_escalation_floor_before_screen_bar_floor() -
     )
 
 
-def test_ambient_brightness_applies_its_surface_floor_after_escalation() -> None:
+
+def test_ambient_brightness_applies_its_surface_floor_after_escalation__and_2_more() -> None:
+    # --- scenario: ambient_brightness_applies_its_surface_floor_after_escalation
     result = plan_ambient_brightness(
         base_brightness=1,
         idle_factor=0.1,
@@ -146,8 +147,7 @@ def test_ambient_brightness_applies_its_surface_floor_after_escalation() -> None
         after=61.0,
     )
 
-
-def test_compounded_ambient_dims_do_not_turn_an_on_surface_effectively_black() -> None:
+    # --- scenario: compounded_ambient_dims_do_not_turn_an_on_surface_effectively_black
     """Auto, idle, night, and Focus dimming may compose without disappearing."""
     result = plan_ambient_brightness(
         base_brightness=95,
@@ -164,8 +164,7 @@ def test_compounded_ambient_dims_do_not_turn_an_on_surface_effectively_black() -
     assert result.brightness == MIN_AMBIENT_VISIBLE_BRIGHTNESS == 61
     assert "ambient_visibility_floor" in _names(result.trace)
 
-
-def test_ambient_visibility_floor_recovers_from_tiny_automatic_base() -> None:
+    # --- scenario: ambient_visibility_floor_recovers_from_tiny_automatic_base
     result = plan_ambient_brightness(
         base_brightness=4,
         idle_factor=0.1,
@@ -180,7 +179,9 @@ def test_ambient_visibility_floor_recovers_from_tiny_automatic_base() -> None:
     assert result.brightness == MIN_AMBIENT_VISIBLE_BRIGHTNESS
 
 
-def test_screen_bar_floor_does_not_revive_an_explicit_zero() -> None:
+
+def test_screen_bar_floor_does_not_revive_an_explicit_zero__and_2_more() -> None:
+    # --- scenario: screen_bar_floor_does_not_revive_an_explicit_zero
     result = plan_ambient_brightness(
         base_brightness=10,
         idle_factor=1.0,
@@ -203,8 +204,7 @@ def test_screen_bar_floor_does_not_revive_an_explicit_zero() -> None:
         "normalize",
     )
 
-
-def test_signal_brightness_uses_only_configured_brightness_global_and_escalation() -> None:
+    # --- scenario: signal_brightness_uses_only_configured_brightness_global_and_escalation
     result = plan_signal_brightness(
         configured_brightness=200,
         global_factor=0.5,
@@ -229,8 +229,7 @@ def test_signal_brightness_uses_only_configured_brightness_global_and_escalation
         ),
     )
 
-
-def test_signal_brightness_focus_turn_off_wins() -> None:
+    # --- scenario: signal_brightness_focus_turn_off_wins
     result = plan_signal_brightness(
         configured_brightness=200,
         global_factor=0.5,
@@ -249,38 +248,34 @@ def test_signal_brightness_focus_turn_off_wins() -> None:
     )
 
 
-@pytest.mark.parametrize("configured_brightness", [0, -1])
-def test_signal_brightness_keeps_the_existing_minimum_one_floor_when_not_blocked(
-    configured_brightness: int,
-) -> None:
-    result = plan_signal_brightness(
-        configured_brightness=configured_brightness,
-        global_factor=0.5,
-        escalation_boost=1.0,
-        focus_scale=1.0,
-    )
 
-    assert result.brightness == 1
-    assert result.trace[-2].name == "minimum_signal_visibility"
-    assert result.trace[-1].name == "normalize"
+def test_signal_brightness_keeps_the_existing_minimum_one_floor_when_not_blocked__and_2_more() -> None:
+    # --- scenario: signal_brightness_keeps_the_existing_minimum_one_floor_when_not_blocked
+    for configured_brightness in [0, -1]:
+        result = plan_signal_brightness(
+            configured_brightness=configured_brightness,
+            global_factor=0.5,
+            escalation_boost=1.0,
+            focus_scale=1.0,
+        )
 
+        assert result.brightness == 1
+        assert result.trace[-2].name == "minimum_signal_visibility"
+        assert result.trace[-1].name == "normalize"
 
-@pytest.mark.parametrize("focus_scale", [0.0, -0.1])
-def test_signal_brightness_nonpositive_focus_scale_forces_zero(
-    focus_scale: float,
-) -> None:
-    result = plan_signal_brightness(
-        configured_brightness=200,
-        global_factor=1.0,
-        escalation_boost=2.0,
-        focus_scale=focus_scale,
-    )
+    # --- scenario: signal_brightness_nonpositive_focus_scale_forces_zero
+    for focus_scale in [0.0, -0.1]:
+        result = plan_signal_brightness(
+            configured_brightness=200,
+            global_factor=1.0,
+            escalation_boost=2.0,
+            focus_scale=focus_scale,
+        )
 
-    assert result.brightness == 0
-    assert _names(result.trace) == ("focus_turn_off", "normalize")
+        assert result.brightness == 0
+        assert _names(result.trace) == ("focus_turn_off", "normalize")
 
-
-def test_dnd_dim_scales_ambient_before_escalation_and_visibility_floors() -> None:
+    # --- scenario: dnd_dim_scales_ambient_before_escalation_and_visibility_floors
     result = plan_ambient_brightness(
         base_brightness=200,
         idle_factor=1.0,
@@ -312,7 +307,9 @@ def test_dnd_dim_scales_ambient_before_escalation_and_visibility_floors() -> Non
     )
 
 
-def test_dnd_dark_zero_is_authoritative_over_every_ambient_floor() -> None:
+
+def test_dnd_dark_zero_is_authoritative_over_every_ambient_floor__and_2_more() -> None:
+    # --- scenario: dnd_dark_zero_is_authoritative_over_every_ambient_floor
     result = plan_ambient_brightness(
         base_brightness=200,
         idle_factor=1.0,
@@ -336,8 +333,7 @@ def test_dnd_dark_zero_is_authoritative_over_every_ambient_floor() -> None:
         "normalize",
     )
 
-
-def test_dnd_dim_scales_signal_brightness_before_escalation_floor() -> None:
+    # --- scenario: dnd_dim_scales_signal_brightness_before_escalation_floor
     result = plan_signal_brightness(
         configured_brightness=200,
         global_factor=0.5,
@@ -356,8 +352,7 @@ def test_dnd_dim_scales_signal_brightness_before_escalation_floor() -> None:
         "normalize",
     )
 
-
-def test_dnd_dark_zero_is_authoritative_over_signal_visibility_floor() -> None:
+    # --- scenario: dnd_dark_zero_is_authoritative_over_signal_visibility_floor
     result = plan_signal_brightness(
         configured_brightness=200,
         global_factor=1.0,
@@ -375,34 +370,29 @@ def test_dnd_dark_zero_is_authoritative_over_signal_visibility_floor() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("base_brightness", "expected"),
-    [(61.6, 62), (300.0, 255), (-4.0, 0)],
-)
-def test_ambient_brightness_trace_exposes_final_rounding_and_clamping(
-    base_brightness: float,
-    expected: int,
-) -> None:
-    result = plan_ambient_brightness(
-        base_brightness=base_brightness,
-        idle_factor=1.0,
-        focus_factor=1.0,
-        night_factor=1.0,
-        global_factor=1.0,
-        escalation_boost=1.0,
-        is_screen_bar=False,
-        screen_bar_min_glow=0.25,
-    )
 
-    assert result.brightness == expected
-    assert result.trace[-1] == BrightnessTraceStep(
-        "normalize",
-        before=base_brightness,
-        after=float(expected),
-    )
+def test_ambient_brightness_trace_exposes_final_rounding_and_clamping__and_2_more() -> None:
+    # --- scenario: ambient_brightness_trace_exposes_final_rounding_and_clamping
+    for base_brightness, expected in [(61.6, 62), (300.0, 255), (-4.0, 0)]:
+        result = plan_ambient_brightness(
+            base_brightness=base_brightness,
+            idle_factor=1.0,
+            focus_factor=1.0,
+            night_factor=1.0,
+            global_factor=1.0,
+            escalation_boost=1.0,
+            is_screen_bar=False,
+            screen_bar_min_glow=0.25,
+        )
 
+        assert result.brightness == expected
+        assert result.trace[-1] == BrightnessTraceStep(
+            "normalize",
+            before=base_brightness,
+            after=float(expected),
+        )
 
-def test_sleep_dims_the_shared_brightness_intent_without_turning_it_off() -> None:
+    # --- scenario: sleep_dims_the_shared_brightness_intent_without_turning_it_off
     result = plan_ambient_brightness(
         base_brightness=255,
         idle_factor=1.0,
@@ -419,8 +409,7 @@ def test_sleep_dims_the_shared_brightness_intent_without_turning_it_off() -> Non
     sleep_step = next(step for step in result.trace if step.name == "sleep_dim")
     assert sleep_step.factor > 0.0
 
-
-def test_idle_auto_off_is_separate_and_authoritative_over_visibility_floors() -> None:
+    # --- scenario: idle_auto_off_is_separate_and_authoritative_over_visibility_floors
     result = plan_ambient_brightness(
         base_brightness=255,
         idle_factor=0.3,
@@ -436,3 +425,4 @@ def test_idle_auto_off_is_separate_and_authoritative_over_visibility_floors() ->
 
     assert result.brightness == 0
     assert _names(result.trace) == ("base", "idle_auto_off", "normalize")
+

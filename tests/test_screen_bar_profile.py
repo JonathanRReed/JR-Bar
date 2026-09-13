@@ -139,9 +139,8 @@ def test_runtime_export_is_explicit_and_writes_one_private_profile(
     assert output.stat().st_mode & 0o777 == 0o600
 
 
-def test_runtime_export_does_nothing_without_explicit_opt_in(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_runtime_export_does_nothing_without_explicit_opt_in__and_1_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: runtime_export_does_nothing_without_explicit_opt_in
     from jrbar import virtual_device
 
     monkeypatch.delenv("JRBAR_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
@@ -151,10 +150,8 @@ def test_runtime_export_does_nothing_without_explicit_opt_in(
     assert device._profile_tracker is None
     assert device._write_profile_if_requested() is None
 
-
-def test_termination_quiesces_frame_and_sampler_work_before_snapshot(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: termination_quiesces_frame_and_sampler_work_before_snapshot
+    monkeypatch.undo()
     from jrbar import virtual_device
 
     monkeypatch.delenv("JRBAR_SCREEN_BAR_PROFILE_OUTPUT", raising=False)
@@ -182,67 +179,58 @@ def test_termination_quiesces_frame_and_sampler_work_before_snapshot(
     ]
 
 
-def test_runtime_profile_rejects_impossible_counter_relationships() -> None:
+
+def test_runtime_profile_rejects_impossible_counter_relationships__and_1_more() -> None:
+    # --- scenario: runtime_profile_rejects_impossible_counter_relationships
     profile = _runtime_profile()
     profile["metrics"]["batch_successes"] = 2
 
     with pytest.raises(ProfileEvidenceError, match="batch successes"):
         validate_runtime_profile(profile)
 
-
-@pytest.mark.parametrize(
-    ("field", "value", "message"),
-    (
+    # --- scenario: runtime_profile_rejects_impossible_prefetch_counters
+    for field, value, message in (
         ("batch_cache_hits", 24, "cache hits"),
         ("batch_invalidations", 2, "invalidations"),
         ("batch_truncations", 2, "truncations"),
-    ),
-)
-def test_runtime_profile_rejects_impossible_prefetch_counters(
-    field: str,
-    value: int,
-    message: str,
-) -> None:
-    profile = _runtime_profile()
-    profile["metrics"][field] = value
+    ):
+        profile = _runtime_profile()
+        profile["metrics"][field] = value
 
-    with pytest.raises(ProfileEvidenceError, match=message):
-        validate_runtime_profile(profile)
+        with pytest.raises(ProfileEvidenceError, match=message):
+            validate_runtime_profile(profile)
 
 
-@pytest.mark.parametrize("value", (-1.0, float("inf"), float("nan")))
-def test_instruments_profile_rejects_invalid_numeric_evidence(
-    tmp_path: Path,
-    value: float,
-) -> None:
-    trace = tmp_path / "static.trace"
-    trace.write_bytes(b"trace")
-    instruments = _instruments_metrics()
-    instruments["energy_impact"] = value
 
-    with pytest.raises(ProfileEvidenceError, match="energy_impact"):
-        create_instruments_profile(
-            root=tmp_path,
-            runtime=_runtime_profile(),
-            instruments=instruments,
-            trace=trace,
-        )
+def test_instruments_profile_rejects_invalid_numeric_evidence(tmp_path: Path) -> None:
+    for value in (-1.0, float("inf"), float("nan")):
+        trace = tmp_path / "static.trace"
+        trace.write_bytes(b"trace")
+        instruments = _instruments_metrics()
+        instruments["energy_impact"] = value
+
+        with pytest.raises(ProfileEvidenceError, match="energy_impact"):
+            create_instruments_profile(
+                root=tmp_path,
+                runtime=_runtime_profile(),
+                instruments=instruments,
+                trace=trace,
+            )
 
 
-def test_runtime_profile_cannot_pose_as_instruments_evidence() -> None:
+def test_runtime_profile_cannot_pose_as_instruments_evidence__and_2_more() -> None:
+    # --- scenario: runtime_profile_cannot_pose_as_instruments_evidence
     profile = _runtime_profile()
     profile["instruments"] = _instruments_metrics()
 
     with pytest.raises(ProfileEvidenceError, match="runtime profile fields"):
         validate_runtime_profile(profile)
 
-
-def test_dnd_profile_requires_observed_focus_state() -> None:
+    # --- scenario: dnd_profile_requires_observed_focus_state
     with pytest.raises(ProfileEvidenceError, match="active Focus"):
         _runtime_profile("dnd", focus_state="unknown")
 
-
-def test_profile_rejects_secret_shaped_text() -> None:
+    # --- scenario: profile_rejects_secret_shaped_text
     with pytest.raises(ProfileEvidenceError, match="secret"):
         metrics = PresentationMetrics().snapshot()
         create_runtime_profile(
@@ -260,6 +248,7 @@ def test_profile_rejects_secret_shaped_text() -> None:
             state_samples=60,
             state_violations=0,
         )
+
 
 
 def test_profile_tracker_rejects_a_late_focus_toggle() -> None:
@@ -298,7 +287,8 @@ def test_profile_tracker_rejects_a_late_focus_toggle() -> None:
         )
 
 
-def test_instruments_profile_rejects_a_symlinked_root(tmp_path: Path) -> None:
+def test_instruments_profile_rejects_a_symlinked_root__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: instruments_profile_rejects_a_symlinked_root
     real_root = tmp_path / "real"
     real_root.mkdir()
     trace = real_root / "static.trace"
@@ -314,8 +304,7 @@ def test_instruments_profile_rejects_a_symlinked_root(tmp_path: Path) -> None:
             trace=linked_root / "static.trace",
         )
 
-
-def test_matrix_rejects_every_missing_required_scenario(tmp_path: Path) -> None:
+    # --- scenario: matrix_rejects_every_missing_required_scenario
     profiles = [_complete_profile(tmp_path, scenario) for scenario in REQUIRED_SCENARIOS]
 
     for missing in REQUIRED_SCENARIOS:
@@ -325,8 +314,7 @@ def test_matrix_rejects_every_missing_required_scenario(tmp_path: Path) -> None:
                 profiles=[profile for profile in profiles if profile["scenario"] != missing],
             )
 
-
-def test_matrix_rehashes_and_rejects_a_substituted_trace(tmp_path: Path) -> None:
+    # --- scenario: matrix_rehashes_and_rejects_a_substituted_trace
     profiles = [_complete_profile(tmp_path, scenario) for scenario in REQUIRED_SCENARIOS]
     trace = tmp_path / "asking.trace"
     trace.write_bytes(b"substituted")
@@ -335,7 +323,9 @@ def test_matrix_rehashes_and_rejects_a_substituted_trace(tmp_path: Path) -> None
         build_profile_matrix(root=tmp_path, profiles=profiles)
 
 
-def test_complete_matrix_contains_each_scenario_once(tmp_path: Path) -> None:
+
+def test_complete_matrix_contains_each_scenario_once__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: complete_matrix_contains_each_scenario_once
     profiles = [_complete_profile(tmp_path, scenario) for scenario in REQUIRED_SCENARIOS]
 
     matrix = build_profile_matrix(root=tmp_path, profiles=profiles)
@@ -345,8 +335,7 @@ def test_complete_matrix_contains_each_scenario_once(tmp_path: Path) -> None:
     assert isinstance(matrix["matrix_id"], str)
     validate_profile_matrix(matrix, root=tmp_path)
 
-
-def test_matrix_rejects_a_tampered_runtime_capture(tmp_path: Path) -> None:
+    # --- scenario: matrix_rejects_a_tampered_runtime_capture
     profiles = [_complete_profile(tmp_path, scenario) for scenario in REQUIRED_SCENARIOS]
     tampered = copy.deepcopy(profiles)
     tampered[0]["runtime"]["environment"]["thermal"] = "critical"
@@ -354,8 +343,7 @@ def test_matrix_rejects_a_tampered_runtime_capture(tmp_path: Path) -> None:
     with pytest.raises(ProfileEvidenceError, match="capture id"):
         build_profile_matrix(root=tmp_path, profiles=tampered)
 
-
-def test_cli_finalizes_runtime_and_external_trace_evidence(tmp_path: Path) -> None:
+    # --- scenario: cli_finalizes_runtime_and_external_trace_evidence
     runtime_path = tmp_path / "runtime.json"
     instruments_path = tmp_path / "instruments.json"
     trace_path = tmp_path / "static.trace"
@@ -384,3 +372,4 @@ def test_cli_finalizes_runtime_and_external_trace_evidence(tmp_path: Path) -> No
     document = json.loads(output_path.read_text(encoding="utf-8"))
     assert document["kind"] == "instruments"
     assert document["trace"]["sha256"]
+

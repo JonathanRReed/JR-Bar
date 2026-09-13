@@ -51,7 +51,8 @@ def _community_pack() -> dict[str, object]:
     }
 
 
-def test_catalog_merges_installed_data_only_pack_with_license_metadata(tmp_path) -> None:
+def test_catalog_merges_installed_data_only_pack_with_license_metadata__and_1_more(tmp_path) -> None:
+    # --- scenario: catalog_merges_installed_data_only_pack_with_license_metadata
     store = EffectPackStore(tmp_path / "packs")
     assert store.install(_community_pack()).accepted
 
@@ -63,8 +64,7 @@ def test_catalog_merges_installed_data_only_pack_with_license_metadata(tmp_path)
     assert catalog.packs[0].source_url == "https://example.com/window-lab"
     assert catalog.store_status == "1 installed data-only pack"
 
-
-def test_preview_frame_is_stable_scenario_aware_and_motion_safe(tmp_path) -> None:
+    # --- scenario: preview_frame_is_stable_scenario_aware_and_motion_safe
     catalog = load_effect_studio_catalog(EffectPackStore(tmp_path / "packs"))
     row = next(row for row in catalog.rows if row.effect_id == "pulse")
     simulation = next(
@@ -110,6 +110,7 @@ def test_preview_frame_is_stable_scenario_aware_and_motion_safe(tmp_path) -> Non
     assert reduced_simulation.rendered_effect_id == "none"
 
 
+
 class _PhysicalPreviewRuntime:
     def __init__(self) -> None:
         self.started = []
@@ -145,7 +146,8 @@ class _PhysicalPreviewRuntime:
         return True
 
 
-def test_native_window_shows_four_surfaces_scenarios_and_guarded_hardware(tmp_path) -> None:
+def test_native_window_shows_four_surfaces_scenarios_and_guarded_hardware__and_2_more(tmp_path) -> None:
+    # --- scenario: native_window_shows_four_surfaces_scenarios_and_guarded_hardware
     store = EffectPackStore(tmp_path / "packs")
     store.install(_community_pack())
     controller = EffectStudioWindowController.alloc().init()
@@ -172,8 +174,7 @@ def test_native_window_shows_four_surfaces_scenarios_and_guarded_hardware(tmp_pa
     assert controller.table_view.numberOfRows() == len(controller.catalog.rows)
     assert "schema-validated" in controller.accessibility_field.stringValue()
 
-
-def test_native_window_ignores_stale_physical_preview_release_callback(tmp_path) -> None:
+    # --- scenario: native_window_ignores_stale_physical_preview_release_callback
     controller = EffectStudioWindowController.alloc().init()
     preview = _PhysicalPreviewRuntime()
     controller.open(
@@ -198,8 +199,7 @@ def test_native_window_ignores_stale_physical_preview_release_callback(tmp_path)
     assert controller._physical_preview_session_id is None
     assert controller.physical_preview_consent.state() == 0
 
-
-def test_search_filter_releases_preview_when_selection_changes(tmp_path) -> None:
+    # --- scenario: search_filter_releases_preview_when_selection_changes
     controller = EffectStudioWindowController.alloc().init()
     preview = _PhysicalPreviewRuntime()
     controller.open(
@@ -220,6 +220,7 @@ def test_search_filter_releases_preview_when_selection_changes(tmp_path) -> None
     assert controller.selected_effect_id == "rainbow"
     assert controller._physical_preview_session_id is None
     assert preview.released[-1].value == "selection_changed"
+
 
 
 def test_native_window_exposes_comparison_timeline_and_every_assignment_scope(
@@ -253,7 +254,8 @@ def test_native_window_exposes_comparison_timeline_and_every_assignment_scope(
     )
 
 
-def test_assignment_actions_persist_then_refresh_the_runtime_cache(tmp_path) -> None:
+def test_assignment_actions_persist_then_refresh_the_runtime_cache__and_2_more(tmp_path) -> None:
+    # --- scenario: assignment_actions_persist_then_refresh_the_runtime_cache
     assignment_store = EffectAssignmentStore(tmp_path / "assignments.json")
     cache = EffectAssignmentCache()
     controller = EffectStudioWindowController.alloc().init()
@@ -279,8 +281,7 @@ def test_assignment_actions_persist_then_refresh_the_runtime_cache(tmp_path) -> 
     assert cache.snapshot().assignments == ()
     assert controller.assignment_status_field.stringValue() == "Using default"
 
-
-def test_timeline_can_scrub_pause_replay_and_simulate_color_vision(tmp_path) -> None:
+    # --- scenario: timeline_can_scrub_pause_replay_and_simulate_color_vision
     controller = EffectStudioWindowController.alloc().init()
     controller.open(
         store=EffectPackStore(tmp_path / "packs"),
@@ -301,8 +302,7 @@ def test_timeline_can_scrub_pause_replay_and_simulate_color_vision(tmp_path) -> 
     assert controller.timeline_paused is True
     assert controller.timeline_slider.doubleValue() == 0.0
 
-
-def test_pack_management_actions_use_the_validated_owner_private_store(tmp_path) -> None:
+    # --- scenario: pack_management_actions_use_the_validated_owner_private_store
     source_store = EffectPackStore(tmp_path / "source-packs")
     source_store.install(_community_pack())
     import_path = tmp_path / "window-lab.json"
@@ -333,6 +333,7 @@ def test_pack_management_actions_use_the_validated_owner_private_store(tmp_path)
         "window-renamed",
     )
     assert export_path.read_bytes() == store.canonical_export("window-renamed")
+
 
 
 def test_native_studio_is_reachable_from_the_production_menu() -> None:

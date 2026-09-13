@@ -225,7 +225,8 @@ _ANSWER_LAYOUT_CASES = (
 )
 
 
-def test_collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open() -> None:
+def test_collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open__and_2_more() -> None:
+    # --- scenario: collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open
     """Removing the passive root or its open intent would make this fail."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -244,8 +245,7 @@ def test_collapsed_panel_is_passive_accessible_button_and_clicks_one_ask_open() 
         (AnnouncerStackAction.OPEN, plan.generation, plan.alerts[0].identity)
     ]
 
-
-def test_multiple_collapsed_asks_expand_and_key_commands_keep_projected_identity() -> None:
+    # --- scenario: multiple_collapsed_asks_expand_and_key_commands_keep_projected_identity
     """Wrong keyboard mapping or a live, post-reconcile identity would fail."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -284,8 +284,7 @@ def test_multiple_collapsed_asks_expand_and_key_commands_keep_projected_identity
         assert _signatures(received) == [(action, 23, plan.alerts[1].identity)]
         received.clear()
 
-
-def test_expanded_panel_uses_native_group_and_exact_button_labels() -> None:
+    # --- scenario: expanded_panel_uses_native_group_and_exact_button_labels
     """Replacing native controls or their spoken actions would make this fail."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -314,7 +313,9 @@ def test_expanded_panel_uses_native_group_and_exact_button_labels() -> None:
     assert 320.0 <= panel.window.frame().size.width <= 460.0
 
 
-def test_expanded_panel_renders_binary_answer_controls_without_changing_footer_controls() -> None:
+
+def test_expanded_panel_renders_binary_answer_controls_without_changing_footer_controls__and_2_more() -> None:
+    # --- scenario: expanded_panel_renders_binary_answer_controls_without_changing_footer_controls
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
@@ -340,8 +341,7 @@ def test_expanded_panel_renders_binary_answer_controls_without_changing_footer_c
         "Collapse Announcer",
     )
 
-
-def test_expanded_panel_renders_reply_send_cancel_retry_and_status_states() -> None:
+    # --- scenario: expanded_panel_renders_reply_send_cancel_retry_and_status_states
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     panel = AnnouncerStackPanel()
@@ -405,113 +405,90 @@ def test_expanded_panel_renders_reply_send_cancel_retry_and_status_states() -> N
         "Jump",
     )
 
-
-@pytest.mark.parametrize(
-    (
-        "case_name",
-        "state",
-        "actions",
-        "status_text",
-        "draft_text",
-        "can_edit_reply",
-        "can_send",
-        "can_cancel",
-        "expected_titles",
-    ),
-    _ANSWER_LAYOUT_CASES,
-    ids=tuple(case[0] for case in _ANSWER_LAYOUT_CASES),
-)
-def test_all_answer_states_use_a_nonoverlapping_native_row_and_coherent_key_order(
-    case_name: str,
-    state: AnswerAttemptState,
-    actions: tuple[AnswerActionKind, ...],
-    status_text: str | None,
-    draft_text: str,
-    can_edit_reply: bool,
-    can_send: bool,
-    can_cancel: bool,
-    expected_titles: tuple[str, ...],
-) -> None:
+    # --- scenario: all_answer_states_use_a_nonoverlapping_native_row_and_coherent_key_order
     """Every projected state must retain readable geometry and semantic order."""
-    from jrbar.announcer_stack_view import AnnouncerStackPanel
+    for case_name, state, actions, status_text, draft_text, can_edit_reply, can_send, can_cancel, expected_titles in _ANSWER_LAYOUT_CASES:
+        from jrbar.announcer_stack_view import AnnouncerStackPanel
 
-    panel = AnnouncerStackPanel()
-    panel.update(
-        _plan(AnnouncerStackVisibility.EXPANDED, count=2),
-        lambda _intent: None,
-        center_x=500.0,
-        top_y=700.0,
-        answer_plan=_answer_plan(
-            state=state,
-            draft_text=draft_text,
-            primary_actions=actions,
-            status_text=status_text,
-            can_edit_reply=can_edit_reply,
-            can_send=can_send,
-            can_cancel=can_cancel,
-        ),
-    )
+        panel = AnnouncerStackPanel()
+        panel.update(
+            _plan(AnnouncerStackVisibility.EXPANDED, count=2),
+            lambda _intent: None,
+            center_x=500.0,
+            top_y=700.0,
+            answer_plan=_answer_plan(
+                state=state,
+                draft_text=draft_text,
+                primary_actions=actions,
+                status_text=status_text,
+                can_edit_reply=can_edit_reply,
+                can_send=can_send,
+                can_cancel=can_cancel,
+            ),
+        )
 
-    visible_buttons = tuple(
-        button for button in panel.answer_buttons if not button.isHidden()
-    )
-    assert tuple(button.title() for button in visible_buttons) == expected_titles
-    assert panel.answer_reply_field.isHidden() is not can_edit_reply
-    assert panel.answer_reply_field.isEditable() is can_edit_reply
-    assert (
-        None
-        if panel.answer_status_field.isHidden()
-        else panel.answer_status_field.stringValue()
-    ) == status_text
+        visible_buttons = tuple(
+            button for button in panel.answer_buttons if not button.isHidden()
+        )
+        assert tuple(button.title() for button in visible_buttons) == expected_titles
+        assert panel.answer_reply_field.isHidden() is not can_edit_reply
+        assert panel.answer_reply_field.isEditable() is can_edit_reply
+        assert (
+            None
+            if panel.answer_status_field.isHidden()
+            else panel.answer_status_field.stringValue()
+        ) == status_text
 
-    visible_row = []
-    if not panel.answer_status_field.isHidden():
-        visible_row.append(panel.answer_status_field)
-    if not panel.answer_reply_field.isHidden():
-        visible_row.append(panel.answer_reply_field)
-    visible_row.extend(visible_buttons)
-    visible_row.sort(key=lambda view: view.frame().origin.x)
-    frames = tuple(view.frame() for view in visible_row)
-    assert frames
-    assert frames[0].origin.x >= 12.0
-    assert frames[-1].origin.x + frames[-1].size.width == 348.0
-    assert all(
-        following.origin.x - (current.origin.x + current.size.width) == 8.0
-        for current, following in pairwise(frames)
-    ), case_name
-    assert all(
-        0.0 <= frame.origin.y
-        and frame.origin.y + frame.size.height <= panel.root_view.bounds().size.height
-        for frame in frames
-    )
-    assert all(
-        button.intrinsicContentSize().width <= button.frame().size.width
-        for button in visible_buttons
-    )
+        visible_row = []
+        if not panel.answer_status_field.isHidden():
+            visible_row.append(panel.answer_status_field)
+        if not panel.answer_reply_field.isHidden():
+            visible_row.append(panel.answer_reply_field)
+        visible_row.extend(visible_buttons)
+        visible_row.sort(key=lambda view: view.frame().origin.x)
+        frames = tuple(view.frame() for view in visible_row)
+        assert frames
+        assert frames[0].origin.x >= 12.0
+        assert frames[-1].origin.x + frames[-1].size.width == 348.0
+        assert all(
+            following.origin.x - (current.origin.x + current.size.width) == 8.0
+            for current, following in pairwise(frames)
+        ), case_name
+        assert all(
+            0.0 <= frame.origin.y
+            and frame.origin.y + frame.size.height <= panel.root_view.bounds().size.height
+            for frame in frames
+        )
+        assert all(
+            button.intrinsicContentSize().width <= button.frame().size.width
+            for button in visible_buttons
+        )
 
-    focus_views = []
-    if can_edit_reply:
-        focus_views.append(panel.answer_reply_field)
-    focus_views.extend(button for button in visible_buttons if button.isEnabled())
-    focus_views.extend(button for button in panel.buttons if button.isEnabled())
-    assert panel._focus_views() == tuple(focus_views)
-    assert panel.root_view.nextKeyView() is focus_views[0]
-    for current, following in pairwise(focus_views):
-        assert current.nextKeyView() is following
-    assert focus_views[-1].nextKeyView() is focus_views[0]
+        focus_views = []
+        if can_edit_reply:
+            focus_views.append(panel.answer_reply_field)
+        focus_views.extend(button for button in visible_buttons if button.isEnabled())
+        focus_views.extend(button for button in panel.buttons if button.isEnabled())
+        assert panel._focus_views() == tuple(focus_views)
+        assert panel.root_view.nextKeyView() is focus_views[0]
+        for current, following in pairwise(focus_views):
+            assert current.nextKeyView() is following
+        assert focus_views[-1].nextKeyView() is focus_views[0]
 
-    detail = panel.detail_field.frame()
-    footer_top = max(
-        button.frame().origin.y + button.frame().size.height for button in panel.buttons
-    )
-    answer_bottom = min(frame.origin.y for frame in frames)
-    question_bottom = panel.question_field.frame().origin.y
-    assert footer_top <= detail.origin.y
-    assert detail.origin.y + detail.size.height <= answer_bottom
-    assert max(frame.origin.y + frame.size.height for frame in frames) <= question_bottom
+        detail = panel.detail_field.frame()
+        footer_top = max(
+            button.frame().origin.y + button.frame().size.height for button in panel.buttons
+        )
+        answer_bottom = min(frame.origin.y for frame in frames)
+        question_bottom = panel.question_field.frame().origin.y
+        assert footer_top <= detail.origin.y
+        assert detail.origin.y + detail.size.height <= answer_bottom
+        assert max(frame.origin.y + frame.size.height for frame in frames) <= question_bottom
 
 
-def test_stale_answer_control_cannot_emit_after_reconciliation() -> None:
+
+def test_stale_answer_control_cannot_emit_after_reconciliation__and_2_more() -> None:
+    # --- scenario: stale_answer_control_cannot_emit_after_reconciliation
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
     received = []
@@ -548,7 +525,7 @@ def test_stale_answer_control_cannot_emit_after_reconciliation() -> None:
 
     assert received == []
 
-def test_real_native_open_control_emits_its_projected_intent() -> None:
+    # --- scenario: real_native_open_control_emits_its_projected_intent
     """A button disconnected from its native action would make this fail."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -561,8 +538,7 @@ def test_real_native_open_control_emits_its_projected_intent() -> None:
         (AnnouncerStackAction.OPEN, 29, plan.alerts[0].identity)
     ]
 
-
-def test_hidden_or_suppressed_plan_hides_and_resigns_key_status() -> None:
+    # --- scenario: hidden_or_suppressed_plan_hides_and_resigns_key_status
     """Leaving a key panel visible after suppression would make this fail."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -577,6 +553,7 @@ def test_hidden_or_suppressed_plan_hides_and_resigns_key_status() -> None:
     assert panel.visibility is AnnouncerStackVisibility.HIDDEN
     assert not panel.window.isVisible()
     assert not panel.window.canBecomeKeyWindow()
+
 
 
 def test_reconciled_panel_rejects_a_stale_native_button() -> None:
@@ -692,7 +669,8 @@ def test_headless_suppression_blocks_pointer_authorized_key_acquisition(
     assert panel.window.firstResponder() is not panel.expanded_view
 
 
-def test_collapsed_reconciliation_revokes_pointer_authorization_before_later_expansion() -> None:
+def test_collapsed_reconciliation_revokes_pointer_authorization_before_later_expansion__and_2_more() -> None:
+    # --- scenario: collapsed_reconciliation_revokes_pointer_authorization_before_later_expansion
     """A later programmatic expansion needs a fresh collapsed pointer click."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -723,8 +701,7 @@ def test_collapsed_reconciliation_revokes_pointer_authorization_before_later_exp
     )
     assert not panel.window.canBecomeKeyWindow()
 
-
-def test_suppressed_retained_control_cannot_emit_an_intent() -> None:
+    # --- scenario: suppressed_retained_control_cannot_emit_an_intent
     """A queued control must be inert as soon as presentation is suppressed."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -741,8 +718,7 @@ def test_suppressed_retained_control_cannot_emit_an_intent() -> None:
     retained_open.performClick_(None)
     assert received == []
 
-
-def test_stale_collapsed_pointer_cannot_authorize_a_programmatic_expansion() -> None:
+    # --- scenario: stale_collapsed_pointer_cannot_authorize_a_programmatic_expansion
     """An old mouse event must not turn a passive reconciled panel keyable."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -768,7 +744,9 @@ def test_stale_collapsed_pointer_cannot_authorize_a_programmatic_expansion() -> 
     assert not panel.window.canBecomeKeyWindow()
 
 
-def test_expanded_reconciliation_reuses_controls_and_keeps_tab_focus() -> None:
+
+def test_expanded_reconciliation_reuses_controls_and_keeps_tab_focus__and_2_more() -> None:
+    # --- scenario: expanded_reconciliation_reuses_controls_and_keeps_tab_focus
     """Replacing the hierarchy would lose an in-progress native tab traversal."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -795,8 +773,7 @@ def test_expanded_reconciliation_reuses_controls_and_keeps_tab_focus() -> None:
     assert panel.buttons == buttons
     assert panel.window.firstResponder() is buttons[1]
 
-
-def test_question_field_uses_two_line_tail_truncation_without_view_slicing() -> None:
+    # --- scenario: question_field_uses_two_line_tail_truncation_without_view_slicing
     """The native cell, not an extra presenter cap, owns visual truncation."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -809,8 +786,7 @@ def test_question_field_uses_two_line_tail_truncation_without_view_slicing() -> 
     assert panel.question_field.cell().wraps()
     assert panel.question_field.cell().truncatesLastVisibleLine()
 
-
-def test_native_roots_have_solid_semantic_surfaces() -> None:
+    # --- scenario: native_roots_have_solid_semantic_surfaces
     """Text must never float directly over arbitrary desktop pixels."""
     from jrbar.announcer_stack_view import AnnouncerStackPanel
 
@@ -818,6 +794,7 @@ def test_native_roots_have_solid_semantic_surfaces() -> None:
     panel.update(_plan(), lambda _intent: None, center_x=500.0, top_y=700.0)
     assert panel.root_view.surface_color is not None
     assert panel.root_view.border_color is not None
+
 
 
 def test_visible_panel_presentation_uses_desktop_takeover_gate(monkeypatch) -> None:

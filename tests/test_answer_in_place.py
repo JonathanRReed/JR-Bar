@@ -73,7 +73,8 @@ def _attempt(
     )
 
 
-def test_answer_capability_uses_exact_local_surface_for_binary_and_reply_requests() -> None:
+def test_answer_capability_uses_exact_local_surface_for_binary_and_reply_requests__and_2_more() -> None:
+    # --- scenario: answer_capability_uses_exact_local_surface_for_binary_and_reply_requests
     contract = _supported_contract()
 
     permission = answer_capability_for_request(contract, RequestKind.PERMISSION)
@@ -89,8 +90,7 @@ def test_answer_capability_uses_exact_local_surface_for_binary_and_reply_request
     assert reply.supports_binary_decision is False
     assert reply.supports_reply_text is True
 
-
-def test_answer_capability_fails_closed_for_unknown_request_or_missing_support() -> None:
+    # --- scenario: answer_capability_fails_closed_for_unknown_request_or_missing_support
     unsupported = answer_capability_for_request(None, RequestKind.PERMISSION)
     unknown = answer_capability_for_request(_supported_contract(), RequestKind.UNKNOWN)
 
@@ -99,8 +99,7 @@ def test_answer_capability_fails_closed_for_unknown_request_or_missing_support()
     assert unknown.supported is False
     assert unknown.disabled_reason == "Jump to session"
 
-
-def test_reconcile_answer_attempt_preserves_matching_identity_and_resets_stale_generation() -> None:
+    # --- scenario: reconcile_answer_attempt_preserves_matching_identity_and_resets_stale_generation
     current = _attempt(state=AnswerAttemptState.CANCELLED, draft_text="Need details")
 
     same = reconcile_answer_attempt(current, current.request_identity, current.generation)
@@ -116,7 +115,9 @@ def test_reconcile_answer_attempt_preserves_matching_identity_and_resets_stale_g
     )
 
 
-def test_reduce_answer_intent_normalizes_reply_text_and_transitions_send_retry_cancel() -> None:
+
+def test_reduce_answer_intent_normalizes_reply_text_and_transitions_send_retry_cancel__and_2_more() -> None:
+    # --- scenario: reduce_answer_intent_normalizes_reply_text_and_transitions_send_retry_cancel
     attempt = _attempt()
     raw_text = "  Please\nreview this carefully  " + ("x" * 400)
 
@@ -137,8 +138,7 @@ def test_reduce_answer_intent_normalizes_reply_text_and_transitions_send_retry_c
     assert cancelled.draft_text == sending.draft_text
     assert retried.state is AnswerAttemptState.SENDING
 
-
-def test_project_answer_controls_for_binary_idle_state_keeps_jump_available() -> None:
+    # --- scenario: project_answer_controls_for_binary_idle_state_keeps_jump_available
     capability = answer_capability_for_request(_supported_contract(), RequestKind.PERMISSION)
 
     plan = project_answer_controls(RequestKind.PERMISSION, capability, _attempt())
@@ -152,8 +152,7 @@ def test_project_answer_controls_for_binary_idle_state_keeps_jump_available() ->
     assert plan.can_cancel is False
     assert plan.status_text is None
 
-
-def test_project_answer_controls_for_reply_state_tracks_send_and_recovery_states() -> None:
+    # --- scenario: project_answer_controls_for_reply_state_tracks_send_and_recovery_states
     capability = answer_capability_for_request(_supported_contract(), RequestKind.INPUT)
 
     idle = project_answer_controls(RequestKind.INPUT, capability, _attempt())
@@ -209,12 +208,13 @@ def test_project_answer_controls_for_reply_state_tracks_send_and_recovery_states
     assert cancelled.status_text == "Cancelled"
 
 
-def test_answer_attempt_rejects_non_normalized_draft_text() -> None:
+
+def test_answer_attempt_rejects_non_normalized_draft_text__and_1_more() -> None:
+    # --- scenario: answer_attempt_rejects_non_normalized_draft_text
     with pytest.raises(ValueError, match="invalid answer attempt"):
         _attempt(draft_text="two\nlines")
 
-
-def test_project_answer_controls_fail_closed_when_capability_is_not_supported() -> None:
+    # --- scenario: project_answer_controls_fail_closed_when_capability_is_not_supported
     unsupported = answer_capability_for_request(None, RequestKind.INPUT)
 
     plan = project_answer_controls(RequestKind.INPUT, unsupported, _attempt(draft_text="Reply"))
@@ -223,3 +223,4 @@ def test_project_answer_controls_fail_closed_when_capability_is_not_supported() 
     assert plan.can_send is False
     assert plan.can_edit_reply is False
     assert plan.status_text == "Jump to session"
+

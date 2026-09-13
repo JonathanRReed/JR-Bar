@@ -299,7 +299,8 @@ def fixture_inputs() -> dict:
     )
 
 
-def test_state_document_carries_the_deck_when_given() -> None:
+def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
+    # --- scenario: state_document_carries_the_deck_when_given
     document = build_state_document(**fixture_inputs())
     deck = document["deck"]
     assert deck["device"]["serial"] == "D0CF130481EC" and deck["device"]["transport"] == "bluetooth"
@@ -311,8 +312,7 @@ def test_state_document_carries_the_deck_when_given() -> None:
     inputs.pop("deck")
     assert "deck" not in build_state_document(**inputs)
 
-
-def test_state_document_projects_sessions_asks_and_aggregate() -> None:
+    # --- scenario: state_document_projects_sessions_asks_and_aggregate
     document = build_state_document(**fixture_inputs())
     assert document["t"] == "state" and document["v"] == 1
     assert document["generation"] == 4812 and document["now"] == NOW
@@ -360,8 +360,7 @@ def test_state_document_projects_sessions_asks_and_aggregate() -> None:
     }
     assert document["unseen_completions"] == [GEMINI_ID]
 
-
-def test_state_document_projects_devices_usage_power_focus_and_health() -> None:
+    # --- scenario: state_document_projects_devices_usage_power_focus_and_health
     document = build_state_document(**fixture_inputs())
     devices = {device["id"]: device for device in document["devices"]}
     assert devices["sidepulse:pro:B293A1"]["brightness"] == 79
@@ -403,7 +402,9 @@ def test_state_document_projects_devices_usage_power_focus_and_health() -> None:
     json.dumps(document)
 
 
-def test_state_document_focus_reads_off_when_idle_and_override_when_manual() -> None:
+
+def test_state_document_focus_reads_off_when_idle_and_override_when_manual__and_2_more() -> None:
+    # --- scenario: state_document_focus_reads_off_when_idle_and_override_when_manual
     """The quiet words the footer reads: ``"off"`` -- never null -- while
     nothing quiet is in effect (a merely *upcoming* quiet must not hand
     the row an ``until`` it would paint as an end time), ``override``
@@ -447,8 +448,7 @@ def test_state_document_focus_reads_off_when_idle_and_override_when_manual() -> 
     inputs["dnd_projection"].active_sources[0].value = "macos_focus"
     assert build_state_document(**inputs)["focus"]["source"] == "focus"
 
-
-def test_state_document_marks_snoozed_sessions() -> None:
+    # --- scenario: state_document_marks_snoozed_sessions
     """``snoozed_until`` lands on the row the family snooze covers --
     live and stale alike -- and is null elsewhere."""
     inputs = fixture_inputs()
@@ -458,8 +458,7 @@ def test_state_document_marks_snoozed_sessions() -> None:
     assert rows[GEMINI_ID]["snoozed_until"] == NOW + 120.0
     assert rows[CLAUDE_ID]["snoozed_until"] is None
 
-
-def test_state_document_tolerates_an_empty_world() -> None:
+    # --- scenario: state_document_tolerates_an_empty_world
     document = build_state_document(
         now=NOW, generation=1, snapshot=None, ask_statuses=[], unseen_completion_ids=frozenset()
     )
@@ -471,7 +470,9 @@ def test_state_document_tolerates_an_empty_world() -> None:
     json.dumps(document)
 
 
-def test_lights_and_settings_documents() -> None:
+
+def test_lights_and_settings_documents__and_2_more() -> None:
+    # --- scenario: lights_and_settings_documents
     lights = build_lights_document(
         {
             "hardware": SurfaceFacts("off 160ms cosine\n#FF3A00 1.6s pulse\nrepeat", 8, NOW - 1.09, "continuous", "#FF3A00", 0.79, "needs_you"),
@@ -492,8 +493,7 @@ def test_lights_and_settings_documents() -> None:
     )
     assert settings["document"] == {"alert_burst": 3, "cloud_ingest_token_path": "/s/t.token"}
 
-
-def test_history_rows_from_the_activity_ledger() -> None:
+    # --- scenario: history_rows_from_the_activity_ledger
     ledger = SimpleNamespace(
         last_seen_epoch=NOW - 1000.0,
         entries=(
@@ -510,8 +510,7 @@ def test_history_rows_from_the_activity_ledger() -> None:
     assert history_rows(ledger, since=NOW - 10.0) == rows[:1]
     assert history_rows(ledger, limit=1) == rows[:1]
 
-
-def test_small_helpers() -> None:
+    # --- scenario: small_helpers
     assert strip_session_short_id("jr-bar-b7 (fca1eb06)", CLAUDE_SID) == "jr-bar-b7"
     assert strip_session_short_id("plain", None) == "plain"
     assert lifecycle_for_mode(AgentMode.BLOCKED_ERROR, stale=False) == "failed"
@@ -525,6 +524,7 @@ def test_small_helpers() -> None:
     assert terminal_from_command("/usr/bin/zsh") is None
     assert hook_health(None) == {}
     assert origin_document(None) is None
+
 
 
 def _fixture_is_carried_by(fixture: object, document: object, path: str = "$") -> list[str]:
@@ -586,7 +586,8 @@ def _glance(semantic: str, override: str = "none", relay_epoch: float = MONOTONI
     )
 
 
-def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id() -> None:
+def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id__and_2_more() -> None:
+    # --- scenario: session_labels_prefer_the_providers_own_title_then_cwd_then_short_id
     sid = "fca1eb06-f6d1-413e-aa5f-dd19d8e05973"
     common = dict(provider="claude", session_id=sid, agent_id=f"claude:session:{sid}")
     # The collector's content-free fallback carries nothing a person can read.
@@ -627,8 +628,7 @@ def test_session_labels_prefer_the_providers_own_title_then_cwd_then_short_id() 
     assert by_id[CLAUDE_WORKER_ID]["label"] == f"jr-bar-b7 worker {CLAUDE_SID[:8]}"
     assert by_id[CLAUDE_WORKER_ID]["short_id"] == CLAUDE_SID[:8]
 
-
-def test_usage_window_names_are_the_panels_short_forms() -> None:
+    # --- scenario: usage_window_names_are_the_panels_short_forms
     assert usage_window_name("five-hour", "5-hour") == "5h"
     assert usage_window_name("five_hour", "5h") == "5h"
     assert usage_window_name("weekly", "Weekly") == "7d"
@@ -655,8 +655,7 @@ def test_usage_window_names_are_the_panels_short_forms() -> None:
     names = [(w["name"], w["id"], w["resets_at"]) for w in usage_document(usage)["providers"][0]["windows"]]
     assert names == [("7d", "weekly", NOW + 86400.0), ("7d Fable", "fable-only", NOW + 86400.0)]
 
-
-def test_light_why_is_the_documented_vocabulary() -> None:
+    # --- scenario: light_why_is_the_documented_vocabulary
     assert light_why(None) == "unknown"
     assert light_why(_glance("attention")) == "waiting"
     assert light_why(_glance("fresh_completion")) == "completed"
@@ -684,7 +683,9 @@ def test_light_why_is_the_documented_vocabulary() -> None:
         assert value in WHY_VALUES
 
 
-def test_why_detail_names_the_session_behind_the_light() -> None:
+
+def test_why_detail_names_the_session_behind_the_light__and_2_more() -> None:
+    # --- scenario: why_detail_names_the_session_behind_the_light
     document = build_state_document(**fixture_inputs())
     facts = LightFacts(dimming=("idle_dim", "quiet"), brightness_factor=0.045)
     waiting = why_detail("waiting", sessions=document["sessions"], asks=document["asks"], now=NOW, facts=facts)
@@ -715,8 +716,7 @@ def test_why_detail_names_the_session_behind_the_light() -> None:
     assert lights["surfaces"]["hardware"]["why_detail"]["session"] == CODEX_ID
     assert lights["devices_linked"] is False
 
-
-def test_install_probe_sessions_are_not_sessions() -> None:
+    # --- scenario: install_probe_sessions_are_not_sessions
     inputs = fixture_inputs()
     probe = _status(agent_id="codex:session:jrbar-install-probe", session_id="jrbar-install-probe", provider="codex", display_name="Codex jrbar-install-probe", work_key="wk-probe")
     inputs["snapshot"] = SimpleNamespace(
@@ -729,11 +729,7 @@ def test_install_probe_sessions_are_not_sessions() -> None:
     assert all(not row["id"].endswith("-install-probe") for row in document["sessions"])
     assert document["aggregate"]["total"] == 3
 
-
-# --- session visibility in the state document -------------------------------
-
-
-def test_only_a_real_end_event_on_a_living_session_reads_completed() -> None:
+    # --- scenario: only_a_real_end_event_on_a_living_session_reads_completed
     """`completed` is the green check, and it is a claim about the provider.
 
     A completion the collector merely inferred, or a process that died
@@ -751,7 +747,9 @@ def test_only_a_real_end_event_on_a_living_session_reads_completed() -> None:
     assert lifecycle_for_mode(AgentMode.WORKING, stale=False, event_name="PostToolUse") == "active"
 
 
-def test_a_finished_one_shot_run_earns_done_even_though_it_has_exited() -> None:
+
+def test_a_finished_one_shot_run_earns_done_even_though_it_has_exited__and_2_more() -> None:
+    # --- scenario: a_finished_one_shot_run_earns_done_even_though_it_has_exited
     """`codex exec`, `claude -p` and `pi -p` send a real Stop and SessionEnd
     and then exit. That is the whole life of a one-shot run, and it is
     `completed`; demoting on a dead process meant no such run could ever
@@ -777,8 +775,7 @@ def test_a_finished_one_shot_run_earns_done_even_though_it_has_exited() -> None:
             == "completed"
         ), event
 
-
-def test_a_process_that_died_without_an_end_event_is_ended_not_done() -> None:
+    # --- scenario: a_process_that_died_without_an_end_event_is_ended_not_done
     """The liveness sweep's synthetic `SessionEnd` looks exactly like a real
     one on the wire; `provider_ended=False` is what tells them apart."""
 
@@ -818,8 +815,7 @@ def test_a_process_that_died_without_an_end_event_is_ended_not_done() -> None:
         == "ended"
     )
 
-
-def test_a_one_shot_run_that_exited_reads_done_in_the_document() -> None:
+    # --- scenario: a_one_shot_run_that_exited_reads_done_in_the_document
     row = session_document(
         _status(
             mode=AgentMode.COMPLETED,
@@ -837,7 +833,9 @@ def test_a_one_shot_run_that_exited_reads_done_in_the_document() -> None:
     assert row["stale"] is False
 
 
-def test_a_killed_session_reads_ended_in_the_document() -> None:
+
+def test_a_killed_session_reads_ended_in_the_document__and_2_more() -> None:
+    # --- scenario: a_killed_session_reads_ended_in_the_document
     row = session_document(
         _status(
             mode=AgentMode.COMPLETED,
@@ -852,8 +850,7 @@ def test_a_killed_session_reads_ended_in_the_document() -> None:
     assert row["lifecycle"] == "ended"
     assert row["mode"] == "ended_unconfirmed"
 
-
-def test_a_dead_process_is_ended_and_stale_in_the_document_not_done() -> None:
+    # --- scenario: a_dead_process_is_ended_and_stale_in_the_document_not_done
     status = _status(
         agent_id=GEMINI_ID,
         provider="gemini",
@@ -884,8 +881,7 @@ def test_a_dead_process_is_ended_and_stale_in_the_document_not_done() -> None:
     )
     assert unknown["lifecycle"] == "completed" and unknown["mode"] == "completed"
 
-
-def test_a_session_whose_process_is_alive_is_never_ended() -> None:
+    # --- scenario: a_session_whose_process_is_alive_is_never_ended
     """Liveness beats silence.
 
     ``ended_unconfirmed`` is what the collector says when a working session
@@ -919,7 +915,9 @@ def test_a_session_whose_process_is_alive_is_never_ended() -> None:
     )
 
 
-def test_the_ended_rule_still_holds_for_a_process_that_is_gone() -> None:
+
+def test_the_ended_rule_still_holds_for_a_process_that_is_gone__and_2_more() -> None:
+    # --- scenario: the_ended_rule_still_holds_for_a_process_that_is_gone
     """The fix the liveness rule must not undo: only ``process_alive is
     True`` outvotes the silence timer. "Nobody looked" and "the process is
     gone" both still read ``ended``."""
@@ -943,8 +941,7 @@ def test_the_ended_rule_still_holds_for_a_process_that_is_gone() -> None:
         == "ended"
     )
 
-
-def test_a_live_but_silent_session_reads_working_in_the_document() -> None:
+    # --- scenario: a_live_but_silent_session_reads_working_in_the_document
     """What the panel says: Working, with ``since`` carrying how long it has
     been quiet. The mode travels beside the lifecycle and the app reads
     whichever is more definite, so a row that is not over must not still say
@@ -967,8 +964,7 @@ def test_a_live_but_silent_session_reads_working_in_the_document() -> None:
     assert counts["active"] == 1 and counts["total"] == 1
     assert aggregate_mode(counts) == "working"
 
-
-def test_a_live_but_silent_session_is_not_marked_stale_or_aged_out() -> None:
+    # --- scenario: a_live_but_silent_session_is_not_marked_stale_or_aged_out
     """The third way to lose a running session, after "Ended" and "not
     active": `session_visibility` drops a **stale** row from the list ten
     quiet minutes after its last event. A row whose process the registry
@@ -1004,6 +1000,7 @@ def test_a_live_but_silent_session_is_not_marked_stale_or_aged_out() -> None:
     )
     assert done["stale"] is True and done["lifecycle"] == "completed"
     assert filter_visible_sessions([done], now=NOW)[0] == []
+
 
 
 def test_a_killed_session_still_reads_ended_in_the_document() -> None:
@@ -1078,7 +1075,8 @@ def _visibility_inputs(**overrides) -> dict:
     return inputs
 
 
-def test_state_sessions_hold_only_live_rows_and_fresh_completions() -> None:
+def test_state_sessions_hold_only_live_rows_and_fresh_completions__and_2_more() -> None:
+    # --- scenario: state_sessions_hold_only_live_rows_and_fresh_completions
     document = build_state_document(**_visibility_inputs())
 
     assert [session["id"] for session in document["sessions"]] == [
@@ -1093,8 +1091,7 @@ def test_state_sessions_hold_only_live_rows_and_fresh_completions() -> None:
     assert document["aggregate"]["ready"] == 1
     assert document["aggregate"]["total"] == 2
 
-
-def test_acknowledged_rows_leave_the_list_and_come_back_on_undo() -> None:
+    # --- scenario: acknowledged_rows_leave_the_list_and_come_back_on_undo
     from jrbar.capacity_types import SourceKey
     from jrbar.clear_agents import CompletionPresentationKey
 
@@ -1114,8 +1111,7 @@ def test_acknowledged_rows_leave_the_list_and_come_back_on_undo() -> None:
         GEMINI_ID,
     ]
 
-
-def test_a_completion_drops_out_when_the_clock_passes_twenty_minutes() -> None:
+    # --- scenario: a_completion_drops_out_when_the_clock_passes_twenty_minutes
     """A test clock, not twenty minutes of waiting."""
     listed = build_state_document(**_visibility_inputs(now=NOW + 16 * 60.0))
     assert GEMINI_ID in {session["id"] for session in listed["sessions"]}
@@ -1129,7 +1125,9 @@ def test_a_completion_drops_out_when_the_clock_passes_twenty_minutes() -> None:
     assert gone["hidden_count"] == 3
 
 
-def test_a_quiet_session_leaves_the_list_ten_minutes_after_its_last_event() -> None:
+
+def test_a_quiet_session_leaves_the_list_ten_minutes_after_its_last_event__and_2_more() -> None:
+    # --- scenario: a_quiet_session_leaves_the_list_ten_minutes_after_its_last_event
     """A row the source stopped delivering: ten minutes, then History.
 
     A row still being delivered is not on this clock -- a long tool call
@@ -1160,14 +1158,7 @@ def test_a_quiet_session_leaves_the_list_ten_minutes_after_its_last_event() -> N
     gone = build_state_document(now=NOW + 11 * 60.0, **common)
     assert gone["sessions"] == [] and gone["hidden_count"] == 1
 
-
-# --- the four live defects ----------------------------------------------------
-#
-# Every test below was written from what the daemon on this Mac actually put
-# on the wire, read over ``~/.local/state/jrbar/core.sock``.
-
-
-def test_seconds_in_state_is_a_duration_never_a_clock_reading() -> None:
+    # --- scenario: seconds_in_state_is_a_duration_never_a_clock_reading
     """``lights.surfaces.*.why_detail.seconds_in_state`` read 1788869798.0.
 
     A light with no session behind it (a preview, an idle strip) fell back
@@ -1210,8 +1201,7 @@ def test_seconds_in_state_is_a_duration_never_a_clock_reading() -> None:
     )
     assert working["session"] == CLAUDE_ID and working["seconds_in_state"] == 1.4
 
-
-def test_duration_helpers_refuse_a_mixed_clock_subtraction() -> None:
+    # --- scenario: duration_helpers_refuse_a_mixed_clock_subtraction
     assert duration_since(NOW, NOW - 90.0) == 90.0
     # A timestamp a hair in the future is clock skew, not a negative wait.
     assert duration_since(NOW, NOW + 5.0) == 0.0
@@ -1229,7 +1219,9 @@ def test_duration_helpers_refuse_a_mixed_clock_subtraction() -> None:
     assert bounded_duration(1.23456, digits=None) == 1.23456
 
 
-def test_no_duration_shaped_field_in_state_can_claim_a_lifetime() -> None:
+
+def test_no_duration_shaped_field_in_state_can_claim_a_lifetime__and_2_more() -> None:
+    # --- scenario: no_duration_shaped_field_in_state_can_claim_a_lifetime
     """The sweep the first defect earned: every seconds-shaped field."""
 
     inputs = fixture_inputs()
@@ -1264,8 +1256,7 @@ def test_no_duration_shaped_field_in_state_can_claim_a_lifetime() -> None:
             continue  # A policy window, not an elapsed time.
         assert 0.0 <= value <= MAX_DURATION_SECONDS, f"{path} is not a duration: {value}"
 
-
-def test_an_ask_always_names_a_session_the_document_lists() -> None:
+    # --- scenario: an_ask_always_names_a_session_the_document_lists
     """Live: an ask for ``claude:session:5facd783…`` whose session had
     already been dropped from ``state.sessions``. The header counted it and
     the strip pulsed amber with no row to show for it."""
@@ -1331,8 +1322,7 @@ def test_an_ask_always_names_a_session_the_document_lists() -> None:
     assert gone["asks"] == [] and gone["sessions"] == []
     assert gone["aggregate"]["needs_you"] == 0 and gone["aggregate"]["mode"] == "idle"
 
-
-def test_an_ask_outranks_a_clear_receipt() -> None:
+    # --- scenario: an_ask_outranks_a_clear_receipt
     """A widened ``clear_completed`` hid stale rows, an open ask included."""
     from jrbar.capacity_types import SourceKey
     from jrbar.clear_agents import CompletionPresentationKey
@@ -1364,6 +1354,7 @@ def test_an_ask_outranks_a_clear_receipt() -> None:
     )
     assert [session["id"] for session in document["sessions"]] == [CODEX_ID]
     assert [ask["session"] for ask in document["asks"]] == [CODEX_ID]
+
 
 
 def test_a_pinned_worker_keeps_its_parent_listed() -> None:
@@ -1430,8 +1421,7 @@ def _random_statuses(rng, count: int) -> tuple[list, list, list]:
     return live, stale, asks
 
 
-@pytest.mark.parametrize("seed", range(40))
-def test_the_aggregate_is_always_derivable_from_the_rows(seed: int) -> None:
+def test_the_aggregate_is_always_derivable_from_the_rows() -> None:
     """Live: ``"working"`` with ``active: 0``, and ``"needs_you"`` while no
     listed session had an ask. The header word came from the collector's
     aggregate over sessions the panel could not see.
@@ -1439,62 +1429,62 @@ def test_the_aggregate_is_always_derivable_from_the_rows(seed: int) -> None:
     The property, over generated session sets: the counts are a function of
     the rows the document carries, and the mode is a function of the counts.
     """
+    for seed in range(40):
+        import random
 
-    import random
+        rng = random.Random(seed)
+        live, stale, asks = _random_statuses(rng, rng.randint(0, 14))
+        document = build_state_document(
+            now=NOW,
+            generation=1,
+            snapshot=SimpleNamespace(
+                # Deliberately unrelated to the rows: it must get no vote.
+                aggregate=SimpleNamespace(mode=rng.choice(list(AgentMode))),
+                statuses=tuple(live),
+                stale_statuses=tuple(stale),
+                collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
+            ),
+            ask_statuses=asks,
+            unseen_completion_ids=frozenset(
+                status.agent_id for status in (*live, *stale) if rng.random() < 0.5
+            ),
+        )
+        aggregate = document["aggregate"]
+        sessions = document["sessions"]
+        listed_ids = {session["id"] for session in sessions}
 
-    rng = random.Random(seed)
-    live, stale, asks = _random_statuses(rng, rng.randint(0, 14))
-    document = build_state_document(
-        now=NOW,
-        generation=1,
-        snapshot=SimpleNamespace(
-            # Deliberately unrelated to the rows: it must get no vote.
-            aggregate=SimpleNamespace(mode=rng.choice(list(AgentMode))),
-            statuses=tuple(live),
-            stale_statuses=tuple(stale),
-            collected_at=datetime.fromtimestamp(NOW, tz=timezone.utc),
-        ),
-        ask_statuses=asks,
-        unseen_completion_ids=frozenset(
-            status.agent_id for status in (*live, *stale) if rng.random() < 0.5
-        ),
-    )
-    aggregate = document["aggregate"]
-    sessions = document["sessions"]
-    listed_ids = {session["id"] for session in sessions}
+        # The counts come from the rows.
+        recomputed = aggregate_counts(
+            sessions, asks=document["asks"], ready_ids=document["unseen_completions"]
+        )
+        assert {key: aggregate[key] for key in recomputed} == recomputed
+        # ... and the mode comes from the counts.
+        assert aggregate["mode"] == aggregate_mode(recomputed)
 
-    # The counts come from the rows.
-    recomputed = aggregate_counts(
-        sessions, asks=document["asks"], ready_ids=document["unseen_completions"]
-    )
-    assert {key: aggregate[key] for key in recomputed} == recomputed
-    # ... and the mode comes from the counts.
-    assert aggregate["mode"] == aggregate_mode(recomputed)
+        # The invariant the counts rest on: no ask without its row.
+        assert all(ask["session"] in listed_ids for ask in document["asks"])
+        assert all(identifier in listed_ids for identifier in document["unseen_completions"])
 
-    # The invariant the counts rest on: no ask without its row.
-    assert all(ask["session"] in listed_ids for ask in document["asks"])
-    assert all(identifier in listed_ids for identifier in document["unseen_completions"])
+        # Each count says what it claims about the rows the app receives.
+        mains = [session for session in sessions if session["kind"] == "main"]
+        assert aggregate["total"] == len(mains)
+        assert aggregate["needs_you"] == len(document["asks"])
+        assert aggregate["active"] == sum(
+            1 for row in mains if row["mode"] in {"working", "tool_running", "long_task_progress"} and not row["stale"]
+        )
+        assert aggregate["failed"] == sum(
+            1 for row in mains if row["lifecycle"] == "failed" and not row["stale"]
+        )
+        assert aggregate["ready"] == len(document["unseen_completions"])
 
-    # Each count says what it claims about the rows the app receives.
-    mains = [session for session in sessions if session["kind"] == "main"]
-    assert aggregate["total"] == len(mains)
-    assert aggregate["needs_you"] == len(document["asks"])
-    assert aggregate["active"] == sum(
-        1 for row in mains if row["mode"] in {"working", "tool_running", "long_task_progress"} and not row["stale"]
-    )
-    assert aggregate["failed"] == sum(
-        1 for row in mains if row["lifecycle"] == "failed" and not row["stale"]
-    )
-    assert aggregate["ready"] == len(document["unseen_completions"])
-
-    # And the word never contradicts them.
-    if aggregate["mode"] == "needs_you":
-        assert aggregate["needs_you"] > 0
-    if aggregate["mode"] == "working":
-        assert aggregate["active"] > 0 and aggregate["needs_you"] == 0 and aggregate["failed"] == 0
-    if aggregate["mode"] == "failed":
-        assert aggregate["failed"] > 0 and aggregate["needs_you"] == 0
-    if aggregate["mode"] == "done":
-        assert aggregate["ready"] > 0 and aggregate["active"] == 0
-    if aggregate["mode"] == "idle":
-        assert not any(aggregate[key] for key in ("needs_you", "active", "ready", "failed"))
+        # And the word never contradicts them.
+        if aggregate["mode"] == "needs_you":
+            assert aggregate["needs_you"] > 0
+        if aggregate["mode"] == "working":
+            assert aggregate["active"] > 0 and aggregate["needs_you"] == 0 and aggregate["failed"] == 0
+        if aggregate["mode"] == "failed":
+            assert aggregate["failed"] > 0 and aggregate["needs_you"] == 0
+        if aggregate["mode"] == "done":
+            assert aggregate["ready"] > 0 and aggregate["active"] == 0
+        if aggregate["mode"] == "idle":
+            assert not any(aggregate[key] for key in ("needs_you", "active", "ready", "failed"))

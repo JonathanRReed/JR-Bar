@@ -37,7 +37,8 @@ def _preferences(*steps: int, enabled: bool = True) -> MilestoneOdometerPreferen
     return MilestoneOdometerPreferences(enabled=enabled, milestone_steps=steps)
 
 
-def test_disabled_odometer_does_not_count_or_retain_supplied_outcomes() -> None:
+def test_disabled_odometer_does_not_count_or_retain_supplied_outcomes__and_2_more() -> None:
+    # --- scenario: disabled_odometer_does_not_count_or_retain_supplied_outcomes
     state = MilestoneOdometerState(reset_epoch=10.0)
 
     plan = plan_milestone_odometer(
@@ -54,8 +55,7 @@ def test_disabled_odometer_does_not_count_or_retain_supplied_outcomes() -> None:
     assert plan.next_milestone is None
     assert plan.cue is None
 
-
-def test_exact_completion_keys_advance_once_and_report_next_milestone() -> None:
+    # --- scenario: exact_completion_keys_advance_once_and_report_next_milestone
     first = _outcome(1)
     second = _outcome(2)
     initial = plan_milestone_odometer(
@@ -89,8 +89,7 @@ def test_exact_completion_keys_advance_once_and_report_next_milestone() -> None:
     assert repeated.next_milestone == 5
     assert repeated.cue is None
 
-
-def test_batch_crossing_multiple_steps_emits_one_bounded_step_per_milestone() -> None:
+    # --- scenario: batch_crossing_multiple_steps_emits_one_bounded_step_per_milestone
     plan = plan_milestone_odometer(
         _preferences(1, 3, 5, 8),
         MilestoneOdometerState(),
@@ -108,7 +107,9 @@ def test_batch_crossing_multiple_steps_emits_one_bounded_step_per_milestone() ->
     assert plan.cue.loops == 0
 
 
-def test_reduce_motion_collapses_crossed_steps_to_one_static_highlight() -> None:
+
+def test_reduce_motion_collapses_crossed_steps_to_one_static_highlight__and_2_more() -> None:
+    # --- scenario: reduce_motion_collapses_crossed_steps_to_one_static_highlight
     plan = plan_milestone_odometer(
         _preferences(1, 2, 3),
         MilestoneOdometerState(),
@@ -126,8 +127,7 @@ def test_reduce_motion_collapses_crossed_steps_to_one_static_highlight() -> None
     assert plan.cue.finite is True
     assert plan.cue.loops == 0
 
-
-def test_reset_epoch_clears_prior_count_and_rejects_pre_reset_outcomes() -> None:
+    # --- scenario: reset_epoch_clears_prior_count_and_rejects_pre_reset_outcomes
     prior = plan_milestone_odometer(
         _preferences(1, 2, 3),
         MilestoneOdometerState(),
@@ -161,8 +161,7 @@ def test_reset_epoch_clears_prior_count_and_rejects_pre_reset_outcomes() -> None
             requested_reset_epoch=29.0,
         )
 
-
-def test_retention_is_bounded_without_decrementing_durable_count() -> None:
+    # --- scenario: retention_is_bounded_without_decrementing_durable_count
     outcomes = tuple(_outcome(index) for index in range(1, MAX_RETAINED_OUTCOMES + 2))
 
     plan = plan_milestone_odometer(
@@ -178,7 +177,9 @@ def test_retention_is_bounded_without_decrementing_durable_count() -> None:
     assert plan.reached_milestones == (MAX_RETAINED_OUTCOMES + 1,)
 
 
-def test_accessibility_is_content_free_and_explains_exact_counting() -> None:
+
+def test_accessibility_is_content_free_and_explains_exact_counting__and_2_more() -> None:
+    # --- scenario: accessibility_is_content_free_and_explains_exact_counting
     private_identity = "agent:private-session-identifier"
     outcome = CompletionPresentationKey(SOURCE, private_identity, "Stop", 10.0)
 
@@ -202,25 +203,18 @@ def test_accessibility_is_content_free_and_explains_exact_counting() -> None:
     assert "1 completed outcome" in accessibility.value
     assert "exact completed outcomes once" in accessibility.help
 
-
-@pytest.mark.parametrize(
-    "steps",
-    (
+    # --- scenario: milestone_steps_must_be_strictly_increasing_positive_counts
+    for steps in (
         (0,),
         (-1,),
         (2, 1),
         (1, 1),
         (True,),
-    ),
-)
-def test_milestone_steps_must_be_strictly_increasing_positive_counts(
-    steps: tuple[int, ...],
-) -> None:
-    with pytest.raises(MilestoneOdometerError):
-        MilestoneOdometerPreferences(enabled=True, milestone_steps=steps)
+    ):
+        with pytest.raises(MilestoneOdometerError):
+            MilestoneOdometerPreferences(enabled=True, milestone_steps=steps)
 
-
-def test_raw_hook_volume_and_loose_identifiers_fail_closed() -> None:
+    # --- scenario: raw_hook_volume_and_loose_identifiers_fail_closed
     preferences = _preferences(1)
     state = MilestoneOdometerState()
 
@@ -234,6 +228,7 @@ def test_raw_hook_volume_and_loose_identifiers_fail_closed() -> None:
                 state,
                 untrusted,  # type: ignore[arg-type]
             )
+
 
 
 def test_state_and_plans_are_immutable() -> None:

@@ -45,7 +45,8 @@ def _notification(
     )
 
 
-def test_default_language_and_lifetimes_match_the_glance_light_contract() -> None:
+def test_default_language_and_lifetimes_match_the_glance_light_contract__and_2_more() -> None:
+    # --- scenario: default_language_and_lifetimes_match_the_glance_light_contract
     ask = _notification("gl:ask", GlanceKind.UNANSWERED_ASK)
     failure = _notification("gl:failure", GlanceKind.FAILURE)
     completion = _notification("gl:completion", GlanceKind.COMPLETED_UNSEEN)
@@ -74,8 +75,7 @@ def test_default_language_and_lifetimes_match_the_glance_light_contract() -> Non
     assert default_glance_cadence(informational.kind).pattern is GlancePattern.STEADY_DIM
     assert default_glance_cadence(informational.kind).repeat_interval_seconds is None
 
-
-def test_planner_selects_highest_priority_and_summarizes_all_pending_items() -> None:
+    # --- scenario: planner_selects_highest_priority_and_summarizes_all_pending_items
     state = GlanceLightState(
         (
             _notification("gl:information", GlanceKind.INFORMATIONAL, created_at_epoch=NOW - 3),
@@ -94,8 +94,7 @@ def test_planner_selects_highest_priority_and_summarizes_all_pending_items() -> 
     assert all(item.notification_count == 3 for item in plan.surface_plans)
     assert all(item.pattern is GlancePattern.TRIPLE_FAILURE for item in plan.surface_plans)
 
-
-def test_equal_priority_selection_is_oldest_first_then_exact_id() -> None:
+    # --- scenario: equal_priority_selection_is_oldest_first_then_exact_id
     state = GlanceLightState(
         (
             _notification("gl:z", GlanceKind.UNANSWERED_ASK, created_at_epoch=NOW - 1),
@@ -109,7 +108,9 @@ def test_equal_priority_selection_is_oldest_first_then_exact_id() -> None:
     assert plan.selected_notification_id == "gl:a"
 
 
-def test_surface_plans_are_bounded_low_energy_and_respect_destinations() -> None:
+
+def test_surface_plans_are_bounded_low_energy_and_respect_destinations__and_2_more() -> None:
+    # --- scenario: surface_plans_are_bounded_low_energy_and_respect_destinations
     notification = _notification(
         "gl:dot-and-orb",
         GlanceKind.UNANSWERED_ASK,
@@ -126,8 +127,7 @@ def test_surface_plans_are_bounded_low_energy_and_respect_destinations() -> None
     assert all(0.0 <= item.intensity <= 0.25 for item in plan.surface_plans)
     assert all(item.energy_class == "low" for item in plan.surface_plans)
 
-
-def test_dnd_is_dark_by_default_and_optional_asks_only_is_a_dim_marker() -> None:
+    # --- scenario: dnd_is_dark_by_default_and_optional_asks_only_is_a_dim_marker
     state = GlanceLightState(
         (
             _notification("gl:failure", GlanceKind.FAILURE, created_at_epoch=NOW - 2),
@@ -156,29 +156,25 @@ def test_dnd_is_dark_by_default_and_optional_asks_only_is_a_dim_marker() -> None
     assert all(surface.pattern is GlancePattern.STATIC_MARKER for surface in asks_only.surface_plans)
     assert all(surface.intensity <= 0.08 for surface in asks_only.surface_plans)
 
-
-@pytest.mark.parametrize(
-    "environment",
-    (
+    # --- scenario: constrained_power_or_thermal_state_uses_a_static_marker
+    for environment in (
         GlanceEnvironment(low_power=True),
         GlanceEnvironment(serious_thermal=True),
         GlanceEnvironment(low_power=True, serious_thermal=True),
-    ),
-)
-def test_constrained_power_or_thermal_state_uses_a_static_marker(
-    environment: GlanceEnvironment,
-) -> None:
-    state = GlanceLightState((_notification("gl:ask", GlanceKind.UNANSWERED_ASK),))
+    ):
+        state = GlanceLightState((_notification("gl:ask", GlanceKind.UNANSWERED_ASK),))
 
-    plan = plan_glance_light(state, now_epoch=NOW, environment=environment)
+        plan = plan_glance_light(state, now_epoch=NOW, environment=environment)
 
-    assert plan.selected_notification_id == "gl:ask"
-    assert all(surface.pattern is GlancePattern.STATIC_MARKER for surface in plan.surface_plans)
-    assert all(surface.repeat_interval_seconds is None for surface in plan.surface_plans)
-    assert all(surface.intensity <= 0.12 for surface in plan.surface_plans)
+        assert plan.selected_notification_id == "gl:ask"
+        assert all(surface.pattern is GlancePattern.STATIC_MARKER for surface in plan.surface_plans)
+        assert all(surface.repeat_interval_seconds is None for surface in plan.surface_plans)
+        assert all(surface.intensity <= 0.12 for surface in plan.surface_plans)
 
 
-def test_acknowledgement_by_exact_id_clears_every_destination() -> None:
+
+def test_acknowledgement_by_exact_id_clears_every_destination__and_2_more() -> None:
+    # --- scenario: acknowledgement_by_exact_id_clears_every_destination
     first = _notification("gl:Exact", GlanceKind.UNANSWERED_ASK)
     second = _notification("gl:exact", GlanceKind.INFORMATIONAL)
     state = GlanceLightState((first, second))
@@ -196,8 +192,7 @@ def test_acknowledgement_by_exact_id_clears_every_destination() -> None:
     assert plan.selected_notification_id == "gl:exact"
     assert plan.notification_count == 1
 
-
-def test_seen_and_resolved_are_distinct_receipts_and_each_clears_surfaces() -> None:
+    # --- scenario: seen_and_resolved_are_distinct_receipts_and_each_clears_surfaces
     original = GlanceLightState((_notification("gl:ask", GlanceKind.UNANSWERED_ASK),))
 
     seen = mark_glance_notification_seen(
@@ -219,8 +214,7 @@ def test_seen_and_resolved_are_distinct_receipts_and_each_clears_surfaces() -> N
     assert plan_glance_light(seen, now_epoch=NOW + 1).selected_notification_id is None
     assert plan_glance_light(resolved, now_epoch=NOW + 2).selected_notification_id is None
 
-
-def test_expiration_is_deterministic_at_the_exact_boundary() -> None:
+    # --- scenario: expiration_is_deterministic_at_the_exact_boundary
     completion = _notification("gl:completion", GlanceKind.COMPLETED_UNSEEN)
     state = GlanceLightState((completion,))
     expiry = NOW + 15 * 60
@@ -230,7 +224,9 @@ def test_expiration_is_deterministic_at_the_exact_boundary() -> None:
     assert plan_glance_light(state, now_epoch=expiry).notification_count == 0
 
 
-def test_future_notifications_are_not_presented_early() -> None:
+
+def test_future_notifications_are_not_presented_early__and_2_more() -> None:
+    # --- scenario: future_notifications_are_not_presented_early
     future = _notification(
         "gl:future",
         GlanceKind.FAILURE,
@@ -243,8 +239,7 @@ def test_future_notifications_are_not_presented_early() -> None:
     assert plan.notification_count == 0
     assert all(not surface.active for surface in plan.surface_plans)
 
-
-def test_exact_versioned_json_document_round_trips_without_content_fields() -> None:
+    # --- scenario: exact_versioned_json_document_round_trips_without_content_fields
     notification = _notification("gl:roundtrip", GlanceKind.COMPLETED_UNSEEN)
     state = mark_glance_notification_seen(
         GlanceLightState((notification,)),
@@ -285,10 +280,8 @@ def test_exact_versioned_json_document_round_trips_without_content_fields() -> N
         "transcript",
     }
 
-
-@pytest.mark.parametrize(
-    "mutate",
-    (
+    # --- scenario: restore_fails_closed_for_non_exact_or_invalid_documents
+    for mutate in (
         lambda document: document.update(extra=True),
         lambda document: document.update(version=GLANCE_LIGHT_DOCUMENT_VERSION + 1),
         lambda document: document.update(schema="other"),
@@ -296,22 +289,21 @@ def test_exact_versioned_json_document_round_trips_without_content_fields() -> N
         lambda document: document["notifications"][0].update(kind="prompt"),
         lambda document: document["notifications"][0].update(privacy_class="private_text"),
         lambda document: document["notifications"].append(dict(document["notifications"][0])),
-    ),
-)
-def test_restore_fails_closed_for_non_exact_or_invalid_documents(mutate) -> None:
-    encoded = serialize_glance_light_document(
-        GlanceLightState((_notification("gl:valid", GlanceKind.INFORMATIONAL),))
-    )
-    assert encoded is not None
-    document = json.loads(encoded)
-    mutate(document)
+    ):
+        encoded = serialize_glance_light_document(
+            GlanceLightState((_notification("gl:valid", GlanceKind.INFORMATIONAL),))
+        )
+        assert encoded is not None
+        document = json.loads(encoded)
+        mutate(document)
 
-    assert restore_glance_light_document(json.dumps(document)) is None
+        assert restore_glance_light_document(json.dumps(document)) is None
 
 
-@pytest.mark.parametrize(
-    "document",
-    (
+
+def test_restore_fails_closed_without_a_partial_state__and_2_more() -> None:
+    # --- scenario: restore_fails_closed_without_a_partial_state
+    for document in (
         None,
         7,
         "",
@@ -319,13 +311,10 @@ def test_restore_fails_closed_for_non_exact_or_invalid_documents(mutate) -> None
         "not json",
         '{"schema":"jrbar.glance-light","schema":"jrbar.glance-light","version":1,"notifications":[]}',
         '{"schema":"jrbar.glance-light","version":1,"notifications":NaN}',
-    ),
-)
-def test_restore_fails_closed_without_a_partial_state(document: object) -> None:
-    assert restore_glance_light_document(document) is None
+    ):
+        assert restore_glance_light_document(document) is None
 
-
-def test_invalid_planner_inputs_fail_closed_to_a_dark_plan() -> None:
+    # --- scenario: invalid_planner_inputs_fail_closed_to_a_dark_plan
     invalid_state = plan_glance_light(object(), now_epoch=NOW)  # type: ignore[arg-type]
     invalid_clock = plan_glance_light(GlanceLightState(), now_epoch=float("nan"))
     invalid_environment = plan_glance_light(
@@ -339,22 +328,19 @@ def test_invalid_planner_inputs_fail_closed_to_a_dark_plan() -> None:
         assert plan.notification_count == 0
         assert all(not surface.active for surface in plan.surface_plans)
 
-
-@pytest.mark.parametrize(
-    "mutate",
-    (
+    # --- scenario: restore_accepts_pre_rename_documents
+    for mutate in (
         # Documents written before the JR-Bar rename carry the old schema
         # string and version 1; both still restore.
         lambda document: document.update(schema="sidepulse.glance-light"),
         lambda document: document.update(version=1),
         lambda document: document.update(schema="sidepulse.glance-light", version=1),
-    ),
-)
-def test_restore_accepts_pre_rename_documents(mutate) -> None:
-    state = GlanceLightState((_notification("gl:valid", GlanceKind.INFORMATIONAL),))
-    encoded = serialize_glance_light_document(state)
-    assert encoded is not None
-    document = json.loads(encoded)
-    mutate(document)
+    ):
+        state = GlanceLightState((_notification("gl:valid", GlanceKind.INFORMATIONAL),))
+        encoded = serialize_glance_light_document(state)
+        assert encoded is not None
+        document = json.loads(encoded)
+        mutate(document)
 
-    assert restore_glance_light_document(json.dumps(document)) == state
+        assert restore_glance_light_document(json.dumps(document)) == state
+

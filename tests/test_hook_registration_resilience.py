@@ -49,22 +49,21 @@ def test_hook_command_uses_the_compiled_shim_when_one_is_named(
     assert hook_command_arguments("codex", Path("/tmp/codex.jsonl"))[1:3] == ["-m", "jrbar.hook_client"]
 
 
-def test_registered_command_actually_runs() -> None:
+def test_registered_command_actually_runs__and_2_more() -> None:
+    # --- scenario: registered_command_actually_runs
     """The gate that was missing: prove it before writing it anywhere."""
     arguments = hook_command_arguments(
         "claude", Path("/tmp/sidepulse-verify-probe.jsonl"), python_executable=sys.executable
     )
     assert verify_hook_command(arguments) is None
 
-
-def test_verification_catches_a_broken_command() -> None:
+    # --- scenario: verification_catches_a_broken_command
     broken = [sys.executable, "/nonexistent/hook_entry.py", "--provider", "claude"]
     assert verify_hook_command(broken) is not None
     assert verify_hook_command([]) is not None
     assert verify_hook_command(["/nonexistent/python", "-m", "jrbar.hook_entry"]) is not None
 
-
-def test_every_shape_we_have_ever_registered_is_recognized_as_ours() -> None:
+    # --- scenario: every_shape_we_have_ever_registered_is_recognized_as_ours
     """A recognizer that knows only one shape reports a working install
     as 'not installed' and re-registers duplicates over it."""
     legacy = ["/venv/bin/python", "/venv/lib/python3.13/site-packages/sidepulse/hook_entry.py",
@@ -80,6 +79,7 @@ def test_every_shape_we_have_ever_registered_is_recognized_as_ours() -> None:
     for shape in (legacy, module, frozen, current_module, current_frozen):
         assert _is_jrbar_hook_invocation(shape) is True, shape
     assert _is_jrbar_hook_invocation(["/bin/echo", "hello"]) is False
+
 
 
 def test_registration_is_gated_on_the_probe_run(tmp_path: Path) -> None:

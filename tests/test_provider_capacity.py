@@ -36,7 +36,8 @@ def _summary(policy: ProviderCapacityPolicy) -> tuple[object, ...]:
     )
 
 
-def test_literal_policy_table_keeps_exact_provider_account_pools_separate() -> None:
+def test_literal_policy_table_keeps_exact_provider_account_pools_separate__and_2_more() -> None:
+    # --- scenario: literal_policy_table_keeps_exact_provider_account_pools_separate
     """Collapsing plan, organization, edition, or billing pools would misstate capacity."""
     policies = provider_capacity_policies()
 
@@ -168,8 +169,7 @@ def test_literal_policy_table_keeps_exact_provider_account_pools_separate() -> N
     )
     assert len({policy.profile_id for policy in policies}) == len(policies)
 
-
-def test_semantic_lanes_are_literal_bounded_and_immutable() -> None:
+    # --- scenario: semantic_lanes_are_literal_bounded_and_immutable
     """Provider labels or runtime reset durations must not invent lane semantics."""
     policies = provider_capacity_policies()
     codex = policies[0]
@@ -261,8 +261,7 @@ def test_semantic_lanes_are_literal_bounded_and_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         codex.provider_id = "openai"  # type: ignore[misc]
 
-
-def test_exact_provider_and_auth_mode_select_one_policy_without_pool_inheritance() -> None:
+    # --- scenario: exact_provider_and_auth_mode_select_one_policy_without_pool_inheritance
     """A family label alone must not merge consumer, admin, or cloud billing."""
     codex = select_provider_capacity_policy("codex", "chatgpt")
     openai = select_provider_capacity_policy("openai", "api-key")
@@ -295,7 +294,9 @@ def test_exact_provider_and_auth_mode_select_one_policy_without_pool_inheritance
     assert select_provider_capacity_policy("google", "api-key") is None
 
 
-def test_each_actual_policy_source_negotiates_exactly_one_registered_capability() -> None:
+
+def test_each_actual_policy_source_negotiates_exactly_one_registered_capability__and_1_more() -> None:
+    # --- scenario: each_actual_policy_source_negotiates_exactly_one_registered_capability
     """Missing or duplicate source rows must fail instead of inheriting a provider source."""
     available = negotiated_provider_sources()
     negotiated = negotiate_provider_capacity_policies(available)
@@ -333,8 +334,7 @@ def test_each_actual_policy_source_negotiates_exactly_one_registered_capability(
         row for row in inactive if row.policy.profile_id == "openai-codex-consumer"
     ).negotiated_source is None
 
-
-def test_policy_construction_rejects_implicit_provider_inheritance() -> None:
+    # --- scenario: policy_construction_rejects_implicit_provider_inheritance
     """OpenCode or another surface cannot stamp its provider id onto an upstream source."""
     upstream = provider_capacity_policies()[1]
 
@@ -342,12 +342,14 @@ def test_policy_construction_rejects_implicit_provider_inheritance() -> None:
         replace(upstream, provider_id="opencode")
 
 
+
 class _PoisonSource:
     def __getattr__(self, _name: str) -> object:
         raise AssertionError("unvalidated capacity source was inspected")
 
 
-def test_capacity_source_negotiation_rejects_unbounded_or_custom_sources_first() -> None:
+def test_capacity_source_negotiation_rejects_unbounded_or_custom_sources_first__and_2_more() -> None:
+    # --- scenario: capacity_source_negotiation_rejects_unbounded_or_custom_sources_first
     """Unbounded or provider-shaped objects must not be traversed during pure negotiation."""
     available = negotiated_provider_sources()
     declared = SourceKey("codex", "quota", "local", "remote_quota_windows")
@@ -361,33 +363,24 @@ def test_capacity_source_negotiation_rejects_unbounded_or_custom_sources_first()
     with pytest.raises(ProviderCapacityPolicyError, match="invalid available capacity sources"):
         negotiate_provider_capacity_policies((*available, _PoisonSource()))
 
-
-@pytest.mark.parametrize(
-    ("configured_model", "profile_id", "provider_id"),
-    [
+    # --- scenario: opencode_selects_only_the_exact_bounded_upstream_prefix
+    """Configured upstream ownership must never become OpenCode-owned capacity."""
+    for configured_model, profile_id, provider_id in [
         ("openai/gpt-5", "openai-api-organization", "openai"),
         ("anthropic/claude-sonnet-4", "anthropic-console-api", "anthropic"),
         ("google/gemini-2.5-pro", "google-cloud-api", "google"),
         ("github-copilot/gpt-4.1", "github-copilot", "github"),
-    ],
-)
-def test_opencode_selects_only_the_exact_bounded_upstream_prefix(
-    configured_model: str,
-    profile_id: str,
-    provider_id: str,
-) -> None:
-    """Configured upstream ownership must never become OpenCode-owned capacity."""
-    policy = select_opencode_capacity_policy(configured_model)
+    ]:
+        policy = select_opencode_capacity_policy(configured_model)
 
-    assert policy is not None
-    assert policy.profile_id == profile_id
-    assert policy.provider_id == provider_id
-    assert policy.provider_id != "opencode"
+        assert policy is not None
+        assert policy.profile_id == profile_id
+        assert policy.provider_id == provider_id
+        assert policy.provider_id != "opencode"
 
-
-@pytest.mark.parametrize(
-    "configured_model",
-    [
+    # --- scenario: opencode_rejects_unbounded_ambiguous_or_self_owned_models
+    """Loose parsing would guess ownership or permit an OpenCode quota source."""
+    for configured_model in [
         None,
         "",
         "openai",
@@ -400,10 +393,6 @@ def test_opencode_selects_only_the_exact_bounded_upstream_prefix(
         " openai/gpt-5",
         "openai/gpt-5\n",
         f"openai/{'x' * 129}",
-    ],
-)
-def test_opencode_rejects_unbounded_ambiguous_or_self_owned_models(
-    configured_model: object,
-) -> None:
-    """Loose parsing would guess ownership or permit an OpenCode quota source."""
-    assert select_opencode_capacity_policy(configured_model) is None
+    ]:
+        assert select_opencode_capacity_policy(configured_model) is None
+

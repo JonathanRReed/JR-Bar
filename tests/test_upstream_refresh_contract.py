@@ -6,7 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 
 
-def test_roadmap_cadence_and_current_refresh_are_linked() -> None:
+def test_roadmap_cadence_and_current_refresh_are_linked__and_1_more() -> None:
+    # --- scenario: roadmap_cadence_and_current_refresh_are_linked
     roadmap = (DOCS / "ROADMAP.md").read_text()
     cadence = (DOCS / "UPSTREAM-RESEARCH-CADENCE.md").read_text()
     normalized_cadence = " ".join(cadence.split())
@@ -24,8 +25,7 @@ def test_roadmap_cadence_and_current_refresh_are_linked() -> None:
     assert "scheduled workflow" in normalized_cadence
     assert "background automation" in normalized_cadence
 
-
-def test_upstream_cadence_contains_required_safety_and_ledger_contract() -> None:
+    # --- scenario: upstream_cadence_contains_required_safety_and_ledger_contract
     cadence = (DOCS / "UPSTREAM-RESEARCH-CADENCE.md").read_text()
 
     for required_source in (
@@ -63,3 +63,4 @@ def test_upstream_cadence_contains_required_safety_and_ledger_contract() -> None
     assert "`adopted/surpassed`" in cadence
     assert "`waiting on evidence`" in cadence
     assert "`reject`" in cadence
+

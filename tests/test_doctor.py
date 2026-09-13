@@ -59,7 +59,8 @@ def _result() -> DiagnosticResult:
     )
 
 
-def test_manifest_and_result_are_frozen_exact_and_bounded() -> None:
+def test_manifest_and_result_are_frozen_exact_and_bounded__and_2_more() -> None:
+    # --- scenario: manifest_and_result_are_frozen_exact_and_bounded
     assert isinstance(DIAGNOSTIC_MANIFEST, DiagnosticManifest)
     # Adding a check changes the exported document's shape, so the version
     # moves with it -- a v1 reader must not silently miss a whole row.
@@ -90,8 +91,7 @@ def test_manifest_and_result_are_frozen_exact_and_bounded() -> None:
     with pytest.raises(ValueError, match="manifest fields"):
         DiagnosticManifest(DOCTOR_VERSION, (object(),))  # type: ignore[arg-type]
 
-
-def test_encoding_is_exact_deterministic_and_contains_only_codes_and_counts() -> None:
+    # --- scenario: encoding_is_exact_deterministic_and_contains_only_codes_and_counts
     encoded = encode_diagnostic_result(_result())
     document = json.loads(encoded)
 
@@ -116,8 +116,7 @@ def test_encoding_is_exact_deterministic_and_contains_only_codes_and_counts() ->
         check.value for check in DiagnosticCheck
     )
 
-
-def test_collection_sanitizes_probe_failures_and_never_copies_private_values() -> None:
+    # --- scenario: collection_sanitizes_probe_failures_and_never_copies_private_values
     private_corpus = (
         "/Users/private-user/secret/project",
         "private-user@example.com",
@@ -151,6 +150,7 @@ def test_collection_sanitizes_probe_failures_and_never_copies_private_values() -
         assert value not in rendered
 
 
+
 def test_alcove_probe_exception_is_a_legal_recovering_nothing() -> None:
     def failed_alcove_probe() -> DiagnosticFinding:
         raise RuntimeError("capture failed")
@@ -174,7 +174,8 @@ def test_alcove_probe_exception_is_a_legal_recovering_nothing() -> None:
     assert (finding.count, finding.limit) == (0, 0)
 
 
-def test_default_collection_uses_only_read_only_local_probes(tmp_path: Path) -> None:
+def test_default_collection_uses_only_read_only_local_probes__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: default_collection_uses_only_read_only_local_probes
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     state.chmod(0o700)
@@ -209,8 +210,7 @@ def test_default_collection_uses_only_read_only_local_probes(tmp_path: Path) -> 
     assert result.last_failure_class is SanitizedFailureClass.NONE
     run.assert_not_called()
 
-
-def test_private_export_writes_one_exact_0600_json_leaf(tmp_path: Path) -> None:
+    # --- scenario: private_export_writes_one_exact_0600_json_leaf
     parent = tmp_path / "selected"
     parent.mkdir(mode=0o755)
     parent.chmod(0o755)
@@ -224,8 +224,7 @@ def test_private_export_writes_one_exact_0600_json_leaf(tmp_path: Path) -> None:
     assert stat.S_IMODE(target.lstat().st_mode) == 0o600
     assert list(parent.iterdir()) == [target]
 
-
-def test_private_export_failure_has_stable_path_free_public_copy(tmp_path: Path) -> None:
+    # --- scenario: private_export_failure_has_stable_path_free_public_copy
     raw = f"could not replace {tmp_path}/private-user-token.json"
     with (
         patch("jrbar.doctor.write_private_export", side_effect=PrivateExportError(raw)),
@@ -238,10 +237,10 @@ def test_private_export_failure_has_stable_path_free_public_copy(tmp_path: Path)
     assert raised.value.__cause__ is None
 
 
-def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+
+def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths__and_2_more(tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],) -> None:
+    # --- scenario: sidepulse_doctor_cli_json_and_export_never_print_private_paths
     target = tmp_path / "private-user" / "doctor.json"
     with (
         patch("jrbar.cli.collect_diagnostics", return_value=_result()),
@@ -256,11 +255,8 @@ def test_sidepulse_doctor_cli_json_and_export_never_print_private_paths(
     assert str(target) not in captured.out
     assert captured.err == ""
 
-
-def test_sidepulse_doctor_cli_uses_stable_public_collection_error(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+    # --- scenario: sidepulse_doctor_cli_uses_stable_public_collection_error
+    capsys.readouterr()
     raw = f"provider error for /Users/private-user at {tmp_path}"
     with patch("jrbar.cli.collect_diagnostics", side_effect=RuntimeError(raw)):
         exit_code = jrbar_main(["doctor"])
@@ -271,11 +267,8 @@ def test_sidepulse_doctor_cli_uses_stable_public_collection_error(
     assert captured.err.strip() == f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
     assert raw not in captured.err
 
-
-def test_sidepulse_doctor_cli_sanitizes_encoding_failures(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
+    # --- scenario: sidepulse_doctor_cli_sanitizes_encoding_failures
+    capsys.readouterr()
     raw = f"encoding failed for /Users/private-user at {tmp_path}"
     with (
         patch("jrbar.cli.collect_diagnostics", return_value=_result()),
@@ -288,3 +281,4 @@ def test_sidepulse_doctor_cli_sanitizes_encoding_failures(
     assert captured.out == ""
     assert captured.err.strip() == f"jrbar doctor: {PUBLIC_COLLECTION_ERROR_MESSAGE}"
     assert raw not in captured.err
+

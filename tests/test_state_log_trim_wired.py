@@ -35,15 +35,15 @@ def _oversized_log(path: Path, *, lines: int) -> Path:
     return path
 
 
-def test_a_quiet_providers_log_still_gets_trimmed(tmp_path: Path) -> None:
+def test_a_quiet_providers_log_still_gets_trimmed__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: a_quiet_providers_log_still_gets_trimmed
     quiet = _oversized_log(tmp_path / "codex.jsonl", lines=5000)
     assert quiet.stat().st_size > TRIM_THRESHOLD_BYTES
 
     assert trim_oversized_logs(tmp_path) == 1
     assert quiet.stat().st_size <= TRIM_THRESHOLD_BYTES
 
-
-def test_trimming_keeps_the_newest_lines(tmp_path: Path) -> None:
+    # --- scenario: trimming_keeps_the_newest_lines
     """The tail is what the collector reads; losing it would blank the UI."""
     log = _oversized_log(tmp_path / "codex.jsonl", lines=5000)
     trim_oversized_logs(tmp_path)
@@ -53,8 +53,7 @@ def test_trimming_keeps_the_newest_lines(tmp_path: Path) -> None:
     assert len(kept) <= TRIM_KEEP_LINES
     assert kept[-1]["i"] == 4999, "the newest event was discarded"
 
-
-def test_one_compaction_ends_the_need_to_compact(tmp_path: Path) -> None:
+    # --- scenario: one_compaction_ends_the_need_to_compact
     """The treadmill, reproduced.
 
     Records vary ~500 to ~5,800 bytes, so a 4,000-line cap bounds a file
@@ -75,7 +74,9 @@ def test_one_compaction_ends_the_need_to_compact(tmp_path: Path) -> None:
     assert compact_jsonl_file(log) is False, "compaction is on a treadmill"
 
 
-def test_a_single_enormous_line_still_leaves_a_log(tmp_path: Path) -> None:
+
+def test_a_single_enormous_line_still_leaves_a_log__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: a_single_enormous_line_still_leaves_a_log
     """One record wider than the whole budget must not empty the file."""
     log = tmp_path / "codex.jsonl"
     log.write_text(json.dumps({"pad": "x" * (TRIM_TARGET_BYTES + 10)}) + "\n")
@@ -83,12 +84,12 @@ def test_a_single_enormous_line_still_leaves_a_log(tmp_path: Path) -> None:
         compact_jsonl_file(log)
     assert log.read_text().strip(), "trimming emptied the log"
 
-
-def test_small_logs_are_left_alone(tmp_path: Path) -> None:
+    # --- scenario: small_logs_are_left_alone
     small = tmp_path / "claude.jsonl"
     small.write_text('{"i": 1}\n')
     assert trim_oversized_logs(tmp_path) == 0
     assert small.read_text() == '{"i": 1}\n'
+
 
 
 def test_the_sweep_is_actually_called_at_launch() -> None:
@@ -104,7 +105,8 @@ def test_the_sweep_is_actually_called_at_launch() -> None:
     )
 
 
-def test_the_sweep_survives_a_broken_state_dir(tmp_path: Path) -> None:
+def test_the_sweep_survives_a_broken_state_dir__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: the_sweep_survives_a_broken_state_dir
     """A log that cannot be trimmed must never take the launch down."""
 
     class _Probe:
@@ -117,8 +119,7 @@ def test_the_sweep_survives_a_broken_state_dir(tmp_path: Path) -> None:
     result = StatusBarController.trim_oversized_state_logs(_Probe())
     assert isinstance(result, int)
 
-
-def test_orphaned_debug_cache_is_removed(tmp_path: Path) -> None:
+    # --- scenario: orphaned_debug_cache_is_removed
     """17.7 MB of residue from a feature that no longer exists.
 
     Nothing in the tree reads or writes usage-debug-cache.json; it was left
@@ -134,8 +135,7 @@ def test_orphaned_debug_cache_is_removed(tmp_path: Path) -> None:
     assert remove_orphaned_state_files(tmp_path) == 2
     assert not orphan.exists() and not sidecar.exists()
 
-
-def test_the_janitor_never_touches_live_state(tmp_path: Path) -> None:
+    # --- scenario: the_janitor_never_touches_live_state
     """A janitor that guesses is worse than the weight it removes."""
     from jrbar.audit import remove_orphaned_state_files
 
@@ -154,13 +154,14 @@ def test_the_janitor_never_touches_live_state(tmp_path: Path) -> None:
         assert (tmp_path / name).read_text() == body
 
 
-def test_the_janitor_survives_a_missing_state_dir(tmp_path: Path) -> None:
+
+def test_the_janitor_survives_a_missing_state_dir__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: the_janitor_survives_a_missing_state_dir
     from jrbar.audit import remove_orphaned_state_files
 
     assert remove_orphaned_state_files(tmp_path / "nope") == 0
 
-
-def test_process_logs_are_bounded_without_losing_the_inode(tmp_path: Path) -> None:
+    # --- scenario: process_logs_are_bounded_without_losing_the_inode
     """launchd holds an O_APPEND fd on stdout/stderr for the process's life.
 
     Replacing the file atomically would leave the app writing into an
@@ -191,8 +192,7 @@ def test_process_logs_are_bounded_without_losing_the_inode(tmp_path: Path) -> No
     finally:
         os.close(appender)
 
-
-def test_process_log_trim_keeps_the_newest_lines(tmp_path: Path) -> None:
+    # --- scenario: process_log_trim_keeps_the_newest_lines
     from jrbar.audit import trim_process_log
 
     log = tmp_path / "status-bar.out.log"
@@ -204,6 +204,7 @@ def test_process_log_trim_keeps_the_newest_lines(tmp_path: Path) -> None:
     lines = log.read_text().splitlines()
     assert lines[-1] == "line 199999 " + "y" * 40
     assert lines[0].startswith("line "), "trim left a partial first line"
+
 
 
 def test_small_process_logs_are_left_alone(tmp_path: Path) -> None:

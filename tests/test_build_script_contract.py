@@ -9,7 +9,8 @@ BUILD_SCRIPT = ROOT / "packaging" / "build_macos_pkg.sh"
 HOOK_BENCHMARK = ROOT / "scripts" / "benchmark_hook_ingress.py"
 
 
-def test_package_builder_fails_fast_and_never_defaults_to_apple_python_39() -> None:
+def test_package_builder_fails_fast_and_never_defaults_to_apple_python_39__and_2_more() -> None:
+    # --- scenario: package_builder_fails_fast_and_never_defaults_to_apple_python_39
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "set -euo pipefail" in text
@@ -18,12 +19,7 @@ def test_package_builder_fails_fast_and_never_defaults_to_apple_python_39() -> N
     assert "sys.version_info[:2] != (3, 12)" in text
     assert "scripts/validate_release_version.py" in text
 
-
-def test_release_build_selects_the_locked_python_runtime() -> None:
-    # This used to be pinned on .github/workflows/self-hosted-macos.yml, which
-    # was retired on 2026-09-10 (see tests/test_workflow_contract.py). The
-    # release build happens on the owner's Mac, so the builder is where the
-    # locked runtime has to be enforced.
+    # --- scenario: release_build_selects_the_locked_python_runtime
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "/opt/homebrew/bin/python3.12" in text
@@ -31,8 +27,7 @@ def test_release_build_selects_the_locked_python_runtime() -> None:
     assert "sys.version_info[:2] != (3, 12)" in text
     assert "JR-Bar release packaging requires Python 3.12." in text
 
-
-def test_source_install_drops_only_the_incompatible_build_constraint() -> None:
+    # --- scenario: source_install_drops_only_the_incompatible_build_constraint
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert (
@@ -43,21 +38,21 @@ def test_source_install_drops_only_the_incompatible_build_constraint() -> None:
     assert 'export PIP_BUILD_CONSTRAINT="$CONSTRAINTS"' in text
 
 
-def test_package_builder_embeds_creator_micro_backend() -> None:
+
+def test_package_builder_embeds_creator_micro_backend__and_2_more() -> None:
+    # --- scenario: package_builder_embeds_creator_micro_backend
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "--hidden-import jrbar.creator_micro_adapter" in text
     assert "--hidden-import jrbar.creator_micro_hidapi" in text
     assert "--hidden-import hid" in text
 
-
-def test_package_builder_embeds_distribution_metadata_for_runtime_version() -> None:
+    # --- scenario: package_builder_embeds_distribution_metadata_for_runtime_version
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "--copy-metadata jrbar" in text
 
-
-def test_package_builder_sets_display_name_without_changing_bundle_identity() -> None:
+    # --- scenario: package_builder_sets_display_name_without_changing_bundle_identity
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert 'PRODUCT_DISPLAY_NAME="JR-Bar"' in text
@@ -70,7 +65,9 @@ def test_package_builder_sets_display_name_without_changing_bundle_identity() ->
     assert 'CORE_ID="com.jonathanreed.jrbar.core"' in text
 
 
-def test_package_builder_assembles_the_swift_app_daemon_and_shim() -> None:
+
+def test_package_builder_assembles_the_swift_app_daemon_and_shim__and_2_more() -> None:
+    # --- scenario: package_builder_assembles_the_swift_app_daemon_and_shim
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     # The Swift app is the bundle; the frozen daemon and the shim ride under Helpers.
@@ -95,8 +92,7 @@ def test_package_builder_assembles_the_swift_app_daemon_and_shim() -> None:
     assert "--collect-submodules Cocoa" in text
     assert "status-bar" not in text
 
-
-def test_package_builder_picks_the_best_keychain_identity_and_notarizes_when_it_can() -> None:
+    # --- scenario: package_builder_picks_the_best_keychain_identity_and_notarizes_when_it_can
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     selector = text[text.index("select_app_identity() {"):text.index("select_installer_identity() {")]
@@ -115,8 +111,7 @@ def test_package_builder_picks_the_best_keychain_identity_and_notarizes_when_it_
     # The keychain is never consulted in the local-only mode the tests run.
     assert 'if [ "$ALLOW_UNSIGNED" = "1" ]; then' in text
 
-
-def test_package_builder_verifies_delivered_signature_identity() -> None:
+    # --- scenario: package_builder_verifies_delivered_signature_identity
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
     signer = (ROOT / "packaging" / "sign_macos_app.py").read_text(encoding="utf-8")
 
@@ -128,7 +123,9 @@ def test_package_builder_verifies_delivered_signature_identity() -> None:
         assert flag in signer
 
 
-def test_package_builder_retains_structured_notarization_evidence() -> None:
+
+def test_package_builder_retains_structured_notarization_evidence__and_2_more() -> None:
+    # --- scenario: package_builder_retains_structured_notarization_evidence
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "--output-format json" in text
@@ -137,8 +134,7 @@ def test_package_builder_retains_structured_notarization_evidence() -> None:
     assert "notary-submission-id" in text
     assert "notary-submitted-pkg.sha256" in text
 
-
-def test_package_builder_embeds_reviewed_sparkle_before_signing() -> None:
+    # --- scenario: package_builder_embeds_reviewed_sparkle_before_signing
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     prepare = 'scripts/prepare_sparkle.py" --output "$SPARKLE_DISTRIBUTION"'
@@ -154,8 +150,7 @@ def test_package_builder_embeds_reviewed_sparkle_before_signing() -> None:
     assert 'packaging/sparkle_public_ed_key.txt' in text
     assert text.index(prepare) < text.index(embed) < text.index(sign) < text.index(verify)
 
-
-def test_package_builder_writes_only_reviewed_sparkle_info_keys() -> None:
+    # --- scenario: package_builder_writes_only_reviewed_sparkle_info_keys
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     for key in (
@@ -175,7 +170,9 @@ def test_package_builder_writes_only_reviewed_sparkle_info_keys() -> None:
     assert 'packaging/entitlements.plist"' in text
 
 
-def test_production_builder_notarizes_app_before_final_zip_and_pkg() -> None:
+
+def test_production_builder_notarizes_app_before_final_zip_and_pkg__and_2_more() -> None:
+    # --- scenario: production_builder_notarizes_app_before_final_zip_and_pkg
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     app_submit = 'notarytool submit "$APP_NOTARY_ZIP"'
@@ -193,8 +190,7 @@ def test_production_builder_notarizes_app_before_final_zip_and_pkg() -> None:
     assert text.index(app_validate) < text.index(updater_zip) < text.index(package)
     assert text.index(package) < text.index(pkg_submit)
 
-
-def test_unsigned_builder_explicitly_refuses_updater_evidence_claims() -> None:
+    # --- scenario: unsigned_builder_explicitly_refuses_updater_evidence_claims
     text = BUILD_SCRIPT.read_text(encoding="utf-8")
 
     assert "ALLOW_UNSIGNED is local-only" in text
@@ -206,8 +202,7 @@ def test_unsigned_builder_explicitly_refuses_updater_evidence_claims() -> None:
     assert "generate_sparkle_channel.py" in text
     assert "SPARKLE_PRIVATE_KEY" not in text
 
-
-def test_clean_install_verifies_t3_integration_artifacts_and_commands() -> None:
+    # --- scenario: clean_install_verifies_t3_integration_artifacts_and_commands
     text = (ROOT / "scripts" / "verify_clean_install.py").read_text(encoding="utf-8")
 
     assert '"integration_compatibility.json"' in text
@@ -217,7 +212,9 @@ def test_clean_install_verifies_t3_integration_artifacts_and_commands() -> None:
     assert "jrbar.codexbar_compat" not in text
 
 
-def test_hook_ingress_benchmark_has_bounded_content_free_report_contract() -> None:
+
+def test_hook_ingress_benchmark_has_bounded_content_free_report_contract__and_1_more() -> None:
+    # --- scenario: hook_ingress_benchmark_has_bounded_content_free_report_contract
     text = HOOK_BENCHMARK.read_text(encoding="utf-8")
 
     assert "MINIMUM_SAMPLES: Final = 50" in text
@@ -236,8 +233,7 @@ def test_hook_ingress_benchmark_has_bounded_content_free_report_contract() -> No
     for forbidden in ("prompt_text", "tool_input", "tool_output", "raw_payload"):
         assert forbidden not in text
 
-
-def test_hook_ingress_benchmark_refuses_too_few_samples() -> None:
+    # --- scenario: hook_ingress_benchmark_refuses_too_few_samples
     result = subprocess.run(
         [sys.executable, str(HOOK_BENCHMARK), "--samples", "49"],
         capture_output=True,
@@ -248,3 +244,4 @@ def test_hook_ingress_benchmark_refuses_too_few_samples() -> None:
 
     assert result.returncode != 0
     assert "at least 50" in result.stderr
+

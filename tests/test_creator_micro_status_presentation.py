@@ -22,7 +22,8 @@ def _controller():
     return controller
 
 
-def test_creator_micro_receipt_updates_cached_hidden_devices_status() -> None:
+def test_creator_micro_receipt_updates_cached_hidden_devices_status__and_1_more() -> None:
+    # --- scenario: creator_micro_receipt_updates_cached_hidden_devices_status
     controller = _controller()
     controller.current_settings_pane = "profile"
     controller._creator_micro_output_receipt = SimpleNamespace(reason="timeout")
@@ -35,8 +36,7 @@ def test_creator_micro_receipt_updates_cached_hidden_devices_status() -> None:
     assert status.stringValue() == "Status: ready"
     assert controller.messages == []
 
-
-def test_receipt_before_devices_pane_builds_latest_status_and_ownership_help() -> None:
+    # --- scenario: receipt_before_devices_pane_builds_latest_status_and_ownership_help
     controller = _controller()
     controller.applyCreatorMicroOutputReceipt_(SimpleNamespace(reason="device_conflict"))
 
@@ -53,6 +53,7 @@ def test_receipt_before_devices_pane_builds_latest_status_and_ownership_help() -
     assert "Close Work Louder Input" in text
     assert "remove the device connection in Codex Micro" in text
     assert "before enabling JR-Bar" in text
+
 
 
 def _all_views(root):

@@ -136,9 +136,8 @@ def test_signer_signs_every_sparkle_target_inside_out(tmp_path: Path) -> None:
     assert signing_targets[-1] == app.resolve()
 
 
-def test_adhoc_signing_omits_timestamp_but_keeps_hardened_runtime(
-    tmp_path: Path,
-) -> None:
+def test_adhoc_signing_omits_timestamp_but_keeps_hardened_runtime__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: adhoc_signing_omits_timestamp_but_keeps_hardened_runtime
     app, entitlements, macho = _candidate(tmp_path)
     calls = []
 
@@ -159,10 +158,7 @@ def test_adhoc_signing_omits_timestamp_but_keeps_hardened_runtime(
     assert all("--timestamp" not in argv for argv in signing)
     assert all(("--options", "runtime") == argv[2:4] for argv in signing)
 
-
-def test_signer_entitles_the_bundled_daemon_and_supports_local_identities(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: signer_entitles_the_bundled_daemon_and_supports_local_identities
     app, entitlements, macho = _candidate(tmp_path)
     daemon = app / "Contents" / "Helpers" / "jrbar-core.app" / "Contents" / "MacOS" / "jrbar-core"
     shim = app / "Contents" / "Helpers" / "jrbar-hook"
@@ -198,6 +194,7 @@ def test_signer_entitles_the_bundled_daemon_and_supports_local_identities(
     assert shim.resolve() in targets
     # A local identity without a Team ID: no hardened runtime, no timestamp.
     assert all("runtime" not in argv and "--timestamp" not in argv for argv in signing)
+
 
 
 def test_sign_plan_rejects_symlink_that_escapes_bundle(tmp_path: Path) -> None:

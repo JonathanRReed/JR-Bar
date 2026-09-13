@@ -70,9 +70,8 @@ def _direct_imports(path: Path) -> set[str]:
     return imports
 
 
-def test_durable_provider_settings_do_not_serialize_cache_permission_or_capability_state(
-    tmp_path: Path,
-) -> None:
+def test_durable_provider_settings_do_not_serialize_cache_permission_or_capability_state__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: durable_provider_settings_do_not_serialize_cache_permission_or_capability_state
     usage_path = tmp_path / "usage-settings.json"
     sync_path = tmp_path / "sync-settings.json"
     save_provider_usage_settings(default_provider_usage_settings(), usage_path)
@@ -84,10 +83,7 @@ def test_durable_provider_settings_do_not_serialize_cache_permission_or_capabili
             forbidden
         )
 
-
-def test_runtime_usage_cache_does_not_serialize_settings_permissions_or_capabilities(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: runtime_usage_cache_does_not_serialize_settings_permissions_or_capabilities
     path = tmp_path / "usage-cache.json"
     save_provider_usage_state(ProviderUsageState((), 1000.0, 1120.0, False), path)
 
@@ -97,7 +93,9 @@ def test_runtime_usage_cache_does_not_serialize_settings_permissions_or_capabili
     )
 
 
-def test_provider_state_modules_keep_direct_ownership_boundaries() -> None:
+
+def test_provider_state_modules_keep_direct_ownership_boundaries__and_1_more() -> None:
+    # --- scenario: provider_state_modules_keep_direct_ownership_boundaries
     usage_settings = _direct_imports(
         ROOT / "src" / "jrbar" / "provider_usage_settings.py"
     )
@@ -122,8 +120,7 @@ def test_provider_state_modules_keep_direct_ownership_boundaries() -> None:
         {"provider_usage_runtime", "provider_usage_settings", "provider_usage_store"}
     )
 
-
-def test_refresh_receipt_is_revision_bound_and_content_free() -> None:
+    # --- scenario: refresh_receipt_is_revision_bound_and_content_free
     receipt = RefreshPublicationReceipt(
         sequence=1,
         settings_revision=7,
@@ -137,3 +134,4 @@ def test_refresh_receipt_is_revision_bound_and_content_free() -> None:
         "outcome",
         "error_code",
     }
+

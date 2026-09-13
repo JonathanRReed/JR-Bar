@@ -6,7 +6,8 @@ from jrbar.deck_controller import apply_deck_input
 from jrbar.deck_input_dispatch import DeckInputDispatch
 
 
-def test_controller_routes_a_hardware_press_to_the_existing_usage_center():
+def test_controller_routes_a_hardware_press_to_the_existing_usage_center__and_2_more() -> None:
+    # --- scenario: controller_routes_a_hardware_press_to_the_existing_usage_center
     queued, opened = [], []
     target = SimpleNamespace(
         performSelectorOnMainThread_withObject_waitUntilDone_=lambda selector, batch, wait: queued.append(batch),
@@ -19,8 +20,7 @@ def test_controller_routes_a_hardware_press_to_the_existing_usage_center():
     assert opened == ["usage"]
     assert target._deck_action_receipt.success
 
-
-def test_controller_ignores_input_during_termination():
+    # --- scenario: controller_ignores_input_during_termination
     queued, opened = [], []
     target = SimpleNamespace(
         _runtime_termination_started=True,
@@ -33,8 +33,7 @@ def test_controller_ignores_input_during_termination():
     assert queued == []
     assert not opened
 
-
-def test_reconfiguration_revokes_input_then_waits_for_old_device_owner_before_starting():
+    # --- scenario: reconfiguration_revokes_input_then_waits_for_old_device_owner_before_starting
     import threading
 
     from jrbar.deck_controller import reconfigure_deck_runtime
@@ -70,7 +69,9 @@ def test_reconfiguration_revokes_input_then_waits_for_old_device_owner_before_st
     assert target._jrbar_optional_integration_runtime is replacement
 
 
-def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop():
+
+def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop__and_1_more() -> None:
+    # --- scenario: reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop
     from jrbar.deck_controller import reconfigure_deck_runtime
 
     calls = []
@@ -84,8 +85,7 @@ def test_reconfiguration_never_starts_a_second_owner_if_the_first_cannot_stop():
     assert calls == ["previous_owner_stopping"]
     assert target._jrbar_optional_integration_runtime is old
 
-
-def test_termination_revokes_a_waiting_restart_before_old_owner_finishes():
+    # --- scenario: termination_revokes_a_waiting_restart_before_old_owner_finishes
     import threading
 
     from jrbar.deck_controller import reconfigure_deck_runtime, stop_deck_runtime_reconfiguration
@@ -106,3 +106,4 @@ def test_termination_revokes_a_waiting_restart_before_old_owner_finishes():
     stopped.set()
     thread.join(1)
     assert not created
+

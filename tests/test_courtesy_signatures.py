@@ -20,7 +20,8 @@ from jrbar.courtesy_signatures import (
 )
 
 
-def test_registry_covers_each_semantic_once_with_stable_identifiers() -> None:
+def test_registry_covers_each_semantic_once_with_stable_identifiers__and_2_more() -> None:
+    # --- scenario: registry_covers_each_semantic_once_with_stable_identifiers
     assert tuple(signature.semantic for signature in COURTESY_SIGNATURES) == (
         CourtesySemantic.COMPLETION,
         CourtesySemantic.RECOVERY,
@@ -46,8 +47,7 @@ def test_registry_covers_each_semantic_once_with_stable_identifiers() -> None:
         "jrbar.courtesy.generic-notification.v1",
     )
 
-
-def test_registry_lookup_is_exact_and_preserves_canonical_order() -> None:
+    # --- scenario: registry_lookup_is_exact_and_preserves_canonical_order
     registry = DEFAULT_COURTESY_SIGNATURE_REGISTRY
     completion = COURTESY_SIGNATURES[0]
 
@@ -58,8 +58,7 @@ def test_registry_lookup_is_exact_and_preserves_canonical_order() -> None:
     with pytest.raises(KeyError):
         registry.require("jrbar.courtesy.missing.v1")
 
-
-def test_every_signature_is_finite_and_never_exceeds_two_hertz() -> None:
+    # --- scenario: every_signature_is_finite_and_never_exceeds_two_hertz
     for signature in COURTESY_SIGNATURES:
         assert 1 <= len(signature.geometry.frames) <= 5
         assert all(frame for frame in signature.geometry.frames)
@@ -68,7 +67,9 @@ def test_every_signature_is_finite_and_never_exceeds_two_hertz() -> None:
         assert signature.cadence.peak_hz <= MAX_CADENCE_HZ == 2.0
 
 
-def test_semantics_are_distinguishable_without_color_or_motion() -> None:
+
+def test_semantics_are_distinguishable_without_color_or_motion__and_2_more() -> None:
+    # --- scenario: semantics_are_distinguishable_without_color_or_motion
     geometry_keys = {
         signature.geometry.fingerprint for signature in COURTESY_SIGNATURES
     }
@@ -91,8 +92,7 @@ def test_semantics_are_distinguishable_without_color_or_motion() -> None:
     assert len(spatial_descriptions) == len(COURTESY_SIGNATURES)
     assert len(accessibility_labels) == len(COURTESY_SIGNATURES)
 
-
-def test_motion_plan_projects_the_canonical_finite_signature() -> None:
+    # --- scenario: motion_plan_projects_the_canonical_finite_signature
     signature = signature_for_semantic(CourtesySemantic.HANDOFF)
 
     plan = plan_courtesy_signature(CourtesySemantic.HANDOFF, reduce_motion=False)
@@ -107,27 +107,26 @@ def test_motion_plan_projects_the_canonical_finite_signature() -> None:
     assert plan.reduce_motion_substituted is False
     assert plan.has_motion is True
 
+    # --- scenario: reduce_motion_preserves_meaning_with_a_static_spatial_substitute
+    for semantic in tuple(CourtesySemantic):
+        signature = signature_for_semantic(semantic)
 
-@pytest.mark.parametrize("semantic", tuple(CourtesySemantic))
-def test_reduce_motion_preserves_meaning_with_a_static_spatial_substitute(
-    semantic: CourtesySemantic,
-) -> None:
-    signature = signature_for_semantic(semantic)
+        plan = plan_courtesy_signature(semantic, reduce_motion=True)
 
-    plan = plan_courtesy_signature(semantic, reduce_motion=True)
-
-    assert plan.identifier == signature.identifier
-    assert plan.semantic is semantic
-    assert plan.presentation is CourtesyPresentation.STATIC
-    assert plan.frames == (signature.geometry.static_slots,)
-    assert plan.cadence is None
-    assert plan.static_slots == signature.geometry.static_slots
-    assert plan.accessibility_label == signature.accessibility_label
-    assert plan.reduce_motion_substituted is True
-    assert plan.has_motion is False
+        assert plan.identifier == signature.identifier
+        assert plan.semantic is semantic
+        assert plan.presentation is CourtesyPresentation.STATIC
+        assert plan.frames == (signature.geometry.static_slots,)
+        assert plan.cadence is None
+        assert plan.static_slots == signature.geometry.static_slots
+        assert plan.accessibility_label == signature.accessibility_label
+        assert plan.reduce_motion_substituted is True
+        assert plan.has_motion is False
 
 
-def test_registry_rejects_identifier_and_semantic_collisions() -> None:
+
+def test_registry_rejects_identifier_and_semantic_collisions__and_2_more() -> None:
+    # --- scenario: registry_rejects_identifier_and_semantic_collisions
     completion = COURTESY_SIGNATURES[0]
     recovery = COURTESY_SIGNATURES[1]
 
@@ -145,10 +144,8 @@ def test_registry_rejects_identifier_and_semantic_collisions() -> None:
             )
         )
 
-
-@pytest.mark.parametrize(
-    ("replacement", "message"),
-    (
+    # --- scenario: registry_rejects_non_color_identity_collisions
+    for replacement, message in (
         ({"geometry": COURTESY_SIGNATURES[0].geometry}, "geometry collision"),
         ({"cadence": COURTESY_SIGNATURES[0].cadence}, "cadence collision"),
         (
@@ -164,20 +161,14 @@ def test_registry_rejects_identifier_and_semantic_collisions() -> None:
             {"accessibility_label": COURTESY_SIGNATURES[0].accessibility_label},
             "accessibility label collision",
         ),
-    ),
-)
-def test_registry_rejects_non_color_identity_collisions(
-    replacement: dict[str, object],
-    message: str,
-) -> None:
-    completion = COURTESY_SIGNATURES[0]
-    recovery = replace(COURTESY_SIGNATURES[1], **replacement)
+    ):
+        completion = COURTESY_SIGNATURES[0]
+        recovery = replace(COURTESY_SIGNATURES[1], **replacement)
 
-    with pytest.raises(CourtesySignatureError, match=message):
-        CourtesySignatureRegistry((completion, recovery))
+        with pytest.raises(CourtesySignatureError, match=message):
+            CourtesySignatureRegistry((completion, recovery))
 
-
-def test_unsafe_or_unbounded_cadence_metadata_is_rejected() -> None:
+    # --- scenario: unsafe_or_unbounded_cadence_metadata_is_rejected
     with pytest.raises(CourtesySignatureError, match="2 Hz"):
         CadencePulse(active_ms=100, rest_ms=100)
     with pytest.raises(CourtesySignatureError, match="at most three"):
@@ -187,29 +178,23 @@ def test_unsafe_or_unbounded_cadence_metadata_is_rejected() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    ("frames", "static_slots", "message"),
-    (
+
+def test_geometry_is_bounded_and_canonical__and_2_more() -> None:
+    # --- scenario: geometry_is_bounded_and_canonical
+    for frames, static_slots, message in (
         ((), (2,), "at least one frame"),
         (((0, 5),), (2,), "slot range"),
         (((0, 1),), (1, 0), "ordered unique slots"),
         (((0, 1),), (), "static geometry"),
-    ),
-)
-def test_geometry_is_bounded_and_canonical(
-    frames: tuple[tuple[int, ...], ...],
-    static_slots: tuple[int, ...],
-    message: str,
-) -> None:
-    with pytest.raises(CourtesySignatureError, match=message):
-        GeometrySignature(
-            frames=frames,
-            static_slots=static_slots,
-            spatial_description="A bounded spatial cue.",
-        )
+    ):
+        with pytest.raises(CourtesySignatureError, match=message):
+            GeometrySignature(
+                frames=frames,
+                static_slots=static_slots,
+                spatial_description="A bounded spatial cue.",
+            )
 
-
-def test_plans_and_nested_signature_values_are_immutable() -> None:
+    # --- scenario: plans_and_nested_signature_values_are_immutable
     plan = plan_courtesy_signature(CourtesySemantic.COMPLETION)
     signature = signature_for_semantic(CourtesySemantic.COMPLETION)
 
@@ -220,8 +205,7 @@ def test_plans_and_nested_signature_values_are_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         signature.cadence.name = "changed"  # type: ignore[misc]
 
-
-def test_lookup_and_planning_reject_non_enum_semantics_and_non_boolean_policy() -> None:
+    # --- scenario: lookup_and_planning_reject_non_enum_semantics_and_non_boolean_policy
     with pytest.raises(CourtesySignatureError, match="semantic must be"):
         signature_for_semantic("completion")  # type: ignore[arg-type]
     with pytest.raises(CourtesySignatureError, match="reduce motion must be"):
@@ -229,3 +213,4 @@ def test_lookup_and_planning_reject_non_enum_semantics_and_non_boolean_policy() 
             CourtesySemantic.COMPLETION,
             reduce_motion=1,  # type: ignore[arg-type]
         )
+

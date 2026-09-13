@@ -65,41 +65,35 @@ def _pulse_indices(program: str) -> list[int]:
     return [int(segment.split(":", 1)[0]) for segment in _body(program)[1].split("; ")]
 
 
-def test_relay_step_is_full_traversal_divided_across_the_led_line() -> None:
+def test_relay_step_is_full_traversal_divided_across_the_led_line__and_2_more() -> None:
+    # --- scenario: relay_step_is_full_traversal_divided_across_the_led_line
     assert relay_step_ms(1.6, 8) == 200
     assert relay_step_ms(1.6, 2) == 800
     assert relay_step_ms(1.6, 8) * 8 == 1_600
 
+    # --- scenario: relay_step_invalid_traversal_uses_normalized_speed_floor
+    for value in [0.0, -2.0, float("nan"), float("inf")]:
+        assert relay_step_ms(value, 8) == 37
 
-@pytest.mark.parametrize("value", [0.0, -2.0, float("nan"), float("inf")])
-def test_relay_step_invalid_traversal_uses_normalized_speed_floor(value: float) -> None:
-    assert relay_step_ms(value, 8) == 37
-
-
-def test_relay_order_visits_each_led_once_before_wrapping() -> None:
+    # --- scenario: relay_order_visits_each_led_once_before_wrapping
     assert relay_led_order(8, 0) == (0, 1, 2, 3, 4, 5, 6, 7)
     assert relay_led_order(8, 6) == (6, 7, 0, 1, 2, 3, 4, 5)
     assert set(relay_led_order(8, 6)) == set(range(8))
 
 
-@pytest.mark.parametrize(
-    ("elapsed_seconds", "expected"),
-    [
+
+def test_relay_phase_index_wraps_without_losing_large_elapsed_time__and_2_more() -> None:
+    # --- scenario: relay_phase_index_wraps_without_losing_large_elapsed_time
+    for elapsed_seconds, expected in [
         (0.0, 0),
         (0.8, 4),
         (1.4, 7),
         (1.6, 0),
         (1_601.41, 7),
-    ],
-)
-def test_relay_phase_index_wraps_without_losing_large_elapsed_time(
-    elapsed_seconds: float,
-    expected: int,
-) -> None:
-    assert relay_phase_index(elapsed_seconds, 1.6, 8) == expected
+    ]:
+        assert relay_phase_index(elapsed_seconds, 1.6, 8) == expected
 
-
-def test_relay_program_rotates_delay_order_to_the_current_phase() -> None:
+    # --- scenario: relay_program_rotates_delay_order_to_the_current_phase
     statuses = (_status("codex"), _status("claude"))
     _state, program = program_for_snapshot(
         statuses,
@@ -112,8 +106,7 @@ def test_relay_program_rotates_delay_order_to_the_current_phase() -> None:
     delays = [int(segment.split()[-1][:-2]) for segment in _body(program)[1].split("; ")]
     assert delays == [0, 200, 400, 600, 800, 1_000, 1_200, 1_400]
 
-
-def test_all_static_relay_program_is_byte_stable_across_elapsed_phases() -> None:
+    # --- scenario: all_static_relay_program_is_byte_stable_across_elapsed_phases
     completed = _status("codex", AgentMode.COMPLETED)
     failed = _status("claude", AgentMode.BLOCKED_ERROR)
     rows = (
@@ -163,7 +156,9 @@ def test_all_static_relay_program_is_byte_stable_across_elapsed_phases() -> None
     assert phase_four == phase_zero
 
 
-def test_two_and_eight_led_programs_map_one_elapsed_duration_by_fraction() -> None:
+
+def test_two_and_eight_led_programs_map_one_elapsed_duration_by_fraction__and_2_more() -> None:
+    # --- scenario: two_and_eight_led_programs_map_one_elapsed_duration_by_fraction
     statuses = (_status("codex"), _status("claude"))
     settings = _relay_settings()
 
@@ -183,16 +178,11 @@ def test_two_and_eight_led_programs_map_one_elapsed_duration_by_fraction() -> No
     assert _pulse_indices(dot)[0] == 1
     assert _pulse_indices(screen_bar)[0] == 4
 
-
-def test_two_and_eight_led_phase_alignment_survives_integer_step_rounding() -> None:
-    # At 299ms of the normalized 300ms traversal, both surfaces are in
-    # their final fraction. Eight integer 37ms steps total only 296ms, so
-    # deriving phase from rounded steps would wrap the Screen Bar early.
+    # --- scenario: two_and_eight_led_phase_alignment_survives_integer_step_rounding
     assert relay_phase_index(0.299, 0.3, 2) == 1
     assert relay_phase_index(0.299, 0.3, 8) == 7
 
-
-def test_zero_leds_emit_no_relay_instructions_and_one_agent_is_unchanged() -> None:
+    # --- scenario: zero_leds_emit_no_relay_instructions_and_one_agent_is_unchanged
     settings = _relay_settings()
     statuses = (_status("codex"), _status("claude"))
     state, empty = program_for_snapshot(
@@ -220,49 +210,51 @@ def test_zero_leds_emit_no_relay_instructions_and_one_agent_is_unchanged() -> No
     assert rebuilt == initial
 
 
-@pytest.mark.parametrize("led_count", [2, 8])
-def test_relay_program_stays_inside_firmware_bounds(led_count: int) -> None:
-    _, program = program_for_snapshot(
-        (_status("codex"), _status("claude")),
-        led_count=led_count,
-        colors=_relay_settings().with_cycle_speed(10.0),
-        relay_elapsed_seconds=987_654.3,
-    )
-    assert len(program.splitlines()) <= MAX_LED_LINES
-    assert len(program.encode("utf-8")) <= MAX_LED_BYTES
 
+def test_relay_program_stays_inside_firmware_bounds__and_1_more() -> None:
+    # --- scenario: relay_program_stays_inside_firmware_bounds
+    for led_count in [2, 8]:
+        _, program = program_for_snapshot(
+            (_status("codex"), _status("claude")),
+            led_count=led_count,
+            colors=_relay_settings().with_cycle_speed(10.0),
+            relay_elapsed_seconds=987_654.3,
+        )
+        assert len(program.splitlines()) <= MAX_LED_LINES
+        assert len(program.encode("utf-8")) <= MAX_LED_BYTES
 
-@pytest.mark.parametrize("led_count", [2, 8])
-def test_real_wasm_relay_visits_every_led_within_one_traversal(led_count: int) -> None:
-    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    # --- scenario: real_wasm_relay_visits_every_led_within_one_traversal
+    for led_count in [2, 8]:
+        from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
 
-    try:
-        controller = SdLedWasmController(led_count=led_count)
-    except LedWasmUnavailableError as exc:
-        pytest.skip(str(exc))
+        try:
+            controller = SdLedWasmController(led_count=led_count)
+        except LedWasmUnavailableError as exc:
+            pytest.skip(str(exc))
 
-    _, program = program_for_snapshot(
-        (_status("codex"), _status("claude")),
-        led_count=led_count,
-        colors=_relay_settings(),
-        relay_elapsed_seconds=0.0,
-    )
-    epoch_ms = 7_000_000
-    parsed = controller.parse(program, epoch_ms)
-    assert parsed.ok, f"{parsed.error_name} at {parsed.line}:{parsed.column}"
+        _, program = program_for_snapshot(
+            (_status("codex"), _status("claude")),
+            led_count=led_count,
+            colors=_relay_settings(),
+            relay_elapsed_seconds=0.0,
+        )
+        epoch_ms = 7_000_000
+        parsed = controller.parse(program, epoch_ms)
+        assert parsed.ok, f"{parsed.error_name} at {parsed.line}:{parsed.column}"
 
-    step_ms = 800 if led_count == 2 else 200
-    settle_ms = 96 if led_count == 2 else 40
-    visited: set[int] = set()
-    for turn in range(led_count):
-        # The midpoint of each pulse is safely away from both segment edges.
-        pixels = controller.step(epoch_ms + settle_ms + turn * step_ms + step_ms // 2)
-        intensity = [sum(pixel) for pixel in pixels]
-        brightest = {index for index, value in enumerate(intensity) if value == max(intensity)}
-        assert brightest == {turn}
-        visited.update(brightest)
+        step_ms = 800 if led_count == 2 else 200
+        settle_ms = 96 if led_count == 2 else 40
+        visited: set[int] = set()
+        for turn in range(led_count):
+            # The midpoint of each pulse is safely away from both segment edges.
+            pixels = controller.step(epoch_ms + settle_ms + turn * step_ms + step_ms // 2)
+            intensity = [sum(pixel) for pixel in pixels]
+            brightest = {index for index, value in enumerate(intensity) if value == max(intensity)}
+            assert brightest == {turn}
+            visited.update(brightest)
 
-    assert visited == set(range(led_count))
+        assert visited == set(range(led_count))
+
 
 
 def _semantic_relay(*, led_count: int, presentation_time: float):
@@ -287,7 +279,8 @@ def _semantic_pulse_indices(program: str) -> list[int]:
     return [int(segment.split(":", 1)[0]) for segment in pulse_line.split("; ")]
 
 
-def test_semantic_relay_uses_one_epoch_for_two_and_eight_led_surfaces() -> None:
+def test_semantic_relay_uses_one_epoch_for_two_and_eight_led_surfaces__and_2_more() -> None:
+    # --- scenario: semantic_relay_uses_one_epoch_for_two_and_eight_led_surfaces
     dot = _semantic_relay(led_count=2, presentation_time=100.8)
     pro = _semantic_relay(led_count=8, presentation_time=100.8)
 
@@ -307,72 +300,57 @@ def test_semantic_relay_uses_one_epoch_for_two_and_eight_led_surfaces() -> None:
     assert sum(frame.duration_seconds for frame in dot.temporal.frames) == pytest.approx(3.2)
     assert sum(frame.duration_seconds for frame in pro.temporal.frames) == pytest.approx(3.2)
 
-
-@pytest.mark.parametrize(
-    ("elapsed", "dot_index", "pro_index", "screen_bar_index"),
-    [
+    # --- scenario: semantic_relay_literal_phase_matrix_for_dot_pro_and_screen_bar
+    for elapsed, dot_index, pro_index, screen_bar_index in [
         (0.0, 0, 0, 0),
         (0.2, 0, 1, 1),
         (0.8, 1, 4, 4),
         (1.4, 1, 7, 7),
         (1.6, 0, 0, 0),
         (3.2, 0, 0, 0),
-    ],
-)
-def test_semantic_relay_literal_phase_matrix_for_dot_pro_and_screen_bar(
-    elapsed: float,
-    dot_index: int,
-    pro_index: int,
-    screen_bar_index: int,
-) -> None:
-    presentation_time = 100.0 + elapsed
-    dot = _semantic_relay(led_count=2, presentation_time=presentation_time)
-    pro = _semantic_relay(led_count=8, presentation_time=presentation_time)
-    screen_bar = _semantic_relay(led_count=8, presentation_time=presentation_time)
+    ]:
+        presentation_time = 100.0 + elapsed
+        dot = _semantic_relay(led_count=2, presentation_time=presentation_time)
+        pro = _semantic_relay(led_count=8, presentation_time=presentation_time)
+        screen_bar = _semantic_relay(led_count=8, presentation_time=presentation_time)
 
-    assert (
-        _semantic_pulse_indices(dot.dsl)[0],
-        _semantic_pulse_indices(pro.dsl)[0],
-        _semantic_pulse_indices(screen_bar.dsl)[0],
-    ) == (dot_index, pro_index, screen_bar_index)
-    assert dot.relay_epoch == pro.relay_epoch == screen_bar.relay_epoch == 100.0
+        assert (
+            _semantic_pulse_indices(dot.dsl)[0],
+            _semantic_pulse_indices(pro.dsl)[0],
+            _semantic_pulse_indices(screen_bar.dsl)[0],
+        ) == (dot_index, pro_index, screen_bar_index)
+        assert dot.relay_epoch == pro.relay_epoch == screen_bar.relay_epoch == 100.0
 
-
-@pytest.mark.parametrize(
-    ("led_count", "elapsed"),
-    [
+    # --- scenario: semantic_relay_applies_canonical_phase_once_in_rendered_pixels
+    """A phase-rotated program must not advance by the same elapsed time again."""
+    for led_count, elapsed in [
         (2, 1.0),
         (8, 0.85),
-    ],
-)
-def test_semantic_relay_applies_canonical_phase_once_in_rendered_pixels(
-    led_count: int,
-    elapsed: float,
-) -> None:
-    """A phase-rotated program must not advance by the same elapsed time again."""
-    from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
+    ]:
+        from jrbar.led_wasm import LedWasmUnavailableError, SdLedWasmController
 
-    try:
-        controller = SdLedWasmController(led_count=led_count)
-    except LedWasmUnavailableError as exc:
-        pytest.skip(str(exc))
+        try:
+            controller = SdLedWasmController(led_count=led_count)
+        except LedWasmUnavailableError as exc:
+            pytest.skip(str(exc))
 
-    presentation_time = 100.0 + elapsed
-    program = _semantic_relay(
-        led_count=led_count,
-        presentation_time=presentation_time,
-    )
-    assert program.playback_anchor is not None
-    parsed = controller.parse(program.dsl, round(program.playback_anchor * 1000.0))
-    assert parsed.ok, f"{parsed.error_name} at {parsed.line}:{parsed.column}"
+        presentation_time = 100.0 + elapsed
+        program = _semantic_relay(
+            led_count=led_count,
+            presentation_time=presentation_time,
+        )
+        assert program.playback_anchor is not None
+        parsed = controller.parse(program.dsl, round(program.playback_anchor * 1000.0))
+        assert parsed.ok, f"{parsed.error_name} at {parsed.line}:{parsed.column}"
 
-    pixels = controller.step(round(presentation_time * 1000.0))
-    intensities = [sum(pixel) for pixel in pixels]
-    assert intensities.index(max(intensities)) == relay_phase_index(
-        elapsed,
-        1.6,
-        led_count,
-    )
+        pixels = controller.step(round(presentation_time * 1000.0))
+        intensities = [sum(pixel) for pixel in pixels]
+        assert intensities.index(max(intensities)) == relay_phase_index(
+            elapsed,
+            1.6,
+            led_count,
+        )
+
 
 
 def test_semantic_relay_keeps_one_phase_independent_physical_identity() -> None:

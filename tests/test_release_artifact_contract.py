@@ -155,31 +155,25 @@ def test_authoritative_artifact_path_is_exact_and_not_a_glob(tmp_path: Path) -> 
     )
 
 
-@pytest.mark.parametrize(
-    ("version", "architecture"),
-    (
+def test_artifact_identity_rejects_path_and_glob_syntax() -> None:
+    for version, architecture in (
         ("../0.5.0", "arm64"),
         ("0.5.0", "../arm64"),
         ("0.5.0/escape", "arm64"),
         ("0.5.0", "arm64/*.pkg"),
         ("..", "arm64"),
         ("0.5.0", ".."),
-    ),
-)
-def test_artifact_identity_rejects_path_and_glob_syntax(
-    version: str,
-    architecture: str,
-) -> None:
-    with pytest.raises(ValueError):
-        release_artifact_contract.artifact_name(
-            version=version,
-            architecture=architecture,
-        )
-    with pytest.raises(ValueError):
-        release_artifact_contract.updater_archive_name(
-            version=version,
-            architecture=architecture,
-        )
+    ):
+        with pytest.raises(ValueError):
+            release_artifact_contract.artifact_name(
+                version=version,
+                architecture=architecture,
+            )
+        with pytest.raises(ValueError):
+            release_artifact_contract.updater_archive_name(
+                version=version,
+                architecture=architecture,
+            )
 
 
 def test_contract_cli_outputs_the_exact_path_and_machine_readable_policy(
@@ -255,7 +249,8 @@ def test_contract_cli_outputs_the_exact_path_and_machine_readable_policy(
     )
 
 
-def test_release_shell_surfaces_delegate_to_the_contract() -> None:
+def test_release_shell_surfaces_delegate_to_the_contract__and_1_more() -> None:
+    # --- scenario: release_shell_surfaces_delegate_to_the_contract
     builder = (ROOT / "packaging" / "build_macos_pkg.sh").read_text(encoding="utf-8")
     gate = (ROOT / "scripts" / "verify_macos_release.sh").read_text(encoding="utf-8")
     publisher = (ROOT / "scripts" / "publish_release.sh").read_text(encoding="utf-8")
@@ -273,8 +268,7 @@ def test_release_shell_surfaces_delegate_to_the_contract() -> None:
     assert "developer-paths" in publisher
     assert "python_release_artifacts.py" in gate
 
-
-def test_signing_identities_are_overrides_that_nothing_has_to_set() -> None:
+    # --- scenario: signing_identities_are_overrides_that_nothing_has_to_set
     """0.8 discovers signing material; these names only redirect it.
 
     The contract used to call them `required_signing_inputs`, and the release
@@ -303,3 +297,4 @@ def test_signing_identities_are_overrides_that_nothing_has_to_set() -> None:
     for source in (builder, gate):
         assert "find-identity" in source
         assert "notarytool history" in source
+

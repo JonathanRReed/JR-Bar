@@ -293,9 +293,8 @@ def _prepare_terminate_controller(controller, monkeypatch):
     )
 
 
-def test_global_action_launch_and_refresh_register_persisted_binding_once(
-    controller,
-) -> None:
+def test_global_action_launch_and_refresh_register_persisted_binding_once__and_2_more(controller,) -> None:
+    # --- scenario: global_action_launch_and_refresh_register_persisted_binding_once
     target, _status_bar = controller
     settings = replace(
         target.settings,
@@ -314,10 +313,7 @@ def test_global_action_launch_and_refresh_register_persisted_binding_once(
     ]
     assert registry.active_bindings == {ACTION: COMMAND_K}
 
-
-def test_global_action_refresh_retries_after_transient_registration_refusal(
-    controller,
-) -> None:
+    # --- scenario: global_action_refresh_retries_after_transient_registration_refusal
     target, _status_bar = controller
     settings = replace(
         target.settings,
@@ -337,10 +333,7 @@ def test_global_action_refresh_retries_after_transient_registration_refusal(
     assert [event[0] for event in events] == ["prepare", "prepare", "commit"]
     assert registry.active_bindings == {ACTION: COMMAND_K}
 
-
-def test_launch_reports_persisted_refusal_and_keeps_valid_binding_operational(
-    controller,
-) -> None:
+    # --- scenario: launch_reports_persisted_refusal_and_keeps_valid_binding_operational
     target, _status_bar = controller
     raw = {
         ACTION.value: COMMAND_K.to_dict(),
@@ -362,6 +355,7 @@ def test_launch_reports_persisted_refusal_and_keeps_valid_binding_operational(
     assert registry.active_bindings == {ACTION: COMMAND_K}
     assert holder["settings"].global_action_shortcuts == raw
     assert [event[0] for event in events] == ["prepare", "commit"]
+
 
 
 def test_global_action_edit_is_prepare_save_commit_and_updates_settings(
@@ -489,9 +483,8 @@ def test_commit_cleanup_always_rolls_back_after_compensating_save_refusal(
     assert holder["settings"] is initial
 
 
-def test_commit_and_rollback_cleanup_failure_remains_bounded_and_retryable(
-    controller,
-) -> None:
+def test_commit_and_rollback_cleanup_failure_remains_bounded_and_retryable__and_1_more(controller,) -> None:
+    # --- scenario: commit_and_rollback_cleanup_failure_remains_bounded_and_retryable
     target, _status_bar = controller
     initial = replace(
         target.settings,
@@ -533,10 +526,7 @@ def test_commit_and_rollback_cleanup_failure_remains_bounded_and_retryable(
     assert registry.pending is None
     assert registry.active_bindings == {ACTION: CONTROL_SHIFT_K}
 
-
-def test_global_action_close_is_idempotent_and_fences_late_actions(
-    controller,
-) -> None:
+    # --- scenario: global_action_close_is_idempotent_and_fences_late_actions
     target, _status_bar = controller
     events = []
     invoked = []
@@ -559,6 +549,7 @@ def test_global_action_close_is_idempotent_and_fences_late_actions(
 
     assert events.count(("close",)) == 1
     assert invoked == []
+
 
 
 def test_application_did_finish_launching_only_arms_plain_timers_once(

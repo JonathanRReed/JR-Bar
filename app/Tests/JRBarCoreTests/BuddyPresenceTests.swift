@@ -122,6 +122,19 @@ struct BuddyPlacementTests {
         #expect(BuddyPlacement.tiltDecay(age: 2) < 0.01)
     }
 
+    @Test("a 3× buddy parked at the screen edge stays fully on it")
+    func clampAtScale() {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        // Roughly what BuddyPanel.present measures at 3× with a caption.
+        let size = CGSize(width: 180, height: 110)
+        let parked = BuddyPlacement.clampedCenter(
+            CGPoint(x: 1438, y: 2), size: size, inside: visible)
+        #expect(parked.x + size.width / 2 <= visible.maxX)
+        #expect(parked.x - size.width / 2 >= visible.minX)
+        #expect(parked.y + size.height / 2 <= visible.maxY)
+        #expect(parked.y - size.height / 2 >= visible.minY)
+    }
+
     @Test("a parked pill stays whole on the visible screen")
     func clamp() {
         let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -164,6 +177,7 @@ struct BuddyRoamingSettingsTests {
         settings.freePosition = BuddySpot(x: 120.5, y: 804)
         settings.tucked = true
         settings.showCaption = false
+        settings.scale = 2.5
         let data = try JSONEncoder().encode(settings)
         #expect(try JSONDecoder().decode(NotchBuddySettings.self, from: data) == settings)
     }
@@ -174,7 +188,19 @@ struct BuddyRoamingSettingsTests {
         #expect(settings.freePosition == nil)
         #expect(settings.tucked == false)
         #expect(settings.showCaption == true)
+        #expect(settings.scale == 1.0)
         #expect(settings.resolvedCharacter == .owl)
+    }
+
+    @Test("the size dial decodes tolerantly: missing or mistyped is 1×, out of range clamps")
+    func scaleDecode() throws {
+        #expect(try decode(#"{}"#).scale == 1.0)
+        #expect(try decode(#"{"scale": "enormous"}"#).scale == 1.0)
+        #expect(try decode(#"{"scale": 2.25}"#).scale == 2.25)
+        #expect(try decode(#"{"scale": 12}"#).scale == 3.0,
+                "a hand edit can't grow a screen-filling pet")
+        #expect(try decode(#"{"scale": 0.4}"#).scale == 1.0)
+        #expect(NotchBuddySettings(scale: 9).scale == 3.0)
     }
 
     @Test("a mistyped spot reads as docked, not stranded")

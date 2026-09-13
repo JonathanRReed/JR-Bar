@@ -97,7 +97,8 @@ def test_the_extension_speaks_canonical_events_the_collector_understands() -> No
     assert ended is not None and ended.event_name == "SessionEnd"
 
 
-def test_pi_session_log_is_read_as_a_transcript(tmp_path: Path) -> None:
+def test_pi_session_log_is_read_as_a_transcript__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: pi_session_log_is_read_as_a_transcript
     root = tmp_path / ".pi" / "agent" / "sessions" / "--Users-j-Downloads-JR-Bar--"
     root.mkdir(parents=True)
     path = root / "2026-09-10T12-00-00_0b7a6c1e-1111-4222-8333-444455556666.jsonl"
@@ -123,8 +124,7 @@ def test_pi_session_log_is_read_as_a_transcript(tmp_path: Path) -> None:
     other.write_text('{"hello": 1}\n')
     assert list(iter_pi_transcript_file(other)) == []
 
-
-def test_transcript_switch_adds_the_pi_source(tmp_path: Path) -> None:
+    # --- scenario: transcript_switch_adds_the_pi_source
     from jrbar._collector_legacy import default_sources
     from jrbar._settings_legacy import AgentMonitorSettings
 
@@ -133,3 +133,4 @@ def test_transcript_switch_adds_the_pi_source(tmp_path: Path) -> None:
     on = default_sources(AgentMonitorSettings().with_transcript_provider("pi", True))
     assert any(source.provider == PI_TRANSCRIPT_PROVIDER and source.path.name == "sessions" for source in on)
     assert AgentMonitorSettings().with_transcript_provider("pi", True).to_dict()["transcript_monitoring"]["pi"] is True
+

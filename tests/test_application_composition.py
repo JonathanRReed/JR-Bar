@@ -76,7 +76,8 @@ def _assigned_attribute_targets(tree: ast.Module) -> list[tuple[str, str]]:
     return targets
 
 
-def test_application_composition_module_is_pure_at_import_time() -> None:
+def test_application_composition_module_is_pure_at_import_time__and_2_more() -> None:
+    # --- scenario: application_composition_module_is_pure_at_import_time
     source = APPLICATION_COMPOSITION.read_text(encoding="utf-8")
     tree = _tree(APPLICATION_COMPOSITION)
 
@@ -86,8 +87,7 @@ def test_application_composition_module_is_pure_at_import_time() -> None:
     assert "from Foundation" not in source
     assert _top_level_calls(tree) == []
 
-
-def test_application_composition_declares_a_receipt_contract() -> None:
+    # --- scenario: application_composition_declares_a_receipt_contract
     tree = _tree(APPLICATION_COMPOSITION)
     compose = _function(tree, "compose_status_bar_application")
 
@@ -112,8 +112,7 @@ def test_application_composition_declares_a_receipt_contract() -> None:
 
     assert {"controller", "final_controller", "menu_binding"} <= receipt_keywords
 
-
-def test_status_bar_modules_stop_bootstrapping_on_import() -> None:
+    # --- scenario: status_bar_modules_stop_bootstrapping_on_import
     for path in (
         STATUS_BAR,
         PRODUCTION_STATUS_BAR,
@@ -137,7 +136,9 @@ def test_status_bar_modules_stop_bootstrapping_on_import() -> None:
         )
 
 
-def test_foreground_entrypoints_reach_one_composition_boundary() -> None:
+
+def test_foreground_entrypoints_reach_one_composition_boundary__and_2_more() -> None:
+    # --- scenario: foreground_entrypoints_reach_one_composition_boundary
     legacy_main = _function(_tree(STATUS_BAR_LEGACY), "main")
     provider_main = _function(_tree(PROVIDER_USAGE_STATUS_BAR), "main")
     legacy_calls = [
@@ -157,8 +158,7 @@ def test_foreground_entrypoints_reach_one_composition_boundary() -> None:
     assert "compose_status_bar_application" not in provider_calls
     assert provider_calls == ["main"]
 
-
-def test_status_bar_composition_is_pure_on_import_and_idempotent_at_boot() -> None:
+    # --- scenario: status_bar_composition_is_pure_on_import_and_idempotent_at_boot
     script = """
 import json
 import threading
@@ -227,8 +227,7 @@ print(json.dumps({"ok": True}))
 
     assert completed.returncode == 0, completed.stderr
 
-
-def test_provider_foreground_main_composes_once_before_appkit() -> None:
+    # --- scenario: provider_foreground_main_composes_once_before_appkit
     script = """
 from jrbar import application_composition
 from jrbar import provider_usage_status_bar as provider
@@ -260,3 +259,4 @@ assert calls == ["compose", "run"], calls
         )
 
     assert completed.returncode == 0, completed.stderr
+

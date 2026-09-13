@@ -45,7 +45,8 @@ def _row(agent_id: str, provider: str, *, worker: bool = False) -> ProjectedAgen
     )
 
 
-def test_worker_rows_survive_projection_for_an_unpinned_device(request) -> None:
+def test_worker_rows_survive_projection_for_an_unpinned_device__and_1_more(request) -> None:
+    # --- scenario: worker_rows_survive_projection_for_an_unpinned_device
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -65,8 +66,7 @@ def test_worker_rows_survive_projection_for_an_unpinned_device(request) -> None:
     assert projected.worker_rows == projection.worker_rows
     assert projected.visible_rows == projection.visible_rows
 
-
-def test_pinned_device_filters_worker_rows_to_the_pin(request) -> None:
+    # --- scenario: pinned_device_filters_worker_rows_to_the_pin
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -92,3 +92,4 @@ def test_pinned_device_filters_worker_rows_to_the_pin(request) -> None:
     )
     projected = controller.projection_for_device(projection, device)
     assert all(row.provider == "codex" for row in projected.worker_rows)
+

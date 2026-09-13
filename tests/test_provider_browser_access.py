@@ -16,7 +16,8 @@ class FakeStore:
         self.saved[(provider_id, account)] = secret
 
 
-def test_import_with_token_on_clipboard_stores_it() -> None:
+def test_import_with_token_on_clipboard_stores_it__and_2_more() -> None:
+    # --- scenario: import_with_token_on_clipboard_stores_it
     store = FakeStore()
     message = handle_provider_usage_action(
         "devin",
@@ -28,8 +29,7 @@ def test_import_with_token_on_clipboard_stores_it() -> None:
     assert store.saved[("devin", "token")] == "devin_api_key_abcdef1234567890"
     assert "imported" in message
 
-
-def test_import_without_token_opens_the_page_and_explains() -> None:
+    # --- scenario: import_without_token_opens_the_page_and_explains
     opened = []
     store = FakeStore()
     message = handle_provider_usage_action(
@@ -50,8 +50,7 @@ def test_import_without_token_opens_the_page_and_explains() -> None:
     assert "app.devin.ai/settings/api-keys" in message
     assert "browser you normally use" in message
 
-
-def test_unrelated_actions_fall_through() -> None:
+    # --- scenario: unrelated_actions_fall_through
     assert (
         handle_provider_usage_action(
             "grok", "Retry", credential_store=FakeStore(),
@@ -61,22 +60,22 @@ def test_unrelated_actions_fall_through() -> None:
     )
 
 
-def test_plausible_token_rejects_prose_and_fragments() -> None:
+
+def test_plausible_token_rejects_prose_and_fragments__and_2_more() -> None:
+    # --- scenario: plausible_token_rejects_prose_and_fragments
     assert plausible_token("sk-abc123def456ghi789")
     assert not plausible_token("short")
     assert not plausible_token("two words here padding padding")
     assert not plausible_token("line\nbreak" + "x" * 30)
 
-
-def test_grok_reconnect_names_the_real_fix() -> None:
+    # --- scenario: grok_reconnect_names_the_real_fix
     message = handle_provider_usage_action(
         "grok", "Run grok login", credential_store=FakeStore(),
         clipboard_reader=lambda: "", url_opener=lambda _u: None,
     )
     assert "grok login" in message
 
-
-def test_reconnect_clears_the_bad_token_and_reopens_import() -> None:
+    # --- scenario: reconnect_clears_the_bad_token_and_reopens_import
     """A wrong-but-plausible token must not wedge the provider forever:
     Reconnect clears the credential and re-enters the import stage."""
     opened = []
@@ -100,7 +99,9 @@ def test_reconnect_clears_the_bad_token_and_reopens_import() -> None:
     assert "cleared" in message and "Import Devin" in message
 
 
-def test_import_takes_the_browser_session_and_never_mentions_a_key() -> None:
+
+def test_import_takes_the_browser_session_and_never_mentions_a_key__and_2_more() -> None:
+    # --- scenario: import_takes_the_browser_session_and_never_mentions_a_key
     """The reported defect: "Why do I need an API key? The
     implementation inside of CodexBar doesn't require an API key." When
     the browser holds a session, no key, no page and no clipboard are
@@ -120,8 +121,7 @@ def test_import_takes_the_browser_session_and_never_mentions_a_key() -> None:
     assert "clipboard" not in message.lower()
     assert store.saved == {}
 
-
-def test_import_falls_back_to_the_manual_route_when_no_session_exists() -> None:
+    # --- scenario: import_falls_back_to_the_manual_route_when_no_session_exists
     opened: list[str] = []
     message = handle_provider_usage_action(
         "devin",
@@ -134,8 +134,7 @@ def test_import_falls_back_to_the_manual_route_when_no_session_exists() -> None:
     assert opened and opened[0].startswith("https://app.devin.ai")
     assert "clipboard" in message
 
-
-def test_reconnect_reimports_a_rotated_session_before_asking_for_anything() -> None:
+    # --- scenario: reconnect_reimports_a_rotated_session_before_asking_for_anything
     """Devin reissues its web token routinely, so the common cause of a
     rejected session is rotation, not a wrong credential."""
     opened: list[str] = []
@@ -150,3 +149,4 @@ def test_reconnect_reimports_a_rotated_session_before_asking_for_anything() -> N
     )
     assert opened == []
     assert "Zen" in message
+

@@ -24,7 +24,8 @@ class FakeMacBridge:
         return self.shortcut_result
 
 
-def test_open_app_uses_bundle_identifier_boundary() -> None:
+def test_open_app_uses_bundle_identifier_boundary__and_2_more() -> None:
+    # --- scenario: open_app_uses_bundle_identifier_boundary
     bridge = FakeMacBridge()
     executor = MacDeckActionExecutor(bridge=bridge)
 
@@ -34,8 +35,7 @@ def test_open_app_uses_bundle_identifier_boundary() -> None:
     assert receipt.code == "opened"
     assert bridge.opened == ["com.apple.Terminal"]
 
-
-def test_shortcut_passes_only_explicit_target_and_bounded_chord() -> None:
+    # --- scenario: shortcut_passes_only_explicit_target_and_bounded_chord
     bridge = FakeMacBridge()
     executor = MacDeckActionExecutor(bridge=bridge)
 
@@ -47,8 +47,7 @@ def test_shortcut_passes_only_explicit_target_and_bounded_chord() -> None:
     assert receipt.code == "sent"
     assert bridge.shortcuts == [("com.openai.codex", 45, ("command", "shift"))]
 
-
-def test_native_refusal_code_is_returned_without_claiming_success() -> None:
+    # --- scenario: native_refusal_code_is_returned_without_claiming_success
     bridge = FakeMacBridge()
     bridge.shortcut_result = "target_not_frontmost"
 
@@ -60,7 +59,9 @@ def test_native_refusal_code_is_returned_without_claiming_success() -> None:
     assert receipt.code == "target_not_frontmost"
 
 
-def test_jr_bar_action_invokes_only_its_configured_callback() -> None:
+
+def test_jr_bar_action_invokes_only_its_configured_callback__and_2_more() -> None:
+    # --- scenario: jr_bar_action_invokes_only_its_configured_callback
     calls: list[str] = []
     executor = MacDeckActionExecutor(
         bridge=FakeMacBridge(),
@@ -75,8 +76,7 @@ def test_jr_bar_action_invokes_only_its_configured_callback() -> None:
     assert receipt.code == "revealed_current_ask"
     assert calls == ["reveal"]
 
-
-def test_missing_or_failing_callback_returns_robust_receipt() -> None:
+    # --- scenario: missing_or_failing_callback_returns_robust_receipt
     missing = MacDeckActionExecutor(bridge=FakeMacBridge()).execute(DeckAction(kind="open_usage"))
 
     def fail() -> None:
@@ -89,8 +89,7 @@ def test_missing_or_failing_callback_returns_robust_receipt() -> None:
     assert failed.success is False
     assert failed.code == "callback_failed"
 
-
-def test_native_boundary_exception_is_contained() -> None:
+    # --- scenario: native_boundary_exception_is_contained
     class BrokenBridge(FakeMacBridge):
         def open_app(self, bundle_id: str) -> str:
             raise RuntimeError("AppKit unavailable")
@@ -101,6 +100,7 @@ def test_native_boundary_exception_is_contained() -> None:
 
     assert receipt.success is False
     assert receipt.code == "native_error"
+
 
 
 class FakeRunningApp:
@@ -148,7 +148,8 @@ def _install_native_fakes(monkeypatch, *, trusted: bool, running: list[FakeRunni
     return posted
 
 
-def test_native_shortcut_posts_paired_flagged_events_only_to_checked_frontmost_pid(monkeypatch) -> None:
+def test_native_shortcut_posts_paired_flagged_events_only_to_checked_frontmost_pid__and_2_more(monkeypatch) -> None:
+    # --- scenario: native_shortcut_posts_paired_flagged_events_only_to_checked_frontmost_pid
     target = FakeRunningApp("com.openai.codex", 712)
     posted = _install_native_fakes(monkeypatch, trusted=True, running=[target], frontmost=target)
 
@@ -162,8 +163,8 @@ def test_native_shortcut_posts_paired_flagged_events_only_to_checked_frontmost_p
         (712, 45, False, 10),
     ]
 
-
-def test_native_shortcut_never_posts_when_accessibility_is_untrusted(monkeypatch) -> None:
+    # --- scenario: native_shortcut_never_posts_when_accessibility_is_untrusted
+    monkeypatch.undo()
     target = FakeRunningApp("com.openai.codex", 712)
     posted = _install_native_fakes(monkeypatch, trusted=False, running=[target], frontmost=target)
 
@@ -175,8 +176,8 @@ def test_native_shortcut_never_posts_when_accessibility_is_untrusted(monkeypatch
     assert receipt.success is False
     assert posted == []
 
-
-def test_native_shortcut_never_retargets_to_a_different_frontmost_app(monkeypatch) -> None:
+    # --- scenario: native_shortcut_never_retargets_to_a_different_frontmost_app
+    monkeypatch.undo()
     target = FakeRunningApp("com.openai.codex", 712)
     other = FakeRunningApp("com.apple.Terminal", 900)
     posted = _install_native_fakes(monkeypatch, trusted=True, running=[target], frontmost=other)
@@ -190,7 +191,9 @@ def test_native_shortcut_never_retargets_to_a_different_frontmost_app(monkeypatc
     assert posted == []
 
 
-def test_native_shortcut_treats_missing_frontmost_app_as_a_refusal(monkeypatch) -> None:
+
+def test_native_shortcut_treats_missing_frontmost_app_as_a_refusal__and_2_more(monkeypatch) -> None:
+    # --- scenario: native_shortcut_treats_missing_frontmost_app_as_a_refusal
     target = FakeRunningApp("com.openai.codex", 712)
     posted = _install_native_fakes(monkeypatch, trusted=True, running=[target], frontmost=None)
 
@@ -202,8 +205,8 @@ def test_native_shortcut_treats_missing_frontmost_app_as_a_refusal(monkeypatch) 
     assert receipt.success is False
     assert posted == []
 
-
-def test_native_shortcut_uses_quartz_flag_function_and_never_real_post(monkeypatch) -> None:
+    # --- scenario: native_shortcut_uses_quartz_flag_function_and_never_real_post
+    monkeypatch.undo()
     import Quartz
 
     target = FakeRunningApp("com.openai.codex", 712)
@@ -229,8 +232,8 @@ def test_native_shortcut_uses_quartz_flag_function_and_never_real_post(monkeypat
     ]
     assert [Quartz.CGEventGetFlags(event) for _, event in posted] == [expected_flags, expected_flags]
 
-
-def test_native_shortcut_rechecks_focus_after_event_construction(monkeypatch) -> None:
+    # --- scenario: native_shortcut_rechecks_focus_after_event_construction
+    monkeypatch.undo()
     target = FakeRunningApp("com.openai.codex", 712)
     other = FakeRunningApp("com.apple.Terminal", 900)
     frontmost_apps = iter((target, other))
@@ -260,6 +263,7 @@ def test_native_shortcut_rechecks_focus_after_event_construction(monkeypatch) ->
     assert receipt.code == "target_not_frontmost"
     assert receipt.success is False
     assert posted == []
+
 
 
 def test_native_shortcut_attempts_key_up_when_key_down_post_raises(monkeypatch) -> None:

@@ -372,7 +372,8 @@ def test_duration_presets_refuse_nonadvancing_float_deadlines(
     )
 
 
-def test_evening_preset_uses_future_local_six_pm_or_is_omitted() -> None:
+def test_evening_preset_uses_future_local_six_pm_or_is_omitted__and_1_more() -> None:
+    # --- scenario: evening_preset_uses_future_local_six_pm_or_is_omitted
     local_timezone = ZoneInfo("America/Chicago")
     morning = datetime(2026, 8, 12, 10, 15, tzinfo=local_timezone).timestamp()
     at_evening = datetime(2026, 8, 12, 18, 0, tzinfo=local_timezone).timestamp()
@@ -395,8 +396,7 @@ def test_evening_preset_uses_future_local_six_pm_or_is_omitted() -> None:
         is None
     )
 
-
-def test_tomorrow_preset_uses_next_local_date_at_nine() -> None:
+    # --- scenario: tomorrow_preset_uses_next_local_date_at_nine
     local_timezone = ZoneInfo("America/New_York")
     now = datetime(2026, 3, 7, 23, 30, tzinfo=local_timezone).timestamp()
     expected = datetime(2026, 3, 8, 9, 0, tzinfo=local_timezone).timestamp()
@@ -409,6 +409,7 @@ def test_tomorrow_preset_uses_next_local_date_at_nine() -> None:
         )
         == expected
     )
+
 
 
 @pytest.mark.parametrize(
@@ -437,7 +438,8 @@ def test_next_monday_preset_uses_following_monday_strictly_in_future(
     assert expected > now
 
 
-def test_nonexistent_calendar_target_advances_to_next_valid_local_instant() -> None:
+def test_nonexistent_calendar_target_advances_to_next_valid_local_instant__and_2_more() -> None:
+    # --- scenario: nonexistent_calendar_target_advances_to_next_valid_local_instant
     local_timezone = ZoneInfo("Pacific/Apia")
     now = datetime(2011, 12, 29, 12, 0, tzinfo=local_timezone).timestamp()
     expected = datetime(2011, 12, 31, 0, 0, tzinfo=local_timezone).timestamp()
@@ -451,8 +453,7 @@ def test_nonexistent_calendar_target_advances_to_next_valid_local_instant() -> N
         == expected
     )
 
-
-def test_ambiguous_calendar_target_chooses_earlier_occurrence() -> None:
+    # --- scenario: ambiguous_calendar_target_chooses_earlier_occurrence
     local_timezone = ZoneInfo("Pacific/Kwajalein")
     now = datetime(1969, 9, 29, 12, 0, tzinfo=local_timezone).timestamp()
     expected = datetime(
@@ -483,8 +484,7 @@ def test_ambiguous_calendar_target_chooses_earlier_occurrence() -> None:
     assert result == expected
     assert result < later
 
-
-def test_mailbox_and_shared_local_boundary_keep_identical_gap_and_fold_rules() -> None:
+    # --- scenario: mailbox_and_shared_local_boundary_keep_identical_gap_and_fold_rules
     gap_zone = ZoneInfo("Pacific/Apia")
     fold_zone = ZoneInfo("Pacific/Kwajalein")
 
@@ -505,6 +505,7 @@ def test_mailbox_and_shared_local_boundary_keep_identical_gap_and_fold_rules() -
         tzinfo=fold_zone,
         fold=0,
     ).timestamp()
+
 
 
 def test_timezone_change_recomputes_calendar_preset_without_changing_now() -> None:

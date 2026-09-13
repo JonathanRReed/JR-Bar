@@ -39,7 +39,8 @@ def _server():
     return server
 
 
-def test_credential_headers_are_refused_on_cross_origin_redirect():
+def test_credential_headers_are_refused_on_cross_origin_redirect__and_1_more() -> None:
+    # --- scenario: credential_headers_are_refused_on_cross_origin_redirect
     source = _server()
     target = _server()
     try:
@@ -63,8 +64,7 @@ def test_credential_headers_are_refused_on_cross_origin_redirect():
         source.shutdown()
         target.shutdown()
 
-
-def test_credential_headers_survive_same_origin_redirect():
+    # --- scenario: credential_headers_survive_same_origin_redirect
     server = _server()
     try:
         _RedirectHandler.received_headers = {}
@@ -82,3 +82,4 @@ def test_credential_headers_survive_same_origin_redirect():
         )
     finally:
         server.shutdown()
+

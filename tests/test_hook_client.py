@@ -66,31 +66,23 @@ def _request(payload: str = "{}") -> HookIngressRequest:
     return HookIngressRequest("claude", "/tmp/state/claude.jsonl", payload)
 
 
-def test_request_repr_never_contains_payload() -> None:
+def test_request_repr_never_contains_payload__and_2_more() -> None:
+    # --- scenario: request_repr_never_contains_payload
     request = _request('{"prompt":"private body"}')
 
     assert "private body" not in repr(request)
 
-
-@pytest.mark.parametrize(
-    ("provider", "log_path", "payload"),
-    [
+    # --- scenario: request_rejects_invalid_outer_values
+    for provider, log_path, payload in [
         ("unknown", "/tmp/state/unknown.jsonl", "{}"),
         ("claude", "relative.jsonl", "{}"),
         ("claude", "/tmp/state/claude\x00.jsonl", "{}"),
         ("claude", "/tmp/state/claude.jsonl", "x" * (MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1)),
-    ],
-)
-def test_request_rejects_invalid_outer_values(
-    provider: str,
-    log_path: str,
-    payload: str,
-) -> None:
-    with pytest.raises(ValueError, match="invalid hook ingress request"):
-        HookIngressRequest(provider, log_path, payload)
+    ]:
+        with pytest.raises(ValueError, match="invalid hook ingress request"):
+            HookIngressRequest(provider, log_path, payload)
 
-
-def test_protocol_round_trip_preserves_escaped_json_without_outer_copy() -> None:
+    # --- scenario: protocol_round_trip_preserves_escaped_json_without_outer_copy
     payload = '{"tool_input":{"command":"printf \\\"a\\\\nb\\\""}}\n'
     request = _request(payload)
 
@@ -101,7 +93,9 @@ def test_protocol_round_trip_preserves_escaped_json_without_outer_copy() -> None
     assert decoded is not request
 
 
-def test_protocol_rejects_truncated_duplicate_and_unknown_headers() -> None:
+
+def test_protocol_rejects_truncated_duplicate_and_unknown_headers__and_1_more() -> None:
+    # --- scenario: protocol_rejects_truncated_duplicate_and_unknown_headers
     encoded = encode_hook_ingress_request(_request())
     magic_size = encoded.index(b"{")
     header_end = encoded.index(b"}", magic_size) + 1
@@ -115,23 +109,18 @@ def test_protocol_rejects_truncated_duplicate_and_unknown_headers() -> None:
     unknown = encoded[:magic_size] + changed + encoded[header_end:]
     assert decode_hook_ingress_request(unknown) is None
 
-
-@pytest.mark.parametrize(
-    "disposition",
-    [
+    # --- scenario: response_tokens_are_exact_and_round_trip
+    for disposition in [
         HookIngressDisposition.ACCEPTED,
         HookIngressDisposition.REFUSED_FULL,
         HookIngressDisposition.REFUSED_CLOSED,
         HookIngressDisposition.REFUSED_INVALID,
-    ],
-)
-def test_response_tokens_are_exact_and_round_trip(
-    disposition: HookIngressDisposition,
-) -> None:
-    encoded = encode_hook_ingress_response(disposition)
-    assert encoded.endswith(b"\n")
-    assert decode_hook_ingress_response(encoded) is disposition
-    assert decode_hook_ingress_response(encoded + b"extra") is HookIngressDisposition.UNAVAILABLE
+    ]:
+        encoded = encode_hook_ingress_response(disposition)
+        assert encoded.endswith(b"\n")
+        assert decode_hook_ingress_response(encoded) is disposition
+        assert decode_hook_ingress_response(encoded + b"extra") is HookIngressDisposition.UNAVAILABLE
+
 
 
 def test_candidate_socket_paths_try_xdg_then_standard_without_duplicates(
@@ -227,35 +216,30 @@ def test_submit_falls_back_after_connected_submission_loses_ack(
     assert fake.closed
 
 
-@pytest.mark.parametrize(
-    "disposition",
-    [
+def test_client_falls_back_when_admission_is_unproven__and_2_more() -> None:
+    # --- scenario: client_falls_back_when_admission_is_unproven
+    for disposition in [
         HookIngressDisposition.UNAVAILABLE,
         HookIngressDisposition.SUBMISSION_AMBIGUOUS,
-    ],
-)
-def test_client_falls_back_when_admission_is_unproven(
-    disposition: HookIngressDisposition,
-) -> None:
-    fallback: list[tuple[str, Path, str]] = []
+    ]:
+        fallback: list[tuple[str, Path, str]] = []
 
-    assert (
-        hook_client.run_hook_client(
-            "claude",
-            Path("/tmp/state/claude.jsonl"),
-            '{"hook_event_name":"Stop"}',
-            submit=lambda _request_value: disposition,
-            fallback=lambda provider, path, payload: fallback.append((provider, path, payload)),
+        assert (
+            hook_client.run_hook_client(
+                "claude",
+                Path("/tmp/state/claude.jsonl"),
+                '{"hook_event_name":"Stop"}',
+                submit=lambda _request_value: disposition,
+                fallback=lambda provider, path, payload: fallback.append((provider, path, payload)),
+            )
+            == 0
         )
-        == 0
-    )
 
-    assert fallback == [
-        ("claude", Path("/tmp/state/claude.jsonl"), '{"hook_event_name":"Stop"}')
-    ]
+        assert fallback == [
+            ("claude", Path("/tmp/state/claude.jsonl"), '{"hook_event_name":"Stop"}')
+        ]
 
-
-def test_client_rejects_oversized_payload_without_fallback() -> None:
+    # --- scenario: client_rejects_oversized_payload_without_fallback
     fallback: list[object] = []
 
     result = hook_client.run_hook_client(
@@ -269,36 +253,30 @@ def test_client_rejects_oversized_payload_without_fallback() -> None:
     assert result == 0
     assert fallback == []
 
-
-@pytest.mark.parametrize(
-    "disposition",
-    [
+    # --- scenario: client_never_retries_an_explicit_admission_outcome_out_of_order
+    for disposition in [
         HookIngressDisposition.ACCEPTED,
         HookIngressDisposition.REFUSED_FULL,
         HookIngressDisposition.REFUSED_CLOSED,
         HookIngressDisposition.REFUSED_INVALID,
-    ],
-)
-def test_client_never_retries_an_explicit_admission_outcome_out_of_order(
-    disposition: HookIngressDisposition,
-) -> None:
-    fallback: list[object] = []
+    ]:
+        fallback: list[object] = []
 
-    result = hook_client.run_hook_client(
-        "claude",
-        Path("/tmp/state/claude.jsonl"),
-        "{}",
-        submit=lambda _request_value: disposition,
-        fallback=lambda *_args: fallback.append(object()),
-    )
+        result = hook_client.run_hook_client(
+            "claude",
+            Path("/tmp/state/claude.jsonl"),
+            "{}",
+            submit=lambda _request_value: disposition,
+            fallback=lambda *_args: fallback.append(object()),
+        )
 
-    assert result == 0
-    assert fallback == []
+        assert result == 0
+        assert fallback == []
 
 
-def test_main_reads_stdin_once_and_cursor_always_returns_json(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+
+def test_main_reads_stdin_once_and_cursor_always_returns_json__and_2_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: main_reads_stdin_once_and_cursor_always_returns_json
     class _Buffer(io.BytesIO):
         reads = 0
 
@@ -327,10 +305,8 @@ def test_main_reads_stdin_once_and_cursor_always_returns_json(
     assert seen == ['cursor:/tmp/cursor.jsonl:{"hook_event_name":"stop"}']
     assert output.getvalue() == "{}\n"
 
-
-def test_main_bounds_stdin_before_client_admission(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: main_bounds_stdin_before_client_admission
+    monkeypatch.undo()
     class _Buffer(io.BytesIO):
         def __init__(self, value: bytes) -> None:
             super().__init__(value)
@@ -356,10 +332,8 @@ def test_main_bounds_stdin_before_client_admission(
 
     assert source.buffer.read_sizes == [MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1]
 
-
-def test_main_caps_multibyte_stdin_by_encoded_bytes_before_admission(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: main_caps_multibyte_stdin_by_encoded_bytes_before_admission
+    monkeypatch.undo()
     class _Buffer(io.BytesIO):
         def __init__(self, value: bytes) -> None:
             super().__init__(value)
@@ -384,6 +358,7 @@ def test_main_caps_multibyte_stdin_by_encoded_bytes_before_admission(
     assert hook_client.hook_client_main("claude", Path("/tmp/claude.jsonl")) == 0
 
     assert source.buffer.read_sizes == [MAX_HOOK_INGRESS_PAYLOAD_BYTES + 1]
+
 
 
 def test_main_rejects_invalid_utf8_before_admission(

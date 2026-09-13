@@ -138,7 +138,8 @@ def test_typed_countdown_uses_only_the_injected_wall_clock(
     )
 
 
-def test_typed_countdown_uses_epoch_arithmetic_across_daylight_saving() -> None:
+def test_typed_countdown_uses_epoch_arithmetic_across_daylight_saving__and_1_more() -> None:
+    # --- scenario: typed_countdown_uses_epoch_arithmetic_across_daylight_saving
     before = datetime.fromisoformat("2026-03-08T01:30:00-06:00").timestamp()
     after = datetime.fromisoformat("2026-03-08T04:30:00-05:00").timestamp()
     reset = ResetFact(ResetState.FUTURE, after, 300.0, before)
@@ -151,8 +152,7 @@ def test_typed_countdown_uses_epoch_arithmetic_across_daylight_saving() -> None:
         0,
     )
 
-
-def test_typed_countdown_recomputes_after_wall_clock_rollback() -> None:
+    # --- scenario: typed_countdown_recomputes_after_wall_clock_rollback
     reset = ResetFact(ResetState.FUTURE, 2_000.0, 300.0, 1_000.0)
 
     before_rollback = derive_reset_countdown(reset, now=1_500.0)
@@ -160,6 +160,7 @@ def test_typed_countdown_recomputes_after_wall_clock_rollback() -> None:
 
     assert before_rollback.remaining_seconds == 500.0
     assert after_rollback.remaining_seconds == 560.0
+
 
 
 @pytest.mark.parametrize(
@@ -261,7 +262,8 @@ def test_multi_day_countdown_deadline_follows_the_next_displayed_hour_transition
     assert format_reset_countdown(reset_epoch, now=deadline) == next_text
 
 
-def test_reset_plan_groups_every_provider_at_the_earliest_shared_boundary() -> None:
+def test_reset_plan_groups_every_provider_at_the_earliest_shared_boundary__and_2_more() -> None:
+    # --- scenario: reset_plan_groups_every_provider_at_the_earliest_shared_boundary
     claude_short = _lane("claude", "scope:short", "five-hour")
     claude_long = _lane("claude", "scope:long", "weekly")
     codex_short = _lane("codex", "scope:short", "five-hour")
@@ -283,8 +285,7 @@ def test_reset_plan_groups_every_provider_at_the_earliest_shared_boundary() -> N
         lane_keys=(claude_short, codex_short),
     )
 
-
-def test_reset_plan_enforces_minimum_delay_and_yields_to_normal_refresh() -> None:
+    # --- scenario: reset_plan_enforces_minimum_delay_and_yields_to_normal_refresh
     windows = (_typed_window(_lane("codex", "scope:short", "five-hour"), 1_001.0),)
 
     due_after = plan_reset_boundary_refresh(
@@ -301,8 +302,7 @@ def test_reset_plan_enforces_minimum_delay_and_yields_to_normal_refresh() -> Non
     assert due_after.deadline == 1_005.0
     assert due_first == ResetBoundaryPlan(None, (), ())
 
-
-def test_reset_plan_skips_attempted_keys_and_moves_to_next_boundary() -> None:
+    # --- scenario: reset_plan_skips_attempted_keys_and_moves_to_next_boundary
     codex_short = _lane("codex", "scope:short", "five-hour")
     codex_long = _lane("codex", "scope:long", "weekly")
     claude_short = _lane("claude", "scope:short", "five-hour")
@@ -324,7 +324,9 @@ def test_reset_plan_skips_attempted_keys_and_moves_to_next_boundary() -> None:
     )
 
 
-def test_reset_plan_preserves_caller_order_and_deduplicates_windows() -> None:
+
+def test_reset_plan_preserves_caller_order_and_deduplicates_windows__and_1_more() -> None:
+    # --- scenario: reset_plan_preserves_caller_order_and_deduplicates_windows
     claude_short = _lane("claude", "scope:short", "five-hour")
     codex_short = _lane("codex", "scope:short", "five-hour")
     claude_long = _lane("claude", "scope:long", "weekly")
@@ -342,8 +344,7 @@ def test_reset_plan_preserves_caller_order_and_deduplicates_windows() -> None:
     assert plan.provider_ids == ("claude", "codex")
     assert plan.lane_keys == (claude_short, codex_short, claude_long)
 
-
-def test_reset_plan_ignores_malformed_and_expired_window_resets() -> None:
+    # --- scenario: reset_plan_ignores_malformed_and_expired_window_resets
     plan = plan_reset_boundary_refresh(
         {
             "codex": (
@@ -357,6 +358,7 @@ def test_reset_plan_ignores_malformed_and_expired_window_resets() -> None:
     )
 
     assert plan == ResetBoundaryPlan(None, (), ())
+
 
 
 @pytest.mark.parametrize("state", (ResetState.STALE, ResetState.DISPUTED))
@@ -425,7 +427,8 @@ def test_legacy_boundary_projection_matches_in_flight_epoch_key_without_losing_t
     assert not (plan.boundary_keys != ("codex|primary|1040",))
 
 
-def test_typed_boundary_identity_does_not_depend_on_delimiter_shaped_labels() -> None:
+def test_typed_boundary_identity_does_not_depend_on_delimiter_shaped_labels__and_1_more() -> None:
+    # --- scenario: typed_boundary_identity_does_not_depend_on_delimiter_shaped_labels
     first = _lane("codex", "scope:first", "five-hour", instance="desktop")
     second = _lane("codex", "scope:second", "five-hour", instance="laptop")
     plan = plan_reset_boundary_refresh(
@@ -441,8 +444,7 @@ def test_typed_boundary_identity_does_not_depend_on_delimiter_shaped_labels() ->
     assert plan.source_keys == (first.source, second.source)
     assert len(set(plan.boundary_keys)) == 2
 
-
-def test_reset_plan_ignores_empty_and_invalid_provider_groups() -> None:
+    # --- scenario: reset_plan_ignores_empty_and_invalid_provider_groups
     plan = plan_reset_boundary_refresh(
         (
             {"provider_id": "", "windows": ({"reset_epoch": 1_040.0},)},
@@ -455,3 +457,4 @@ def test_reset_plan_ignores_empty_and_invalid_provider_groups() -> None:
     )
 
     assert plan == ResetBoundaryPlan(None, (), ())
+

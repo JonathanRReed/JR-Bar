@@ -42,7 +42,8 @@ from jrbar.models import AgentMode, AgentStatus
 # --- the key itself --------------------------------------------------------
 
 
-def test_error_is_a_first_class_mode_colour() -> None:
+def test_error_is_a_first_class_mode_colour__and_2_more() -> None:
+    # --- scenario: error_is_a_first_class_mode_colour
     assert MODE_ERROR == "error"
     assert MODE_COLOR_KEYS == (MODE_IDLE, MODE_WORKING, MODE_DONE, MODE_ASK, MODE_ERROR)
     defaults = ColorSettings.defaults()
@@ -50,16 +51,14 @@ def test_error_is_a_first_class_mode_colour() -> None:
     assert defaults.mode_color(MODE_ASK) == ASK_AMBER
     assert defaults.mode_color(MODE_ERROR) != defaults.mode_color(MODE_ASK)
 
-
-def test_the_failed_state_wears_the_error_colour_not_the_ask_one() -> None:
+    # --- scenario: the_failed_state_wears_the_error_colour_not_the_ask_one
     assert colors_module._STATE_TO_MODE_KEY[LedDisplayState.FAILED] == MODE_ERROR
     assert colors_module._STATE_TO_MODE_KEY[LedDisplayState.ASK] == MODE_ASK
     # The fade envelope is deliberately still shared: the split was about
     # colour, not about giving failure its own set of sliders.
     assert colors_module._STATE_TO_FADE_MODE_KEY[LedDisplayState.FAILED] == MODE_ASK
 
-
-def test_error_is_configurable_exactly_like_the_other_four() -> None:
+    # --- scenario: error_is_configurable_exactly_like_the_other_four
     changed = ColorSettings.defaults().with_mode_color(MODE_ERROR, "#123456")
     assert changed.mode_color(MODE_ERROR) == "#123456"
     assert ColorSettings.from_dict(changed.to_dict()).mode_color(MODE_ERROR) == "#123456"
@@ -68,7 +67,9 @@ def test_error_is_configurable_exactly_like_the_other_four() -> None:
         ColorSettings.defaults().with_mode_color("not-a-mode", "#123456")
 
 
-def test_a_settings_file_written_before_the_key_existed_still_loads() -> None:
+
+def test_a_settings_file_written_before_the_key_existed_still_loads__and_1_more() -> None:
+    # --- scenario: a_settings_file_written_before_the_key_existed_still_loads
     """The upgrade path: every JR-Bar installed before 2026-09-10 has a
     settings file with four mode colours and no ``error``."""
     old = {
@@ -88,8 +89,7 @@ def test_a_settings_file_written_before_the_key_existed_still_loads() -> None:
     # And the hand-set colours it did carry are untouched.
     assert loaded.mode_color(MODE_IDLE) == "#010203"
 
-
-def test_the_settings_row_is_named_and_offered_like_the_others() -> None:
+    # --- scenario: the_settings_row_is_named_and_offered_like_the_others
     rows = mode_color_rows(ColorSettings.defaults())
     assert [row.key for row in rows] == list(MODE_COLOR_KEYS)
     row = mode_color_row(MODE_ERROR, ColorSettings.defaults())
@@ -101,6 +101,7 @@ def test_the_settings_row_is_named_and_offered_like_the_others() -> None:
     assert default_group is not None
     assert [swatch.hex for swatch in default_group.swatches] == [ERROR_RED]
     assert default_group.swatches[0].selected
+
 
 
 # --- the invariant that survives any configuration -------------------------
@@ -121,24 +122,27 @@ _SAMPLE_COLOURS = (
 )
 
 
-@pytest.mark.parametrize("ask,error", list(itertools.product(_SAMPLE_COLOURS, repeat=2)))
-def test_ask_and_error_are_never_the_same_value_after_normalisation(ask: str, error: str) -> None:
+def test_ask_and_error_are_never_the_same_value_after_normalisation__and_2_more() -> None:
+    # --- scenario: ask_and_error_are_never_the_same_value_after_normalisation
     """The property, over every pair including the pathological ones.
 
     A user can set either colour to anything, so no default -- however
     carefully measured -- can guarantee the pair stays apart on its own.
     """
-    settings = (
-        ColorSettings.defaults()
-        .with_mode_color(MODE_ASK, ask)
-        .with_mode_color(MODE_ERROR, error)
-    )
-    rendered = settings.rendered_error_color()
-    assert rendered.upper() != settings.mode_color(MODE_ASK).upper()
-    assert perceptual_gap(settings.mode_color(MODE_ASK), rendered) > 0.0
+    for ask, error in itertools.product(_SAMPLE_COLOURS, repeat=2):
+        settings = (
+            ColorSettings.defaults()
+            .with_mode_color(MODE_ASK, ask)
+            .with_mode_color(MODE_ERROR, error)
+        )
+        rendered = settings.rendered_error_color()
+        assert rendered.upper() != settings.mode_color(MODE_ASK).upper(), (ask, error)
+        assert perceptual_gap(settings.mode_color(MODE_ASK), rendered) > 0.0, (
+            ask,
+            error,
+        )
 
-
-def test_a_colliding_pair_is_pushed_apart_rather_than_left_alone() -> None:
+    # --- scenario: a_colliding_pair_is_pushed_apart_rather_than_left_alone
     settings = (
         ColorSettings.defaults()
         .with_mode_color(MODE_ASK, "#FF0000")
@@ -150,10 +154,10 @@ def test_a_colliding_pair_is_pushed_apart_rather_than_left_alone() -> None:
     # picked; only the LIGHT moves.
     assert settings.mode_color(MODE_ERROR) == "#FF0000"
 
-
-def test_a_separated_pair_is_returned_byte_for_byte() -> None:
+    # --- scenario: a_separated_pair_is_returned_byte_for_byte
     assert separated_error_color("#D187F5", "#B00020") == "#B00020"
     assert separated_error_color(ASK_AMBER, ERROR_RED) == ERROR_RED
+
 
 
 def test_the_rescued_colour_is_still_a_light() -> None:
@@ -182,7 +186,8 @@ def _failed_status() -> AgentStatus:
     )
 
 
-def test_the_strip_renders_a_failure_in_the_error_colour() -> None:
+def test_the_strip_renders_a_failure_in_the_error_colour__and_2_more() -> None:
+    # --- scenario: the_strip_renders_a_failure_in_the_error_colour
     settings = ColorSettings.defaults()
     assert program_for_display_state(LedDisplayState.FAILED) == ERROR_RED
     program = program_for_display_state(
@@ -193,16 +198,14 @@ def test_the_strip_renders_a_failure_in_the_error_colour() -> None:
     assert program == ERROR_RED
     assert "#D187F5" not in program
 
-
-def test_classic_mode_renders_a_failure_in_the_error_colour() -> None:
+    # --- scenario: classic_mode_renders_a_failure_in_the_error_colour
     settings = ColorSettings.defaults().with_blend_mode(colors_module.BLEND_MODE_CLASSIC)
     state, program = program_for_snapshot((_failed_status(),), colors=settings)
     assert state == LedDisplayState.FAILED
     assert settings.mode_color(MODE_ERROR) in program
     assert settings.mode_color(MODE_ASK) not in program
 
-
-def test_the_dot_beacon_uses_the_shared_error_constant() -> None:
+    # --- scenario: the_dot_beacon_uses_the_shared_error_constant
     from jrbar.dot_role import DEFAULT_DOT_ROLE_COLORS, DotBeaconFacts, beacon_program
 
     assert DEFAULT_DOT_ROLE_COLORS.blocked == ERROR_RED
@@ -216,7 +219,9 @@ def test_the_dot_beacon_uses_the_shared_error_constant() -> None:
     assert DEFAULT_DOT_ROLE_COLORS.ask not in blocked
 
 
-def test_the_creator_micro_keys_tell_broken_from_waiting() -> None:
+
+def test_the_creator_micro_keys_tell_broken_from_waiting__and_2_more() -> None:
+    # --- scenario: the_creator_micro_keys_tell_broken_from_waiting
     from jrbar.creator_micro_lighting import creator_micro_light_frame
 
     def key(state: str) -> int:
@@ -229,15 +234,13 @@ def test_the_creator_micro_keys_tell_broken_from_waiting() -> None:
     assert key("quota_exhausted") == key("failure")
     assert key("quota_warning") == key("input_required")
 
-
-def test_the_deck_slot_colour_tells_broken_from_waiting() -> None:
+    # --- scenario: the_deck_slot_colour_tells_broken_from_waiting
     from jrbar.core_deck import slot_color
 
     assert slot_color("failure") == ERROR_RED
     assert slot_color("failure") != slot_color("input_required")
 
-
-def test_the_effect_semantics_tell_broken_from_waiting() -> None:
+    # --- scenario: the_effect_semantics_tell_broken_from_waiting
     from jrbar.core_effects import SEMANTIC_COLORS
     from jrbar.effect_studio_physical_preview import _SEMANTIC_COLORS
 
@@ -246,7 +249,9 @@ def test_the_effect_semantics_tell_broken_from_waiting() -> None:
         assert table["failure"] != table["asking"]
 
 
-def test_the_on_screen_virtual_device_no_longer_paints_a_failure_as_working() -> None:
+
+def test_the_on_screen_virtual_device_no_longer_paints_a_failure_as_working__and_2_more() -> None:
+    # --- scenario: the_on_screen_virtual_device_no_longer_paints_a_failure_as_working
     from jrbar.virtual_device import virtual_led_colors
 
     lit = virtual_led_colors(LedDisplayState.FAILED, 0.0)
@@ -259,8 +264,7 @@ def test_the_on_screen_virtual_device_no_longer_paints_a_failure_as_working() ->
     assert red > green and red > blue
     assert virtual_led_colors(LedDisplayState.FAILED, 0.75)[0][3] == 0.0
 
-
-def test_the_failure_signal_cue_plays_in_the_error_colour() -> None:
+    # --- scenario: the_failure_signal_cue_plays_in_the_error_colour
     """``program_for_projection``'s active-signal branch -- the finite
     double blink a failure announces itself with."""
     from types import SimpleNamespace
@@ -288,11 +292,11 @@ def test_the_failure_signal_cue_plays_in_the_error_colour() -> None:
     assert settings.rendered_error_color() in program
     assert "#D187F5" not in program
 
-
-def test_the_error_seed_is_reserved_against_provider_colours() -> None:
+    # --- scenario: the_error_seed_is_reserved_against_provider_colours
     """Adding it to STATE_SEED_COLORS is what keeps a provider from being
     auto-assigned a colour that reads as "this one is broken" -- the
     antigravity/#FF3B30 incident, in the other direction."""
     seeds = dict(colors_module.STATE_SEED_COLORS)
     assert seeds["Error"] == ERROR_RED
     assert seeds["Ask"] != seeds["Error"]
+

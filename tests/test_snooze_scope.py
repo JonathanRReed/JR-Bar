@@ -45,7 +45,8 @@ def _snooze(work_key: WorkKey, *, until: float = NOW + 900.0) -> MailboxPreferen
     return MailboxPreference(work_key, snoozed_at=NOW - 60.0, snoozed_until=until)
 
 
-def test_snoozed_working_session_is_filtered() -> None:
+def test_snoozed_working_session_is_filtered__and_2_more() -> None:
+    # --- scenario: snoozed_working_session_is_filtered
     key = _work_key("codex", "main")
     working = _status("codex:session:main", AgentMode.WORKING, work_key=key, session_id="main")
     other = _status("claude:session:other", AgentMode.WORKING, provider="claude", session_id="other")
@@ -55,8 +56,7 @@ def test_snoozed_working_session_is_filtered() -> None:
     assert status_snoozed(working, (_snooze(key),), now=NOW)
     assert not status_snoozed(other, (_snooze(key),), now=NOW)
 
-
-def test_live_hard_ask_breaks_through_a_snooze() -> None:
+    # --- scenario: live_hard_ask_breaks_through_a_snooze
     key = _work_key("codex", "main")
     ask = _status(
         "codex:session:main",
@@ -69,8 +69,7 @@ def test_live_hard_ask_breaks_through_a_snooze() -> None:
     assert kept == (ask,)
     assert not status_snoozed(ask, (_snooze(key),), now=NOW)
 
-
-def test_expired_snooze_no_longer_silences() -> None:
+    # --- scenario: expired_snooze_no_longer_silences
     key = _work_key("codex", "main")
     working = _status("codex:session:main", AgentMode.WORKING, work_key=key, session_id="main")
     expired = MailboxPreference(key, snoozed_at=NOW - 7_200.0, snoozed_until=NOW - 3_600.0)
@@ -78,9 +77,9 @@ def test_expired_snooze_no_longer_silences() -> None:
     assert kept == (working,)
 
 
-def test_family_snooze_covers_a_worker_via_its_session_id() -> None:
-    # A snooze is stored on the FAMILY key; a worker's own work key
-    # differs, but its session_id is the family's work id.
+
+def test_family_snooze_covers_a_worker_via_its_session_id__and_2_more() -> None:
+    # --- scenario: family_snooze_covers_a_worker_via_its_session_id
     family = _work_key("codex", "main")
     worker = _status(
         "codex:agent:w1",
@@ -91,8 +90,7 @@ def test_family_snooze_covers_a_worker_via_its_session_id() -> None:
     kept = filter_snoozed_statuses((worker,), (_snooze(family),), now=NOW)
     assert kept == ()
 
-
-def test_legacy_agent_id_preferences_still_silence() -> None:
+    # --- scenario: legacy_agent_id_preferences_still_silence
     working = _status("codex:session:main", AgentMode.WORKING, session_id="main")
     legacy = LegacyMailboxPreference(
         "codex:session:main",
@@ -101,9 +99,9 @@ def test_legacy_agent_id_preferences_still_silence() -> None:
     )
     assert filter_snoozed_statuses((working,), (legacy,), now=NOW) == ()
 
-
-def test_unfiltered_input_returns_the_original_tuple_object() -> None:
+    # --- scenario: unfiltered_input_returns_the_original_tuple_object
     statuses = (_status("codex:session:main", AgentMode.WORKING, session_id="main"),)
     assert filter_snoozed_statuses(statuses, (), now=NOW) is statuses
     other = _snooze(_work_key("claude", "elsewhere"))
     assert filter_snoozed_statuses(statuses, (other,), now=NOW) is statuses
+

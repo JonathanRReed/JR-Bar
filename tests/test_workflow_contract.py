@@ -38,7 +38,8 @@ def _workflows() -> tuple[Path, ...]:
     return tuple(sorted(WORKFLOWS.glob("*.yml")))
 
 
-def test_tests_run_for_pull_requests_and_pushes_on_hosted_macos() -> None:
+def test_tests_run_for_pull_requests_and_pushes_on_hosted_macos__and_2_more() -> None:
+    # --- scenario: tests_run_for_pull_requests_and_pushes_on_hosted_macos
     text = (WORKFLOWS / "tests.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in text
@@ -49,8 +50,7 @@ def test_tests_run_for_pull_requests_and_pushes_on_hosted_macos() -> None:
     assert "runs-on: macos-latest" in security
     assert "self-hosted" not in security
 
-
-def test_hosted_tests_cover_the_three_gates_a_contributor_runs_locally() -> None:
+    # --- scenario: hosted_tests_cover_the_three_gates_a_contributor_runs_locally
     text = (WORKFLOWS / "tests.yml").read_text(encoding="utf-8")
 
     assert "make fast" in text
@@ -61,8 +61,7 @@ def test_hosted_tests_cover_the_three_gates_a_contributor_runs_locally() -> None
     assert "swift build" in text
     assert "swift test" in text
 
-
-def test_publish_workflow_remains_manual_only() -> None:
+    # --- scenario: publish_workflow_remains_manual_only
     text = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in text
@@ -70,15 +69,16 @@ def test_publish_workflow_remains_manual_only() -> None:
     assert "\n  pull_request:" not in text
 
 
-def test_fork_workflow_does_not_publish_upstream_pypi_name() -> None:
+
+def test_fork_workflow_does_not_publish_upstream_pypi_name__and_2_more() -> None:
+    # --- scenario: fork_workflow_does_not_publish_upstream_pypi_name
     text = (WORKFLOWS / "publish.yml").read_text(encoding="utf-8")
 
     assert "gh-action-pypi-publish" not in text
     assert "upload-artifact" in text
     assert "scripts/validate_release_version.py" in text
 
-
-def test_every_third_party_action_is_pinned_to_an_immutable_commit() -> None:
+    # --- scenario: every_third_party_action_is_pinned_to_an_immutable_commit
     for workflow in _workflows():
         text = workflow.read_text(encoding="utf-8")
         refs = _ACTION_USE.findall(text)
@@ -87,13 +87,14 @@ def test_every_third_party_action_is_pinned_to_an_immutable_commit() -> None:
             f"{workflow.name} contains a floating action reference: {refs}"
         )
 
-
-def test_the_retired_self_hosted_production_workflow_stays_retired() -> None:
+    # --- scenario: the_retired_self_hosted_production_workflow_stays_retired
     assert not (WORKFLOWS / "self-hosted-macos.yml").exists()
     assert _workflows(), "the workflow directory is empty"
 
 
-def test_no_workflow_runs_repository_code_on_a_self_hosted_runner() -> None:
+
+def test_no_workflow_runs_repository_code_on_a_self_hosted_runner__and_2_more() -> None:
+    # --- scenario: no_workflow_runs_repository_code_on_a_self_hosted_runner
     for workflow in _workflows():
         text = workflow.read_text(encoding="utf-8")
         assert "self-hosted" not in text, f"{workflow.name} targets a self-hosted runner"
@@ -104,8 +105,7 @@ def test_no_workflow_runs_repository_code_on_a_self_hosted_runner() -> None:
                     f"{workflow.name} runs on an unreviewed runner: {stripped}"
                 )
 
-
-def test_no_workflow_can_reach_the_signing_notary_or_sparkle_material() -> None:
+    # --- scenario: no_workflow_can_reach_the_signing_notary_or_sparkle_material
     for workflow in _workflows():
         text = workflow.read_text(encoding="utf-8")
         for name in _RELEASE_SECRET_NAMES:
@@ -116,8 +116,7 @@ def test_no_workflow_can_reach_the_signing_notary_or_sparkle_material() -> None:
         assert "publish_release.sh" not in text
         assert "build_macos_pkg.sh" not in text
 
-
-def test_no_workflow_writes_to_the_repository_or_a_release() -> None:
+    # --- scenario: no_workflow_writes_to_the_repository_or_a_release
     for workflow in _workflows():
         text = workflow.read_text(encoding="utf-8")
         assert "permissions:" in text, f"{workflow.name} declares no permissions block"
@@ -125,6 +124,7 @@ def test_no_workflow_writes_to_the_repository_or_a_release() -> None:
         assert "id-token:" not in text
         assert "packages: write" not in text
         assert "gh release" not in text
+
 
 
 def test_release_documentation_names_the_owner_mac_as_the_only_release_path() -> None:

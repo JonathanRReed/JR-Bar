@@ -23,7 +23,8 @@ import SwiftUI
 /// the slot — or "Dock at the notch" — sends it home. Right-click or a
 /// held press opens its menu; "Tuck away" hides it until the next
 /// session event or a card re-enable. Floating, it wears a quiet
-/// caption naming the session it is watching.
+/// caption naming the session it is watching, and the card's Size
+/// slider grows it up to 3× — the docked pill stays its 18pt self.
 @MainActor
 @Observable
 final class NotchBuddyToy: Toy {
@@ -132,6 +133,22 @@ final class NotchBuddyToy: Toy {
     var isTucked: Bool { store?.state.notchBuddy.tucked ?? false }
     /// The floating buddy's one-line tag under the pill.
     var showsCaption: Bool { store?.state.notchBuddy.showCaption ?? true }
+
+    /// The free-floating buddy's size multiplier — the card's Size
+    /// slider. Docked ignores it: the notch slot is fixed at 18pt.
+    var buddyScale: Double {
+        NotchBuddySettings.clampedScale(store?.state.notchBuddy.scale ?? 1.0)
+    }
+
+    /// The card's Size slider. Writes re-lay the panels immediately so
+    /// the floating pet grows under the thumb, not after a relaunch.
+    var scaleBinding: Binding<Double> {
+        Binding(get: { self.buddyScale },
+                set: {
+                    self.store?.state.notchBuddy.scale = NotchBuddySettings.clampedScale($0)
+                    self.onVisibilityChange?()
+                })
+    }
 
     /// Where a drop landed it — the HUD moves it to the free panel.
     func parkFree(at point: CGPoint) {
@@ -524,6 +541,17 @@ private struct BuddyControlsView: View {
                     .frame(maxWidth: 200)
             } label: {
                 SettingLabel(title: "Name", subtitle: "What it answers to. Blank keeps \(toy.buddyCharacter.defaultName).")
+            }
+
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: toy.scaleBinding, in: NotchBuddySettings.scaleRange, step: 0.25)
+                        .frame(width: 180)
+                    ValueText(text: String(format: "%.2g×", toy.buddyScale))
+                }
+            } label: {
+                SettingLabel(title: "Size",
+                             subtitle: "How big the floating buddy grows — the docked pill stays its 18pt self.")
             }
 
             HStack(spacing: 10) {

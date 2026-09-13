@@ -60,100 +60,84 @@ def _features(plan: PresentationSchedulePlan) -> tuple[RuntimeFeature, ...]:
     return tuple(intent.feature for intent in plan.intents)
 
 
-@pytest.mark.parametrize(
-    (
-        "screen_bar_enabled",
-        "visible",
-        "display_asleep",
-        "app_terminating",
-        "animation_active",
-        "alcove_enabled",
-        "alcove_relevant",
-        "pointer_interaction_relevant",
-        "deadline_kind",
-    ),
-    tuple(
-        (*flags, deadline_kind)
-        for flags in product((False, True), repeat=8)
-        for deadline_kind in ("none", "future", "elapsed")
-    ),
-)
-def test_all_relevance_and_lifecycle_combinations_follow_the_timer_matrix(
-    screen_bar_enabled: bool,
-    visible: bool,
-    display_asleep: bool,
-    app_terminating: bool,
-    animation_active: bool,
-    alcove_enabled: bool,
-    alcove_relevant: bool,
-    pointer_interaction_relevant: bool,
-    deadline_kind: str,
-) -> None:
+def test_all_relevance_and_lifecycle_combinations_follow_the_timer_matrix__and_2_more() -> None:
+    # --- scenario: all_relevance_and_lifecycle_combinations_follow_the_timer_matrix
     """Catches any lifecycle or feature flag leaking a forbidden timer."""
-    deadline = {
-        "none": None,
-        "future": NOW + 7.25,
-        "elapsed": NOW - 0.25,
-    }[deadline_kind]
-    inputs = _inputs(
-        screen_bar_enabled=screen_bar_enabled,
-        visible=visible,
-        display_asleep=display_asleep,
-        app_terminating=app_terminating,
-        animation_active=animation_active,
-        next_visual_change_at=deadline,
-        alcove_enabled=alcove_enabled,
-        alcove_relevant=alcove_relevant,
-        pointer_interaction_relevant=pointer_interaction_relevant,
-    )
+    for flags in product((False, True), repeat=8):
+        (
+            screen_bar_enabled,
+            visible,
+            display_asleep,
+            app_terminating,
+            animation_active,
+            alcove_enabled,
+            alcove_relevant,
+            pointer_interaction_relevant,
+        ) = flags
+        for deadline_kind in ("none", "future", "elapsed"):
+            deadline = {
+                "none": None,
+                "future": NOW + 7.25,
+                "elapsed": NOW - 0.25,
+            }[deadline_kind]
+            inputs = _inputs(
+                screen_bar_enabled=screen_bar_enabled,
+                visible=visible,
+                display_asleep=display_asleep,
+                app_terminating=app_terminating,
+                animation_active=animation_active,
+                next_visual_change_at=deadline,
+                alcove_enabled=alcove_enabled,
+                alcove_relevant=alcove_relevant,
+                pointer_interaction_relevant=pointer_interaction_relevant,
+            )
 
-    plan = plan_presentation_schedule(inputs, now=NOW)
+            plan = plan_presentation_schedule(inputs, now=NOW)
 
-    active_surface = screen_bar_enabled and visible and not display_asleep and not app_terminating
-    expected = set()
-    if active_surface and animation_active and deadline_kind != "elapsed":
-        expected.add(RuntimeFeature.PRESENTATION_FRAME_FALLBACK)
-    if active_surface and deadline_kind == "future":
-        expected.add(RuntimeFeature.PRESENTATION_STATIC_DEADLINE)
-    if active_surface and alcove_enabled and alcove_relevant:
-        expected.add(RuntimeFeature.ALCOVE_OBSERVATION)
-    if active_surface and pointer_interaction_relevant:
-        expected.add(RuntimeFeature.POINTER_PEEK)
-    expected_features = tuple(feature for feature in RuntimeFeature if feature in expected)
+            active_surface = (
+                screen_bar_enabled and visible and not display_asleep and not app_terminating
+            )
+            expected = set()
+            if active_surface and animation_active and deadline_kind != "elapsed":
+                expected.add(RuntimeFeature.PRESENTATION_FRAME_FALLBACK)
+            if active_surface and deadline_kind == "future":
+                expected.add(RuntimeFeature.PRESENTATION_STATIC_DEADLINE)
+            if active_surface and alcove_enabled and alcove_relevant:
+                expected.add(RuntimeFeature.ALCOVE_OBSERVATION)
+            if active_surface and pointer_interaction_relevant:
+                expected.add(RuntimeFeature.POINTER_PEEK)
+            expected_features = tuple(
+                feature for feature in RuntimeFeature if feature in expected
+            )
 
-    assert _features(plan) == expected_features
-    assert plan.reconcile_immediately is (active_surface and deadline_kind == "elapsed")
+            assert _features(plan) == expected_features, (flags, deadline_kind)
+            assert plan.reconcile_immediately is (
+                active_surface and deadline_kind == "elapsed"
+            )
 
-
-@pytest.mark.parametrize(
-    "inactive",
-    [
+    # --- scenario: inactive_lifecycle_states_produce_no_timer_or_immediate_work
+    """Catches hidden or terminating surfaces retaining callbacks or work."""
+    for inactive in (
         {"screen_bar_enabled": False},
         {"visible": False},
         {"display_asleep": True},
         {"app_terminating": True},
-    ],
-)
-def test_inactive_lifecycle_states_produce_no_timer_or_immediate_work(
-    inactive: dict[str, bool],
-) -> None:
-    """Catches hidden or terminating surfaces retaining callbacks or work."""
-    inputs = _inputs(
-        animation_active=True,
-        next_visual_change_at=NOW + 1.0,
-        alcove_enabled=True,
-        alcove_relevant=True,
-        pointer_interaction_relevant=True,
-        **inactive,
-    )
+    ):
+        inputs = _inputs(
+            animation_active=True,
+            next_visual_change_at=NOW + 1.0,
+            alcove_enabled=True,
+            alcove_relevant=True,
+            pointer_interaction_relevant=True,
+            **inactive,
+        )
 
-    plan = plan_presentation_schedule(inputs, now=NOW)
+        plan = plan_presentation_schedule(inputs, now=NOW)
 
-    assert plan.intents == ()
-    assert plan.reconcile_immediately is False
+        assert plan.intents == (), inactive
+        assert plan.reconcile_immediately is False
 
-
-def test_static_state_has_no_frame_driver_and_uses_one_exact_future_deadline() -> None:
+    # --- scenario: static_state_has_no_frame_driver_and_uses_one_exact_future_deadline
     """Catches static output polling continuously or rounding its deadline."""
     deadline = NOW + 0.375
     plan = plan_presentation_schedule(
@@ -173,7 +157,9 @@ def test_static_state_has_no_frame_driver_and_uses_one_exact_future_deadline() -
     assert no_deadline.intents == ()
 
 
-def test_elapsed_deadline_requests_one_immediate_reconciliation_then_is_consumed() -> None:
+
+def test_elapsed_deadline_requests_one_immediate_reconciliation_then_is_consumed__and_2_more() -> None:
+    # --- scenario: elapsed_deadline_requests_one_immediate_reconciliation_then_is_consumed
     """Catches an elapsed one-shot becoming a zero-delay reconciliation loop."""
     deadline = NOW - 1.0
     first = plan_presentation_schedule(
@@ -202,8 +188,7 @@ def test_elapsed_deadline_requests_one_immediate_reconciliation_then_is_consumed
     assert new_elapsed.reconcile_immediately is True
     assert new_elapsed.next_state.consumed_deadline == deadline + 0.25
 
-
-def test_deadline_token_clears_only_after_the_deadline_is_withdrawn() -> None:
+    # --- scenario: deadline_token_clears_only_after_the_deadline_is_withdrawn
     """Catches a reused future episode being suppressed by an obsolete token."""
     deadline = NOW - 1.0
     consumed = plan_presentation_schedule(
@@ -224,8 +209,7 @@ def test_deadline_token_clears_only_after_the_deadline_is_withdrawn() -> None:
     assert cleared.next_state.consumed_deadline is None
     assert replayed.reconcile_immediately is True
 
-
-def test_inactive_surface_does_not_consume_an_elapsed_deadline() -> None:
+    # --- scenario: inactive_surface_does_not_consume_an_elapsed_deadline
     """Catches hidden state silently discarding the reconciliation due on show."""
     deadline = NOW - 1.0
     hidden = plan_presentation_schedule(
@@ -243,7 +227,9 @@ def test_inactive_surface_does_not_consume_an_elapsed_deadline() -> None:
     assert shown.reconcile_immediately is True
 
 
-def test_repeating_feature_intervals_tolerances_and_relevance_are_exact() -> None:
+
+def test_repeating_feature_intervals_tolerances_and_relevance_are_exact__and_1_more() -> None:
+    # --- scenario: repeating_feature_intervals_tolerances_and_relevance_are_exact
     """Catches observation jitter policy or feature gating drifting."""
     deadline = NOW + 2.0
     plan = plan_presentation_schedule(
@@ -292,8 +278,7 @@ def test_repeating_feature_intervals_tolerances_and_relevance_are_exact() -> Non
     assert RuntimeFeature.ALCOVE_OBSERVATION not in _features(alcove_disabled)
     assert RuntimeFeature.POINTER_PEEK not in _features(pointer_irrelevant)
 
-
-def test_inputs_plan_and_consumed_state_are_frozen_and_validate_scalar_boundaries() -> None:
+    # --- scenario: inputs_plan_and_consumed_state_are_frozen_and_validate_scalar_boundaries
     """Catches mutable canonical payloads or malformed clocks entering planning."""
     inputs = _inputs()
     state = PresentationSchedulerState()
@@ -347,6 +332,7 @@ def test_inputs_plan_and_consumed_state_are_frozen_and_validate_scalar_boundarie
         plan_presentation_schedule(object(), now=NOW)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="state"):
         plan_presentation_schedule(inputs, now=NOW, state=object())  # type: ignore[arg-type]
+
 
 
 class _FakeTimer:
@@ -419,7 +405,8 @@ def _registry(
     )
 
 
-def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_all() -> None:
+def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_all__and_1_more() -> None:
+    # --- scenario: same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_all
     """Catches a planner creating duplicate AppKit timers on stable input."""
     factory = _FakeAppKitFactory()
     registry = _registry(factory)
@@ -465,8 +452,7 @@ def test_same_plan_reconciles_one_timer_per_feature_and_termination_invalidates_
     assert factory.live_timer_count == 0
     assert all(timer.invalidations == 1 for timer in factory.created)
 
-
-def test_fifty_lifecycle_cycles_leave_no_timer_or_thread_growth() -> None:
+    # --- scenario: fifty_lifecycle_cycles_leave_no_timer_or_thread_growth
     """Catches hide, wake, screen, or termination churn leaking runtime work."""
     factory = _FakeAppKitFactory()
     registry = _registry(factory)
@@ -517,6 +503,7 @@ def test_fifty_lifecycle_cycles_leave_no_timer_or_thread_growth() -> None:
     assert registry.snapshot().active_features == ()
     assert registry.snapshot().created == registry.snapshot().invalidated == 300
     assert tuple(thread.ident for thread in threading.enumerate()) == before_threads
+
 
 
 def test_planning_executes_no_poll_capture_file_subprocess_wait_or_thread_work(

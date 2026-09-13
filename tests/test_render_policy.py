@@ -18,7 +18,8 @@ from jrbar.render_policy import (
 )
 
 
-def test_hidden_or_sleeping_surface_pauses() -> None:
+def test_hidden_or_sleeping_surface_pauses__and_2_more() -> None:
+    # --- scenario: hidden_or_sleeping_surface_pauses
     assert choose_render_cadence(RenderEnvironment(visible=False), True).fps == 0.0
     assert (
         choose_render_cadence(
@@ -27,8 +28,7 @@ def test_hidden_or_sleeping_surface_pauses() -> None:
         == 0.0
     )
 
-
-def test_static_and_active_cadences_are_adaptive() -> None:
+    # --- scenario: static_and_active_cadences_are_adaptive
     environment = RenderEnvironment(visible=True)
 
     static = choose_render_cadence(environment, False)
@@ -39,8 +39,7 @@ def test_static_and_active_cadences_are_adaptive() -> None:
     assert active.fps > static.fps
     assert active.sample_fps == active.fps
 
-
-def test_render_schedule_reuses_the_cadence_policy_result() -> None:
+    # --- scenario: render_schedule_reuses_the_cadence_policy_result
     environment = RenderEnvironment(visible=True, low_power=True, thermal="serious")
 
     schedule = choose_render_schedule(
@@ -52,7 +51,9 @@ def test_render_schedule_reuses_the_cadence_policy_result() -> None:
     assert schedule.cadence == choose_render_cadence(environment, animation_active=True)
 
 
-def test_render_schedule_preserves_the_next_visual_change_deadline() -> None:
+
+def test_render_schedule_preserves_the_next_visual_change_deadline__and_2_more() -> None:
+    # --- scenario: render_schedule_preserves_the_next_visual_change_deadline
     """Catches finite cue demotion losing the pulse deadline at driver selection."""
     schedule = choose_render_schedule(
         RenderEnvironment(visible=True),
@@ -63,8 +64,7 @@ def test_render_schedule_preserves_the_next_visual_change_deadline() -> None:
 
     assert schedule.next_visual_change_at == 42.75
 
-
-def test_low_power_and_thermal_pressure_reduce_cadence() -> None:
+    # --- scenario: low_power_and_thermal_pressure_reduce_cadence
     normal = choose_render_cadence(RenderEnvironment(visible=True), True)
     low_power = choose_render_cadence(
         RenderEnvironment(visible=True, low_power=True), True
@@ -84,8 +84,7 @@ def test_low_power_and_thermal_pressure_reduce_cadence() -> None:
     assert constrained.fps <= 10.0
     assert critical.fps < serious.fps
 
-
-def test_accessibility_snapshot_and_generation_do_not_change_cadence() -> None:
+    # --- scenario: accessibility_snapshot_and_generation_do_not_change_cadence
     baseline = RenderEnvironment(visible=True, low_power=True, thermal="serious")
     accessible = RenderEnvironment(
         visible=True,
@@ -113,7 +112,9 @@ def test_accessibility_snapshot_and_generation_do_not_change_cadence() -> None:
         accessible.accessibility_generation = 42  # type: ignore[misc]
 
 
-def test_geometry_key_is_color_free_but_invalidates_geometry_inputs() -> None:
+
+def test_geometry_key_is_color_free_but_invalidates_geometry_inputs__and_2_more() -> None:
+    # --- scenario: geometry_key_is_color_free_but_invalidates_geometry_inputs
     cache: BoundedRenderCache[object] = BoundedRenderCache(max_entries=3)
     builds = 0
 
@@ -150,8 +151,7 @@ def test_geometry_key_is_color_free_but_invalidates_geometry_inputs() -> None:
     assert cache.metrics.hits == 1
     assert cache.metrics.misses == 2
 
-
-def test_geometry_keys_ignore_color_and_brightness_but_cover_geometry_identity() -> None:
+    # --- scenario: geometry_keys_ignore_color_and_brightness_but_cover_geometry_identity
     first = GlowGeometryKey.from_output(
         screen_identity="built-in:1",
         scale=2.0,
@@ -194,8 +194,7 @@ def test_geometry_keys_ignore_color_and_brightness_but_cover_geometry_identity()
         values.update(change)
         assert GlowGeometryKey.from_output(**values) != first
 
-
-def test_paint_key_changes_for_every_paint_input() -> None:
+    # --- scenario: paint_key_changes_for_every_paint_input
     geometry = GlowGeometryKey.from_output(
         screen_identity="built-in:1",
         scale=2.0,
@@ -232,7 +231,9 @@ def test_paint_key_changes_for_every_paint_input() -> None:
         assert GlowPaintKey.from_output(**values) != base
 
 
-def test_rounded_silhouette_is_one_closed_body_and_clamps_radius() -> None:
+
+def test_rounded_silhouette_is_one_closed_body_and_clamps_radius__and_2_more() -> None:
+    # --- scenario: rounded_silhouette_is_one_closed_body_and_clamps_radius
     silhouette = rounded_silhouette(
         center_x=110.0,
         width=220.0,
@@ -249,8 +250,7 @@ def test_rounded_silhouette_is_one_closed_body_and_clamps_radius() -> None:
         for first, second in zip(silhouette.points, silhouette.points[1:])
     )
 
-
-def test_glow_composition_reuses_geometry_across_paint_changes() -> None:
+    # --- scenario: glow_composition_reuses_geometry_across_paint_changes
     from jrbar.virtual_device import _glow_runs
 
     geometry_cache: BoundedRenderCache[object] = BoundedRenderCache(max_entries=4)
@@ -291,8 +291,7 @@ def test_glow_composition_reuses_geometry_across_paint_changes() -> None:
     assert paint_cache.metrics.misses == 2
     assert paint_cache.metrics.hits == 1
 
-
-def test_runtime_environment_reads_public_power_state_with_fallbacks() -> None:
+    # --- scenario: runtime_environment_reads_public_power_state_with_fallbacks
     class ProcessInfo:
         @staticmethod
         def isLowPowerModeEnabled() -> bool:
@@ -316,3 +315,4 @@ def test_runtime_environment_reads_public_power_state_with_fallbacks() -> None:
     assert environment.thermal == "serious"
     assert fallback.low_power is False
     assert fallback.thermal == "nominal"
+

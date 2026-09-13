@@ -65,12 +65,12 @@ def _snapshot(
     )
 
 
-def test_snapshot_preserves_source_instance_identity() -> None:
+def test_snapshot_preserves_source_instance_identity__and_2_more() -> None:
+    # --- scenario: snapshot_preserves_source_instance_identity
     result = _snapshot(source_instance_id="personal")
     assert result.source_instance_id == "personal"
 
-
-def test_registry_has_all_native_providers_and_no_codexbar() -> None:
+    # --- scenario: registry_has_all_native_providers_and_no_codexbar
     ids = tuple(descriptor.provider_id for descriptor in provider_descriptors())
     assert ids == (
         "codex",
@@ -84,8 +84,7 @@ def test_registry_has_all_native_providers_and_no_codexbar() -> None:
     )
     assert "codexbar" not in ids
 
-
-def test_registry_declares_ordered_source_ladders() -> None:
+    # --- scenario: registry_declares_ordered_source_ladders
     by_id = {descriptor.provider_id: descriptor for descriptor in provider_descriptors()}
     assert by_id["codex"].source_order[:2] == ("codex-auth", "codex-rollouts")
     assert by_id["claude"].source_order[:2] == ("claude-keychain", "claude-oauth")
@@ -93,7 +92,9 @@ def test_registry_declares_ordered_source_ladders() -> None:
     assert by_id["devin"].supports_browser_sources is True
 
 
-def test_dynamic_provider_lane_is_preserved_but_not_bindable() -> None:
+
+def test_dynamic_provider_lane_is_preserved_but_not_bindable__and_2_more() -> None:
+    # --- scenario: dynamic_provider_lane_is_preserved_but_not_bindable
     result = normalize_dynamic_lane(
         provider_id="claude",
         lane_id="fable-weekly",
@@ -107,8 +108,7 @@ def test_dynamic_provider_lane_is_preserved_but_not_bindable() -> None:
     assert result.bindable is False
     assert result.model == "fable"
 
-
-def test_actionable_failure_requires_action() -> None:
+    # --- scenario: actionable_failure_requires_action
     try:
         _snapshot(
             state=ProviderSourceState.NEEDS_CONSENT,
@@ -120,8 +120,7 @@ def test_actionable_failure_requires_action() -> None:
     else:
         raise AssertionError("permission-required snapshot accepted without an action")
 
-
-def test_first_ready_source_wins() -> None:
+    # --- scenario: first_ready_source_wins
     missing = _snapshot(
         state=ProviderSourceState.SOURCE_NOT_FOUND,
         reason="missing",
@@ -134,7 +133,9 @@ def test_first_ready_source_wins() -> None:
     assert merged is ready
 
 
-def test_last_known_good_is_retained_as_stale_when_sources_fail() -> None:
+
+def test_last_known_good_is_retained_as_stale_when_sources_fail__and_2_more() -> None:
+    # --- scenario: last_known_good_is_retained_as_stale_when_sources_fail
     previous = _snapshot(lanes=(_lane(remaining=21),), observed=900)
     failure = _snapshot(
         state=ProviderSourceState.UNAVAILABLE,
@@ -147,15 +148,13 @@ def test_last_known_good_is_retained_as_stale_when_sources_fail() -> None:
     assert merged.lanes == previous.lanes
     assert merged.reason_code == "network"
 
-
-def test_most_constrained_lane_ignores_detail_only_unknown_lanes() -> None:
+    # --- scenario: most_constrained_lane_ignores_detail_only_unknown_lanes
     known = _lane(lane_id="weekly", remaining=25, bindable=True)
     detail = _lane(lane_id="fable", remaining=5, bindable=False)
     result = most_constrained_lane(_snapshot(lanes=(known, detail)))
     assert result is known
 
-
-def test_source_failure_summary_is_specific() -> None:
+    # --- scenario: source_failure_summary_is_specific
     result = _snapshot(
         provider="cursor",
         state=ProviderSourceState.NEEDS_CONSENT,
@@ -163,3 +162,4 @@ def test_source_failure_summary_is_specific() -> None:
         action="Enable Cursor browser access",
     )
     assert provider_status_line(result) == "Cursor · permission required"
+

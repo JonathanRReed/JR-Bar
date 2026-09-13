@@ -14,9 +14,8 @@ from jrbar.settings import (
 )
 
 
-def test_external_edit_after_load_is_never_silently_overwritten(
-    tmp_path: Path,
-) -> None:
+def test_external_edit_after_load_is_never_silently_overwritten__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: external_edit_after_load_is_never_silently_overwritten
     target = tmp_path / "settings.json"
     save_settings(AgentMonitorSettings(), target)
     loaded = load_settings_document(target)
@@ -34,10 +33,7 @@ def test_external_edit_after_load_is_never_silently_overwritten(
 
     assert json.loads(target.read_text(encoding="utf-8")) == external
 
-
-def test_successful_save_refreshes_the_expected_document_digest(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: successful_save_refreshes_the_expected_document_digest
     target = tmp_path / "settings.json"
     loaded = load_settings_document(target)
     updated = loaded.settings.with_tips_enabled(False)
@@ -47,10 +43,7 @@ def test_successful_save_refreshes_the_expected_document_digest(
 
     assert json.loads(target.read_text(encoding="utf-8"))["tips_enabled"] is False
 
-
-def test_concurrent_write_refuses_dnd_override_without_partial_durable_state(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: concurrent_write_refuses_dnd_override_without_partial_durable_state
     target = tmp_path / "settings.json"
     save_settings(AgentMonitorSettings(), target)
     loaded = load_settings_document(target)
@@ -72,3 +65,4 @@ def test_concurrent_write_refuses_dnd_override_without_partial_durable_state(
     assert durable["dnd_override_mode"] is None
     assert durable["dnd_override_created_epoch"] is None
     assert durable["dnd_override_until_epoch"] is None
+

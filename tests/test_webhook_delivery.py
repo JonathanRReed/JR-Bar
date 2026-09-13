@@ -19,7 +19,8 @@ def _resolver(*_args, **_kwargs):
     ]
 
 
-def test_webhook_requires_https_and_a_public_destination() -> None:
+def test_webhook_requires_https_and_a_public_destination__and_2_more() -> None:
+    # --- scenario: webhook_requires_https_and_a_public_destination
     with pytest.raises(WebhookValidationError) as insecure:
         validate_webhook_url("http://example.com/hook", resolver=_resolver)
     assert insecure.value.reason is WebhookReason.INSECURE_SCHEME
@@ -34,8 +35,7 @@ def test_webhook_requires_https_and_a_public_destination() -> None:
         )
     assert private.value.reason is WebhookReason.FORBIDDEN_DESTINATION
 
-
-def test_webhook_refuses_mixed_public_and_private_dns_answers() -> None:
+    # --- scenario: webhook_refuses_mixed_public_and_private_dns_answers
     def mixed_resolver(*_args, **_kwargs):
         return [
             (2, 1, 6, "", ("93.184.216.34", 443)),
@@ -49,8 +49,7 @@ def test_webhook_refuses_mixed_public_and_private_dns_answers() -> None:
         )
     assert refused.value.reason is WebhookReason.FORBIDDEN_DESTINATION
 
-
-def test_webhook_payload_drops_session_provider_and_user_labels() -> None:
+    # --- scenario: webhook_payload_drops_session_provider_and_user_labels
     payload = {
         "event": "jrbar.escalation",
         "stage": 3,
@@ -72,6 +71,7 @@ def test_webhook_payload_drops_session_provider_and_user_labels() -> None:
         "oldest_ask_seconds": 305,
     }
     assert encoded == safe
+
 
 
 def test_response_parser_refuses_redirects_and_oversized_bodies() -> None:

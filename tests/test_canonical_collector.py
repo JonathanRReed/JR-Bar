@@ -97,7 +97,8 @@ def _batch(
     )
 
 
-def test_live_monitor_has_one_canonical_authority_and_emits_edges_once() -> None:
+def test_live_monitor_has_one_canonical_authority_and_emits_edges_once__and_2_more() -> None:
+    # --- scenario: live_monitor_has_one_canonical_authority_and_emits_edges_once
     monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
 
     monitor.ingest_batch(_batch(WorkLifecycle.ACTIVE, 1), clock=_clock(monotonic=101.0))
@@ -123,8 +124,7 @@ def test_live_monitor_has_one_canonical_authority_and_emits_edges_once() -> None
     )
     assert monitor.snapshot().operator_events == ()
 
-
-def test_lower_authority_fallback_cannot_override_direct_truth() -> None:
+    # --- scenario: lower_authority_fallback_cannot_override_direct_truth
     monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
     monitor.ingest_batch(_batch(WorkLifecycle.ACTIVE, 10), clock=_clock(monotonic=110.0))
     monitor.snapshot()
@@ -146,8 +146,7 @@ def test_lower_authority_fallback_cannot_override_direct_truth() -> None:
         ObservationAuthority.DIRECT_PROVIDER_OBSERVATION
     )
 
-
-def test_real_transcript_fallback_record_cannot_override_direct_truth() -> None:
+    # --- scenario: real_transcript_fallback_record_cannot_override_direct_truth
     monitor = LiveAgentMonitor(
         clock_sampler=lambda: _clock(
             wall=NOW.timestamp() + 2.0,
@@ -185,7 +184,9 @@ def test_real_transcript_fallback_record_cannot_override_direct_truth() -> None:
     )
 
 
-def test_stale_replay_status_cannot_shadow_fresher_canonical_projection() -> None:
+
+def test_stale_replay_status_cannot_shadow_fresher_canonical_projection__and_2_more() -> None:
+    # --- scenario: stale_replay_status_cannot_shadow_fresher_canonical_projection
     """The startup replay seeds the compatibility row for a session and
     nothing refreshes it -- every later event for the provider arrives
     normalized through ``ingest_batch``. A higher-precedence mode frozen in
@@ -220,8 +221,7 @@ def test_stale_replay_status_cannot_shadow_fresher_canonical_projection() -> Non
     assert status.updated_at == NOW
     assert status in snapshot.statuses
 
-
-def test_same_moment_supplemental_status_still_wins_on_precedence() -> None:
+    # --- scenario: same_moment_supplemental_status_still_wins_on_precedence
     """The precedence rule exists for two readings of the same moment --
     a transcript parse and the canonical projection of one event -- so a
     supplemental status at least as fresh still outranks it."""
@@ -249,8 +249,7 @@ def test_same_moment_supplemental_status_still_wins_on_precedence() -> None:
     )
     assert status.mode is AgentMode.WAITING_FOR_INPUT
 
-
-def test_canonical_projection_derives_content_free_legacy_fields_and_typed_keys() -> None:
+    # --- scenario: canonical_projection_derives_content_free_legacy_fields_and_typed_keys
     monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
     monitor.ingest_batch(
         _batch(WorkLifecycle.WAITING, 1, request_live=True),
@@ -269,7 +268,9 @@ def test_canonical_projection_derives_content_free_legacy_fields_and_typed_keys(
     assert snapshot_status == status
 
 
-def test_live_unanswered_request_pins_active_work_to_waiting() -> None:
+
+def test_live_unanswered_request_pins_active_work_to_waiting__and_2_more() -> None:
+    # --- scenario: live_unanswered_request_pins_active_work_to_waiting
     """A work can be lifecycle-ACTIVE with a live ask on it -- the agent kept
     an unrelated tool call moving while its permission prompt sat on screen.
     The projection used to read that as WORKING/UserPromptSubmit, hiding an
@@ -290,8 +291,7 @@ def test_live_unanswered_request_pins_active_work_to_waiting() -> None:
     assert snapshot.statuses[0].event_name == "PermissionRequest"
     assert snapshot.aggregate.mode is AgentMode.WAITING_FOR_INPUT
 
-
-def test_resolved_request_does_not_pin_active_work_to_waiting() -> None:
+    # --- scenario: resolved_request_does_not_pin_active_work_to_waiting
     """The matching PostToolUse resolves the derived request identity, and the
     resolved tombstone stays linked -- it must not keep the row 'waiting'."""
     monitor = LiveAgentMonitor(clock_sampler=lambda: _clock())
@@ -329,8 +329,7 @@ def test_resolved_request_does_not_pin_active_work_to_waiting() -> None:
     assert snapshot.statuses[0].mode is AgentMode.WORKING
     assert snapshot.aggregate.mode is AgentMode.WORKING
 
-
-def test_one_thousand_works_and_requests_are_bounded_and_deterministic() -> None:
+    # --- scenario: one_thousand_works_and_requests_are_bounded_and_deterministic
     watermark = _watermark(1)
     work_keys = tuple(
         WorkKey(SOURCE, WorkIdentifier(f"work:{index:04d}")) for index in range(1_000)
@@ -379,7 +378,9 @@ def test_one_thousand_works_and_requests_are_bounded_and_deterministic() -> None
     assert tuple(work.key for work in first.operator_state.works) == work_keys
 
 
-def test_v2_restore_is_metadata_only_restored_and_edge_free(tmp_path: Path) -> None:
+
+def test_v2_restore_is_metadata_only_restored_and_edge_free__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: v2_restore_is_metadata_only_restored_and_edge_free
     path = tmp_path / "latest.json"
     monitor = LiveAgentMonitor(
         latest_state_path=path,
@@ -422,8 +423,7 @@ def test_v2_restore_is_metadata_only_restored_and_edge_free(tmp_path: Path) -> N
     )
     assert snapshot.operator_state.works[0].source_freshness is SourceFreshness.RESTORED
 
-
-def test_v2_restore_rejects_dangling_request_authority(tmp_path: Path) -> None:
+    # --- scenario: v2_restore_rejects_dangling_request_authority
     path = tmp_path / "latest.json"
     monitor = LiveAgentMonitor(
         latest_state_path=path,
@@ -451,6 +451,7 @@ def test_v2_restore_rejects_dangling_request_authority(tmp_path: Path) -> None:
     assert snapshot.operator_events == ()
 
 
+
 def _legacy_document(agent_id: str = "codex:session:work:one") -> dict[str, object]:
     return {
         "updated_at": NOW.isoformat(),
@@ -465,7 +466,8 @@ def _legacy_document(agent_id: str = "codex:session:work:one") -> dict[str, obje
     }
 
 
-def test_v1_migrates_only_one_exact_current_work_key_without_edges(tmp_path: Path) -> None:
+def test_v1_migrates_only_one_exact_current_work_key_without_edges__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: v1_migrates_only_one_exact_current_work_key_without_edges
     path = tmp_path / "latest.json"
     path.write_text(json.dumps(_legacy_document()))
     exact = WorkKey(SOURCE, WorkIdentifier("work:one"))
@@ -485,8 +487,7 @@ def test_v1_migrates_only_one_exact_current_work_key_without_edges(tmp_path: Pat
     )
     assert monitor.operator_state.works[0].source_freshness is SourceFreshness.RESTORED
 
-
-def test_v1_zero_and_ambiguous_matches_fail_closed(tmp_path: Path) -> None:
+    # --- scenario: v1_zero_and_ambiguous_matches_fail_closed
     path = tmp_path / "latest.json"
     path.write_text(json.dumps(_legacy_document()))
     hook_key = WorkKey(SOURCE, WorkIdentifier("work:one"))
@@ -513,8 +514,7 @@ def test_v1_zero_and_ambiguous_matches_fail_closed(tmp_path: Path) -> None:
     assert ambiguous.operator_state.works == ()
     assert ambiguous.snapshot().operator_events == ()
 
-
-def test_corrupt_unsupported_and_oversize_restore_are_visible(tmp_path: Path) -> None:
+    # --- scenario: corrupt_unsupported_and_oversize_restore_are_visible
     path = tmp_path / "latest.json"
     cases = (
         ("{", RestoreHealth.CORRUPT),
@@ -533,9 +533,9 @@ def test_corrupt_unsupported_and_oversize_restore_are_visible(tmp_path: Path) ->
         assert snapshot.operator_events == ()
 
 
-def test_offline_collector_uses_canonical_reduction_not_legacy_status_map(
-    tmp_path: Path,
-) -> None:
+
+def test_offline_collector_uses_canonical_reduction_not_legacy_status_map__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: offline_collector_uses_canonical_reduction_not_legacy_status_map
     log = tmp_path / "codex.jsonl"
     log.write_text(
         json.dumps(
@@ -569,10 +569,7 @@ def test_offline_collector_uses_canonical_reduction_not_legacy_status_map(
     )
     assert repeated.operator_events == ()
 
-
-def test_offline_reduction_does_not_replay_old_edges_when_log_grows(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: offline_reduction_does_not_replay_old_edges_when_log_grows
     log = tmp_path / "codex.jsonl"
     active = {
         "logged_at": NOW.isoformat(),
@@ -607,6 +604,7 @@ def test_offline_reduction_does_not_replay_old_edges_when_log_grows(
     assert tuple(event.kind for event in monitor.snapshot().operator_events) == (
         TransitionKind.COMPLETED,
     )
+
 
 
 def test_unknown_live_event_degrades_existing_source_without_changing_truth() -> None:

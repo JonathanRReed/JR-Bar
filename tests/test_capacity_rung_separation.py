@@ -75,7 +75,8 @@ def _lines(model):
 # --------------------------------------------------------------------------
 
 
-def test_a_provider_with_no_ceiling_says_so_instead_of_borrowing_one() -> None:
+def test_a_provider_with_no_ceiling_says_so_instead_of_borrowing_one__and_2_more() -> None:
+    # --- scenario: a_provider_with_no_ceiling_says_so_instead_of_borrowing_one
     """The owner's Claude row, exactly: local activity, no quota window."""
     model = _model(
         local_activity=LocalActivitySection(
@@ -95,8 +96,7 @@ def test_a_provider_with_no_ceiling_says_so_instead_of_borrowing_one() -> None:
     # Settings pane reads it.
     assert "2508 sessions" in model.settings_text
 
-
-def test_the_transcript_scans_coverage_never_qualifies_a_plan_limit() -> None:
+    # --- scenario: the_transcript_scans_coverage_never_qualifies_a_plan_limit
     """`partial` and the file count belong to the scan, not to the ceiling."""
     model = _model(
         provider_id="codex",
@@ -119,8 +119,7 @@ def test_the_transcript_scans_coverage_never_qualifies_a_plan_limit() -> None:
     assert model.partial is True
     assert "2895 files" in model.source_text
 
-
-def test_no_fact_is_printed_on_both_rows_of_one_provider() -> None:
+    # --- scenario: no_fact_is_printed_on_both_rows_of_one_provider
     """The card's two rows must not restate each other."""
     model = _model(
         provider_id="codex",
@@ -146,7 +145,9 @@ def test_no_fact_is_printed_on_both_rows_of_one_provider() -> None:
     assert shared == set()
 
 
-def test_a_window_with_no_usable_percentage_says_no_reading() -> None:
+
+def test_a_window_with_no_usable_percentage_says_no_reading__and_2_more() -> None:
+    # --- scenario: a_window_with_no_usable_percentage_says_no_reading
     model = _model(
         provider_id="codex",
         provider_title="Codex",
@@ -164,8 +165,7 @@ def test_a_window_with_no_usable_percentage_says_no_reading() -> None:
     assert primary == "Codex · 5h no reading"
     assert "%" not in primary
 
-
-def test_extra_window_rows_follow_the_same_rule() -> None:
+    # --- scenario: extra_window_rows_follow_the_same_rule
     model = _model(
         windows=(
             {"label": "5-hour", "used_percent": 10.0, "window_minutes": 300},
@@ -179,13 +179,7 @@ def test_extra_window_rows_follow_the_same_rule() -> None:
     assert rows[0] == "Weekly Opus 12% left"
     assert rows[1].startswith("Weekly Sonnet no reading")
 
-
-# --------------------------------------------------------------------------
-# One title, one owner.
-# --------------------------------------------------------------------------
-
-
-def test_the_summary_line_names_the_period_and_never_the_provider() -> None:
+    # --- scenario: the_summary_line_names_the_period_and_never_the_provider
     totals = usage_stats.UsageTotals()
     totals.sessions.add("s1")
     totals.input_tokens = 2_000_000
@@ -198,6 +192,7 @@ def test_the_summary_line_names_the_period_and_never_the_provider() -> None:
 
     assert line == "Last 365 days: 1 session"
     assert "Claude" not in line
+
 
 
 def test_the_view_adds_exactly_one_provider_title() -> None:
@@ -241,7 +236,8 @@ def _codex_lanes(payload, *, observed_at=_NOW):
     return evidence.lanes
 
 
-def test_a_window_that_only_says_it_just_opened_reports_no_balance() -> None:
+def test_a_window_that_only_says_it_just_opened_reports_no_balance__and_2_more() -> None:
+    # --- scenario: a_window_that_only_says_it_just_opened_reports_no_balance
     """The owner's Codex row: used 0.0, boundary exactly one window ahead.
 
     Every rate-limit record in the live rollout file carried
@@ -263,8 +259,7 @@ def test_a_window_that_only_says_it_just_opened_reports_no_balance() -> None:
     assert lanes[0].percent is None
     assert lanes[0].state is ObservationState.NULL
 
-
-def test_a_stationary_boundary_with_nothing_spent_is_still_a_real_reading() -> None:
+    # --- scenario: a_stationary_boundary_with_nothing_spent_is_still_a_real_reading
     """The suppression must not swallow a genuine untouched allowance."""
     lanes = _codex_lanes(
         {
@@ -281,8 +276,7 @@ def test_a_stationary_boundary_with_nothing_spent_is_still_a_real_reading() -> N
     assert lanes[0].percent == 0.0
     assert lanes[0].state is ObservationState.OBSERVED
 
-
-def test_a_nonzero_reading_at_a_fresh_boundary_is_never_suppressed() -> None:
+    # --- scenario: a_nonzero_reading_at_a_fresh_boundary_is_never_suppressed
     lanes = _codex_lanes(
         {
             "primary": {
@@ -297,7 +291,9 @@ def test_a_nonzero_reading_at_a_fresh_boundary_is_never_suppressed() -> None:
     assert lanes[0].state is ObservationState.OBSERVED
 
 
-def test_the_card_never_prints_a_percentage_for_the_suppressed_window() -> None:
+
+def test_the_card_never_prints_a_percentage_for_the_suppressed_window__and_2_more() -> None:
+    # --- scenario: the_card_never_prints_a_percentage_for_the_suppressed_window
     """End to end: the placeholder reaches the dropdown as "no reading"."""
     model = _model(
         provider_id="codex",
@@ -317,13 +313,7 @@ def test_the_card_never_prints_a_percentage_for_the_suppressed_window() -> None:
     assert "%" not in primary
     assert primary == "Codex · 7d no reading"
 
-
-# --------------------------------------------------------------------------
-# A lane is the window it is, not the key it arrived under.
-# --------------------------------------------------------------------------
-
-
-def test_a_weekly_window_under_the_primary_key_binds_to_the_weekly_lane() -> None:
+    # --- scenario: a_weekly_window_under_the_primary_key_binds_to_the_weekly_lane
     """`primary` carrying 10,080 minutes is the WEEKLY ceiling, renamed.
 
     The card printed "7d" from `window_minutes` while the authority layer had
@@ -343,8 +333,7 @@ def test_a_weekly_window_under_the_primary_key_binds_to_the_weekly_lane() -> Non
 
     assert tuple(lane.key.window for lane in lanes) == ("weekly",)
 
-
-def test_the_ordinary_pair_still_binds_the_way_it_always_did() -> None:
+    # --- scenario: the_ordinary_pair_still_binds_the_way_it_always_did
     lanes = _codex_lanes(
         {
             "primary": {"used_percent": 25.0, "window_minutes": 300},
@@ -355,7 +344,9 @@ def test_the_ordinary_pair_still_binds_the_way_it_always_did() -> None:
     assert tuple(lane.key.window for lane in lanes) == ("five-hour", "weekly")
 
 
-def test_a_declared_label_carrying_an_undeclared_window_is_dropped() -> None:
+
+def test_a_declared_label_carrying_an_undeclared_window_is_dropped__and_2_more() -> None:
+    # --- scenario: a_declared_label_carrying_an_undeclared_window_is_dropped
     """Force-fitting an unknown length is how the 7d/5h mismatch happened."""
     lanes = _codex_lanes(
         {"primary": {"used_percent": 25.0, "window_minutes": 1_440}}
@@ -363,8 +354,7 @@ def test_a_declared_label_carrying_an_undeclared_window_is_dropped() -> None:
 
     assert lanes == ()
 
-
-def test_an_undeclared_label_is_still_dropped_whatever_its_length() -> None:
+    # --- scenario: an_undeclared_label_is_still_dropped_whatever_its_length
     """The Spark rule, unchanged: length decides WHICH lane, never WHETHER."""
     lanes = _codex_lanes(
         {
@@ -380,11 +370,11 @@ def test_an_undeclared_label_is_still_dropped_whatever_its_length() -> None:
 
     assert lanes == ()
 
-
-def test_a_window_with_no_stated_length_falls_back_to_its_label() -> None:
+    # --- scenario: a_window_with_no_stated_length_falls_back_to_its_label
     lanes = _codex_lanes({"secondary": {"used_percent": 12.0}})
 
     assert tuple(lane.key.window for lane in lanes) == ("weekly",)
+
 
 
 def test_time_moves_but_the_suppression_rule_does_not_depend_on_the_clock() -> None:

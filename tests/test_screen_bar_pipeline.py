@@ -63,28 +63,24 @@ class _DisplayLink:
         return self.target
 
 
-@pytest.mark.parametrize(
-    "target",
-    [None, 0.0, -1.0, math.nan, math.inf, -math.inf, RuntimeError("unavailable")],
-)
-def test_presentation_time_falls_back_once_for_invalid_targets(target: object) -> None:
+def test_presentation_time_falls_back_once_for_invalid_targets__and_2_more() -> None:
+    # --- scenario: presentation_time_falls_back_once_for_invalid_targets
     """Catches an invalid target escaping validation or a retry on the frame path."""
-    link = _DisplayLink(target)
-    before = DEFAULT_PRESENTATION_METRICS.snapshot().counter(PresentationMetricKind.TARGET_FALLBACK)
+    for target in [None, 0.0, -1.0, math.nan, math.inf, -math.inf, RuntimeError("unavailable")]:
+        link = _DisplayLink(target)
+        before = DEFAULT_PRESENTATION_METRICS.snapshot().counter(PresentationMetricKind.TARGET_FALLBACK)
 
-    assert presentation_time(link, callback_timestamp=9.5, previous_target=9.0) == pytest.approx(9.5)
-    assert link.calls == 1
-    after = DEFAULT_PRESENTATION_METRICS.snapshot().counter(PresentationMetricKind.TARGET_FALLBACK)
-    assert after == min(before + 1, MAX_METRIC_COUNTER)
+        assert presentation_time(link, callback_timestamp=9.5, previous_target=9.0) == pytest.approx(9.5)
+        assert link.calls == 1
+        after = DEFAULT_PRESENTATION_METRICS.snapshot().counter(PresentationMetricKind.TARGET_FALLBACK)
+        assert after == min(before + 1, MAX_METRIC_COUNTER)
 
-
-def test_presentation_time_falls_back_for_missing_or_regressing_target() -> None:
+    # --- scenario: presentation_time_falls_back_for_missing_or_regressing_target
     """Catches feature probing or monotonic validation being removed."""
     assert presentation_time(object(), callback_timestamp=20.0, previous_target=19.0) == pytest.approx(20.0)
     assert presentation_time(_DisplayLink(18.0), callback_timestamp=20.0, previous_target=19.0) == pytest.approx(20.0)
 
-
-def test_presentation_time_prefers_finite_positive_monotonic_target() -> None:
+    # --- scenario: presentation_time_prefers_finite_positive_monotonic_target
     """Catches callback arrival time replacing the display's presentation clock."""
     link = _DisplayLink(20.25)
 
@@ -92,12 +88,13 @@ def test_presentation_time_prefers_finite_positive_monotonic_target() -> None:
     assert link.calls == 1
 
 
-def test_presentation_time_keeps_fallback_monotonic_when_callback_regresses() -> None:
+
+def test_presentation_time_keeps_fallback_monotonic_when_callback_regresses__and_2_more() -> None:
+    # --- scenario: presentation_time_keeps_fallback_monotonic_when_callback_regresses
     """Catches an invalid display target moving presentation time backwards."""
     assert presentation_time(_DisplayLink(0.0), callback_timestamp=9.0, previous_target=10.0) == pytest.approx(10.0)
 
-
-def test_color_samples_and_ticks_are_immutable() -> None:
+    # --- scenario: color_samples_and_ticks_are_immutable
     """Catches a producer mutating a sample after its atomic publication."""
     sample = _sample(1, 1.0, 0.25)
     tick = PresentationTick(1.0, 1.1, 1)
@@ -109,17 +106,15 @@ def test_color_samples_and_ticks_are_immutable() -> None:
     with pytest.raises(TypeError):
         ColorSample(1, 1.0, [(0.0, 0.0, 0.0, 1.0)])  # type: ignore[arg-type]
 
-
-@pytest.mark.parametrize(
-    ("target", "expected"),
-    [(9.0, 0.0), (10.0, 0.0), (10.5, 0.25), (11.0, 0.5), (12.0, 1.0), (13.0, 1.0)],
-)
-def test_interpolation_uses_exact_endpoints_and_clamps_time(target: float, expected: float) -> None:
+    # --- scenario: interpolation_uses_exact_endpoints_and_clamps_time
     """Catches extrapolation or callback-count interpolation."""
-    assert interpolate_sample(_pair(), target) == _colors(expected)
+    for target, expected in [(9.0, 0.0), (10.0, 0.0), (10.5, 0.25), (11.0, 0.5), (12.0, 1.0), (13.0, 1.0)]:
+        assert interpolate_sample(_pair(), target) == _colors(expected)
 
 
-def test_interpolation_clamps_every_channel() -> None:
+
+def test_interpolation_clamps_every_channel__and_2_more() -> None:
+    # --- scenario: interpolation_clamps_every_channel
     """Catches malformed worker channels escaping the bounded display result."""
     pair = SamplePair(
         ColorSample(1, 1.0, ((-1.0, 0.25, 2.0, math.nan),)),
@@ -128,24 +123,17 @@ def test_interpolation_clamps_every_channel() -> None:
 
     assert interpolate_sample(pair, 1.5) == ((1.0, 0.0, 1.0, 0.0),)
 
-
-@pytest.mark.parametrize(
-    "pair",
-    [
+    # --- scenario: interpolation_rejects_generation_count_and_time_mismatch
+    """Catches a torn pair producing a visually plausible but mixed frame."""
+    for pair in [
         SamplePair(_sample(1, 1.0, 0.0), _sample(2, 2.0, 1.0)),
         SamplePair(_sample(1, 1.0, 0.0), _sample(1, 2.0, 1.0, 1.0)),
         SamplePair(_sample(1, 2.0, 0.0), _sample(1, 1.0, 1.0)),
-    ],
-)
-def test_interpolation_rejects_generation_count_and_time_mismatch(
-    pair: SamplePair,
-) -> None:
-    """Catches a torn pair producing a visually plausible but mixed frame."""
-    with pytest.raises(ValueError):
-        interpolate_sample(pair, 1.5)
+    ]:
+        with pytest.raises(ValueError):
+            interpolate_sample(pair, 1.5)
 
-
-def test_two_sample_buffer_rejects_stale_and_torn_publications() -> None:
+    # --- scenario: two_sample_buffer_rejects_stale_and_torn_publications
     """Catches an older worker result replacing the current generation pair."""
     buffer = TwoSampleBuffer()
     first = _pair(generation=2, previous_at=2.0, following_at=3.0)
@@ -157,6 +145,7 @@ def test_two_sample_buffer_rejects_stale_and_torn_publications() -> None:
     assert buffer.publish(newer) is True
     assert buffer.read(1) is None
     assert buffer.read(2) is newer
+
 
 
 def test_two_sample_buffer_rejects_invalid_pair_without_losing_safe_pair() -> None:
@@ -196,7 +185,8 @@ def test_display_path_is_target_driven_and_uses_only_published_samples(
     assert display_colors_for_tick(buffer, late, last_safe_colors=None, static_fallback_colors=_colors(0.1)) == expected
 
 
-def test_display_path_reuses_last_safe_then_static_fallback_without_worker_work() -> None:
+def test_display_path_reuses_last_safe_then_static_fallback_without_worker_work__and_2_more() -> None:
+    # --- scenario: display_path_reuses_last_safe_then_static_fallback_without_worker_work
     """Catches a late sampler causing synchronous parsing or a blank frame."""
     buffer = TwoSampleBuffer()
     tick = PresentationTick(10.0, 10.1, 8)
@@ -214,8 +204,7 @@ def test_display_path_reuses_last_safe_then_static_fallback_without_worker_work(
         static_fallback_colors=_colors(0.25),
     ) == _colors(0.25)
 
-
-def test_metrics_reservoirs_counters_and_labels_are_bounded() -> None:
+    # --- scenario: metrics_reservoirs_counters_and_labels_are_bounded
     """Catches per-frame metrics growing without bound or accepting identifier labels."""
     metrics = PresentationMetrics()
     for value in range(10_000):
@@ -230,8 +219,7 @@ def test_metrics_reservoirs_counters_and_labels_are_bounded() -> None:
     with pytest.raises(TypeError):
         metrics.increment("session-123")  # type: ignore[arg-type]
 
-
-def test_metrics_snapshot_exposes_bounded_cumulative_duration_totals() -> None:
+    # --- scenario: metrics_snapshot_exposes_bounded_cumulative_duration_totals
     metrics = PresentationMetrics()
 
     metrics.record_duration(PresentationMetricKind.DISPLAY_CALLBACK_NS, 10)
@@ -261,6 +249,7 @@ def test_metrics_snapshot_exposes_bounded_cumulative_duration_totals() -> None:
     assert reset.duration_total(PresentationMetricKind.DISPLAY_CALLBACK_NS) == 0
 
 
+
 class _BatchController:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -288,7 +277,8 @@ class _BatchController:
         return [[(index, 0, 0)] * 2 for index in range(frame_count)]
 
 
-def test_sampler_profiles_one_jsc_batch_and_its_cached_frames() -> None:
+def test_sampler_profiles_one_jsc_batch_and_its_cached_frames__and_1_more() -> None:
+    # --- scenario: sampler_profiles_one_jsc_batch_and_its_cached_frames
     metrics = PresentationMetrics()
     sampler = ScreenBarSampler(TwoSampleBuffer(), metrics=metrics, led_count=2)
     controller = _BatchController()
@@ -309,8 +299,7 @@ def test_sampler_profiles_one_jsc_batch_and_its_cached_frames() -> None:
     assert snapshot.counter(PresentationMetricKind.JSC_STEP_CALL) == 0
     assert controller.batch_frame_counts == [24]
 
-
-def test_sampler_profiles_a_failed_batch_and_single_step_fallback() -> None:
+    # --- scenario: sampler_profiles_a_failed_batch_and_single_step_fallback
     metrics = PresentationMetrics()
     sampler = ScreenBarSampler(TwoSampleBuffer(), metrics=metrics, led_count=2)
     controller = _BatchController(fail=True)
@@ -325,6 +314,7 @@ def test_sampler_profiles_a_failed_batch_and_single_step_fallback() -> None:
     assert snapshot.counter(PresentationMetricKind.JSC_BATCH_SUCCESS) == 0
     assert snapshot.counter(PresentationMetricKind.BATCH_FALLBACK) == 1
     assert snapshot.counter(PresentationMetricKind.JSC_STEP_CALL) == 1
+
 
 
 class _BlockingController:
@@ -368,7 +358,8 @@ def _command(
     )
 
 
-def test_sampler_clears_prefetched_batch_when_a_new_command_supersedes_it() -> None:
+def test_sampler_clears_prefetched_batch_when_a_new_command_supersedes_it__and_2_more() -> None:
+    # --- scenario: sampler_clears_prefetched_batch_when_a_new_command_supersedes_it
     metrics = PresentationMetrics()
     controller = _BatchController()
     sampler = ScreenBarSampler(
@@ -400,43 +391,34 @@ def test_sampler_clears_prefetched_batch_when_a_new_command_supersedes_it() -> N
     assert snapshot.counter(PresentationMetricKind.BATCH_INVALIDATED) == 1
     assert snapshot.counter(PresentationMetricKind.BATCH_FALLBACK) == 0
 
-
-@pytest.mark.parametrize(
-    ("first", "second", "second_interval"),
-    (
+    # --- scenario: sampler_reuses_prefetch_only_for_the_same_generation_program_and_cadence
+    for first, second, second_interval in (
         (_command(1, "pulse"), _command(2, "pulse"), 1.0 / 60.0),
         (_command(1, "pulse"), _command(1, "ripple"), 1.0 / 60.0),
         (_command(1, "pulse"), _command(1, "pulse"), 1.0 / 30.0),
-    ),
-)
-def test_sampler_reuses_prefetch_only_for_the_same_generation_program_and_cadence(
-    first: SamplerCommand,
-    second: SamplerCommand,
-    second_interval: float,
-) -> None:
-    metrics = PresentationMetrics()
-    sampler = ScreenBarSampler(TwoSampleBuffer(), metrics=metrics, led_count=2)
-    controller = _BatchController()
-    first_interval = 1.0 / 60.0
-    try:
-        sampler._pixels_for(controller, 100.0, first_interval, command=first)
-        sampler._pixels_for(
-            controller,
-            100.0 + first_interval,
-            second_interval,
-            command=second,
-        )
-    finally:
-        assert sampler.close(timeout_seconds=2.0)
+    ):
+        metrics = PresentationMetrics()
+        sampler = ScreenBarSampler(TwoSampleBuffer(), metrics=metrics, led_count=2)
+        controller = _BatchController()
+        first_interval = 1.0 / 60.0
+        try:
+            sampler._pixels_for(controller, 100.0, first_interval, command=first)
+            sampler._pixels_for(
+                controller,
+                100.0 + first_interval,
+                second_interval,
+                command=second,
+            )
+        finally:
+            assert sampler.close(timeout_seconds=2.0)
 
-    snapshot = metrics.snapshot()
-    assert controller.batch_calls == 2
-    assert snapshot.counter(PresentationMetricKind.BATCH_CACHE_HIT) == 0
-    assert snapshot.counter(PresentationMetricKind.BATCH_INVALIDATED) == 1
-    assert snapshot.counter(PresentationMetricKind.BATCH_FALLBACK) == 0
+        snapshot = metrics.snapshot()
+        assert controller.batch_calls == 2
+        assert snapshot.counter(PresentationMetricKind.BATCH_CACHE_HIT) == 0
+        assert snapshot.counter(PresentationMetricKind.BATCH_INVALIDATED) == 1
+        assert snapshot.counter(PresentationMetricKind.BATCH_FALLBACK) == 0
 
-
-def test_sampler_clamps_batch_request_to_the_remaining_finite_visual_horizon() -> None:
+    # --- scenario: sampler_clamps_batch_request_to_the_remaining_finite_visual_horizon
     metrics = PresentationMetrics()
     sampler = ScreenBarSampler(TwoSampleBuffer(), metrics=metrics, led_count=2)
     controller = _BatchController()
@@ -469,6 +451,7 @@ def test_sampler_clamps_batch_request_to_the_remaining_finite_visual_horizon() -
     snapshot = metrics.snapshot()
     assert snapshot.counter(PresentationMetricKind.BATCH_TRUNCATED) == 1
     assert snapshot.counter(PresentationMetricKind.BATCH_FALLBACK) == 0
+
 
 
 def test_sampler_counts_a_stalled_prefetch_as_invalidation_not_fallback() -> None:
@@ -506,7 +489,8 @@ class _BlockingBatchController(_BatchController):
         return super().step_batch(now_ms, interval_ms, frame_count)
 
 
-def test_latest_wins_does_not_publish_or_cache_an_in_flight_stale_batch() -> None:
+def test_latest_wins_does_not_publish_or_cache_an_in_flight_stale_batch__and_1_more() -> None:
+    # --- scenario: latest_wins_does_not_publish_or_cache_an_in_flight_stale_batch
     started = threading.Event()
     release = threading.Event()
     metrics = PresentationMetrics()
@@ -543,8 +527,7 @@ def test_latest_wins_does_not_publish_or_cache_an_in_flight_stale_batch() -> Non
     assert snapshot.counter(PresentationMetricKind.BATCH_INVALIDATED) == 1
     assert snapshot.counter(PresentationMetricKind.BATCH_FALLBACK) == 0
 
-
-def test_sampler_mailbox_is_latest_wins_and_uses_one_worker() -> None:
+    # --- scenario: sampler_mailbox_is_latest_wins_and_uses_one_worker
     """Catches an unbounded command queue or per-command sampler thread."""
     started = threading.Event()
     release = threading.Event()
@@ -573,6 +556,7 @@ def test_sampler_mailbox_is_latest_wins_and_uses_one_worker() -> None:
         assert sampler.close(timeout_seconds=2.0)
 
 
+
 def test_sampler_constructs_default_controller_only_on_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -599,7 +583,8 @@ def test_sampler_constructs_default_controller_only_on_worker(
         assert sampler.close(timeout_seconds=2.0)
 
 
-def test_sampler_lifecycle_none_replaces_pending_program() -> None:
+def test_sampler_lifecycle_none_replaces_pending_program__and_1_more() -> None:
+    # --- scenario: sampler_lifecycle_none_replaces_pending_program
     """Catches hide or sleep leaving stale pending sampler work queued."""
     started = threading.Event()
     release = threading.Event()
@@ -620,8 +605,7 @@ def test_sampler_lifecycle_none_replaces_pending_program() -> None:
         release.set()
         assert sampler.close(timeout_seconds=2.0)
 
-
-def test_sampler_caps_logical_samples_at_60_hz_and_publishes_rgba_pair() -> None:
+    # --- scenario: sampler_caps_logical_samples_at_60_hz_and_publishes_rgba_pair
     """Catches 120 Hz callbacks doubling WASM source sampling."""
     controller = _BlockingController(threading.Event(), threading.Event())
     buffer = TwoSampleBuffer()
@@ -644,6 +628,7 @@ def test_sampler_caps_logical_samples_at_60_hz_and_publishes_rgba_pair() -> None
         assert sampler.close(timeout_seconds=2.0)
 
 
+
 class _FallbackController:
     def __init__(self) -> None:
         self.programs: list[str] = []
@@ -659,7 +644,8 @@ class _FallbackController:
         return [(255, 0, 0)] * 2
 
 
-def test_sampler_failure_publishes_static_fallback_on_worker() -> None:
+def test_sampler_failure_publishes_static_fallback_on_worker__and_1_more() -> None:
+    # --- scenario: sampler_failure_publishes_static_fallback_on_worker
     """Catches a parse failure publishing malformed output or parsing fallback on the caller."""
     controller = _FallbackController()
     buffer = TwoSampleBuffer()
@@ -684,8 +670,7 @@ def test_sampler_failure_publishes_static_fallback_on_worker() -> None:
     finally:
         assert sampler.close(timeout_seconds=2.0)
 
-
-def test_sampler_failure_preserves_last_safe_pair_for_generation() -> None:
+    # --- scenario: sampler_failure_preserves_last_safe_pair_for_generation
     """Catches a later failed sample clearing a current generation's safe frame."""
     buffer = TwoSampleBuffer()
     safe = _pair(generation=10)
@@ -702,3 +687,4 @@ def test_sampler_failure_preserves_last_safe_pair_for_generation() -> None:
         assert buffer.read(10) is safe
     finally:
         assert sampler.close(timeout_seconds=2.0)
+

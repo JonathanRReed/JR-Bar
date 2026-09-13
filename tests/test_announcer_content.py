@@ -39,11 +39,11 @@ def _row(
     )
 
 
-def test_no_actionable_rows_produce_no_announcer_content() -> None:
+def test_no_actionable_rows_produce_no_announcer_content__and_2_more() -> None:
+    # --- scenario: no_actionable_rows_produce_no_announcer_content
     assert project_announcer_content(()) is None
 
-
-def test_primary_words_keep_current_normalization_and_caps() -> None:
+    # --- scenario: primary_words_keep_current_normalization_and_caps
     content = project_announcer_content(
         (
             _row(
@@ -59,8 +59,7 @@ def test_primary_words_keep_current_normalization_and_caps() -> None:
     assert content.total_actionable_count == 1
     assert content.primary_agent_id == "codex:session:primary"
 
-
-def test_provider_name_and_needs_you_are_the_primary_fallbacks() -> None:
+    # --- scenario: provider_name_and_needs_you_are_the_primary_fallbacks
     content = project_announcer_content(
         (
             _row(
@@ -76,7 +75,9 @@ def test_provider_name_and_needs_you_are_the_primary_fallbacks() -> None:
     assert content.text == "Claude needs you"
 
 
-def test_additional_actionable_rows_are_disclosed_in_the_pill() -> None:
+
+def test_additional_actionable_rows_are_disclosed_in_the_pill__and_2_more() -> None:
+    # --- scenario: additional_actionable_rows_are_disclosed_in_the_pill
     content = project_announcer_content(
         (
             _row("codex:session:primary", display_name="Codex", message="Approve access?"),
@@ -92,8 +93,7 @@ def test_additional_actionable_rows_are_disclosed_in_the_pill() -> None:
     with pytest.raises(FrozenInstanceError):
         content.text = "mutated"  # type: ignore[misc]
 
-
-def test_large_actionable_counts_stay_bounded_without_hiding_overflow() -> None:
+    # --- scenario: large_actionable_counts_stay_bounded_without_hiding_overflow
     rows = tuple(
         _row(
             f"codex:session:{index}",
@@ -112,8 +112,7 @@ def test_large_actionable_counts_stay_bounded_without_hiding_overflow() -> None:
     assert len(content.text) <= 140
     assert "\n" not in content.text
 
-
-def test_long_fallback_provider_cannot_push_overflow_disclosure_out_of_view() -> None:
+    # --- scenario: long_fallback_provider_cannot_push_overflow_disclosure_out_of_view
     content = project_announcer_content(
         (
             _row(
@@ -129,3 +128,4 @@ def test_long_fallback_provider_cannot_push_overflow_disclosure_out_of_view() ->
     assert content is not None
     assert content.text.endswith(" · 1 more ask")
     assert len(content.text) <= 140
+

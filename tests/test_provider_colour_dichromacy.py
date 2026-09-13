@@ -121,30 +121,30 @@ def _every_reserved_colour() -> dict[str, str]:
     return reserved
 
 
-@pytest.mark.parametrize("spec", PROVIDER_SPECS, ids=lambda s: s.provider)
-def test_every_provider_colour_survives_dichromacy(spec) -> None:
+def test_every_provider_colour_survives_dichromacy__and_2_more() -> None:
+    # --- scenario: every_provider_colour_survives_dichromacy
     """Including against the STATE seeds.
 
     A provider colour that collapses onto the Ask/blocked seed for a
     deuteranope means that agent looks blocked whenever it is merely running.
     """
-    colour = default_agent_color(spec.provider)
-    own_brand = PROVIDER_BRAND_COLORS.get(spec.provider, "").upper()
+    for spec in PROVIDER_SPECS:
+        colour = default_agent_color(spec.provider)
+        own_brand = PROVIDER_BRAND_COLORS.get(spec.provider, "").upper()
 
-    for name, other in _every_reserved_colour().items():
-        if other.upper() == colour.upper() and other.upper() == own_brand:
-            continue  # its own brand entry
-        for vision in VISIONS:
-            if (spec.provider, name) in KNOWN_COLLAPSES:
-                continue
-            gap = separation(colour, other, vision)
-            assert gap >= MIN_SEPARATION_DE, (
-                f"{spec.provider} {colour} is dE {gap:.1f} from {name} {other} "
-                f"under {vision} -- indistinguishable light"
-            )
+        for name, other in _every_reserved_colour().items():
+            if other.upper() == colour.upper() and other.upper() == own_brand:
+                continue  # its own brand entry
+            for vision in VISIONS:
+                if (spec.provider, name) in KNOWN_COLLAPSES:
+                    continue
+                gap = separation(colour, other, vision)
+                assert gap >= MIN_SEPARATION_DE, (
+                    f"{spec.provider} {colour} is dE {gap:.1f} from {name} {other} "
+                    f"under {vision} -- indistinguishable light"
+                )
 
-
-def test_no_two_providers_collapse_onto_each_other() -> None:
+    # --- scenario: no_two_providers_collapse_onto_each_other
     assigned = {spec.provider: default_agent_color(spec.provider) for spec in PROVIDER_SPECS}
     providers = sorted(assigned)
     for index, left in enumerate(providers):
@@ -159,8 +159,7 @@ def test_no_two_providers_collapse_onto_each_other() -> None:
                     f"{left} and {right} are dE {gap:.1f} apart under {vision}"
                 )
 
-
-def test_antigravity_specifically_is_not_the_blocked_colour() -> None:
+    # --- scenario: antigravity_specifically_is_not_the_blocked_colour
     """The regression that prompted all of this.
 
     The positional fallback handed antigravity #FF3B30, ten hue-degrees from
@@ -173,7 +172,9 @@ def test_antigravity_specifically_is_not_the_blocked_colour() -> None:
         assert separation(colour, ask, vision) >= MIN_SEPARATION_DE
 
 
-def test_the_known_collapses_are_still_real_and_still_only_these() -> None:
+
+def test_the_known_collapses_are_still_real_and_still_only_these__and_1_more() -> None:
+    # --- scenario: the_known_collapses_are_still_real_and_still_only_these
     """A baseline that silently drifts is worse than no baseline."""
     reserved = _every_reserved_colour()
     still_colliding = set()
@@ -190,8 +191,7 @@ def test_the_known_collapses_are_still_real_and_still_only_these() -> None:
         f"{sorted(set(KNOWN_COLLAPSES) - still_colliding)}"
     )
 
-
-def test_the_real_antigravity_brand_blue_would_have_failed() -> None:
+    # --- scenario: the_real_antigravity_brand_blue_would_have_failed
     """Records why the actual brand colour was rejected, so it is not
     'restored' later by someone being helpful."""
     brand_blue = "#3D8AFF"
@@ -200,3 +200,4 @@ def test_the_real_antigravity_brand_blue_would_have_failed() -> None:
         "if this now passes, Antigravity's real brand colour is usable and "
         "the substitute should be reconsidered"
     )
+

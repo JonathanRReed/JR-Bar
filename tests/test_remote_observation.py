@@ -62,7 +62,8 @@ def policy(*scopes: RemoteObservationScope) -> RemoteObservationPolicy:
     )
 
 
-def test_default_envelope_is_status_outcome_only_and_minimized() -> None:
+def test_default_envelope_is_status_outcome_only_and_minimized__and_2_more() -> None:
+    # --- scenario: default_envelope_is_status_outcome_only_and_minimized
     envelope = build_observation_envelope(
         observation(), policy(), signer=signer
     )
@@ -73,8 +74,7 @@ def test_default_envelope_is_status_outcome_only_and_minimized() -> None:
     assert b"input_tokens" not in encoded
     assert b"remaining_percent" not in encoded
 
-
-def test_message_usage_and_capacity_are_independent_explicit_consents() -> None:
+    # --- scenario: message_usage_and_capacity_are_independent_explicit_consents
     message_only = build_observation_envelope(
         observation(), policy(RemoteObservationScope.MESSAGE_TEXT), signer=signer
     )
@@ -89,8 +89,7 @@ def test_message_usage_and_capacity_are_independent_explicit_consents() -> None:
     assert set(usage_only.payload) == {"status", "outcome", "usage"}
     assert set(capacity_only.payload) == {"status", "outcome", "capacity"}
 
-
-def test_receiver_requires_valid_authentication_and_exact_source_identity() -> None:
+    # --- scenario: receiver_requires_valid_authentication_and_exact_source_identity
     receiver = RemoteObservationReceiver(policy(), verifier=verifier)
     envelope = build_observation_envelope(observation(), policy(), signer=signer)
     assert receiver.accept(envelope, now=1_000.0).accepted is True
@@ -120,7 +119,9 @@ def test_receiver_requires_valid_authentication_and_exact_source_identity() -> N
     assert refusal.code is RemoteObservationRefusalCode.AUTHENTICATION_REQUIRED
 
 
-def test_replay_and_sequence_gaps_are_typed_refusals() -> None:
+
+def test_replay_and_sequence_gaps_are_typed_refusals__and_2_more() -> None:
+    # --- scenario: replay_and_sequence_gaps_are_typed_refusals
     receiver = RemoteObservationReceiver(policy(), verifier=verifier)
     first = build_observation_envelope(observation(sequence=10), policy(), signer=signer)
     assert receiver.accept(first, now=1_000.0).accepted
@@ -133,8 +134,7 @@ def test_replay_and_sequence_gaps_are_typed_refusals() -> None:
     assert refusal is not None
     assert refusal.code is RemoteObservationRefusalCode.SEQUENCE_GAP
 
-
-def test_receiver_enforces_age_future_size_and_count_bounds() -> None:
+    # --- scenario: receiver_enforces_age_future_size_and_count_bounds
     bounded = RemoteObservationPolicy(
         source_id="mac-mini",
         stream_id="agent-events",
@@ -170,8 +170,7 @@ def test_receiver_enforces_age_future_size_and_count_bounds() -> None:
     assert refusal is not None
     assert refusal.code is RemoteObservationRefusalCode.TOO_MANY
 
-
-def test_content_is_redacted_and_minimized_even_with_broad_raw_mappings() -> None:
+    # --- scenario: content_is_redacted_and_minimized_even_with_broad_raw_mappings
     raw = observation(
         usage={"input_tokens": 3, "prompt": "secret", "token": "secret"},
         capacity={"remaining_percent": 40, "command": "rm -rf /", "path": "/secret"},
@@ -188,7 +187,9 @@ def test_content_is_redacted_and_minimized_even_with_broad_raw_mappings() -> Non
     assert "command" not in json.dumps(envelope.payload)
 
 
-def test_event_stream_is_selected_and_remote_commands_are_refused() -> None:
+
+def test_event_stream_is_selected_and_remote_commands_are_refused__and_2_more() -> None:
+    # --- scenario: event_stream_is_selected_and_remote_commands_are_refused
     class EventStream:
         authenticated_event_stream = True
 
@@ -222,8 +223,7 @@ def test_event_stream_is_selected_and_remote_commands_are_refused() -> None:
     )
     assert refused.refusals[0].code is RemoteObservationRefusalCode.REMOTE_COMMAND_FORBIDDEN
 
-
-def test_default_consent_always_contains_status_and_outcome() -> None:
+    # --- scenario: default_consent_always_contains_status_and_outcome
     assert DEFAULT_CONSENT == frozenset({RemoteObservationScope.STATUS_OUTCOME})
     with pytest.raises(ValueError):
         RemoteObservationPolicy(
@@ -232,8 +232,7 @@ def test_default_consent_always_contains_status_and_outcome() -> None:
             consents=frozenset(),
         )
 
-
-def test_remote_peer_facade_exposes_only_authenticated_event_streaming() -> None:
+    # --- scenario: remote_peer_facade_exposes_only_authenticated_event_streaming
     from jrbar.remote_peers import collect_authenticated_remote_observations
 
     class EventStream:
@@ -253,3 +252,4 @@ def test_remote_peer_facade_exposes_only_authenticated_event_streaming() -> None
     )
     assert result.accepted == ()
     assert result.refusals == ()
+

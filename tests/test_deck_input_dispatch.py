@@ -18,7 +18,8 @@ def press(key=3, action=1):
     return {"method": "v.oai.hid", "params": {"k": f"AG{key:02d}", "act": action}}
 
 
-def test_input_reaches_only_its_saved_action_through_main_thread_delivery():
+def test_input_reaches_only_its_saved_action_through_main_thread_delivery__and_2_more() -> None:
+    # --- scenario: input_reaches_only_its_saved_action_through_main_thread_delivery
     target, opened = Target(), []
     controls = DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),))
     dispatch = DeckInputDispatch(target, controls)
@@ -32,15 +33,13 @@ def test_input_reaches_only_its_saved_action_through_main_thread_delivery():
     assert dispatch.deliver(target.calls[0], executor) == ()
     assert opened == ["usage"]
 
-
-def test_disabled_input_does_not_schedule_an_action():
+    # --- scenario: disabled_input_does_not_schedule_an_action
     target = Target()
     dispatch = DeckInputDispatch(target, DeckControlSettings(bindings=((3, DeckAction("open_usage")),)))
     dispatch.receive([press()])
     assert not target.calls
 
-
-def test_slow_main_thread_gets_one_bounded_batch_and_expired_actions_are_discarded():
+    # --- scenario: slow_main_thread_gets_one_bounded_batch_and_expired_actions_are_discarded
     target, now, opened = Target(), [10.0], []
     controls = DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),))
     dispatch = DeckInputDispatch(target, controls, clock=lambda: now[0])
@@ -54,7 +53,9 @@ def test_slow_main_thread_gets_one_bounded_batch_and_expired_actions_are_discard
     assert len(target.calls) == 2
 
 
-def test_close_revokes_already_scheduled_actions():
+
+def test_close_revokes_already_scheduled_actions__and_1_more() -> None:
+    # --- scenario: close_revokes_already_scheduled_actions
     target, opened = Target(), []
     controls = DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),))
     dispatch = DeckInputDispatch(target, controls)
@@ -63,8 +64,7 @@ def test_close_revokes_already_scheduled_actions():
     assert dispatch.deliver(target.calls[0], MacDeckActionExecutor(open_usage=lambda: opened.append(1))) == ()
     assert not opened
 
-
-def test_analog_sector_input_runs_its_bound_action():
+    # --- scenario: analog_sector_input_runs_its_bound_action
     """An axis_sector input on 20..23 dispatches the action bound there:
     the router emits index 20 + sector once analog mode is on, and
     DeckControlSettings already holds bindings that far."""
@@ -79,3 +79,4 @@ def test_analog_sector_input_runs_its_bound_action():
     receipts = dispatch.deliver(target.calls[0], executor)
     assert opened == ["usage"]
     assert receipts[0].success
+

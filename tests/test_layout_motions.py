@@ -49,7 +49,8 @@ def firmware_ok(text: str) -> None:
     assert result.accepted, result.reason
 
 
-def test_cycle_turns_render_the_chosen_rhythm_class() -> None:
+def test_cycle_turns_render_the_chosen_rhythm_class__and_2_more() -> None:
+    # --- scenario: cycle_turns_render_the_chosen_rhythm_class
     base = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CYCLE)
     plain = program(base, ("claude", "codex"))
     heartbeat = program(
@@ -68,8 +69,7 @@ def test_cycle_turns_render_the_chosen_rhythm_class() -> None:
     for text in (plain, heartbeat, gradient):
         firmware_ok(text)
 
-
-def test_cycle_degrades_from_the_end_to_fit_the_firmware_budget() -> None:
+    # --- scenario: cycle_degrades_from_the_end_to_fit_the_firmware_budget
     base = ColorSettings.defaults().with_blend_mode(BLEND_MODE_CYCLE)
     settings = base
     providers = ("claude", "codex", "devin", "grok", "cursor", "hermes")
@@ -80,8 +80,7 @@ def test_cycle_degrades_from_the_end_to_fit_the_firmware_budget() -> None:
     assert text.count("\n") + 1 <= 20
     firmware_ok(text)
 
-
-def test_spatial_blocks_honor_the_motion_vocabulary() -> None:
+    # --- scenario: spatial_blocks_honor_the_motion_vocabulary
     base = ColorSettings.defaults().with_blend_mode(BLEND_MODE_SPATIAL)
     plain = program(base, ("claude", "codex"))
     kitt = program(base.with_agent_animation("claude", "kitt"), ("claude", "codex"))
@@ -93,6 +92,7 @@ def test_spatial_blocks_honor_the_motion_vocabulary() -> None:
     assert kitt != twinkle
     for text in (plain, kitt, twinkle):
         firmware_ok(text)
+
 
 
 def test_aurora_and_drift_are_distinct_in_shared_strips() -> None:

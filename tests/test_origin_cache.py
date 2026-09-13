@@ -40,7 +40,8 @@ def test_without_a_session_nothing_is_cached() -> None:
         assert walk.call_count == 2
 
 
-def test_the_cache_is_bounded() -> None:
+def test_the_cache_is_bounded__and_1_more() -> None:
+    # --- scenario: the_cache_is_bounded
     from jrbar.origin import _ORIGIN_CACHE_MAX_SESSIONS, _origin_cache
 
     with patch("jrbar.origin.process_ancestry", return_value=()):
@@ -48,10 +49,10 @@ def test_the_cache_is_bounded() -> None:
             detect_agent_origin("claude", env={}, session_id=f"s{index}")
     assert len(_origin_cache) <= _ORIGIN_CACHE_MAX_SESSIONS
 
-
-def test_clearing_one_session_forces_a_fresh_walk() -> None:
+    # --- scenario: clearing_one_session_forces_a_fresh_walk
     with patch("jrbar.origin.process_ancestry", return_value=()) as walk:
         detect_agent_origin("claude", env={}, session_id="s1")
         clear_origin_cache("s1")
         detect_agent_origin("claude", env={}, session_id="s1")
         assert walk.call_count == 2
+

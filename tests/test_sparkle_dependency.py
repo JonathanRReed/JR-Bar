@@ -198,10 +198,9 @@ def test_preparer_rejects_an_archive_digest_mismatch_before_writing_output(
     assert not output.exists()
 
 
-def test_preparer_rejects_a_symlinked_supplied_archive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_preparer_rejects_a_symlinked_supplied_archive__and_1_more(tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: preparer_rejects_a_symlinked_supplied_archive
     prepare_sparkle = _module()
     archive = tmp_path / "Sparkle-2.9.6.tar.xz"
     digest = _build_archive(archive)
@@ -218,11 +217,8 @@ def test_preparer_rejects_a_symlinked_supplied_archive(
 
     assert not output.exists()
 
-
-def test_preparer_hashes_and_extracts_one_private_snapshot_of_a_supplied_archive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: preparer_hashes_and_extracts_one_private_snapshot_of_a_supplied_archive
+    monkeypatch.undo()
     prepare_sparkle = _module()
     archive = tmp_path / "Sparkle-2.9.6.tar.xz"
     digest = _build_archive(archive)
@@ -244,6 +240,7 @@ def test_preparer_hashes_and_extracts_one_private_snapshot_of_a_supplied_archive
     assert verified_paths[0] != archive
     assert verified_paths[0].parent.name == ".prepare-sparkle"
     assert (output / "Sparkle.framework" / "Versions" / "B" / "Sparkle").is_file()
+
 
 
 @pytest.mark.parametrize(

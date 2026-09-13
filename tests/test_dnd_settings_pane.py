@@ -158,9 +158,8 @@ def _assert_closed_key_view_loop(order: tuple[object, ...]) -> None:
     assert current is order[0]
 
 
-def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
-    monkeypatch,
-) -> None:
+def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces__and_1_more(monkeypatch,) -> None:
+    # --- scenario: focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces
     target = _DndSettingsTarget.alloc().init()
     monkeypatch.setattr(
         dnd_settings_pane.focus_sync,
@@ -203,10 +202,8 @@ def test_focus_pane_adds_one_dnd_card_and_preserves_existing_surfaces(
         "dnd_end_override",
     } <= set(buttons)
 
-
-def test_dnd_card_uses_native_controls_plain_labels_and_exact_accessibility(
-    monkeypatch,
-) -> None:
+    # --- scenario: dnd_card_uses_native_controls_plain_labels_and_exact_accessibility
+    monkeypatch.undo()
     target = _DndSettingsTarget.alloc().init()
     target.settings = (
         target.settings.with_dnd_schedule(
@@ -273,6 +270,7 @@ def test_dnd_card_uses_native_controls_plain_labels_and_exact_accessibility(
         assert target.actions[-1] == ("one_hour", mode.value)
 
 
+
 def test_status_copy_includes_the_supplied_exact_return_time() -> None:
     projection = compose_dnd_contributions(
         (contribution_for_mode(DndSource.MANUAL, DndMode.MUTE),),
@@ -320,9 +318,8 @@ def test_key_view_loop_is_stable_and_disabled_state_is_explicit(monkeypatch) -> 
     assert buttons["dnd_end_override"].isEnabled() is False
 
 
-def test_refresh_rebuilds_per_focus_content_when_the_live_roster_changes(
-    monkeypatch,
-) -> None:
+def test_refresh_rebuilds_per_focus_content_when_the_live_roster_changes__and_2_more(monkeypatch,) -> None:
+    # --- scenario: refresh_rebuilds_per_focus_content_when_the_live_roster_changes
     target = _DndSettingsTarget.alloc().init()
     roster: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -378,10 +375,8 @@ def test_refresh_rebuilds_per_focus_content_when_the_live_roster_changes(
     _assert_closed_key_view_loop(fields["dnd_keyboard_order"])
     assert {"Personal", "Sleep"} <= set(_view_text(pane))
 
-
-def test_refresh_updates_retained_controls_from_current_controller_truth(
-    monkeypatch,
-) -> None:
+    # --- scenario: refresh_updates_retained_controls_from_current_controller_truth
+    monkeypatch.undo()
     target = _DndSettingsTarget.alloc().init()
     monkeypatch.setattr(
         dnd_settings_pane.focus_sync,
@@ -448,10 +443,8 @@ def test_refresh_updates_retained_controls_from_current_controller_truth(
     assert buttons["dnd_focus_authorization"].isHidden()
     assert buttons["dnd_end_override"].isEnabled()
 
-
-def test_configured_focus_rules_keep_three_controls_and_refresh_every_axis(
-    monkeypatch,
-) -> None:
+    # --- scenario: configured_focus_rules_keep_three_controls_and_refresh_every_axis
+    monkeypatch.undo()
     target = _DndSettingsTarget.alloc().init()
     target.settings = replace(
         target.settings,
@@ -481,6 +474,7 @@ def test_configured_focus_rules_keep_three_controls_and_refresh_every_axis(
     assert _selected_value(fields["focus_rule_popup:work"]) == "0.25"
     assert _selected_value(fields["focus_profile_popup:work"]) == "Night"
     assert _selected_value(fields["focus_signal_popup:work"]) == "silent"
+
 
 
 def test_settings_window_delegates_focus_without_adding_navigation(monkeypatch) -> None:

@@ -129,9 +129,8 @@ def test_import_requires_exact_provider_browser_profile_consent(tmp_path: Path):
     assert credentials.values == {}
 
 
-def test_import_refuses_a_profile_root_that_does_not_match_the_granted_profile(
-    tmp_path: Path,
-):
+def test_import_refuses_a_profile_root_that_does_not_match_the_granted_profile__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: import_refuses_a_profile_root_that_does_not_match_the_granted_profile
     credentials = Credentials()
     wrong_root = tmp_path / "Work"
     wrong_root.mkdir()
@@ -146,10 +145,7 @@ def test_import_refuses_a_profile_root_that_does_not_match_the_granted_profile(
     assert result.state is BrowserImportState.CONSENT_REQUIRED
     assert credentials.values == {}
 
-
-def test_import_refuses_a_same_named_profile_outside_the_browser_root(
-    tmp_path: Path,
-):
+    # --- scenario: import_refuses_a_same_named_profile_outside_the_browser_root
     profile(tmp_path)
     rogue_root = tmp_path / "rogue" / "Default"
     leveldb = rogue_root / "Local Storage" / "leveldb"
@@ -169,6 +165,7 @@ def test_import_refuses_a_same_named_profile_outside_the_browser_root(
 
     assert result.state is BrowserImportState.CONSENT_REQUIRED
     assert credentials.values == {}
+
 
 
 def test_import_stores_only_validated_session_and_returns_org(tmp_path: Path):

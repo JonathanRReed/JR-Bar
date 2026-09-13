@@ -42,11 +42,11 @@ REQUIRED_COMMANDS = {
 }
 
 
-def test_every_protocol_command_is_registered() -> None:
+def test_every_protocol_command_is_registered__and_2_more() -> None:
+    # --- scenario: every_protocol_command_is_registered
     assert REQUIRED_COMMANDS <= set(command_names())
 
-
-def test_path_helpers() -> None:
+    # --- scenario: path_helpers
     document = {"colors": {"agent_colors": {"claude": "#D97757"}}, "devices": [{"brightness": 255}]}
     assert get_path(document, "colors.agent_colors.claude") == ("#D97757", True)
     assert get_path(document, "devices.0.brightness") == (255, True)
@@ -58,8 +58,7 @@ def test_path_helpers() -> None:
     assert document["new"] == {"nested": {"key": True}}
     assert set_path(document, "", 1) is False
 
-
-def test_screen_bar_follows_the_strip_anchor_when_linked() -> None:
+    # --- scenario: screen_bar_follows_the_strip_anchor_when_linked
     assert screen_bar_anchor(200.0, 100.0, linked=True) == 100.0
     assert screen_bar_anchor(50.0, 100.0, linked=True) == 100.0
     assert screen_bar_anchor(200.0, 100.0, linked=False) == 200.0
@@ -67,7 +66,9 @@ def test_screen_bar_follows_the_strip_anchor_when_linked() -> None:
     assert screen_bar_anchor(None, None, linked=True) is None
 
 
-def test_device_transitions_key_on_the_device_name() -> None:
+
+def test_device_transitions_key_on_the_device_name__and_1_more() -> None:
+    # --- scenario: device_transitions_key_on_the_device_name
     def device(device_id, name, connected=True):
         return SimpleNamespace(device_id=device_id, name=name, connected=connected)
 
@@ -83,14 +84,14 @@ def test_device_transitions_key_on_the_device_name() -> None:
     connected, events = device_transitions({"SidePulse": True}, [device("/Volumes/SidePulse", "SidePulse", connected=False), device("sidepulse:pro:serial:67", "SidePulse")])
     assert events == [] and connected == {"SidePulse": True}
 
-
-def test_mono_to_epoch_is_wall_clock_aligned() -> None:
+    # --- scenario: mono_to_epoch_is_wall_clock_aligned
     import time
 
     now_mono = time.monotonic()
     assert abs(mono_to_epoch(now_mono) - time.time()) < 0.05
     assert mono_to_epoch(None) is None
     assert mono_to_epoch(True) is None
+
 
 
 def test_settings_round_trip_validates_through_the_real_loader(tmp_path: Path) -> None:
@@ -236,7 +237,8 @@ def headless(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     return controller
 
 
-def test_headless_launch_skips_every_appkit_surface_and_serves(headless) -> None:
+def test_headless_launch_skips_every_appkit_surface_and_serves__and_2_more(headless) -> None:
+    # --- scenario: headless_launch_skips_every_appkit_surface_and_serves
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     assert controller.status_item is None
@@ -253,8 +255,7 @@ def test_headless_launch_skips_every_appkit_surface_and_serves(headless) -> None
     assert any(kind == "settings" for kind, _ in server.published)
     controller.refresh_.assert_called()
 
-
-def test_volatile_only_rebuilds_are_not_republished(headless) -> None:
+    # --- scenario: volatile_only_rebuilds_are_not_republished
     """The wire dedupe can never see two identical state/lights frames --
     `now`, `generation` and the ages tick every build -- so the publish
     layer compares significance with the volatile paths stripped. A quiet
@@ -282,8 +283,7 @@ def test_volatile_only_rebuilds_are_not_republished(headless) -> None:
     assert [kind for kind, _ in server.published][-1] == "state"
     assert len(server.published) == 3
 
-
-def test_settings_property_bumps_the_generation_and_republishes(headless) -> None:
+    # --- scenario: settings_property_bumps_the_generation_and_republishes
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     server = controller._core
@@ -297,7 +297,9 @@ def test_settings_property_bumps_the_generation_and_republishes(headless) -> Non
     assert server.published[0][1]["generation"] == before + 1
 
 
-def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused(headless) -> None:
+
+def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_more(headless) -> None:
+    # --- scenario: commands_run_on_the_main_thread_and_unknown_ones_are_refused
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     assert controller._core_dispatch("ping", {})["pong"] is True
@@ -314,8 +316,7 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused(headless) 
         controller._core_dispatch("set_setting", {"path": "devices.7.brightness", "value": 1})
     assert bad_path.value.code == "invalid_path"
 
-
-def test_unsnooze_all_lifts_quiet_snoozes_not_just_asks(headless) -> None:
+    # --- scenario: unsnooze_all_lifts_quiet_snoozes_not_just_asks
     """``snooze {session: "all", seconds: 0}`` is the menu's Unsnooze-All:
     it must reach every family actually snoozed. The old target list —
     the ask statuses — silently missed a snoozed session that was
@@ -350,8 +351,7 @@ def test_unsnooze_all_lifts_quiet_snoozes_not_just_asks(headless) -> None:
     assert payload.kind == OperatorActionKind.UNSNOOZE
     assert payload.work_key == key
 
-
-def test_snooze_all_still_targets_the_ask_statuses(headless) -> None:
+    # --- scenario: snooze_all_still_targets_the_ask_statuses
     """The positive path is unchanged: ``seconds > 0`` mutes what is
     actually asking, not every session on the board."""
     from jrbar.provider_facts import WorkIdentifier, WorkKey
@@ -370,6 +370,7 @@ def test_snooze_all_still_targets_the_ask_statuses(headless) -> None:
     assert reply["sessions"] == ["codex:session:asking"]
     (payload,) = applied
     assert payload.snooze_preset == "15-minutes"
+
 
 
 def test_peer_arrive_depart_events_fire_on_reachability_edges(headless) -> None:
@@ -427,7 +428,8 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert controller.settings.alert_burst == status_bar.AgentMonitorSettings().alert_burst
 
 
-def test_reset_settings_reaches_per_device_leaves(headless) -> None:
+def test_reset_settings_reaches_per_device_leaves__and_1_more(headless) -> None:
+    # --- scenario: reset_settings_reaches_per_device_leaves
     """The defaults document has no device rows, so a devices.N.<field>
     reset reads the leaf default off a stock DeviceDisplaySetting --
     identity fields (id, name, path) are not preferences and refuse."""
@@ -443,8 +445,7 @@ def test_reset_settings_reaches_per_device_leaves(headless) -> None:
     reply = controller._core_dispatch("reset_settings", {"paths": ["devices.0.name", "devices.9.resting_glow"]})
     assert reply["reset"] == []
 
-
-def test_app_introduced_settings_are_served_and_the_token_path_is_read_only(headless) -> None:
+    # --- scenario: app_introduced_settings_are_served_and_the_token_path_is_read_only
     """The three keys the app catalogued as "Not provided by core":
     ``menu_bar_icon_style`` and ``quota_alert_thresholds`` are real,
     persisted preferences; ``cloud_ingest_token_path`` is the daemon's own
@@ -476,6 +477,7 @@ def test_app_introduced_settings_are_served_and_the_token_path_is_read_only(head
     published = [payload for kind, payload in server.published if kind == "settings"][-1]["document"]
     assert published["cloud_ingest_token_path"] == str(default_token_path())
     assert published["quota_alert_thresholds"] == [90.0, 95.0]
+
 
 
 def test_state_builds_feed_the_usage_sample_buffer(headless, tmp_path: Path) -> None:
@@ -518,7 +520,8 @@ def test_state_builds_feed_the_usage_sample_buffer(headless, tmp_path: Path) -> 
     assert buffer.path.exists()
 
 
-def test_doctor_and_history_answer_without_a_snapshot(headless) -> None:
+def test_doctor_and_history_answer_without_a_snapshot__and_1_more(headless) -> None:
+    # --- scenario: doctor_and_history_answer_without_a_snapshot
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     history = controller._core_dispatch("list_history", {"limit": 10})
@@ -530,8 +533,7 @@ def test_doctor_and_history_answer_without_a_snapshot(headless) -> None:
     assert {check["name"] for check in doctor["checks"]} >= {"hook shim", "pending hook lines"}
     assert "open_session" in doctor["commands"]
 
-
-def test_terminate_stops_the_server_and_drainer(headless) -> None:
+    # --- scenario: terminate_stops_the_server_and_drainer
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     server = controller._core
@@ -541,7 +543,9 @@ def test_terminate_stops_the_server_and_drainer(headless) -> None:
     assert not _FakeDrainer.instances[0].started
 
 
-def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+
+def test_effect_commands_read_and_write_the_real_stores__and_2_more(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # --- scenario: effect_commands_read_and_write_the_real_stores
     import json
 
     from jrbar import core_effects, effect_assignment_store, effect_pack_store
@@ -615,8 +619,8 @@ def test_effect_commands_read_and_write_the_real_stores(headless, monkeypatch: p
     packed = controller._core_dispatch("render_effect", {"effect_id": "pack:night-lab:aurora", "parameters": {"duration_seconds": 1.0}})
     assert packed["parameters"]["motion"] == "aurora" and packed["program"]
 
-
-def test_set_assignment_rejects_states_that_cannot_fire(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # --- scenario: set_assignment_rejects_states_that_cannot_fire
+    monkeypatch.undo()
     """State-scope assigns the router can never deliver are refused.
 
     ``_semantic_kind`` only ever produces asking/failure/completion/
@@ -643,8 +647,8 @@ def test_set_assignment_rejects_states_that_cannot_fire(headless, monkeypatch: p
     routed = controller._core_dispatch("set_assignment", {"effect_id": "comet", "scope": "semantic", "target_id": "completion"})
     assert routed["assignment"]["target_id"] == "completion"
 
-
-def test_provider_motion_assignment_writes_the_color_policy(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # --- scenario: provider_motion_assignment_writes_the_color_policy
+    monkeypatch.undo()
     """"Assign → Provider → <agent>" for a motion must reach the strip.
 
     ``provider_animation`` is the persistent per-provider motion the solo
@@ -676,7 +680,9 @@ def test_provider_motion_assignment_writes_the_color_policy(headless, monkeypatc
     assert controller._core_dispatch("list_assignments", {})["assignments"] != []
 
 
-def test_remove_effect_pack_uninstalls(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+
+def test_remove_effect_pack_uninstalls__and_1_more(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # --- scenario: remove_effect_pack_uninstalls
     """The Studio calls ``remove_effect_pack``; a missing handler used to
     answer unknown_command forever."""
     from jrbar import core_effects, effect_assignment_store, effect_pack_store
@@ -704,8 +710,8 @@ def test_remove_effect_pack_uninstalls(headless, monkeypatch: pytest.MonkeyPatch
         controller._core_dispatch("remove_effect_pack", {"pack_id": "temp"})
     assert gone.value.code == "not_installed"
 
-
-def test_project_assignment_accepts_origin_labels(headless, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # --- scenario: project_assignment_accepts_origin_labels
+    monkeypatch.undo()
     """A project target is the session's origin label ("Claude in VS
     Code"); rejecting spaces made every real target unwritable."""
     from jrbar import core_effects, effect_assignment_store, effect_pack_store
@@ -725,7 +731,9 @@ def test_project_assignment_accepts_origin_labels(headless, monkeypatch: pytest.
     assert reply["assignment"]["target_id"] == "Claude in VS Code"
 
 
-def test_serve_server_tracks_serve_enabled_and_the_token(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+
+def test_serve_server_tracks_serve_enabled_and_the_token__and_2_more(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: serve_server_tracks_serve_enabled_and_the_token
     """Settings > Remote's switch runs the loopback endpoint it describes."""
     monkeypatch.setenv("JRBAR_SERVE_ACCESS_TOKEN", "t" * 32)
     monkeypatch.setenv("JRBAR_SERVE_PORT", "0")
@@ -746,8 +754,8 @@ def test_serve_server_tracks_serve_enabled_and_the_token(headless, monkeypatch: 
     assert getattr(controller, "_core_serve_server", None) is None
     assert controller._core_dispatch("serve_token", {})["running"] is False
 
-
-def test_serve_server_needs_the_token_env(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: serve_server_needs_the_token_env
+    monkeypatch.undo()
     """No token in the daemon's environment means no endpoint -- the
     anonymous variant is a CLI flag, never a default."""
     monkeypatch.delenv("JRBAR_SERVE_ACCESS_TOKEN", raising=False)
@@ -760,8 +768,8 @@ def test_serve_server_needs_the_token_env(headless, monkeypatch: pytest.MonkeyPa
     reply = controller._core_dispatch("serve_token", {})
     assert reply["enabled"] is True and reply["running"] is False and reply["token"] is None
 
-
-def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: usage_history_scans_the_provider_and_refuses_bad_ranges
+    monkeypatch.undo()
     from jrbar import core_usage_history
 
     controller = headless
@@ -799,6 +807,7 @@ def test_usage_history_scans_the_provider_and_refuses_bad_ranges(headless, monke
     assert gemini["records"] == 0 and gemini["pending"] is False
     assert gemini["pricing"]["estimated"] is True
     assert gemini["pricing"]["model"] == core_usage_history.REFERENCE_MODEL["gemini"]
+
 
 
 def test_linked_pro_and_dot_are_written_in_one_worker_command(headless) -> None:
@@ -1246,7 +1255,8 @@ def test_disconnect_forgets_the_devices_cached_led_count(headless, tmp_path) -> 
     assert root not in led_status._LED_COUNT_CACHE
 
 
-def test_the_dot_rides_only_the_followed_strip(headless) -> None:
+def test_the_dot_rides_only_the_followed_strip__and_2_more(headless) -> None:
+    # --- scenario: the_dot_rides_only_the_followed_strip
     """Two strips mounted: the Dot couples with the FIRST strip in
     inventory order -- the one the lights document calls ``hardware`` --
     and the second strip's writes neither carry the Dot nor overwrite the
@@ -1289,8 +1299,7 @@ def test_the_dot_rides_only_the_followed_strip(headless) -> None:
     )
     assert controller._core_linked_pro_program == (followed_write.program, followed_write.state)
 
-
-def test_an_uncoupled_batch_leaves_the_dot_its_own_anchor(headless) -> None:
+    # --- scenario: an_uncoupled_batch_leaves_the_dot_its_own_anchor
     """The lights document stamped the Dot with the strip's anchor on
     ``devices_linked`` alone -- even for a batch that never coupled the
     pair, where the two are provably not running from one clock. Only a
@@ -1328,8 +1337,7 @@ def test_an_uncoupled_batch_leaves_the_dot_its_own_anchor(headless) -> None:
     lights = controller._core_build_lights()
     assert lights["surfaces"]["dot"]["anchor"] == 1000.0
 
-
-def test_dot_link_reports_every_state(headless) -> None:
+    # --- scenario: dot_link_reports_every_state
     """``lights.dot_link`` is always present and says which of the seven
     words applies -- the states a settings toggle alone cannot express
     (``no_strip``, ``failed``) are the point of publishing it."""
@@ -1367,7 +1375,9 @@ def test_dot_link_reports_every_state(headless) -> None:
     assert link_state() == {"state": "off", "role": None, "error": None}
 
 
-def test_state_devices_linked_names_the_right_mechanism(headless) -> None:
+
+def test_state_devices_linked_names_the_right_mechanism__and_2_more(headless) -> None:
+    # --- scenario: state_devices_linked_names_the_right_mechanism
     """``devices[].linked`` used to be the Screen Bar's setting on every
     row, so a Dot reporting ``linked: true`` was claiming the Screen Bar
     follows the strip. Now the field follows the row's ``kind``: the bar
@@ -1397,8 +1407,7 @@ def test_state_devices_linked_names_the_right_mechanism(headless) -> None:
     by_kind = {facts.kind: facts for facts in controller._core_device_facts()}
     assert by_kind["dot"].linked is False
 
-
-def test_the_screen_bar_mirrors_the_strip_only_while_linked(headless) -> None:
+    # --- scenario: the_screen_bar_mirrors_the_strip_only_while_linked
     """With no live Screen Bar call, an UNLINKED bar has no business
     replaying the strip's program -- the mirror surface appeared anyway,
     because nothing checked the link."""
@@ -1416,8 +1425,7 @@ def test_the_screen_bar_mirrors_the_strip_only_while_linked(headless) -> None:
     assert "screen_bar" in lights["surfaces"]
     assert lights["surfaces"]["screen_bar"]["anchor"] == 1000.0
 
-
-def test_screen_bar_phase_offset_shifts_the_linked_anchor(headless) -> None:
+    # --- scenario: screen_bar_phase_offset_shifts_the_linked_anchor
     """``screen_bar_phase_offset_ms`` nudges the bar's clock against the
     strip's: 250 ms holds the bar's t=0 a quarter second later than the
     strip's write, both on a live call and on the mirror surface."""
@@ -1448,6 +1456,7 @@ def test_screen_bar_phase_offset_shifts_the_linked_anchor(headless) -> None:
     assert controller.settings.to_dict()["screen_bar_phase_offset_ms"] == 250.0
     reply = controller._core_dispatch("set_setting", {"path": "screen_bar_phase_offset_ms", "value": 120.0})
     assert reply["value"] == 120.0 and controller.settings.screen_bar_phase_offset_ms == 120.0
+
 
 
 def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
@@ -1601,7 +1610,8 @@ def test_linked_screen_bar_presents_the_strips_program(headless) -> None:
     controller._core_previews.pop("screen_bar", None)
 
 
-def test_lift_program_luminance_lifts_only_colour_literals() -> None:
+def test_lift_program_luminance_lifts_only_colour_literals__and_1_more() -> None:
+    # --- scenario: lift_program_luminance_lifts_only_colour_literals
     """The mirror transform: hue kept, the lift a continuous curve below
     the knee, everything that is not a colour left byte-identical."""
     from jrbar.colors import (
@@ -1637,8 +1647,7 @@ def test_lift_program_luminance_lifts_only_colour_literals() -> None:
     # Not a program: handed back as-is.
     assert lift_program_luminance("") == ""
 
-
-def test_lift_program_luminance_curve_is_continuous_and_monotone() -> None:
+    # --- scenario: lift_program_luminance_curve_is_continuous_and_monotone
     """The lift fades to zero at black and meets the pass-through region
     without a seam: a token a hair below the knee lands a hair below the
     knee, and darker tokens always land darker."""
@@ -1685,6 +1694,7 @@ def test_lift_program_luminance_curve_is_continuous_and_monotone() -> None:
     assert lift_program_luminance(program, floor=0.0) == program
 
 
+
 # --- calibration previews ----------------------------------------------------
 
 
@@ -1723,7 +1733,8 @@ def _calibration_devices(controller, *, stored_gains=(1.0, 0.38, 1.0), with_dot=
     return devices
 
 
-def test_calibration_preview_drives_the_given_gains_once(headless) -> None:
+def test_calibration_preview_drives_the_given_gains_once__and_2_more(headless) -> None:
+    # --- scenario: calibration_preview_drives_the_given_gains_once
     """Stored G=0.38, working G=1.0: the preview must write what the CALLER
     asked through the strip boundary -- not the stored profile on top, which
     is how the old double-application preview lied (a ~12 drive beside the
@@ -1765,8 +1776,7 @@ def test_calibration_preview_drives_the_given_gains_once(headless) -> None:
     assert led.last_program == expected == reply["program"]
     assert "#FFFFFF" not in reply["program"]
 
-
-def test_calibration_preview_transfers_the_patch_and_holds(headless) -> None:
+    # --- scenario: calibration_preview_transfers_the_patch_and_holds
     """Grey is a nominal colour, not drive bytes: it must come out the far
     side of the strip transfer, and the preview must be held on the device
     (owning its write path) for the sheet's whole session, not three
@@ -1812,8 +1822,7 @@ def test_calibration_preview_transfers_the_patch_and_holds(headless) -> None:
     assert lights["surfaces"]["hardware"]["why"] == "preview"
     assert lights["surfaces"]["hardware"]["program"] == reply["program"]
 
-
-def test_calibration_preview_ends_and_rearms_the_live_program(headless) -> None:
+    # --- scenario: calibration_preview_ends_and_rearms_the_live_program
     """End drops the hold -- the device's own and any companion's -- clears
     the dedupe identity the preview bytes left behind, and republishes."""
     controller = headless
@@ -1840,7 +1849,9 @@ def test_calibration_preview_ends_and_rearms_the_live_program(headless) -> None:
     assert invalid.value.code == "invalid_args"
 
 
-def test_dot_companion_preview_lights_the_strip_with_its_stored_profile(headless) -> None:
+
+def test_dot_companion_preview_lights_the_strip_with_its_stored_profile__and_2_more(headless) -> None:
+    # --- scenario: dot_companion_preview_lights_the_strip_with_its_stored_profile
     """Matching the Dot to the strip by eye needs the strip showing the same
     patch at the strip's OWN stored gains and brightness -- the thing the
     Dot will sit beside -- held for the same session."""
@@ -1877,8 +1888,7 @@ def test_dot_companion_preview_lights_the_strip_with_its_stored_profile(headless
     assert reply["ended"] is True
     assert not controller._core_previews
 
-
-def test_calibration_preview_ends_when_its_device_leaves(headless) -> None:
+    # --- scenario: calibration_preview_ends_when_its_device_leaves
     """A hold can outlive its device by ten minutes: a strip that goes away
     mid-calibration must take its preview (and, for a Dot, the companion's)
     with it, or a replug inside the window would find its live writes still
@@ -1913,8 +1923,7 @@ def test_calibration_preview_ends_when_its_device_leaves(headless) -> None:
     )
     assert not controller._core_previews
 
-
-def test_calibration_preview_routes_the_screen_bar_to_its_own_surface(headless) -> None:
+    # --- scenario: calibration_preview_routes_the_screen_bar_to_its_own_surface
     """The Screen Bar is the settings device ``virtual:status-bar``; its
     preview must take the code-domain transform to the ``screen_bar``
     surface -- never the strip boundary, never the physical ``hardware``
@@ -1945,7 +1954,9 @@ def test_calibration_preview_routes_the_screen_bar_to_its_own_surface(headless) 
     assert lights["surfaces"]["screen_bar"]["why"] == "preview"
 
 
-def test_calibration_preview_validates_and_finds(headless) -> None:
+
+def test_calibration_preview_validates_and_finds__and_2_more(headless) -> None:
+    # --- scenario: calibration_preview_validates_and_finds
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     pro, _dot = _calibration_devices(controller)
@@ -1975,8 +1986,7 @@ def test_calibration_preview_validates_and_finds(headless) -> None:
     })
     assert reply["device"] == pro.device_id
 
-
-def test_apply_calibration_persists_brightness_and_glow_on_a_new_device(headless) -> None:
+    # --- scenario: apply_calibration_persists_brightness_and_glow_on_a_new_device
     """Three fixes: brightness is part of the profile, the glow write used
     to vanish when the device had no settings row yet, and a malformed
     number must answer invalid_args instead of leaking a ValueError."""
@@ -2015,8 +2025,7 @@ def test_apply_calibration_persists_brightness_and_glow_on_a_new_device(headless
     controller._core_dispatch("apply_calibration", {"device": pro.device_id, "profile": {"blue_gain": 0.8}})
     assert "hardware" not in controller._core_previews
 
-
-def test_calibration_preview_registers_the_hold_before_the_write(headless) -> None:
+    # --- scenario: calibration_preview_registers_the_hold_before_the_write
     """The write used to land before the hold existed: a live command
     scheduled in the gap painted over the patch, and the just-registered
     hold then refused every repair for the rest of its 600 s. The hold is
@@ -2060,6 +2069,7 @@ def test_calibration_preview_registers_the_hold_before_the_write(headless) -> No
     assert refused.value.code == "refused"
     assert pro.device_id not in controller._core_held_preview_devices()
     assert "hardware" not in controller._core_previews
+
 
 
 def test_preview_program_refuses_a_held_surface(headless) -> None:
@@ -2229,7 +2239,8 @@ def _listed(controller) -> list[str]:
         return [row["id"] for row in (controller._core_documents["state"] or {})["sessions"]]
 
 
-def test_clear_completed_leaves_only_live_sessions_and_undo_puts_them_back(cleared) -> None:
+def test_clear_completed_leaves_only_live_sessions_and_undo_puts_them_back__and_2_more(cleared) -> None:
+    # --- scenario: clear_completed_leaves_only_live_sessions_and_undo_puts_them_back
     controller = cleared
     before = _listed(controller)
     assert before == [
@@ -2263,8 +2274,7 @@ def test_clear_completed_leaves_only_live_sessions_and_undo_puts_them_back(clear
     assert undone["restored"] == reply["cleared"]
     assert _listed(controller) == before
 
-
-def test_clear_completed_can_name_a_subset_and_never_touches_live_rows(cleared) -> None:
+    # --- scenario: clear_completed_can_name_a_subset_and_never_touches_live_rows
     controller = cleared
 
     reply = controller._core_dispatch(
@@ -2281,8 +2291,7 @@ def test_clear_completed_can_name_a_subset_and_never_touches_live_rows(cleared) 
         "devin:session:lapis-fl",
     ]
 
-
-def test_clearing_a_list_with_nothing_over_is_a_no_op(cleared) -> None:
+    # --- scenario: clearing_a_list_with_nothing_over_is_a_no_op
     controller = cleared
     controller._core_dispatch("clear_completed", {"sessions": "all"})
     again = controller._core_dispatch("clear_completed", {"sessions": "all"})
@@ -2291,6 +2300,7 @@ def test_clearing_a_list_with_nothing_over_is_a_no_op(cleared) -> None:
     with pytest.raises(CommandError) as bad:
         controller._core_dispatch("clear_completed", {"sessions": "some"})
     assert bad.value.code == "invalid_args"
+
 
 
 def test_undo_clear_expires_after_its_window(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2309,7 +2319,8 @@ def test_undo_clear_expires_after_its_window(cleared, monkeypatch: pytest.Monkey
 # --- dismiss_session / mark_history_seen / serve_token -----------------------
 
 
-def test_dismiss_session_hides_a_live_row_until_it_speaks(cleared) -> None:
+def test_dismiss_session_hides_a_live_row_until_it_speaks__and_2_more(cleared) -> None:
+    # --- scenario: dismiss_session_hides_a_live_row_until_it_speaks
     """The row leaves ``state.sessions`` now and returns the moment the
     session's ``updated_at`` moves past the acknowledgement receipt."""
     from dataclasses import replace
@@ -2332,8 +2343,7 @@ def test_dismiss_session_hides_a_live_row_until_it_speaks(cleared) -> None:
     controller._core_publish_state()
     assert "claude:session:live" in _listed(controller)
 
-
-def test_dismiss_session_refuses_asks_remote_and_unknown_rows(cleared) -> None:
+    # --- scenario: dismiss_session_refuses_asks_remote_and_unknown_rows
     from datetime import datetime, timedelta, timezone
 
     from jrbar.capacity_types import SourceKey
@@ -2369,8 +2379,7 @@ def test_dismiss_session_refuses_asks_remote_and_unknown_rows(cleared) -> None:
         controller._core_dispatch("dismiss_session", {"session": remote.agent_id})
     assert refused.value.code == "refused"
 
-
-def test_dismiss_session_rejects_a_row_without_exact_identity(cleared) -> None:
+    # --- scenario: dismiss_session_rejects_a_row_without_exact_identity
     """A status whose work_key is not a real ``WorkKey`` cannot carry a
     receipt -- the command refuses instead of guessing."""
     from dataclasses import replace
@@ -2381,6 +2390,7 @@ def test_dismiss_session_rejects_a_row_without_exact_identity(cleared) -> None:
     with pytest.raises(CommandError) as refused:
         controller._core_dispatch("dismiss_session", {"session": "claude:session:live"})
     assert refused.value.code == "refused"
+
 
 
 def test_mark_history_seen_advances_the_watermark(headless) -> None:
@@ -2465,9 +2475,8 @@ def scene_store(headless, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return controller
 
 
-def test_scene_packs_list_import_preview_and_conflict(
-    scene_store, tmp_path: Path
-) -> None:
+def test_scene_packs_list_import_preview_and_conflict__and_1_more(scene_store, tmp_path: Path) -> None:
+    # --- scenario: scene_packs_list_import_preview_and_conflict
     import json as _json
 
     controller = scene_store
@@ -2519,16 +2528,14 @@ def test_scene_packs_list_import_preview_and_conflict(
         controller._core_dispatch("import_scene_pack", {"path": str(bad_pack)})
     assert invalid.value.code == "invalid_pack"
 
-
-def test_import_scene_pack_reports_a_migrated_v1_pack(
-    scene_store, tmp_path: Path
-) -> None:
+    # --- scenario: import_scene_pack_reports_a_migrated_v1_pack
     import json as _json
 
     source = tmp_path / "legacy.json"
     source.write_text(_json.dumps(_scene_pack_payload("legacy-pack", version=1)), encoding="utf-8")
     reply = scene_store._core_dispatch("import_scene_pack", {"path": str(source)})
     assert reply["pack_id"] == "legacy-pack" and reply["migrated"] is True
+
 
 
 def _dead_process_row(cleared, monkeypatch: pytest.MonkeyPatch, end_reason: str | None) -> dict:
@@ -2557,9 +2564,8 @@ def _dead_process_row(cleared, monkeypatch: pytest.MonkeyPatch, end_reason: str 
     return rows["devin:session:troubled"]
 
 
-def test_a_finished_one_shot_run_reads_done_though_its_process_is_gone(
-    cleared, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_finished_one_shot_run_reads_done_though_its_process_is_gone__and_2_more(cleared, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: a_finished_one_shot_run_reads_done_though_its_process_is_gone
     """A one-shot CLI run sends a real end event and then exits -- that is
     its whole normal life. The registry closed the record with
     `end_reason="hook"`, which is the provider's own `SessionEnd`, so the
@@ -2569,10 +2575,8 @@ def test_a_finished_one_shot_run_reads_done_though_its_process_is_gone(
     assert done["lifecycle"] == "completed" and done["mode"] == "completed"
     assert done["pid"] is None
 
-
-def test_a_swept_record_is_re_read_until_the_provider_end_can_land(
-    cleared, monkeypatch: pytest.MonkeyPatch
-) -> None:
+    # --- scenario: a_swept_record_is_re_read_until_the_provider_end_can_land
+    monkeypatch.undo()
     """A one-shot CLI can exit before its own `SessionEnd` reaches the
     daemon, so the liveness sweep sometimes closes the record first and the
     provider's event upgrades it a moment later. Caching "the sweep ended
@@ -2631,10 +2635,8 @@ def test_a_swept_record_is_re_read_until_the_provider_end_can_land(
     controller._core_extras_for(working)
     assert len(reads) == quiet
 
-
-def test_a_process_killed_without_an_end_event_reads_ended_not_done(
-    cleared, monkeypatch: pytest.MonkeyPatch
-) -> None:
+    # --- scenario: a_process_killed_without_an_end_event_reads_ended_not_done
+    monkeypatch.undo()
     """The liveness sweep closed this record (`process_exited`) and wrote the
     synthetic `SessionEnd` itself. Nobody claimed success, so nobody gets
     the check."""
@@ -2642,6 +2644,7 @@ def test_a_process_killed_without_an_end_event_reads_ended_not_done(
     ended = _dead_process_row(cleared, monkeypatch, "process_exited")
     assert ended["lifecycle"] == "ended" and ended["mode"] == "ended_unconfirmed"
     assert ended["stale"] is True and ended["pid"] is None
+
 
 
 def test_shared_host_process_record_cannot_vouch_for_a_session(
@@ -2835,7 +2838,8 @@ def _wire_answer_capture(controller, status, state, *, delivered=True):
     return captured
 
 
-def test_answer_ask_sends_a_typed_reply_through_the_reply_action(headless) -> None:
+def test_answer_ask_sends_a_typed_reply_through_the_reply_action__and_1_more(headless) -> None:
+    # --- scenario: answer_ask_sends_a_typed_reply_through_the_reply_action
     from jrbar.answer_in_place import AnswerActionKind
 
     controller = headless
@@ -2862,8 +2866,7 @@ def test_answer_ask_sends_a_typed_reply_through_the_reply_action(headless) -> No
     # ever sees it.
     assert command.reply_text == "yes, proceed"
 
-
-def test_answer_ask_without_reply_text_still_sends_the_decision(headless) -> None:
+    # --- scenario: answer_ask_without_reply_text_still_sends_the_decision
     from jrbar.answer_in_place import AnswerActionKind
 
     controller = headless
@@ -2878,6 +2881,7 @@ def test_answer_ask_without_reply_text_still_sends_the_decision(headless) -> Non
     assert reply["decision"] == "deny"
     assert captured[0].action is AnswerActionKind.DENY
     assert captured[0].reply_text is None
+
 
 
 @pytest.mark.parametrize(
@@ -2898,7 +2902,8 @@ def test_answer_ask_refuses_malformed_reply_text(headless, reply_text) -> None:
     assert error.value.code == "invalid_args"
 
 
-def test_answer_ask_reports_the_surface_refusal(headless) -> None:
+def test_answer_ask_reports_the_surface_refusal__and_1_more(headless) -> None:
+    # --- scenario: answer_ask_reports_the_surface_refusal
     controller = headless
     state, work_key, request_key = _live_ask_state()
     status = _answerable_status(work_key, request_key)
@@ -2911,8 +2916,7 @@ def test_answer_ask_reports_the_surface_refusal(headless) -> None:
         )
     assert error.value.code == "stale_ask"
 
-
-def test_answer_ask_reply_without_a_live_ask_is_not_found(headless) -> None:
+    # --- scenario: answer_ask_reply_without_a_live_ask_is_not_found
     controller = headless
     state, work_key, request_key = _live_ask_state()
     status = _answerable_status(work_key, request_key)
@@ -2936,3 +2940,4 @@ def test_answer_ask_reply_without_a_live_ask_is_not_found(headless) -> None:
             {"session": status.agent_id, "reply_text": "yes"},
         )
     assert error.value.code == "not_found"
+

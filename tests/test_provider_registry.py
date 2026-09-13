@@ -58,7 +58,8 @@ def _row_identity(row: NegotiatedProviderSource) -> tuple[str, str, str, str]:
     )
 
 
-def test_static_registry_has_literal_deterministic_source_and_capability_order() -> None:
+def test_static_registry_has_literal_deterministic_source_and_capability_order__and_2_more() -> None:
+    # --- scenario: static_registry_has_literal_deterministic_source_and_capability_order
     """Deriving order from a set or detector result would make source scheduling drift."""
     registrations = provider_source_registrations()
 
@@ -192,8 +193,7 @@ def test_static_registry_has_literal_deterministic_source_and_capability_order()
         ),
     )
 
-
-def test_each_hook_provider_has_exactly_one_registered_hook_source() -> None:
+    # --- scenario: each_hook_provider_has_exactly_one_registered_hook_source
     """Omitting or duplicating a hook source would drop or double-schedule a provider."""
     hook_registrations = tuple(
         registration
@@ -219,8 +219,7 @@ def test_each_hook_provider_has_exactly_one_registered_hook_source() -> None:
         HOOK_PROVIDERS
     )
 
-
-def test_negotiated_rows_use_unique_canonical_source_keys_one_per_capability() -> None:
+    # --- scenario: negotiated_rows_use_unique_canonical_source_keys_one_per_capability
     """Dropping capability identity would collapse sibling facts from one source instance."""
     rows = negotiated_provider_sources()
     keys = tuple(row.source_key for row in rows)
@@ -245,7 +244,9 @@ def test_negotiated_rows_use_unique_canonical_source_keys_one_per_capability() -
     )
 
 
-def test_capacity_source_registrations_are_exact_and_separate_from_hook_ownership() -> None:
+
+def test_capacity_source_registrations_are_exact_and_separate_from_hook_ownership__and_2_more() -> None:
+    # --- scenario: capacity_source_registrations_are_exact_and_separate_from_hook_ownership
     """A provider family fallback would collapse account pools or create lifecycle truth."""
     registrations = provider_capacity_source_registrations()
 
@@ -270,8 +271,7 @@ def test_capacity_source_registrations_are_exact_and_separate_from_hook_ownershi
     )
     assert not any(registration.provider_id.value == "opencode" for registration in registrations)
 
-
-def test_known_pairs_negotiate_exact_versions_and_absent_capabilities_stay_absent() -> None:
+    # --- scenario: known_pairs_negotiate_exact_versions_and_absent_capabilities_stay_absent
     """Inferring related capabilities would fabricate provider observation authority."""
     rows = negotiated_provider_sources()
     codex_hooks = tuple(
@@ -327,8 +327,7 @@ def test_known_pairs_negotiate_exact_versions_and_absent_capabilities_stay_absen
         for row in rows
     )
 
-
-def test_capability_filter_returns_only_negotiated_invocation_eligible_rows() -> None:
+    # --- scenario: capability_filter_returns_only_negotiated_invocation_eligible_rows
     """Filtering declarations alone would schedule unsupported or mutation-only work."""
     rows = negotiated_provider_sources()
 
@@ -345,7 +344,9 @@ def test_capability_filter_returns_only_negotiated_invocation_eligible_rows() ->
     ) == ()
 
 
-def test_unsupported_capability_major_remains_visible_but_ineligible(monkeypatch) -> None:
+
+def test_unsupported_capability_major_remains_visible_but_ineligible__and_1_more(monkeypatch) -> None:
+    # --- scenario: unsupported_capability_major_remains_visible_but_ineligible
     """Discarding an incompatible source would hide health, while scheduling it is unsafe."""
     unsupported = ProviderSourceRegistration(
         provider_id=ProviderIdentifier("codex"),
@@ -378,8 +379,8 @@ def test_unsupported_capability_major_remains_visible_but_ineligible(monkeypatch
         CapabilityIdentifier("live_agent_events"),
     ) == ()
 
-
-def test_unknown_source_stays_visible_with_zero_invocation_eligibility(monkeypatch) -> None:
+    # --- scenario: unknown_source_stays_visible_with_zero_invocation_eligibility
+    monkeypatch.undo()
     """A valid-looking unknown provider must never become an implicit plugin source."""
     unknown = ProviderSourceRegistration(
         provider_id=ProviderIdentifier("future-provider"),
@@ -405,3 +406,4 @@ def test_unknown_source_stays_visible_with_zero_invocation_eligibility(monkeypat
         rows,
         CapabilityIdentifier("live_agent_events"),
     ) == ()
+

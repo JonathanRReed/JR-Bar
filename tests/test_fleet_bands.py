@@ -20,7 +20,8 @@ def _member(identity: str, semantic: object, *, worker: bool = False) -> FleetMe
     return FleetMember(identity=identity, semantic=semantic, is_worker=worker)
 
 
-def test_two_main_rows_get_deterministic_eight_led_and_screen_bar_partitions() -> None:
+def test_two_main_rows_get_deterministic_eight_led_and_screen_bar_partitions__and_2_more() -> None:
+    # --- scenario: two_main_rows_get_deterministic_eight_led_and_screen_bar_partitions
     plan = plan_fleet_bands(
         [_member("project-a", State.WORKING), _member("project-b", State.ASKING)],
         screen_bar_width=240.0,
@@ -36,8 +37,7 @@ def test_two_main_rows_get_deterministic_eight_led_and_screen_bar_partitions() -
         (120.0, 240.0),
     ]
 
-
-def test_sticky_slots_survive_lifecycle_state_changes() -> None:
+    # --- scenario: sticky_slots_survive_lifecycle_state_changes
     first = plan_fleet_bands(
         [_member("a", "working"), _member("b", "asking"), _member("c", "idle")]
     )
@@ -52,8 +52,7 @@ def test_sticky_slots_survive_lifecycle_state_changes() -> None:
         ("c", 6, 8),
     ]
 
-
-def test_workers_do_not_create_bands_or_change_shared_state() -> None:
+    # --- scenario: workers_do_not_create_bands_or_change_shared_state
     plan = plan_fleet_bands(
         [
             _member("main", "working"),
@@ -69,7 +68,9 @@ def test_workers_do_not_create_bands_or_change_shared_state() -> None:
     assert plan.bands[0].led_end == 8
 
 
-def test_uniform_main_fleet_collapses_to_one_full_width_shared_effect() -> None:
+
+def test_uniform_main_fleet_collapses_to_one_full_width_shared_effect__and_2_more() -> None:
+    # --- scenario: uniform_main_fleet_collapses_to_one_full_width_shared_effect
     plan = plan_fleet_bands([_member("a", "working"), _member("b", "working")])
 
     assert plan.mode == "shared"
@@ -78,8 +79,7 @@ def test_uniform_main_fleet_collapses_to_one_full_width_shared_effect() -> None:
     assert plan.bands[0].screen_end == 1.0
     assert plan.member_slots == (("a", 0, 4), ("b", 4, 8))
 
-
-def test_divergence_from_shared_mode_returns_members_to_sticky_slots() -> None:
+    # --- scenario: divergence_from_shared_mode_returns_members_to_sticky_slots
     shared = plan_fleet_bands([_member("a", "working"), _member("b", "working")])
     divergent = plan_fleet_bands(
         [_member("a", "working"), _member("b", "asking")],
@@ -92,8 +92,7 @@ def test_divergence_from_shared_mode_returns_members_to_sticky_slots() -> None:
         ("b", 4, 8),
     ]
 
-
-def test_ninth_main_identity_is_an_explicit_refusal() -> None:
+    # --- scenario: ninth_main_identity_is_an_explicit_refusal
     plan = plan_fleet_bands([_member(f"project-{index}", "working") for index in range(9)])
 
     assert plan.refused is True
@@ -102,7 +101,9 @@ def test_ninth_main_identity_is_an_explicit_refusal() -> None:
     assert plan.bands == ()
 
 
-def test_project_or_machine_identity_can_be_used_without_a_runtime_row_id() -> None:
+
+def test_project_or_machine_identity_can_be_used_without_a_runtime_row_id__and_1_more() -> None:
+    # --- scenario: project_or_machine_identity_can_be_used_without_a_runtime_row_id
     plan = plan_fleet_bands(
         [
             FleetMember(project_id="repo-a", semantic="working"),
@@ -112,11 +113,11 @@ def test_project_or_machine_identity_can_be_used_without_a_runtime_row_id() -> N
 
     assert [band.identity for band in plan.bands] == ["mac-b", "repo-a"]
 
-
-def test_duplicate_main_identity_with_conflicting_semantics_is_refused() -> None:
+    # --- scenario: duplicate_main_identity_with_conflicting_semantics_is_refused
     plan = plan_fleet_bands([_member("a", "working"), _member("a", "asking")])
 
     assert plan.refusal == "conflicting_main_rows_for_identity"
+
 
 
 def _projected_row(

@@ -72,6 +72,23 @@ struct BuddyRoamingTests {
         #expect(toy.showsCaption == true)
     }
 
+    @Test("the size dial writes the settings and re-lays the floating panel live")
+    func scaleDial() {
+        let (toy, store) = makeToy()
+        var syncs = 0
+        toy.onVisibilityChange = { syncs += 1 }
+        #expect(toy.buddyScale == 1)
+        toy.scaleBinding.wrappedValue = 2
+        #expect(store.state.notchBuddy.scale == 2)
+        #expect(toy.buddyScale == 2)
+        #expect(syncs == 1)
+        // A hand-edited state can't grow a screen-eating pet either.
+        store.state.notchBuddy.scale = 12
+        #expect(toy.buddyScale == 3)
+        toy.scaleBinding.wrappedValue = 0.5
+        #expect(store.state.notchBuddy.scale == 1)
+    }
+
     @Test("with nothing on the clock the caption is the name tag")
     func captionFallback() {
         let (toy, store) = makeToy()

@@ -43,7 +43,8 @@ def _stock_config() -> dict[str, object]:
     }
 
 
-def test_plan_replaces_only_the_active_matrix_and_describes_lost_key_behavior() -> None:
+def test_plan_replaces_only_the_active_matrix_and_describes_lost_key_behavior__and_2_more() -> None:
+    # --- scenario: plan_replaces_only_the_active_matrix_and_describes_lost_key_behavior
     original = _stock_config()
     raw = json.dumps(original, indent=2)
 
@@ -72,8 +73,7 @@ def test_plan_replaces_only_the_active_matrix_and_describes_lost_key_behavior() 
     assert plan.original_digest == keymap_digest(raw)
     assert plan.proposed_digest == keymap_digest(plan.proposed_json)
 
-
-def test_plan_is_frozen_and_an_already_planned_map_has_no_changes() -> None:
+    # --- scenario: plan_is_frozen_and_an_already_planned_map_has_no_changes
     first = plan_keymap(json.dumps(_stock_config()), {"layer_index": 1})
     second = plan_keymap(first.proposed_json, {"layer_index": 1})
 
@@ -82,21 +82,19 @@ def test_plan_is_frozen_and_an_already_planned_map_has_no_changes() -> None:
     with pytest.raises(FrozenInstanceError):
         second.profile_index = 2  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    ("raw", "message"),
-    [
+    # --- scenario: plan_rejects_unsafe_json
+    for raw, message in [
         ('{"activeProfileId":0,"activeProfileId":0,"profiles":[]}', "duplicate"),
         ('{"activeProfileId":NaN,"profiles":[]}', "non-finite"),
         ("[]", "object"),
-    ],
-)
-def test_plan_rejects_unsafe_json(raw: str, message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        plan_keymap(raw, {"layer_index": 1})
+    ]:
+        with pytest.raises(ValueError, match=message):
+            plan_keymap(raw, {"layer_index": 1})
 
 
-def test_plan_rejects_oversize_and_deep_json_before_mutation() -> None:
+
+def test_plan_rejects_oversize_and_deep_json_before_mutation__and_2_more() -> None:
+    # --- scenario: plan_rejects_oversize_and_deep_json_before_mutation
     too_large = json.dumps({"padding": "x" * (64 * 1024)})
     deep: object = "leaf"
     for _ in range(70):
@@ -107,8 +105,7 @@ def test_plan_rejects_oversize_and_deep_json_before_mutation() -> None:
     with pytest.raises(ValueError, match="depth"):
         plan_keymap(json.dumps({"deep": deep}), {"layer_index": 1})
 
-
-def test_plan_rejects_a_generated_document_over_64_kib() -> None:
+    # --- scenario: plan_rejects_a_generated_document_over_64_kib
     config = _stock_config()
     compact = json.dumps(config, separators=(",", ":"))
     config["padding"] = "x" * (64 * 1024 - len(compact.encode("utf-8")) - len(',"padding":""}'))
@@ -118,22 +115,20 @@ def test_plan_rejects_a_generated_document_over_64_kib() -> None:
     with pytest.raises(ValueError, match=r"proposed.*64 KiB"):
         plan_keymap(raw, {"layer_index": 1})
 
-
-@pytest.mark.parametrize(
-    ("status", "message"),
-    [
+    # --- scenario: plan_requires_an_in_range_one_based_status_layer
+    for status, message in [
         ({}, "layer_index"),
         ({"layer_index": 0}, "1-based"),
         ({"layer_index": True}, "integer"),
         ({"layer_index": 3}, "available layers"),
-    ],
-)
-def test_plan_requires_an_in_range_one_based_status_layer(status: dict[str, object], message: str) -> None:
-    with pytest.raises(ValueError, match=message):
-        plan_keymap(json.dumps(_stock_config()), status)
+    ]:
+        with pytest.raises(ValueError, match=message):
+            plan_keymap(json.dumps(_stock_config()), status)
 
 
-def test_plan_rejects_ambiguous_profile_identifiers() -> None:
+
+def test_plan_rejects_ambiguous_profile_identifiers__and_2_more() -> None:
+    # --- scenario: plan_rejects_ambiguous_profile_identifiers
     config = _stock_config()
     config["activeProfileId"] = 0
     config["profiles"][0]["id"] = 9  # type: ignore[index]
@@ -142,51 +137,48 @@ def test_plan_rejects_ambiguous_profile_identifiers() -> None:
     with pytest.raises(ValueError, match="ambiguous"):
         plan_keymap(json.dumps(config), {"layer_index": 1})
 
+    # --- scenario: plan_rejects_non_integer_explicit_profile_ids
+    for profile_id in [False, 0.0, True, 1.0]:
+        config = _stock_config()
+        config["profiles"][0]["id"] = profile_id  # type: ignore[index]
+        config["profiles"][1]["id"] = 1  # type: ignore[index]
 
-@pytest.mark.parametrize("profile_id", [False, 0.0, True, 1.0])
-def test_plan_rejects_non_integer_explicit_profile_ids(profile_id: object) -> None:
-    config = _stock_config()
-    config["profiles"][0]["id"] = profile_id  # type: ignore[index]
-    config["profiles"][1]["id"] = 1  # type: ignore[index]
+        with pytest.raises(ValueError, match="profile ids must be integers"):
+            plan_keymap(json.dumps(config), {"layer_index": 1})
 
-    with pytest.raises(ValueError, match="profile ids must be integers"):
-        plan_keymap(json.dumps(config), {"layer_index": 1})
+    # --- scenario: plan_rejects_non_index_active_profiles
+    for active_profile in [True, "0", -1, 2]:
+        config = _stock_config()
+        config["activeProfileId"] = active_profile
 
-
-@pytest.mark.parametrize(
-    "active_profile",
-    [True, "0", -1, 2],
-)
-def test_plan_rejects_non_index_active_profiles(active_profile: object) -> None:
-    config = _stock_config()
-    config["activeProfileId"] = active_profile
-
-    with pytest.raises(ValueError, match="activeProfileId"):
-        plan_keymap(json.dumps(config), {"layer_index": 1})
+        with pytest.raises(ValueError, match="activeProfileId"):
+            plan_keymap(json.dumps(config), {"layer_index": 1})
 
 
-def test_plan_rejects_an_unsupported_matrix_shape() -> None:
+
+def test_plan_rejects_an_unsupported_matrix_shape__and_2_more() -> None:
+    # --- scenario: plan_rejects_an_unsupported_matrix_shape
     config = _stock_config()
     config["profiles"][0]["layers"][0]["layout"]["keymap"][3].append("extra")  # type: ignore[index,union-attr]
 
     with pytest.raises(ValueError, match=r"\[2, 4, 4, 3\]"):
         plan_keymap(json.dumps(config), {"layer_index": 1})
 
-
-def test_plan_rejects_unpaired_unicode_surrogates_as_value_errors() -> None:
+    # --- scenario: plan_rejects_unpaired_unicode_surrogates_as_value_errors
     config = _stock_config()
     config["label"] = "\ud800"
 
     with pytest.raises(ValueError, match="valid UTF-8"):
         plan_keymap(json.dumps(config), {"layer_index": 1})
 
-
-def test_canonical_digest_ignores_object_order_and_whitespace_but_not_array_order() -> None:
+    # --- scenario: canonical_digest_ignores_object_order_and_whitespace_but_not_array_order
     assert keymap_digest('{"b": 2, "a": [1, 3]}') == keymap_digest('{"a":[1,3],"b":2}')
     assert keymap_digest('{"a":[1,3],"b":2}') != keymap_digest('{"a":[3,1],"b":2}')
 
 
-def test_auxiliary_setup_is_explicit_and_preserves_sector_geometry():
+
+def test_auxiliary_setup_is_explicit_and_preserves_sector_geometry__and_1_more() -> None:
+    # --- scenario: auxiliary_setup_is_explicit_and_preserves_sector_geometry
     source = _stock_config()
     original = json.dumps(source)
     plan = plan_keymap(original, {"profile_index": 0, "layer_index": 1}, include_auxiliary=True)
@@ -196,11 +188,11 @@ def test_auxiliary_setup_is_explicit_and_preserves_sector_geometry():
     assert json.loads(plan.proposed_json)["topLevelExtension"] == source["topLevelExtension"]
     assert len(plan.control_labels) == 17
 
-
-def test_unknown_auxiliary_shape_is_refused_without_changing_base_plan():
+    # --- scenario: unknown_auxiliary_shape_is_refused_without_changing_base_plan
     source = _stock_config()
     source["profiles"][0]["layers"][0]["layout"]["encoders"] = {"unknown": True}
     raw = json.dumps(source)
     assert plan_keymap(raw, {"profile_index": 0, "layer_index": 1}).changes
     with pytest.raises(ValueError, match="encoder"):
         plan_keymap(raw, {"profile_index": 0, "layer_index": 1}, include_auxiliary=True)
+

@@ -44,27 +44,27 @@ def _previous() -> dict[str, AgentMode]:
     return {"claude:session:main": AgentMode.WORKING}
 
 
-def test_no_celebration_while_workers_are_still_running() -> None:
+def test_no_celebration_while_workers_are_still_running__and_2_more() -> None:
+    # --- scenario: no_celebration_while_workers_are_still_running
     statuses = [_main(AgentMode.COMPLETED)] + [
         _worker(i, AgentMode.WORKING) for i in range(60)
     ]
     batch = detect_completion_batch(_previous(), statuses, datetime.now(timezone.utc))
     assert batch.statuses == ()
 
-
-def test_celebration_once_the_whole_subtree_is_quiet() -> None:
+    # --- scenario: celebration_once_the_whole_subtree_is_quiet
     statuses = [_main(AgentMode.COMPLETED)] + [
         _worker(i, AgentMode.COMPLETED) for i in range(60)
     ]
     batch = detect_completion_batch(_previous(), statuses, datetime.now(timezone.utc))
     assert [status.agent_id for status in batch.statuses] == ["claude:session:main"]
 
-
-def test_a_lone_main_agent_still_celebrates() -> None:
+    # --- scenario: a_lone_main_agent_still_celebrates
     batch = detect_completion_batch(
         _previous(), [_main(AgentMode.COMPLETED)], datetime.now(timezone.utc)
     )
     assert [status.agent_id for status in batch.statuses] == ["claude:session:main"]
+
 
 
 def test_one_straggler_is_enough_to_hold_the_celebration() -> None:
@@ -104,7 +104,8 @@ def _silent_worker(index: int, mode: AgentMode, *, age_seconds: float) -> AgentS
     )
 
 
-def test_a_reaped_worker_does_not_mute_its_parent_forever() -> None:
+def test_a_reaped_worker_does_not_mute_its_parent_forever__and_2_more() -> None:
+    # --- scenario: a_reaped_worker_does_not_mute_its_parent_forever
     """The bug this gate could otherwise cause, permanently.
 
     track_completions is fed the FULL timeline -- live and stale -- on
@@ -123,8 +124,7 @@ def test_a_reaped_worker_does_not_mute_its_parent_forever() -> None:
         "one dead worker suppressed the parent's completion"
     )
 
-
-def test_a_worker_gone_quiet_past_the_hold_window_releases_its_parent() -> None:
+    # --- scenario: a_worker_gone_quiet_past_the_hold_window_releases_its_parent
     statuses = [
         _main(AgentMode.COMPLETED),
         _silent_worker(1, AgentMode.WORKING, age_seconds=SUBAGENT_HOLD_SECONDS + 60),
@@ -132,8 +132,7 @@ def test_a_worker_gone_quiet_past_the_hold_window_releases_its_parent() -> None:
     batch = detect_completion_batch(_previous(), statuses, datetime.now(timezone.utc))
     assert [status.agent_id for status in batch.statuses] == ["claude:session:main"]
 
-
-def test_a_worker_still_reporting_holds_its_parent() -> None:
+    # --- scenario: a_worker_still_reporting_holds_its_parent
     """The hold window must not become a way to celebrate early."""
     statuses = [
         _main(AgentMode.COMPLETED),
@@ -141,3 +140,4 @@ def test_a_worker_still_reporting_holds_its_parent() -> None:
     ]
     batch = detect_completion_batch(_previous(), statuses, datetime.now(timezone.utc))
     assert batch.statuses == (), "released a parent whose worker is still alive"
+

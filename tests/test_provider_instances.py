@@ -41,7 +41,8 @@ def _profile(**changes: object) -> ProviderInstanceProfile:
     return ProviderInstanceProfile(**values)
 
 
-def test_same_provider_instances_are_distinct_routing_keys() -> None:
+def test_same_provider_instances_are_distinct_routing_keys__and_2_more() -> None:
+    # --- scenario: same_provider_instances_are_distinct_routing_keys
     personal = _key("personal")
     work = _key("work")
 
@@ -50,34 +51,29 @@ def test_same_provider_instances_are_distinct_routing_keys() -> None:
     assert personal.provider_id.value == "codex"
     assert personal.source_instance_id.value == "personal"
 
-
-def test_default_profile_uses_safe_v1_choices_and_explicit_legacy_instance() -> None:
+    # --- scenario: default_profile_uses_safe_v1_choices_and_explicit_legacy_instance
     profile = default_provider_instance_profile("codex")
 
     assert profile.key == ProviderInstanceKey("codex", "default")
     assert profile.remote_sharing_choice == "never"
     assert profile.open_session_action == "app"
 
-
-@pytest.mark.parametrize(
-    "source_instance_id",
-    (
+    # --- scenario: instance_key_rejects_email_path_and_secret_like_identity
+    for source_instance_id in (
         "person@example.com",
         "/Users/person/.codex",
         "../../credentials",
         "Bearer-secret-token",
         "api_key_123456",
         "refresh_token",
-    ),
-)
-def test_instance_key_rejects_email_path_and_secret_like_identity(
-    source_instance_id: str,
-) -> None:
-    with pytest.raises(ProviderInstanceError):
-        ProviderInstanceKey("codex", source_instance_id)
+    ):
+        with pytest.raises(ProviderInstanceError):
+            ProviderInstanceKey("codex", source_instance_id)
 
 
-def test_profile_is_immutable_and_validates_bounded_choices() -> None:
+
+def test_profile_is_immutable_and_validates_bounded_choices__and_2_more() -> None:
+    # --- scenario: profile_is_immutable_and_validates_bounded_choices
     profile = _profile()
 
     with pytest.raises(FrozenInstanceError):
@@ -87,40 +83,31 @@ def test_profile_is_immutable_and_validates_bounded_choices() -> None:
     with pytest.raises(ProviderInstanceError):
         replace(profile, color_override="not-a-color")
 
+    # --- scenario: profile_accepts_only_explicit_remote_and_session_choices
+    for remote_sharing_choice in REMOTE_SHARING_CHOICES:
+        for open_session_action in OPEN_SESSION_ACTION_CHOICES:
+            profile = _profile(
+                remote_sharing_choice=remote_sharing_choice,
+                open_session_action=open_session_action,
+            )
 
-@pytest.mark.parametrize("remote_sharing_choice", REMOTE_SHARING_CHOICES)
-@pytest.mark.parametrize("open_session_action", OPEN_SESSION_ACTION_CHOICES)
-def test_profile_accepts_only_explicit_remote_and_session_choices(
-    remote_sharing_choice: str,
-    open_session_action: str,
-) -> None:
-    profile = _profile(
-        remote_sharing_choice=remote_sharing_choice,
-        open_session_action=open_session_action,
-    )
+            assert profile.remote_sharing_choice == remote_sharing_choice
+            assert profile.open_session_action == open_session_action
 
-    assert profile.remote_sharing_choice == remote_sharing_choice
-    assert profile.open_session_action == open_session_action
-
-
-@pytest.mark.parametrize(
-    "field, value",
-    (
+    # --- scenario: profile_rejects_unbounded_remote_and_session_choices
+    for field, value in (
         ("remote_sharing_choice", "sometimes"),
         ("remote_sharing_choice", "status-only"),
         ("open_session_action", "open"),
         ("open_session_action", "browser"),
-    ),
-)
-def test_profile_rejects_unbounded_remote_and_session_choices(
-    field: str,
-    value: str,
-) -> None:
-    with pytest.raises(ProviderInstanceError):
-        _profile(**{field: value})
+    ):
+        with pytest.raises(ProviderInstanceError):
+            _profile(**{field: value})
 
 
-def test_profile_document_is_deterministic_and_preserves_unknown_fields() -> None:
+
+def test_profile_document_is_deterministic_and_preserves_unknown_fields__and_2_more() -> None:
+    # --- scenario: profile_document_is_deterministic_and_preserves_unknown_fields
     profile = _profile(
         unknown_fields=(("future_extension", {"enabled": True}),),
     )
@@ -150,8 +137,7 @@ def test_profile_document_is_deterministic_and_preserves_unknown_fields() -> Non
         "enabled": True
     }
 
-
-def test_secret_like_references_and_unknown_fields_never_serialize_or_repr() -> None:
+    # --- scenario: secret_like_references_and_unknown_fields_never_serialize_or_repr
     with pytest.raises(ProviderInstanceError):
         _profile(credential_account_reference="sk-live-secret-token")
 
@@ -167,15 +153,16 @@ def test_secret_like_references_and_unknown_fields_never_serialize_or_repr() -> 
     assert "access_token" not in encoded
     assert "do-not-persist" not in repr(profile)
 
-
-def test_opaque_credential_reference_is_allowed_but_raw_credential_is_not() -> None:
+    # --- scenario: opaque_credential_reference_is_allowed_but_raw_credential_is_not
     profile = _profile(credential_account_reference="credential-ref:work-account")
 
     assert profile.credential_account_reference == "credential-ref:work-account"
     assert "credential-ref:work-account" in serialize_provider_instance_profile(profile)
 
 
-def test_nested_secret_like_values_are_removed_from_unknown_fields() -> None:
+
+def test_nested_secret_like_values_are_removed_from_unknown_fields__and_2_more() -> None:
+    # --- scenario: nested_secret_like_values_are_removed_from_unknown_fields
     profile = _profile(
         unknown_fields=(
             (
@@ -206,15 +193,13 @@ def test_nested_secret_like_values_are_removed_from_unknown_fields() -> None:
     assert "password123" not in encoded
     assert "token123" not in encoded
 
-
-def test_unknown_extension_values_must_be_json_compatible_for_determinism() -> None:
+    # --- scenario: unknown_extension_values_must_be_json_compatible_for_determinism
     profile = _profile(unknown_fields=(("future_extension", object()),))
 
     with pytest.raises(ProviderInstanceError):
         serialize_provider_instance_profile(profile)
 
-
-def test_future_schema_is_read_only_and_cannot_be_serialized() -> None:
+    # --- scenario: future_schema_is_read_only_and_cannot_be_serialized
     future = {
         "schema_version": PROVIDER_INSTANCE_PROFILE_SCHEMA_VERSION + 1,
         "provider_id": "codex",
@@ -228,6 +213,7 @@ def test_future_schema_is_read_only_and_cannot_be_serialized() -> None:
     assert loaded.unknown_fields[-1] == ("future_only", {"value": True})
     with pytest.raises(ProviderInstanceFutureSchemaError):
         serialize_provider_instance_profile(loaded.profile)
+
 
 
 def test_legacy_provider_document_gets_explicit_default_instance_without_losing_fields() -> None:

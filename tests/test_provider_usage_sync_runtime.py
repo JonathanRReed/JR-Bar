@@ -112,7 +112,8 @@ def settings(tmp_path: Path):
     )
 
 
-def test_local_packet_status_only_contains_quota_without_machine_usage():
+def test_local_packet_status_only_contains_quota_without_machine_usage__and_2_more() -> None:
+    # --- scenario: local_packet_status_only_contains_quota_without_machine_usage
     packet = build_local_sync_packet(
         usage_state(),
         settings(Path("/tmp")),
@@ -132,8 +133,7 @@ def test_local_packet_status_only_contains_quota_without_machine_usage():
     assert shared.cache_savings_usd is None
     assert packet.machine_usage == ()
 
-
-def test_local_packet_filters_each_exact_instance_and_never_shares_usage_totals():
+    # --- scenario: local_packet_filters_each_exact_instance_and_never_shares_usage_totals
     packet = build_local_sync_packet(
         usage_state("default", "work"),
         settings(Path("/tmp")),
@@ -149,8 +149,7 @@ def test_local_packet_filters_each_exact_instance_and_never_shares_usage_totals(
     )
     assert packet.machine_usage == ()
 
-
-def test_local_packet_missing_or_invalid_sharing_policy_fails_closed():
+    # --- scenario: local_packet_missing_or_invalid_sharing_policy_fails_closed
     missing = build_local_sync_packet(
         usage_state("work"),
         settings(Path("/tmp")),
@@ -168,6 +167,7 @@ def test_local_packet_missing_or_invalid_sharing_policy_fails_closed():
     assert missing.machine_usage == ()
     assert invalid.quota_snapshots == ()
     assert invalid.machine_usage == ()
+
 
 
 def test_runtime_sharing_loader_failure_fails_closed_without_aborting_sync(
@@ -207,7 +207,8 @@ def test_runtime_sharing_loader_failure_fails_closed_without_aborting_sync(
         assert result.local_packet.machine_usage == ()
 
 
-def test_runtime_publishes_peer_specific_signed_packet_and_merges_remote(tmp_path: Path):
+def test_runtime_publishes_peer_specific_signed_packet_and_merges_remote__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: runtime_publishes_peer_specific_signed_packet_and_merges_remote
     secret = b"x" * 32
     remote_packet = ProviderSyncPacket(
         1,
@@ -253,8 +254,7 @@ def test_runtime_publishes_peer_specific_signed_packet_and_merges_remote(tmp_pat
     cached = decode_signed_packet(published["macbook.remote.packet"], secret, now=1100.0)
     assert cached == remote_packet
 
-
-def test_stale_remote_packet_is_reported_as_stale_not_merged(tmp_path: Path):
+    # --- scenario: stale_remote_packet_is_reported_as_stale_not_merged
     from jrbar.provider_usage_sync import SYNC_PACKET_MAX_AGE_SECONDS
 
     secret = b"x" * 32
@@ -286,8 +286,7 @@ def test_stale_remote_packet_is_reported_as_stale_not_merged(tmp_path: Path):
     assert result.health[0].reachable is False
     assert result.health[0].reason == "packet_stale"
 
-
-def test_cached_merged_sync_reads_local_documents_without_fetching(tmp_path: Path):
+    # --- scenario: cached_merged_sync_reads_local_documents_without_fetching
     from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
     from jrbar.provider_usage_sync_transport import publish_local_packet
 
@@ -316,6 +315,7 @@ def test_cached_merged_sync_reads_local_documents_without_fetching(tmp_path: Pat
     assert merged is not None
     # Status-only profiles never contribute token or cost totals.
     assert merged.total_input_tokens == 0
+
 
 
 def test_cached_merged_sync_rejects_future_dated_verified_packet(tmp_path: Path) -> None:
@@ -388,7 +388,8 @@ def test_cached_merge_keeps_verified_remote_when_local_policy_loader_fails(
     )
 
 
-def test_cached_merged_sync_is_none_when_sync_is_disabled(tmp_path: Path):
+def test_cached_merged_sync_is_none_when_sync_is_disabled__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: cached_merged_sync_is_none_when_sync_is_disabled
     from jrbar.provider_usage_sync_runtime import load_cached_merged_sync
 
     configured = settings(tmp_path)
@@ -409,8 +410,7 @@ def test_cached_merged_sync_is_none_when_sync_is_disabled(tmp_path: Path):
     )
     assert merged is None
 
-
-def test_missing_pairing_secret_is_actionable_and_does_not_fetch(tmp_path: Path):
+    # --- scenario: missing_pairing_secret_is_actionable_and_does_not_fetch
     class Missing:
         def get(self, *_args):
             return type("Read", (), {"available": False, "secret": None, "reason": "credential_not_found"})()
@@ -428,8 +428,7 @@ def test_missing_pairing_secret_is_actionable_and_does_not_fetch(tmp_path: Path)
     assert result.health[0].reason == "pairing_secret_missing"
     assert calls == []
 
-
-def test_disabled_runtime_does_not_publish_or_fetch(tmp_path: Path):
+    # --- scenario: disabled_runtime_does_not_publish_or_fetch
     configured = settings(tmp_path)
     disabled = ProviderSyncSettings(
         configured.schema_version,
@@ -450,3 +449,4 @@ def test_disabled_runtime_does_not_publish_or_fetch(tmp_path: Path):
     result = runtime.refresh(usage_state())
     assert result.enabled is False
     assert result.remote_packets == ()
+

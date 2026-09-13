@@ -75,7 +75,8 @@ def test_module_import_does_not_load_objc_or_intents(monkeypatch: pytest.MonkeyP
     assert imported == []
 
 
-def test_client_loads_the_bridge_only_for_the_first_observation() -> None:
+def test_client_loads_the_bridge_only_for_the_first_observation__and_2_more() -> None:
+    # --- scenario: client_loads_the_bridge_only_for_the_first_observation
     center = _Center(authorization=3, focused=True)
     loads: list[str] = []
 
@@ -93,8 +94,7 @@ def test_client_loads_the_bridge_only_for_the_first_observation() -> None:
     assert client.observe().activity is FocusActivity.ACTIVE
     assert loads == ["load"]
 
-
-def test_unsupported_macos_does_not_load_the_objc_bridge() -> None:
+    # --- scenario: unsupported_macos_does_not_load_the_objc_bridge
     imports: list[str] = []
 
     assert (
@@ -107,8 +107,7 @@ def test_unsupported_macos_does_not_load_the_objc_bridge() -> None:
     )
     assert imports == []
 
-
-def test_non_macos_does_not_load_the_objc_bridge() -> None:
+    # --- scenario: non_macos_does_not_load_the_objc_bridge
     imports: list[str] = []
 
     assert (
@@ -122,7 +121,9 @@ def test_non_macos_does_not_load_the_objc_bridge() -> None:
     assert imports == []
 
 
-def test_supported_macos_loads_the_public_intents_center() -> None:
+
+def test_supported_macos_loads_the_public_intents_center__and_2_more() -> None:
+    # --- scenario: supported_macos_loads_the_public_intents_center
     center = _Center()
 
     class CenterType:
@@ -168,10 +169,8 @@ def test_supported_macos_loads_the_public_intents_center() -> None:
     assert selector == b"requestAuthorizationWithCompletionHandler:"
     assert metadata["arguments"][2]["callable"]["arguments"][1]["type"] == b"q"
 
-
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    [
+    # --- scenario: observation_maps_authorization_to_closed_typed_values
+    for raw, expected in [
         (0, FocusAuthorization.NOT_DETERMINED),
         (1, FocusAuthorization.RESTRICTED),
         (2, FocusAuthorization.DENIED),
@@ -179,71 +178,54 @@ def test_supported_macos_loads_the_public_intents_center() -> None:
         (4, FocusAuthorization.UNAVAILABLE),
         (True, FocusAuthorization.UNAVAILABLE),
         ("3", FocusAuthorization.UNAVAILABLE),
-    ],
-)
-def test_observation_maps_authorization_to_closed_typed_values(
-    raw: object,
-    expected: FocusAuthorization,
-) -> None:
-    observation = MacOSFocusStatusClient(center=_Center(authorization=raw)).observe()
+    ]:
+        observation = MacOSFocusStatusClient(center=_Center(authorization=raw)).observe()
 
-    assert observation.authorization is expected
+        assert observation.authorization is expected
 
-
-@pytest.mark.parametrize(
-    ("focused", "expected"),
-    [
+    # --- scenario: authorized_observation_maps_only_real_boolean_focus_status
+    for focused, expected in [
         (True, FocusActivity.ACTIVE),
         (False, FocusActivity.INACTIVE),
         (None, FocusActivity.UNAVAILABLE),
         (1, FocusActivity.UNAVAILABLE),
         ("yes", FocusActivity.UNAVAILABLE),
-    ],
-)
-def test_authorized_observation_maps_only_real_boolean_focus_status(
-    focused: object,
-    expected: FocusActivity,
-) -> None:
-    observation = MacOSFocusStatusClient(
-        center=_Center(authorization=3, focused=focused)
-    ).observe()
+    ]:
+        observation = MacOSFocusStatusClient(
+            center=_Center(authorization=3, focused=focused)
+        ).observe()
 
-    assert observation == FocusStatusObservation(
-        FocusAuthorization.AUTHORIZED,
-        expected,
-    )
+        assert observation == FocusStatusObservation(
+            FocusAuthorization.AUTHORIZED,
+            expected,
+        )
 
 
-@pytest.mark.parametrize("authorization", [0, 1, 2, 4, True, "3"])
-def test_unauthorized_or_unknown_status_never_claims_focus_is_inactive(
-    authorization: object,
-) -> None:
-    center = _Center(authorization=authorization, focused=False)
 
-    observation = MacOSFocusStatusClient(center=center).observe()
+def test_unauthorized_or_unknown_status_never_claims_focus_is_inactive__and_2_more() -> None:
+    # --- scenario: unauthorized_or_unknown_status_never_claims_focus_is_inactive
+    for authorization in [0, 1, 2, 4, True, "3"]:
+        center = _Center(authorization=authorization, focused=False)
 
-    assert observation.activity is FocusActivity.UNAVAILABLE
-    assert center.focus_reads == 0
+        observation = MacOSFocusStatusClient(center=center).observe()
 
+        assert observation.activity is FocusActivity.UNAVAILABLE
+        assert center.focus_reads == 0
 
-@pytest.mark.parametrize(
-    "center",
-    [
+    # --- scenario: bridge_failures_return_typed_unavailable_observations
+    for center in [
         _Center(authorization=RuntimeError("authorization failed")),
         _Center(authorization=3, focused=RuntimeError("status failed")),
-    ],
-)
-def test_bridge_failures_return_typed_unavailable_observations(center: _Center) -> None:
-    observation = MacOSFocusStatusClient(center=center).observe()
+    ]:
+        observation = MacOSFocusStatusClient(center=center).observe()
 
-    assert observation.activity is FocusActivity.UNAVAILABLE
-    if isinstance(center.authorization, BaseException):
-        assert observation.authorization is FocusAuthorization.UNAVAILABLE
-    else:
-        assert observation.authorization is FocusAuthorization.AUTHORIZED
+        assert observation.activity is FocusActivity.UNAVAILABLE
+        if isinstance(center.authorization, BaseException):
+            assert observation.authorization is FocusAuthorization.UNAVAILABLE
+        else:
+            assert observation.authorization is FocusAuthorization.AUTHORIZED
 
-
-def test_observation_is_immutable() -> None:
+    # --- scenario: observation_is_immutable
     observation = FocusStatusObservation(
         FocusAuthorization.AUTHORIZED,
         FocusActivity.ACTIVE,
@@ -253,22 +235,17 @@ def test_observation_is_immutable() -> None:
         observation.activity = FocusActivity.INACTIVE  # type: ignore[misc]
 
 
-@pytest.mark.parametrize(
-    ("authorization", "activity"),
-    [
+
+def test_observation_refuses_untyped_values__and_2_more() -> None:
+    # --- scenario: observation_refuses_untyped_values
+    for authorization, activity in [
         ("authorized", FocusActivity.ACTIVE),
         (FocusAuthorization.AUTHORIZED, "active"),
-    ],
-)
-def test_observation_refuses_untyped_values(
-    authorization: object,
-    activity: object,
-) -> None:
-    with pytest.raises(TypeError, match="Focus"):
-        FocusStatusObservation(authorization, activity)  # type: ignore[arg-type]
+    ]:
+        with pytest.raises(TypeError, match="Focus"):
+            FocusStatusObservation(authorization, activity)  # type: ignore[arg-type]
 
-
-def test_observation_never_requests_authorization() -> None:
+    # --- scenario: observation_never_requests_authorization
     center = _Center(authorization=0, focused=False)
 
     observation = MacOSFocusStatusClient(center=center).observe()
@@ -276,8 +253,7 @@ def test_observation_never_requests_authorization() -> None:
     assert observation.authorization is FocusAuthorization.NOT_DETERMINED
     assert center.request_count == 0
 
-
-def test_only_explicit_request_method_calls_authorization_selector() -> None:
+    # --- scenario: only_explicit_request_method_calls_authorization_selector
     center = _Center(authorization=3)
     results: list[FocusAuthorization] = []
     client = MacOSFocusStatusClient(center=center)
@@ -288,7 +264,9 @@ def test_only_explicit_request_method_calls_authorization_selector() -> None:
     assert results == [FocusAuthorization.AUTHORIZED]
 
 
-def test_explicit_request_maps_unknown_callback_values_to_unavailable() -> None:
+
+def test_explicit_request_maps_unknown_callback_values_to_unavailable__and_2_more() -> None:
+    # --- scenario: explicit_request_maps_unknown_callback_values_to_unavailable
     center = _Center(authorization="authorized")
     results: list[FocusAuthorization] = []
 
@@ -296,21 +274,21 @@ def test_explicit_request_maps_unknown_callback_values_to_unavailable() -> None:
 
     assert results == [FocusAuthorization.UNAVAILABLE]
 
-
-def test_explicit_request_is_refused_when_the_public_center_is_unavailable() -> None:
+    # --- scenario: explicit_request_is_refused_when_the_public_center_is_unavailable
     requested: list[FocusAuthorization] = []
     client = MacOSFocusStatusClient(bridge_loader=lambda: None)
 
     assert not client.request_authorization(requested.append)
     assert requested == []
 
-
-def test_explicit_request_rejects_a_noncallable_completion() -> None:
+    # --- scenario: explicit_request_rejects_a_noncallable_completion
     with pytest.raises(TypeError, match="completion"):
         MacOSFocusStatusClient(center=_Center()).request_authorization("later")  # type: ignore[arg-type]
 
 
-def test_explicit_request_refuses_selector_failures() -> None:
+
+def test_explicit_request_refuses_selector_failures__and_1_more() -> None:
+    # --- scenario: explicit_request_refuses_selector_failures
     class BrokenCenter(_Center):
         def requestAuthorizationWithCompletionHandler_(self, completion) -> None:
             raise RuntimeError("request failed")
@@ -322,11 +300,11 @@ def test_explicit_request_refuses_selector_failures() -> None:
     )
     assert results == []
 
-
-def test_completion_exceptions_do_not_escape_the_objc_callback_boundary() -> None:
+    # --- scenario: completion_exceptions_do_not_escape_the_objc_callback_boundary
     def raise_from_completion(_state: FocusAuthorization) -> None:
         raise RuntimeError("consumer failed")
 
     assert MacOSFocusStatusClient(center=_Center()).request_authorization(
         raise_from_completion
     )
+

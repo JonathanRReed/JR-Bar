@@ -30,7 +30,8 @@ def _run_gate(
     )
 
 
-def test_release_version_gate_executes_titled_changelog_and_exits_zero() -> None:
+def test_release_version_gate_executes_titled_changelog_and_exits_zero__and_1_more() -> None:
+    # --- scenario: release_version_gate_executes_titled_changelog_and_exits_zero
     result = _run_gate("validate_release_version.py")
     expected_version = validate_release_version.pyproject_version()
 
@@ -38,8 +39,7 @@ def test_release_version_gate_executes_titled_changelog_and_exits_zero() -> None
     assert result.stdout.strip() == expected_version
     assert result.stderr == ""
 
-
-def test_release_version_gate_executes_wrong_tag_and_exits_nonzero() -> None:
+    # --- scenario: release_version_gate_executes_wrong_tag_and_exits_nonzero
     expected_version = validate_release_version.pyproject_version()
     wrong_tag = f"v{expected_version}.wrong"
 
@@ -50,7 +50,9 @@ def test_release_version_gate_executes_wrong_tag_and_exits_nonzero() -> None:
     assert result.stdout == ""
 
 
-def test_secret_gate_executes_clean_tracked_tree_and_exits_zero(tmp_path: Path) -> None:
+
+def test_secret_gate_executes_clean_tracked_tree_and_exits_zero__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: secret_gate_executes_clean_tracked_tree_and_exits_zero
     subprocess.run(
         ["git", "init", "--quiet"],
         cwd=tmp_path,
@@ -76,8 +78,7 @@ def test_secret_gate_executes_clean_tracked_tree_and_exits_zero(tmp_path: Path) 
     assert result.stdout == "secret scan passed (1 tracked files)\n"
     assert result.stderr == ""
 
-
-def test_secret_gate_executes_tracked_secret_and_exits_one(tmp_path: Path) -> None:
+    # --- scenario: secret_gate_executes_tracked_secret_and_exits_one
     subprocess.run(
         ["git", "init", "--quiet"],
         cwd=tmp_path,
@@ -104,6 +105,7 @@ def test_secret_gate_executes_tracked_secret_and_exits_one(tmp_path: Path) -> No
     assert "config.txt:1: github-token" in result.stdout
     assert secret not in result.stdout
     assert result.stderr == ""
+
 
 
 def _configure_release_version_fixture(
@@ -136,28 +138,20 @@ def test_release_version_accepts_descriptive_text_after_exact_heading(
     assert validate_release_version.validate() == "0.5.0"
 
 
-@pytest.mark.parametrize(
-    "changelog_heading",
-    ("## 0.5.0rc1: Preview", "## 0.5.0.1: Preview"),
-)
-def test_release_version_rejects_a_similar_version_heading(
-    tmp_path: Path,
-    monkeypatch,
-    changelog_heading: str,
-) -> None:
-    _configure_release_version_fixture(
-        tmp_path,
-        monkeypatch,
-        changelog_heading=changelog_heading,
-    )
+def test_release_version_rejects_a_similar_version_heading(tmp_path: Path, monkeypatch) -> None:
+    for changelog_heading in ("## 0.5.0rc1: Preview", "## 0.5.0.1: Preview"):
+        _configure_release_version_fixture(
+            tmp_path,
+            monkeypatch,
+            changelog_heading=changelog_heading,
+        )
 
-    with pytest.raises(RuntimeError, match=r"no release section for 0\.5\.0"):
-        validate_release_version.validate()
+        with pytest.raises(RuntimeError, match=r"no release section for 0\.5\.0"):
+            validate_release_version.validate()
 
 
-def test_secret_scanner_detects_high_confidence_tokens_without_echoing_them(
-    tmp_path: Path,
-) -> None:
+def test_secret_scanner_detects_high_confidence_tokens_without_echoing_them__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: secret_scanner_detects_high_confidence_tokens_without_echoing_them
     target = tmp_path / "config.txt"
     target.write_text("token=ghp_" + "A" * 36 + "\n", encoding="utf-8")
 
@@ -166,14 +160,12 @@ def test_secret_scanner_detects_high_confidence_tokens_without_echoing_them(
     assert findings == (("github-token", 1),)
     assert all("ghp_" not in name for name, _line in findings)
 
-
-def test_secret_scanner_ignores_documented_prefix_without_a_token(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: secret_scanner_ignores_documented_prefix_without_a_token
     target = tmp_path / "README.md"
     target.write_text("Never log a tskey- value.\n", encoding="utf-8")
 
     assert scan_secrets.scan_file(target) == ()
+
 
 
 def test_sbom_is_cyclonedx_and_deduplicates_components(monkeypatch) -> None:

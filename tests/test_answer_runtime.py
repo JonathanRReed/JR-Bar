@@ -224,7 +224,8 @@ def _submit(
     )
 
 
-def test_registry_resolves_only_the_exact_reviewed_local_invocation() -> None:
+def test_registry_resolves_only_the_exact_reviewed_local_invocation__and_2_more() -> None:
+    # --- scenario: registry_resolves_only_the_exact_reviewed_local_invocation
     registry = AnswerHandlerRegistry()
 
     def handler(*_args, **_kwargs) -> None:
@@ -237,8 +238,7 @@ def test_registry_resolves_only_the_exact_reviewed_local_invocation() -> None:
     assert registry.resolve(_invocation(source="source:other")) is None
     assert registry.resolve(object()) is None
 
-
-def test_missing_handler_refuses_without_changing_the_idle_attempt() -> None:
+    # --- scenario: missing_handler_refuses_without_changing_the_idle_attempt
     runtime = AnswerRuntime(
         registry=AnswerHandlerRegistry(),
         executor=_ManualExecutor(),
@@ -260,8 +260,7 @@ def test_missing_handler_refuses_without_changing_the_idle_attempt() -> None:
     assert accepted is False
     assert runtime.snapshot(identity, 4).state is AnswerAttemptState.IDLE
 
-
-def test_submit_preserves_exact_invocation_and_uses_fixed_timeout() -> None:
+    # --- scenario: submit_preserves_exact_invocation_and_uses_fixed_timeout
     harness = _harness()
     identity = AnnouncerAlertIdentity("request:0")
     _reconcile(harness)
@@ -289,52 +288,50 @@ def test_submit_preserves_exact_invocation_and_uses_fixed_timeout() -> None:
     assert harness.timer_factory.timers[0].cancelled is True
 
 
-@pytest.mark.parametrize(
-    "seam",
-    ("executor-submit", "timer-factory", "callback-registration", "timer-start"),
-)
-def test_bootstrap_failure_is_visible_and_notifies_the_projector(seam: str) -> None:
-    registry = AnswerHandlerRegistry()
-    registry.register(_invocation(), lambda *_args, **_kwargs: None)
-    executor = _ManualExecutor(
-        fail_submit=seam == "executor-submit",
-        fail_callback_registration=seam == "callback-registration",
-    )
-    timers = _ManualTimerFactory(
-        fail_factory=seam == "timer-factory",
-        fail_start=seam == "timer-start",
-    )
-    main_callbacks: list[object] = []
-    changes = []
-    runtime = AnswerRuntime(
-        registry=registry,
-        executor=executor,
-        timer_factory=timers,
-        dispatch_main=main_callbacks.append,
-        on_change=changes.append,
-    )
-    identity = AnnouncerAlertIdentity("request:bootstrap")
-    runtime.reconcile(identity, 8)
 
-    accepted = runtime.submit(
-        _invocation(),
-        request_identity=identity,
-        generation=8,
-        request_kind=RequestKind.PERMISSION,
-        action=AnswerActionKind.APPROVE,
-        reply_text=None,
-    )
-    while main_callbacks:
-        main_callbacks.pop(0)()
+def test_bootstrap_failure_is_visible_and_notifies_the_projector__and_2_more() -> None:
+    # --- scenario: bootstrap_failure_is_visible_and_notifies_the_projector
+    for seam in ("executor-submit", "timer-factory", "callback-registration", "timer-start"):
+        registry = AnswerHandlerRegistry()
+        registry.register(_invocation(), lambda *_args, **_kwargs: None)
+        executor = _ManualExecutor(
+            fail_submit=seam == "executor-submit",
+            fail_callback_registration=seam == "callback-registration",
+        )
+        timers = _ManualTimerFactory(
+            fail_factory=seam == "timer-factory",
+            fail_start=seam == "timer-start",
+        )
+        main_callbacks: list[object] = []
+        changes = []
+        runtime = AnswerRuntime(
+            registry=registry,
+            executor=executor,
+            timer_factory=timers,
+            dispatch_main=main_callbacks.append,
+            on_change=changes.append,
+        )
+        identity = AnnouncerAlertIdentity("request:bootstrap")
+        runtime.reconcile(identity, 8)
 
-    assert accepted is True
-    attempt = runtime.snapshot(identity, 8)
-    assert attempt.state is AnswerAttemptState.FAILED
-    assert attempt.last_error == "Send failed: RuntimeError"
-    assert changes == [attempt]
+        accepted = runtime.submit(
+            _invocation(),
+            request_identity=identity,
+            generation=8,
+            request_kind=RequestKind.PERMISSION,
+            action=AnswerActionKind.APPROVE,
+            reply_text=None,
+        )
+        while main_callbacks:
+            main_callbacks.pop(0)()
 
+        assert accepted is True
+        attempt = runtime.snapshot(identity, 8)
+        assert attempt.state is AnswerAttemptState.FAILED
+        assert attempt.last_error == "Send failed: RuntimeError"
+        assert changes == [attempt]
 
-def test_default_runtime_invokes_handler_off_the_calling_thread() -> None:
+    # --- scenario: default_runtime_invokes_handler_off_the_calling_thread
     registry = AnswerHandlerRegistry()
     identity = AnnouncerAlertIdentity("request:thread")
     caller_thread = threading.get_ident()
@@ -361,8 +358,7 @@ def test_default_runtime_invokes_handler_off_the_calling_thread() -> None:
     assert called_thread and called_thread[0] != caller_thread
     runtime.close()
 
-
-def test_timeout_preserves_draft_and_projects_retry_and_jump() -> None:
+    # --- scenario: timeout_preserves_draft_and_projects_retry_and_jump
     harness = _harness()
     identity = AnnouncerAlertIdentity("request:0")
     _reconcile(harness, draft="Use the existing selection")
@@ -389,7 +385,9 @@ def test_timeout_preserves_draft_and_projects_retry_and_jump() -> None:
     )
 
 
-def test_failure_preserves_draft_and_retry_reuses_exact_submission() -> None:
+
+def test_failure_preserves_draft_and_retry_reuses_exact_submission__and_2_more() -> None:
+    # --- scenario: failure_preserves_draft_and_retry_reuses_exact_submission
     calls: list[tuple] = []
 
     def failing_handler(
@@ -430,8 +428,7 @@ def test_failure_preserves_draft_and_retry_reuses_exact_submission() -> None:
     ]
     assert harness.runtime.snapshot(identity, 4).state is AnswerAttemptState.SENT
 
-
-def test_cancel_is_local_and_late_success_cannot_overwrite_cancelled() -> None:
+    # --- scenario: cancel_is_local_and_late_success_cannot_overwrite_cancelled
     harness = _harness()
     identity = AnnouncerAlertIdentity("request:0")
     _reconcile(harness)
@@ -444,8 +441,7 @@ def test_cancel_is_local_and_late_success_cannot_overwrite_cancelled() -> None:
 
     assert harness.runtime.snapshot(identity, 4).state is AnswerAttemptState.CANCELLED
 
-
-def test_completed_future_cannot_be_relabelled_cancelled_before_main_drain() -> None:
+    # --- scenario: completed_future_cannot_be_relabelled_cancelled_before_main_drain
     harness = _harness()
     identity = AnnouncerAlertIdentity("request:0")
     _reconcile(harness)
@@ -459,33 +455,34 @@ def test_completed_future_cannot_be_relabelled_cancelled_before_main_drain() -> 
     assert harness.runtime.snapshot(identity, 4).state is AnswerAttemptState.SENT
 
 
-@pytest.mark.parametrize("completion", ("success", "failure", "timeout"))
-def test_stale_callbacks_cannot_mutate_a_new_generation_or_identity(completion) -> None:
-    harness = _harness(
-        lambda *_args, **_kwargs: (
-            (_ for _ in ()).throw(RuntimeError("late"))
-            if completion == "failure"
-            else None
+
+def test_stale_callbacks_cannot_mutate_a_new_generation_or_identity__and_2_more() -> None:
+    # --- scenario: stale_callbacks_cannot_mutate_a_new_generation_or_identity
+    for completion in ("success", "failure", "timeout"):
+        harness = _harness(
+            lambda *_args, **_kwargs: (
+                (_ for _ in ()).throw(RuntimeError("late"))
+                if completion == "failure"
+                else None
+            )
         )
-    )
-    first = AnnouncerAlertIdentity("request:0")
-    second = AnnouncerAlertIdentity("request:1")
-    _reconcile(harness)
-    assert _submit(harness)
+        first = AnnouncerAlertIdentity("request:0")
+        second = AnnouncerAlertIdentity("request:1")
+        _reconcile(harness)
+        assert _submit(harness)
 
-    if completion == "timeout":
-        harness.timer_factory.timers[0].fire()
-    else:
-        harness.executor.futures[0].run()
-    harness.runtime.reconcile(second, 5)
-    harness.drain_main()
+        if completion == "timeout":
+            harness.timer_factory.timers[0].fire()
+        else:
+            harness.executor.futures[0].run()
+        harness.runtime.reconcile(second, 5)
+        harness.drain_main()
 
-    assert harness.runtime.snapshot(first, 4) is None
-    current = harness.runtime.snapshot(second, 5)
-    assert current.state is AnswerAttemptState.IDLE
+        assert harness.runtime.snapshot(first, 4) is None
+        current = harness.runtime.snapshot(second, 5)
+        assert current.state is AnswerAttemptState.IDLE
 
-
-def test_canonical_clear_wins_before_a_late_completion() -> None:
+    # --- scenario: canonical_clear_wins_before_a_late_completion
     harness = _harness()
     identity = AnnouncerAlertIdentity("request:0")
     _reconcile(harness)
@@ -497,8 +494,7 @@ def test_canonical_clear_wins_before_a_late_completion() -> None:
 
     assert harness.runtime.snapshot(identity, 4) is None
 
-
-def test_close_invalidates_pending_callbacks_and_refuses_new_work() -> None:
+    # --- scenario: close_invalidates_pending_callbacks_and_refuses_new_work
     harness = _harness()
     identity = AnnouncerAlertIdentity("request:0")
     _reconcile(harness)
@@ -514,7 +510,9 @@ def test_close_invalidates_pending_callbacks_and_refuses_new_work() -> None:
     assert _submit(harness) is False
 
 
-def test_bounded_close_reports_a_running_handler_without_mutating_late_state() -> None:
+
+def test_bounded_close_reports_a_running_handler_without_mutating_late_state__and_1_more() -> None:
+    # --- scenario: bounded_close_reports_a_running_handler_without_mutating_late_state
     registry = AnswerHandlerRegistry()
     identity = AnnouncerAlertIdentity("request:blocked-close")
     started = threading.Event()
@@ -547,8 +545,7 @@ def test_bounded_close_reports_a_running_handler_without_mutating_late_state() -
     assert finished.wait(1.0)
     assert runtime.snapshot(identity, 1) is None
 
-
-def test_bounded_close_reports_a_normally_completed_worker() -> None:
+    # --- scenario: bounded_close_reports_a_normally_completed_worker
     registry = AnswerHandlerRegistry()
     identity = AnnouncerAlertIdentity("request:complete-close")
     completed = threading.Event()
@@ -571,3 +568,4 @@ def test_bounded_close_reports_a_normally_completed_worker() -> None:
 
     assert runtime.close(timeout_seconds=1.0) is True
     assert runtime.snapshot(identity, 1) is None
+

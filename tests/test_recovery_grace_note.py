@@ -93,7 +93,8 @@ def _plan(**overrides: object):
     return plan_recovery_grace_note(_evidence(), **inputs)
 
 
-def test_confirmed_recovery_emits_one_restrained_wipe_then_returns_to_normal() -> None:
+def test_confirmed_recovery_emits_one_restrained_wipe_then_returns_to_normal__and_2_more() -> None:
+    # --- scenario: confirmed_recovery_emits_one_restrained_wipe_then_returns_to_normal
     plan = _plan()
 
     assert plan.disposition is RecoveryGraceDisposition.EMIT
@@ -108,8 +109,7 @@ def test_confirmed_recovery_emits_one_restrained_wipe_then_returns_to_normal() -
         "normal status returns."
     )
 
-
-def test_reduce_motion_substitutes_one_static_recovery_highlight() -> None:
+    # --- scenario: reduce_motion_substitutes_one_static_recovery_highlight
     plan = _plan(reduce_motion=True)
 
     assert plan.disposition is RecoveryGraceDisposition.STATIC
@@ -123,27 +123,22 @@ def test_reduce_motion_substitutes_one_static_recovery_highlight() -> None:
         "normal status returns."
     )
 
+    # --- scenario: dnd_admissions_that_exclude_courtesy_suppress_recovery
+    for admission in (DisplayAdmission.NONE, DisplayAdmission.ASKS, DisplayAdmission.CRITICAL):
+        plan = _plan(dnd_display_admission=admission)
 
-@pytest.mark.parametrize(
-    "admission",
-    (DisplayAdmission.NONE, DisplayAdmission.ASKS, DisplayAdmission.CRITICAL),
-)
-def test_dnd_admissions_that_exclude_courtesy_suppress_recovery(
-    admission: DisplayAdmission,
-) -> None:
-    plan = _plan(dnd_display_admission=admission)
-
-    assert plan.disposition is RecoveryGraceDisposition.SUPPRESS
-    assert plan.presentation is RecoveryGracePresentation.NONE
-    assert plan.suppression_reason is RecoveryGraceSuppressionReason.DND
-    assert plan.accessibility_text == (
-        "Source recovered. The courtesy cue is withheld by Do Not Disturb."
-    )
+        assert plan.disposition is RecoveryGraceDisposition.SUPPRESS
+        assert plan.presentation is RecoveryGracePresentation.NONE
+        assert plan.suppression_reason is RecoveryGraceSuppressionReason.DND
+        assert plan.accessibility_text == (
+            "Source recovered. The courtesy cue is withheld by Do Not Disturb."
+        )
 
 
-@pytest.mark.parametrize(
-    ("suppression", "reason", "accessibility_text"),
-    (
+
+def test_courtesy_policy_suppresses_with_an_explainable_reason__and_2_more() -> None:
+    # --- scenario: courtesy_policy_suppresses_with_an_explainable_reason
+    for suppression, reason, accessibility_text in (
         (
             CourtesySuppression(focus=True),
             RecoveryGraceSuppressionReason.COURTESY_FOCUS,
@@ -159,21 +154,14 @@ def test_dnd_admissions_that_exclude_courtesy_suppress_recovery(
             RecoveryGraceSuppressionReason.COURTESY_BUDGET,
             "Source recovered. The courtesy cue budget is currently exhausted.",
         ),
-    ),
-)
-def test_courtesy_policy_suppresses_with_an_explainable_reason(
-    suppression: CourtesySuppression,
-    reason: RecoveryGraceSuppressionReason,
-    accessibility_text: str,
-) -> None:
-    plan = _plan(courtesy_suppression=suppression)
+    ):
+        plan = _plan(courtesy_suppression=suppression)
 
-    assert plan.disposition is RecoveryGraceDisposition.SUPPRESS
-    assert plan.suppression_reason is reason
-    assert plan.accessibility_text == accessibility_text
+        assert plan.disposition is RecoveryGraceDisposition.SUPPRESS
+        assert plan.suppression_reason is reason
+        assert plan.accessibility_text == accessibility_text
 
-
-def test_unavailable_finite_cue_capacity_suppresses_without_queueing_motion() -> None:
+    # --- scenario: unavailable_finite_cue_capacity_suppresses_without_queueing_motion
     plan = _plan(finite_cue_available=False)
 
     assert plan.disposition is RecoveryGraceDisposition.SUPPRESS
@@ -183,8 +171,7 @@ def test_unavailable_finite_cue_capacity_suppresses_without_queueing_motion() ->
     assert plan.returns_to_normal is False
     assert plan.consumes_finite_cue is False
 
-
-def test_one_source_recovery_has_one_identity_across_multiple_work_rows() -> None:
+    # --- scenario: one_source_recovery_has_one_identity_across_multiple_work_rows
     watermark = _watermark()
     first = _evidence(event=_operator_event(work_id="work:01", watermark=watermark))
     second = _evidence(event=_operator_event(work_id="work:02", watermark=watermark))
@@ -210,34 +197,30 @@ def test_one_source_recovery_has_one_identity_across_multiple_work_rows() -> Non
     assert second_plan.suppression_reason is RecoveryGraceSuppressionReason.DUPLICATE
 
 
-@pytest.mark.parametrize("confirmations", (0, 1))
-def test_recovery_evidence_requires_the_existing_two_confirmation_truth(
-    confirmations: int,
-) -> None:
-    with pytest.raises(ValueError, match="confirmed recovery evidence"):
-        _evidence(recovery_confirmations=confirmations)
 
+def test_recovery_evidence_requires_the_existing_two_confirmation_truth__and_2_more() -> None:
+    # --- scenario: recovery_evidence_requires_the_existing_two_confirmation_truth
+    for confirmations in (0, 1):
+        with pytest.raises(ValueError, match="confirmed recovery evidence"):
+            _evidence(recovery_confirmations=confirmations)
 
-@pytest.mark.parametrize(
-    "evidence",
-    (
+    # --- scenario: only_fresh_explicit_source_recovery_evidence_is_accepted
+    for evidence in (
         lambda: _evidence(event=_operator_event(kind=TransitionKind.COMPLETED)),
         lambda: _evidence(previous_health=SourceHealth.HEALTHY),
         lambda: _evidence(current_health=SourceHealth.PARTIAL),
         lambda: _evidence(
             event=_operator_event(freshness=SourceFreshness.TIMING_UNCERTAIN)
         ),
-    ),
-)
-def test_only_fresh_explicit_source_recovery_evidence_is_accepted(evidence) -> None:
-    with pytest.raises(ValueError, match="confirmed recovery evidence"):
-        evidence()
+    ):
+        with pytest.raises(ValueError, match="confirmed recovery evidence"):
+            evidence()
 
-
-def test_recovery_plan_and_identity_are_immutable() -> None:
+    # --- scenario: recovery_plan_and_identity_are_immutable
     plan = _plan()
 
     with pytest.raises(FrozenInstanceError):
         plan.repetitions = 2  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         plan.dedupe_identity.watermark = _watermark()  # type: ignore[misc]
+

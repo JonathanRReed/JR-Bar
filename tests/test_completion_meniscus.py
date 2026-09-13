@@ -29,37 +29,34 @@ def _evidence(*, completed_at: float = 100.0) -> SelectedUnseenCompletionEvidenc
     return SelectedUnseenCompletionEvidence(_completion(completed_at=completed_at))
 
 
-@pytest.mark.parametrize(
-    "surface",
-    (CompletionMeniscusSurface.ALCOVE, CompletionMeniscusSurface.SCREEN_BAR),
-)
-def test_one_finite_ripple_expands_from_exact_surface_center(surface) -> None:
-    geometry = CompletionMeniscusGeometry(surface, 20.0, 8.0, 200.0, 24.0)
+def test_one_finite_ripple_expands_from_exact_surface_center__and_2_more() -> None:
+    # --- scenario: one_finite_ripple_expands_from_exact_surface_center
+    for surface in (CompletionMeniscusSurface.ALCOVE, CompletionMeniscusSurface.SCREEN_BAR):
+        geometry = CompletionMeniscusGeometry(surface, 20.0, 8.0, 200.0, 24.0)
 
-    plan = plan_completion_meniscus(
-        _evidence(),
-        geometry,
-        AccessibilityDisplayPreferences(),
-    )
+        plan = plan_completion_meniscus(
+            _evidence(),
+            geometry,
+            AccessibilityDisplayPreferences(),
+        )
 
-    assert plan.mode is CompletionMeniscusMode.CENTER_OUT_RIPPLE
-    assert plan.duration_ms == RIPPLE_DURATION_MS == 900
-    assert plan.passes == 1
-    assert plan.loops == 0
-    assert plan.release_to_live_surface is True
-    assert [frame.elapsed_ms for frame in plan.frames] == [0, 180, 450, 702, 900]
-    assert {frame.center_x for frame in plan.frames} == {120.0}
-    assert {frame.center_y for frame in plan.frames} == {20.0}
-    assert [frame.radius for frame in plan.frames] == sorted(
-        frame.radius for frame in plan.frames
-    )
-    assert plan.frames[0].radius == 0.0
-    assert plan.frames[-1].radius == 100.0
-    assert plan.frames[-1].crest_height == 0.0
-    assert plan.frames[-1].opacity == 0.0
+        assert plan.mode is CompletionMeniscusMode.CENTER_OUT_RIPPLE
+        assert plan.duration_ms == RIPPLE_DURATION_MS == 900
+        assert plan.passes == 1
+        assert plan.loops == 0
+        assert plan.release_to_live_surface is True
+        assert [frame.elapsed_ms for frame in plan.frames] == [0, 180, 450, 702, 900]
+        assert {frame.center_x for frame in plan.frames} == {120.0}
+        assert {frame.center_y for frame in plan.frames} == {20.0}
+        assert [frame.radius for frame in plan.frames] == sorted(
+            frame.radius for frame in plan.frames
+        )
+        assert plan.frames[0].radius == 0.0
+        assert plan.frames[-1].radius == 100.0
+        assert plan.frames[-1].crest_height == 0.0
+        assert plan.frames[-1].opacity == 0.0
 
-
-def test_reduce_motion_is_a_brief_static_center_highlight() -> None:
+    # --- scenario: reduce_motion_is_a_brief_static_center_highlight
     geometry = CompletionMeniscusGeometry(
         CompletionMeniscusSurface.ALCOVE,
         10.0,
@@ -87,8 +84,7 @@ def test_reduce_motion_is_a_brief_static_center_highlight() -> None:
     assert "Reduce Motion" in plan.accessibility.help
     assert "travels" not in plan.accessibility.help
 
-
-def test_accessibility_preferences_are_projected_without_work_content() -> None:
+    # --- scenario: accessibility_preferences_are_projected_without_work_content
     plan = plan_completion_meniscus(
         _evidence(),
         CompletionMeniscusGeometry(
@@ -124,7 +120,9 @@ def test_accessibility_preferences_are_projected_without_work_content() -> None:
     assert "stop" not in accessibility_text.casefold()
 
 
-def test_exact_completion_identity_is_preserved_without_entering_surface_text() -> None:
+
+def test_exact_completion_identity_is_preserved_without_entering_surface_text__and_2_more() -> None:
+    # --- scenario: exact_completion_identity_is_preserved_without_entering_surface_text
     first = plan_completion_meniscus(
         _evidence(completed_at=100.0),
         CompletionMeniscusGeometry(
@@ -147,8 +145,7 @@ def test_exact_completion_identity_is_preserved_without_entering_surface_text() 
     assert second.completion_key.completed_at_epoch == 101.0
     assert first.accessibility == second.accessibility
 
-
-def test_geometry_rejects_unknown_or_unbounded_surface_facts() -> None:
+    # --- scenario: geometry_rejects_unknown_or_unbounded_surface_facts
     with pytest.raises(ValueError, match="surface must be known"):
         CompletionMeniscusGeometry(  # type: ignore[arg-type]
             "screen_bar", 0.0, 0.0, 80.0, 10.0
@@ -163,8 +160,7 @@ def test_geometry_rejects_unknown_or_unbounded_surface_facts() -> None:
             10.0,
         )
 
-
-def test_planner_requires_typed_selected_unseen_evidence_and_preferences() -> None:
+    # --- scenario: planner_requires_typed_selected_unseen_evidence_and_preferences
     geometry = CompletionMeniscusGeometry(
         CompletionMeniscusSurface.SCREEN_BAR,
         0.0,
@@ -186,3 +182,4 @@ def test_planner_requires_typed_selected_unseen_evidence_and_preferences() -> No
             geometry,
             object(),
         )
+

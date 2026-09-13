@@ -277,7 +277,8 @@ def test_symlinked_state_files_fail_closed(tmp_path: Path) -> None:
     assert document["usage"] is None
 
 
-def test_endpoint_serves_json_and_404s_elsewhere() -> None:
+def test_endpoint_serves_json_and_404s_elsewhere__and_2_more() -> None:
+    # --- scenario: endpoint_serves_json_and_404s_elsewhere
     server = create_serve_server(port=0, allow_anonymous_status=True)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -302,8 +303,7 @@ def test_endpoint_serves_json_and_404s_elsewhere() -> None:
         server.shutdown()
         server.server_close()
 
-
-def test_status_endpoint_requires_bearer_authentication_by_default() -> None:
+    # --- scenario: status_endpoint_requires_bearer_authentication_by_default
     token = b"local-status-access-token"
     server = create_serve_server(port=0, status_access_token=token)
     port = server.server_address[1]
@@ -332,8 +332,7 @@ def test_status_endpoint_requires_bearer_authentication_by_default() -> None:
         server.shutdown()
         server.server_close()
 
-
-def test_status_endpoint_has_no_anonymous_default_even_without_a_token() -> None:
+    # --- scenario: status_endpoint_has_no_anonymous_default_even_without_a_token
     server = create_serve_server(port=0)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -345,6 +344,7 @@ def test_status_endpoint_has_no_anonymous_default_even_without_a_token() -> None
     finally:
         server.shutdown()
         server.server_close()
+
 
 
 def test_cli_status_requires_token_unless_anonymous_compatibility_is_explicit(

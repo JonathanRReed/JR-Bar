@@ -15,7 +15,8 @@ def _view():
     )
 
 
-def test_draw_does_not_search_objc_for_uninitialized_python_state() -> None:
+def test_draw_does_not_search_objc_for_uninitialized_python_state__and_2_more() -> None:
+    # --- scenario: draw_does_not_search_objc_for_uninitialized_python_state
     NSApplication.sharedApplication()
     view = _view()
     view._presentation_colors = ((0.1, 0.4, 0.8, 1.0),) * virtual_device.LED_COUNT
@@ -36,8 +37,7 @@ def test_draw_does_not_search_objc_for_uninitialized_python_state() -> None:
 
     assert missing == set(), f"Per-frame Objective-C attribute misses: {missing}"
 
-
-def test_glow_row_uses_four_native_gradient_draws_without_bridged_column_fills() -> None:
+    # --- scenario: glow_row_uses_four_native_gradient_draws_without_bridged_column_fills
     view = _view()
     colors = ((0.1, 0.4, 0.8, 1.0),) * virtual_device.LED_COUNT
     draws: list[tuple[object, object, float, float]] = []
@@ -77,8 +77,7 @@ def test_glow_row_uses_four_native_gradient_draws_without_bridged_column_fills()
     ]
     assert fallback_fills == []
 
-
-def test_glow_row_retains_bounded_fill_fallback_when_native_gradient_fails() -> None:
+    # --- scenario: glow_row_retains_bounded_fill_fallback_when_native_gradient_fails
     view = _view()
     colors = ((0.1, 0.4, 0.8, 1.0),) * virtual_device.LED_COUNT
     fallback_fills: list[object] = []
@@ -110,7 +109,9 @@ def test_glow_row_retains_bounded_fill_fallback_when_native_gradient_fails() -> 
     assert 1 <= len(fallback_fills) <= 440
 
 
-def test_native_gradient_rejects_missing_context_or_degenerate_geometry() -> None:
+
+def test_native_gradient_rejects_missing_context_or_degenerate_geometry__and_1_more() -> None:
+    # --- scenario: native_gradient_rejects_missing_context_or_degenerate_geometry
     runs = ((0.0, 10.0, (1.0, 0.0, 0.0, 1.0)),)
 
     assert not virtual_device.draw_horizontal_glow_gradient(
@@ -128,8 +129,7 @@ def test_native_gradient_rejects_missing_context_or_degenerate_geometry() -> Non
         alpha_scale=1.0,
     )
 
-
-def test_continuous_sampler_uses_the_same_gentle_cadence_as_the_surface() -> None:
+    # --- scenario: continuous_sampler_uses_the_same_gentle_cadence_as_the_surface
     class Window:
         @staticmethod
         def isVisible() -> bool:
@@ -166,3 +166,4 @@ def test_continuous_sampler_uses_the_same_gentle_cadence_as_the_surface() -> Non
     assert sampler.commands[-1].sample_interval == (
         1.0 / virtual_device.GENTLE_MOTION_FPS
     )
+

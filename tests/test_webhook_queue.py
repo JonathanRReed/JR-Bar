@@ -20,7 +20,8 @@ def _endpoint(url: str) -> WebhookEndpoint:
     )
 
 
-def test_queue_depth_is_bounded_while_one_delivery_is_in_flight() -> None:
+def test_queue_depth_is_bounded_while_one_delivery_is_in_flight__and_1_more() -> None:
+    # --- scenario: queue_depth_is_bounded_while_one_delivery_is_in_flight
     started = threading.Event()
     release = threading.Event()
     completed = threading.Event()
@@ -57,8 +58,7 @@ def test_queue_depth_is_bounded_while_one_delivery_is_in_flight() -> None:
     assert delivered == ["first", "second"]
     service.close()
 
-
-def test_close_discards_queued_work_but_allows_inflight_cleanup() -> None:
+    # --- scenario: close_discards_queued_work_but_allows_inflight_cleanup
     started = threading.Event()
     release = threading.Event()
     first_done = threading.Event()
@@ -91,3 +91,4 @@ def test_close_discards_queued_work_but_allows_inflight_cleanup() -> None:
 
     assert first_done.wait(1.0)
     assert not second_done.wait(0.2)
+

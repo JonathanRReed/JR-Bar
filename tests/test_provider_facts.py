@@ -155,7 +155,8 @@ def _batch(
     )
 
 
-def test_source_work_request_and_quota_keys_are_source_scoped_and_orderable() -> None:
+def test_source_work_request_and_quota_keys_are_source_scoped_and_orderable__and_1_more() -> None:
+    # --- scenario: source_work_request_and_quota_keys_are_source_scoped_and_orderable
     """Dropping source components would merge sibling provider work and quota lanes."""
     assert SourceKey is CapacitySourceKey
     assert QuotaLaneKey is CapacityQuotaLaneKey
@@ -192,8 +193,7 @@ def test_source_work_request_and_quota_keys_are_source_scoped_and_orderable() ->
     with pytest.raises(FrozenInstanceError):
         first_work.work_id = WorkIdentifier("changed")  # type: ignore[misc]
 
-
-def test_work_and_request_key_v1_payloads_are_exact_and_round_trip() -> None:
+    # --- scenario: work_and_request_key_v1_payloads_are_exact_and_round_trip
     """A lossy or additive codec would make persisted identities ambiguous."""
     work_key = _work_key("work:a:b")
     request_key = _request_key("request:x:y", work_key=work_key)
@@ -214,6 +214,7 @@ def test_work_and_request_key_v1_payloads_are_exact_and_round_trip() -> None:
     assert request_key_to_payload(request_key) == request_payload
     assert work_key_from_payload(work_payload) == work_key
     assert request_key_from_payload(request_payload) == request_key
+
 
 
 class _ExplosiveMapping(Mapping[object, object]):
@@ -238,7 +239,8 @@ class _ExplosiveDict(dict[object, object]):
         raise AssertionError("dict subclass value was read")
 
 
-def test_key_decoders_reject_extra_missing_unknown_and_executable_mappings() -> None:
+def test_key_decoders_reject_extra_missing_unknown_and_executable_mappings__and_2_more() -> None:
+    # --- scenario: key_decoders_reject_extra_missing_unknown_and_executable_mappings
     """Permissive mappings could execute code or smuggle unversioned identity fields."""
     valid = work_key_to_payload(_work_key())
     missing = dict(valid)
@@ -263,8 +265,7 @@ def test_key_decoders_reject_extra_missing_unknown_and_executable_mappings() -> 
     assert request_key_from_payload({**request_payload, "extra": 1}) is None
     assert request_key_from_payload(_ExplosiveDict(request_payload)) is None
 
-
-def test_opaque_components_cannot_collide_through_delimiters() -> None:
+    # --- scenario: opaque_components_cannot_collide_through_delimiters
     """Concatenating opaque components would let delimiter placement alias two keys."""
     first = WorkKey(
         _source(instance="alpha:beta"),
@@ -283,10 +284,9 @@ def test_opaque_components_cannot_collide_through_delimiters() -> None:
     assert work_key_from_payload(work_key_to_payload(second)) == second
     assert request_key_to_payload(first_request) != request_key_to_payload(second_request)
 
-
-@pytest.mark.parametrize(
-    "component",
-    [
+    # --- scenario: display_labels_paths_and_account_text_are_never_key_inputs
+    """Private or display text in an identifier would create durable sensitive linkage."""
+    for component in [
         "Agent Display Name",
         "/Users/private/project",
         "person@example.com",
@@ -298,34 +298,26 @@ def test_opaque_components_cannot_collide_through_delimiters() -> None:
         "line\nbreak",
         "x" * 65,
         "",
-    ],
-)
-def test_display_labels_paths_and_account_text_are_never_key_inputs(component: str) -> None:
-    """Private or display text in an identifier would create durable sensitive linkage."""
-    for wrapper in (WorkIdentifier, RequestIdentifier, EventToken):
-        with pytest.raises(ProviderFactValidationError, match="invalid opaque identifier"):
-            wrapper(component)
+    ]:
+        for wrapper in (WorkIdentifier, RequestIdentifier, EventToken):
+            with pytest.raises(ProviderFactValidationError, match="invalid opaque identifier"):
+                wrapper(component)
 
 
-def test_opaque_identifiers_enforce_exact_64_character_bound() -> None:
+
+def test_opaque_identifiers_enforce_exact_64_character_bound__and_2_more() -> None:
+    # --- scenario: opaque_identifiers_enforce_exact_64_character_bound
     """An off-by-one identifier cap would admit unbounded provider-controlled identity."""
     assert WorkIdentifier("a" * 64).value == "a" * 64
     with pytest.raises(ProviderFactValidationError, match="invalid opaque identifier"):
         WorkIdentifier("a" * 65)
 
-
-@pytest.mark.parametrize(
-    "component",
-    ["work:my_token_123", "event:customer.account.01", "work:secret-agent"],
-)
-def test_benign_opaque_components_are_not_interpreted_as_provider_copy(
-    component: str,
-) -> None:
+    # --- scenario: benign_opaque_components_are_not_interpreted_as_provider_copy
     """Semantic guesses about opaque IDs would silently drop legitimate provider facts."""
-    assert WorkIdentifier(component).value == component
+    for component in ["work:my_token_123", "event:customer.account.01", "work:secret-agent"]:
+        assert WorkIdentifier(component).value == component
 
-
-def test_provider_sequence_orders_before_time_fallback_for_one_source() -> None:
+    # --- scenario: provider_sequence_orders_before_time_fallback_for_one_source
     """A later receipt clock must not override an authoritative provider sequence."""
     earlier_sequence = _watermark(
         basis=WatermarkBasis.PROVIDER_SEQUENCE,
@@ -348,7 +340,9 @@ def test_provider_sequence_orders_before_time_fallback_for_one_source() -> None:
     assert compare_watermarks(earlier_sequence, time_fallback) is WatermarkOrder.OLDER
 
 
-def test_equal_time_uses_adapter_rank_then_opaque_event_token_deterministically() -> None:
+
+def test_equal_time_uses_adapter_rank_then_opaque_event_token_deterministically__and_2_more() -> None:
+    # --- scenario: equal_time_uses_adapter_rank_then_opaque_event_token_deterministically
     """Equal provider times need a stable total order independent of tuple order."""
     low_rank = _watermark(rank=1, token="event:z")
     high_rank = _watermark(rank=2, token="event:a")
@@ -361,8 +355,7 @@ def test_equal_time_uses_adapter_rank_then_opaque_event_token_deterministically(
     assert compare_watermarks(high_token, low_token) is WatermarkOrder.NEWER
     assert compare_watermarks(high_token, high_token) is WatermarkOrder.EQUAL
 
-
-def test_watermarks_from_different_sources_are_not_comparable() -> None:
+    # --- scenario: watermarks_from_different_sources_are_not_comparable
     """Cross-source ordering would let one provider advance or suppress another source."""
     with pytest.raises(ValueError, match="watermarks belong to different sources"):
         compare_watermarks(
@@ -370,10 +363,9 @@ def test_watermarks_from_different_sources_are_not_comparable() -> None:
             _watermark(source=_source(instance="local:02")),
         )
 
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
+    # --- scenario: watermark_rejects_invalid_numeric_and_basis_combinations
+    """Malformed clocks and ambiguous sequences must not enter reducer ordering."""
+    for kwargs in [
         {"epoch": -0.1},
         {"epoch": nan},
         {"epoch": inf},
@@ -385,17 +377,14 @@ def test_watermarks_from_different_sources_are_not_comparable() -> None:
         {"basis": WatermarkBasis.PROVIDER_EVENT_ID, "sequence": 1},
         {"basis": WatermarkBasis.PROVIDER_SEQUENCE, "sequence": -1},
         {"basis": WatermarkBasis.PROVIDER_SEQUENCE, "sequence": True},
-    ],
-)
-def test_watermark_rejects_invalid_numeric_and_basis_combinations(
-    kwargs: dict[str, object],
-) -> None:
-    """Malformed clocks and ambiguous sequences must not enter reducer ordering."""
-    with pytest.raises(ProviderFactValidationError, match="invalid provider watermark"):
-        _watermark(**kwargs)  # type: ignore[arg-type]
+    ]:
+        with pytest.raises(ProviderFactValidationError, match="invalid provider watermark"):
+            _watermark(**kwargs)  # type: ignore[arg-type]
 
 
-def test_fact_batch_rejects_cross_source_children_duplicates_and_oversize() -> None:
+
+def test_fact_batch_rejects_cross_source_children_duplicates_and_oversize__and_2_more() -> None:
+    # --- scenario: fact_batch_rejects_cross_source_children_duplicates_and_oversize
     """A batch must not merge sibling sources, duplicate keys, or exceed hard caps."""
     source = _source()
     sibling = _source(instance="local:02")
@@ -446,10 +435,9 @@ def test_fact_batch_rejects_cross_source_children_duplicates_and_oversize() -> N
         with pytest.raises(ProviderFactValidationError):
             _batch(**fields)  # type: ignore[arg-type]
 
-
-@pytest.mark.parametrize(
-    "safe_label",
-    [
+    # --- scenario: safe_label_refuses_path_prompt_control_and_secret_shaped_copy
+    """Provider payload copy must not cross into canonical display-safe work facts."""
+    for safe_label in [
         "/Users/private/work:01",
         "Fix this prompt?",
         "Codex\nwork:01",
@@ -458,25 +446,19 @@ def test_fact_batch_rejects_cross_source_children_duplicates_and_oversize() -> N
         "Claude work:01",
         "Codex other-work",
         "x" * 65,
-    ],
-)
-def test_safe_label_refuses_path_prompt_control_and_secret_shaped_copy(
-    safe_label: str,
-) -> None:
-    """Provider payload copy must not cross into canonical display-safe work facts."""
-    work = _work_key()
-    with pytest.raises(ProviderFactValidationError, match="invalid safe label"):
-        ProviderWorkFact(
-            key=work,
-            lifecycle=WorkLifecycle.ACTIVE,
-            watermark=_watermark(),
-            safe_label=safe_label,
-            parent_key=None,
-            next_actor=NextActor.PROVIDER,
-        )
+    ]:
+        work = _work_key()
+        with pytest.raises(ProviderFactValidationError, match="invalid safe label"):
+            ProviderWorkFact(
+                key=work,
+                lifecycle=WorkLifecycle.ACTIVE,
+                watermark=_watermark(),
+                safe_label=safe_label,
+                parent_key=None,
+                next_actor=NextActor.PROVIDER,
+            )
 
-
-def test_secret_shaped_opaque_work_id_cannot_become_a_matching_safe_label() -> None:
+    # --- scenario: secret_shaped_opaque_work_id_cannot_become_a_matching_safe_label
     """Opaque grammar alone must not let a credential marker become canonical UI copy."""
     with pytest.raises(ProviderFactValidationError, match="invalid opaque identifier"):
         secret_key = WorkKey(_source(), WorkIdentifier("work:Bearer_secret"))
@@ -488,6 +470,7 @@ def test_secret_shaped_opaque_work_id_cannot_become_a_matching_safe_label() -> N
             parent_key=None,
             next_actor=NextActor.PROVIDER,
         )
+
 
 
 def test_fact_types_validate_sources_parents_diagnostics_and_quota_windows() -> None:
@@ -568,7 +551,8 @@ class _PoisonTuple(tuple[object, ...]):
         raise AssertionError("poison tuple was iterated")
 
 
-def test_poison_subclasses_are_rejected_without_executing_attacker_behavior() -> None:
+def test_poison_subclasses_are_rejected_without_executing_attacker_behavior__and_1_more() -> None:
+    # --- scenario: poison_subclasses_are_rejected_without_executing_attacker_behavior
     """Subclass hooks must not run while rejecting untrusted provider fact shapes."""
     with pytest.raises(ProviderFactValidationError, match="invalid opaque identifier"):
         WorkIdentifier(_PoisonString("work:01"))
@@ -581,8 +565,7 @@ def test_poison_subclasses_are_rejected_without_executing_attacker_behavior() ->
     valid_payload["work_id"] = _PoisonString("work:01")
     assert work_key_from_payload(valid_payload) is None
 
-
-def test_public_fact_enums_preserve_distinct_authority_and_truth_states() -> None:
+    # --- scenario: public_fact_enums_preserve_distinct_authority_and_truth_states
     """Collapsing authority, freshness, lifecycle, or request states loses fact truth."""
     assert list(ObservationAuthority) == [
         ObservationAuthority.UNTRUSTED_HINT,
@@ -597,3 +580,4 @@ def test_public_fact_enums_preserve_distinct_authority_and_truth_states() -> Non
     assert len(set(NextActor)) == 4
     assert len(set(ProviderRequestState)) == 3
     assert len(set(RequestKind)) == 5
+

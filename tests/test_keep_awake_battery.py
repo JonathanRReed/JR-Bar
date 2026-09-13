@@ -25,13 +25,13 @@ def _controller() -> KeepAwakeController:
     return KeepAwakeController(process_factory=_Process, watch_current_process=False)
 
 
-def test_on_battery_with_default_setting_still_holds() -> None:
+def test_on_battery_with_default_setting_still_holds__and_2_more() -> None:
+    # --- scenario: on_battery_with_default_setting_still_holds
     controller = _controller()
     assert controller.update(AgentMode.WORKING, on_battery=True, hold_on_battery=True)
     assert controller.process_running()
 
-
-def test_on_battery_opt_out_releases_and_stays_released() -> None:
+    # --- scenario: on_battery_opt_out_releases_and_stays_released
     controller = _controller()
     assert controller.update(AgentMode.WORKING, on_battery=False, hold_on_battery=False)
     assert not controller.update(
@@ -39,11 +39,11 @@ def test_on_battery_opt_out_releases_and_stays_released() -> None:
     )
     assert not controller.process_running()
 
-
-def test_unknown_power_state_never_releases() -> None:
+    # --- scenario: unknown_power_state_never_releases
     controller = _controller()
     assert controller.update(AgentMode.WORKING, on_battery=None, hold_on_battery=False)
     assert controller.process_running()
+
 
 
 def test_settings_round_trip_keep_awake_on_battery(tmp_path) -> None:
@@ -55,7 +55,8 @@ def test_settings_round_trip_keep_awake_on_battery(tmp_path) -> None:
     assert load_settings(path).keep_awake_on_battery is False
 
 
-def test_hold_self_expires_and_the_next_tick_renews_it() -> None:
+def test_hold_self_expires_and_the_next_tick_renews_it__and_1_more() -> None:
+    # --- scenario: hold_self_expires_and_the_next_tick_renews_it
     """`caffeinate -t` bounds every assertion by time: when the child
     exits at expiry the hold is gone until the next sync tick respawns
     it -- so a wedged app cannot keep the machine awake forever."""
@@ -91,8 +92,7 @@ def test_hold_self_expires_and_the_next_tick_renews_it() -> None:
     assert controller.update(AgentMode.WORKING)
     assert len(processes) == 2
 
-
-def test_battery_yield_is_independent_of_the_reminder_toggle() -> None:
+    # --- scenario: battery_yield_is_independent_of_the_reminder_toggle
     """The safety yield judges the battery DIRECTLY: routing it through
     low_power_active silently disabled it whenever the cosmetic charge
     reminder was off (regression review, round two)."""
@@ -112,3 +112,4 @@ def test_battery_yield_is_independent_of_the_reminder_toggle() -> None:
     assert not battery_yields_hold(healthy, settings)
     assert not battery_yields_hold(plugged, settings)
     assert not battery_yields_hold(None, settings)
+

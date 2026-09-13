@@ -60,7 +60,8 @@ def _status(
     )
 
 
-def test_nondefault_exact_profile_action_is_an_explicit_override() -> None:
+def test_nondefault_exact_profile_action_is_an_explicit_override__and_2_more() -> None:
+    # --- scenario: nondefault_exact_profile_action_is_an_explicit_override
     projection = _projection(
         ("claude", "default", "app"),
         ("claude", "work", "terminal"),
@@ -73,8 +74,7 @@ def test_nondefault_exact_profile_action_is_an_explicit_override() -> None:
     assert resolution.identity == ("claude", "work")
     assert resolution.has_override is True
 
-
-def test_default_instance_explicitly_preserves_legacy_resolution() -> None:
+    # --- scenario: default_instance_explicitly_preserves_legacy_resolution
     projection = _projection(("claude", "default", "terminal"))
 
     resolution = resolve_profile_session_action(projection, "claude", "default")
@@ -84,8 +84,7 @@ def test_default_instance_explicitly_preserves_legacy_resolution() -> None:
     assert resolution.identity == ("claude", "default")
     assert resolution.has_override is False
 
-
-def test_status_resolution_uses_its_exact_work_source_identity() -> None:
+    # --- scenario: status_resolution_uses_its_exact_work_source_identity
     projection = _projection(
         ("claude", "personal", "app"),
         ("claude", "work", "vscode"),
@@ -101,7 +100,9 @@ def test_status_resolution_uses_its_exact_work_source_identity() -> None:
     assert resolution.identity == ("claude", "work")
 
 
-def test_status_without_a_work_identity_fails_safe_to_legacy_behavior() -> None:
+
+def test_status_without_a_work_identity_fails_safe_to_legacy_behavior__and_2_more() -> None:
+    # --- scenario: status_without_a_work_identity_fails_safe_to_legacy_behavior
     resolution = resolve_profile_session_action_for_status(
         _projection(("claude", "work", "terminal")),
         _status("claude", None),
@@ -111,8 +112,7 @@ def test_status_without_a_work_identity_fails_safe_to_legacy_behavior() -> None:
     assert resolution.action is None
     assert resolution.identity is None
 
-
-def test_status_provider_mismatch_never_applies_another_profile() -> None:
+    # --- scenario: status_provider_mismatch_never_applies_another_profile
     status = _status("claude", "work")
     object.__setattr__(status, "provider", "codex")
 
@@ -124,8 +124,7 @@ def test_status_provider_mismatch_never_applies_another_profile() -> None:
     assert resolution.kind is ProfileSessionActionResolutionKind.INVALID_IDENTITY
     assert resolution.action is None
 
-
-def test_untyped_status_identity_fails_safe_instead_of_reading_attributes() -> None:
+    # --- scenario: untyped_status_identity_fails_safe_instead_of_reading_attributes
     resolution = resolve_profile_session_action_for_status(
         _projection(("claude", "work", "terminal")),
         object(),  # type: ignore[arg-type]
@@ -135,7 +134,9 @@ def test_untyped_status_identity_fails_safe_instead_of_reading_attributes() -> N
     assert resolution.action is None
 
 
-def test_unknown_or_invalid_explicit_identity_fails_safe_without_fallback() -> None:
+
+def test_unknown_or_invalid_explicit_identity_fails_safe_without_fallback__and_1_more() -> None:
+    # --- scenario: unknown_or_invalid_explicit_identity_fails_safe_without_fallback
     projection = _projection(("claude", "work", "terminal"))
 
     unknown = resolve_profile_session_action(projection, "claude", "personal")
@@ -148,7 +149,7 @@ def test_unknown_or_invalid_explicit_identity_fails_safe_without_fallback() -> N
     assert invalid.action is None
     assert invalid.identity is None
 
-
-def test_resolver_rejects_an_untyped_projection_boundary() -> None:
+    # --- scenario: resolver_rejects_an_untyped_projection_boundary
     with pytest.raises(TypeError, match="ProviderInstanceSessionActionProjection"):
         resolve_profile_session_action(object(), "claude", "work")  # type: ignore[arg-type]
+

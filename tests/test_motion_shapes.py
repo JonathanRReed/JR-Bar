@@ -108,14 +108,14 @@ ALL_SHAPES = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(ALL_SHAPES))
-@pytest.mark.parametrize("led_count", (8, 2))
-def test_every_shape_fits_the_firmware_budget(name: str, led_count: int) -> None:
-    lines = ALL_SHAPES[name](led_count)
-    text = program(lines)
-    assert len(text.encode("utf-8")) <= shapes.MAX_PROGRAM_BYTES, name
-    assert len(text.splitlines()) <= shapes.MAX_PROGRAM_LINES, name
-    sample(text, led_count, frames=4)
+def test_every_shape_fits_the_firmware_budget() -> None:
+    for name in sorted(ALL_SHAPES):
+        for led_count in (8, 2):
+            lines = ALL_SHAPES[name](led_count)
+            text = program(lines)
+            assert len(text.encode("utf-8")) <= shapes.MAX_PROGRAM_BYTES, name
+            assert len(text.splitlines()) <= shapes.MAX_PROGRAM_LINES, name
+            sample(text, led_count, frames=4)
 
 
 #: The steepest a shape may move between two 60 Hz frames. 0.16 is a full
@@ -141,22 +141,19 @@ AMBIENT_SHAPES = (
 GENTLE_FRAME_STEP = 0.10
 
 
-@pytest.mark.parametrize("name", sorted(ALL_SHAPES))
-def test_every_shape_moves_in_small_steps(name: str) -> None:
+def test_every_shape_moves_in_small_steps__and_2_more() -> None:
+    # --- scenario: every_shape_moves_in_small_steps
     """No shape may jump: adjacent 60 Hz frames stay close in steady state."""
-    frames = sample(program(ALL_SHAPES[name](8)), 8, frames=360, start_ms=2600)
-    assert biggest_frame_step(frames) <= MAX_FRAME_STEP, name
+    for name in sorted(ALL_SHAPES):
+        frames = sample(program(ALL_SHAPES[name](8)), 8, frames=360, start_ms=2600)
+        assert biggest_frame_step(frames) <= MAX_FRAME_STEP, name
 
+    # --- scenario: the_ambient_shapes_are_gentle
+    for name in AMBIENT_SHAPES:
+        frames = sample(program(ALL_SHAPES[name](8)), 8, frames=360, start_ms=2600)
+        assert biggest_frame_step(frames) <= GENTLE_FRAME_STEP, name
 
-@pytest.mark.parametrize("name", AMBIENT_SHAPES)
-def test_the_ambient_shapes_are_gentle(name: str) -> None:
-    frames = sample(program(ALL_SHAPES[name](8)), 8, frames=360, start_ms=2600)
-    assert biggest_frame_step(frames) <= GENTLE_FRAME_STEP, name
-
-
-@pytest.mark.parametrize("name", sorted(ALL_SHAPES))
-@pytest.mark.parametrize("led_count", (8, 2))
-def test_every_shape_eases(name: str, led_count: int) -> None:
+    # --- scenario: every_shape_eases
     """Nothing in this library cuts.
 
     `none` is the firmware's hard edge and the only shape in the product that
@@ -164,14 +161,20 @@ def test_every_shape_eases(name: str, led_count: int) -> None:
     lives outside this module. An assignment with no timing at all is the same
     hard edge spelled differently -- it lasts one 17 ms frame.
     """
-    for line in ALL_SHAPES[name](led_count):
-        assert " none" not in line, f"{name}/{led_count}: {line}"
-        for segment in line.split(";"):
-            tokens = segment.split()
-            assert len(tokens) > 1, f"{name}/{led_count}: untimed paint {segment!r}"
+    for name in sorted(ALL_SHAPES):
+        for led_count in (8, 2):
+            for line in ALL_SHAPES[name](led_count):
+                assert " none" not in line, f"{name}/{led_count}: {line}"
+                for segment in line.split(";"):
+                    tokens = segment.split()
+                    assert len(tokens) > 1, (
+                        f"{name}/{led_count}: untimed paint {segment!r}"
+                    )
 
 
-def test_knight_rider_sweeps_out_and_back_without_going_dark() -> None:
+
+def test_knight_rider_sweeps_out_and_back_without_going_dark__and_2_more() -> None:
+    # --- scenario: knight_rider_sweeps_out_and_back_without_going_dark
     """The head reaches both ends, reverses, and never leaves the strip dark.
 
     This is the whole complaint the redesign started from: the old shape was a
@@ -196,8 +199,7 @@ def test_knight_rider_sweeps_out_and_back_without_going_dark() -> None:
     strip = [sum(frame) for frame in luminance(frames)]
     assert min(strip) > 0.01, "the strip went dark mid-sweep"
 
-
-def test_a_travelling_wave_never_seams() -> None:
+    # --- scenario: a_travelling_wave_never_seams
     """A rolled profile keeps its total light constant all the way round.
 
     That is the property no staggered-pulse sweep can have: a bump has to die
@@ -208,8 +210,7 @@ def test_a_travelling_wave_never_seams() -> None:
     totals = [sum(frame) for frame in luminance(frames)]
     assert min(totals) > 0.5 * max(totals), "the wave dimmed at the seam"
 
-
-def test_two_leds_crossfade_rather_than_strobe() -> None:
+    # --- scenario: two_leds_crossfade_rather_than_strobe
     """A Dot has nowhere for a head to travel, so it gets a slow crossfade."""
     lines = shapes.travelling_wave(
         COLOR, led_count=2, lap_ms=2200, tail=shapes.DOT_TAIL, laps=4
@@ -220,7 +221,9 @@ def test_two_leds_crossfade_rather_than_strobe() -> None:
     assert min(totals) > 0.5 * max(totals)
 
 
-def test_no_shape_writes_two_segments_for_one_led_on_a_line() -> None:
+
+def test_no_shape_writes_two_segments_for_one_led_on_a_line__and_2_more() -> None:
+    # --- scenario: no_shape_writes_two_segments_for_one_led_on_a_line
     """The firmware keeps the LAST assignment and drops the earlier ones.
 
     A line that names an LED twice therefore throws away work silently, which
@@ -236,15 +239,13 @@ def test_no_shape_writes_two_segments_for_one_led_on_a_line() -> None:
                 ]
                 assert len(named) == len(set(named)), f"{name}/{led_count}: {line}"
 
-
-def test_a_heartbeat_has_two_unequal_beats_on_their_own_lines() -> None:
+    # --- scenario: a_heartbeat_has_two_unequal_beats_on_their_own_lines
     lines = shapes.lub_dub(COLOR, FLOOR, cycle_ms=2200)
     beats = [line for line in lines if "pulse" in line]
     assert len(beats) == 2
     assert beats[0].split()[0] != beats[1].split()[0], "both beats are equal"
 
-
-def test_shades_stay_on_the_identity() -> None:
+    # --- scenario: shades_stay_on_the_identity
     for fraction in (0.0, 0.25, 0.5, 1.0):
         shaded = shapes.shade("#00E5FF", fraction)
         assert shaded.startswith("#00")
@@ -252,14 +253,15 @@ def test_shades_stay_on_the_identity() -> None:
     assert shapes.shade("#00E5FF", 0.0) == "#000000"
 
 
-def test_a_profile_resamples_onto_a_shorter_strip() -> None:
+
+def test_a_profile_resamples_onto_a_shorter_strip__and_2_more() -> None:
+    # --- scenario: a_profile_resamples_onto_a_shorter_strip
     fitted = shapes._fitted_tail(shapes.CHASE_TAIL, 4)
     assert len(fitted) == 4
     assert fitted[0] == 1.0
     assert fitted[-1] < fitted[0]
 
-
-def test_ember_burns_hottest_in_the_middle() -> None:
+    # --- scenario: ember_burns_hottest_in_the_middle
     """The centre pair crests well above the rim, and nothing goes dark."""
     frames = sample(program(shapes.ember(COLOR, FLOOR, led_count=8, cycle_ms=3200)), 8,
                     frames=200, start_ms=700)
@@ -269,8 +271,7 @@ def test_ember_burns_hottest_in_the_middle() -> None:
     assert centre > rim * 1.5
     assert min(peak_frame) > 0.0  # coals never fully die
 
-
-def test_bloom_lights_the_centre_before_the_edges() -> None:
+    # --- scenario: bloom_lights_the_centre_before_the_edges
     """At mid-rise the middle is lit while the rim still rests."""
     frames = sample(program(shapes.bloom(COLOR, FLOOR, led_count=8, step_ms=140)), 8,
                     frames=12, start_ms=400)
@@ -279,7 +280,9 @@ def test_bloom_lights_the_centre_before_the_edges() -> None:
     assert mid[0] < mid[3] and mid[7] < mid[4]
 
 
-def test_frontier_holds_its_fill_while_the_tip_breathes() -> None:
+
+def test_frontier_holds_its_fill_while_the_tip_breathes__and_1_more() -> None:
+    # --- scenario: frontier_holds_its_fill_while_the_tip_breathes
     """The fill sits constant across the cycle; the tip LED oscillates."""
     # start_ms past the first rise: the fill eases up once, then holds.
     frames = sample(program(shapes.frontier(COLOR, FLOOR, led_count=8, cycle_ms=2400)), 8,
@@ -296,11 +299,11 @@ def test_frontier_holds_its_fill_while_the_tip_breathes() -> None:
     for dark in tracks[6:]:
         assert max(dark) < 0.05
 
-
-def test_glint_sweeps_a_lit_strip() -> None:
+    # --- scenario: glint_sweeps_a_lit_strip
     """A travelling crest, but the bed never drops out from under it."""
     frames = sample(program(shapes.glint(COLOR, led_count=8, lap_ms=2400)), 8,
                     frames=200, start_ms=600)
     assert min(min(frame) for frame in luminance(frames)) > 0.2
     positions = head_positions(frames)
     assert len(set(positions)) >= 6  # the crest actually crosses the strip
+

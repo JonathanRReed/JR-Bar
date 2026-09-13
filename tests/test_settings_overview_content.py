@@ -36,7 +36,8 @@ def _text(root):
     return [str(view.stringValue()) for view in _views(root) if hasattr(view, "stringValue")]
 
 
-def test_overview_keeps_global_actions_without_usage_chart_or_event_hook(target):
+def test_overview_keeps_global_actions_without_usage_chart_or_event_hook__and_1_more(target) -> None:
+    # --- scenario: overview_keeps_global_actions_without_usage_chart_or_event_hook
     category = navigation.category_for_key("overview")
     pane, fields, _ = runtime._build_child(target, category.default_page)
 
@@ -45,8 +46,7 @@ def test_overview_keeps_global_actions_without_usage_chart_or_event_hook(target)
     assert "Event hook" not in _text(pane)
     assert "About" in _text(pane)
 
-
-def test_usage_activity_is_reachable_with_chart_heatmap_and_no_global_recorder(target):
+    # --- scenario: usage_activity_is_reachable_with_chart_heatmap_and_no_global_recorder
     category = navigation.category_for_key("usage")
     activity = next((page for page in category.pages if page.key == "usage_activity"), None)
     assert activity is not None, "Usage statistics must be reachable from Usage"
@@ -58,19 +58,21 @@ def test_usage_activity_is_reachable_with_chart_heatmap_and_no_global_recorder(t
     assert "global_action_settings_pane" not in fields
 
 
-@pytest.mark.parametrize("mode", ["sessions", "percent"])
-def test_activity_legend_names_only_selected_providers(mode):
-    from jrbar.settings_window import usage_graph_legend_text
 
-    settings = AgentMonitorSettings().with_usage_graph_providers(("grok",)).with_usage_display_mode(mode)
-    legend = usage_graph_legend_text(settings)
+def test_activity_legend_names_only_selected_providers():
+    for mode in ["sessions", "percent"]:
+        from jrbar.settings_window import usage_graph_legend_text
 
-    assert "Grok" in legend
-    assert "Claude" not in legend
-    assert "Codex" not in legend
+        settings = AgentMonitorSettings().with_usage_graph_providers(("grok",)).with_usage_display_mode(mode)
+        legend = usage_graph_legend_text(settings)
+
+        assert "Grok" in legend
+        assert "Claude" not in legend
+        assert "Codex" not in legend
 
 
-def test_reopened_activity_seeds_summary_from_its_cached_model(target):
+def test_reopened_activity_seeds_summary_from_its_cached_model__and_1_more(target) -> None:
+    # --- scenario: reopened_activity_seeds_summary_from_its_cached_model
     target.usage_graph_model = {"summary": "Selected local history", "series": ()}
     target.usage_summary_text = "Unrelated provider summary"
 
@@ -78,8 +80,7 @@ def test_reopened_activity_seeds_summary_from_its_cached_model(target):
 
     assert str(fields["profile_usage_label"].stringValue()) == "Selected local history"
 
-
-def test_activity_does_not_mix_unfiltered_provider_status_into_local_history(target):
+    # --- scenario: activity_does_not_mix_unfiltered_provider_status_into_local_history
     target.usage_graph_model = {"summary": "Selected local history", "series": ()}
     target.codex_summary_text = "Capacity source unavailable"
     target.usage_detail_text = "Unrelated Claude quota detail"
@@ -89,3 +90,4 @@ def test_activity_does_not_mix_unfiltered_provider_status_into_local_history(tar
     assert "Selected local history" in _text(pane)
     assert "Capacity source unavailable" not in _text(pane)
     assert "Unrelated Claude quota detail" not in _text(pane)
+

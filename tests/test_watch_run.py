@@ -62,7 +62,8 @@ class FakeProcess:
         return self.result
 
 
-def test_plan_is_claude_only_and_uses_invocation_local_settings() -> None:
+def test_plan_is_claude_only_and_uses_invocation_local_settings__and_2_more() -> None:
+    # --- scenario: plan_is_claude_only_and_uses_invocation_local_settings
     plan = plan_watch_run(
         WatchRunProvider.CLAUDE,
         ("claude", "-p", "private prompt"),
@@ -87,8 +88,7 @@ def test_plan_is_claude_only_and_uses_invocation_local_settings() -> None:
     with pytest.raises(WatchRunPlanError):
         plan_watch_run("codex", ("codex", "exec"), observer_command=("observer",))
 
-
-def test_watch_run_is_reachable_from_both_cli_surfaces() -> None:
+    # --- scenario: watch_run_is_reachable_from_both_cli_surfaces
     from jrbar.cli import build_jrbar_parser, build_parser, cmd_watch_run
 
     for parser in (build_jrbar_parser(), build_parser()):
@@ -99,15 +99,16 @@ def test_watch_run_is_reachable_from_both_cli_surfaces() -> None:
         assert parsed.provider == "claude"
         assert parsed.provider_command[-2:] == ["claude", "--version"]
 
-
-def test_unsupported_or_unsafe_plan_fails_before_filesystem_mutation() -> None:
+    # --- scenario: unsupported_or_unsafe_plan_fails_before_filesystem_mutation
     file_system = FakeFileSystem()
     with pytest.raises(WatchRunPlanError):
         plan_watch_run("claude", ("claude", "--settings", "/user/settings.json"), observer_command=("observer",))
     assert file_system.created == []
 
 
-def test_execution_preserves_child_exit_code_and_removes_temp_settings() -> None:
+
+def test_execution_preserves_child_exit_code_and_removes_temp_settings__and_2_more() -> None:
+    # --- scenario: execution_preserves_child_exit_code_and_removes_temp_settings
     file_system = FakeFileSystem()
     signals = FakeSignals()
     process = FakeProcess(result=23)
@@ -128,8 +129,7 @@ def test_execution_preserves_child_exit_code_and_removes_temp_settings() -> None
     assert {receipt.status for receipt in result.cleanup_receipts} == {CleanupStatus.RESTORED}
     assert signals.handlers == {signal.SIGINT: "old-int", signal.SIGTERM: "old-term"}
 
-
-def test_signal_handler_forwards_to_child_and_is_restored() -> None:
+    # --- scenario: signal_handler_forwards_to_child_and_is_restored
     file_system = FakeFileSystem()
     signals = FakeSignals()
     process = FakeProcess(result=130)
@@ -144,8 +144,7 @@ def test_signal_handler_forwards_to_child_and_is_restored() -> None:
     assert process.sent == [signal.SIGINT]
     assert result.exit_code == 130
 
-
-def test_cleanup_runs_when_child_wait_raises_and_original_exception_escapes() -> None:
+    # --- scenario: cleanup_runs_when_child_wait_raises_and_original_exception_escapes
     file_system = FakeFileSystem()
     signals = FakeSignals()
     process = FakeProcess()
@@ -161,6 +160,7 @@ def test_cleanup_runs_when_child_wait_raises_and_original_exception_escapes() ->
     assert process.terminated
     assert file_system.removed
     assert signals.handlers == {signal.SIGINT: "old-int", signal.SIGTERM: "old-term"}
+
 
 
 def test_keyboard_interrupt_is_cleaned_up_without_sensitive_receipt_fields() -> None:

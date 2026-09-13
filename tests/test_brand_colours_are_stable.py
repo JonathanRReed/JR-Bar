@@ -88,7 +88,8 @@ def test_registering_a_tenth_provider_moves_nobody(monkeypatch) -> None:
     assert default_agent_color("newcomer") not in set(before.values())
 
 
-def test_every_shipped_brandless_provider_has_a_pinned_slot() -> None:
+def test_every_shipped_brandless_provider_has_a_pinned_slot__and_2_more() -> None:
+    # --- scenario: every_shipped_brandless_provider_has_a_pinned_slot
     """A pin is the only thing that makes the guarantee above true.
 
     Left to derivation, the answer depends on who else is registered.
@@ -103,11 +104,7 @@ def test_every_shipped_brandless_provider_has_a_pinned_slot() -> None:
         hex_value.upper() for hex_value in PROVIDER_BRAND_COLORS.values()
     }
 
-
-# --- brand-correctness -----------------------------------------------------
-
-
-def test_a_crowd_of_providers_wears_its_own_brands() -> None:
+    # --- scenario: a_crowd_of_providers_wears_its_own_brands
     settings = ColorSettings.defaults()
 
     assignment = provider_identity_colors_for_agents(
@@ -123,8 +120,7 @@ def test_a_crowd_of_providers_wears_its_own_brands() -> None:
     assert assignment["codex:session:b"] == PROVIDER_BRAND_COLORS["codex"]
     assert assignment["devin:session:c"] == PROVIDER_BRAND_COLORS["devin"]
 
-
-def test_sessions_of_one_provider_differ_by_lightness_not_by_hue() -> None:
+    # --- scenario: sessions_of_one_provider_differ_by_lightness_not_by_hue
     settings = ColorSettings.defaults()
     ids = [(f"claude:session:{name}", "claude") for name in ("a", "b", "c", "d")]
 
@@ -143,7 +139,9 @@ def test_sessions_of_one_provider_differ_by_lightness_not_by_hue() -> None:
     assert any(abs(value - brand_lightness) < 1e-6 for value in lightnesses)
 
 
-def test_the_screen_bar_paints_the_working_agents_brand() -> None:
+
+def test_the_screen_bar_paints_the_working_agents_brand__and_2_more() -> None:
+    # --- scenario: the_screen_bar_paints_the_working_agents_brand
     """The announcer had no provider input at all before this."""
     settings = ColorSettings.defaults()
 
@@ -160,30 +158,22 @@ def test_the_screen_bar_paints_the_working_agents_brand() -> None:
         == PROVIDER_BRAND_COLORS["codex"]
     )
 
-
-@pytest.mark.parametrize(
-    "semantic",
-    [
+    # --- scenario: the_apps_own_signals_never_become_a_provider_guessing_game
+    """Ask, failure, done and rest stay one unmistakable colour each."""
+    for semantic in [
         GlanceSemantic.ATTENTION,
         GlanceSemantic.FRESH_FAILURE,
         GlanceSemantic.FRESH_COMPLETION,
         GlanceSemantic.UNRESOLVED_FAILURE,
         GlanceSemantic.REST,
-    ],
-)
-def test_the_apps_own_signals_never_become_a_provider_guessing_game(semantic) -> None:
-    """Ask, failure, done and rest stay one unmistakable colour each."""
-    settings = ColorSettings.defaults()
+    ]:
+        settings = ColorSettings.defaults()
 
-    assert color_for_resolved_glance(
-        settings, _glance(semantic), provider="claude"
-    ) == color_for_resolved_glance(settings, _glance(semantic))
+        assert color_for_resolved_glance(
+            settings, _glance(semantic), provider="claude"
+        ) == color_for_resolved_glance(settings, _glance(semantic))
 
-
-# --- the settings layer ----------------------------------------------------
-
-
-def test_applying_a_palette_never_repaints_a_declared_brand() -> None:
+    # --- scenario: applying_a_palette_never_repaints_a_declared_brand
     """How the live install came to hold ``claude: #10A37F``.
 
     That is OpenAI's own green, written by clicking the "OpenAI" palette.
@@ -203,7 +193,9 @@ def test_applying_a_palette_never_repaints_a_declared_brand() -> None:
     assert colors.agent_color("cursor") == PROVIDER_BRAND_COLORS["cursor"]
 
 
-def test_the_settings_windows_brand_chips_are_the_brand_colours() -> None:
+
+def test_the_settings_windows_brand_chips_are_the_brand_colours__and_2_more() -> None:
+    # --- scenario: the_settings_windows_brand_chips_are_the_brand_colours
     """One table cannot disagree with the other if there is one table."""
     from jrbar import settings_window
 
@@ -211,8 +203,7 @@ def test_the_settings_windows_brand_chips_are_the_brand_colours() -> None:
     assert dict(settings_window.BRAND_SWATCHES)["Codex"] == PROVIDER_BRAND_COLORS["codex"]
     assert dict(settings_window.BRAND_SWATCHES)["Claude"] == PROVIDER_BRAND_COLORS["claude"]
 
-
-def test_both_surfaces_route_a_crowd_the_same_way() -> None:
+    # --- scenario: both_surfaces_route_a_crowd_the_same_way
     """The notch and the strip must not speak two colour languages.
 
     ``should_render_multi_agent`` was called at exactly ONE site -- the
@@ -245,8 +236,7 @@ def test_both_surfaces_route_a_crowd_the_same_way() -> None:
         "color_for_resolved_glance"
     )
 
-
-def test_a_palette_that_already_ate_a_brand_colour_is_repaired_on_load() -> None:
+    # --- scenario: a_palette_that_already_ate_a_brand_colour_is_repaired_on_load
     """The live install still holds the damage; a fix must undo it.
 
     ``/Users/.../settings.json`` carried ``claude: #10A37F`` -- OpenAI's
@@ -281,14 +271,15 @@ def test_a_palette_that_already_ate_a_brand_colour_is_repaired_on_load() -> None
     assert repaired.agent_color("cursor") == PROVIDER_BRAND_COLORS["cursor"]
 
 
-def test_a_hand_picked_provider_colour_is_never_touched() -> None:
+
+def test_a_hand_picked_provider_colour_is_never_touched__and_1_more() -> None:
+    # --- scenario: a_hand_picked_provider_colour_is_never_touched
     """The repair is narrow on purpose: only a palette's own output."""
     chosen = ColorSettings.from_dict({"agent_colors": {"claude": "#123456"}})
 
     assert chosen.agent_color("claude") == "#123456"
 
-
-def test_one_engaged_agent_is_a_solo_whatever_else_is_remembered() -> None:
+    # --- scenario: one_engaged_agent_is_a_solo_whatever_else_is_remembered
     """'Even though codex was the only one running it showed claude's
     colors alongside codex's' (2026-08-20): the crowd gate counted every
     row inside the presence horizon, so one working Codex plus a
@@ -346,3 +337,4 @@ def test_one_engaged_agent_is_a_solo_whatever_else_is_remembered() -> None:
         row("codex", LifecycleMode.ACTIVE), row("claude", LifecycleMode.WAITING)
     )
     assert check(None, None, duo) is True
+

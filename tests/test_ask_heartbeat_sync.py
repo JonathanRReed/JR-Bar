@@ -45,7 +45,8 @@ def _plan(
     )
 
 
-def test_reserved_signature_is_bounded_and_not_the_general_picker_motion() -> None:
+def test_reserved_signature_is_bounded_and_not_the_general_picker_motion__and_2_more() -> None:
+    # --- scenario: reserved_signature_is_bounded_and_not_the_general_picker_motion
     plan = _plan(_ask("a"))
 
     assert ASK_HEARTBEAT_SIGNATURE != "heartbeat"
@@ -55,8 +56,7 @@ def test_reserved_signature_is_bounded_and_not_the_general_picker_motion() -> No
     assert plan.cadence.cycle_seconds == ASK_HEARTBEAT_CYCLE_SECONDS == 1.0
     assert plan.cadence.pulse_count / plan.cadence.cycle_seconds <= 2.0
 
-
-def test_simultaneous_asks_share_phase_but_keep_exact_request_members() -> None:
+    # --- scenario: simultaneous_asks_share_phase_but_keep_exact_request_members
     first = _ask("first", 0.0)
     second = _ask("second", 0.8)
 
@@ -76,8 +76,7 @@ def test_simultaneous_asks_share_phase_but_keep_exact_request_members() -> None:
         "Open Screen Bar or the alert stack to identify and answer each asking session."
     )
 
-
-def test_later_member_does_not_rename_or_restart_the_anchor_cadence() -> None:
+    # --- scenario: later_member_does_not_rename_or_restart_the_anchor_cadence
     first = _ask("first", 0.0)
     one = _plan(first)
     two = _plan(first, _ask("second", 1.0))
@@ -87,7 +86,9 @@ def test_later_member_does_not_rename_or_restart_the_anchor_cadence() -> None:
     assert reversed_input == two
 
 
-def test_burst_window_is_anchored_and_does_not_extend_with_each_arrival() -> None:
+
+def test_burst_window_is_anchored_and_does_not_extend_with_each_arrival__and_2_more() -> None:
+    # --- scenario: burst_window_is_anchored_and_does_not_extend_with_each_arrival
     first = _ask("first", 0.0)
     middle = _ask("middle", ASK_HEARTBEAT_BURST_SECONDS - 0.1)
     outside = _ask("outside", ASK_HEARTBEAT_BURST_SECONDS + 0.1)
@@ -101,8 +102,7 @@ def test_burst_window_is_anchored_and_does_not_extend_with_each_arrival() -> Non
     )
     assert plan.cohorts[1].request_identities == (outside.request_identity,)
 
-
-def test_exact_window_boundary_and_different_escalation_do_not_share_phase() -> None:
+    # --- scenario: exact_window_boundary_and_different_escalation_do_not_share_phase
     fresh = _ask("fresh", 0.0, 0)
     exact_boundary = _ask("boundary", ASK_HEARTBEAT_BURST_SECONDS, 0)
     escalated = _ask("escalated", 0.5, 2)
@@ -113,8 +113,7 @@ def test_exact_window_boundary_and_different_escalation_do_not_share_phase() -> 
     assert {cohort.escalation_stage for cohort in plan.cohorts} == {0, 2}
     assert len({cohort.sync_identity for cohort in plan.cohorts}) == 3
 
-
-def test_duplicate_presentation_coalesces_without_absorbing_another_request() -> None:
+    # --- scenario: duplicate_presentation_coalesces_without_absorbing_another_request
     first = _ask("first", 0.0)
     duplicate = _ask("first", 0.5)
     second = _ask("second", 0.7)
@@ -130,7 +129,9 @@ def test_duplicate_presentation_coalesces_without_absorbing_another_request() ->
     assert plan.cohorts[0].members[1].request_identity == second.request_identity
 
 
-def test_same_request_cannot_occupy_multiple_temporal_or_stage_cohorts() -> None:
+
+def test_same_request_cannot_occupy_multiple_temporal_or_stage_cohorts__and_2_more() -> None:
+    # --- scenario: same_request_cannot_occupy_multiple_temporal_or_stage_cohorts
     with pytest.raises(
         AskHeartbeatValidationError,
         match="one request cannot occupy multiple",
@@ -146,8 +147,7 @@ def test_same_request_cannot_occupy_multiple_temporal_or_stage_cohorts() -> None
     ):
         _plan(_ask("same", 0.0, 0), _ask("same", 0.1, 1))
 
-
-def test_presentation_identity_changes_with_time_or_stage_not_input_order() -> None:
+    # --- scenario: presentation_identity_changes_with_time_or_stage_not_input_order
     baseline = _ask("one", 0.0, 0)
     same = _ask("one", 0.0, 0)
     later = _ask("one", 0.1, 0)
@@ -157,8 +157,7 @@ def test_presentation_identity_changes_with_time_or_stage_not_input_order() -> N
     assert baseline.identity != later.identity
     assert baseline.identity != escalated.identity
 
-
-def test_reduce_motion_substitutes_static_attention_without_losing_semantics() -> None:
+    # --- scenario: reduce_motion_substitutes_static_attention_without_losing_semantics
     first = _ask("first")
     second = _ask("second", 0.5)
 
@@ -174,7 +173,9 @@ def test_reduce_motion_substitutes_static_attention_without_losing_semantics() -
     assert static.accessibility_label == "Synchronized ask attention"
 
 
-def test_empty_plan_is_accessible_and_contains_no_motion_work() -> None:
+
+def test_empty_plan_is_accessible_and_contains_no_motion_work__and_2_more() -> None:
+    # --- scenario: empty_plan_is_accessible_and_contains_no_motion_work
     plan = _plan()
 
     assert plan.cohorts == ()
@@ -183,8 +184,7 @@ def test_empty_plan_is_accessible_and_contains_no_motion_work() -> None:
     assert plan.accessibility_label == "Ask heartbeat"
     assert plan.accessibility_value == "No asking sessions need attention."
 
-
-def test_public_records_are_frozen_and_do_not_offer_content_fields() -> None:
+    # --- scenario: public_records_are_frozen_and_do_not_offer_content_fields
     presentation = _ask("private-request-token")
     plan = _plan(presentation)
 
@@ -200,10 +200,8 @@ def test_public_records_are_frozen_and_do_not_offer_content_fields() -> None:
     }
     assert not field_names & {"prompt", "question", "message", "content", "body"}
 
-
-@pytest.mark.parametrize(
-    "presentation",
-    (
+    # --- scenario: invalid_presentation_facts_are_rejected
+    for presentation in (
         lambda: AskHeartbeatPresentation(  # type: ignore[arg-type]
             request_identity="request:v1:not-canonical",
             presented_at_epoch=NOW,
@@ -221,11 +219,10 @@ def test_public_records_are_frozen_and_do_not_offer_content_fields() -> None:
             presented_at_epoch=NOW,
             escalation_stage=4,
         ),
-    ),
-)
-def test_invalid_presentation_facts_are_rejected(presentation) -> None:
-    with pytest.raises(AskHeartbeatValidationError):
-        presentation()
+    ):
+        with pytest.raises(AskHeartbeatValidationError):
+            presentation()
+
 
 
 def test_planner_rejects_invalid_preferences_window_items_and_oversized_input() -> None:

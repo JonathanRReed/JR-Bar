@@ -108,7 +108,8 @@ def _called_names(path: Path) -> tuple[str, ...]:
     return tuple(calls)
 
 
-def test_no_new_module_becomes_unreachable() -> None:
+def test_no_new_module_becomes_unreachable__and_2_more() -> None:
+    # --- scenario: no_new_module_becomes_unreachable
     """A module nothing imports is a feature nobody can use."""
     unwired = {
         path.stem
@@ -121,8 +122,7 @@ def test_no_new_module_becomes_unreachable() -> None:
         "Wire them up, or add them to KNOWN_UNWIRED with the reason."
     )
 
-
-def test_the_unwired_list_does_not_go_stale() -> None:
+    # --- scenario: the_unwired_list_does_not_go_stale
     """Wiring a module up should retire it from this list."""
     still_unwired = {
         name for name in KNOWN_UNWIRED if not _module_importers(name)
@@ -132,21 +132,21 @@ def test_the_unwired_list_does_not_go_stale() -> None:
         f"{now_wired} are wired up now -- remove them from KNOWN_UNWIRED"
     )
 
-
-def test_every_listed_module_actually_exists() -> None:
+    # --- scenario: every_listed_module_actually_exists
     missing = sorted(
         name for name in KNOWN_UNWIRED if not (SRC / f"{name}.py").exists()
     )
     assert not missing, f"KNOWN_UNWIRED names modules that are gone: {missing}"
 
 
-def test_announcer_stack_modules_are_wired_to_production_owners() -> None:
+
+def test_announcer_stack_modules_are_wired_to_production_owners__and_2_more() -> None:
+    # --- scenario: announcer_stack_modules_are_wired_to_production_owners
     assert "status_bar_legacy" in _module_importers("announcer_stack")
     assert "virtual_device" in _module_importers("announcer_stack")
     assert "virtual_device" in _module_importers("announcer_stack_view")
 
-
-def test_answer_in_place_runtime_is_wired_to_controller_and_screen_bar() -> None:
+    # --- scenario: answer_in_place_runtime_is_wired_to_controller_and_screen_bar
     assert "status_bar_legacy" in _module_importers("answer_runtime")
     assert "status_bar_legacy" in _module_importers("answer_controller")
     assert "answer_controller" in _module_importers("answer_runtime")
@@ -154,12 +154,13 @@ def test_answer_in_place_runtime_is_wired_to_controller_and_screen_bar() -> None
     assert "virtual_device" in _module_importers("answer_in_place")
     assert "virtual_device" in _module_importers("announcer_presenter")
 
-
-def test_global_action_settings_pane_is_reachable_from_settings_window() -> None:
+    # --- scenario: global_action_settings_pane_is_reachable_from_settings_window
     assert "settings_window" in _module_importers("global_action_settings_pane")
 
 
-def test_cmd_effects_dispatches_through_the_runtime_owner(monkeypatch) -> None:
+
+def test_cmd_effects_dispatches_through_the_runtime_owner__and_2_more(monkeypatch) -> None:
+    # --- scenario: cmd_effects_dispatches_through_the_runtime_owner
     from jrbar import cli, effect_cli
 
     calls: list[tuple[object, object, object]] = []
@@ -181,8 +182,8 @@ def test_cmd_effects_dispatches_through_the_runtime_owner(monkeypatch) -> None:
     assert result == 37
     assert calls == [("install", Path("/tmp/calm-pack.json"), True)]
 
-
-def test_status_bar_ambient_bar_uses_the_screen_consumer_runtime(monkeypatch) -> None:
+    # --- scenario: status_bar_ambient_bar_uses_the_screen_consumer_runtime
+    monkeypatch.undo()
     pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
     from jrbar import _status_bar_production as production
 
@@ -229,8 +230,8 @@ def test_status_bar_ambient_bar_uses_the_screen_consumer_runtime(monkeypatch) ->
     assert setter_calls[0][1].dsl == "ambient dsl"
     assert controller._ambient_accessibility_text == "ambient text"
 
-
-def test_status_bar_hardware_sync_uses_the_hardware_consumer_runtime(monkeypatch) -> None:
+    # --- scenario: status_bar_hardware_sync_uses_the_hardware_consumer_runtime
+    monkeypatch.undo()
     pytest.importorskip("AppKit", reason="native AppKit behavior is exercised by the full Mac gate")
     from jrbar import _status_bar_production as production
     from jrbar import status_bar_legacy as legacy
@@ -329,3 +330,4 @@ def test_status_bar_hardware_sync_uses_the_hardware_consumer_runtime(monkeypatch
     assert result.agent_display_rendered is False
     assert result.completed_at == 123.0
     assert records and records[0][1][0] == "hardware_render"
+

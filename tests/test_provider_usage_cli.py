@@ -56,7 +56,8 @@ def empty_snapshot(provider, state, action=None):
     )
 
 
-def test_status_json_explains_actionable_provider_state(tmp_path: Path):
+def test_status_json_explains_actionable_provider_state__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: status_json_explains_actionable_provider_state
     state = ProviderUsageState(
         (
             empty_snapshot(
@@ -82,8 +83,7 @@ def test_status_json_explains_actionable_provider_state(tmp_path: Path):
     assert document["providers"][0]["action"] == "Connect Claude usage"
     assert "no reading" not in output.getvalue().lower()
 
-
-def test_enable_disable_and_configuration_round_trip(tmp_path: Path):
+    # --- scenario: enable_disable_and_configuration_round_trip
     settings_path = tmp_path / "provider-usage.json"
     output = io.StringIO()
     assert provider_usage_cli.main(
@@ -113,8 +113,7 @@ def test_enable_disable_and_configuration_round_trip(tmp_path: Path):
     assert loaded.preference("devin").threshold_remaining == 15
     assert loaded.preference("devin").option("organization") == "org_fixture"
 
-
-def test_credential_set_reads_stdin_and_never_echoes_secret(tmp_path: Path):
+    # --- scenario: credential_set_reads_stdin_and_never_echoes_secret
     credentials = Credentials()
     output = io.StringIO()
     secret = "fixture-provider-session-long"
@@ -128,6 +127,7 @@ def test_credential_set_reads_stdin_and_never_echoes_secret(tmp_path: Path):
     assert code == 0
     assert credentials.values[("openai-api", "admin-key")] == secret
     assert secret not in output.getvalue()
+
 
 
 def test_browser_consent_grant_is_exact_and_provider_scoped(tmp_path: Path):

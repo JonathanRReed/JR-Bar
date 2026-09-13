@@ -99,37 +99,37 @@ class _Walker:
                 self.dead.append(f"{where} -> {selector}")
 
 
-@pytest.mark.parametrize("fleet_name", sorted(_FLEETS))
-def test_every_enabled_menu_action_resolves(request, fleet_name):
-    case = SimpleNamespace(
-        addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
-    )
-    isolate_controller(case)
-    controller = case.controller
-    status_bar = case.status_bar
-    statuses = _FLEETS[fleet_name]
-    snapshot = SimpleNamespace(
-        statuses=statuses,
-        stale_statuses=(),
-        collected_at=datetime.now(timezone.utc),
-    )
-    controller.last_snapshot = snapshot
-    controller.update_attention_projection(snapshot)
-    menu = status_bar.build_menu(
-        snapshot,
-        status_bar.STATE_WORKING if statuses else status_bar.STATE_IDLE,
-        controller,
-    )
-    walker = _Walker(controller)
-    walker.walk(menu)
-    assert walker.seen > 0
-    assert walker.dead == [], (
-        f"{len(walker.dead)} dead menu actions in fleet {fleet_name!r}:\n"
-        + "\n".join(walker.dead)
-    )
+def test_every_enabled_menu_action_resolves__and_2_more(request) -> None:
+    # --- scenario: every_enabled_menu_action_resolves
+    for fleet_name in sorted(_FLEETS):
+        case = SimpleNamespace(
+            addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
+        )
+        isolate_controller(case)
+        controller = case.controller
+        status_bar = case.status_bar
+        statuses = _FLEETS[fleet_name]
+        snapshot = SimpleNamespace(
+            statuses=statuses,
+            stale_statuses=(),
+            collected_at=datetime.now(timezone.utc),
+        )
+        controller.last_snapshot = snapshot
+        controller.update_attention_projection(snapshot)
+        menu = status_bar.build_menu(
+            snapshot,
+            status_bar.STATE_WORKING if statuses else status_bar.STATE_IDLE,
+            controller,
+        )
+        walker = _Walker(controller)
+        walker.walk(menu)
+        assert walker.seen > 0
+        assert walker.dead == [], (
+            f"{len(walker.dead)} dead menu actions in fleet {fleet_name!r}:\n"
+            + "\n".join(walker.dead)
+        )
 
-
-def test_open_agent_browser_survives_stale_menus_and_missing_payloads(request):
+    # --- scenario: open_agent_browser_survives_stale_menus_and_missing_payloads
     """The click that shipped dead: a payload from a stale menu (old
     generation), or no payload at all, must still open the browser."""
     from test_jrbar import CanonicalAgentBrowserIntegrationTests
@@ -153,8 +153,7 @@ def test_open_agent_browser_survives_stale_menus_and_missing_payloads(request):
     unpayloaded = SimpleNamespace(representedObject=lambda: None)
     assert controller.openAgentBrowser_(unpayloaded) is True
 
-
-def test_clear_agents_is_the_only_completion_cleanup_selector(request):
+    # --- scenario: clear_agents_is_the_only_completion_cleanup_selector
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -195,7 +194,9 @@ def test_clear_agents_is_the_only_completion_cleanup_selector(request):
     assert not any(str(item.title()).startswith("Clear Finished") for item in items)
 
 
-def test_reveal_current_ask_menu_item_uses_the_single_controller_selector(request):
+
+def test_reveal_current_ask_menu_item_uses_the_single_controller_selector__and_2_more(request) -> None:
+    # --- scenario: reveal_current_ask_menu_item_uses_the_single_controller_selector
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -230,8 +231,7 @@ def test_reveal_current_ask_menu_item_uses_the_single_controller_selector(reques
     assert reveal.target() is controller
     assert format_shortcut(chord) in str(reveal.title())
 
-
-def test_compact_root_replaces_quiet_with_one_bounded_dnd_submenu(request):
+    # --- scenario: compact_root_replaces_quiet_with_one_bounded_dnd_submenu
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -278,8 +278,7 @@ def test_compact_root_replaces_quiet_with_one_bounded_dnd_submenu(request):
         "DND Settings…",
     ]
 
-
-def test_compact_dnd_contextual_actions_are_visible_and_resolve(request):
+    # --- scenario: compact_dnd_contextual_actions_are_visible_and_resolve
     case = SimpleNamespace(
         addCleanup=lambda fn, *a, **k: request.addfinalizer(lambda: fn(*a, **k)),
     )
@@ -339,6 +338,7 @@ def test_compact_dnd_contextual_actions_are_visible_and_resolve(request):
     walker = _Walker(case.controller)
     walker.walk(submenu, "/DND")
     assert walker.dead == []
+
 
 
 def test_sampler_serves_frames_from_one_batched_engine_call() -> None:

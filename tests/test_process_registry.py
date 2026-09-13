@@ -13,7 +13,8 @@ def _table(*rows):
     return {pid: pr.ProcessEntry(pid, ppid, started, command) for pid, ppid, started, command in rows}
 
 
-def test_list_processes_parses_lstart_and_comm_with_spaces():
+def test_list_processes_parses_lstart_and_comm_with_spaces__and_2_more() -> None:
+    # --- scenario: list_processes_parses_lstart_and_comm_with_spaces
     class Completed:
         returncode = 0
         stdout = (
@@ -29,8 +30,7 @@ def test_list_processes_parses_lstart_and_comm_with_spaces():
     assert table[1234].basename == "codex"
     assert len(table) == 2
 
-
-def test_discover_agent_process_walks_past_shells_to_provider_binary():
+    # --- scenario: discover_agent_process_walks_past_shells_to_provider_binary
     table = _table(
         (500, 400, 10.0, "/usr/bin/python3"),
         (400, 300, 10.0, "/bin/sh"),
@@ -40,8 +40,7 @@ def test_discover_agent_process_walks_past_shells_to_provider_binary():
     entry = pr.discover_agent_process("codex", start_pid=500, table=table)
     assert entry is not None and entry.pid == 300
 
-
-def test_discover_agent_process_falls_back_to_first_non_shell_ancestor():
+    # --- scenario: discover_agent_process_falls_back_to_first_non_shell_ancestor
     table = _table(
         (500, 400, 10.0, "/bin/zsh"),
         (400, 300, 10.0, "/usr/local/bin/mystery-agent"),
@@ -51,7 +50,9 @@ def test_discover_agent_process_falls_back_to_first_non_shell_ancestor():
     assert entry is not None and entry.pid == 400
 
 
-def test_record_roundtrip_and_liveness(tmp_path: Path):
+
+def test_record_roundtrip_and_liveness__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: record_roundtrip_and_liveness
     entry = pr.ProcessEntry(300, 1, 5.0, "/opt/homebrew/bin/codex")
     record = pr.record_agent_process("codex", "thread-1", entry, cwd="/work", state_dir=tmp_path, now=100.0)
     loaded = pr.load_record("codex", "thread-1", state_dir=tmp_path)
@@ -64,9 +65,7 @@ def test_record_roundtrip_and_liveness(tmp_path: Path):
     reused = _table((300, 1, 5000.0, "/bin/ls"))
     assert pr.process_is_live(record, reused) == (False, "pid_reused")
 
-
-def test_note_hook_payload_registers_once_and_marks_session_end(tmp_path: Path):
-    # The walk starts at the hook process' parent, so seed the table there.
+    # --- scenario: note_hook_payload_registers_once_and_marks_session_end
     table = _table(
         (os.getppid(), 41, 10.0, "/bin/sh"),
         (41, 1, 3.0, "/opt/homebrew/bin/codex"),
@@ -92,8 +91,7 @@ def test_note_hook_payload_registers_once_and_marks_session_end(tmp_path: Path):
     assert ended.ended_at_epoch is not None and ended.end_reason == "hook"
     assert len(calls) == 1
 
-
-def test_a_real_session_end_upgrades_a_record_the_sweep_already_closed(tmp_path: Path):
+    # --- scenario: a_real_session_end_upgrades_a_record_the_sweep_already_closed
     """`end_reason` is what the app reads to tell a provider's own end from
     the liveness sweep's synthetic one. A one-shot CLI exits the instant it
     finishes, so the sweep can close the record first -- a real `SessionEnd`
@@ -121,21 +119,21 @@ def test_a_real_session_end_upgrades_a_record_the_sweep_already_closed(tmp_path:
     assert ended.ended_at_epoch == 1000.0
 
 
-def test_note_hook_payload_ignores_garbage(tmp_path: Path):
+
+def test_note_hook_payload_ignores_garbage__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: note_hook_payload_ignores_garbage
     pr.note_hook_payload("codex", "not json", state_dir=tmp_path, table_loader=lambda: {})
     pr.note_hook_payload("codex", json.dumps({"hook_event_name": "SessionStart"}), state_dir=tmp_path, table_loader=lambda: {})
     assert not list(pr.registry_dir(tmp_path).glob("**/*.json"))
 
-
-def test_claude_session_index_reads_pid_files(tmp_path: Path):
+    # --- scenario: claude_session_index_reads_pid_files
     (tmp_path / "9170.json").write_text(json.dumps({"pid": 9170, "sessionId": "abc", "startedAt": 1788978889983, "entrypoint": "claude-desktop"}))
     (tmp_path / "bad.json").write_text("{")
     index = pr.claude_session_index(tmp_path)
     assert index["abc"].pid == 9170
     assert abs(index["abc"].started_at_epoch - 1788978889.983) < 0.01
 
-
-def test_sweeper_ends_dead_and_keeps_alive(tmp_path: Path):
+    # --- scenario: sweeper_ends_dead_and_keeps_alive
     alive = pr.ProcessEntry(300, 1, 5.0, "/opt/homebrew/bin/codex")
     dead = pr.ProcessEntry(301, 1, 6.0, "/opt/homebrew/bin/codex")
     pr.record_agent_process("codex", "alive", alive, state_dir=tmp_path)
@@ -154,7 +152,9 @@ def test_sweeper_ends_dead_and_keeps_alive(tmp_path: Path):
     assert sweeper.sweep([("codex", "dead")]) == []
 
 
-def test_sweeper_re_reports_an_end_the_row_never_took(tmp_path: Path):
+
+def test_sweeper_re_reports_an_end_the_row_never_took__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: sweeper_re_reports_an_end_the_row_never_took
     """The record is marked ended before the synthetic event lands, so a
     lost write used to leave the session lit forever. A session still on
     the caller's live list past the grace window is proof the end never
@@ -189,8 +189,7 @@ def test_sweeper_re_reports_an_end_the_row_never_took(tmp_path: Path):
     # the death is not reported again.
     assert sweeper.sweep([]) == []
 
-
-def test_classify_names_the_living_as_well_as_the_dead(tmp_path: Path):
+    # --- scenario: classify_names_the_living_as_well_as_the_dead
     """The sweep answers both halves of one question, and the live half is
     the only evidence strong enough to outvote the silence timer. It is
     affirmative only: a session the registry never recorded, or one whose
@@ -216,8 +215,7 @@ def test_classify_names_the_living_as_well_as_the_dead(tmp_path: Path):
     assert live == frozenset({("codex", "alive")})
     assert sorted(d.record.session_id for d in gone) == ["dead", "reused"]
 
-
-def test_classify_vouches_for_nothing_without_a_process_table(tmp_path: Path):
+    # --- scenario: classify_vouches_for_nothing_without_a_process_table
     """No table is no evidence in either direction."""
 
     pr.record_agent_process("codex", "s", pr.ProcessEntry(9, 1, 1.0, "codex"), state_dir=tmp_path)
@@ -225,20 +223,20 @@ def test_classify_vouches_for_nothing_without_a_process_table(tmp_path: Path):
     assert sweeper.classify([("codex", "s")]) == ([], frozenset())
 
 
-def test_sweeper_uses_claude_index_for_unregistered_sessions(tmp_path: Path):
+
+def test_sweeper_uses_claude_index_for_unregistered_sessions__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: sweeper_uses_claude_index_for_unregistered_sessions
     index = {"claude-sess": pr.ProcessEntry(777, 0, 5.0, "claude")}
     sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=lambda: _table((1, 0, 0.0, "/sbin/launchd")), claude_index_loader=lambda: index, clock=lambda: 50.0)
     result = sweeper.sweep([("claude", "claude-sess")])
     assert len(result) == 1 and result[0].record.pid == 777
 
-
-def test_sweeper_declares_nothing_dead_without_a_process_table(tmp_path: Path):
+    # --- scenario: sweeper_declares_nothing_dead_without_a_process_table
     pr.record_agent_process("codex", "s", pr.ProcessEntry(9, 1, 1.0, "codex"), state_dir=tmp_path)
     sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=dict, claude_index_loader=dict)
     assert sweeper.sweep([("codex", "s")]) == []
 
-
-def test_shared_host_provider_never_registers_or_vouches(tmp_path: Path):
+    # --- scenario: shared_host_provider_never_registers_or_vouches
     """Devin's hook fires inside one long-lived host that multiplexes
     sessions; its pid outlives every session on it. Registering it made
     dead sessions vouch themselves alive -- the silence clock is the only
@@ -273,6 +271,7 @@ def test_shared_host_provider_never_registers_or_vouches(tmp_path: Path):
     )
     dead, live = sweeper.classify([("devin", "sess-2")])
     assert dead == [] and live == frozenset()
+
 
 
 def test_prune_registry_removes_old_records(tmp_path: Path):

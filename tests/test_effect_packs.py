@@ -22,26 +22,27 @@ def pack(**overrides):
     return value
 
 
-def test_validates_and_previews_data_only_pack():
+def test_validates_and_previews_data_only_pack__and_2_more() -> None:
+    # --- scenario: validates_and_previews_data_only_pack
     result = validate_pack(pack())
     assert result.pack_id == "ambient"
     assert preview_pack(pack())[0]["label"] == "Pulse"
 
-
-def test_migrates_v1_defaults():
+    # --- scenario: migrates_v1_defaults
     migrated = migrate_pack({"id": "old", "name": "Old", "version": 1, "effects": []})
     assert migrated["version"] == 2
     assert validate_pack(migrated).safety["data_only"] is True
 
-
-def test_rejects_executable_keys_and_markers():
+    # --- scenario: rejects_executable_keys_and_markers
     with pytest.raises(EffectPackError):
         validate_pack(pack(effects=[{"id": "x", "label": "x", "script": "pulse()"}]))
     with pytest.raises(EffectPackError):
         validate_pack(pack(effects=[{"id": "x", "label": "run python now"}]))
 
 
-def test_allows_benign_marker_words_and_http_urls():
+
+def test_allows_benign_marker_words_and_http_urls__and_2_more() -> None:
+    # --- scenario: allows_benign_marker_words_and_http_urls
     validated = validate_pack(
         pack(
             effects=[
@@ -55,27 +56,26 @@ def test_allows_benign_marker_words_and_http_urls():
     )
     assert validated.effects[0]["label"] == "shimmer"
 
-
-def test_rejects_code_markers_with_token_boundaries():
+    # --- scenario: rejects_code_markers_with_token_boundaries
     for marker in ("python3 -c 'pass'", "javascript:alert(1)", "sh -c true"):
         with pytest.raises(EffectPackError):
             validate_pack(pack(effects=[{"id": "x", "label": marker}]))
 
-
-def test_requires_safety_and_accessibility_contract():
+    # --- scenario: requires_safety_and_accessibility_contract
     with pytest.raises(EffectPackError):
         validate_pack(pack(safety={"data_only": True, "network": True}))
     with pytest.raises(EffectPackError):
         validate_pack(pack(accessibility={"reduced_motion": True}))
 
 
-def test_export_is_deterministic_json():
+
+def test_export_is_deterministic_json__and_2_more() -> None:
+    # --- scenario: export_is_deterministic_json
     first = export_pack(pack())
     assert first == export_pack(json.loads(first))
     assert b"\n" not in first
 
-
-def test_license_metadata_is_optional_canonical_and_round_trips():
+    # --- scenario: license_metadata_is_optional_canonical_and_round_trips
     payload = pack(
         license={
             "spdx_id": "CC-BY-4.0",
@@ -96,8 +96,7 @@ def test_license_metadata_is_optional_canonical_and_round_trips():
     assert json.loads(encoded)["license"] == payload["license"]
     assert validate_pack(json.loads(encoded)).license == validated.license
 
-
-def test_license_metadata_rejects_invalid_or_unsafe_values():
+    # --- scenario: license_metadata_rejects_invalid_or_unsafe_values
     with pytest.raises(EffectPackError, match="SPDX"):
         validate_pack(pack(license={"spdx_id": "not an SPDX id", "label": "License"}))
     with pytest.raises(EffectPackError, match=r"http\(s\)"):
@@ -117,13 +116,14 @@ def test_license_metadata_rejects_invalid_or_unsafe_values():
         validate_pack(pack(license={"spdx_id": "MIT", "label": "MIT", "unknown": "value"}))
 
 
-def test_license_metadata_is_absent_for_legacy_manifests():
+
+def test_license_metadata_is_absent_for_legacy_manifests__and_2_more() -> None:
+    # --- scenario: license_metadata_is_absent_for_legacy_manifests
     validated = validate_pack(pack())
     assert validated.license is None
     assert "license" not in json.loads(export_pack(validated))
 
-
-def test_pack_and_preview_data_are_recursively_copy_isolated():
+    # --- scenario: pack_and_preview_data_are_recursively_copy_isolated
     payload = pack(
         effects=[
             {
@@ -148,8 +148,7 @@ def test_pack_and_preview_data_are_recursively_copy_isolated():
     preview[0]["parameters"]["settings"]["colors"].append("green")
     assert export_pack(validated) == original_export
 
-
-def test_adapts_data_only_pack_to_namespaced_registry_definitions():
+    # --- scenario: adapts_data_only_pack_to_namespaced_registry_definitions
     payload = pack(
         effects=[
             {"id": "steady", "label": "Steady", "brightness": 0.4},
@@ -178,7 +177,9 @@ def test_adapts_data_only_pack_to_namespaced_registry_definitions():
     )
 
 
-def test_rejects_duplicate_effects_unknown_fallbacks_and_registry_collisions():
+
+def test_rejects_duplicate_effects_unknown_fallbacks_and_registry_collisions__and_1_more() -> None:
+    # --- scenario: rejects_duplicate_effects_unknown_fallbacks_and_registry_collisions
     with pytest.raises(EffectPackError, match="duplicate effect identifier"):
         validate_pack(
             pack(
@@ -205,8 +206,7 @@ def test_rejects_duplicate_effects_unknown_fallbacks_and_registry_collisions():
     with pytest.raises(EffectPackError, match="already registered"):
         registry_with_pack(registry, pack())
 
-
-def test_adapter_revalidates_effect_pack_instances_and_rejects_executable_content():
+    # --- scenario: adapter_revalidates_effect_pack_instances_and_rejects_executable_content
     unsafe = EffectPack(
         pack_id="ambient",
         name="Ambient",
@@ -218,3 +218,4 @@ def test_adapter_revalidates_effect_pack_instances_and_rejects_executable_conten
 
     with pytest.raises(EffectPackError, match="executable content"):
         effect_definitions_from_pack(unsafe)
+

@@ -13,11 +13,11 @@ from scripts.verify_dependency_policy import validate_dependency_policy
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_reviewed_dependency_policy_is_exact() -> None:
+def test_reviewed_dependency_policy_is_exact__and_2_more() -> None:
+    # --- scenario: reviewed_dependency_policy_is_exact
     assert validate_dependency_policy(ROOT) == ()
 
-
-def test_release_dependencies_are_hash_locked() -> None:
+    # --- scenario: release_dependencies_are_hash_locked
     lock = (ROOT / "requirements" / "release-lock.txt").read_text(encoding="utf-8")
     requirement_blocks = [block for block in lock.split("\n\n") if "==" in block]
 
@@ -30,8 +30,7 @@ def test_release_dependencies_are_hash_locked() -> None:
     assert "--python-version 3.12" in lock
     assert "hidapi==0.14.0" in lock
 
-
-def test_creator_micro_backend_is_in_the_signed_release() -> None:
+    # --- scenario: creator_micro_backend_is_in_the_signed_release
     document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     release_input = (ROOT / "requirements" / "release.in").read_text(encoding="utf-8")
 
@@ -39,7 +38,9 @@ def test_creator_micro_backend_is_in_the_signed_release() -> None:
     assert "hidapi==0.14.0.post4" in release_input.splitlines()
 
 
-def test_no_isolation_build_backend_is_installed_by_the_dev_extra() -> None:
+
+def test_no_isolation_build_backend_is_installed_by_the_dev_extra__and_2_more() -> None:
+    # --- scenario: no_isolation_build_backend_is_installed_by_the_dev_extra
     document = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     build_requirements = {
         requirement.split("==", 1)[0]
@@ -52,23 +53,23 @@ def test_no_isolation_build_backend_is_installed_by_the_dev_extra() -> None:
 
     assert build_requirements <= dev_requirements
 
-
-def test_source_entitlements_match_the_exact_reviewed_allowlist() -> None:
+    # --- scenario: source_entitlements_match_the_exact_reviewed_allowlist
     source = source_entitlements(ROOT / "packaging" / "entitlements.plist")
 
     assert source == REQUIRED_ENTITLEMENTS
     assert validate_entitlements(source) == ()
     assert not (FORBIDDEN_ENTITLEMENTS & source.keys())
 
-
-def test_source_entitlements_do_not_allow_dynamic_executable_memory() -> None:
+    # --- scenario: source_entitlements_do_not_allow_dynamic_executable_memory
     source = source_entitlements(ROOT / "packaging" / "entitlements.plist")
 
     assert "com.apple.security.cs.allow-jit" not in source
     assert "com.apple.security.cs.allow-unsigned-executable-memory" not in source
 
 
-def test_entitlement_validator_rejects_any_unreviewed_capability() -> None:
+
+def test_entitlement_validator_rejects_any_unreviewed_capability__and_1_more() -> None:
+    # --- scenario: entitlement_validator_rejects_any_unreviewed_capability
     expanded = {
         **REQUIRED_ENTITLEMENTS,
         "com.apple.security.cs.disable-library-validation": True,
@@ -79,9 +80,9 @@ def test_entitlement_validator_rejects_any_unreviewed_capability() -> None:
     assert any("forbidden entitlement" in failure for failure in failures)
     assert any("unreviewed entitlement" in failure for failure in failures)
 
-
-def test_entitlements_plist_is_a_dictionary() -> None:
+    # --- scenario: entitlements_plist_is_a_dictionary
     value = plistlib.loads(
         (ROOT / "packaging" / "entitlements.plist").read_bytes()
     )
     assert isinstance(value, dict)
+

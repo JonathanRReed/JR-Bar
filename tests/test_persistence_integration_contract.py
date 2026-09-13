@@ -47,7 +47,8 @@ def _qualified_calls(node: ast.AST) -> list[str]:
     return result
 
 
-def test_percent_and_reset_state_use_the_shared_writer() -> None:
+def test_percent_and_reset_state_use_the_shared_writer__and_2_more() -> None:
+    # --- scenario: percent_and_reset_state_use_the_shared_writer
     percent = _function(PERCENT_HISTORY, "record_state_observations")
     usage_apply = _function(USAGE_STATUS_BAR, "applyProviderUsageState_")
     reset_persist = _function(USAGE_STATUS_BAR, "_persist_reset_delivery_state")
@@ -59,8 +60,7 @@ def test_percent_and_reset_state_use_the_shared_writer() -> None:
     assert "_persist_reset_delivery_state" in _calls(usage_apply)
     assert "Thread" not in _calls(usage_apply)
 
-
-def test_operator_history_write_paths_use_the_shared_writer() -> None:
+    # --- scenario: operator_history_write_paths_use_the_shared_writer
     retention = _function(STATUS_BAR, "start_operator_history_retention_change")
     events = _function(STATUS_BAR, "_enqueue_operator_history_events")
 
@@ -69,8 +69,7 @@ def test_operator_history_write_paths_use_the_shared_writer() -> None:
     assert "Thread" not in _calls(retention)
     assert "Thread" not in _calls(events)
 
-
-def test_capacity_reconciliation_queues_flush_and_fences_store_identity() -> None:
+    # --- scenario: capacity_reconciliation_queues_flush_and_fences_store_identity
     record = _function(STATUS_BAR, "record_capacity_history")
     flush = _function(STATUS_BAR, "_flush_capacity_history_store")
     runtime_record = _function(CAPACITY_HISTORY_RUNTIME, "record_capacity_history_runtime")
@@ -89,6 +88,7 @@ def test_capacity_reconciliation_queues_flush_and_fences_store_identity() -> Non
         child.attr for child in ast.walk(runtime_flush) if isinstance(child, ast.Attribute)
     }
     assert "_capacity_history_generation" in flush_attributes
+
 
 
 def test_termination_force_submits_before_one_drain_and_quit_keeps_its_routes() -> None:

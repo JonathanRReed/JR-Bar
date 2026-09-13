@@ -113,7 +113,8 @@ def test_claude_install_failure_before_commit_preserves_original_config(
     _assert_no_installer_scratch(tmp_path)
 
 
-def test_codex_trust_refresh_failure_rolls_back_only_this_provider(tmp_path: Path) -> None:
+def test_codex_trust_refresh_failure_rolls_back_only_this_provider__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: codex_trust_refresh_failure_rolls_back_only_this_provider
     """Publishing hooks before trust refresh must not leave an untrusted partial config."""
     config = tmp_path / "codex" / "config.toml"
     log = tmp_path / "state" / "codex.jsonl"
@@ -137,8 +138,7 @@ def test_codex_trust_refresh_failure_rolls_back_only_this_provider(tmp_path: Pat
     assert log.read_text() == ""
     _assert_no_installer_scratch(tmp_path)
 
-
-def test_claude_post_verify_failure_rolls_back_config_and_preserves_log(tmp_path: Path) -> None:
+    # --- scenario: claude_post_verify_failure_rolls_back_config_and_preserves_log
     """Removing post-verify or rollback would report or retain an unverified install."""
     config = tmp_path / "claude" / "settings.json"
     log = tmp_path / "state" / "claude.jsonl"
@@ -159,6 +159,7 @@ def test_claude_post_verify_failure_rolls_back_config_and_preserves_log(tmp_path
     assert config.read_text() == original
     assert log.read_text() == ""
     _assert_no_installer_scratch(tmp_path)
+
 
 
 def test_rollback_failure_is_reported_without_overwriting_replacement(tmp_path: Path) -> None:
@@ -323,7 +324,8 @@ def test_parent_swap_after_publish_is_rolled_back_through_the_held_parent(
     assert parent.is_symlink()
 
 
-def test_openclaw_late_write_failure_rolls_back_all_provider_owned_files(tmp_path: Path) -> None:
+def test_openclaw_late_write_failure_rolls_back_all_provider_owned_files__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: openclaw_late_write_failure_rolls_back_all_provider_owned_files
     """Treating coordinated OpenClaw leaves independently would retain a partial provider install."""
     config = tmp_path / "openclaw" / "openclaw.json"
     log = tmp_path / "state" / "openclaw.jsonl"
@@ -353,8 +355,7 @@ def test_openclaw_late_write_failure_rolls_back_all_provider_owned_files(tmp_pat
     assert log.read_text() == ""
     _assert_no_installer_scratch(tmp_path)
 
-
-def test_provider_install_failure_does_not_mutate_sibling_provider(tmp_path: Path) -> None:
+    # --- scenario: provider_install_failure_does_not_mutate_sibling_provider
     """Sharing one install transaction across providers would couple their mutations."""
     claude_config = tmp_path / "claude" / "settings.json"
     codex_config = tmp_path / "codex" / "config.toml"
@@ -376,6 +377,7 @@ def test_provider_install_failure_does_not_mutate_sibling_provider(tmp_path: Pat
         )
 
     assert codex_config.read_text() == original_codex
+
 
 
 def test_provider_backups_are_bounded_and_retain_exact_preinstall_bytes(

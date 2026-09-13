@@ -57,9 +57,9 @@ final class FoldToy: Toy {
 
     @ObservationIgnored private var jitter = JitterFilter(tolerance: 0)
     /// The edge tracker: the hinge sensor only changes every ~100 ms,
-    /// so instead of smoothing a high-rate stream it dead-reckons each
-    /// sensor edge — `renderAngle` is the edge plus a bounded velocity
-    /// extrapolation, `velocity` feeds the motion blur. Fed on accepted
+    /// so `renderAngle` is simply the last accepted edge — the spring
+    /// downstream owns the glide (extrapolating between edges was the
+    /// judder). `velocity` still feeds the motion blur. Fed on accepted
     /// samples, ticked on every vsync.
     @ObservationIgnored private var tracker = LidTracker()
     @ObservationIgnored private var overlay: FoldOverlayWindow?
@@ -235,11 +235,10 @@ final class FoldToy: Toy {
     private var gateAngle: Double? { simulatedAngle ?? rawAngle }
 
     /// What the fold amount reads: the simulation while held, else the
-    /// tracker's render angle — the edge plus its bounded extrapolation.
+    /// tracker's render angle — the last accepted sensor edge.
     private var renderAngle: Double? { simulatedAngle ?? tracker.renderAngle }
 
-    /// The number the "Lid angle" row prints — the measured truth, not
-    /// the lead. A lead of a few degrees belongs to the glass, not the UI.
+    /// The number the "Lid angle" row prints — the measured truth.
     private var measuredAngle: Double? { simulatedAngle ?? rawAngle }
 
     // MARK: Engine
@@ -337,10 +336,9 @@ final class FoldToy: Toy {
 
     /// The delta the fold wants right now, from the freshest truth — 0
     /// when the gate is closed, so easing home is also how the overlay
-    /// leaves. The gate reads the raw angle (an extrapolated lead can
-    /// never activate early); the delta itself rides the tracker's
-    /// render angle and is the REAL lid travel, so the held plane
-    /// counter-rotates by the hinge's own arc.
+    /// leaves. The gate reads the raw angle; the delta itself rides the
+    /// tracker's render angle — the last accepted edge — so the held
+    /// plane counter-rotates by the hinge's own arc.
     private var targetDelta: Double {
         guard let gate = gateAngle,
               FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),

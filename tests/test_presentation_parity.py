@@ -130,7 +130,8 @@ def _event(kind: TransitionKind, token: str) -> CanonicalOperatorEvent:
     )
 
 
-def test_active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_plans() -> None:
+def test_active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_plans__and_1_more() -> None:
+    # --- scenario: active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_plans
     preferences = AccessibilityDisplayPreferences()
     controller = SimpleNamespace(
         _relay_epoch=100.0,
@@ -213,19 +214,8 @@ def test_active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_p
         ),
     )
 
-
-@pytest.mark.parametrize(
-    (
-        "case",
-        "projection",
-        "operator_events",
-        "capacity",
-        "override_reason",
-        "override_semantic",
-        "preferences",
-        "expected",
-    ),
-    (
+    # --- scenario: golden_semantic_matrix_is_literal_before_all_three_surface_projections
+    for case, projection, operator_events, capacity, override_reason, override_semantic, preferences, expected in (
         (
             "attention",
             _projection(LifecycleMode.WAITING, actionable=True),
@@ -431,74 +421,64 @@ def test_active_projection_resolves_once_before_literal_dot_pro_and_screen_bar_p
             AccessibilityDisplayPreferences(differentiate_without_color=True),
             ("capacity", "capacity_fill", None, "none", 100.0, None),
         ),
-    ),
-)
-def test_golden_semantic_matrix_is_literal_before_all_three_surface_projections(
-    case,
-    projection,
-    operator_events,
-    capacity,
-    override_reason,
-    override_semantic,
-    preferences,
-    expected,
-) -> None:
-    controller = SimpleNamespace(
-        _relay_epoch=100.0,
-        _accessibility_display_preferences=preferences,
-    )
-
-    resolved = StatusBarController.resolve_presentation_glance(
-        controller,
-        projection,
-        operator_events=operator_events,
-        capacity=capacity,
-        override_reason=override_reason,
-        override_semantic=override_semantic,
-        presentation_time=100.8,
-    )
-
-    assert (
-        resolved.semantic.value,
-        resolved.glyph.value,
-        None if resolved.cue is None else resolved.cue.event_key,
-        resolved.override_reason.value,
-        resolved.relay_epoch,
-        resolved.next_visual_change_at,
-    ) == expected, case
-    for led_count in (2, 8, 8):
-        plan = compose_presentation_program(
-            resolved,
-            presentation_time=100.8,
-            led_count=led_count,
-            color="#FFFFFF",
-            preferences=preferences,
-            capacity_remaining_fraction=(
-                None if capacity is None else capacity.remaining_fraction
-            ),
+    ):
+        controller = SimpleNamespace(
+            _relay_epoch=100.0,
+            _accessibility_display_preferences=preferences,
         )
-        assert plan.semantic is resolved.semantic, case
-        assert plan.glyph is resolved.glyph, case
-        assert plan.relay_epoch == 100.0, case
-        assert plan.motion.value == {
-            "attention": "finite",
-            "fresh-failure": "finite",
-            "fresh-completion": "finite",
-            "active": "continuous",
-            "unresolved-failure": "static",
-            "capacity": "static",
-            "rest": "static",
-            "safety-override": "static",
-            "device-mode-override": "static",
-            "provider-pin-override": "continuous",
-            "focus-override": "static",
-            "privacy-override": "static",
-            "unavailable-override": "static",
-            "reduce-motion-consumes-cue": "static",
-            "reduce-transparency-keeps-cue": "finite",
-            "increase-contrast-keeps-priority": "continuous",
-            "without-color-keeps-capacity": "static",
-        }[case]
+
+        resolved = StatusBarController.resolve_presentation_glance(
+            controller,
+            projection,
+            operator_events=operator_events,
+            capacity=capacity,
+            override_reason=override_reason,
+            override_semantic=override_semantic,
+            presentation_time=100.8,
+        )
+
+        assert (
+            resolved.semantic.value,
+            resolved.glyph.value,
+            None if resolved.cue is None else resolved.cue.event_key,
+            resolved.override_reason.value,
+            resolved.relay_epoch,
+            resolved.next_visual_change_at,
+        ) == expected, case
+        for led_count in (2, 8, 8):
+            plan = compose_presentation_program(
+                resolved,
+                presentation_time=100.8,
+                led_count=led_count,
+                color="#FFFFFF",
+                preferences=preferences,
+                capacity_remaining_fraction=(
+                    None if capacity is None else capacity.remaining_fraction
+                ),
+            )
+            assert plan.semantic is resolved.semantic, case
+            assert plan.glyph is resolved.glyph, case
+            assert plan.relay_epoch == 100.0, case
+            assert plan.motion.value == {
+                "attention": "finite",
+                "fresh-failure": "finite",
+                "fresh-completion": "finite",
+                "active": "continuous",
+                "unresolved-failure": "static",
+                "capacity": "static",
+                "rest": "static",
+                "safety-override": "static",
+                "device-mode-override": "static",
+                "provider-pin-override": "continuous",
+                "focus-override": "static",
+                "privacy-override": "static",
+                "unavailable-override": "static",
+                "reduce-motion-consumes-cue": "static",
+                "reduce-transparency-keeps-cue": "finite",
+                "increase-contrast-keeps-priority": "continuous",
+                "without-color-keeps-capacity": "static",
+            }[case]
+
 
 
 def _request() -> HardwareWriteRequest:
@@ -519,7 +499,8 @@ def _request() -> HardwareWriteRequest:
     )
 
 
-def test_physical_success_and_failure_keep_virtual_semantics_but_only_success_anchors() -> None:
+def test_physical_success_and_failure_keep_virtual_semantics_but_only_success_anchors__and_2_more() -> None:
+    # --- scenario: physical_success_and_failure_keep_virtual_semantics_but_only_success_anchors
     request = _request()
     success = HardwareWriteResult(
         request=request,
@@ -558,8 +539,7 @@ def test_physical_success_and_failure_keep_virtual_semantics_but_only_success_an
     assert failure_sync.started_at is None
     assert failure.write.error == "write verification failed"
 
-
-def test_hardware_latency_success_and_failure_keep_the_canonical_episode_epoch() -> None:
+    # --- scenario: hardware_latency_success_and_failure_keep_the_canonical_episode_epoch
     resolved = StatusBarController.resolve_presentation_glance(
         SimpleNamespace(
             _relay_epoch=100.0,
@@ -610,8 +590,7 @@ def test_hardware_latency_success_and_failure_keep_the_canonical_episode_epoch()
     )
     assert resolved.cue is None
 
-
-def test_unchanged_nonagent_hardware_result_does_not_replay_virtual_surface() -> None:
+    # --- scenario: unchanged_nonagent_hardware_result_does_not_replay_virtual_surface
     request = _request()
     unchanged = HardwareWriteResult(
         request=request,
@@ -629,7 +608,9 @@ def test_unchanged_nonagent_hardware_result_does_not_replay_virtual_surface() ->
     assert hardware_presentation_sync_for_result(unchanged) is None
 
 
-def test_accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer() -> None:
+
+def test_accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer__and_1_more() -> None:
+    # --- scenario: accessibility_preferences_repaint_each_changed_dimension_without_recreating_renderer
     device = VirtualStatusDevice.alloc().init()
     window = SimpleNamespace(isVisible=lambda: True)
     view = MagicMock()
@@ -670,8 +651,7 @@ def test_accessibility_preferences_repaint_each_changed_dimension_without_recrea
     )
     assert view.setNeedsDisplay_.call_count == 4
 
-
-def test_physical_accessibility_snapshot_is_frozen_validated_and_semantically_neutral() -> None:
+    # --- scenario: physical_accessibility_snapshot_is_frozen_validated_and_semantically_neutral
     baseline = _request()
     preferences = AccessibilityDisplayPreferences(
         reduce_motion=True,
@@ -690,3 +670,4 @@ def test_physical_accessibility_snapshot_is_frozen_validated_and_semantically_ne
         planned.accessibility_preferences = AccessibilityDisplayPreferences()
     with pytest.raises(ValueError, match="invalid accessibility display preferences"):
         replace(baseline, accessibility_preferences=object())
+

@@ -379,7 +379,8 @@ def test_disabled_t3_service_does_not_start_a_worker_or_read(monkeypatch) -> Non
     assert observation.in_flight is False
 
 
-def test_failed_observation_marks_last_known_good_statuses_stale() -> None:
+def test_failed_observation_marks_last_known_good_statuses_stale__and_2_more() -> None:
+    # --- scenario: failed_observation_marks_last_known_good_statuses_stale
     snapshot = SimpleNamespace(
         agent_statuses=lambda *, stale=False: ("stale" if stale else "fresh",)
     )
@@ -392,8 +393,7 @@ def test_failed_observation_marks_last_known_good_statuses_stale() -> None:
 
     assert observation.statuses == ("stale",)
 
-
-def test_t3_policy_requires_separate_activity_statistics_opt_in() -> None:
+    # --- scenario: t3_policy_requires_separate_activity_statistics_opt_in
     settings = SimpleNamespace(
         t3code_enabled=True,
         t3code_base_dir="/configured/t3",
@@ -420,8 +420,7 @@ def test_t3_policy_requires_separate_activity_statistics_opt_in() -> None:
     assert disabled.should_poll is False
     assert disabled.may_scan_activity_statistics is False
 
-
-def test_t3_policy_reads_the_separate_persisted_activity_opt_in() -> None:
+    # --- scenario: t3_policy_reads_the_separate_persisted_activity_opt_in
     policy = t3_compat.project_t3_read_only_policy(
         SimpleNamespace(
             t3code_enabled=True,
@@ -433,7 +432,9 @@ def test_t3_policy_reads_the_separate_persisted_activity_opt_in() -> None:
     assert policy.may_scan_activity_statistics is True
 
 
-def test_disabled_runtime_admission_closes_service_without_constructing_one() -> None:
+
+def test_disabled_runtime_admission_closes_service_without_constructing_one__and_2_more() -> None:
+    # --- scenario: disabled_runtime_admission_closes_service_without_constructing_one
     closed = []
     service = SimpleNamespace(close=lambda: closed.append(True))
     policy = t3_compat.project_t3_read_only_policy(
@@ -450,8 +451,7 @@ def test_disabled_runtime_admission_closes_service_without_constructing_one() ->
     assert admitted is None
     assert closed == [True]
 
-
-def test_enabled_runtime_admission_constructs_the_configured_service_once() -> None:
+    # --- scenario: enabled_runtime_admission_constructs_the_configured_service_once
     policy = t3_compat.project_t3_read_only_policy(
         SimpleNamespace(
             t3code_enabled=True,
@@ -485,8 +485,7 @@ def test_enabled_runtime_admission_constructs_the_configured_service_once() -> N
         }
     ]
 
-
-def test_disabled_runtime_update_clears_statuses_without_constructing_or_polling() -> None:
+    # --- scenario: disabled_runtime_update_clears_statuses_without_constructing_or_polling
     replacements = []
     target = SimpleNamespace(
         monitor=SimpleNamespace(
@@ -505,6 +504,7 @@ def test_disabled_runtime_update_clears_statuses_without_constructing_or_polling
     assert policy.should_instantiate is False
     assert target._t3_snapshot_service is None
     assert replacements == [("t3code", ())]
+
 
 
 def test_enabled_runtime_update_polls_the_admitted_service() -> None:

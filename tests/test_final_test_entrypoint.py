@@ -6,14 +6,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_final_command_help_is_available_without_bootstrap_or_macos():
+def test_final_command_help_is_available_without_bootstrap_or_macos__and_2_more() -> None:
+    # --- scenario: final_command_help_is_available_without_bootstrap_or_macos
     result = subprocess.run(["bash", str(ROOT / "scripts/final-test.sh"), "--help"],
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0
     assert "--no-bootstrap" in result.stdout and "--allow-dirty" in result.stdout
 
-
-def test_non_macos_final_command_refuses_before_bootstrap():
+    # --- scenario: non_macos_final_command_refuses_before_bootstrap
     if sys.platform == "darwin":
         return
     result = subprocess.run(["bash", str(ROOT / "scripts/final-test.sh"), "--no-bootstrap"],
@@ -21,8 +21,7 @@ def test_non_macos_final_command_refuses_before_bootstrap():
     assert result.returncode == 2
     assert "requires macOS" in result.stderr
 
-
-def test_final_command_keeps_full_build_and_test_gates_and_source_identity():
+    # --- scenario: final_command_keeps_full_build_and_test_gates_and_source_identity
     script = (ROOT / "scripts/final-test.sh").read_text()
     assert "scripts/verify_fast.py" in script
     assert "./scripts/verify.sh --no-bootstrap" in script
@@ -32,6 +31,7 @@ def test_final_command_keeps_full_build_and_test_gates_and_source_identity():
     assert "--junitxml=" in script and "exit-code.txt" in script
     assert "final-test:" in (ROOT / "Makefile").read_text()
     assert ".jrbar-verification/" in (ROOT / ".gitignore").read_text()
+
 
 
 def test_fast_and_portable_gates_include_control_center_regressions():

@@ -37,23 +37,22 @@ def _status(provider: str, mode: AgentMode = AgentMode.WORKING) -> AgentStatus:
     )
 
 
-def test_every_shipped_brand_default_clears_the_floor() -> None:
+def test_every_shipped_brand_default_clears_the_floor__and_2_more() -> None:
+    # --- scenario: every_shipped_brand_default_clears_the_floor
     for provider in PROVIDER_BRAND_COLORS:
         color = default_agent_color(provider)
         assert relative_luminance(color) >= IDENTITY_LUMINANCE_FLOOR, (
             f"{provider} ships an identity color the strip cannot show: {color}"
         )
 
-
-def test_devin_default_is_the_lifted_navy_not_the_invisible_one() -> None:
+    # --- scenario: devin_default_is_the_lifted_navy_not_the_invisible_one
     assert default_agent_color("devin") == "#5C84B0"
     # Character preserved: still clearly darker than the bright brands.
     assert relative_luminance("#5C84B0") < relative_luminance(
         default_agent_color("codex")
     )
 
-
-def test_dark_identity_is_lifted_with_its_hue_intact() -> None:
+    # --- scenario: dark_identity_is_lifted_with_its_hue_intact
     lifted = readable_identity_hex("#1D3461")
     assert relative_luminance(lifted) >= IDENTITY_LUMINANCE_FLOOR * 0.98
     _, _, old_hue = hex_to_oklch("#1D3461")
@@ -61,18 +60,16 @@ def test_dark_identity_is_lifted_with_its_hue_intact() -> None:
     assert abs(old_hue - new_hue) < 8.0, "the lift changed the hue"
 
 
-def test_bright_identities_pass_through_untouched() -> None:
+
+def test_bright_identities_pass_through_untouched__and_2_more() -> None:
+    # --- scenario: bright_identities_pass_through_untouched
     for color in ("#D97757", "#2B8FFF", "#8E8E93", "#FFFFFF"):
         assert readable_identity_hex(color) == color
 
-
-def test_pure_black_stays_black() -> None:
-    # No hue to preserve and no luminance to scale: an explicit black
-    # pick stays an explicit "off," not an arbitrary invented gray.
+    # --- scenario: pure_black_stays_black
     assert readable_identity_hex("#000000") == "#000000"
 
-
-def test_a_custom_near_black_pick_still_lights_the_crowd_render() -> None:
+    # --- scenario: a_custom_near_black_pick_still_lights_the_crowd_render
     settings = ColorSettings.defaults().with_agent_color("devin", "#001423")
     statuses = (
         _status("codex"),
@@ -84,7 +81,9 @@ def test_a_custom_near_black_pick_still_lights_the_crowd_render() -> None:
     assert relative_luminance(devin.color) >= IDENTITY_LUMINANCE_FLOOR * 0.9
 
 
-def test_solo_active_glyph_floors_a_dark_identity_but_rest_stays_dim() -> None:
+
+def test_solo_active_glyph_floors_a_dark_identity_but_rest_stays_dim__and_1_more() -> None:
+    # --- scenario: solo_active_glyph_floors_a_dark_identity_but_rest_stays_dim
     from jrbar.accessibility_display import AccessibilityDisplayPreferences
     from jrbar.presentation_policy import (
         GlanceOverrideReason,
@@ -130,8 +129,7 @@ def test_solo_active_glyph_floors_a_dark_identity_but_rest_stays_dim() -> None:
     # REST must not inherit the floor -- idle dim is deliberate.
     assert readable_identity_hex("#1D3461") not in rest.dsl
 
-
-def test_a_persisted_snapshot_of_a_retired_default_tracks_the_repair() -> None:
+    # --- scenario: a_persisted_snapshot_of_a_retired_default_tracks_the_repair
     """The live install held devin: #1D3461 in settings -- written by an
     earlier default-snapshotting path, never chosen -- so fixing the
     brand table alone changed nothing there: agent_color reads settings
@@ -152,3 +150,4 @@ def test_a_persisted_snapshot_of_a_retired_default_tracks_the_repair() -> None:
     assert loaded.agent_color("hermes") == default_agent_color("hermes")
     # A hand-picked colour that never shipped as a default is untouched.
     assert loaded.agent_color("claude") == "#123456"
+

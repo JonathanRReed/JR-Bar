@@ -59,7 +59,8 @@ def _seed_popover_open_state(controller):
     controller._calibration_compare_stash = {}
 
 
-def test_compare_round_trip_returns_the_tuned_gains(controller):
+def test_compare_round_trip_returns_the_tuned_gains__and_1_more(controller) -> None:
+    # --- scenario: compare_round_trip_returns_the_tuned_gains
     _tune(controller)
     _seed_popover_open_state(controller)
     sender = _Sender(DEVICE)
@@ -71,8 +72,7 @@ def test_compare_round_trip_returns_the_tuned_gains(controller):
     assert controller.settings.channel_gains_for_device(DEVICE) == TUNED
     assert not controller._calibration_compare_stash
 
-
-def test_closing_mid_compare_restores_the_tuned_gains(controller):
+    # --- scenario: closing_mid_compare_restores_the_tuned_gains
     _tune(controller)
     _seed_popover_open_state(controller)
 
@@ -84,3 +84,4 @@ def test_closing_mid_compare_restores_the_tuned_gains(controller):
 
     assert controller.settings.channel_gains_for_device(DEVICE) == TUNED
     assert not controller._calibration_compare_stash
+

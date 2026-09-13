@@ -133,7 +133,8 @@ def _binding(*, pool: str = "general", account: str = "acct:primary") -> Capacit
     )
 
 
-def test_authority_refuses_a_bound_lane_when_its_account_or_pool_differs() -> None:
+def test_authority_refuses_a_bound_lane_when_its_account_or_pool_differs__and_2_more() -> None:
+    # --- scenario: authority_refuses_a_bound_lane_when_its_account_or_pool_differs
     """Ignoring account or pool binding would release an unrelated account's quota."""
     lane = replace(_lane(), account_discriminator="acct:other")
 
@@ -148,27 +149,20 @@ def test_authority_refuses_a_bound_lane_when_its_account_or_pool_differs() -> No
     assert wrong_pool.bindable is False
     assert wrong_pool.refusal_code == "pool_binding_mismatch"
 
-
-@pytest.mark.parametrize(
-    "evidence_class",
-    (CapacityEvidenceClass.UI_LINK_ONLY, CapacityEvidenceClass.UNSUPPORTED),
-)
-def test_authority_never_releases_a_non_observable_bound_source(
-    evidence_class: CapacityEvidenceClass,
-) -> None:
+    # --- scenario: authority_never_releases_a_non_observable_bound_source
     """Treating a setup link as a measured source would fabricate capacity authority."""
-    lane = replace(
-        _lane(), account_discriminator="acct:primary", auth_mode="chatgpt-plan"
-    )
-    binding = replace(_binding(), evidence_class=evidence_class)
+    for evidence_class in (CapacityEvidenceClass.UI_LINK_ONLY, CapacityEvidenceClass.UNSUPPORTED):
+        lane = replace(
+            _lane(), account_discriminator="acct:primary", auth_mode="chatgpt-plan"
+        )
+        binding = replace(_binding(), evidence_class=evidence_class)
 
-    authority = evaluate_lane_authority(lane, _context(), NOW, binding=binding)
+        authority = evaluate_lane_authority(lane, _context(), NOW, binding=binding)
 
-    assert authority.bindable is False
-    assert authority.refusal_code == "capacity_not_observable"
+        assert authority.bindable is False
+        assert authority.refusal_code == "capacity_not_observable"
 
-
-def test_compact_projection_does_not_release_an_unbound_account_lane() -> None:
+    # --- scenario: compact_projection_does_not_release_an_unbound_account_lane
     """Looking up bindings by source alone would merge two accounts in one source family."""
     primary = replace(
         _lane(window="primary"),
@@ -192,7 +186,9 @@ def test_compact_projection_does_not_release_an_unbound_account_lane() -> None:
     assert projection.detail_lanes[0].refusal_code == "account_binding_required"
 
 
-def test_authority_requires_exact_auth_mode_and_fresh_binding_time() -> None:
+
+def test_authority_requires_exact_auth_mode_and_fresh_binding_time__and_2_more() -> None:
+    # --- scenario: authority_requires_exact_auth_mode_and_fresh_binding_time
     """Ignoring auth or stale binding time could release capacity from another plan."""
     lane = replace(_lane(), account_discriminator="acct:primary", auth_mode="api-organization")
     wrong_auth = evaluate_lane_authority(lane, _context(), NOW, binding=_binding())
@@ -220,8 +216,7 @@ def test_authority_requires_exact_auth_mode_and_fresh_binding_time() -> None:
     assert stale.refusal_code == "binding_stale"
     assert future.refusal_code == "binding_clock_uncertain"
 
-
-def test_compact_projection_requires_explicit_legacy_opt_in_when_unbound() -> None:
+    # --- scenario: compact_projection_requires_explicit_legacy_opt_in_when_unbound
     """An omitted bindings argument must not silently become capacity authority."""
     projection = select_binding_lanes(_snapshot(_lane()), _context(), NOW)
     legacy_projection = select_binding_lanes(
@@ -232,10 +227,8 @@ def test_compact_projection_requires_explicit_legacy_opt_in_when_unbound() -> No
     assert projection.detail_lanes[0].refusal_code == "account_binding_required"
     assert len(legacy_projection.binding_lanes) == 1
 
-
-@pytest.mark.parametrize(
-    ("lane", "expected_bindable", "expected_reason"),
-    [
+    # --- scenario: observed_zero_binds_but_missing_capacity_does_not
+    for lane, expected_bindable, expected_reason in [
         (
             _lane(remaining=0.0, state=ObservationState.OBSERVED_ZERO),
             True,
@@ -251,20 +244,16 @@ def test_compact_projection_requires_explicit_legacy_opt_in_when_unbound() -> No
             False,
             "usage_unavailable",
         ),
-    ],
-)
-def test_observed_zero_binds_but_missing_capacity_does_not(
-    lane: QuotaLaneObservation,
-    expected_bindable: bool,
-    expected_reason: str | None,
-) -> None:
-    authority = evaluate_lane_authority(lane, _context(), NOW, allow_unbound_legacy=True)
+    ]:
+        authority = evaluate_lane_authority(lane, _context(), NOW, allow_unbound_legacy=True)
 
-    assert authority.bindable is expected_bindable
-    assert authority.refusal_code == expected_reason
+        assert authority.bindable is expected_bindable
+        assert authority.refusal_code == expected_reason
 
 
-def test_fresh_lane_outranks_stale_lower_remaining_lane() -> None:
+
+def test_fresh_lane_outranks_stale_lower_remaining_lane__and_2_more() -> None:
+    # --- scenario: fresh_lane_outranks_stale_lower_remaining_lane
     fresh = _lane(window="fresh", remaining=40.0)
     stale = _lane(
         window="stale",
@@ -280,56 +269,42 @@ def test_fresh_lane_outranks_stale_lower_remaining_lane() -> None:
     assert [row.lane.key.window for row in projection.binding_lanes] == ["fresh"]
     assert projection.detail_lanes[1].freshness == ObservationState.STALE
 
-
-@pytest.mark.parametrize(
-    ("selected_model", "expected", "reason"),
-    [
+    # --- scenario: model_lane_requires_an_exact_selected_model
+    for selected_model, expected, reason in [
         (None, LaneApplicability.AMBIGUOUS, "model_unknown"),
         ("gpt-4.1", LaneApplicability.INAPPLICABLE, "model_mismatch"),
         ("gpt-5", LaneApplicability.APPLICABLE, None),
-    ],
-)
-def test_model_lane_requires_an_exact_selected_model(
-    selected_model: str | None,
-    expected: LaneApplicability,
-    reason: str | None,
-) -> None:
-    lane = _lane(
-        opaque_scope="model:gpt-5",
-        model="gpt-5",
-        effect=QuotaEffect.MODEL,
-    )
-    context = _context(model=selected_model)
+    ]:
+        lane = _lane(
+            opaque_scope="model:gpt-5",
+            model="gpt-5",
+            effect=QuotaEffect.MODEL,
+        )
+        context = _context(model=selected_model)
 
-    assert classify_applicability(lane, context) is expected
-    authority = evaluate_lane_authority(lane, context, NOW, allow_unbound_legacy=True)
-    assert authority.bindable is (expected is LaneApplicability.APPLICABLE)
-    assert authority.refusal_code == reason
+        assert classify_applicability(lane, context) is expected
+        authority = evaluate_lane_authority(lane, context, NOW, allow_unbound_legacy=True)
+        assert authority.bindable is (expected is LaneApplicability.APPLICABLE)
+        assert authority.refusal_code == reason
 
-
-@pytest.mark.parametrize(
-    ("selected_feature", "expected", "reason"),
-    [
+    # --- scenario: feature_lane_matches_the_canonical_opaque_scope
+    for selected_feature, expected, reason in [
         (None, LaneApplicability.AMBIGUOUS, "feature_unknown"),
         ("routines", LaneApplicability.INAPPLICABLE, "feature_mismatch"),
         ("fable", LaneApplicability.APPLICABLE, None),
-    ],
-)
-def test_feature_lane_matches_the_canonical_opaque_scope(
-    selected_feature: str | None,
-    expected: LaneApplicability,
-    reason: str | None,
-) -> None:
-    lane = _lane(opaque_scope="fable", effect=QuotaEffect.FEATURE)
-    context = _context(feature=selected_feature)
+    ]:
+        lane = _lane(opaque_scope="fable", effect=QuotaEffect.FEATURE)
+        context = _context(feature=selected_feature)
 
-    assert classify_applicability(lane, context) is expected
-    assert evaluate_lane_authority(
-        lane, context, NOW, allow_unbound_legacy=True
-    ).refusal_code == reason
+        assert classify_applicability(lane, context) is expected
+        assert evaluate_lane_authority(
+            lane, context, NOW, allow_unbound_legacy=True
+        ).refusal_code == reason
 
 
-def test_all_workloads_lane_binds_only_for_its_execution_source() -> None:
+
+def test_all_workloads_lane_binds_only_for_its_execution_source__and_2_more() -> None:
+    # --- scenario: all_workloads_lane_binds_only_for_its_execution_source
     lane = _lane()
 
     matching = evaluate_lane_authority(lane, _context(), NOW, allow_unbound_legacy=True)
@@ -350,8 +325,7 @@ def test_all_workloads_lane_binds_only_for_its_execution_source() -> None:
     assert wrong_provider.refusal_code == "source_out_of_context"
     assert wrong_instance.refusal_code == "source_out_of_context"
 
-
-def test_selection_prefers_one_short_and_one_long_lane() -> None:
+    # --- scenario: selection_prefers_one_short_and_one_long_lane
     tighter_short = _lane(window="short-tight", remaining=20.0)
     looser_short = _lane(window="short-loose", remaining=70.0)
     long = _lane(
@@ -373,8 +347,7 @@ def test_selection_prefers_one_short_and_one_long_lane() -> None:
         "weekly",
     ]
 
-
-def test_compact_projection_never_contains_more_than_two_lanes() -> None:
+    # --- scenario: compact_projection_never_contains_more_than_two_lanes
     lanes = tuple(
         _lane(window=f"window-{index}", remaining=float(index + 1))
         for index in range(6)
@@ -390,7 +363,9 @@ def test_compact_projection_never_contains_more_than_two_lanes() -> None:
         )
 
 
-def test_second_provider_can_bind_without_losing_its_provider_identity() -> None:
+
+def test_second_provider_can_bind_without_losing_its_provider_identity__and_2_more() -> None:
+    # --- scenario: second_provider_can_bind_without_losing_its_provider_identity
     codex_short = _lane(window="codex-short", remaining=60.0)
     claude_short = _lane(
         provider_id="claude",
@@ -428,8 +403,7 @@ def test_second_provider_can_bind_without_losing_its_provider_identity() -> None
         "codex",
     ]
 
-
-def test_tied_selection_and_detail_order_are_stable_across_input_permutations() -> None:
+    # --- scenario: tied_selection_and_detail_order_are_stable_across_input_permutations
     lanes = (
         _lane(window="alpha", remaining=25.0),
         _lane(window="bravo", remaining=25.0),
@@ -458,8 +432,7 @@ def test_tied_selection_and_detail_order_are_stable_across_input_permutations() 
     assert selections == {("alpha",)}
     assert details == {("alpha", "bravo", "charlie")}
 
-
-def test_one_horizon_fills_second_slot_only_from_another_source() -> None:
+    # --- scenario: one_horizon_fills_second_slot_only_from_another_source
     codex_tight = _lane(window="codex-tight", remaining=10.0)
     codex_loose = _lane(window="codex-loose", remaining=20.0)
     claude = _lane(
@@ -496,7 +469,9 @@ def test_one_horizon_fills_second_slot_only_from_another_source() -> None:
     ]
 
 
-def test_partial_quota_evidence_stays_in_detail_and_never_binds() -> None:
+
+def test_partial_quota_evidence_stays_in_detail_and_never_binds__and_2_more() -> None:
+    # --- scenario: partial_quota_evidence_stays_in_detail_and_never_binds
     partial = _lane(
         remaining=20.0,
         state=ObservationState.PARTIAL,
@@ -508,8 +483,7 @@ def test_partial_quota_evidence_stays_in_detail_and_never_binds() -> None:
     assert projection.binding_lanes == ()
     assert projection.detail_lanes[0].refusal_code == "usage_partial"
 
-
-def test_failed_source_with_last_known_good_shows_but_never_binds() -> None:
+    # --- scenario: failed_source_with_last_known_good_shows_but_never_binds
     """A dead source's last good reading is a ledger row, not authority.
 
     `_value_refusal` forgives an unhealthy source that still holds a
@@ -530,8 +504,7 @@ def test_failed_source_with_last_known_good_shows_but_never_binds() -> None:
     assert authority.bindable is False
     assert authority.refusal_code == "source_failed"
 
-
-def test_reset_credibility_uses_the_injected_clock_without_blocking_present_capacity() -> None:
+    # --- scenario: reset_credibility_uses_the_injected_clock_without_blocking_present_capacity
     """A reset we cannot believe blocks binding, never the present number.
 
     `reset_credible` was computed and then never consulted by `bindable`, so a
@@ -565,7 +538,9 @@ def test_reset_credibility_uses_the_injected_clock_without_blocking_present_capa
     assert reset_less.presentable is True
 
 
-def test_a_dead_source_never_binds_even_with_a_perfectly_credible_reset() -> None:
+
+def test_a_dead_source_never_binds_even_with_a_perfectly_credible_reset__and_2_more() -> None:
+    # --- scenario: a_dead_source_never_binds_even_with_a_perfectly_credible_reset
     """Isolate staleness: nothing else about this lane is refusable.
 
     The value is observed, the reset is in the future, the account binding is
@@ -585,8 +560,7 @@ def test_a_dead_source_never_binds_even_with_a_perfectly_credible_reset() -> Non
     assert authority.bindable is False
     assert authority.refusal_code == "source_failed"
 
-
-def test_two_registered_sources_do_not_authorise_their_cross_product() -> None:
+    # --- scenario: two_registered_sources_do_not_authorise_their_cross_product
     """Registering a second source must not widen what the first speaks for.
 
     `provider_ids` and `source_instances` were two independent membership
@@ -618,8 +592,7 @@ def test_two_registered_sources_do_not_authorise_their_cross_product() -> None:
         assert authority.refusal_code == "source_out_of_context"
         assert authority.presentable is False
 
-
-def test_a_context_naming_several_providers_and_instances_must_say_which_pairs() -> None:
+    # --- scenario: a_context_naming_several_providers_and_instances_must_say_which_pairs
     """The flat form cannot express two sources, so it must not pretend to."""
     with pytest.raises(CapacityValidationError, match="ambiguous execution context"):
         ExecutionContext(
@@ -644,6 +617,7 @@ def test_a_context_naming_several_providers_and_instances_must_say_which_pairs()
             None,
             (("claude", "local:primary"),),
         )
+
 
 
 def test_source_health_projection_is_stably_ordered() -> None:

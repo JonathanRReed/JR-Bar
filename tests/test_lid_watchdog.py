@@ -47,7 +47,8 @@ def _controller(tmp_path: Path, spawned: list):
     )
 
 
-def test_holding_writes_the_heartbeat_and_spawns_the_watchdog(tmp_path) -> None:
+def test_holding_writes_the_heartbeat_and_spawns_the_watchdog__and_1_more(tmp_path) -> None:
+    # --- scenario: holding_writes_the_heartbeat_and_spawns_the_watchdog
     spawned: list[FakeProcess] = []
     controller = _controller(tmp_path, spawned)
     controller.update(CLOSED_LID_AWAKE_AGENTS, agents_active=True)
@@ -62,8 +63,7 @@ def test_holding_writes_the_heartbeat_and_spawns_the_watchdog(tmp_path) -> None:
     controller.update(CLOSED_LID_AWAKE_AGENTS, agents_active=True)
     assert len([p for p in spawned if p.argv[0] == "/bin/sh"]) == 1
 
-
-def test_clean_release_retires_the_heartbeat(tmp_path) -> None:
+    # --- scenario: clean_release_retires_the_heartbeat
     spawned: list[FakeProcess] = []
     controller = _controller(tmp_path, spawned)
     controller.update(CLOSED_LID_AWAKE_AGENTS, agents_active=True)
@@ -71,6 +71,7 @@ def test_clean_release_retires_the_heartbeat(tmp_path) -> None:
 
     controller.update(CLOSED_LID_AWAKE_NEVER, agents_active=False)
     assert not (tmp_path / "lid-hold-renewal").exists()
+
 
 
 def test_caffeinate_hold_is_time_bounded() -> None:

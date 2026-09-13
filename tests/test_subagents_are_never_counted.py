@@ -118,7 +118,8 @@ def _project(statuses) -> AttentionProjection:
 # --- the source ------------------------------------------------------------
 
 
-def test_one_main_agent_fanning_out_is_still_one_row() -> None:
+def test_one_main_agent_fanning_out_is_still_one_row__and_2_more() -> None:
+    # --- scenario: one_main_agent_fanning_out_is_still_one_row
     statuses = [_main("main", AgentMode.WORKING)] + [
         _worker(index, AgentMode.WORKING) for index in range(_OBSERVED_FANOUT)
     ]
@@ -129,8 +130,7 @@ def test_one_main_agent_fanning_out_is_still_one_row() -> None:
     assert len(projection.worker_rows) == _OBSERVED_FANOUT
     assert all(row.is_subagent for row in projection.worker_rows)
 
-
-def test_visible_rows_refuses_a_worker_however_it_is_constructed() -> None:
+    # --- scenario: visible_rows_refuses_a_worker_however_it_is_constructed
     """The filter is structural, not a courtesy the projectors extend.
 
     Every consumer reads this field. Leaving it to each of them is what
@@ -156,8 +156,7 @@ def test_visible_rows_refuses_a_worker_however_it_is_constructed() -> None:
     replaced = replace(hand_built, visible_rows=(main, worker))
     assert replaced.visible_rows == (main,)
 
-
-def test_a_worker_never_drives_the_light() -> None:
+    # --- scenario: a_worker_never_drives_the_light
     """The light only ever talks about a MAIN the user can see.
 
     The original sin this file guards against was the representative
@@ -182,7 +181,9 @@ def test_a_worker_never_drives_the_light() -> None:
     assert projection.dominant_provider == "claude"
 
 
-def test_a_lone_main_agent_is_not_a_crowd() -> None:
+
+def test_a_lone_main_agent_is_not_a_crowd__and_2_more() -> None:
+    # --- scenario: a_lone_main_agent_is_not_a_crowd
     """``should_render_multi_agent`` gates on row count.
 
     With workers in ``visible_rows`` it saw 114 and the multi-agent
@@ -207,8 +208,7 @@ def test_a_lone_main_agent_is_not_a_crowd() -> None:
 
     assert decided is False
 
-
-def test_the_strip_is_coloured_by_main_agents_only() -> None:
+    # --- scenario: the_strip_is_coloured_by_main_agents_only
     """Two mains under 40 workers is a two-colour strip, in their brands.
 
     Live, 87 workers were fed straight into identity colouring: the
@@ -241,11 +241,7 @@ def test_the_strip_is_coloured_by_main_agents_only() -> None:
         scale_hex_brightness(colors.agent_color("codex"), ceiling),
     }
 
-
-# --- the mailbox still sees them -------------------------------------------
-
-
-def test_the_mailbox_still_counts_a_family_s_workers() -> None:
+    # --- scenario: the_mailbox_still_counts_a_family_s_workers
     """The one legitimate consumer must not lose them in the split."""
     statuses = [_main("main", AgentMode.WORKING)] + [
         _worker(index, AgentMode.WORKING) for index in range(_OBSERVED_FANOUT)
@@ -257,6 +253,7 @@ def test_the_mailbox_still_counts_a_family_s_workers() -> None:
     assert len(rows) == 1
     assert rows[0].worker_count == _OBSERVED_FANOUT
     assert mailbox.active_count == 1
+
 
 
 # --- every other counted surface -------------------------------------------
@@ -309,7 +306,8 @@ def _fanned_out_state():
     return replace(empty_operator_state(), generation=1, works=(main, *workers))
 
 
-def test_the_menu_bar_title_counts_main_agents_only() -> None:
+def test_the_menu_bar_title_counts_main_agents_only__and_2_more() -> None:
+    # --- scenario: the_menu_bar_title_counts_main_agents_only
     state = _fanned_out_state()
     glance = ResolvedGlance(
         semantic=GlanceSemantic.ACTIVE,
@@ -325,8 +323,7 @@ def test_the_menu_bar_title_counts_main_agents_only() -> None:
     assert "Active: 1" in value
     assert f"Active: {_OBSERVED_FANOUT + 1}" not in value
 
-
-def test_the_dropdown_header_counts_working_families_only() -> None:
+    # --- scenario: the_dropdown_header_counts_working_families_only
     """"N active" must mean working, not retained.
 
     Live: 27 retained families, of which 16 completed and 8 idle. The
@@ -365,8 +362,7 @@ def test_the_dropdown_header_counts_working_families_only() -> None:
     assert projection.active_count == 1
     assert projection.active_count == mailbox.active_count
 
-
-def test_the_cli_active_count_excludes_workers() -> None:
+    # --- scenario: the_cli_active_count_excludes_workers
     statuses = tuple(
         [_main("main", AgentMode.WORKING)]
         + [_worker(index, AgentMode.WORKING) for index in range(_OBSERVED_FANOUT)]
@@ -375,7 +371,9 @@ def test_the_cli_active_count_excludes_workers() -> None:
     assert aggregate_status(statuses).active_count == 1
 
 
-def test_the_menu_bar_title_is_a_ledger_not_a_spoken_sentence() -> None:
+
+def test_the_menu_bar_title_is_a_ledger_not_a_spoken_sentence__and_2_more() -> None:
+    # --- scenario: the_menu_bar_title_is_a_ledger_not_a_spoken_sentence
     """The eye gets one number; VoiceOver still gets the whole sentence.
 
     Both were the same string, so the menu bar rendered the screen-reader
@@ -405,8 +403,7 @@ def test_the_menu_bar_title_is_a_ledger_not_a_spoken_sentence() -> None:
     spoken = status_item_accessibility(state, glance).value
     assert "," in spoken and len(spoken) > len(title)
 
-
-def test_collector_refreshes_a_delegating_parents_presence() -> None:
+    # --- scenario: collector_refreshes_a_delegating_parents_presence
     """A fresh child event is evidence of the parent's presence.
 
     The projection-level promotion was not enough: active_count, the
@@ -435,8 +432,7 @@ def test_collector_refreshes_a_delegating_parents_presence() -> None:
     )
     assert aggregate_status(reconciled).active_count == 1
 
-
-def test_collector_leaves_a_parent_with_finished_children_alone() -> None:
+    # --- scenario: collector_leaves_a_parent_with_finished_children_alone
     from jrbar.delegation import _reconcile_delegating_parents
 
     stopped_main = _main("main", AgentMode.COMPLETED)
@@ -449,7 +445,9 @@ def test_collector_leaves_a_parent_with_finished_children_alone() -> None:
     assert reconciled == (stopped_main, finished_child)
 
 
-def test_collector_never_rewrites_an_asking_or_failed_parent() -> None:
+
+def test_collector_never_rewrites_an_asking_or_failed_parent__and_2_more() -> None:
+    # --- scenario: collector_never_rewrites_an_asking_or_failed_parent
     from jrbar.delegation import _reconcile_delegating_parents
 
     asking = _main("asker", AgentMode.WAITING_FOR_INPUT)
@@ -468,8 +466,7 @@ def test_collector_never_rewrites_an_asking_or_failed_parent() -> None:
     assert reconciled[0].mode is AgentMode.WAITING_FOR_INPUT
     assert reconciled[1].mode is AgentMode.BLOCKED_ERROR
 
-
-def test_a_stale_child_stops_vouching_for_its_parent() -> None:
+    # --- scenario: a_stale_child_stops_vouching_for_its_parent
     from jrbar.delegation import (
         DELEGATION_CHILD_FRESH_SECONDS,
         _reconcile_delegating_parents,
@@ -487,8 +484,7 @@ def test_a_stale_child_stops_vouching_for_its_parent() -> None:
 
     assert reconciled[0].mode is AgentMode.COMPLETED
 
-
-def test_idle_sessions_do_not_claim_strip_slots_while_anyone_works() -> None:
+    # --- scenario: idle_sessions_do_not_claim_strip_slots_while_anyone_works
     """A dozen retained-but-idle sessions must not bury the real work
     in identity whispers (the live Devin plane listed 13 idle sessions;
     the working strip read as unattributable murk)."""
@@ -533,7 +529,9 @@ def test_idle_sessions_do_not_claim_strip_slots_while_anyone_works() -> None:
     )
 
 
-def test_an_idle_only_fleet_keeps_its_ambient_presence() -> None:
+
+def test_an_idle_only_fleet_keeps_its_ambient_presence__and_1_more() -> None:
+    # --- scenario: an_idle_only_fleet_keeps_its_ambient_presence
     from jrbar.colors import program_for_snapshot
     from jrbar.led_status import LedDisplayState
 
@@ -552,8 +550,7 @@ def test_an_idle_only_fleet_keeps_its_ambient_presence() -> None:
     assert state is LedDisplayState.IDLE
     assert program.strip(), "idle presence still renders"
 
-
-def test_a_resting_companion_keeps_its_whisper_while_slots_are_free() -> None:
+    # --- scenario: a_resting_companion_keeps_its_whisper_while_slots_are_free
     """Slot pressure, not mere activity, is what evicts idle rows."""
     from jrbar.colors import program_for_snapshot
 
@@ -579,3 +576,4 @@ def test_a_resting_companion_keeps_its_whisper_while_slots_are_free() -> None:
         "two sessions on eight LEDs both keep their slots; "
         f"saw peaks {peaks}"
     )
+

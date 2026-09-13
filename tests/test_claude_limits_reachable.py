@@ -52,7 +52,8 @@ class _Response(io.BytesIO):
         return False
 
 
-def test_the_fetch_is_no_longer_a_stub() -> None:
+def test_the_fetch_is_no_longer_a_stub__and_2_more() -> None:
+    # --- scenario: the_fetch_is_no_longer_a_stub
     """Switch 1: it used to raise no matter what it was given."""
     payload = {
         "five_hour": {"utilization": 10.0},
@@ -68,8 +69,7 @@ def test_the_fetch_is_no_longer_a_stub() -> None:
     )
     assert [window["label"] for window in windows] == ["5-hour", "weekly", "Opus only"]
 
-
-def test_the_credential_path_is_hardened() -> None:
+    # --- scenario: the_credential_path_is_hardened
     """Reading a credential must never happen on a background timer."""
     from jrbar.credentials import CLAUDE_CODE_KEYCHAIN, read_keychain_secret
 
@@ -80,13 +80,7 @@ def test_the_credential_path_is_hardened() -> None:
     )
     assert result.secret is None
 
-
-# --------------------------------------------------------------------------
-# The four switches, in the order they had to open.
-# --------------------------------------------------------------------------
-
-
-def test_consumer_claude_declares_every_window_it_can_observe() -> None:
+    # --- scenario: consumer_claude_declares_every_window_it_can_observe
     """The root switch. Everything downstream follows from this declaration.
 
     A policy with zero lanes gives the authority layer nothing to reason
@@ -115,7 +109,9 @@ def test_consumer_claude_declares_every_window_it_can_observe() -> None:
     )
 
 
-def test_the_toggle_is_real_but_still_starts_off() -> None:
+
+def test_the_toggle_is_real_but_still_starts_off__and_2_more() -> None:
+    # --- scenario: the_toggle_is_real_but_still_starts_off
     """Switch 2. The gate is no longer a lie, and no longer on by surprise."""
     assert AgentMonitorSettings().claude_plan_limits_enabled is False
     enabled = AgentMonitorSettings().with_claude_plan_limits_enabled(True)
@@ -124,8 +120,7 @@ def test_the_toggle_is_real_but_still_starts_off() -> None:
     # An opt-in that does not survive a save is not an opt-in.
     assert enabled.to_dict()["claude_plan_limits_enabled"] is True
 
-
-def test_claude_declares_exactly_one_negotiated_capacity_source() -> None:
+    # --- scenario: claude_declares_exactly_one_negotiated_capacity_source
     """Switch 3. Two eligible sources for one provider is a scheduling bug."""
     from jrbar.providers import negotiated_provider_sources
 
@@ -145,8 +140,7 @@ def test_claude_declares_exactly_one_negotiated_capacity_source() -> None:
     assert claude_row.source_key.adapter_id == "quota"
     assert claude_row.source_key.source_instance_id == "oauth"
 
-
-def test_the_coordinator_follows_the_setting_rather_than_a_hardcoded_name() -> None:
+    # --- scenario: the_coordinator_follows_the_setting_rather_than_a_hardcoded_name
     """Switch 4 was `enabled=provider_id != "claude"`, ignoring the user.
 
     It now reads the setting. The setting still fails closed, so the
@@ -175,6 +169,7 @@ def test_the_coordinator_follows_the_setting_rather_than_a_hardcoded_name() -> N
 
     assert decide(_JrOwned(), "claude") is False
     assert decide(_JrOwned(), "codex") is True
+
 
 
 def test_the_scheduler_follows_the_setting_too() -> None:

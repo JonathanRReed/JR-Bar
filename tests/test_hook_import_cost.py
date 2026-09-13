@@ -53,7 +53,8 @@ def _imported_modules(statement: str) -> set[str]:
     return set(json.loads(result.stdout.strip().splitlines()[-1]))
 
 
-def test_hook_entry_does_not_drag_in_the_app() -> None:
+def test_hook_entry_does_not_drag_in_the_app__and_2_more() -> None:
+    # --- scenario: hook_entry_does_not_drag_in_the_app
     loaded = _imported_modules("import jrbar.hook_entry")
     leaked = sorted(loaded & set(FORBIDDEN))
     assert not leaked, (
@@ -61,8 +62,7 @@ def test_hook_entry_does_not_drag_in_the_app() -> None:
         "every hook event pays for this"
     )
 
-
-def test_the_module_the_hook_actually_runs_stays_lean() -> None:
+    # --- scenario: the_module_the_hook_actually_runs_stays_lean
     """`hook_entry` defers `hook`, so this is the seam that really runs.
 
     Testing only `hook_entry` would pass while the module it loads a
@@ -77,31 +77,31 @@ def test_the_module_the_hook_actually_runs_stays_lean() -> None:
     leaked = sorted(loaded & legacy_forbidden)
     assert not leaked, f"the synchronous fallback path now loads {leaked}"
 
-
-def test_thin_hook_client_does_not_load_processing_or_app_modules() -> None:
+    # --- scenario: thin_hook_client_does_not_load_processing_or_app_modules
     loaded = _imported_modules("import jrbar.hook_client")
     leaked = sorted(loaded & set(FORBIDDEN))
     assert not leaked, f"the hook admission client now loads {leaked}"
 
 
-def test_package_import_is_lazy() -> None:
+
+def test_package_import_is_lazy__and_2_more() -> None:
+    # --- scenario: package_import_is_lazy
     """`import jrbar` alone must not walk the whole package."""
     loaded = _imported_modules("import jrbar")
     leaked = sorted(loaded & set(FORBIDDEN))
     assert not leaked, f"`import jrbar` eagerly loads {leaked}"
 
-
-@pytest.mark.parametrize("name", ["AgentMode", "HookEventServer", "AgentLedController"])
-def test_lazy_exports_still_resolve(name: str) -> None:
+    # --- scenario: lazy_exports_still_resolve
     """Laziness must be invisible to callers."""
-    import jrbar
+    for name in ["AgentMode", "HookEventServer", "AgentLedController"]:
+        import jrbar
 
-    assert getattr(jrbar, name) is not None
-    assert name in dir(jrbar)
+        assert getattr(jrbar, name) is not None
+        assert name in dir(jrbar)
 
-
-def test_unknown_attribute_still_raises_attribute_error() -> None:
+    # --- scenario: unknown_attribute_still_raises_attribute_error
     import jrbar
 
     with pytest.raises(AttributeError):
         jrbar.definitely_not_exported
+

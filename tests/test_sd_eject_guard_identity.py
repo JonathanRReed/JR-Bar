@@ -26,7 +26,8 @@ def paths(tmp_path: Path) -> SdEjectGuardPaths:
     )
 
 
-def test_selected_volume_uuid_enables_exact_launch_job(tmp_path: Path) -> None:
+def test_selected_volume_uuid_enables_exact_launch_job__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: selected_volume_uuid_enables_exact_launch_job
     target = paths(tmp_path)
 
     plist = build_sd_eject_guard_plist(target, volume_uuid=VOLUME_UUID)
@@ -39,13 +40,11 @@ def test_selected_volume_uuid_enables_exact_launch_job(tmp_path: Path) -> None:
     assert plist["RunAtLoad"] is True
     assert plist["KeepAlive"] is True
 
-
-def test_invalid_volume_uuid_is_refused(tmp_path: Path) -> None:
+    # --- scenario: invalid_volume_uuid_is_refused
     with pytest.raises(SdEjectGuardInstallError, match="volume UUID"):
         build_sd_eject_guard_plist(paths(tmp_path), volume_uuid="../../disk2")
 
-
-def test_interactive_guard_passes_exact_selected_identity(tmp_path: Path) -> None:
+    # --- scenario: interactive_guard_passes_exact_selected_identity
     target = paths(tmp_path)
     completed = subprocess.CompletedProcess([], 0)
 
@@ -69,3 +68,4 @@ def test_interactive_guard_passes_exact_selected_identity(tmp_path: Path) -> Non
         [str(target.binary_path), "--volume-uuid", VOLUME_UUID],
         check=False,
     )
+

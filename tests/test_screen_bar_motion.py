@@ -16,9 +16,9 @@ from jrbar.render_policy import (
 )
 
 
-@pytest.mark.parametrize(
-    ("previous", "current", "reduce_motion", "animated"),
-    [
+def test_alcove_recovery_motion_transitions_are_bounded__and_2_more(monkeypatch) -> None:
+    # --- scenario: alcove_recovery_motion_transitions_are_bounded
+    for previous, current, reduce_motion, animated in [
         ("stale", "fresh", False, True),
         ("recovering", "fresh", False, True),
         ("fresh", "fresh", False, False),
@@ -27,56 +27,52 @@ from jrbar.render_policy import (
         ("unsupported", "fresh", False, False),
         ("not_following", "fresh", False, False),
         ("recovering", "fresh", True, False),
-    ],
-)
-def test_alcove_recovery_motion_transitions_are_bounded(
-    monkeypatch, previous, current, reduce_motion, animated
-) -> None:
-    from jrbar.alcove_observation import AlcoveConfidenceState
-    from jrbar.virtual_device import _apply_alcove_frame
+    ]:
+        from jrbar.alcove_observation import AlcoveConfidenceState
+        from jrbar.virtual_device import _apply_alcove_frame
 
-    class Window:
-        def __init__(self):
-            self.frames = []
+        class Window:
+            def __init__(self):
+                self.frames = []
 
-        def animator(self):
-            return self
+            def animator(self):
+                return self
 
-        def setFrame_display_(self, frame, display):
-            self.frames.append((frame, display))
+            def setFrame_display_(self, frame, display):
+                self.frames.append((frame, display))
 
-    class Context:
-        duration = None
-        timing_function = None
+        class Context:
+            duration = None
+            timing_function = None
 
-        def setDuration_(self, value):
-            self.duration = value
+            def setDuration_(self, value):
+                self.duration = value
 
-        def setTimingFunction_(self, value):
-            self.timing_function = value
+            def setTimingFunction_(self, value):
+                self.timing_function = value
 
-    context = Context()
-    class AnimationContext:
-        @staticmethod
-        def runAnimationGroup_completionHandler_(configure, completion):
-            configure(context)
-            if completion is not None:
-                completion()
+        context = Context()
+        class AnimationContext:
+            @staticmethod
+            def runAnimationGroup_completionHandler_(configure, completion):
+                configure(context)
+                if completion is not None:
+                    completion()
 
-    monkeypatch.setattr("AppKit.NSAnimationContext", AnimationContext, raising=False)
-    window = Window()
-    _apply_alcove_frame(
-        window,
-        ((1.0, 2.0), (3.0, 4.0)),
-        AlcoveConfidenceState(previous),
-        AlcoveConfidenceState(current),
-        AccessibilityDisplayPreferences(reduce_motion=reduce_motion),
-    )
-    assert len(window.frames) == 1
-    assert (context.duration == 0.18) is animated
+        monkeypatch.setattr("AppKit.NSAnimationContext", AnimationContext, raising=False)
+        window = Window()
+        _apply_alcove_frame(
+            window,
+            ((1.0, 2.0), (3.0, 4.0)),
+            AlcoveConfidenceState(previous),
+            AlcoveConfidenceState(current),
+            AccessibilityDisplayPreferences(reduce_motion=reduce_motion),
+        )
+        assert len(window.frames) == 1
+        assert (context.duration == 0.18) is animated
 
-
-def test_alcove_recovery_animation_failure_applies_frame_once(monkeypatch) -> None:
+    # --- scenario: alcove_recovery_animation_failure_applies_frame_once
+    monkeypatch.undo()
     from jrbar.alcove_observation import AlcoveConfidenceState
     from jrbar.virtual_device import _apply_alcove_frame
 
@@ -106,8 +102,8 @@ def test_alcove_recovery_animation_failure_applies_frame_once(monkeypatch) -> No
     )
     assert window.frames == [(((1.0, 2.0), (3.0, 4.0)), True)]
 
-
-def test_alcove_recovery_post_apply_failure_does_not_retry(monkeypatch) -> None:
+    # --- scenario: alcove_recovery_post_apply_failure_does_not_retry
+    monkeypatch.undo()
     from jrbar.alcove_observation import AlcoveConfidenceState
     from jrbar.virtual_device import _apply_alcove_frame
 
@@ -140,6 +136,7 @@ def test_alcove_recovery_post_apply_failure_does_not_retry(monkeypatch) -> None:
         AccessibilityDisplayPreferences(),
     )
     assert window.frames == [(((1.0, 2.0), (3.0, 4.0)), True)]
+
 
 
 def test_reposition_passes_ordered_alcove_motion_state_to_frame_boundary(monkeypatch) -> None:
@@ -251,7 +248,8 @@ def _real_window_presentation(monkeypatch):
     )
 
 
-def test_alcove_idle_pulse_keeps_the_dark_gap_between_breaths() -> None:
+def test_alcove_idle_pulse_keeps_the_dark_gap_between_breaths__and_1_more() -> None:
+    # --- scenario: alcove_idle_pulse_keeps_the_dark_gap_between_breaths
     from jrbar.virtual_device import VirtualLedView
 
     view = VirtualLedView.alloc().initWithFrame_(((0, 0), (213.0, 37.0)))
@@ -262,8 +260,7 @@ def test_alcove_idle_pulse_keeps_the_dark_gap_between_breaths() -> None:
 
     assert rendered == [(0.0, 0.0, 0.0, 0.0)] * 8
 
-
-def test_explicit_off_program_remains_invisible_with_a_minimum_glow() -> None:
+    # --- scenario: explicit_off_program_remains_invisible_with_a_minimum_glow
     from jrbar.virtual_device import VirtualLedView
 
     view = VirtualLedView.alloc().initWithFrame_(((0, 0), (213.0, 37.0)))
@@ -275,7 +272,9 @@ def test_explicit_off_program_remains_invisible_with_a_minimum_glow() -> None:
     ] * 8
 
 
-def test_alcove_view_boundaries_are_typed_and_change_gated(monkeypatch) -> None:
+
+def test_alcove_view_boundaries_are_typed_and_change_gated__and_1_more(monkeypatch) -> None:
+    # --- scenario: alcove_view_boundaries_are_typed_and_change_gated
     from jrbar.alcove_observation import (
         AlcoveConfidenceProjection,
         AlcoveConfidenceState,
@@ -306,8 +305,8 @@ def test_alcove_view_boundaries_are_typed_and_change_gated(monkeypatch) -> None:
     view.setAlcoveConfidence_(projection)
     assert len(repaints) == 2
 
-
-def test_alcove_confidence_accessibility_failures_are_headless_safe(monkeypatch) -> None:
+    # --- scenario: alcove_confidence_accessibility_failures_are_headless_safe
+    monkeypatch.undo()
     from jrbar.alcove_observation import (
         AlcoveConfidenceProjection,
         AlcoveConfidenceState,
@@ -333,6 +332,7 @@ def test_alcove_confidence_accessibility_failures_are_headless_safe(monkeypatch)
     monkeypatch.setattr(missing, "setAccessibilityHelp_", None)
     missing.setAlcoveConfidence_(projection)
     assert missing.alcove_confidence is projection
+
 
 
 class _DisplayLink:
@@ -558,9 +558,8 @@ class _PresentationInputRecorder:
         self.inputs.append(inputs)
 
 
-def test_screen_bar_production_lifecycle_publishes_no_inactive_work(
-    monkeypatch,
-) -> None:
+def test_screen_bar_production_lifecycle_publishes_no_inactive_work__and_2_more(monkeypatch,) -> None:
+    # --- scenario: screen_bar_production_lifecycle_publishes_no_inactive_work
     """Catches hidden, disabled, sleeping, or terminating device work escaping the plan."""
     for lifecycle in ("hide", "disable", "sleep", "terminate"):
         device, _view, _run_loop, timers, _virtual_device = _active_device(
@@ -607,10 +606,8 @@ def test_screen_bar_production_lifecycle_publishes_no_inactive_work(
         assert sampler_creations == []
         assert alcove_creations == []
 
-
-def test_screen_bar_resolves_native_and_fallback_drivers_before_planning(
-    monkeypatch,
-) -> None:
+    # --- scenario: screen_bar_resolves_native_and_fallback_drivers_before_planning
+    monkeypatch.undo()
     """Catches a native display link and registry fallback running together."""
     native, _view, _run_loop, native_timers, _virtual_device = _active_device(monkeypatch)
     native_recorder = _PresentationInputRecorder()
@@ -636,10 +633,8 @@ def test_screen_bar_resolves_native_and_fallback_drivers_before_planning(
     assert fallback_recorder.inputs[-1].animation_active is True
     assert fallback_timers.created == []
 
-
-def test_screen_bar_static_and_finite_programs_publish_only_exact_deadline_work(
-    monkeypatch,
-) -> None:
+    # --- scenario: screen_bar_static_and_finite_programs_publish_only_exact_deadline_work
+    monkeypatch.undo()
     """Catches static output retaining a watcher or finite output creating a local timer."""
     clock = [500.0]
     device, _view, _run_loop, timers, virtual_device = _active_device(
@@ -675,6 +670,7 @@ def test_screen_bar_static_and_finite_programs_publish_only_exact_deadline_work(
     assert finite_plan.intents[-1].tolerance == 0.0
     assert device.timer is None
     assert timers.created == []
+
 
 
 def test_screen_bar_fifty_lifecycle_cycles_keep_one_worker_and_no_local_timer(
@@ -728,7 +724,8 @@ def test_screen_bar_fifty_lifecycle_cycles_keep_one_worker_and_no_local_timer(
     assert timers.created == []
 
 
-def test_screen_bar_fallback_never_creates_a_second_local_timer(monkeypatch) -> None:
+def test_screen_bar_fallback_never_creates_a_second_local_timer__and_2_more(monkeypatch) -> None:
+    # --- scenario: screen_bar_fallback_never_creates_a_second_local_timer
     """Catches the device bypassing the shared registry with a local fallback timer."""
     device, _view, _run_loop, timers, _virtual_device = _active_device(
         monkeypatch,
@@ -747,8 +744,8 @@ def test_screen_bar_fallback_never_creates_a_second_local_timer(monkeypatch) -> 
     assert device.display_link is None
     assert device.presentation_scheduler_inputs().animation_active is True
 
-
-def test_screen_bar_partial_workspace_observer_install_rolls_back(monkeypatch) -> None:
+    # --- scenario: screen_bar_partial_workspace_observer_install_rolls_back
+    monkeypatch.undo()
     """Catches a wake-registration failure leaking the already registered sleep observer."""
     from jrbar import virtual_device
 
@@ -782,8 +779,8 @@ def test_screen_bar_partial_workspace_observer_install_rolls_back(monkeypatch) -
     assert center.removed == [virtual_device.NSWorkspaceScreensDidSleepNotification]
     assert not device._power_observers_installed
 
-
-def test_screen_bar_failed_observer_rollback_remains_owned_for_teardown_retry(monkeypatch) -> None:
+    # --- scenario: screen_bar_failed_observer_rollback_remains_owned_for_teardown_retry
+    monkeypatch.undo()
     """Catches a failed rollback being forgotten, duplicated, or skipped by later teardown."""
     from jrbar import virtual_device
 
@@ -829,34 +826,27 @@ def test_screen_bar_failed_observer_rollback_remains_owned_for_teardown_retry(mo
     assert not device._power_observers_installed
 
 
-@pytest.mark.parametrize(
-    ("maximum_fps", "negotiated", "cadence"),
-    # The rate asked for is one the panel can produce, so it is also the rate
-    # assumed afterwards. 144 used to ask for 120: there is no 144/n equal to
-    # 120, so the link settled at 72 and every number downstream was a fiction.
-    # 144/3 = 48 is a real scan rate and clears the 60 fps ceiling whole.
-    [(60, 60.0, 60.0), (120, 120.0, 60.0), (144, 48.0, 48.0)],
-)
-def test_screen_bar_driver_negotiates_target_clock_in_common_modes(
-    monkeypatch, maximum_fps: int, negotiated: float, cadence: float
-) -> None:
-    """Catches active nominal output falling back to a timer despite display-link support."""
-    device, view, run_loop, timers, virtual_device = _active_device(
-        monkeypatch, maximum_fps=maximum_fps
-    )
 
-    device._refresh_render_cadence(True, force=True)
+def test_screen_bar_driver_negotiates_target_clock_in_common_modes__and_1_more(monkeypatch) -> None:
+    # --- scenario: screen_bar_driver_negotiates_target_clock_in_common_modes
+    for maximum_fps, negotiated, cadence in [(60, 60.0, 60.0), (120, 120.0, 60.0), (144, 48.0, 48.0)]:
+        """Catches active nominal output falling back to a timer despite display-link support."""
+        device, view, run_loop, timers, virtual_device = _active_device(
+            monkeypatch, maximum_fps=maximum_fps
+        )
 
-    assert device.display_link is view.links[0]
-    assert view.links[0].run_loop_modes == [(run_loop, virtual_device.NSRunLoopCommonModes)]
-    assert view.links[0].frame_ranges == [(negotiated, negotiated, negotiated)]
-    assert device._render_schedule.driver_fps == negotiated
-    assert device.timer is None
-    assert timers.created == []
-    assert view.sample_fps == [cadence]
+        device._refresh_render_cadence(True, force=True)
 
+        assert device.display_link is view.links[0]
+        assert view.links[0].run_loop_modes == [(run_loop, virtual_device.NSRunLoopCommonModes)]
+        assert view.links[0].frame_ranges == [(negotiated, negotiated, negotiated)]
+        assert device._render_schedule.driver_fps == negotiated
+        assert device.timer is None
+        assert timers.created == []
+        assert view.sample_fps == [cadence]
 
-def test_screen_bar_display_link_callback_samples_and_invalidates_once(monkeypatch) -> None:
+    # --- scenario: screen_bar_display_link_callback_samples_and_invalidates_once
+    monkeypatch.undo()
     """Catches one display callback requesting multiple paints or re-registering its driver."""
     device, view, run_loop, _timers, _virtual_device = _active_device(monkeypatch)
     device._refresh_render_cadence(True, force=True)
@@ -869,125 +859,113 @@ def test_screen_bar_display_link_callback_samples_and_invalidates_once(monkeypat
     assert run_loop.timers == []
 
 
-@pytest.mark.parametrize(
-    ("display_interval", "middle_frame"),
-    [
+
+def test_screen_bar_display_samples_follow_target_timestamp_not_arrival() -> None:
+    for display_interval, middle_frame in [
         (1.0 / 60.0, ((1.0, 0.5, 0.25, 1.0),)),
         (1.0 / 120.0, ((0.5, 0.25, 0.125, 1.0),)),
-    ],
-)
-def test_screen_bar_display_samples_follow_target_timestamp_not_arrival(
-    display_interval: float, middle_frame: tuple[tuple[float, float, float, float], ...]
-) -> None:
-    """Catches 60 or 120 Hz motion advancing by callback count or callback arrival."""
-    from jrbar.screen_bar_pipeline import (
-        ColorSample,
-        PresentationTick,
-        SamplePair,
-        TwoSampleBuffer,
-        display_colors_for_tick,
-    )
-
-    pair = SamplePair(
-        ColorSample(7, 30.0, ((0.0, 0.0, 0.0, 1.0),)),
-        ColorSample(7, 30.0 + 1.0 / 60.0, ((1.0, 0.5, 0.25, 1.0),)),
-    )
-    buffer = TwoSampleBuffer()
-    assert buffer.publish(pair)
-    schedules = (
-        (29.998, 30.000),
-        (30.010, 30.000 + display_interval),
-        (30.013, 30.000 + display_interval),
-        (30.012, 30.000 + 1.0 / 60.0),
-    )
-
-    frames = [
-        display_colors_for_tick(
-            buffer,
-            PresentationTick(arrival, target, 7),
-            last_safe_colors=None,
-            static_fallback_colors=((0.0, 0.0, 0.0, 1.0),),
+    ]:
+        """Catches 60 or 120 Hz motion advancing by callback count or callback arrival."""
+        from jrbar.screen_bar_pipeline import (
+            ColorSample,
+            PresentationTick,
+            SamplePair,
+            TwoSampleBuffer,
+            display_colors_for_tick,
         )
-        for arrival, target in schedules
-    ]
 
-    assert frames == [
-        ((0.0, 0.0, 0.0, 1.0),),
-        middle_frame,
-        middle_frame,
-        ((1.0, 0.5, 0.25, 1.0),),
-    ]
+        pair = SamplePair(
+            ColorSample(7, 30.0, ((0.0, 0.0, 0.0, 1.0),)),
+            ColorSample(7, 30.0 + 1.0 / 60.0, ((1.0, 0.5, 0.25, 1.0),)),
+        )
+        buffer = TwoSampleBuffer()
+        assert buffer.publish(pair)
+        schedules = (
+            (29.998, 30.000),
+            (30.010, 30.000 + display_interval),
+            (30.013, 30.000 + display_interval),
+            (30.012, 30.000 + 1.0 / 60.0),
+        )
+
+        frames = [
+            display_colors_for_tick(
+                buffer,
+                PresentationTick(arrival, target, 7),
+                last_safe_colors=None,
+                static_fallback_colors=((0.0, 0.0, 0.0, 1.0),),
+            )
+            for arrival, target in schedules
+        ]
+
+        assert frames == [
+            ((0.0, 0.0, 0.0, 1.0),),
+            middle_frame,
+            middle_frame,
+            ((1.0, 0.5, 0.25, 1.0),),
+        ]
 
 
-@pytest.mark.parametrize(
-    ("environment", "expected_fps"),
-    [
+def test_screen_bar_constrained_output_replaces_display_link_with_capped_timer__and_2_more(monkeypatch) -> None:
+    # --- scenario: screen_bar_constrained_output_replaces_display_link_with_capped_timer
+    for environment, expected_fps in [
         (RenderEnvironment(low_power=True), 30.0),
         (RenderEnvironment(thermal="serious"), 15.0),
-    ],
-)
-def test_screen_bar_constrained_output_replaces_display_link_with_capped_timer(
-    monkeypatch, environment: RenderEnvironment, expected_fps: float
-) -> None:
-    """Catches low-power or thermal changes leaving the uncapped native driver alive."""
-    device, view, _run_loop, timers, _virtual_device = _active_device(monkeypatch)
-    device._refresh_render_cadence(True, force=True)
-    native_link = view.links[0]
-    device._runtime_environment = lambda **_kwargs: environment
+    ]:
+        """Catches low-power or thermal changes leaving the uncapped native driver alive."""
+        device, view, _run_loop, timers, _virtual_device = _active_device(monkeypatch)
+        device._refresh_render_cadence(True, force=True)
+        native_link = view.links[0]
+        device._runtime_environment = lambda **_kwargs: environment
 
-    device._refresh_render_cadence(True, force=True)
+        device._refresh_render_cadence(True, force=True)
 
-    assert native_link.invalidated == 1
-    assert device.display_link is None
-    assert device.timer is None
-    assert timers.created == []
-    assert device._frame_interval_current == 1.0 / expected_fps
-    assert device.presentation_scheduler_inputs().animation_active is True
+        assert native_link.invalidated == 1
+        assert device.display_link is None
+        assert device.timer is None
+        assert timers.created == []
+        assert device._frame_interval_current == 1.0 / expected_fps
+        assert device.presentation_scheduler_inputs().animation_active is True
 
+    # --- scenario: screen_bar_display_link_failure_uses_60_hz_timer_fallback
+    monkeypatch.undo()
+    for failure in ["construction", "registration"]:
+        """Catches an AppKit display-link boundary failure that leaves the bar without a driver."""
+        view = _DisplayLinkView(fail_construction=failure == "construction")
+        device, view, _run_loop, timers, _virtual_device = _active_device(
+            monkeypatch, view=view, fail_registration=failure == "registration"
+        )
 
-@pytest.mark.parametrize("failure", ["construction", "registration"])
-def test_screen_bar_display_link_failure_uses_60_hz_timer_fallback(monkeypatch, failure: str) -> None:
-    """Catches an AppKit display-link boundary failure that leaves the bar without a driver."""
-    view = _DisplayLinkView(fail_construction=failure == "construction")
-    device, view, _run_loop, timers, _virtual_device = _active_device(
-        monkeypatch, view=view, fail_registration=failure == "registration"
-    )
+        device._refresh_render_cadence(True, force=True)
 
-    device._refresh_render_cadence(True, force=True)
+        assert device.display_link is None
+        assert device.timer is None
+        assert timers.created == []
+        assert device.presentation_scheduler_inputs().animation_active is True
+        if failure == "registration":
+            assert view.links[0].invalidated == 1
 
-    assert device.display_link is None
-    assert device.timer is None
-    assert timers.created == []
-    assert device.presentation_scheduler_inputs().animation_active is True
-    if failure == "registration":
-        assert view.links[0].invalidated == 1
-
-
-@pytest.mark.parametrize(
-    "view",
-    [
+    # --- scenario: screen_bar_unsupported_target_clock_uses_one_timer_without_retry_churn
+    monkeypatch.undo()
+    for view in [
         _DisplayLinkView(supports_target_timestamp=False),
         _DisplayLinkView(supports_frame_range=False),
         _DisplayLinkView(fail_frame_range=True),
-    ],
-)
-def test_screen_bar_unsupported_target_clock_uses_one_timer_without_retry_churn(
-    monkeypatch, view: _DisplayLinkView
-) -> None:
-    """Catches an unsupported display-link lifecycle replacing its fallback every refresh."""
-    device, view, _run_loop, timers, _virtual_device = _active_device(
-        monkeypatch, view=view
-    )
+    ]:
+        """Catches an unsupported display-link lifecycle replacing its fallback every refresh."""
+        device, view, _run_loop, timers, _virtual_device = _active_device(
+            monkeypatch, view=view
+        )
 
-    device._refresh_render_cadence(True, force=True)
-    device._refresh_render_cadence(True, force=True)
+        device._refresh_render_cadence(True, force=True)
+        device._refresh_render_cadence(True, force=True)
 
-    assert device.display_link is None
-    assert device.timer is None
-    assert timers.created == []
-    assert device.presentation_scheduler_inputs().animation_active is True
-    assert len(view.links) == 1
-    assert view.links[0].invalidated == 1
+        assert device.display_link is None
+        assert device.timer is None
+        assert timers.created == []
+        assert device.presentation_scheduler_inputs().animation_active is True
+        assert len(view.links) == 1
+        assert view.links[0].invalidated == 1
+
 
 
 def test_screen_bar_redraw_reads_target_time_and_only_dirties_quantized_changes(
@@ -1032,7 +1010,8 @@ def test_screen_bar_redraw_reads_target_time_and_only_dirties_quantized_changes(
     assert view.paint_requests == [True]
 
 
-def test_screen_bar_frame_callback_never_observes_or_scans_alcove(monkeypatch) -> None:
+def test_screen_bar_frame_callback_never_observes_or_scans_alcove__and_1_more(monkeypatch) -> None:
+    # --- scenario: screen_bar_frame_callback_never_observes_or_scans_alcove
     """Catches Alcove capture or geometry reduction moving into a display callback."""
     device, _view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
 
@@ -1050,8 +1029,8 @@ def test_screen_bar_frame_callback_never_observes_or_scans_alcove(monkeypatch) -
 
     device.redraw_(_DisplayLink(target_timestamps=(10.5,)))
 
-
-def test_screen_bar_draw_rect_never_captures_or_scans_alcove(monkeypatch) -> None:
+    # --- scenario: screen_bar_draw_rect_never_captures_or_scans_alcove
+    monkeypatch.undo()
     """Catches pixel observation being hidden inside the AppKit paint callback."""
     from jrbar import alcove_observation, virtual_device
 
@@ -1076,6 +1055,7 @@ def test_screen_bar_draw_rect_never_captures_or_scans_alcove(monkeypatch) -> Non
     view._presentation_colors = ((0.2, 0.4, 0.6, 1.0),) * 8
 
     view.drawRect_(None)
+
 
 
 def test_reposition_submits_plain_alcove_request_and_applies_validated_center(
@@ -1295,47 +1275,41 @@ def test_reposition_submits_plain_alcove_request_and_applies_validated_center(
     assert device.view.silhouettes[-1] is None
 
 
-@pytest.mark.parametrize(
-    "lifecycle",
-    ["hide", "disable", "sleep", "terminate", "follow_disabled"],
-)
-def test_screen_bar_inactive_lifecycle_stops_alcove_observation(
-    monkeypatch, lifecycle: str
-) -> None:
-    """Catches capture work surviving a hidden, disabled, asleep, or torn-down bar."""
-    device, _view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
+def test_screen_bar_inactive_lifecycle_stops_alcove_observation(monkeypatch) -> None:
+    for lifecycle in ["hide", "disable", "sleep", "terminate", "follow_disabled"]:
+        """Catches capture work surviving a hidden, disabled, asleep, or torn-down bar."""
+        device, _view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
 
-    class Observer:
-        def __init__(self) -> None:
-            self.closes = 0
+        class Observer:
+            def __init__(self) -> None:
+                self.closes = 0
 
-        def close(self, *, timeout_seconds: float) -> bool:
-            assert timeout_seconds <= 0.25
-            self.closes += 1
-            return True
+            def close(self, *, timeout_seconds: float) -> bool:
+                assert timeout_seconds <= 0.25
+                self.closes += 1
+                return True
 
-    observer = Observer()
-    device._alcove_observer = observer
-    if lifecycle == "hide":
-        device.hide()
-    elif lifecycle == "disable":
-        device.set_enabled(False)
-    elif lifecycle == "sleep":
-        device._set_display_asleep(True)
-    elif lifecycle == "terminate":
-        device.terminate()
-    elif lifecycle == "follow_disabled":
-        device.set_follow_alcove(False)
-    else:
-        device.set_wraps_menu_bar(False)
+        observer = Observer()
+        device._alcove_observer = observer
+        if lifecycle == "hide":
+            device.hide()
+        elif lifecycle == "disable":
+            device.set_enabled(False)
+        elif lifecycle == "sleep":
+            device._set_display_asleep(True)
+        elif lifecycle == "terminate":
+            device.terminate()
+        elif lifecycle == "follow_disabled":
+            device.set_follow_alcove(False)
+        else:
+            device.set_wraps_menu_bar(False)
 
-    assert observer.closes == 1
-    assert device._alcove_observer is None
+        assert observer.closes == 1
+        assert device._alcove_observer is None
 
 
-def test_screen_bar_late_callback_clamps_last_sample_without_waking_sampler(
-    monkeypatch,
-) -> None:
+def test_screen_bar_late_callback_clamps_last_sample_without_waking_sampler__and_1_more(monkeypatch,) -> None:
+    # --- scenario: screen_bar_late_callback_clamps_last_sample_without_waking_sampler
     """Catches a late display tick advancing WASM or submitting work from the callback."""
     from jrbar.screen_bar_pipeline import ColorSample, SamplePair, TwoSampleBuffer
 
@@ -1358,10 +1332,8 @@ def test_screen_bar_late_callback_clamps_last_sample_without_waking_sampler(
     assert view.presentation_colors[-1] == ((1.0, 0.5, 0.25, 1.0),) * 8
     assert sampler.commands == []
 
-
-def test_screen_bar_screen_change_rebinds_one_driver_at_new_refresh_rate(
-    monkeypatch,
-) -> None:
+    # --- scenario: screen_bar_screen_change_rebinds_one_driver_at_new_refresh_rate
+    monkeypatch.undo()
     """Catches a 60-to-120 Hz screen transition retaining the old display clock.
 
     Both halves of the clock: the rate the link is registered at AND the rate
@@ -1388,6 +1360,7 @@ def test_screen_bar_screen_change_rebinds_one_driver_at_new_refresh_rate(
     assert timers.created == []
 
 
+
 class _Sampler:
     def __init__(self, *, closes: bool = True) -> None:
         self.commands: list[object] = []
@@ -1402,9 +1375,8 @@ class _Sampler:
         return self.closes
 
 
-def test_screen_bar_set_program_advances_generation_and_only_enqueues_worker_work(
-    monkeypatch,
-) -> None:
+def test_screen_bar_set_program_advances_generation_and_only_enqueues_worker_work__and_2_more(monkeypatch,) -> None:
+    # --- scenario: screen_bar_set_program_advances_generation_and_only_enqueues_worker_work
     """Catches set_program constructing or stepping the WASM engine on AppKit's thread."""
     device, view, _run_loop, _timers, virtual_device = _active_device(monkeypatch)
     monkeypatch.setattr(virtual_device.time, "monotonic", lambda: 12.5)
@@ -1434,10 +1406,8 @@ def test_screen_bar_set_program_advances_generation_and_only_enqueues_worker_wor
     assert command.motion is MotionClass.FINITE
     assert command.next_visual_change_at == 13.5
 
-
-def test_screen_bar_missing_sample_paints_typed_static_semantic_fallback(
-    monkeypatch,
-) -> None:
+    # --- scenario: screen_bar_missing_sample_paints_typed_static_semantic_fallback
+    monkeypatch.undo()
     """Catches first-frame or failed-sampler fallback collapsing semantic truth to black."""
     fallback = ((0.1, 0.2, 0.3, 1.0),) * 8
     link = _DisplayLink(target_timestamps=(50.0,))
@@ -1455,10 +1425,8 @@ def test_screen_bar_missing_sample_paints_typed_static_semantic_fallback(
 
     assert view.presentation_colors[-1] == fallback
 
-
-def test_screen_bar_finite_deadline_demotes_to_static_without_a_watcher(
-    monkeypatch,
-) -> None:
+    # --- scenario: screen_bar_finite_deadline_demotes_to_static_without_a_watcher
+    monkeypatch.undo()
     """Catches an expired finite cue retaining a frame driver or static watcher."""
     clock = [100.0]
     device, view, run_loop, timers, virtual_device = _active_device(monkeypatch)
@@ -1489,6 +1457,7 @@ def test_screen_bar_finite_deadline_demotes_to_static_without_a_watcher(
     assert sampler.commands[-1].program == "steady"
     assert sampler.commands[-1].motion is MotionClass.STATIC
     assert device._static_fallback_colors == fallback
+
 
 
 def test_screen_bar_same_finite_dsl_rearms_for_a_new_episode(monkeypatch) -> None:
@@ -1713,7 +1682,8 @@ def test_screen_bar_stale_program_or_screen_publication_never_reaches_paint(
     assert view.presentation_colors[-1] == ((0.0, 0.0, 0.0, 0.0),) * 8
 
 
-def test_screen_bar_hide_and_display_sleep_clear_every_owned_driver(monkeypatch) -> None:
+def test_screen_bar_hide_and_display_sleep_clear_every_owned_driver__and_2_more(monkeypatch) -> None:
+    # --- scenario: screen_bar_hide_and_display_sleep_clear_every_owned_driver
     """Catches lifecycle pauses that retain either native or timer callbacks."""
     device, _view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
     first_link = _DisplayLink()
@@ -1742,8 +1712,8 @@ def test_screen_bar_hide_and_display_sleep_clear_every_owned_driver(monkeypatch)
     assert device.display_link is None
     assert device.timer is None
 
-
-def test_screen_bar_rebuild_invalidates_old_display_link_before_binding_view(monkeypatch) -> None:
+    # --- scenario: screen_bar_rebuild_invalidates_old_display_link_before_binding_view
+    monkeypatch.undo()
     """Catches replacing the content view while its display link still targets the old view."""
     device, _view, _run_loop, _timers, virtual_device = _active_device(monkeypatch)
     old_link = _DisplayLink()
@@ -1795,8 +1765,8 @@ def test_screen_bar_rebuild_invalidates_old_display_link_before_binding_view(mon
     assert device.display_link is None
     assert isinstance(device.view, ReplacementView)
 
-
-def test_screen_bar_typed_static_and_program_promotion_swap_drivers(monkeypatch) -> None:
+    # --- scenario: screen_bar_typed_static_and_program_promotion_swap_drivers
+    monkeypatch.undo()
     """Catches typed static output retaining a driver or new motion remaining static."""
     device, view, _run_loop, timers, _virtual_device = _active_device(monkeypatch)
     device.reposition = lambda: None
@@ -1818,6 +1788,7 @@ def test_screen_bar_typed_static_and_program_promotion_swap_drivers(monkeypatch)
     assert timers.created == []
 
 
+
 def test_screen_bar_wake_and_show_install_only_one_driver(monkeypatch) -> None:
     """Catches wake or repeated show installing duplicate display callbacks."""
     device, view, _run_loop, _timers, _virtual_device = _active_device(monkeypatch)
@@ -1832,9 +1803,9 @@ def test_screen_bar_wake_and_show_install_only_one_driver(monkeypatch) -> None:
     assert device.timer is None
 
 
-@pytest.mark.parametrize(
-    ("environment", "animation_active", "display_link_available", "driver", "fps", "sample_fps"),
-    [
+def test_render_schedule_selects_driver_without_changing_cadence__and_2_more() -> None:
+    # --- scenario: render_schedule_selects_driver_without_changing_cadence
+    for environment, animation_active, display_link_available, driver, fps, sample_fps in [
         (RenderEnvironment(visible=False), True, True, RenderDriverKind.PAUSED, 0.0, 0.0),
         (
             RenderEnvironment(visible=True, display_asleep=True),
@@ -1855,50 +1826,34 @@ def test_screen_bar_wake_and_show_install_only_one_driver(monkeypatch) -> None:
         (RenderEnvironment(thermal="critical"), True, True, RenderDriverKind.TIMER, 7.5, 7.5),
         (RenderEnvironment(), False, True, RenderDriverKind.TIMER, 4.0, 4.0),
         (RenderEnvironment(low_power=True), False, True, RenderDriverKind.TIMER, 1.0, 1.0),
-    ],
-)
-def test_render_schedule_selects_driver_without_changing_cadence(
-    environment: RenderEnvironment,
-    animation_active: bool,
-    display_link_available: bool,
-    driver: RenderDriverKind,
-    fps: float,
-    sample_fps: float,
-) -> None:
-    """Catches a driver choice that bypasses the established cadence caps.
+    ]:
+        """Catches a driver choice that bypasses the established cadence caps.
 
-    The cadence is now also rounded DOWN to something the chosen driver can
-    actually produce, never up -- these are thermal and low-power ceilings and
-    overshooting one is the failure the ceiling exists to prevent.
-    """
-    schedule = choose_render_schedule(
-        environment,
-        animation_active,
-        display_link_available=display_link_available,
-    )
+        The cadence is now also rounded DOWN to something the chosen driver can
+        actually produce, never up -- these are thermal and low-power ceilings and
+        overshooting one is the failure the ceiling exists to prevent.
+        """
+        schedule = choose_render_schedule(
+            environment,
+            animation_active,
+            display_link_available=display_link_available,
+        )
 
-    assert schedule.driver is driver
-    assert schedule.cadence.fps == fps
-    assert schedule.cadence.sample_fps == sample_fps
+        assert schedule.driver is driver
+        assert schedule.cadence.fps == fps
+        assert schedule.cadence.sample_fps == sample_fps
 
-
-@pytest.mark.parametrize(
-    ("width", "height", "expected"),
-    [
+    # --- scenario: alcove_bracket_corner_radius_stays_inside_the_bracket
+    for width, height, expected in [
         (220.0, 40.0, 8.0),
         (15.0, 40.0, 7.5),
         (40.0, 6.0, 3.0),
         (-1.0, 40.0, 0.0),
-    ],
-)
-def test_alcove_bracket_corner_radius_stays_inside_the_bracket(
-    width: float, height: float, expected: float
-) -> None:
-    """Catches rounded corners extending beyond a narrow Alcove bracket."""
-    assert alcove_bracket_corner_radius(width, height) == expected
+    ]:
+        """Catches rounded corners extending beyond a narrow Alcove bracket."""
+        assert alcove_bracket_corner_radius(width, height) == expected
 
-
-def test_reanchor_program_snaps_phase_to_the_hardware_write_moment() -> None:
+    # --- scenario: reanchor_program_snaps_phase_to_the_hardware_write_moment
     """Linked means SYNCED: the strip restarts its cycle when the firmware
     picks up a changed LEDS.LED; the bar snaps its clock to that moment so
     the same pulse loops together on both surfaces instead of a few
@@ -1964,7 +1919,9 @@ def test_reanchor_program_snaps_phase_to_the_hardware_write_moment() -> None:
     assert device.reanchor_program(200.0) is False
 
 
-def test_a_full_screen_space_hides_the_bar_unless_opted_in():
+
+def test_a_full_screen_space_hides_the_bar_unless_opted_in__and_1_more() -> None:
+    # --- scenario: a_full_screen_space_hides_the_bar_unless_opted_in
     """'In full screen videos it is still there' (2026-08-21): the bar's
     window level rides above full-screen video by necessity, so a
     full-screen space (menu bar gone -- the visible frame reaches the
@@ -2010,8 +1967,7 @@ def test_a_full_screen_space_hides_the_bar_unless_opted_in():
     device._reconcile_fullscreen_visibility()
     window.orderOut_.assert_not_called()
 
-
-def test_show_never_fronts_the_bar_over_a_full_screen_space():
+    # --- scenario: show_never_fronts_the_bar_over_a_full_screen_space
     """The regression behind 'still there inside full-screen video':
     show() fronted the window BEFORE reconciling, so every program
     reassert popped the bar back over the movie. The verdict now comes
@@ -2061,6 +2017,7 @@ def test_show_never_fronts_the_bar_over_a_full_screen_space():
     window.orderOut_.assert_not_called()
 
 
+
 def test_announcer_pill_entrance_springs_from_its_top_anchor(monkeypatch) -> None:
     """The pill used to teleport: frame set, orderFrontRegardless, done.
     Its entrance is now a top-anchored spring + fade (wired 2026-08-26,
@@ -2089,7 +2046,8 @@ def test_announcer_pill_entrance_springs_from_its_top_anchor(monkeypatch) -> Non
     pill.close()
 
 
-def test_follow_window_height_tracks_the_capsules_measured_depth() -> None:
+def test_follow_window_height_tracks_the_capsules_measured_depth__and_2_more() -> None:
+    # --- scenario: follow_window_height_tracks_the_capsules_measured_depth
     """An expanded Alcove capsule runs far taller than the hardware
     notch; keeping hardware-notch height rendered the band mid-capsule
     as a detached smear (fixed 2026-08-27)."""
@@ -2134,8 +2092,7 @@ def test_follow_window_height_tracks_the_capsules_measured_depth() -> None:
     )
     assert collapsed[1][1] == baseline[1][1]
 
-
-def test_alcove_relevance_wakes_from_a_cached_presence_read() -> None:
+    # --- scenario: alcove_relevance_wakes_from_a_cached_presence_read
     """A launched Alcove against an idle bar starts its own follow
     cadence: the schedule inputs refresh relevance from the probe's
     cached answer instead of waiting for an unrelated reposition
@@ -2160,8 +2117,7 @@ def test_alcove_relevance_wakes_from_a_cached_presence_read() -> None:
     quiet._alcove_presence_probe = SimpleNamespace(running=lambda now: False)
     assert quiet._alcove_follow_relevant() is False
 
-
-def test_compact_mode_keeps_the_alcove_observation_schedule_alive() -> None:
+    # --- scenario: compact_mode_keeps_the_alcove_observation_schedule_alive
     """Compact changes bar geometry, not whether Alcove is observed."""
     from jrbar.runtime_scheduler import RuntimeFeature
     from jrbar.virtual_device import VirtualStatusDevice
@@ -2183,7 +2139,9 @@ def test_compact_mode_keeps_the_alcove_observation_schedule_alive() -> None:
     )
 
 
-def test_compact_mode_width_follows_the_capsule_too() -> None:
+
+def test_compact_mode_width_follows_the_capsule_too__and_1_more() -> None:
+    # --- scenario: compact_mode_width_follows_the_capsule_too
     """Wrap OFF is the default ("minimal settings"), and its window used
     to stay at raw hardware-slot width while height and center followed
     Alcove -- a fixed 232pt band overhanging a ~200pt capsule read as a
@@ -2221,8 +2179,7 @@ def test_compact_mode_width_follows_the_capsule_too() -> None:
     assert followed[1][0] == 204.0
     assert followed[1][0] != bare[1][0]
 
-
-def test_announcer_suppression_gate_includes_fullscreen_and_compact_modes() -> None:
+    # --- scenario: announcer_suppression_gate_includes_fullscreen_and_compact_modes
     """A visible Screen Bar must not leak an announcer into either exclusion."""
     from jrbar.virtual_device import VirtualStatusDevice
 
@@ -2234,3 +2191,4 @@ def test_announcer_suppression_gate_includes_fullscreen_and_compact_modes() -> N
     device._fullscreen_hidden = False
     device._compact_active = True
     assert not device.can_present_announcer()
+

@@ -82,7 +82,8 @@ def _controller_for_refresh(module, *, wall_clock, monotonic_clock):
     return controller
 
 
-def test_usage_window_is_a_thin_appkit_projection_host():
+def test_usage_window_is_a_thin_appkit_projection_host__and_2_more() -> None:
+    # --- scenario: usage_window_is_a_thin_appkit_projection_host
     source = MODULE.read_text(encoding="utf-8")
     tree = ast.parse(source)
     names = {
@@ -103,19 +104,14 @@ def test_usage_window_is_a_thin_appkit_projection_host():
     ):
         assert forbidden not in source
 
-
-def test_usage_window_passes_cached_merged_sync_and_never_fetches():
-    # The "across synced Macs" line renders from LOCAL cached documents
-    # only (2026-08-26): the window imports the worker-refreshed in-memory
-    # cache, not the local document loader, SFTP runtime, or transport.
+    # --- scenario: usage_window_passes_cached_merged_sync_and_never_fetches
     source = MODULE.read_text(encoding="utf-8")
     assert "merged_sync=cached_merged_sync(state)" in source
     assert "provider_usage_sync_cache" in source
     assert "provider_usage_sync_runtime" not in source
     assert "provider_usage_sync_transport" not in source
 
-
-def test_usage_window_cache_lookup_is_memory_only_and_worker_refreshed():
+    # --- scenario: usage_window_cache_lookup_is_memory_only_and_worker_refreshed
     cache = ROOT / "src" / "jrbar" / "provider_usage_sync_cache.py"
     source = cache.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -136,16 +132,13 @@ def test_usage_window_cache_lookup_is_memory_only_and_worker_refreshed():
     assert "load_cached_merged_sync" in calls("refresh_cached_merged_sync")
 
 
-def test_usage_window_survives_its_own_close_button():
-    # A code-created NSWindow defaults to released-when-closed; this
-    # window is cached and refreshed forever, so closing it once made
-    # every later Connect click a dead-object SIGTRAP (2026-08-20, three
-    # crash reports in one morning).
+
+def test_usage_window_survives_its_own_close_button__and_1_more() -> None:
+    # --- scenario: usage_window_survives_its_own_close_button
     source = MODULE.read_text(encoding="utf-8")
     assert "setReleasedWhenClosed_(False)" in source
 
-
-def test_usage_window_scroll_document_uses_top_origin():
+    # --- scenario: usage_window_scroll_document_uses_top_origin
     """AppKit scroll documents otherwise open at their bottom edge.
 
     The Usage Center must start with its heading and first cards at the top
@@ -169,28 +162,24 @@ def test_usage_window_scroll_document_uses_top_origin():
     assert "self.stack = FlippedStackView.alloc().init()" in source
 
 
-def test_usage_window_accepts_injected_wall_and_monotonic_clocks(
-    monkeypatch: pytest.MonkeyPatch,
-):
+
+def test_usage_window_accepts_injected_wall_and_monotonic_clocks__and_2_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: usage_window_accepts_injected_wall_and_monotonic_clocks
     module = _load_controller_module(monkeypatch)
     parameters = inspect.signature(module.ProviderUsageWindowController).parameters
 
     assert parameters["wall_clock"].default is time.time
     assert parameters["monotonic_clock"].default is time.monotonic
 
-
-def test_usage_window_accepts_explicit_privacy_mode(
-    monkeypatch: pytest.MonkeyPatch,
-):
+    # --- scenario: usage_window_accepts_explicit_privacy_mode
+    monkeypatch.undo()
     module = _load_controller_module(monkeypatch)
     parameters = inspect.signature(module.ProviderUsageWindowController).parameters
 
     assert parameters["privacy_mode"].default is False
 
-
-def test_usage_window_privacy_mode_can_follow_live_settings(
-    monkeypatch: pytest.MonkeyPatch,
-):
+    # --- scenario: usage_window_privacy_mode_can_follow_live_settings
+    monkeypatch.undo()
     module = _load_controller_module(monkeypatch)
     controller = _controller_for_refresh(
         module,
@@ -209,6 +198,7 @@ def test_usage_window_privacy_mode_can_follow_live_settings(
 
     assert controller._privacy_mode is True
     assert refreshes == [state]
+
 
 
 def test_usage_window_projection_uses_injected_wall_clock(
@@ -241,43 +231,35 @@ def test_usage_window_projection_uses_injected_wall_clock(
     assert projection_calls == [1234.5]
 
 
-@pytest.mark.parametrize(
-    ("monotonic_now", "banner_visible"),
-    ((11.999, True), (12.0, False)),
-)
-def test_usage_window_message_expires_at_exact_monotonic_deadline(
-    monkeypatch: pytest.MonkeyPatch,
-    monotonic_now: float,
-    banner_visible: bool,
-):
-    module = _load_controller_module(monkeypatch)
-    from jrbar.provider_usage_runtime import ProviderUsageState
+def test_usage_window_message_expires_at_exact_monotonic_deadline(monkeypatch: pytest.MonkeyPatch):
+    for monotonic_now, banner_visible in ((11.999, True), (12.0, False)):
+        module = _load_controller_module(monkeypatch)
+        from jrbar.provider_usage_runtime import ProviderUsageState
 
-    controller = _controller_for_refresh(
-        module,
-        wall_clock=lambda: 500.0,
-        monotonic_clock=lambda: monotonic_now,
-    )
-    controller._message = "Connected"
-    controller._message_until = 12.0
-    monkeypatch.setattr(module, "cached_merged_sync", lambda _state: None)
-    monkeypatch.setattr(
-        module,
-        "project_usage_center",
-        lambda _state, *, now, merged_sync, visual, privacy_mode: SimpleNamespace(
-            subtitle="subtitle", aggregate_metrics=(), sections=()
-        ),
-    )
-    monkeypatch.setattr(module, "_label", lambda text, **_kwargs: text)
+        controller = _controller_for_refresh(
+            module,
+            wall_clock=lambda: 500.0,
+            monotonic_clock=lambda: monotonic_now,
+        )
+        controller._message = "Connected"
+        controller._message_until = 12.0
+        monkeypatch.setattr(module, "cached_merged_sync", lambda _state: None)
+        monkeypatch.setattr(
+            module,
+            "project_usage_center",
+            lambda _state, *, now, merged_sync, visual, privacy_mode: SimpleNamespace(
+                subtitle="subtitle", aggregate_metrics=(), sections=()
+            ),
+        )
+        monkeypatch.setattr(module, "_label", lambda text, **_kwargs: text)
 
-    controller.refresh(ProviderUsageState((), None, None, False))
+        controller.refresh(ProviderUsageState((), None, None, False))
 
-    assert ("Connected" in controller.stack.views) is banner_visible
+        assert ("Connected" in controller.stack.views) is banner_visible
 
 
-def test_usage_window_message_deadline_uses_injected_monotonic_clock(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_usage_window_message_deadline_uses_injected_monotonic_clock__and_2_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: usage_window_message_deadline_uses_injected_monotonic_clock
     module = _load_controller_module(monkeypatch)
     from jrbar.provider_usage_runtime import ProviderUsageState
 
@@ -295,10 +277,8 @@ def test_usage_window_message_deadline_uses_injected_monotonic_clock(
     assert monotonic_reads == ["read"]
     assert controller._message_until == 112.0
 
-
-def test_usage_window_passes_only_the_privacy_safe_visual_projection(
-    monkeypatch: pytest.MonkeyPatch,
-):
+    # --- scenario: usage_window_passes_only_the_privacy_safe_visual_projection
+    monkeypatch.undo()
     module = _load_controller_module(monkeypatch)
     from jrbar.provider_feature_settings import (
         ProviderInstancePolicyProjection,
@@ -340,10 +320,8 @@ def test_usage_window_passes_only_the_privacy_safe_visual_projection(
 
     assert received == [visual]
 
-
-def test_usage_window_passes_privacy_mode_to_safe_identity_projection(
-    monkeypatch: pytest.MonkeyPatch,
-):
+    # --- scenario: usage_window_passes_privacy_mode_to_safe_identity_projection
+    monkeypatch.undo()
     module = _load_controller_module(monkeypatch)
     from jrbar.provider_usage_runtime import ProviderUsageState
 
@@ -370,6 +348,7 @@ def test_usage_window_passes_privacy_mode_to_safe_identity_projection(
     assert received == [True]
 
 
+
 def test_usage_window_never_reprocesses_safe_projected_account_labels():
     source = MODULE.read_text(encoding="utf-8")
 
@@ -377,9 +356,8 @@ def test_usage_window_never_reprocesses_safe_projected_account_labels():
     assert "_label(section.account" in source
 
 
-def test_usage_window_meter_prefers_exact_profile_color(
-    monkeypatch: pytest.MonkeyPatch,
-):
+def test_usage_window_meter_prefers_exact_profile_color__and_1_more(monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: usage_window_meter_prefers_exact_profile_color
     module = _load_controller_module(monkeypatch)
     section = SimpleNamespace(provider_id="claude", color_override="#112233")
     lane = SimpleNamespace(provider_id="claude")
@@ -391,10 +369,8 @@ def test_usage_window_meter_prefers_exact_profile_color(
         "claude"
     )
 
-
-def test_usage_window_refresh_pulse_keeps_the_sixty_second_deadline(
-    monkeypatch: pytest.MonkeyPatch,
-):
+    # --- scenario: usage_window_refresh_pulse_keeps_the_sixty_second_deadline
+    monkeypatch.undo()
     module = _load_controller_module(monkeypatch)
 
     class FakeTimer:
@@ -419,3 +395,4 @@ def test_usage_window_refresh_pulse_keeps_the_sixty_second_deadline(
     controller._start_refresh_pulse()
 
     assert [call[0] for call in FakeTimer.calls] == [60.0]
+

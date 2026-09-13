@@ -57,7 +57,8 @@ def target(**overrides) -> LocalAnswerTarget:
 # --- the measured keys --------------------------------------------------------
 
 
-def test_the_two_providers_that_can_be_answered_carry_measured_keys():
+def test_the_two_providers_that_can_be_answered_carry_measured_keys__and_2_more() -> None:
+    # --- scenario: the_two_providers_that_can_be_answered_carry_measured_keys
     assert set(ANSWER_KEYS) == {"claude", "codex"}
     claude = answer_keys_for_provider("claude")
     codex = answer_keys_for_provider("Codex")
@@ -69,16 +70,11 @@ def test_the_two_providers_that_can_be_answered_carry_measured_keys():
     assert (codex.approve.label, codex.approve.key_code) == ("y", 16)
     assert (codex.deny.label, codex.deny.key_code) == ("3", 20)
 
-
-def test_a_provider_with_no_recipe_has_no_keys():
+    # --- scenario: a_provider_with_no_recipe_has_no_keys
     assert answer_keys_for_provider("gemini") is None
     assert answer_keys_for_provider(None) is None
 
-
-# --- the contract gate --------------------------------------------------------
-
-
-def test_only_codex_and_claude_hooks_declare_answering():
+    # --- scenario: only_codex_and_claude_hooks_declare_answering
     declared = {
         (source.source_key.provider_id, source.source_key.adapter_id)
         for source in negotiated_provider_sources()
@@ -87,7 +83,9 @@ def test_only_codex_and_claude_hooks_declare_answering():
     assert declared == {("codex", "hooks"), ("claude", "hooks")}
 
 
-def test_the_declared_binding_is_the_reviewed_local_surface():
+
+def test_the_declared_binding_is_the_reviewed_local_surface__and_2_more() -> None:
+    # --- scenario: the_declared_binding_is_the_reviewed_local_surface
     for source in negotiated_provider_sources():
         declaration = source.contract.product_capability(ProductCapability.ANSWERING)
         if not declaration.supported:
@@ -97,11 +95,7 @@ def test_the_declared_binding_is_the_reviewed_local_surface():
         assert invocation.capability_id is None
         assert invocation.capability_version is None
 
-
-# --- the decision -------------------------------------------------------------
-
-
-def test_an_approved_plan_names_the_key_and_the_frontmost_process():
+    # --- scenario: an_approved_plan_names_the_key_and_the_frontmost_process
     plan = plan_local_answer(
         provider="codex", decision="approve", ask_live=True, facts=facts()
     )
@@ -110,8 +104,7 @@ def test_an_approved_plan_names_the_key_and_the_frontmost_process():
     assert plan.mechanism == "synthetic_keystroke"
     assert plan.facts.window_evidence() == "host_process_ancestry"
 
-
-def test_deny_is_planned_exactly_like_approve():
+    # --- scenario: deny_is_planned_exactly_like_approve
     plan = plan_local_answer(
         provider="claude", decision="deny", ask_live=True, facts=facts()
     )
@@ -119,9 +112,10 @@ def test_deny_is_planned_exactly_like_approve():
     assert plan.target_pid == 4200
 
 
-@pytest.mark.parametrize(
-    ("label", "overrides", "live", "code", "reason"),
-    [
+
+def test_every_failed_check_refuses_with_its_own_reason__and_2_more() -> None:
+    # --- scenario: every_failed_check_refuses_with_its_own_reason
+    for label, overrides, live, code, reason in [
         ("resolved elsewhere", {}, False, "stale_ask", "resolved_elsewhere"),
         ("dead session", {"session_alive": False}, True, "session_gone", "no_live_process"),
         ("no pid", {"session_pid": None}, True, "session_gone", "no_live_process"),
@@ -167,19 +161,16 @@ def test_deny_is_planned_exactly_like_approve():
             "accessibility_required",
             "ax_not_trusted",
         ),
-    ],
-)
-def test_every_failed_check_refuses_with_its_own_reason(label, overrides, live, code, reason):
-    with pytest.raises(AnswerRefusal) as raised:
-        plan_local_answer(
-            provider="claude", decision="approve", ask_live=live, facts=facts(**overrides)
-        )
-    assert raised.value.code == code
-    assert raised.value.reason == reason
-    assert raised.value.code in ANSWER_REFUSAL_CODES
+    ]:
+        with pytest.raises(AnswerRefusal) as raised:
+            plan_local_answer(
+                provider="claude", decision="approve", ask_live=live, facts=facts(**overrides)
+            )
+        assert raised.value.code == code
+        assert raised.value.reason == reason
+        assert raised.value.code in ANSWER_REFUSAL_CODES
 
-
-def test_accessibility_refusal_names_the_exact_settings_path():
+    # --- scenario: accessibility_refusal_names_the_exact_settings_path
     with pytest.raises(AnswerRefusal) as raised:
         plan_local_answer(
             provider="claude",
@@ -189,8 +180,7 @@ def test_accessibility_refusal_names_the_exact_settings_path():
         )
     assert ACCESSIBILITY_SETTINGS_PATH in raised.value.message
 
-
-def test_a_provider_without_a_recipe_is_unsupported_not_refused_as_a_window():
+    # --- scenario: a_provider_without_a_recipe_is_unsupported_not_refused_as_a_window
     with pytest.raises(AnswerRefusal) as raised:
         plan_local_answer(
             provider="gemini", decision="approve", ask_live=True, facts=facts()
@@ -198,10 +188,9 @@ def test_a_provider_without_a_recipe_is_unsupported_not_refused_as_a_window():
     assert raised.value.code == "unsupported"
 
 
-def test_undeterminable_window_evidence_does_not_refuse():
-    # Ghostty exposes neither a scripting tty nor a usable window title; the
-    # ancestry walk is what carries the check, and an ancestry that could not
-    # be read is "not determined", never "mismatch".
+
+def test_undeterminable_window_evidence_does_not_refuse__and_2_more() -> None:
+    # --- scenario: undeterminable_window_evidence_does_not_refuse
     plan = plan_local_answer(
         provider="claude",
         decision="approve",
@@ -210,8 +199,7 @@ def test_undeterminable_window_evidence_does_not_refuse():
     )
     assert plan.facts.window_evidence() == "frontmost_application_only"
 
-
-def test_a_matching_focused_tab_is_the_strongest_evidence():
+    # --- scenario: a_matching_focused_tab_is_the_strongest_evidence
     plan = plan_local_answer(
         provider="claude",
         decision="approve",
@@ -220,11 +208,7 @@ def test_a_matching_focused_tab_is_the_strongest_evidence():
     )
     assert plan.facts.window_evidence() == "focused_tab_tty"
 
-
-# --- typed replies ------------------------------------------------------------
-
-
-def test_a_reply_plan_targets_the_same_checked_process():
+    # --- scenario: a_reply_plan_targets_the_same_checked_process
     plan = plan_local_reply(
         provider="claude", reply_text="yes, ship it", ask_live=True, facts=facts()
     )
@@ -233,7 +217,9 @@ def test_a_reply_plan_targets_the_same_checked_process():
     assert plan.mechanism == "synthetic_text"
 
 
-def test_reply_text_normalizes_to_one_bounded_printable_line():
+
+def test_reply_text_normalizes_to_one_bounded_printable_line__and_2_more() -> None:
+    # --- scenario: reply_text_normalizes_to_one_bounded_printable_line
     plan = plan_local_reply(
         provider="codex",
         reply_text="  ship\n it\tnow  ",
@@ -251,8 +237,7 @@ def test_reply_text_normalizes_to_one_bounded_printable_line():
             provider="codex", reply_text=42, ask_live=True, facts=facts()
         )
 
-
-def test_reply_planning_runs_every_fence_before_text_is_sent():
+    # --- scenario: reply_planning_runs_every_fence_before_text_is_sent
     with pytest.raises(AnswerRefusal) as raised:
         plan_local_reply(
             provider="claude",
@@ -270,8 +255,7 @@ def test_reply_planning_runs_every_fence_before_text_is_sent():
         )
     assert raised.value.code == "accessibility_required"
 
-
-def test_unicode_chunks_never_exceed_the_event_unit_limit():
+    # --- scenario: unicode_chunks_never_exceed_the_event_unit_limit
     text = "0123456789" * 5 + " \U0001f600 tail"  # one astral char = 2 units
     chunks = list(_unicode_chunks(text))
     assert "".join(chunks) == text
@@ -281,10 +265,12 @@ def test_unicode_chunks_never_exceed_the_event_unit_limit():
     assert len(chunks) > 1
 
 
+
 # --- delivery -----------------------------------------------------------------
 
 
-def test_delivery_posts_the_key_once_to_the_frontmost_process():
+def test_delivery_posts_the_key_once_to_the_frontmost_process__and_2_more() -> None:
+    # --- scenario: delivery_posts_the_key_once_to_the_frontmost_process
     sent = []
     delivery = LocalAnswerDelivery(
         sender=lambda pid, code: sent.append((pid, code)),
@@ -301,8 +287,7 @@ def test_delivery_posts_the_key_once_to_the_frontmost_process():
     assert outcome.delivered and outcome.code == "sent"
     assert sent == [(4200, 16)]
 
-
-def test_an_ask_resolved_between_plan_and_post_sends_nothing():
+    # --- scenario: an_ask_resolved_between_plan_and_post_sends_nothing
     sent = []
     answers = iter([True, False])
     delivery = LocalAnswerDelivery(
@@ -321,8 +306,7 @@ def test_an_ask_resolved_between_plan_and_post_sends_nothing():
     assert (outcome.delivered, outcome.code) == (False, "stale_ask")
     assert "resolved_while_sending" in outcome.message
 
-
-def test_a_delivery_that_overruns_its_budget_sends_nothing():
+    # --- scenario: a_delivery_that_overruns_its_budget_sends_nothing
     sent = []
     ticks = iter([0.0, 99.0, 99.0, 99.0])
     delivery = LocalAnswerDelivery(
@@ -341,6 +325,7 @@ def test_a_delivery_that_overruns_its_budget_sends_nothing():
     assert sent == []
     assert (outcome.delivered, outcome.code) == (False, "stale_ask")
     assert "budget_exceeded" in outcome.message
+
 
 
 def test_a_refused_delivery_reports_the_code_and_sends_nothing():
@@ -381,7 +366,8 @@ def _surface(**kwargs) -> tuple[LocalAnswerSurface, list, list]:
     return surface, sent, typed
 
 
-def test_the_handler_answers_and_records_the_outcome():
+def test_the_handler_answers_and_records_the_outcome__and_2_more() -> None:
+    # --- scenario: the_handler_answers_and_records_the_outcome
     surface, sent, _typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     surface.handle(object(), request_kind=None, answer_kind=_Action("approve"), reply_text=None)
@@ -389,8 +375,7 @@ def test_the_handler_answers_and_records_the_outcome():
     assert surface.completed.is_set()
     assert surface.last_outcome.delivered
 
-
-def test_the_handler_raises_the_refusal_the_owner_should_read():
+    # --- scenario: the_handler_raises_the_refusal_the_owner_should_read
     surface, sent, _typed = _surface(
         resolve_target=lambda decision: (_ for _ in ()).throw(
             AnswerRefusal("stale_ask", "That ask is no longer live.", "gone")
@@ -406,8 +391,7 @@ def test_the_handler_raises_the_refusal_the_owner_should_read():
     assert surface.last_outcome.code == "stale_ask"
     assert surface.completed.is_set()
 
-
-def test_a_typed_reply_is_typed_into_the_same_checked_target():
+    # --- scenario: a_typed_reply_is_typed_into_the_same_checked_target
     surface, sent, typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     surface.handle(
@@ -425,7 +409,9 @@ def test_a_typed_reply_is_typed_into_the_same_checked_target():
     assert surface.last_outcome.plan.mechanism == "synthetic_text"
 
 
-def test_a_reply_that_fails_the_same_fences_sends_nothing():
+
+def test_a_reply_that_fails_the_same_fences_sends_nothing__and_2_more() -> None:
+    # --- scenario: a_reply_that_fails_the_same_fences_sends_nothing
     sent: list = []
     typed: list = []
     delivery = LocalAnswerDelivery(
@@ -444,8 +430,7 @@ def test_a_reply_that_fails_the_same_fences_sends_nothing():
     assert (outcome.delivered, outcome.code) == (False, "not_frontmost")
     assert typed == [] and sent == []
 
-
-def test_an_empty_reply_is_refused_before_any_delivery():
+    # --- scenario: an_empty_reply_is_refused_before_any_delivery
     surface, sent, typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     with pytest.raises(AnswerRefusal) as raised:
@@ -456,8 +441,7 @@ def test_an_empty_reply_is_refused_before_any_delivery():
     assert raised.value.reason == "invalid_reply_text"
     assert sent == [] and typed == []
 
-
-def test_reply_text_on_a_decision_action_is_rejected():
+    # --- scenario: reply_text_on_a_decision_action_is_rejected
     surface, sent, typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     with pytest.raises(AnswerRefusal) as raised:
@@ -471,7 +455,9 @@ def test_reply_text_on_a_decision_action_is_rejected():
     assert sent == [] and typed == []
 
 
-def test_arming_forgets_the_previous_outcome():
+
+def test_arming_forgets_the_previous_outcome__and_2_more() -> None:
+    # --- scenario: arming_forgets_the_previous_outcome
     surface, _sent, _typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     surface.handle(object(), request_kind=None, answer_kind=_Action("approve"), reply_text=None)
@@ -479,8 +465,7 @@ def test_arming_forgets_the_previous_outcome():
     surface.arm()
     assert surface.last_outcome is None and not surface.completed.is_set()
 
-
-def test_the_registry_receives_one_handler_per_invocation():
+    # --- scenario: the_registry_receives_one_handler_per_invocation
     registered: list = []
 
     class _Registry:
@@ -493,17 +478,15 @@ def test_the_registry_receives_one_handler_per_invocation():
     assert [row[0] for row in registered] == ["a", "b"]
     assert all(row[1] == surface.handle for row in registered)
 
-
-# --- what the panel shows -----------------------------------------------------
-
-
-def test_a_refusal_reaches_the_panel_as_its_own_sentence():
+    # --- scenario: a_refusal_reaches_the_panel_as_its_own_sentence
     refusal = AnswerRefusal("not_frontmost", "The session's terminal is not in front.")
     assert _failure_text(refusal) == "The session's terminal is not in front."
     assert _failure_text(RuntimeError("boom")) == "Send failed: RuntimeError"
 
 
-def test_an_outcome_document_carries_the_mechanism_and_the_key():
+
+def test_an_outcome_document_carries_the_mechanism_and_the_key__and_1_more() -> None:
+    # --- scenario: an_outcome_document_carries_the_mechanism_and_the_key
     delivery = LocalAnswerDelivery(sender=lambda pid, code: None, observer=lambda **_: facts())
     outcome = delivery.deliver(
         provider="codex",
@@ -521,14 +504,14 @@ def test_an_outcome_document_carries_the_mechanism_and_the_key():
     assert document["host"]["app"] == "com.mitchellh.ghostty"
     assert document["host"]["window_evidence"] == "host_process_ancestry"
 
-
-def test_an_unknown_refusal_code_is_not_expressible():
+    # --- scenario: an_unknown_refusal_code_is_not_expressible
     with pytest.raises(ValueError):
         AnswerRefusal("made_up", "no")
     assert isinstance(
         AnswerDeliveryOutcome(delivered=False, code="stale_ask", message="x", plan=None),
         AnswerDeliveryOutcome,
     )
+
 
 
 # --- resolving the host -------------------------------------------------------

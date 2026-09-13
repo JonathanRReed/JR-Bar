@@ -36,28 +36,30 @@ def _with_screens(monkeypatch, screens, main=None):
     return virtual_device
 
 
-def test_the_notched_screen_wins_over_the_focused_one(monkeypatch):
+def test_the_notched_screen_wins_over_the_focused_one__and_2_more(monkeypatch) -> None:
+    # --- scenario: the_notched_screen_wins_over_the_focused_one
     external = _screen("Studio Display", 0.0)
     builtin = _screen("Built-in Retina Display", 32.0)
     vd = _with_screens(monkeypatch, [external, builtin], main=external)
 
     assert vd.preferred_screen() is builtin
 
-
-def test_a_named_screen_wins_even_without_a_safe_area(monkeypatch):
+    # --- scenario: a_named_screen_wins_even_without_a_safe_area
+    monkeypatch.undo()
     external = _screen("Studio Display", 0.0)
     builtin = _screen("Built-in Retina Display", 32.0)
     vd = _with_screens(monkeypatch, [external, builtin], main=builtin)
 
     assert vd.preferred_screen("Studio Display") is external
 
-
-def test_an_unattached_name_falls_back_to_the_notched_screen(monkeypatch):
+    # --- scenario: an_unattached_name_falls_back_to_the_notched_screen
+    monkeypatch.undo()
     external = _screen("Studio Display", 0.0)
     builtin = _screen("Built-in Retina Display", 32.0)
     vd = _with_screens(monkeypatch, [external, builtin], main=external)
 
     assert vd.preferred_screen("Unplugged Monitor") is builtin
+
 
 
 def test_a_single_notchless_screen_still_works(monkeypatch):

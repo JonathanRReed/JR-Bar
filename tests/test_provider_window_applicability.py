@@ -60,7 +60,8 @@ def _lanes(probe: dict) -> dict[str, object]:
 # --------------------------------------------------------------------------
 
 
-def test_a_pro_account_gets_a_weekly_lane_and_no_five_hour_lane() -> None:
+def test_a_pro_account_gets_a_weekly_lane_and_no_five_hour_lane__and_2_more() -> None:
+    # --- scenario: a_pro_account_gets_a_weekly_lane_and_no_five_hour_lane
     probe = _probe(_fixture("codex-app-server-rate-limits-pro.json"))
 
     assert probe["plan"] == "pro"
@@ -71,8 +72,7 @@ def test_a_pro_account_gets_a_weekly_lane_and_no_five_hour_lane() -> None:
     assert lanes["weekly"].reset_at == 1_789_440_279.0
     assert lanes["weekly"].bindable is True
 
-
-def test_a_plan_that_has_a_five_hour_window_still_gets_one() -> None:
+    # --- scenario: a_plan_that_has_a_five_hour_window_still_gets_one
     """The half the owner asked to keep working for everyone else."""
     probe = _probe(_fixture("codex-app-server-rate-limits-plus.json"))
 
@@ -84,8 +84,7 @@ def test_a_plan_that_has_a_five_hour_window_still_gets_one() -> None:
     assert lanes["five-hour"].bindable is True
     assert lanes["weekly"].remaining_percent == 38.0
 
-
-def test_an_explicit_null_secondary_emits_nothing_at_all() -> None:
+    # --- scenario: an_explicit_null_secondary_emits_nothing_at_all
     """`"secondary": null` is Codex STATING the plan has no second window."""
     windows = usage_stats.codex_windows_from_limits(
         {"limitId": "codex", "primary": {"usedPercent": 12, "windowDurationMins": 10080},
@@ -96,12 +95,14 @@ def test_an_explicit_null_secondary_emits_nothing_at_all() -> None:
     assert all(window["account_limit"] for window in windows)
 
 
+
 # --------------------------------------------------------------------------
 # A model-scoped sub-cap is never the account's ceiling.
 # --------------------------------------------------------------------------
 
 
-def test_the_spark_family_keeps_its_own_lanes_and_claims_no_account_lane() -> None:
+def test_the_spark_family_keeps_its_own_lanes_and_claims_no_account_lane__and_2_more() -> None:
+    # --- scenario: the_spark_family_keeps_its_own_lanes_and_claims_no_account_lane
     probe = _probe(_fixture("codex-app-server-rate-limits-pro.json"))
     lanes = _lanes(probe)
 
@@ -113,8 +114,7 @@ def test_the_spark_family_keeps_its_own_lanes_and_claims_no_account_lane() -> No
     # same row, and only one of them exists.
     assert "five-hour" not in lanes
 
-
-def test_a_spark_rollout_alone_never_produces_an_account_five_hour_lane() -> None:
+    # --- scenario: a_spark_rollout_alone_never_produces_an_account_five_hour_lane
     """The exact evidence that produced the owner's phantom row.
 
     A rollout file carries one family per record. This one is Spark's, and
@@ -137,8 +137,7 @@ def test_a_spark_rollout_alone_never_produces_an_account_five_hour_lane() -> Non
     assert "five-hour" not in lane_ids
     assert "weekly" not in lane_ids
 
-
-def test_the_capacity_plane_refuses_the_same_sub_cap() -> None:
+    # --- scenario: the_capacity_plane_refuses_the_same_sub_cap
     """The second plane that reads these windows must agree."""
     from jrbar.provider_capacity import negotiate_provider_capacity_policies
     from jrbar.providers import negotiated_provider_sources
@@ -160,12 +159,14 @@ def test_the_capacity_plane_refuses_the_same_sub_cap() -> None:
     assert evidence.lanes == ()
 
 
+
 # --------------------------------------------------------------------------
 # Present-but-unknown is not exhausted.
 # --------------------------------------------------------------------------
 
 
-def test_a_window_with_no_stated_percentage_is_unknown_not_spent() -> None:
+def test_a_window_with_no_stated_percentage_is_unknown_not_spent__and_2_more() -> None:
+    # --- scenario: a_window_with_no_stated_percentage_is_unknown_not_spent
     windows = usage_stats.codex_windows_from_limits(
         {"limitId": "codex",
          "primary": {"windowDurationMins": 300, "resetsAt": 1_789_078_256},
@@ -182,9 +183,7 @@ def test_a_window_with_no_stated_percentage_is_unknown_not_spent() -> None:
     assert lanes["five-hour"].remaining_percent is None
     assert lanes["weekly"].remaining_percent == 100.0
 
-
-def test_an_unknown_window_reaches_the_state_document_as_a_null_percentage(
-) -> None:
+    # --- scenario: an_unknown_window_reaches_the_state_document_as_a_null_percentage
     from jrbar import core_projection
 
     snapshot = parse_codex_usage(
@@ -210,8 +209,7 @@ def test_an_unknown_window_reaches_the_state_document_as_a_null_percentage(
     assert windows["weekly"]["used_pct"] == 100.0
     assert document["providers"][0]["account"]["plan"] == "plus"
 
-
-def test_a_malformed_percentage_is_dropped_rather_than_read_as_unknown() -> None:
+    # --- scenario: a_malformed_percentage_is_dropped_rather_than_read_as_unknown
     """A NaN or a bool is not the provider saying "no reading"."""
     windows = usage_stats.codex_windows_from_limits(
         {"limitId": "codex",
@@ -220,6 +218,7 @@ def test_a_malformed_percentage_is_dropped_rather_than_read_as_unknown() -> None
     )
 
     assert [window["label"] for window in windows] == ["secondary"]
+
 
 
 # --------------------------------------------------------------------------
@@ -281,7 +280,8 @@ def test_claude_states_an_absent_window_as_null_and_gets_no_lane_for_it() -> Non
     assert snapshot.account_plan == "Max 20x"
 
 
-def test_claude_plan_comes_from_claude_codes_own_config(tmp_path: Path) -> None:
+def test_claude_plan_comes_from_claude_codes_own_config__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: claude_plan_comes_from_claude_codes_own_config
     (tmp_path / ".claude.json").write_text(
         json.dumps(
             {
@@ -299,8 +299,7 @@ def test_claude_plan_comes_from_claude_codes_own_config(tmp_path: Path) -> None:
     assert claude_quota.plan_from_claude_config(tmp_path) == "Max 20x"
     assert claude_quota.plan_from_claude_config(tmp_path / "missing") is None
 
-
-def test_codex_plan_falls_back_to_the_id_token_claim(tmp_path: Path) -> None:
+    # --- scenario: codex_plan_falls_back_to_the_id_token_claim
     """No live probe and no rollout plan: auth.json still names the plan."""
     import base64
 
@@ -330,8 +329,7 @@ def test_codex_plan_falls_back_to_the_id_token_claim(tmp_path: Path) -> None:
     assert tokens is not None
     assert tokens.plan_type == "pro"
 
-
-def test_the_plan_survives_a_save_and_load_round_trip(tmp_path: Path) -> None:
+    # --- scenario: the_plan_survives_a_save_and_load_round_trip
     from jrbar.provider_usage_runtime import ProviderUsageState
     from jrbar.provider_usage_store import (
         load_provider_usage_state,
@@ -368,3 +366,4 @@ def test_the_plan_survives_a_save_and_load_round_trip(tmp_path: Path) -> None:
     )
 
     assert load_provider_usage_state(path).snapshots[0].account_plan == "pro"
+

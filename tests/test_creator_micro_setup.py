@@ -222,7 +222,8 @@ def test_cancellation_after_backup_before_flash_retains_backup_without_programmi
     assert not device.writes
 
 
-def test_backup_conflict_never_replaces_the_only_recoverable_original(tmp_path):
+def test_backup_conflict_never_replaces_the_only_recoverable_original__and_1_more(tmp_path) -> None:
+    # --- scenario: backup_conflict_never_replaces_the_only_recoverable_original
     device = Device()
     setup = service(tmp_path, device)
     assert setup.apply(setup.inspect()).code == "keymap_verified"
@@ -232,13 +233,13 @@ def test_backup_conflict_never_replaces_the_only_recoverable_original(tmp_path):
     assert (tmp_path / "backup.json").read_bytes() == original_backup
     assert len(device.writes) == 1
 
-
-def test_device_disconnect_during_readback_keeps_original_for_recovery(tmp_path):
+    # --- scenario: device_disconnect_during_readback_keeps_original_for_recovery
     device = Device()
     setup = service(tmp_path, device)
     device.before_write = lambda: setattr(device, "connected", False)
     assert setup.apply(setup.inspect()).code == "recovery_required"
     assert (tmp_path / "backup.json").exists()
+
 
 
 def test_a_backup_created_by_another_process_before_publish_is_never_overwritten(tmp_path, monkeypatch):
@@ -325,7 +326,8 @@ def test_interrupted_prefix_restore_recovers_first_original_without_replaying_ap
     assert device.raw == original
 
 
-def test_profile_change_with_same_layer_revokes_preview(tmp_path):
+def test_profile_change_with_same_layer_revokes_preview__and_2_more(tmp_path) -> None:
+    # --- scenario: profile_change_with_same_layer_revokes_preview
     device = Device()
     setup = service(tmp_path, device)
     plan = setup.inspect()
@@ -333,8 +335,7 @@ def test_profile_change_with_same_layer_revokes_preview(tmp_path):
     assert setup.apply(plan).code == "keymap_changed"
     assert not device.writes
 
-
-def test_connection_generation_change_revokes_even_connected_transfer(tmp_path):
+    # --- scenario: connection_generation_change_revokes_even_connected_transfer
     device = Device()
     setup = service(tmp_path, device)
     plan = setup.inspect()
@@ -342,8 +343,7 @@ def test_connection_generation_change_revokes_even_connected_transfer(tmp_path):
     assert setup.apply(plan).code == "connection_changed"
     assert not device.writes
 
-
-def test_pending_recovery_refuses_apply_even_when_original_bytes_survived(tmp_path):
+    # --- scenario: pending_recovery_refuses_apply_even_when_original_bytes_survived
     device = Device()
     setup = service(tmp_path, device)
     original = device.raw
@@ -357,6 +357,7 @@ def test_pending_recovery_refuses_apply_even_when_original_bytes_survived(tmp_pa
     before = len(device.writes)
     assert setup.apply(plan).code == "recovery_required"
     assert len(device.writes) == before
+
 
 
 def test_restore_of_surviving_original_clears_pending_recovery(tmp_path):

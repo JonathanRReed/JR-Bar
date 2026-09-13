@@ -17,7 +17,8 @@ def _record(provider: str, model: str, when: datetime, *, inp=1000, cached=500, 
     return (provider, "session", model, when.timestamp(), inp, cached, create, out, dedupe)
 
 
-def test_days_and_hours_cover_the_range_and_dedupe_records() -> None:
+def test_days_and_hours_cover_the_range_and_dedupe_records__and_2_more() -> None:
+    # --- scenario: days_and_hours_cover_the_range_and_dedupe_records
     hour_ago = NOW - timedelta(hours=1)
     records = [
         _record("claude", "fable", hour_ago, dedupe="a"),
@@ -56,8 +57,7 @@ def test_days_and_hours_cover_the_range_and_dedupe_records() -> None:
     }
     assert document["estimated"] is False and document["estimated_records"] == 0
 
-
-def test_codex_costs_bill_cache_writes_at_the_input_rate() -> None:
+    # --- scenario: codex_costs_bill_cache_writes_at_the_input_rate
     document = history.usage_history_document(
         [_record("codex", "gpt-5.6-sol", NOW, inp=100, cached=100, create=100, out=100, dedupe="x")],
         provider="codex", range_name="30d", now=NOW.timestamp(), account={"plan": "Plus"}, state="ready",
@@ -67,8 +67,7 @@ def test_codex_costs_bill_cache_writes_at_the_input_rate() -> None:
     assert document["account"] == {"plan": "Plus"} and document["state"] == "ready"
     assert document["pricing"]["cache_read_per_mtok"] == pytest.approx(0.4)
 
-
-def test_unknown_models_are_estimated_at_the_reference_rate_not_zero() -> None:
+    # --- scenario: unknown_models_are_estimated_at_the_reference_rate_not_zero
     document = history.usage_history_document(
         [_record("claude", "mystery-9", NOW, inp=100_000, cached=0, create=0, out=10_000, dedupe="u")],
         provider="claude", range_name="90d", now=NOW.timestamp(),
@@ -85,6 +84,7 @@ def test_unknown_models_are_estimated_at_the_reference_rate_not_zero() -> None:
     # A provider with no table at all still bills nothing and quotes nothing.
     assert history.price_quote("grok", "grok-4") is None
     assert history.record_cost("grok", "grok-4", 1, 1, 1, 1) == 0.0
+
 
 
 def test_codex_records_are_priced_at_the_configured_default_model(tmp_path) -> None:
@@ -188,7 +188,8 @@ def _service(scan, publish=None, clock=None, threads=None, **kw):
     )
 
 
-def test_service_answers_inside_the_budget_when_the_scan_is_quick() -> None:
+def test_service_answers_inside_the_budget_when_the_scan_is_quick__and_2_more() -> None:
+    # --- scenario: service_answers_inside_the_budget_when_the_scan_is_quick
     now = datetime.now()
     service = _service(lambda provider, days: [_record("codex", "gpt-5.6", now)])
     document = service.document("codex", "7d", account={"plan": "pro"}, state="live")
@@ -197,8 +198,7 @@ def test_service_answers_inside_the_budget_when_the_scan_is_quick() -> None:
     assert document["account"] == {"plan": "pro"} and document["state"] == "live"
     assert document["scanned_at"] is not None
 
-
-def test_service_answers_pending_then_pushes_ready_when_a_cold_scan_outlives_the_budget() -> None:
+    # --- scenario: service_answers_pending_then_pushes_ready_when_a_cold_scan_outlives_the_budget
     now = datetime.now()
     gate = _Gate([_record("codex", "gpt-5.6", now)])
     events: list[tuple[str, dict]] = []
@@ -224,8 +224,7 @@ def test_service_answers_pending_then_pushes_ready_when_a_cold_scan_outlives_the
     assert second["records"] == 1 and second["pending"] is False and second["stale"] is False
     assert gate.calls == [("codex", 30)]
 
-
-def test_service_answers_the_last_document_stale_while_a_rescan_runs_and_stays_quiet_when_quick() -> None:
+    # --- scenario: service_answers_the_last_document_stale_while_a_rescan_runs_and_stays_quiet_when_quick
     now = datetime.now()
     clock = _Clock()
     events: list[str] = []
@@ -251,7 +250,9 @@ def test_service_answers_the_last_document_stale_while_a_rescan_runs_and_stays_q
     assert events == [history.READY_EVENT]
 
 
-def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_scan() -> None:
+
+def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_scan__and_2_more() -> None:
+    # --- scenario: service_warm_starts_every_scanned_provider_once_and_survives_a_failing_scan
     calls: list[tuple[str, int]] = []
     logged: list[str] = []
 
@@ -272,8 +273,7 @@ def test_service_warm_starts_every_scanned_provider_once_and_survives_a_failing_
     assert service.document("claude", "30d", budget=0.0)["pending"] is True
     assert service.document("codex", "30d")["pending"] is False
 
-
-def test_service_rejects_a_bad_range_and_answers_unscanned_providers_empty() -> None:
+    # --- scenario: service_rejects_a_bad_range_and_answers_unscanned_providers_empty
     service = _service(lambda provider, days: [])
     with pytest.raises(ValueError):
         service.document("codex", "2d")
@@ -281,8 +281,7 @@ def test_service_rejects_a_bad_range_and_answers_unscanned_providers_empty() -> 
     assert document["records"] == 0 and document["pending"] is False
     assert document["pricing"]["estimated"] is True
 
-
-def test_service_close_starts_nothing_further() -> None:
+    # --- scenario: service_close_starts_nothing_further
     """A daemon on its way down must not begin a forty-second scan, and the
     warm-up must stop waiting the moment it is told to."""
     calls: list[tuple[str, int]] = []
@@ -294,3 +293,4 @@ def test_service_close_starts_nothing_further() -> None:
     threads.settle()
     assert calls == [] and threads.threads == []
     assert service.document("codex", "7d", budget=0.0)["pending"] is True
+

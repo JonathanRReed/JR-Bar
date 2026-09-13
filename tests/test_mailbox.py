@@ -148,7 +148,8 @@ def _section(projected, kind: MailboxSectionKind):
     return next(section for section in projected.sections if section.kind == kind)
 
 
-def test_projects_authoritative_lifecycles_into_fixed_shelves() -> None:
+def test_projects_authoritative_lifecycles_into_fixed_shelves__and_2_more() -> None:
+    # --- scenario: projects_authoritative_lifecycles_into_fixed_shelves
     old_ask = _row(
         "codex:session:old-ask",
         LifecycleMode.WAITING,
@@ -237,8 +238,7 @@ def test_projects_authoritative_lifecycles_into_fixed_shelves() -> None:
     assert projected.needs_you_count == 2
     assert projected.ready_count == 2
 
-
-def test_tool_activity_changes_do_not_reorder_and_new_rows_append() -> None:
+    # --- scenario: tool_activity_changes_do_not_reorder_and_new_rows_append
     first = _row(
         "codex:session:first",
         LifecycleMode.ACTIVE,
@@ -280,10 +280,8 @@ def test_tool_activity_changes_do_not_reorder_and_new_rows_append() -> None:
     assert rows[0].stable_order == previous[first.agent_id]
     assert rows[-1].stable_order > max(previous.values())
 
-
-@pytest.mark.parametrize(
-    ("current_lifecycle", "current_mode", "expected_section"),
-    (
+    # --- scenario: newer_identity_copy_cannot_resurrect_an_older_actionable_ask
+    for current_lifecycle, current_mode, expected_section in (
         (
             LifecycleMode.ACTIVE,
             AgentMode.WORKING,
@@ -294,36 +292,32 @@ def test_tool_activity_changes_do_not_reorder_and_new_rows_append() -> None:
             AgentMode.COMPLETED,
             MailboxSectionKind.READY_FOR_REVIEW,
         ),
-    ),
-)
-def test_newer_identity_copy_cannot_resurrect_an_older_actionable_ask(
-    current_lifecycle: LifecycleMode,
-    current_mode: AgentMode,
-    expected_section: MailboxSectionKind,
-) -> None:
-    old_ask = _row(
-        "codex:session:reused",
-        LifecycleMode.WAITING,
-        minutes_ago=5,
-        actionable=True,
-        event_name="PermissionRequest",
-    )
-    current = _row(
-        "codex:session:reused",
-        current_lifecycle,
-        minutes_ago=0,
-        source_mode=current_mode,
-    )
+    ):
+        old_ask = _row(
+            "codex:session:reused",
+            LifecycleMode.WAITING,
+            minutes_ago=5,
+            actionable=True,
+            event_name="PermissionRequest",
+        )
+        current = _row(
+            "codex:session:reused",
+            current_lifecycle,
+            minutes_ago=0,
+            source_mode=current_mode,
+        )
 
-    projected = project_mailbox(_projection(current, old_ask))
+        projected = project_mailbox(_projection(current, old_ask))
 
-    assert _section(projected, MailboxSectionKind.NEEDS_YOU).rows == ()
-    assert tuple(row.agent_id for row in _section(projected, expected_section).rows) == (
-        current.agent_id,
-    )
+        assert _section(projected, MailboxSectionKind.NEEDS_YOU).rows == ()
+        assert tuple(row.agent_id for row in _section(projected, expected_section).rows) == (
+            current.agent_id,
+        )
 
 
-def test_tied_identity_timestamp_prefers_non_actionable_current_lifecycle() -> None:
+
+def test_tied_identity_timestamp_prefers_non_actionable_current_lifecycle__and_2_more() -> None:
+    # --- scenario: tied_identity_timestamp_prefers_non_actionable_current_lifecycle
     stale_ask = _row(
         "codex:session:tied",
         LifecycleMode.WAITING,
@@ -343,38 +337,30 @@ def test_tied_identity_timestamp_prefers_non_actionable_current_lifecycle() -> N
         row.agent_id for row in _section(projected, MailboxSectionKind.IN_PROGRESS).rows
     ) == (current.agent_id,)
 
-
-@pytest.mark.parametrize(
-    ("stale_lifecycle", "stale_mode"),
-    (
+    # --- scenario: tied_terminal_copy_cannot_resurrect_over_current_active_lifecycle
+    for stale_lifecycle, stale_mode in (
         (LifecycleMode.FAILED_VISIBLE, AgentMode.BLOCKED_ERROR),
         (LifecycleMode.COMPLETED_RECENTLY, AgentMode.COMPLETED),
-    ),
-)
-def test_tied_terminal_copy_cannot_resurrect_over_current_active_lifecycle(
-    stale_lifecycle: LifecycleMode,
-    stale_mode: AgentMode,
-) -> None:
-    stale_terminal = _row(
-        "codex:session:tied-terminal",
-        stale_lifecycle,
-        source_mode=stale_mode,
-    )
-    current = _row(
-        "codex:session:tied-terminal",
-        LifecycleMode.ACTIVE,
-        source_mode=AgentMode.WORKING,
-    )
+    ):
+        stale_terminal = _row(
+            "codex:session:tied-terminal",
+            stale_lifecycle,
+            source_mode=stale_mode,
+        )
+        current = _row(
+            "codex:session:tied-terminal",
+            LifecycleMode.ACTIVE,
+            source_mode=AgentMode.WORKING,
+        )
 
-    projected = project_mailbox(_projection(stale_terminal, current))
+        projected = project_mailbox(_projection(stale_terminal, current))
 
-    assert tuple(
-        row.agent_id for row in _section(projected, MailboxSectionKind.IN_PROGRESS).rows
-    ) == (current.agent_id,)
-    assert _section(projected, MailboxSectionKind.READY_FOR_REVIEW).rows == ()
+        assert tuple(
+            row.agent_id for row in _section(projected, MailboxSectionKind.IN_PROGRESS).rows
+        ) == (current.agent_id,)
+        assert _section(projected, MailboxSectionKind.READY_FOR_REVIEW).rows == ()
 
-
-def test_newer_worker_copy_prevents_stale_ask_and_duplicate_rollup_count() -> None:
+    # --- scenario: newer_worker_copy_prevents_stale_ask_and_duplicate_rollup_count
     parent = _row("claude:session:main", LifecycleMode.ACTIVE, provider="claude")
     stale_worker_ask = _row(
         "claude:agent:reused",
@@ -402,7 +388,9 @@ def test_newer_worker_copy_prevents_stale_ask_and_duplicate_rollup_count() -> No
     assert rows[0].navigation_agent_id == parent.agent_id
 
 
-def test_workers_roll_up_under_parent_and_actionable_worker_keeps_click_identity() -> None:
+
+def test_workers_roll_up_under_parent_and_actionable_worker_keeps_click_identity__and_2_more() -> None:
+    # --- scenario: workers_roll_up_under_parent_and_actionable_worker_keeps_click_identity
     parent = _row("claude:session:main", LifecycleMode.ACTIVE, provider="claude")
     active_worker = _row(
         "claude:agent:worker-active",
@@ -431,8 +419,7 @@ def test_workers_roll_up_under_parent_and_actionable_worker_keeps_click_identity
     assert rollup.navigation_agent_id == worker_ask.agent_id
     assert _section(projected, MailboxSectionKind.NEEDS_YOU).rows == (rollup,)
 
-
-def test_snoozed_worker_family_wakes_to_exact_actionable_worker_identity() -> None:
+    # --- scenario: snoozed_worker_family_wakes_to_exact_actionable_worker_identity
     parent = _row("claude:session:main-wake", LifecycleMode.ACTIVE, provider="claude")
     worker_ask = _row(
         "claude:agent:worker-wake",
@@ -457,8 +444,7 @@ def test_snoozed_worker_family_wakes_to_exact_actionable_worker_identity() -> No
     assert row.worker_count == 1
     assert result.woke_agent_ids == (parent.agent_id,)
 
-
-def test_one_thousand_source_rows_remain_one_hundred_primary_preferences() -> None:
+    # --- scenario: one_thousand_source_rows_remain_one_hundred_primary_preferences
     mains = tuple(
         _row(
             f"claude:session:main-{index:03d}",
@@ -508,7 +494,9 @@ def test_one_thousand_source_rows_remain_one_hundred_primary_preferences() -> No
     assert family.actionable is True
 
 
-def test_orphan_workers_form_one_deterministic_background_rollup() -> None:
+
+def test_orphan_workers_form_one_deterministic_background_rollup__and_2_more() -> None:
+    # --- scenario: orphan_workers_form_one_deterministic_background_rollup
     working = _row(
         "claude:agent:working",
         LifecycleMode.ACTIVE,
@@ -536,8 +524,7 @@ def test_orphan_workers_form_one_deterministic_background_rollup() -> None:
     assert forward_rows[0].lifecycle_mode == LifecycleMode.ACTIVE
     assert forward_rows[0].navigation_agent_id is None
 
-
-def test_each_shelf_is_bounded_with_exact_overflow_count() -> None:
+    # --- scenario: each_shelf_is_bounded_with_exact_overflow_count
     rows = tuple(
         _row(
             f"codex:session:{index:02d}",
@@ -552,8 +539,7 @@ def test_each_shelf_is_bounded_with_exact_overflow_count() -> None:
     assert len(section.rows) == 12
     assert section.overflow_count == 3
 
-
-def test_retention_evicts_absent_identities_before_live_actionable_rows() -> None:
+    # --- scenario: retention_evicts_absent_identities_before_live_actionable_rows
     previous = {f"expired:{index:03d}": index for index in range(100)}
     ask = _row(
         "codex:session:live-ask",
@@ -575,7 +561,9 @@ def test_retention_evicts_absent_identities_before_live_actionable_rows() -> Non
     assert set(previous) - set(retained) == {"expired:000"}
 
 
-def test_worker_identities_never_consume_retained_primary_capacity() -> None:
+
+def test_worker_identities_never_consume_retained_primary_capacity__and_2_more() -> None:
+    # --- scenario: worker_identities_never_consume_retained_primary_capacity
     previous = {
         **{f"codex:session:{index:03d}": index for index in range(99)},
         "claude:agent:old-worker": 99,
@@ -600,10 +588,8 @@ def test_worker_identities_never_consume_retained_primary_capacity() -> None:
     assert parent.agent_id in retained
     assert len(retained) == 100
 
-
-@pytest.mark.parametrize(
-    ("mode", "tool_name", "expected"),
-    (
+    # --- scenario: normalized_activity_uses_product_owned_vocabulary
+    for mode, tool_name, expected in (
         (AgentMode.TOOL_RUNNING, "Read", "Reading files"),
         (AgentMode.TOOL_RUNNING, "read_file", "Reading files"),
         (AgentMode.TOOL_RUNNING, "Edit", "Editing files"),
@@ -615,25 +601,18 @@ def test_worker_identities_never_consume_retained_primary_capacity() -> None:
         (AgentMode.WORKING, None, "Thinking"),
         (AgentMode.LONG_TASK_PROGRESS, None, "Thinking"),
         (AgentMode.WAITING_FOR_INPUT, None, "Waiting for approval"),
-    ),
-)
-def test_normalized_activity_uses_product_owned_vocabulary(
-    mode: AgentMode,
-    tool_name: str | None,
-    expected: str,
-) -> None:
-    status = _status(
-        "codex:session:activity",
-        mode,
-        tool_name=tool_name,
-        cwd="/Users/jonathan/Secret Folder",
-        message="approve token sk-private-value",
-    )
+    ):
+        status = _status(
+            "codex:session:activity",
+            mode,
+            tool_name=tool_name,
+            cwd="/Users/jonathan/Secret Folder",
+            message="approve token sk-private-value",
+        )
 
-    assert normalized_activity_label(status) == expected
+        assert normalized_activity_label(status) == expected
 
-
-def test_unknown_activity_is_sanitized_bounded_and_never_uses_payload_fields() -> None:
+    # --- scenario: unknown_activity_is_sanitized_bounded_and_never_uses_payload_fields
     ordinary = _status(
         "codex:session:ordinary",
         AgentMode.TOOL_RUNNING,
@@ -665,6 +644,7 @@ def test_unknown_activity_is_sanitized_bounded_and_never_uses_payload_fields() -
         if value
     )
     assert all(secret not in ordinary_label for secret in combined_private_text.split())
+
 
 
 def test_non_activity_lifecycles_do_not_surface_raw_tool_or_message_text() -> None:
@@ -785,7 +765,8 @@ def _canonical_state(
     )
 
 
-def test_canonical_mailbox_keeps_source_scoped_identity_and_exact_retained_order() -> None:
+def test_canonical_mailbox_keeps_source_scoped_identity_and_exact_retained_order__and_2_more() -> None:
+    # --- scenario: canonical_mailbox_keeps_source_scoped_identity_and_exact_retained_order
     first_key = _canonical_work_key("same", source_instance="local:01")
     second_key = _canonical_work_key("same", source_instance="local:02")
     first = _canonical_work(first_key, epoch=NOW.timestamp() - 30.0)
@@ -808,8 +789,7 @@ def test_canonical_mailbox_keeps_source_scoped_identity_and_exact_retained_order
     assert dict(refreshed.retained_order) == dict(initial.retained_order)
     assert len(dict(refreshed.retained_order)) == 2
 
-
-def test_canonical_mailbox_joins_only_exact_request_keys_and_attaches_workers() -> None:
+    # --- scenario: canonical_mailbox_joins_only_exact_request_keys_and_attaches_workers
     parent_key = _canonical_work_key("family")
     worker_key = _canonical_work_key("worker")
     sibling_source_worker_key = _canonical_work_key("worker", source_instance="local:02")
@@ -837,8 +817,7 @@ def test_canonical_mailbox_joins_only_exact_request_keys_and_attaches_workers() 
     assert row.worker_count == 1
     assert row.updated_at_epoch == NOW.timestamp() - 120.0
 
-
-def test_canonical_mailbox_retires_stale_worker_without_changing_primary_truth() -> None:
+    # --- scenario: canonical_mailbox_retires_stale_worker_without_changing_primary_truth
     """Keeping a stale worker would resurrect its Ask over a completed primary."""
     parent_key = _canonical_work_key("completed-family")
     worker_key = _canonical_work_key("stale-worker")
@@ -877,7 +856,9 @@ def test_canonical_mailbox_retires_stale_worker_without_changing_primary_truth()
     assert projection.ready_count == 1
 
 
-def test_canonical_mailbox_retirement_preserves_exact_primary_request() -> None:
+
+def test_canonical_mailbox_retirement_preserves_exact_primary_request__and_2_more() -> None:
+    # --- scenario: canonical_mailbox_retirement_preserves_exact_primary_request
     """Dropping a stale worker must not drop or substitute the primary's request."""
     parent_key = _canonical_work_key("request-family")
     worker_key = _canonical_work_key("request-worker")
@@ -926,8 +907,7 @@ def test_canonical_mailbox_retirement_preserves_exact_primary_request() -> None:
     assert row.worker_count == 0
     assert row.updated_at_epoch == NOW.timestamp() - 30.0
 
-
-def test_canonical_mailbox_keeps_fresh_terminal_worker_until_it_becomes_stale() -> None:
+    # --- scenario: canonical_mailbox_keeps_fresh_terminal_worker_until_it_becomes_stale
     """Retiring every terminal worker would erase fresh family outcome attribution."""
     parent_key = _canonical_work_key("active-family")
     worker_key = _canonical_work_key("terminal-worker")
@@ -961,8 +941,7 @@ def test_canonical_mailbox_keeps_fresh_terminal_worker_until_it_becomes_stale() 
     assert stale_row.worker_count == 0
     assert dict(stale.retained_order) == dict(fresh.retained_order)
 
-
-def test_canonical_mailbox_does_not_promote_worker_with_missing_parent() -> None:
+    # --- scenario: canonical_mailbox_does_not_promote_worker_with_missing_parent
     """Treating an orphan worker as primary would violate the exact parent contract."""
     missing_parent = _canonical_work_key("missing-parent")
     orphan = _canonical_work(
@@ -979,7 +958,9 @@ def test_canonical_mailbox_does_not_promote_worker_with_missing_parent() -> None
     assert projection.retained_order == ()
 
 
-def test_canonical_mailbox_parent_swap_is_exact_and_not_sticky() -> None:
+
+def test_canonical_mailbox_parent_swap_is_exact_and_not_sticky__and_2_more() -> None:
+    # --- scenario: canonical_mailbox_parent_swap_is_exact_and_not_sticky
     """Remembering a prior family would attach a worker to the wrong primary."""
     first_key = _canonical_work_key("parent-a")
     second_key = _canonical_work_key("parent-b")
@@ -1007,8 +988,7 @@ def test_canonical_mailbox_parent_swap_is_exact_and_not_sticky() -> None:
     assert rows[second_key].worker_count == 1
     assert dict(moved.retained_order) == dict(initial.retained_order)
 
-
-def test_canonical_mailbox_restart_and_compaction_preserve_episode_order() -> None:
+    # --- scenario: canonical_mailbox_restart_and_compaction_preserve_episode_order
     """A generation reset or newer compaction watermark must not reshuffle families."""
     first_key = _canonical_work_key("restart-first")
     second_key = _canonical_work_key("restart-second")
@@ -1037,8 +1017,7 @@ def test_canonical_mailbox_restart_and_compaction_preserve_episode_order() -> No
     ) == (first_key, second_key)
     assert dict(restarted.retained_order) == dict(initial.retained_order)
 
-
-def test_canonical_mailbox_restart_retires_restored_worker_not_primary_outcome() -> None:
+    # --- scenario: canonical_mailbox_restart_retires_restored_worker_not_primary_outcome
     """Restored worker metadata must not survive restart as a live display row."""
     parent_key = _canonical_work_key("restored-primary")
     parent = _canonical_work(
@@ -1066,7 +1045,9 @@ def test_canonical_mailbox_restart_retires_restored_worker_not_primary_outcome()
     assert row.worker_count == 0
 
 
-def test_canonical_mailbox_uses_only_safe_label_and_never_request_or_identifier_text() -> None:
+
+def test_canonical_mailbox_uses_only_safe_label_and_never_request_or_identifier_text__and_2_more() -> None:
+    # --- scenario: canonical_mailbox_uses_only_safe_label_and_never_request_or_identifier_text
     key = _canonical_work_key("opaque-private-looking-id")
     label = "Codex 7F3A"
     work = _canonical_work(key, safe_label=label)
@@ -1077,8 +1058,7 @@ def test_canonical_mailbox_uses_only_safe_label_and_never_request_or_identifier_
     assert row.safe_label == label
     assert key.work_id.value not in row.safe_label
 
-
-def test_canonical_mailbox_bounds_shelves_and_retained_primary_families() -> None:
+    # --- scenario: canonical_mailbox_bounds_shelves_and_retained_primary_families
     works = tuple(
         _canonical_work(
             _canonical_work_key(f"work:{index:03d}"),
@@ -1098,8 +1078,7 @@ def test_canonical_mailbox_bounds_shelves_and_retained_primary_families() -> Non
     assert section.overflow_count == 93
     assert len(projection.retained_order) == 100
 
-
-def test_canonical_mailbox_row_and_projection_expose_only_task_two_authority_fields() -> None:
+    # --- scenario: canonical_mailbox_row_and_projection_expose_only_task_two_authority_fields
     assert tuple(field.name for field in __import__("dataclasses").fields(MailboxRow)) == (
         "work_key",
         "request_key",
@@ -1121,3 +1100,4 @@ def test_canonical_mailbox_row_and_projection_expose_only_task_two_authority_fie
         "ready_count",
         "retained_order",
     )
+

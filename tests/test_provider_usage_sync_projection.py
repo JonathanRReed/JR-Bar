@@ -43,7 +43,8 @@ def snapshot(observed, remaining, *, input_tokens, source_instance_id="default")
     )
 
 
-def test_fresher_remote_quota_replaces_lanes_but_preserves_local_usage_fields():
+def test_fresher_remote_quota_replaces_lanes_but_preserves_local_usage_fields__and_2_more() -> None:
+    # --- scenario: fresher_remote_quota_replaces_lanes_but_preserves_local_usage_fields
     local = snapshot(1000, 40, input_tokens=100)
     remote = snapshot(1100, 25, input_tokens=999)
     merged = MergedProviderSync(
@@ -65,8 +66,7 @@ def test_fresher_remote_quota_replaces_lanes_but_preserves_local_usage_fields():
     assert result.input_tokens == 100
     assert result.output_tokens == 10
 
-
-def test_older_remote_quota_cannot_replace_fresher_local_quota():
+    # --- scenario: older_remote_quota_cannot_replace_fresher_local_quota
     local = snapshot(1100, 25, input_tokens=100)
     remote = snapshot(1000, 40, input_tokens=999)
     merged = MergedProviderSync(
@@ -84,8 +84,7 @@ def test_older_remote_quota_cannot_replace_fresher_local_quota():
     )
     assert state.by_provider("claude").lanes[0].remaining_percent == 25
 
-
-def test_projection_matches_remote_quota_by_composite_instance_key():
+    # --- scenario: projection_matches_remote_quota_by_composite_instance_key
     local_personal = snapshot(1000, 40, input_tokens=100, source_instance_id="personal")
     local_work = snapshot(1000, 70, input_tokens=200, source_instance_id="work")
     remote_personal = snapshot(1100, 25, input_tokens=999, source_instance_id="personal")
@@ -97,3 +96,4 @@ def test_projection_matches_remote_quota_by_composite_instance_key():
     by_key = {(item.provider_id, item.source_instance_id): item for item in state.snapshots}
     assert by_key[("claude", "personal")].lanes[0].remaining_percent == 25
     assert by_key[("claude", "work")].lanes[0].remaining_percent == 70
+

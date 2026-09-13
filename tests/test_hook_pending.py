@@ -38,7 +38,8 @@ def test_request_from_pending_line_carries_the_shim_fields() -> None:
     assert request_from_pending_line(_line(ppid_start="x")).ppid_start is None
 
 
-def test_drain_submits_in_file_order_and_removes_the_files(tmp_path: Path) -> None:
+def test_drain_submits_in_file_order_and_removes_the_files__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: drain_submits_in_file_order_and_removes_the_files
     (tmp_path / f"claude{PENDING_SUFFIX}").write_text(_line() + "\n" + _line(payload="{}") + "\n\n")
     (tmp_path / f"codex{PENDING_SUFFIX}").write_text(_line(provider="codex") + "\nbroken\n")
     (tmp_path / "unrelated.jsonl").write_text("{}\n")
@@ -51,8 +52,7 @@ def test_drain_submits_in_file_order_and_removes_the_files(tmp_path: Path) -> No
     assert pending_hook_files(tmp_path) == []
     assert (tmp_path / "unrelated.jsonl").exists()
 
-
-def test_drain_survives_a_submit_that_raises(tmp_path: Path) -> None:
+    # --- scenario: drain_survives_a_submit_that_raises
     (tmp_path / f"claude{PENDING_SUFFIX}").write_text(_line() + "\n" + _line() + "\n")
     calls = []
 
@@ -64,6 +64,7 @@ def test_drain_survives_a_submit_that_raises(tmp_path: Path) -> None:
     assert drain_pending_hooks(submit, state_dir=tmp_path, log_path_for=lambda p: f"/logs/{p}.jsonl") == 1
     assert len(calls) == 2
     assert pending_hook_files(tmp_path) == []
+
 
 
 def test_orphaned_drain_files_are_adopted_by_the_next_drain(tmp_path) -> None:

@@ -7,7 +7,8 @@ from types import SimpleNamespace
 from jrbar.ask_episodes import ASK_BATCH_SECONDS, batched_episode_key
 
 
-def test_burst_within_window_reuses_the_first_episode() -> None:
+def test_burst_within_window_reuses_the_first_episode__and_1_more() -> None:
+    # --- scenario: burst_within_window_reuses_the_first_episode
     controller = SimpleNamespace()
     first = batched_episode_key(controller, "attention:a", 100.0)
     assert first == "attention:a"
@@ -19,9 +20,9 @@ def test_burst_within_window_reuses_the_first_episode() -> None:
         == "attention:c"
     )
 
-
-def test_a_pending_ask_keeps_its_own_key_every_tick() -> None:
+    # --- scenario: a_pending_ask_keeps_its_own_key_every_tick
     controller = SimpleNamespace()
     assert batched_episode_key(controller, "attention:a", 100.0) == "attention:a"
     assert batched_episode_key(controller, "attention:a", 100.5) == "attention:a"
     assert batched_episode_key(controller, "attention:a", 500.0) == "attention:a"
+

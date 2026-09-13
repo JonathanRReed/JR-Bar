@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 
-def test_installed_surface_registry_exposes_typed_domain_boundary() -> None:
+def test_installed_surface_registry_exposes_typed_domain_boundary__and_2_more() -> None:
+    # --- scenario: installed_surface_registry_exposes_typed_domain_boundary
     """Removing the registry types would leave inventory without a pure boundary."""
     from jrbar.installed_agents import (
         InstalledSurfaceKey,
@@ -23,8 +24,7 @@ def test_installed_surface_registry_exposes_typed_domain_boundary() -> None:
     assert InstalledSurfaceRegistration.__name__ == "InstalledSurfaceRegistration"
     assert InstalledSurfaceObservation.__name__ == "InstalledSurfaceObservation"
 
-
-def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> None:
+    # --- scenario: literal_registry_has_one_deterministic_row_per_supported_surface
     """Reordering or omitting a surface would make installed-agent rows unstable."""
     from jrbar.installed_agents import installed_surface_registrations
 
@@ -56,8 +56,7 @@ def test_literal_registry_has_one_deterministic_row_per_supported_surface() -> N
         ("gemini", "jrbar-hooks", "Gemini CLI JR-Bar hooks", "local_harness", "lifecycle"),
     )
 
-
-def test_registration_rejects_duplicate_surface_keys_and_executable_detectors() -> None:
+    # --- scenario: registration_rejects_duplicate_surface_keys_and_executable_detectors
     """A duplicate or executable detector could create ambiguous or active inventory work."""
     from jrbar.installed_agents import (
         InstalledSurfaceKey,
@@ -99,7 +98,9 @@ def test_registration_rejects_duplicate_surface_keys_and_executable_detectors() 
         )
 
 
-def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage() -> None:
+
+def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage__and_2_more() -> None:
+    # --- scenario: reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage
     """Treating installation as activity would fabricate agent work and alerts."""
     from jrbar.installed_agents import (
         InstalledSurfaceEvidence,
@@ -149,8 +150,7 @@ def test_reduction_maps_bounded_read_only_evidence_without_lifecycle_leakage() -
     assert reduction.completions == ()
     assert reduction.hardware_presentation_changes == ()
 
-
-def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secret_values() -> None:
+    # --- scenario: reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secret_values
     """Accepting untrusted detector data could expose host paths or activate unknown surfaces."""
     from jrbar.installed_agents import (
         InstalledSurfaceEvidence,
@@ -202,8 +202,7 @@ def test_reduction_rejects_unknown_detectors_duplicate_evidence_and_path_or_secr
             version="1.15.13",
         )
 
-
-def test_observation_rejects_raw_paths_credentials_and_oversized_product_values() -> None:
+    # --- scenario: observation_rejects_raw_paths_credentials_and_oversized_product_values
     """Persisting detector internals would disclose private host or account data."""
     from jrbar.installed_agents import (
         InstalledSurfaceKey,
@@ -246,6 +245,7 @@ def test_observation_rejects_raw_paths_credentials_and_oversized_product_values(
             detector_kind=SurfaceDetectorKind.CONFIG_MARKER,
             detector_id="opencode-plugin",
         )
+
 
 
 def test_reduction_fails_closed_for_malformed_rows() -> None:

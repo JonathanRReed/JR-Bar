@@ -26,14 +26,14 @@ def _glance(
     )
 
 
-def test_ordinary_agent_frames_share_one_latest_slot() -> None:
+def test_ordinary_agent_frames_share_one_latest_slot__and_2_more() -> None:
+    # --- scenario: ordinary_agent_frames_share_one_latest_slot
     policy = hardware_write_policy("agent", _glance(GlanceSemantic.ACTIVE))
 
     assert policy.priority is RuntimeWorkPriority.COALESCIBLE
     assert policy.coalesce_identity == "latest"
 
-
-def test_persistent_attention_and_failure_use_protected_semantic_slots() -> None:
+    # --- scenario: persistent_attention_and_failure_use_protected_semantic_slots
     attention = hardware_write_policy(
         "agent",
         _glance(GlanceSemantic.ATTENTION),
@@ -45,8 +45,7 @@ def test_persistent_attention_and_failure_use_protected_semantic_slots() -> None
     assert failure.priority is RuntimeWorkPriority.URGENT
     assert failure.coalesce_identity == "signal-failure"
 
-
-def test_finite_cue_slot_is_stable_and_contains_no_event_text() -> None:
+    # --- scenario: finite_cue_slot_is_stable_and_contains_no_event_text
     event_key = "provider:private-session-name"
     first = hardware_write_policy(
         "agent",
@@ -75,6 +74,7 @@ def test_finite_cue_slot_is_stable_and_contains_no_event_text() -> None:
     assert first.coalesce_identity != other.coalesce_identity
     assert event_key not in first.coalesce_identity
     assert first.coalesce_identity.startswith("cue-")
+
 
 
 def test_explicit_signal_preview_outranks_routine_signals() -> None:

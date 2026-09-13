@@ -12,7 +12,8 @@ from pathlib import Path
 import pytest
 
 
-def test_inventory_exposes_a_content_free_read_only_collection_boundary() -> None:
+def test_inventory_exposes_a_content_free_read_only_collection_boundary__and_2_more() -> None:
+    # --- scenario: inventory_exposes_a_content_free_read_only_collection_boundary
     """Removing the collector would make host inventory impossible to fence."""
     from jrbar.installed_agent_inventory import (
         InstalledAgentInventoryResult,
@@ -28,8 +29,7 @@ def test_inventory_exposes_a_content_free_read_only_collection_boundary() -> Non
     assert callable(collect_installed_agent_inventory)
     assert len(default_inventory_candidates()) == 22
 
-
-def test_antigravity_cli_uses_the_official_agy_name_with_bounded_common_install_roots() -> None:
+    # --- scenario: antigravity_cli_uses_the_official_agy_name_with_bounded_common_install_roots
     """Using the obsolete antigravity name would silently miss the official CLI."""
     from jrbar.installed_agent_inventory import default_inventory_candidates
     from jrbar.installed_agents import InstalledSurfaceKey
@@ -46,8 +46,7 @@ def test_antigravity_cli_uses_the_official_agy_name_with_bounded_common_install_
         ("local_bin", ("bin", "agy")),
     )
 
-
-def test_reviewed_path_marker_surfaces_use_only_home_homebrew_and_usr_local_literals() -> None:
+    # --- scenario: reviewed_path_marker_surfaces_use_only_home_homebrew_and_usr_local_literals
     """Dropping a package-manager location would regress normal installed-agent inventory."""
     from jrbar.installed_agent_inventory import default_inventory_candidates
     from jrbar.installed_agents import InstalledSurfaceKey
@@ -82,7 +81,9 @@ def test_reviewed_path_marker_surfaces_use_only_home_homebrew_and_usr_local_lite
     assert agent.alternate_locations == (("home", (".kiro", "agents", "sidepulse.json")),)
 
 
-def test_gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal() -> None:
+
+def test_gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal__and_1_more() -> None:
+    # --- scenario: gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal
     from jrbar.installed_agent_inventory import default_inventory_candidates
     from jrbar.installed_agents import InstalledSurfaceKey
 
@@ -92,8 +93,7 @@ def test_gemini_desktop_uses_the_exact_reviewed_macos_bundle_literal() -> None:
     assert desktop.relative_path == ("Gemini.app",)
     assert desktop.marker_kind.value == "directory"
 
-
-def test_exact_package_manager_roots_allow_safe_group_writable_directories() -> None:
+    # --- scenario: exact_package_manager_roots_allow_safe_group_writable_directories
     from jrbar.installed_agent_inventory import InventoryRoot
 
     owners = frozenset({0, os.getuid()})
@@ -116,6 +116,7 @@ def test_exact_package_manager_roots_allow_safe_group_writable_directories() -> 
             owners,
             trusted_system_root=True,
         )
+
 
 
 def test_system_applications_root_allows_only_the_reviewed_root_mode_exception(

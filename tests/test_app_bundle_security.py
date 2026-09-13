@@ -167,12 +167,12 @@ def test_source_install_launch_agent_uses_current_interpreter(tmp_path: Path) ->
     assert payload["ProgramArguments"][0] == str(Path(sys.executable))
 
 
-def test_development_python_is_absent_when_frozen() -> None:
+def test_development_python_is_absent_when_frozen__and_2_more() -> None:
+    # --- scenario: development_python_is_absent_when_frozen
     with patch("jrbar.status_bar_launch.sys.frozen", True, create=True):
         assert development_python_executable() is None
 
-
-def test_explicit_development_interpreter_remains_available_with_system_path() -> None:
+    # --- scenario: explicit_development_interpreter_remains_available_with_system_path
     plist = build_launch_agent_plist(
         python_executable="/usr/bin/python3",
         stdout_path=Path("/tmp/jrbar.out.log"),
@@ -191,9 +191,9 @@ def test_explicit_development_interpreter_remains_available_with_system_path() -
         "PATH": SYSTEM_PATH,
     }
 
-
-def test_launch_agent_path_is_only_apple_system_directories() -> None:
+    # --- scenario: launch_agent_path_is_only_apple_system_directories
     assert launch_agent_path_env("/opt/homebrew/bin/python3") == SYSTEM_PATH
+
 
 
 def test_frozen_launch_agent_uses_packaged_argument_shape_without_python_overrides(
@@ -593,7 +593,8 @@ def test_trusted_tool_rejects_untrusted_filesystem_objects(tmp_path: Path, kind:
             trusted_tools.trusted_system_tool("security")
 
 
-def test_battery_reader_uses_trusted_ioreg_path() -> None:
+def test_battery_reader_uses_trusted_ioreg_path__and_1_more() -> None:
+    # --- scenario: battery_reader_uses_trusted_ioreg_path
     from jrbar.battery import read_battery_snapshot
 
     commands: list[list[str]] = []
@@ -606,8 +607,7 @@ def test_battery_reader_uses_trusted_ioreg_path() -> None:
 
     assert commands == [["/usr/sbin/ioreg", "-r", "-n", "AppleSmartBattery", "-a"]]
 
-
-def test_claude_quota_exposes_no_credential_or_subprocess_route() -> None:
+    # --- scenario: claude_quota_exposes_no_credential_or_subprocess_route
     from jrbar import claude_quota
 
     assert not hasattr(claude_quota, "subprocess")
@@ -623,7 +623,9 @@ def test_claude_quota_exposes_no_credential_or_subprocess_route() -> None:
             claude_quota.fetch_windows()
 
 
-def test_log_follow_uses_trusted_tail_path(tmp_path: Path) -> None:
+
+def test_log_follow_uses_trusted_tail_path__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: log_follow_uses_trusted_tail_path
     from jrbar import cli
 
     log = tmp_path / "guard.log"
@@ -644,8 +646,7 @@ def test_log_follow_uses_trusted_tail_path(tmp_path: Path) -> None:
 
     assert run.call_args.args[0][0] == "/usr/bin/tail"
 
-
-def test_sd_guard_compile_and_launch_use_trusted_system_paths(tmp_path: Path) -> None:
+    # --- scenario: sd_guard_compile_and_launch_use_trusted_system_paths
     from jrbar import sd_eject_guard_launch
 
     source = tmp_path / "guard.c"
@@ -670,7 +671,9 @@ def test_sd_guard_compile_and_launch_use_trusted_system_paths(tmp_path: Path) ->
     ]
 
 
-def test_sd_guard_requires_an_explicit_volume_uuid_before_registration() -> None:
+
+def test_sd_guard_requires_an_explicit_volume_uuid_before_registration__and_2_more() -> None:
+    # --- scenario: sd_guard_requires_an_explicit_volume_uuid_before_registration
     source = (REPO_ROOT / "src" / "jrbar" / "resources" / "sd_eject_guard.c").read_text()
 
     assert "--volume-uuid" in source
@@ -681,8 +684,7 @@ def test_sd_guard_requires_an_explicit_volume_uuid_before_registration() -> None
     assert source.index("if (!g_selected_volume_uuid)") < source.index("DARegisterDiskEjectApprovalCallback")
     assert "is_builtin_sd" not in source
 
-
-def test_field_diagnostics_redacts_paths_and_device_serials() -> None:
+    # --- scenario: field_diagnostics_redacts_paths_and_device_serials
     source = (REPO_ROOT / "scripts" / "field-diagnostics.sh").read_text()
 
     assert 'APP_LABEL="user Applications/JR-Bar.app"' in source
@@ -692,8 +694,7 @@ def test_field_diagnostics_redacts_paths_and_device_serials() -> None:
     assert 'grep -E "serial|' not in source
     assert "retains file names, sizes, ages, and filtered operational log lines" in source
 
-
-def test_status_bar_shortcut_quit_and_openers_use_trusted_system_paths() -> None:
+    # --- scenario: status_bar_shortcut_quit_and_openers_use_trusted_system_paths
     try:
         from jrbar import status_bar
     except (ImportError, SystemExit) as exc:
@@ -732,19 +733,16 @@ def test_status_bar_shortcut_quit_and_openers_use_trusted_system_paths() -> None
     ]
 
 
-def test_package_builder_removes_candidate_metadata_before_codesign() -> None:
-    # Signing moved into packaging/sign_macos_app.py (inside-out plan); the
-    # builder must still sanitize Finder metadata before handing over.
+
+def test_package_builder_removes_candidate_metadata_before_codesign__and_2_more() -> None:
+    # --- scenario: package_builder_removes_candidate_metadata_before_codesign
     source = (REPO_ROOT / "packaging" / "build_macos_pkg.sh").read_text()
     sanitize = source.index('/usr/bin/xattr -cr "$APP_PATH"')
     signed = source.index("packaging/sign_macos_app.py")
 
     assert sanitize < signed
 
-
-def test_package_builder_strictly_verifies_ad_hoc_signatures() -> None:
-    # The signer performs its own strict deep verification after signing,
-    # for Developer ID and ad-hoc identities alike.
+    # --- scenario: package_builder_strictly_verifies_ad_hoc_signatures
     source = (REPO_ROOT / "packaging" / "sign_macos_app.py").read_text()
     signed = source.index('"--sign"')
     strict_verify = source.index('"--strict"', signed)
@@ -753,11 +751,11 @@ def test_package_builder_strictly_verifies_ad_hoc_signatures() -> None:
     assert '"--verify"' in source
     assert '"--deep"' in source
 
-
-def test_package_builder_collects_the_resource_package_for_installed_manifests() -> None:
+    # --- scenario: package_builder_collects_the_resource_package_for_installed_manifests
     source = (REPO_ROOT / "packaging" / "build_macos_pkg.sh").read_text()
 
     assert "--collect-data jrbar.resources" in source
+
 
 
 def _write_executable(path: Path, source: str) -> None:

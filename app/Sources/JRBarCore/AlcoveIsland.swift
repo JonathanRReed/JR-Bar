@@ -170,25 +170,38 @@ public enum AlcoveIslandLayout {
         return ((left.maxX + right.minX) / 2, width)
     }
 
+    /// Points of dead space the island keeps under the notch while the
+    /// Screen Bar is live: the LED band ends ~8 pt below the notch (6 pt
+    /// of band plus the halo bleed) and the island's window sits one
+    /// level under the bar, so the strip draws across the island's top
+    /// dead zone and the island's own content starts below it. Both
+    /// stay readable and neither covers the other.
+    public static let ledBandClearance: CGFloat = 12
+
     /// The collapsed capsule: at least as wide as the notch plus a small
     /// shoulder each side — the island reads as the notch grown, not a
     /// pill parked beside it — and a `lip` deep for the content strip.
     /// Notch-less screens get a floating pill sized to the content.
-    public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat, contentWidth: CGFloat) -> CGSize {
+    /// `ledClearance` is `ledBandClearance` while the Screen Bar draws
+    /// over the island's top zone, 0 otherwise.
+    public static func idleSize(slotWidth: CGFloat, notchDepth: CGFloat, contentWidth: CGFloat,
+                                ledClearance: CGFloat = 0) -> CGSize {
         guard notchDepth > 0 else {
             return CGSize(width: max(idleMinWidth, contentWidth + 24), height: 24)
         }
         return CGSize(width: max(idleMinWidth, slotWidth + 2 * shoulder, contentWidth + 28),
-                      height: notchDepth + lip)
+                      height: notchDepth + lip + ledClearance)
     }
 
     /// The expanded card's window height: the notch clearance (the card's
     /// content starts below the hardware) plus the media row, the session
     /// rows, the meters and the paddings — all fixed heights, so the view
-    /// and the frame agree to the point.
+    /// and the frame agree to the point. `ledClearance` raises the
+    /// content start past a live Screen Bar's band and halo.
     public static func expandedHeight(notchDepth: CGFloat, rows: Int, meters: Int,
-                                      overflow: Bool, media: Bool = false) -> CGFloat {
-        let inset = notchDepth > 0 ? notchDepth + expandedNotchInset : 8
+                                      overflow: Bool, media: Bool = false,
+                                      ledClearance: CGFloat = 0) -> CGFloat {
+        let inset = notchDepth > 0 ? notchDepth + expandedNotchInset + ledClearance : 8
         var card: CGFloat = 20                              // header line
         if media { card += 40 }                             // Now Playing row + divider
         card += CGFloat(max(0, rows)) * 22                  // session rows

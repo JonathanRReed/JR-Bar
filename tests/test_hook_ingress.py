@@ -32,7 +32,8 @@ def _request(name: str) -> HookIngressRequest:
     )
 
 
-def test_fifo_preserves_acceptance_order_with_one_worker() -> None:
+def test_fifo_preserves_acceptance_order_with_one_worker__and_2_more() -> None:
+    # --- scenario: fifo_preserves_acceptance_order_with_one_worker
     first_started = threading.Event()
     release_first = threading.Event()
     completed: list[str] = []
@@ -60,8 +61,7 @@ def test_fifo_preserves_acceptance_order_with_one_worker() -> None:
     assert len(worker_ids) == 1
     assert service.close(timeout_seconds=1.0)
 
-
-def test_bound_counts_running_plus_pending_and_records_full_refusal() -> None:
+    # --- scenario: bound_counts_running_plus_pending_and_records_full_refusal
     started = threading.Event()
     release = threading.Event()
     receipts: list[HookIngressReceipt] = []
@@ -92,8 +92,7 @@ def test_bound_counts_running_plus_pending_and_records_full_refusal() -> None:
     release.set()
     assert service.close(timeout_seconds=1.0)
 
-
-def test_processing_failure_has_content_free_receipt_and_does_not_stop_fifo() -> None:
+    # --- scenario: processing_failure_has_content_free_receipt_and_does_not_stop_fifo
     completed: list[str] = []
     receipts: list[HookIngressReceipt] = []
 
@@ -121,7 +120,9 @@ def test_processing_failure_has_content_free_receipt_and_does_not_stop_fifo() ->
     assert service.close(timeout_seconds=1.0)
 
 
-def test_close_drains_every_accepted_request_and_then_refuses_new_work() -> None:
+
+def test_close_drains_every_accepted_request_and_then_refuses_new_work__and_2_more() -> None:
+    # --- scenario: close_drains_every_accepted_request_and_then_refuses_new_work
     completed: list[str] = []
     service = HookIngressService(
         process=lambda request: completed.append(json.loads(request.payload_text)["session_id"]),
@@ -139,8 +140,7 @@ def test_close_drains_every_accepted_request_and_then_refuses_new_work() -> None
     assert snapshot.pending_count == 0
     assert not snapshot.thread_alive
 
-
-def test_close_timeout_records_running_and_pending_as_not_drained() -> None:
+    # --- scenario: close_timeout_records_running_and_pending_as_not_drained
     started = threading.Event()
     release = threading.Event()
     receipts: list[HookIngressReceipt] = []
@@ -173,8 +173,7 @@ def test_close_timeout_records_running_and_pending_as_not_drained() -> None:
     release.set()
     assert service.wait_stopped(timeout_seconds=1.0)
 
-
-def test_rejection_recorder_failure_never_breaks_admission_contract() -> None:
+    # --- scenario: rejection_recorder_failure_never_breaks_admission_contract
     started = threading.Event()
     release = threading.Event()
     service = HookIngressService(
@@ -191,7 +190,9 @@ def test_rejection_recorder_failure_never_breaks_admission_contract() -> None:
     assert service.close(timeout_seconds=1.0)
 
 
-def test_socket_admits_on_private_same_uid_path_and_processes_request() -> None:
+
+def test_socket_admits_on_private_same_uid_path_and_processes_request__and_2_more() -> None:
+    # --- scenario: socket_admits_on_private_same_uid_path_and_processes_request
     with tempfile.TemporaryDirectory(prefix="jrbar-hi-", dir="/tmp") as directory:
         socket_path = Path(directory) / "hook-ingress.sock"
         completed = threading.Event()
@@ -220,8 +221,7 @@ def test_socket_admits_on_private_same_uid_path_and_processes_request() -> None:
             assert service.close(timeout_seconds=1.0)
         assert not socket_path.exists()
 
-
-def test_lost_ack_after_acceptance_falls_back_through_dedupe() -> None:
+    # --- scenario: lost_ack_after_acceptance_falls_back_through_dedupe
     ack_started = threading.Event()
     release_ack = threading.Event()
 
@@ -280,8 +280,7 @@ def test_lost_ack_after_acceptance_falls_back_through_dedupe() -> None:
         finally:
             assert service.close(timeout_seconds=1.0)
 
-
-def test_a_trickling_connection_never_serializes_later_hooks() -> None:
+    # --- scenario: a_trickling_connection_never_serializes_later_hooks
     """One read-to-EOF client used to hold the sole ingress slot for as
     long as it kept the stream alive; each connection now gets its own
     bounded worker, so a peer that never finishes cannot starve hooks."""
@@ -313,6 +312,7 @@ def test_a_trickling_connection_never_serializes_later_hooks() -> None:
                 trickler.close()
         finally:
             assert service.close(timeout_seconds=1.0)
+
 
 
 def test_trickling_connection_dies_at_the_whole_connection_deadline(
@@ -519,10 +519,10 @@ def test_close_waits_until_app_owned_refresh_handler_finishes(
     assert log_path.is_file()
 
 
-@pytest.mark.parametrize("timeout", [-1, float("nan"), True, None])
-def test_waits_reject_invalid_timeouts(timeout: object) -> None:
-    service = HookIngressService(process=lambda _request_value: None)
-    with pytest.raises(ValueError, match="invalid hook ingress timeout"):
-        service.wait_idle(timeout_seconds=timeout)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="invalid hook ingress timeout"):
-        service.close(timeout_seconds=timeout)  # type: ignore[arg-type]
+def test_waits_reject_invalid_timeouts() -> None:
+    for timeout in [-1, float("nan"), True, None]:
+        service = HookIngressService(process=lambda _request_value: None)
+        with pytest.raises(ValueError, match="invalid hook ingress timeout"):
+            service.wait_idle(timeout_seconds=timeout)  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="invalid hook ingress timeout"):
+            service.close(timeout_seconds=timeout)  # type: ignore[arg-type]

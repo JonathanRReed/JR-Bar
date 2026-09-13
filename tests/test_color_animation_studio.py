@@ -88,7 +88,8 @@ def _status(provider: str, mode: AgentMode, *, agent_id: str | None = None) -> A
 # --- Named brand groups ----------------------------------------------------
 
 
-def test_every_swatch_on_every_provider_row_has_a_name() -> None:
+def test_every_swatch_on_every_provider_row_has_a_name__and_2_more() -> None:
+    # --- scenario: every_swatch_on_every_provider_row_has_a_name
     """"No anonymous colour squares anywhere." A coloured rectangle with no
     word attached is a guess, not a choice, and it is what made the old
     card's brand-colour claim unverifiable by anyone but its author."""
@@ -101,8 +102,7 @@ def test_every_swatch_on_every_provider_row_has_a_name() -> None:
                 assert swatch.hex.startswith("#") and len(swatch.hex) == 7
                 assert swatch.tooltip.strip()
 
-
-def test_each_row_leads_with_a_labelled_brand_group_naming_all_four_brands() -> None:
+    # --- scenario: each_row_leads_with_a_labelled_brand_group_naming_all_four_brands
     """Identity first, palette second -- and the Brand group says "Brand"."""
     for row in provider_color_rows(ColorSettings.defaults()):
         first = row.groups[0]
@@ -114,8 +114,7 @@ def test_each_row_leads_with_a_labelled_brand_group_naming_all_four_brands() -> 
         assert brand_pairs == list(BRAND_SEED_COLORS), row.provider
         assert all(swatch.is_brand for swatch in first.swatches)
 
-
-def test_the_row_leads_with_the_providers_own_identity() -> None:
+    # --- scenario: the_row_leads_with_the_providers_own_identity
     rows = provider_color_rows(ColorSettings.defaults())
     assert [row.provider for row in rows] == [spec.provider for spec in PROVIDER_SPECS]
     assert [row.label for row in rows] == [spec.label for spec in PROVIDER_SPECS]
@@ -124,7 +123,9 @@ def test_the_row_leads_with_the_providers_own_identity() -> None:
     assert rows[0].provider == PROVIDER_SPECS[0].provider
 
 
-def test_palette_swatches_never_claim_to_be_brand_colours() -> None:
+
+def test_palette_swatches_never_claim_to_be_brand_colours__and_2_more() -> None:
+    # --- scenario: palette_swatches_never_claim_to_be_brand_colours
     """The exact regression: the card announced "the first four swatches on
     every row are Claude, OpenAI, Codex and Gemini's official brand colors"
     while rendering CURATED_PALETTE, whose first four are system red, blue,
@@ -136,16 +137,14 @@ def test_palette_swatches_never_claim_to_be_brand_colours() -> None:
         assert not any(swatch.is_brand for swatch in palette.swatches)
         assert [swatch.hex for swatch in palette.swatches] == list(CURATED_PALETTE)
 
-
-def test_brand_seeds_and_brand_palettes_cannot_drift_apart() -> None:
+    # --- scenario: brand_seeds_and_brand_palettes_cannot_drift_apart
     """One source of truth: the "Claude" look and the "Claude" swatch are
     seeded from the same hex, so renaming or recolouring one moves both."""
     assert list(PROVIDER_PALETTES) == [name for name, _hex in BRAND_SEED_COLORS]
     for name, seed in BRAND_SEED_COLORS:
         assert PROVIDER_PALETTES[name] == colors_module.derive_palette(seed)
 
-
-def test_a_row_names_the_swatch_it_is_actually_wearing() -> None:
+    # --- scenario: a_row_names_the_swatch_it_is_actually_wearing
     colors = ColorSettings.defaults()
     row = provider_color_row("claude", colors)
     assert row.current_name == "Claude"
@@ -157,7 +156,9 @@ def test_a_row_names_the_swatch_it_is_actually_wearing() -> None:
     assert grey.current_name == "Gray"
 
 
-def test_a_hand_picked_colour_stays_a_named_selected_swatch() -> None:
+
+def test_a_hand_picked_colour_stays_a_named_selected_swatch__and_2_more() -> None:
+    # --- scenario: a_hand_picked_colour_stays_a_named_selected_swatch
     colors = ColorSettings.defaults().with_agent_color("claude", "#123456")
     row = provider_color_row("claude", colors)
     custom = row.group(SWATCH_GROUP_CUSTOM)
@@ -167,8 +168,7 @@ def test_a_hand_picked_colour_stays_a_named_selected_swatch() -> None:
     assert custom.swatches[0].opens_picker
     assert row.current_name == CUSTOM_SWATCH_NAME
 
-
-def test_a_providers_own_shipped_colour_is_named_default_not_repeated() -> None:
+    # --- scenario: a_providers_own_shipped_colour_is_named_default_not_repeated
     """Devin ships #5C84B0, which is in neither named set. It leads the row
     as "Default" -- and must not ALSO show up as an unnamed custom chip."""
     row = provider_color_row("devin", ColorSettings.defaults())
@@ -187,8 +187,7 @@ def test_a_providers_own_shipped_colour_is_named_default_not_repeated() -> None:
     offered = [swatch.hex.upper() for swatch in row.all_swatches if not swatch.is_control]
     assert len(offered) == len(set(offered)), "a colour appears twice on one row"
 
-
-def test_a_provider_whose_default_is_already_named_gets_no_default_chip() -> None:
+    # --- scenario: a_provider_whose_default_is_already_named_gets_no_default_chip
     claude = provider_color_row("claude", ColorSettings.defaults())
     assert "Default" not in [swatch.name for swatch in claude.group(SWATCH_GROUP_BRAND).swatches]
     # grok moved off systemGray (#8E8E93 -> #636366, an unnamed hex)
@@ -198,35 +197,34 @@ def test_a_provider_whose_default_is_already_named_gets_no_default_chip() -> Non
     assert grok.current_name == "Default"
 
 
-def test_swatch_name_resolves_brand_then_palette_then_identity_then_custom() -> None:
+
+def test_swatch_name_resolves_brand_then_palette_then_identity_then_custom__and_2_more() -> None:
+    # --- scenario: swatch_name_resolves_brand_then_palette_then_identity_then_custom
     assert swatch_name("#D97757") == "Claude"
     assert swatch_name("#ff3b30") == "Red"
     assert swatch_name("#4C8DFF") == "Azure"
     assert swatch_name("#010203") == CUSTOM_SWATCH_NAME
 
-
-def test_exactly_one_swatch_per_row_is_selected() -> None:
+    # --- scenario: exactly_one_swatch_per_row_is_selected
     for provider in ("claude", "codex", "devin", "grok", "cursor"):
         row = provider_color_row(provider, ColorSettings.defaults())
         selected = [swatch for swatch in row.all_swatches if swatch.selected]
         assert len(selected) == 1, f"{provider}: {[s.name for s in selected]}"
         assert selected[0].hex.upper() == row.current_hex.upper()
 
-
-# --- Studio sections -------------------------------------------------------
-
-
-def test_the_studio_offers_colours_animations_and_preview_as_peers() -> None:
+    # --- scenario: the_studio_offers_colours_animations_and_preview_as_peers
     assert STUDIO_SECTION_CHOICES == ("colors", "animations", "preview")
     assert normalize_studio_section("animations") == "animations"
     assert normalize_studio_section("nonsense") == "colors"
     assert normalize_studio_section(None) == "colors"
 
 
+
 # --- Per-provider animation ------------------------------------------------
 
 
-def test_provider_animation_defaults_to_automatic_and_round_trips() -> None:
+def test_provider_animation_defaults_to_automatic_and_round_trips__and_2_more() -> None:
+    # --- scenario: provider_animation_defaults_to_automatic_and_round_trips
     colors = ColorSettings.defaults()
     assert colors.agent_animation("claude") == PROVIDER_ANIMATION_AUTO
     assert colors.provider_animation == {}
@@ -236,21 +234,21 @@ def test_provider_animation_defaults_to_automatic_and_round_trips() -> None:
     assert colors.agent_animation("claude") == PROVIDER_ANIMATION_AUTO  # frozen
     assert ColorSettings.from_dict(chased.to_dict()) == chased
 
-
-def test_automatic_removes_the_stored_choice_rather_than_storing_auto() -> None:
+    # --- scenario: automatic_removes_the_stored_choice_rather_than_storing_auto
     colors = ColorSettings.defaults().with_agent_animation("claude", MOTION_STEADY)
     back = colors.with_agent_animation("claude", PROVIDER_ANIMATION_AUTO)
     assert back.provider_animation == {}
     assert back == ColorSettings.from_dict(back.to_dict())
 
-
-def test_a_settings_file_from_before_this_feature_still_loads() -> None:
+    # --- scenario: a_settings_file_from_before_this_feature_still_loads
     legacy = ColorSettings.defaults().to_dict()
     legacy.pop("provider_animation")
     assert ColorSettings.from_dict(legacy) == ColorSettings.defaults()
 
 
-def test_garbage_provider_animation_reads_as_automatic_and_is_not_persisted() -> None:
+
+def test_garbage_provider_animation_reads_as_automatic_and_is_not_persisted__and_2_more() -> None:
+    # --- scenario: garbage_provider_animation_reads_as_automatic_and_is_not_persisted
     payload = ColorSettings.defaults().to_dict()
     payload["provider_animation"] = {
         "claude": "interpretive-dance",
@@ -264,8 +262,7 @@ def test_garbage_provider_animation_reads_as_automatic_and_is_not_persisted() ->
     with pytest.raises(ValueError):
         loaded.with_agent_animation("claude", "interpretive-dance")
 
-
-def test_every_offered_animation_has_a_label_and_a_description() -> None:
+    # --- scenario: every_offered_animation_has_a_label_and_a_description
     for motion in PROVIDER_ANIMATION_CHOICES:
         assert PROVIDER_ANIMATION_LABELS[motion].strip()
         assert colors_module.PROVIDER_ANIMATION_DESCRIPTIONS[motion].strip()
@@ -305,40 +302,38 @@ def test_every_offered_animation_has_a_label_and_a_description() -> None:
     }
     assert MOTION_BEAT not in PROVIDER_ANIMATION_CHOICES
 
-
-@pytest.mark.parametrize(
-    "motion",
-    (
+    # --- scenario: seeded_ambient_motion_compiles_to_repeatable_bytes
+    for motion in (
         colors_module.MOTION_FLICKER,
         colors_module.MOTION_TWINKLE,
         colors_module.MOTION_DRIFT,
         colors_module.MOTION_AURORA,
-    ),
-)
-def test_seeded_ambient_motion_compiles_to_repeatable_bytes(motion: str) -> None:
-    settings = ColorSettings.defaults().with_agent_animation("claude", motion)
+    ):
+        settings = ColorSettings.defaults().with_agent_animation("claude", motion)
 
-    first = colors_module._motion_turn_lines(
-        "#4F8CFF",
-        LedDisplayState.WORKING,
-        settings,
-        provider="claude",
-        led_count=8,
-        duration_ms=1600,
-    )
-    second = colors_module._motion_turn_lines(
-        "#4F8CFF",
-        LedDisplayState.WORKING,
-        settings,
-        provider="claude",
-        led_count=8,
-        duration_ms=1600,
-    )
+        first = colors_module._motion_turn_lines(
+            "#4F8CFF",
+            LedDisplayState.WORKING,
+            settings,
+            provider="claude",
+            led_count=8,
+            duration_ms=1600,
+        )
+        second = colors_module._motion_turn_lines(
+            "#4F8CFF",
+            LedDisplayState.WORKING,
+            settings,
+            provider="claude",
+            led_count=8,
+            duration_ms=1600,
+        )
 
-    assert first == second
+        assert first == second
 
 
-def test_a_providers_animation_replaces_the_states_rhythm() -> None:
+
+def test_a_providers_animation_replaces_the_states_rhythm__and_2_more() -> None:
+    # --- scenario: a_providers_animation_replaces_the_states_rhythm
     colors = ColorSettings.defaults().with_agent_animation("claude", MOTION_STEADY)
     assert agent_motion(LedDisplayState.WORKING, cycle_ms=1600) == MOTION_CHASE
     assert (
@@ -355,8 +350,7 @@ def test_a_providers_animation_replaces_the_states_rhythm() -> None:
         == MOTION_CHASE
     )
 
-
-def test_urgency_keeps_its_beat_whatever_the_provider_was_set_to() -> None:
+    # --- scenario: urgency_keeps_its_beat_whatever_the_provider_was_set_to
     """A per-provider animation is for telling two busy agents apart. It is
     not a switch for turning "a human is needed" into something calmer."""
     colors = ColorSettings.defaults().with_agent_animation("claude", MOTION_STEADY)
@@ -365,8 +359,7 @@ def test_urgency_keeps_its_beat_whatever_the_provider_was_set_to() -> None:
             state, cycle_ms=1600, provider="claude", settings=colors
         ) == agent_motion(state, cycle_ms=1600)
 
-
-def test_a_chosen_animation_still_obeys_nothing_above_two_hertz() -> None:
+    # --- scenario: a_chosen_animation_still_obeys_nothing_above_two_hertz
     colors = ColorSettings.defaults().with_agent_animation("claude", MOTION_BLINK)
     fast = colors_module.MIN_FLASH_CYCLE_MS - 1
     assert (
@@ -384,6 +377,7 @@ def test_a_chosen_animation_still_obeys_nothing_above_two_hertz() -> None:
     )
 
 
+
 def _round_robin(colors: ColorSettings) -> str:
     statuses = (
         _status("claude", AgentMode.WORKING),
@@ -395,7 +389,8 @@ def _round_robin(colors: ColorSettings) -> str:
     return program
 
 
-def test_one_provider_on_steady_changes_only_its_own_leds() -> None:
+def test_one_provider_on_steady_changes_only_its_own_leds__and_1_more() -> None:
+    # --- scenario: one_provider_on_steady_changes_only_its_own_leds
     """Two agents working at once: put Claude on Steady and its LEDs hold
     while Codex's keep chasing. Without the per-provider wiring both keep
     pulsing and the two programs are byte-identical."""
@@ -413,8 +408,7 @@ def test_one_provider_on_steady_changes_only_its_own_leds() -> None:
     assert "pulse" not in segments[1]
     assert "pulse" in segments[0]
 
-
-def test_a_lone_agent_also_gets_its_providers_animation() -> None:
+    # --- scenario: a_lone_agent_also_gets_its_providers_animation
     base = ColorSettings.defaults()
     changed = base.with_agent_animation("claude", MOTION_STEADY)
     statuses = (_status("claude", AgentMode.WORKING),)
@@ -425,11 +419,13 @@ def test_a_lone_agent_also_gets_its_providers_animation() -> None:
     assert "pulse" not in after
 
 
+
 def _segments(program: str, line: int) -> list[str]:
     return program.splitlines()[line].split("; ")
 
 
-def test_spatial_split_blocks_follow_the_providers_animation() -> None:
+def test_spatial_split_blocks_follow_the_providers_animation__and_2_more() -> None:
+    # --- scenario: spatial_split_blocks_follow_the_providers_animation
     base = ColorSettings.defaults().with_blend_mode(colors_module.BLEND_MODE_SPATIAL)
     changed = base.with_agent_animation("claude", MOTION_STEADY)
     statuses = (
@@ -457,8 +453,7 @@ def test_spatial_split_blocks_follow_the_providers_animation() -> None:
             reset_color(after, index)
         ) > colors_module.relative_luminance(reset_color(before, index))
 
-
-def test_relay_stays_byte_stable_when_every_provider_holds_still() -> None:
+    # --- scenario: relay_stays_byte_stable_when_every_provider_holds_still
     """Relay skips its baton rotation when nothing is actually moving -- the
     property that keeps it from rewriting the device for motion that does not
     exist. A provider parked on Steady counts as still."""
@@ -480,11 +475,7 @@ def test_relay_stays_byte_stable_when_every_provider_holds_still() -> None:
     }
     assert len(programs) == 1
 
-
-# --- Uncommitted preview ---------------------------------------------------
-
-
-def test_hovering_never_changes_what_is_saved() -> None:
+    # --- scenario: hovering_never_changes_what_is_saved
     committed = ColorSettings.defaults()
     session = StudioPreviewSession(committed)
     assert not session.previewing
@@ -501,7 +492,9 @@ def test_hovering_never_changes_what_is_saved() -> None:
     assert session.effective is committed
 
 
-def test_committing_keeps_whatever_is_being_previewed() -> None:
+
+def test_committing_keeps_whatever_is_being_previewed__and_2_more() -> None:
+    # --- scenario: committing_keeps_whatever_is_being_previewed
     session = StudioPreviewSession(ColorSettings.defaults())
     session.preview_agent_animation("claude", MOTION_CHASE)
     kept = session.commit()
@@ -509,8 +502,7 @@ def test_committing_keeps_whatever_is_being_previewed() -> None:
     assert not session.previewing
     assert session.effective is kept
 
-
-def test_rebasing_drops_an_in_flight_hover() -> None:
+    # --- scenario: rebasing_drops_an_in_flight_hover
     """A palette button or Reset changes the ground under an open hover. The
     candidate is stale the moment that happens and must not repaint over it."""
     session = StudioPreviewSession(ColorSettings.defaults())
@@ -520,8 +512,7 @@ def test_rebasing_drops_an_in_flight_hover() -> None:
     assert not session.previewing
     assert session.effective is fresh
 
-
-def test_a_preview_program_reflects_the_candidate_not_the_saved_settings() -> None:
+    # --- scenario: a_preview_program_reflects_the_candidate_not_the_saved_settings
     committed = ColorSettings.defaults()
     candidate = committed.with_agent_color("claude", "#10A37F")
     statuses = (_status("claude", AgentMode.WORKING),)
@@ -535,7 +526,9 @@ def test_a_preview_program_reflects_the_candidate_not_the_saved_settings() -> No
     assert committed.agent_color("claude") == "#D97757"
 
 
-def test_a_provider_preview_puts_that_provider_alone_on_the_strip() -> None:
+
+def test_a_provider_preview_puts_that_provider_alone_on_the_strip__and_1_more() -> None:
+    # --- scenario: a_provider_preview_puts_that_provider_alone_on_the_strip
     """A provider swatch previews THAT provider, not a fleet.
 
     This file used to close by asserting the opposite of the last block:
@@ -566,10 +559,10 @@ def test_a_provider_preview_puts_that_provider_alone_on_the_strip() -> None:
         untouched, statuses=crowd
     )
 
-
-def test_a_preview_with_nothing_running_still_shows_something() -> None:
+    # --- scenario: a_preview_with_nothing_running_still_shows_something
     program = studio_preview_program(ColorSettings.defaults(), statuses=())
     assert program.strip()
+
 
 
 # --- The Screen Bar hands the surface back --------------------------------
@@ -593,7 +586,8 @@ class _RecordingDevice:
         return self.applied[-1][0] if self.applied else None
 
 
-def test_a_held_preview_owns_the_screen_bar_and_hides_live_updates() -> None:
+def test_a_held_preview_owns_the_screen_bar_and_hides_live_updates__and_2_more() -> None:
+    # --- scenario: a_held_preview_owns_the_screen_bar_and_hides_live_updates
     recorder = _RecordingDevice()
     device = recorder.device
 
@@ -607,8 +601,7 @@ def test_a_held_preview_owns_the_screen_bar_and_hides_live_updates() -> None:
     device.set_program("live-2")
     assert recorder.shown == "candidate", "a live update repainted over the preview"
 
-
-def test_releasing_a_preview_reverts_to_the_CURRENT_live_program() -> None:
+    # --- scenario: releasing_a_preview_reverts_to_the_CURRENT_live_program
     """Not the frame from before the hover: the world moved on underneath."""
     recorder = _RecordingDevice()
     device = recorder.device
@@ -621,8 +614,7 @@ def test_releasing_a_preview_reverts_to_the_CURRENT_live_program() -> None:
     assert recorder.shown == "live-2"
     assert device.preview_is_held() is False
 
-
-def test_releasing_with_no_live_update_restores_what_was_there_before() -> None:
+    # --- scenario: releasing_with_no_live_update_restores_what_was_there_before
     recorder = _RecordingDevice()
     device = recorder.device
 
@@ -630,6 +622,7 @@ def test_releasing_with_no_live_update_restores_what_was_there_before() -> None:
     device.hold_preview_program("candidate")
     assert device.release_preview_program() is True
     assert recorder.shown == "live-1"
+
 
 
 def test_releasing_when_nothing_is_held_says_so_and_paints_nothing() -> None:

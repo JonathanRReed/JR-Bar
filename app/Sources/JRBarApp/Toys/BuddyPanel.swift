@@ -266,13 +266,19 @@ final class BuddyPanel: NSPanel {
     /// Parked centred on `point` in screen coordinates, clamped so the
     /// whole pill stays on the visible screen — a spot saved on a
     /// monitor that is no longer there lands somewhere sane instead.
+    /// The frame is measured fresh off the hosting view, so a scale
+    /// change lands here already sized.
     func present(centeredAt point: CGPoint) {
         guard let toy = model.toy, toy.isOn else { dismiss(); return }
+        // A carry owns the frame until the drop lands it — a resize
+        // mid-carry re-presents on the drop.
+        guard buddyDrag?.inProgress != true else { return }
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let height = max(26, size.height)
         let width = max(30, size.width)
-        let radius = min(15, min(width, height) / 2)
+        // A pill at every size: capsule ends scale with the panel.
+        let radius = min(width, height) / 2
         (backdrop as? NSGlassEffectView)?.cornerRadius = radius
         backdrop.layer?.cornerRadius = radius
         let screen = NSScreen.screens.first { $0.frame.contains(point) }
@@ -295,10 +301,12 @@ final class BuddyPanel: NSPanel {
 }
 
 /// What the free panel shows: the same buddy the docked pill carries —
-/// moods, tricks, badges, hover line and all — plus the quiet caption
-/// underneath naming the session it is watching, or just its name tag
-/// while nothing is on the clock. The caption row keeps its height even
-/// when the text is short, so the pill's size never breathes.
+/// moods, tricks, badges, hover line and all — drawn at the settings'
+/// `scale` (the docked slot is fixed at 18pt; this one is a desk pet),
+/// plus the quiet caption underneath naming the session it is watching,
+/// or just its name tag while nothing is on the clock. The caption row
+/// keeps its height even when the text is short, so the pill's size
+/// never breathes — only the slider does that.
 struct BuddyPanelView: View {
     let model: BuddyPanelModel
 
@@ -310,17 +318,21 @@ struct BuddyPanelView: View {
         if let toy = model.toy, toy.isOn {
             TimelineView(.periodic(from: .now, by: 15)) { context in
                 let summary = toy.summary(at: context.date)
+                let scale = toy.buddyScale
+                // The tag grows with the pet but tops out — a caption,
+                // not a headline.
+                let caption = min(11, 7.2 * scale)
                 VStack(spacing: 0) {
-                    NotchBuddyView(toy: toy)
+                    NotchBuddyView(toy: toy, scale: scale)
                     if toy.showsCaption {
                         Text(summary.focus?.line ?? toy.buddyName)
-                            .font(.system(size: 7.2, weight: .medium, design: .rounded))
+                            .font(.system(size: caption, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.tail)
-                            .frame(maxWidth: 150)
-                            .frame(height: 9)
-                            .padding(.bottom, 2)
+                            .frame(maxWidth: max(150, 60 * scale))
+                            .frame(height: caption + 2)
+                            .padding(.bottom, 2 * scale)
                     }
                 }
                 .help(summary.statusLine)

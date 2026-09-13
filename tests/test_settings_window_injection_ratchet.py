@@ -73,7 +73,8 @@ def _ambient_names() -> set[str]:
     return {name for name in loads if name not in defined}
 
 
-def test_settings_window_has_no_namespace_injection() -> None:
+def test_settings_window_has_no_namespace_injection__and_1_more() -> None:
+    # --- scenario: settings_window_has_no_namespace_injection
     tree = _settings_window_tree()
     functions = {
         node.name
@@ -91,8 +92,7 @@ def test_settings_window_has_no_namespace_injection() -> None:
     assert global_namespace_reads == []
     assert _ambient_names() == set()
 
-
-def test_settings_window_declares_extracted_settings_pane_dependencies() -> None:
+    # --- scenario: settings_window_declares_extracted_settings_pane_dependencies
     imports = {
         node.module
         for node in ast.walk(_settings_window_tree())
@@ -101,3 +101,4 @@ def test_settings_window_declares_extracted_settings_pane_dependencies() -> None
 
     assert "global_action_settings_pane" in imports
     assert "dnd_settings_pane" in imports
+

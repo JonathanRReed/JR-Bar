@@ -104,12 +104,12 @@ def test_no_devin_session_is_not_an_error(tmp_path) -> None:
     assert import_devin_session(tmp_path) is None
 
 
-def test_a_missing_browser_is_not_an_error(tmp_path) -> None:
+def test_a_missing_browser_is_not_an_error__and_2_more(tmp_path) -> None:
+    # --- scenario: a_missing_browser_is_not_an_error
     assert import_devin_session(tmp_path) is None
     assert firefox_profile_directories(tmp_path) == []
 
-
-def test_the_auth0_shape_is_read_when_auth1_is_absent(tmp_path) -> None:
+    # --- scenario: the_auth0_shape_is_read_when_auth1_is_absent
     jwt = "eyJ" + "c" * 40 + ".body.sig"
     session = devin_session_from_entries(
         {
@@ -122,14 +122,14 @@ def test_the_auth0_shape_is_read_when_auth1_is_absent(tmp_path) -> None:
     assert session is not None
     assert session.token == jwt
 
-
-def test_a_profile_that_is_a_symlink_is_refused(tmp_path) -> None:
+    # --- scenario: a_profile_that_is_a_symlink_is_refused
     real = tmp_path / "elsewhere"
     real.mkdir()
     root = tmp_path / "Library" / "Application Support" / "zen" / "Profiles"
     root.mkdir(parents=True)
     (root / "linked").symlink_to(real, target_is_directory=True)
     assert firefox_profile_directories(tmp_path) == []
+
 
 
 def test_the_reader_never_writes_to_the_browsers_database(tmp_path) -> None:

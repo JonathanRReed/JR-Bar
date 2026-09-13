@@ -100,7 +100,8 @@ def registered_id(backend: FakeBackend, index: int = -1) -> int:
     return int(registrations[index][2])
 
 
-def test_registry_installs_one_handler_and_routes_only_the_registered_action_id() -> None:
+def test_registry_installs_one_handler_and_routes_only_the_registered_action_id__and_2_more() -> None:
+    # --- scenario: registry_installs_one_handler_and_routes_only_the_registered_action_id
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     invoked: list[GlobalActionID] = []
@@ -119,8 +120,7 @@ def test_registry_installs_one_handler_and_routes_only_the_registered_action_id(
     queued.pop()()
     assert invoked == [ACTION]
 
-
-def test_prepared_candidate_is_inert_until_commit() -> None:
+    # --- scenario: prepared_candidate_is_inert_until_commit
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     registry = registry_with(backend, queued=queued)
@@ -136,8 +136,7 @@ def test_prepared_candidate_is_inert_until_commit() -> None:
     backend.emit(candidate_id)
     assert len(queued) == 1
 
-
-def test_commit_registers_replacement_before_unregistering_previous_binding() -> None:
+    # --- scenario: commit_registers_replacement_before_unregistering_previous_binding
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -151,7 +150,9 @@ def test_commit_registers_replacement_before_unregistering_previous_binding() ->
     assert registry.active_bindings == {ACTION: CONTROL_SHIFT_K}
 
 
-def test_registration_refusal_rolls_back_candidates_and_preserves_live_binding() -> None:
+
+def test_registration_refusal_rolls_back_candidates_and_preserves_live_binding__and_2_more() -> None:
+    # --- scenario: registration_refusal_rolls_back_candidates_and_preserves_live_binding
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -167,8 +168,7 @@ def test_registration_refusal_rolls_back_candidates_and_preserves_live_binding()
     assert registry.active_bindings == {ACTION: COMMAND_K}
     assert backend.events == [("register", CONTROL_SHIFT_K, original_id + 1)]
 
-
-def test_rollback_unregisters_candidate_and_preserves_previous_route() -> None:
+    # --- scenario: rollback_unregisters_candidate_and_preserves_previous_route
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     registry = registry_with(backend, queued=queued)
@@ -185,8 +185,7 @@ def test_rollback_unregisters_candidate_and_preserves_previous_route() -> None:
     assert ("unregister", f"hotkey-ref-{candidate_id}") in backend.events
     assert len(queued) == 1
 
-
-def test_rebind_fences_callback_queued_by_the_previous_registration() -> None:
+    # --- scenario: rebind_fences_callback_queued_by_the_previous_registration
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     invoked: list[GlobalActionID] = []
@@ -204,7 +203,9 @@ def test_rebind_fences_callback_queued_by_the_previous_registration() -> None:
     assert queued == []
 
 
-def test_clear_and_close_unregister_owned_references_exactly_once() -> None:
+
+def test_clear_and_close_unregister_owned_references_exactly_once__and_2_more() -> None:
+    # --- scenario: clear_and_close_unregister_owned_references_exactly_once
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -223,8 +224,7 @@ def test_clear_and_close_unregister_owned_references_exactly_once() -> None:
     assert registry.active_bindings == {}
     assert registry.closed
 
-
-def test_close_rolls_back_a_prepared_candidate_and_fences_late_callbacks() -> None:
+    # --- scenario: close_rolls_back_a_prepared_candidate_and_fences_late_callbacks
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     invoked: list[GlobalActionID] = []
@@ -246,8 +246,7 @@ def test_close_rolls_back_a_prepared_candidate_and_fences_late_callbacks() -> No
     assert backend.events.count(("unregister", f"hotkey-ref-{active_id}")) == 1
     assert backend.events.count(("unregister", f"hotkey-ref-{pending_id}")) == 1
 
-
-def test_same_bindings_are_an_idempotent_prepare_and_commit() -> None:
+    # --- scenario: same_bindings_are_an_idempotent_prepare_and_commit
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -260,7 +259,9 @@ def test_same_bindings_are_an_idempotent_prepare_and_commit() -> None:
     assert registry.active_bindings == {ACTION: COMMAND_K}
 
 
-def test_failed_commit_keeps_old_binding_and_preparation_retryable() -> None:
+
+def test_failed_commit_keeps_old_binding_and_preparation_retryable__and_2_more() -> None:
+    # --- scenario: failed_commit_keeps_old_binding_and_preparation_retryable
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     registry = registry_with(backend, queued=queued)
@@ -287,8 +288,7 @@ def test_failed_commit_keeps_old_binding_and_preparation_retryable() -> None:
     assert registry.active_bindings == {ACTION: CONTROL_SHIFT_K}
     assert backend.events.count(("unregister", old_ref)) == 2
 
-
-def test_failed_rollback_keeps_candidate_inert_and_preparation_retryable() -> None:
+    # --- scenario: failed_rollback_keeps_candidate_inert_and_preparation_retryable
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     registry = registry_with(backend, queued=queued)
@@ -311,8 +311,7 @@ def test_failed_rollback_keeps_candidate_inert_and_preparation_retryable() -> No
     assert registry.active_bindings == {ACTION: COMMAND_K}
     assert backend.events.count(("unregister", candidate_ref)) == 2
 
-
-def test_failed_clear_surfaces_preparation_for_durable_rollback() -> None:
+    # --- scenario: failed_clear_surfaces_preparation_for_durable_rollback
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -329,7 +328,9 @@ def test_failed_clear_surfaces_preparation_for_durable_rollback() -> None:
     assert backend.events.count(("unregister", old_ref)) == 1
 
 
-def test_failed_close_retains_failed_resources_and_retries_independent_cleanup() -> None:
+
+def test_failed_close_retains_failed_resources_and_retries_independent_cleanup__and_2_more() -> None:
+    # --- scenario: failed_close_retains_failed_resources_and_retries_independent_cleanup
     backend = FakeBackend()
     queued: list[Callable[[], None]] = []
     invoked: list[GlobalActionID] = []
@@ -364,8 +365,7 @@ def test_failed_close_retains_failed_resources_and_retries_independent_cleanup()
     assert backend.events.count(("unregister", pending_ref)) == 2
     assert backend.events.count(("remove_handler", "handler-ref")) == 1
 
-
-def test_close_does_not_retry_resources_cleaned_before_an_independent_failure() -> None:
+    # --- scenario: close_does_not_retry_resources_cleaned_before_an_independent_failure
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -384,8 +384,7 @@ def test_close_does_not_retry_resources_cleaned_before_an_independent_failure() 
     assert backend.events.count(("unregister", pending_ref)) == 2
     assert registry.closed
 
-
-def test_failed_handler_removal_keeps_close_retryable_without_double_unregister() -> None:
+    # --- scenario: failed_handler_removal_keeps_close_retryable_without_double_unregister
     backend = FakeBackend()
     registry = registry_with(backend)
     registry.rebind({ACTION: COMMAND_K})
@@ -404,6 +403,7 @@ def test_failed_handler_removal_keeps_close_retryable_without_double_unregister(
     assert registry.closed
     assert backend.events.count(("unregister", active_ref)) == 1
     assert backend.events.count(("remove_handler", "handler-ref")) == 2
+
 
 
 def test_mutations_must_run_on_the_injected_main_thread() -> None:
@@ -497,7 +497,8 @@ class FakeCarbonLibrary:
         return 0
 
 
-def test_carbon_library_is_lazy_and_binds_sdk_widths_before_installing() -> None:
+def test_carbon_library_is_lazy_and_binds_sdk_widths_before_installing__and_2_more() -> None:
+    # --- scenario: carbon_library_is_lazy_and_binds_sdk_widths_before_installing
     library = FakeCarbonLibrary()
     loads: list[str] = []
     backend = CarbonHotkeyBackend(
@@ -521,8 +522,7 @@ def test_carbon_library_is_lazy_and_binds_sdk_widths_before_installing() -> None
     assert library.RegisterEventHotKey.argtypes[:2] == [ctypes.c_uint32, ctypes.c_uint32]
     assert library.RegisterEventHotKey.argtypes[4] is ctypes.c_uint32
 
-
-def test_carbon_backend_translates_normalized_chord_and_uses_nonexclusive_options() -> None:
+    # --- scenario: carbon_backend_translates_normalized_chord_and_uses_nonexclusive_options
     library = FakeCarbonLibrary()
     backend = CarbonHotkeyBackend(library_loader=lambda _path: library, platform="darwin")
     handler = backend.install_handler(lambda _hotkey_id: None)
@@ -546,8 +546,7 @@ def test_carbon_backend_translates_normalized_chord_and_uses_nonexclusive_option
     assert len(library.UnregisterEventHotKey.calls) == 1
     assert len(library.RemoveEventHandler.calls) == 1
 
-
-def test_carbon_registration_failure_is_a_bounded_refusal() -> None:
+    # --- scenario: carbon_registration_failure_is_a_bounded_refusal
     library = FakeCarbonLibrary(register_status=-9878)
     backend = CarbonHotkeyBackend(library_loader=lambda _path: library, platform="darwin")
     handler = backend.install_handler(lambda _hotkey_id: None)
@@ -559,7 +558,9 @@ def test_carbon_registration_failure_is_a_bounded_refusal() -> None:
     backend.remove_handler(handler)
 
 
-def test_carbon_handler_extracts_only_the_bounded_owned_hotkey_id() -> None:
+
+def test_carbon_handler_extracts_only_the_bounded_owned_hotkey_id__and_2_more() -> None:
+    # --- scenario: carbon_handler_extracts_only_the_bounded_owned_hotkey_id
     library = FakeCarbonLibrary()
     received: list[int] = []
     backend = CarbonHotkeyBackend(library_loader=lambda _path: library, platform="darwin")
@@ -579,8 +580,7 @@ def test_carbon_handler_extracts_only_the_bounded_owned_hotkey_id() -> None:
     backend.unregister_hotkey(registration)
     backend.remove_handler(handler)
 
-
-def test_carbon_unregister_failure_retains_owned_reference_for_retry() -> None:
+    # --- scenario: carbon_unregister_failure_retains_owned_reference_for_retry
     library = FakeCarbonLibrary(unregister_statuses=(-9878, 0))
     backend = CarbonHotkeyBackend(library_loader=lambda _path: library, platform="darwin")
     handler = backend.install_handler(lambda _hotkey_id: None)
@@ -602,8 +602,7 @@ def test_carbon_unregister_failure_retains_owned_reference_for_retry() -> None:
     assert reference.pointer not in backend._registrations  # type: ignore[attr-defined]
     backend.remove_handler(handler)
 
-
-def test_carbon_handler_removal_failure_retains_callback_and_target_for_retry() -> None:
+    # --- scenario: carbon_handler_removal_failure_retains_callback_and_target_for_retry
     library = FakeCarbonLibrary(remove_handler_statuses=(-9879, 0))
     backend = CarbonHotkeyBackend(library_loader=lambda _path: library, platform="darwin")
     handler = backend.install_handler(lambda _hotkey_id: None)
@@ -622,6 +621,7 @@ def test_carbon_handler_removal_failure_retains_callback_and_target_for_retry() 
     assert handler.callback is None  # type: ignore[attr-defined]
     assert backend._handler is None
     assert backend._event_target is None
+
 
 
 def test_registry_source_cannot_observe_ordinary_keys_or_event_text() -> None:

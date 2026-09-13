@@ -33,7 +33,8 @@ def _target(settings):
     return SimpleNamespace(_deck_control_settings=settings)
 
 
-def test_card_exposes_bounded_actions_and_explicit_keymap_setup() -> None:
+def test_card_exposes_bounded_actions_and_explicit_keymap_setup__and_2_more() -> None:
+    # --- scenario: card_exposes_bounded_actions_and_explicit_keymap_setup
     pane = build_deck_settings_card(_target(DeckControlSettings()), DeckControlSettings())
 
     assert [label for label, _kind in ACTION_CHOICES] == [
@@ -63,8 +64,7 @@ def test_card_exposes_bounded_actions_and_explicit_keymap_setup() -> None:
     assert pane.inspect_setup_button.target() is pane.target
     assert pane.restore_setup_button.target() is pane.target
 
-
-def test_setup_buttons_disable_together_while_a_device_job_is_active() -> None:
+    # --- scenario: setup_buttons_disable_together_while_a_device_job_is_active
     pane = build_deck_settings_card(_target(DeckControlSettings()), DeckControlSettings())
 
     pane.set_setup_pending(True)
@@ -72,8 +72,7 @@ def test_setup_buttons_disable_together_while_a_device_job_is_active() -> None:
     assert pane.inspect_setup_button.isEnabled() is False
     assert pane.restore_setup_button.isEnabled() is False
 
-
-def test_existing_mapping_is_selected_and_summarized_without_numeric_key_codes() -> None:
+    # --- scenario: existing_mapping_is_selected_and_summarized_without_numeric_key_codes
     action = DeckAction("shortcut", "com.apple.Safari", 8, ("shift", "command"))
     settings = DeckControlSettings(True, ((3, action),))
     pane = build_deck_settings_card(_target(settings), settings)
@@ -88,7 +87,9 @@ def test_existing_mapping_is_selected_and_summarized_without_numeric_key_codes()
     assert "8" not in pane.summary_field.stringValue()
 
 
-def test_shortcut_recorder_builds_app_scoped_action_with_a_readable_chord() -> None:
+
+def test_shortcut_recorder_builds_app_scoped_action_with_a_readable_chord__and_2_more() -> None:
+    # --- scenario: shortcut_recorder_builds_app_scoped_action_with_a_readable_chord
     pane = build_deck_settings_card(_target(DeckControlSettings()), DeckControlSettings())
     pane.key_popup.selectItemAtIndex_(5)
     pane.action_popup.selectItemAtIndex_(2)
@@ -102,8 +103,7 @@ def test_shortcut_recorder_builds_app_scoped_action_with_a_readable_chord() -> N
     assert action == DeckAction("shortcut", "com.apple.TextEdit", 8, ("shift", "command"))
     assert pane.shortcut_recorder.accessibilityValue() == "⇧⌘C"
 
-
-def test_disabled_choice_removes_the_selected_mapping() -> None:
+    # --- scenario: disabled_choice_removes_the_selected_mapping
     action = DeckAction("open_usage")
     settings = DeckControlSettings(True, ((1, action),))
     pane = build_deck_settings_card(_target(settings), settings)
@@ -112,8 +112,7 @@ def test_disabled_choice_removes_the_selected_mapping() -> None:
 
     assert pane.selected_mapping() == (1, None)
 
-
-def test_command_shortcut_is_consumed_as_a_key_equivalent_before_menu_dispatch() -> None:
+    # --- scenario: command_shortcut_is_consumed_as_a_key_equivalent_before_menu_dispatch
     pane = build_deck_settings_card(_target(DeckControlSettings()), DeckControlSettings())
     pane.action_popup.selectItemAtIndex_(2)
     pane.selected_bundle_id = "com.apple.TextEdit"
@@ -134,6 +133,7 @@ def test_command_shortcut_is_consumed_as_a_key_equivalent_before_menu_dispatch()
 
     assert pane.shortcut_recorder.performKeyEquivalent_(event) is True
     assert pane.shortcut_recorder.accessibilityValue() == "⌘Q"
+
 
 
 def test_changing_mapping_selection_stops_shortcut_recording() -> None:

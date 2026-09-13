@@ -695,7 +695,8 @@ def test_manifest_rejects_duplicate_and_unknown_receipts(tmp_path: Path) -> None
         _manifest(fixture, unknown)
 
 
-def test_pkg_signature_parser_extracts_the_installer_identity_and_team() -> None:
+def test_pkg_signature_parser_extracts_the_installer_identity_and_team__and_2_more() -> None:
+    # --- scenario: pkg_signature_parser_extracts_the_installer_identity_and_team
     output = """Package \"candidate.pkg\":
    Status: signed by a certificate trusted by macOS
    Certificate Chain:
@@ -707,13 +708,11 @@ def test_pkg_signature_parser_extracts_the_installer_identity_and_team() -> None
         "team_identifier": "ABCDE12345",
     }
 
-
-def test_pkg_signature_parser_rejects_non_developer_id_output() -> None:
+    # --- scenario: pkg_signature_parser_rejects_non_developer_id_output
     with pytest.raises(release_evidence.EvidenceError, match="Developer ID Installer"):
         release_evidence.installer_signature_details("Status: unsigned")
 
-
-def test_notarization_details_bind_submission_log_and_submitted_pkg() -> None:
+    # --- scenario: notarization_details_bind_submission_log_and_submitted_pkg
     submission_id = "2efe2717-52ef-43a5-96dc-0797e4ca1041"
     submitted_sha = "b" * 64
     response = {
@@ -742,6 +741,7 @@ def test_notarization_details_bind_submission_log_and_submitted_pkg() -> None:
     assert details["submission_id"] == submission_id
     assert details["submitted_pkg_sha256"] == submitted_sha
     assert details["log_issue_count"] == 0
+
 
 
 @pytest.mark.parametrize(
@@ -830,9 +830,8 @@ def test_uninstall_verifier_detects_a_pre_rename_user_guard_left_behind(
     assert legacy_plist in leftovers
 
 
-def test_upgrade_baseline_rejects_settings_without_an_installed_app(
-    tmp_path: Path,
-) -> None:
+def test_upgrade_baseline_rejects_settings_without_an_installed_app__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: upgrade_baseline_rejects_settings_without_an_installed_app
     settings = tmp_path / "settings.json"
     settings.write_text("{}\n", encoding="utf-8")
 
@@ -842,10 +841,7 @@ def test_upgrade_baseline_rejects_settings_without_an_installed_app(
             settings=settings,
         )
 
-
-def test_upgrade_baseline_rejects_an_install_without_a_package_receipt(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: upgrade_baseline_rejects_an_install_without_a_package_receipt
     app = tmp_path / "JR-Bar.app"
     executable = app / "Contents" / "MacOS" / "JR-Bar"
     executable.parent.mkdir(parents=True)
@@ -868,3 +864,4 @@ def test_upgrade_baseline_rejects_an_install_without_a_package_receipt(
             runner=no_receipt,
             team_reader=lambda _app: "ABCDE12345",
         )
+

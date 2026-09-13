@@ -6,7 +6,8 @@ from pathlib import Path
 from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
 
-def test_power_hold_defaults_keep_system_working_but_allow_display_sleep() -> None:
+def test_power_hold_defaults_keep_system_working_but_allow_display_sleep__and_1_more() -> None:
+    # --- scenario: power_hold_defaults_keep_system_working_but_allow_display_sleep
     settings = AgentMonitorSettings()
 
     assert settings.agent_keep_awake_enabled is True
@@ -14,8 +15,7 @@ def test_power_hold_defaults_keep_system_working_but_allow_display_sleep() -> No
     assert settings.keep_awake_on_battery is True
     assert settings.closed_lid_awake_policy == "never"
 
-
-def test_agent_and_display_choices_are_immutable_and_independent() -> None:
+    # --- scenario: agent_and_display_choices_are_immutable_and_independent
     defaults = AgentMonitorSettings()
     no_agent_hold = defaults.with_agent_keep_awake_enabled(False)
     display_hold = no_agent_hold.with_keep_display_awake(True)
@@ -30,7 +30,9 @@ def test_agent_and_display_choices_are_immutable_and_independent() -> None:
     assert display_hold.closed_lid_awake_policy == "never"
 
 
-def test_agent_and_display_choices_round_trip_independently(tmp_path: Path) -> None:
+
+def test_agent_and_display_choices_round_trip_independently__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: agent_and_display_choices_round_trip_independently
     target = tmp_path / "settings.json"
     expected = (
         AgentMonitorSettings()
@@ -47,8 +49,7 @@ def test_agent_and_display_choices_round_trip_independently(tmp_path: Path) -> N
     assert document["agent_keep_awake_enabled"] is False
     assert document["keep_display_awake"] is True
 
-
-def test_absent_power_choice_keys_use_safe_defaults(tmp_path: Path) -> None:
+    # --- scenario: absent_power_choice_keys_use_safe_defaults
     target = tmp_path / "settings.json"
     save_settings(
         AgentMonitorSettings()
@@ -66,8 +67,7 @@ def test_absent_power_choice_keys_use_safe_defaults(tmp_path: Path) -> None:
     assert reloaded.agent_keep_awake_enabled is True
     assert reloaded.keep_display_awake is False
 
-
-def test_ambiguous_power_choice_values_use_safe_defaults(tmp_path: Path) -> None:
+    # --- scenario: ambiguous_power_choice_values_use_safe_defaults
     target = tmp_path / "settings.json"
     save_settings(AgentMonitorSettings(), target)
     document = json.loads(target.read_text())
@@ -79,6 +79,7 @@ def test_ambiguous_power_choice_values_use_safe_defaults(tmp_path: Path) -> None
 
     assert reloaded.agent_keep_awake_enabled is True
     assert reloaded.keep_display_awake is False
+
 
 
 def test_unrelated_save_retains_power_choices_and_readable_extension(

@@ -46,9 +46,6 @@ struct AlcoveIslandView: View {
         .animation(reduceMotion ? .easeInOut(duration: 0.15)
                               : .spring(response: 0.32, dampingFraction: 0.82),
                    value: face)
-        .animation(reduceMotion ? .easeInOut(duration: 0.15)
-                              : .spring(response: 0.32, dampingFraction: 0.82),
-                   value: toy.activeCapsule?.id)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Alcove island")
         .accessibilityValue(summary.statusLine)
@@ -203,13 +200,14 @@ struct AlcoveIslandView: View {
 
     /// Waiting is amber, finished is green, failed is red — the app's
     /// standing state colours; a quota reset borrows its provider's
-    /// accent since the kind carries no colour of its own.
+    /// accent and power is yellow, the bolt's own colour.
     private func noticeTint(_ notice: AlcoveNotice) -> Color {
         switch notice.kind {
         case .ask: return .orange
         case .completed: return .green
         case .failed: return .red
         case .quotaReset: return ProviderStyle.style(for: notice.provider ?? "").accent
+        case .charging: return .yellow
         }
     }
 

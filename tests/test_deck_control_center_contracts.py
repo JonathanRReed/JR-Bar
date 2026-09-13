@@ -26,7 +26,8 @@ def status(account="account-a", session="session-a", mode=AgentMode.WORKING):
                        work_key=WorkKey(SourceKey("codex", "native", account, "threads"), WorkIdentifier(session)))
 
 
-def test_slot_identity_is_account_scoped_and_never_silently_reassigned():
+def test_slot_identity_is_account_scoped_and_never_silently_reassigned__and_2_more() -> None:
+    # --- scenario: slot_identity_is_account_scoped_and_never_silently_reassigned
     board = DeckSessionBoard(clock=lambda: NOW)
     a, b = status(), status("account-b")
     assert session_identity(a) != session_identity(b)
@@ -40,8 +41,7 @@ def test_slot_identity_is_account_scoped_and_never_silently_reassigned():
     assert board.resolve_slot(0)[1] == session_identity(b)
     assert board.navigation_target(first[1], first[0]) is None
 
-
-def test_status_does_not_grant_navigation_and_old_bank_revision_is_revoked():
+    # --- scenario: status_does_not_grant_navigation_and_old_bank_revision_is_revoked
     board = DeckSessionBoard(clock=lambda: NOW)
     a = status()
     identity = session_identity(a)
@@ -55,8 +55,7 @@ def test_status_does_not_grant_navigation_and_old_bank_revision_is_revoked():
     board.update([replace(a, stale=True)], navigation_keys={identity})
     assert not board.snapshot().slots[0].navigable
 
-
-def test_pins_survive_explicit_absent_clear_and_serialize_only_opaque_ids():
+    # --- scenario: pins_survive_explicit_absent_clear_and_serialize_only_opaque_ids
     board = DeckSessionBoard(clock=lambda: NOW)
     a = status(session="private-project-session")
     board.update([a])
@@ -71,7 +70,9 @@ def test_pins_survive_explicit_absent_clear_and_serialize_only_opaque_ids():
     assert restored.resolve_slot(0)[1] == session_identity(a)
 
 
-def test_provider_scope_filters_the_board_restarts_banking_and_revokes_context():
+
+def test_provider_scope_filters_the_board_restarts_banking_and_revokes_context__and_2_more() -> None:
+    # --- scenario: provider_scope_filters_the_board_restarts_banking_and_revokes_context
     board = DeckSessionBoard(clock=lambda: NOW)
     codex = status(session="codex-a")
     claude = replace(status(session="claude-a"), provider="claude", agent_id="claude:claude-a",
@@ -114,8 +115,7 @@ def test_provider_scope_filters_the_board_restarts_banking_and_revokes_context()
                       "rail_edge": "off"})
     assert restored.snapshot().scope == "automatic"  # v2 predates scopes
 
-
-def test_per_session_light_frames_keep_unknown_and_unassigned_slots_off():
+    # --- scenario: per_session_light_frames_keep_unknown_and_unassigned_slots_off
     board = DeckSessionBoard(clock=lambda: NOW)
     board.update([status()])
     frame = creator_micro_session_frame(board.snapshot())
@@ -126,8 +126,7 @@ def test_per_session_light_frames_keep_unknown_and_unassigned_slots_off():
     with pytest.raises(ValueError):
         CreatorMicroLightFrame(0, float("nan"), 1)
 
-
-def test_analog_excursion_needs_recenter_and_never_accepts_nan():
+    # --- scenario: analog_excursion_needs_recenter_and_never_accepts_nan
     router = DeckInputRouter(analog_enabled=True)
     def message(angle, distance):
         return {"method": "v.oai.rad", "params": {"a": angle, "d": distance}}
@@ -140,7 +139,9 @@ def test_analog_excursion_needs_recenter_and_never_accepts_nan():
     assert DeckInputRouter().normalize(message(0, .8)) is None
 
 
-def test_normalized_user_inputs_are_fifo_and_reset_revokes_pending_work():
+
+def test_normalized_user_inputs_are_fifo_and_reset_revokes_pending_work__and_2_more() -> None:
+    # --- scenario: normalized_user_inputs_are_fifo_and_reset_revokes_pending_work
     calls, executed = [], []
     target = SimpleNamespace(performSelectorOnMainThread_withObject_waitUntilDone_=lambda _, batch, __: calls.append(batch))
     settings = DeckControlSettings(enabled=True, bindings=((3, DeckAction("open_usage")),))
@@ -154,10 +155,7 @@ def test_normalized_user_inputs_are_fifo_and_reset_revokes_pending_work():
     assert dispatch.deliver(calls[1], executor) == ()
     assert executed == ["usage"]
 
-
-def test_legacy_mappings_migrate_and_duplicate_json_is_refused():
-    # v1 predates both the option fields and the layer map: it loads with
-    # every layer automatic rather than silently gaining a provider map.
+    # --- scenario: legacy_mappings_migrate_and_duplicate_json_is_refused
     assert decode_deck_controls('{"version":1,"enabled":false,"bindings":[]}') == DeckControlSettings(layer_map=())
     with pytest.raises(ValueError, match="duplicate"):
         decode_deck_controls('{"version":1,"enabled":false,"enabled":true,"bindings":[]}')
@@ -166,24 +164,24 @@ def test_legacy_mappings_migrate_and_duplicate_json_is_refused():
     with pytest.raises(ValueError):
         DeckAction("run_system_shortcut", shortcut_name="--help")
 
-
-def test_usb_preference_only_collapses_proven_cross_transport_duplicate():
+    # --- scenario: usb_preference_only_collapses_proven_cross_transport_duplicate
     usb = {"serial_number": "CM-1", "bus_type": 1, "path": "usb"}
     bt = {"serial_number": "CM-1", "bus_type": 2, "path": "bt"}
     assert preferred_endpoints([bt, usb]) == [usb]
     assert len(preferred_endpoints([usb, {**usb, "path": "ambiguous"}])) == 2
 
 
-@pytest.mark.parametrize("edge", ["left", "right", "top", "bottom"])
-def test_single_edge_transform_includes_inward_hit_regions(edge):
-    placement = SurfacePlacement(edge, 420, 34)
-    (x, y), (width, height) = placement.rect(40, 2, 30, 28)
-    along, across = placement.inverse(x + width / 2, y + height / 2)
-    assert (along, across) == (55, 16)
-    (_, _), size = placement.frame(((0, 0), (1920, 1080)))
-    assert size == placement.size
-    with pytest.raises(ValueError):
-        placement.rect(419, 0, 10, 5)
+
+def test_single_edge_transform_includes_inward_hit_regions():
+    for edge in ["left", "right", "top", "bottom"]:
+        placement = SurfacePlacement(edge, 420, 34)
+        (x, y), (width, height) = placement.rect(40, 2, 30, 28)
+        along, across = placement.inverse(x + width / 2, y + height / 2)
+        assert (along, across) == (55, 16)
+        (_, _), size = placement.frame(((0, 0), (1920, 1080)))
+        assert size == placement.size
+        with pytest.raises(ValueError):
+            placement.rect(419, 0, 10, 5)
 
 
 def test_composite_bluetooth_promotion_never_reclassifies_usb_keyboard(monkeypatch):

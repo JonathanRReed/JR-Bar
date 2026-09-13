@@ -69,9 +69,8 @@ def _snapshot(
     )
 
 
-def test_worst_lane_wins_even_above_every_threshold() -> None:
-    # Runway differs from the ember here: no threshold gate. 62% left is
-    # the tightest lane, so it drives the fill.
+def test_worst_lane_wins_even_above_every_threshold__and_2_more() -> None:
+    # --- scenario: worst_lane_wins_even_above_every_threshold
     lane = tightest_runway_lane(
         (
             _snapshot("claude", (_lane("claude", "five_hour", 90.0), _lane("claude", "weekly", 62.0))),
@@ -81,8 +80,7 @@ def test_worst_lane_wins_even_above_every_threshold() -> None:
     assert lane is not None
     assert (lane.provider_id, lane.lane_id) == ("claude", "weekly")
 
-
-def test_hidden_providers_and_ungated_sources_are_skipped() -> None:
+    # --- scenario: hidden_providers_and_ungated_sources_are_skipped
     lane = tightest_runway_lane(
         (
             _snapshot("claude", (_lane("claude", "weekly", 5.0),)),
@@ -98,8 +96,7 @@ def test_hidden_providers_and_ungated_sources_are_skipped() -> None:
     assert lane is not None
     assert lane.provider_id == "codex"
 
-
-def test_detail_only_lanes_never_bind_and_stale_last_known_good_does() -> None:
+    # --- scenario: detail_only_lanes_never_bind_and_stale_last_known_good_does
     lane = tightest_runway_lane(
         (
             _snapshot("claude", (_lane("claude", "opus_weekly", 3.0, bindable=False),)),
@@ -114,7 +111,9 @@ def test_detail_only_lanes_never_bind_and_stale_last_known_good_does() -> None:
     assert lane.provider_id == "codex"
 
 
-def test_no_percent_anywhere_returns_none() -> None:
+
+def test_no_percent_anywhere_returns_none__and_2_more() -> None:
+    # --- scenario: no_percent_anywhere_returns_none
     assert tightest_runway_lane(()) is None
     assert (
         tightest_runway_lane(
@@ -123,8 +122,7 @@ def test_no_percent_anywhere_returns_none() -> None:
         is None
     )
 
-
-def test_runway_state_matches_the_renderer_and_claim_shape() -> None:
+    # --- scenario: runway_state_matches_the_renderer_and_claim_shape
     state = runway_state_for_lane(_lane("claude", "weekly", 30.0), color="#D97757")
     assert type(state) is QuotaRunwayState
     # The LED display claim and program factory consume indexes 0 and 1.
@@ -141,8 +139,7 @@ def test_runway_state_matches_the_renderer_and_claim_shape() -> None:
     assert "repeat" in program
     assert ":off" not in program
 
-
-def test_controller_seam_reads_the_jr_plane_and_identity_color() -> None:
+    # --- scenario: controller_seam_reads_the_jr_plane_and_identity_color
     class Colors:
         @staticmethod
         def agent_color(provider_id):
@@ -171,6 +168,7 @@ def test_controller_seam_reads_the_jr_plane_and_identity_color() -> None:
     assert state[1] == "#D97757"
 
 
+
 def test_controller_seam_returns_none_without_lanes() -> None:
     controller = SimpleNamespace(
         provider_usage_state=SimpleNamespace(snapshots=()),
@@ -189,7 +187,8 @@ def _instance_policies(*visual_policies) -> ProviderInstancePolicyProjection:
     )
 
 
-def test_controller_seam_uses_exact_instance_profile_identity() -> None:
+def test_controller_seam_uses_exact_instance_profile_identity__and_1_more() -> None:
+    # --- scenario: controller_seam_uses_exact_instance_profile_identity
     class Colors:
         @staticmethod
         def agent_color(_provider_id):
@@ -224,8 +223,7 @@ def test_controller_seam_uses_exact_instance_profile_identity() -> None:
     assert state.provider_label == "Client Claude"
     assert state.color == "#112233"
 
-
-def test_controller_seam_keeps_provider_color_without_exact_override() -> None:
+    # --- scenario: controller_seam_keeps_provider_color_without_exact_override
     class Colors:
         @staticmethod
         def agent_color(provider_id):
@@ -260,3 +258,4 @@ def test_controller_seam_keeps_provider_color_without_exact_override() -> None:
     assert state.source_instance_id == "personal"
     assert state.provider_label == "Claude"
     assert state.color == "#D97757"
+

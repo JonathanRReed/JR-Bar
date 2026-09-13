@@ -63,7 +63,8 @@ def coordinator() -> QuotaPowerHoldCoordinator:
     return result
 
 
-def test_first_zero_observation_keeps_agent_lease() -> None:
+def test_first_zero_observation_keeps_agent_lease__and_2_more() -> None:
+    # --- scenario: first_zero_observation_keeps_agent_lease
     holds = coordinator()
 
     receipt = holds.observe_capacity(CODEX, signal("zero-1", 110.0), now=110.0)
@@ -73,8 +74,7 @@ def test_first_zero_observation_keeps_agent_lease() -> None:
     assert receipt.action == "retained"
     assert receipt.reason == "zero_confirmation_required"
 
-
-def test_second_zero_before_quiet_window_keeps_agent_lease() -> None:
+    # --- scenario: second_zero_before_quiet_window_keeps_agent_lease
     holds = coordinator()
     holds.observe_capacity(CODEX, signal("zero-1", 110.0), now=110.0)
 
@@ -83,8 +83,7 @@ def test_second_zero_before_quiet_window_keeps_agent_lease() -> None:
     assert holds.should_hold(CODEX, now=164.9)
     assert receipt.reason == "quiet_window_active"
 
-
-def test_two_zero_observations_release_after_quiet_window() -> None:
+    # --- scenario: two_zero_observations_release_after_quiet_window
     holds = coordinator()
     holds.observe_capacity(CODEX, signal("zero-1", 110.0), now=110.0)
     holds.observe_capacity(CODEX, signal("zero-2", 120.0), now=120.0)
@@ -97,7 +96,9 @@ def test_two_zero_observations_release_after_quiet_window() -> None:
     assert receipt[-1].reason == "confirmed_zero_after_quiet_window"
 
 
-def test_newer_agent_activity_restores_and_renews_hold() -> None:
+
+def test_newer_agent_activity_restores_and_renews_hold__and_2_more() -> None:
+    # --- scenario: newer_agent_activity_restores_and_renews_hold
     holds = coordinator()
     holds.observe_capacity(CODEX, signal("zero-1", 110.0), now=110.0)
     holds.observe_capacity(CODEX, signal("zero-2", 120.0), now=120.0)
@@ -109,8 +110,7 @@ def test_newer_agent_activity_restores_and_renews_hold() -> None:
     assert receipt.action == "renewed"
     assert receipt.reason == "newer_agent_activity"
 
-
-def test_capacity_recovery_restores_hold() -> None:
+    # --- scenario: capacity_recovery_restores_hold
     holds = coordinator()
     holds.observe_capacity(CODEX, signal("zero-1", 110.0), now=110.0)
     holds.observe_capacity(CODEX, signal("zero-2", 120.0), now=120.0)
@@ -126,8 +126,7 @@ def test_capacity_recovery_restores_hold() -> None:
     assert receipt.action == "renewed"
     assert receipt.reason == "capacity_recovered"
 
-
-def test_other_agent_retains_global_hold() -> None:
+    # --- scenario: other_agent_retains_global_hold
     holds = coordinator()
     claude = AgentPowerHoldKey("agent-2", "claude", "account-b")
     holds.renew(claude, event_at=105.0)
@@ -140,7 +139,9 @@ def test_other_agent_retains_global_hold() -> None:
     assert holds.global_hold(now=165.0)
 
 
-def test_stale_uncertain_cross_account_and_unbindable_evidence_is_ignored() -> None:
+
+def test_stale_uncertain_cross_account_and_unbindable_evidence_is_ignored__and_2_more() -> None:
+    # --- scenario: stale_uncertain_cross_account_and_unbindable_evidence_is_ignored
     cases = (
         signal("stale", 110.0, fresh=False),
         signal("uncertain", 111.0, authoritative=False),
@@ -163,8 +164,7 @@ def test_stale_uncertain_cross_account_and_unbindable_evidence_is_ignored() -> N
         assert first.action == "ignored"
         assert second.reason == "zero_confirmation_required"
 
-
-def test_duplicate_or_out_of_order_zero_is_not_a_second_confirmation() -> None:
+    # --- scenario: duplicate_or_out_of_order_zero_is_not_a_second_confirmation
     holds = coordinator()
     holds.observe_capacity(CODEX, signal("same", 110.0), now=110.0)
     holds.observe_capacity(CODEX, signal("same", 111.0), now=111.0)
@@ -174,8 +174,7 @@ def test_duplicate_or_out_of_order_zero_is_not_a_second_confirmation() -> None:
 
     assert holds.should_hold(CODEX, now=300.0)
 
-
-def test_quota_release_never_fabricates_completion_or_termination() -> None:
+    # --- scenario: quota_release_never_fabricates_completion_or_termination
     holds = coordinator()
     holds.observe_capacity(CODEX, signal("zero-1", 110.0), now=110.0)
     holds.observe_capacity(CODEX, signal("zero-2", 120.0), now=120.0)
@@ -187,6 +186,7 @@ def test_quota_release_never_fabricates_completion_or_termination() -> None:
     assert not hasattr(holds, "interrupt")
     assert all("complet" not in receipt.reason for receipt in receipts)
     assert all("terminat" not in receipt.reason for receipt in receipts)
+
 
 
 def test_receipts_are_bounded() -> None:
@@ -235,7 +235,8 @@ def _runtime_capacity(observed_at: float, remaining: float) -> tuple[CapacitySna
     return snapshot, context, binding
 
 
-def test_production_mode_releases_only_the_explicitly_bound_quota_exhausted_work() -> None:
+def test_production_mode_releases_only_the_explicitly_bound_quota_exhausted_work__and_2_more() -> None:
+    # --- scenario: production_mode_releases_only_the_explicitly_bound_quota_exhausted_work
     event_source = SourceKey("codex", "hooks", "local", "live_agent_events")
     work_key = WorkKey(event_source, WorkIdentifier("session-1"))
     status = type("Status", (), {})()
@@ -287,8 +288,7 @@ def test_production_mode_releases_only_the_explicitly_bound_quota_exhausted_work
         now=300.0,
     ) is AgentMode.WORKING
 
-
-def test_two_zero_lanes_from_one_refresh_count_as_one_observation() -> None:
+    # --- scenario: two_zero_lanes_from_one_refresh_count_as_one_observation
     event_source = SourceKey("codex", "hooks", "local", "live_agent_events")
     work_key = WorkKey(event_source, WorkIdentifier("session-1"))
     status = type("Status", (), {})()
@@ -320,8 +320,7 @@ def test_two_zero_lanes_from_one_refresh_count_as_one_observation() -> None:
 
     assert result is AgentMode.WORKING
 
-
-def test_unique_authoritative_all_workloads_account_auto_binds_across_source_instances() -> None:
+    # --- scenario: unique_authoritative_all_workloads_account_auto_binds_across_source_instances
     event_source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(event_source, WorkIdentifier("session-1"))
     status = type("Status", (), {})()
@@ -358,7 +357,9 @@ def test_unique_authoritative_all_workloads_account_auto_binds_across_source_ins
     ) is AgentMode.IDLE_READY
 
 
-def test_unique_provider_account_can_release_multiple_active_sessions() -> None:
+
+def test_unique_provider_account_can_release_multiple_active_sessions__and_2_more() -> None:
+    # --- scenario: unique_provider_account_can_release_multiple_active_sessions
     event_source = SourceKey("codex", "hooks", "global", "live_agent_events")
     statuses = []
     for index in (1, 2):
@@ -396,8 +397,7 @@ def test_unique_provider_account_can_release_multiple_active_sessions() -> None:
         **common,
     ) is AgentMode.IDLE_READY
 
-
-def test_auto_binding_refuses_ambiguous_accounts_and_non_global_or_untrusted_capacity() -> None:
+    # --- scenario: auto_binding_refuses_ambiguous_accounts_and_non_global_or_untrusted_capacity
     event_source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(event_source, WorkIdentifier("session-1"))
     status = type("Status", (), {})()
@@ -448,8 +448,7 @@ def test_auto_binding_refuses_ambiguous_accounts_and_non_global_or_untrusted_cap
             now=300.0,
         ) is AgentMode.WORKING
 
-
-def test_explicit_work_binding_overrides_ambiguous_provider_accounts() -> None:
+    # --- scenario: explicit_work_binding_overrides_ambiguous_provider_accounts
     event_source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(event_source, WorkIdentifier("session-1"))
     status = type("Status", (), {})()
@@ -493,6 +492,7 @@ def test_explicit_work_binding_overrides_ambiguous_provider_accounts() -> None:
         now=165.0,
         **common,
     ) is AgentMode.IDLE_READY
+
 
 
 def test_provider_mismatch_preserves_hold() -> None:

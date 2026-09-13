@@ -40,7 +40,8 @@ def _status(
     )
 
 
-def test_same_poll_completions_have_stable_agent_order() -> None:
+def test_same_poll_completions_have_stable_agent_order__and_2_more() -> None:
+    # --- scenario: same_poll_completions_have_stable_agent_order
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     previous = {
         "codex:session:a": AgentMode.WORKING,
@@ -58,8 +59,7 @@ def test_same_poll_completions_have_stable_agent_order() -> None:
     ]
     assert reverse.statuses == forward.statuses
 
-
-def test_stale_and_future_completions_are_rejected() -> None:
+    # --- scenario: stale_and_future_completions_are_rejected
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     previous = {
         "codex:session:stale": AgentMode.WORKING,
@@ -78,8 +78,7 @@ def test_stale_and_future_completions_are_rejected() -> None:
 
     assert batch.statuses == ()
 
-
-def test_session_end_and_subagent_completions_are_rejected() -> None:
+    # --- scenario: session_end_and_subagent_completions_are_rejected
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     previous = {
         "codex:session:closed": AgentMode.WORKING,
@@ -97,7 +96,9 @@ def test_session_end_and_subagent_completions_are_rejected() -> None:
     assert batch.statuses == ()
 
 
-def test_warm_and_repeated_completed_snapshots_do_not_replay() -> None:
+
+def test_warm_and_repeated_completed_snapshots_do_not_replay__and_2_more() -> None:
+    # --- scenario: warm_and_repeated_completed_snapshots_do_not_replay
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     completed = _status("codex:session:a", updated_at=now)
 
@@ -111,8 +112,7 @@ def test_warm_and_repeated_completed_snapshots_do_not_replay() -> None:
     assert warm.statuses == ()
     assert repeated.statuses == ()
 
-
-def test_only_active_to_completed_transitions_are_eligible() -> None:
+    # --- scenario: only_active_to_completed_transitions_are_eligible
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     previous = {
         "codex:session:active": AgentMode.TOOL_RUNNING,
@@ -127,8 +127,7 @@ def test_only_active_to_completed_transitions_are_eligible() -> None:
         "codex:session:active"
     ]
 
-
-def test_active_to_usage_limit_failure_is_not_a_completion_notification() -> None:
+    # --- scenario: active_to_usage_limit_failure_is_not_a_completion_notification
     now = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
     failed = _status(
         "codex:session:limited",
@@ -146,7 +145,9 @@ def test_active_to_usage_limit_failure_is_not_a_completion_notification() -> Non
     assert batch.statuses == ()
 
 
-def test_duplicate_current_rows_deliver_one_completion_per_agent() -> None:
+
+def test_duplicate_current_rows_deliver_one_completion_per_agent__and_2_more() -> None:
+    # --- scenario: duplicate_current_rows_deliver_one_completion_per_agent
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     completed = _status("codex:session:a", updated_at=now)
 
@@ -158,8 +159,7 @@ def test_duplicate_current_rows_deliver_one_completion_per_agent() -> None:
 
     assert batch.statuses == (completed,)
 
-
-def test_newer_duplicate_active_row_suppresses_older_completed_row() -> None:
+    # --- scenario: newer_duplicate_active_row_suppresses_older_completed_row
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     completed = _status(
         "codex:session:a",
@@ -180,8 +180,7 @@ def test_newer_duplicate_active_row_suppresses_older_completed_row() -> None:
 
     assert batch.statuses == ()
 
-
-def test_equal_timestamp_session_end_suppresses_stop_completion() -> None:
+    # --- scenario: equal_timestamp_session_end_suppresses_stop_completion
     now = datetime(2026, 8, 12, 12, 0, tzinfo=timezone.utc)
     completed = _status("codex:session:a", updated_at=now)
     session_end = _status(
@@ -197,6 +196,7 @@ def test_equal_timestamp_session_end_suppresses_stop_completion() -> None:
     )
 
     assert batch.statuses == ()
+
 
 
 def test_canonical_completion_selector_filters_exact_semantic_edges() -> None:

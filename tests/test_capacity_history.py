@@ -82,7 +82,8 @@ def _activity(*, observed_at: float = NOW) -> ActivityHistorySample:
     )
 
 
-def test_history_samples_expose_only_the_metadata_allowlist() -> None:
+def test_history_samples_expose_only_the_metadata_allowlist__and_2_more() -> None:
+    # --- scenario: history_samples_expose_only_the_metadata_allowlist
     """Adding content, path, title, account display, or raw-error fields is a privacy bug."""
     assert tuple(field.name for field in fields(CapacityHistorySample)) == (
         "schema_version",
@@ -107,10 +108,9 @@ def test_history_samples_expose_only_the_metadata_allowlist() -> None:
         "estimated_cost",
     )
 
-
-@pytest.mark.parametrize(
-    "forbidden",
-    (
+    # --- scenario: capacity_constructor_rejects_every_undeclared_field
+    """An expanded constructor would let private provider payloads enter retention."""
+    for forbidden in (
         "prompt",
         "response",
         "transcript",
@@ -122,85 +122,73 @@ def test_history_samples_expose_only_the_metadata_allowlist() -> None:
         "credential",
         "access_token",
         "undeclared",
-    ),
-)
-def test_capacity_constructor_rejects_every_undeclared_field(forbidden: str) -> None:
-    """An expanded constructor would let private provider payloads enter retention."""
-    values = {
-        "schema_version": CAPACITY_HISTORY_SCHEMA_VERSION,
-        "lane_key": _lane(),
-        "account_discriminator": "acct:opaque-01",
-        "observed_at": NOW,
-        "remaining": 45.0,
-        "reset_epoch": NOW + 3_600.0,
-        "window_minutes": 300.0,
-        "source_health": SourceHealthKind.HEALTHY,
-        "disposition": SampleDisposition.ACCEPTED,
-        "refusal_code": None,
-        forbidden: "PRIVATE SENTINEL",
-    }
-    with pytest.raises(TypeError):
-        CapacityHistorySample(**values)  # type: ignore[arg-type]
+    ):
+        values = {
+            "schema_version": CAPACITY_HISTORY_SCHEMA_VERSION,
+            "lane_key": _lane(),
+            "account_discriminator": "acct:opaque-01",
+            "observed_at": NOW,
+            "remaining": 45.0,
+            "reset_epoch": NOW + 3_600.0,
+            "window_minutes": 300.0,
+            "source_health": SourceHealthKind.HEALTHY,
+            "disposition": SampleDisposition.ACCEPTED,
+            "refusal_code": None,
+            forbidden: "PRIVATE SENTINEL",
+        }
+        with pytest.raises(TypeError):
+            CapacityHistorySample(**values)  # type: ignore[arg-type]
 
-
-@pytest.mark.parametrize(
-    "account_discriminator",
-    ("person@example.com", "/Users/private/account", "Display Account", "token:secret"),
-)
-def test_history_rejects_account_display_email_and_path_identity(
-    account_discriminator: str,
-) -> None:
+    # --- scenario: history_rejects_account_display_email_and_path_identity
     """Only an opaque source discriminator can establish longitudinal identity."""
-    with pytest.raises(HistoryValidationError):
-        CapacityHistorySample(
-            CAPACITY_HISTORY_SCHEMA_VERSION,
-            _lane(),
-            account_discriminator,
-            NOW,
-            45.0,
-            NOW + 3_600.0,
-            300.0,
-            SourceHealthKind.HEALTHY,
-            SampleDisposition.ACCEPTED,
-            None,
-        )
+    for account_discriminator in ("person@example.com", "/Users/private/account", "Display Account", "token:secret"):
+        with pytest.raises(HistoryValidationError):
+            CapacityHistorySample(
+                CAPACITY_HISTORY_SCHEMA_VERSION,
+                _lane(),
+                account_discriminator,
+                NOW,
+                45.0,
+                NOW + 3_600.0,
+                300.0,
+                SourceHealthKind.HEALTHY,
+                SampleDisposition.ACCEPTED,
+                None,
+            )
 
 
-@pytest.mark.parametrize("remaining", (-0.1, 100.1, nan, inf, True))
-def test_capacity_history_values_are_finite_and_bounded(remaining: object) -> None:
+
+def test_capacity_history_values_are_finite_and_bounded__and_2_more() -> None:
+    # --- scenario: capacity_history_values_are_finite_and_bounded
     """Unbounded or nonfinite metadata must not reach summaries or disk."""
-    with pytest.raises(HistoryValidationError):
-        _capacity(remaining=remaining)  # type: ignore[arg-type]
+    for remaining in (-0.1, 100.1, nan, inf, True):
+        with pytest.raises(HistoryValidationError):
+            _capacity(remaining=remaining)  # type: ignore[arg-type]
 
-
-@pytest.mark.parametrize(
-    "values",
-    (
+    # --- scenario: activity_history_values_are_finite_and_bounded
+    """Local activity remains one bounded aggregate record, never broad usage history."""
+    for values in (
         {"event_count": -1},
         {"session_count": 1_000_001},
         {"coverage": 1.01},
         {"priced_coverage": -0.01},
         {"estimated_cost": inf},
-    ),
-)
-def test_activity_history_values_are_finite_and_bounded(values: dict[str, object]) -> None:
-    """Local activity remains one bounded aggregate record, never broad usage history."""
-    kwargs: dict[str, object] = {
-        "schema_version": ACTIVITY_HISTORY_SCHEMA_VERSION,
-        "source_key": _source(),
-        "observed_at": NOW,
-        "event_count": 12,
-        "session_count": 3,
-        "coverage": 0.8,
-        "priced_coverage": 0.5,
-        "estimated_cost": 1.25,
-    }
-    kwargs.update(values)
-    with pytest.raises(HistoryValidationError):
-        ActivityHistorySample(**kwargs)  # type: ignore[arg-type]
+    ):
+        kwargs: dict[str, object] = {
+            "schema_version": ACTIVITY_HISTORY_SCHEMA_VERSION,
+            "source_key": _source(),
+            "observed_at": NOW,
+            "event_count": 12,
+            "session_count": 3,
+            "coverage": 0.8,
+            "priced_coverage": 0.5,
+            "estimated_cost": 1.25,
+        }
+        kwargs.update(values)
+        with pytest.raises(HistoryValidationError):
+            ActivityHistorySample(**kwargs)  # type: ignore[arg-type]
 
-
-def test_admission_rejects_duplicate_out_of_order_and_identity_discontinuity() -> None:
+    # --- scenario: admission_rejects_duplicate_out_of_order_and_identity_discontinuity
     """Polling and ambiguous identity must not create retained samples or idle writes."""
     previous = _capacity(observed_at=NOW - 60.0)
     duplicate = _capacity(observed_at=NOW)
@@ -219,7 +207,9 @@ def test_admission_rejects_duplicate_out_of_order_and_identity_discontinuity() -
     assert missing_result.refusal_code == "identity_missing"
 
 
-def test_admission_preserves_bounded_candidate_refusal_without_raw_error() -> None:
+
+def test_admission_preserves_bounded_candidate_refusal_without_raw_error__and_2_more() -> None:
+    # --- scenario: admission_preserves_bounded_candidate_refusal_without_raw_error
     """A rejected typed candidate keeps its code and disposition, but is not admitted."""
     candidate = _capacity(
         remaining=40.0,
@@ -234,8 +224,7 @@ def test_admission_preserves_bounded_candidate_refusal_without_raw_error() -> No
     assert result.refusal_code == "source_partial"
     assert not hasattr(result, "raw_error")
 
-
-def test_day_week_and_month_summaries_expose_only_bounded_facts() -> None:
+    # --- scenario: day_week_and_month_summaries_expose_only_bounded_facts
     """Summaries must not grow into scores, streaks, records, or behavioral judgments."""
     samples = (
         _capacity(observed_at=NOW - 6 * DAY, remaining=80.0, reset_epoch=NOW - 5 * DAY),
@@ -266,8 +255,7 @@ def test_day_week_and_month_summaries_expose_only_bounded_facts() -> None:
     for forbidden in ("score", "ring", "streak", "record", "leaderboard", "judgment"):
         assert not hasattr(week, forbidden)
 
-
-def test_reset_cycle_requires_a_later_nonmissing_reset_marker() -> None:
+    # --- scenario: reset_cycle_requires_a_later_nonmissing_reset_marker
     """Losing reset evidence after a boundary cannot manufacture confirmation."""
     samples = (
         _capacity(
@@ -287,7 +275,9 @@ def test_reset_cycle_requires_a_later_nonmissing_reset_marker() -> None:
     assert summary.confirmed_reset_cycle_count == 0
 
 
-def test_empty_summary_uses_explicit_no_observation_truth() -> None:
+
+def test_empty_summary_uses_explicit_no_observation_truth__and_2_more() -> None:
+    # --- scenario: empty_summary_uses_explicit_no_observation_truth
     """No retained sample is missing evidence, never an observed zero."""
     summary = summarize_capacity_history((), HistoryInterval.DAY, NOW)
 
@@ -297,8 +287,7 @@ def test_empty_summary_uses_explicit_no_observation_truth() -> None:
     assert summary.maximum_remaining is NO_OBSERVATION
     assert summary.no_observation_intervals == (NoObservationInterval(NOW - DAY, NOW),)
 
-
-def test_sample_on_day_boundary_belongs_to_only_the_later_bucket() -> None:
+    # --- scenario: sample_on_day_boundary_belongs_to_only_the_later_bucket
     """Inclusive boundaries on both sides would hide a full unobserved day."""
     start = NOW - 7 * DAY
     summary = summarize_capacity_history(
@@ -312,8 +301,7 @@ def test_sample_on_day_boundary_belongs_to_only_the_later_bucket() -> None:
         NoObservationInterval(start + 2 * DAY, NOW),
     )
 
-
-def test_pruning_applies_age_then_count_with_only_supported_retention_days() -> None:
+    # --- scenario: pruning_applies_age_then_count_with_only_supported_retention_days
     """Old metadata and over-count records must be removed even if either bound alone fits."""
     with pytest.raises(HistoryValidationError):
         HistoryRetentionPolicy(14)
@@ -335,6 +323,7 @@ def test_pruning_applies_age_then_count_with_only_supported_retention_days() -> 
         )
         == ()
     )
+
 
 
 def test_activity_sample_has_no_capacity_or_content_surface() -> None:

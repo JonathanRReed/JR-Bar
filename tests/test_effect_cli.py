@@ -50,9 +50,8 @@ def _run(
     return code, stdout.getvalue(), stderr.getvalue()
 
 
-def test_cli_install_list_inspect_update_remove_json_round_trip(
-    tmp_path: Path,
-) -> None:
+def test_cli_install_list_inspect_update_remove_json_round_trip__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: cli_install_list_inspect_update_remove_json_round_trip
     source = tmp_path / "pack.json"
     source.write_text(json.dumps(_pack()), encoding="utf-8")
     store = EffectPackStore(tmp_path / "store")
@@ -79,10 +78,7 @@ def test_cli_install_list_inspect_update_remove_json_round_trip(
     assert code == 0
     assert json.loads(output)["status"] == "removed"
 
-
-def test_cli_collision_returns_refusal_code_and_deterministic_human_receipt(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: cli_collision_returns_refusal_code_and_deterministic_human_receipt
     store = EffectPackStore(tmp_path / "store")
     store.install(_pack())
     source = tmp_path / "pack.json"
@@ -93,6 +89,7 @@ def test_cli_collision_returns_refusal_code_and_deterministic_human_receipt(
     assert code == 2
     assert output == "calm-pack: refused (already_installed)\n"
     assert error == ""
+
 
 
 def test_cli_export_writes_canonical_private_file(tmp_path: Path) -> None:
@@ -114,9 +111,8 @@ def test_cli_export_writes_canonical_private_file(tmp_path: Path) -> None:
     assert target.read_bytes() == store.canonical_export("calm-pack")
 
 
-def test_cli_gallery_supports_installed_index_and_builtin_rows(
-    tmp_path: Path,
-) -> None:
+def test_cli_gallery_supports_installed_index_and_builtin_rows__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: cli_gallery_supports_installed_index_and_builtin_rows
     store = EffectPackStore(tmp_path / "store")
     store.install(
         _pack(license={"spdx_id": "MIT", "label": "MIT License"})
@@ -136,10 +132,7 @@ def test_cli_gallery_supports_installed_index_and_builtin_rows(
     assert code == 0
     assert json.loads(output)["effects"][0]["effect_id"] == "pulse"
 
-
-def test_cli_history_json_contains_only_content_free_projection(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: cli_history_json_contains_only_content_free_projection
     history_path = tmp_path / "effect-history.json"
     save_effect_history(
         history_path,
@@ -180,6 +173,7 @@ def test_cli_history_json_contains_only_content_free_projection(
         "https://private.example",
     ):
         assert forbidden not in lowered
+
 
 
 def test_cli_history_rejects_store_dir_without_an_explicit_history_path(
@@ -295,7 +289,8 @@ def test_cli_duplicate_and_rename_refuse_target_collisions(
     assert store.canonical_export("other-pack") == other
 
 
-def test_cli_errors_do_not_echo_source_paths_or_file_content(tmp_path: Path) -> None:
+def test_cli_errors_do_not_echo_source_paths_or_file_content__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: cli_errors_do_not_echo_source_paths_or_file_content
     secret = "private-sentinel-token"
     source = tmp_path / f"{secret}.json"
     source.write_text(secret, encoding="utf-8")
@@ -308,8 +303,7 @@ def test_cli_errors_do_not_echo_source_paths_or_file_content(tmp_path: Path) -> 
     assert error == "effect packs: install failed\n"
     assert secret not in error
 
-
-def test_cli_rejects_unknown_action_without_mutating_store(tmp_path: Path) -> None:
+    # --- scenario: cli_rejects_unknown_action_without_mutating_store
     store = EffectPackStore(tmp_path / "store")
 
     code, output, error = _run(store, "unknown")
@@ -318,6 +312,7 @@ def test_cli_rejects_unknown_action_without_mutating_store(tmp_path: Path) -> No
     assert output == ""
     assert error == "effect packs: unknown action\n"
     assert not (tmp_path / "store").exists()
+
 
 
 def test_sidepulse_effects_parser_reaches_the_data_only_store(

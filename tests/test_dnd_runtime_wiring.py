@@ -84,9 +84,8 @@ def test_retained_controller_owns_one_fail_closed_dnd_controller(controller) -> 
     assert controller.current_dnd_projection() is controller.dnd_controller.projection
 
 
-@pytest.mark.parametrize(
-    ("observation", "expected"),
-    (
+def test_focus_summary_withholds_private_detail_without_public_active_truth(controller, monkeypatch: pytest.MonkeyPatch) -> None:
+    for observation, expected in (
         (
             FocusStatusObservation(
                 FocusAuthorization.AUTHORIZED,
@@ -129,42 +128,34 @@ def test_retained_controller_owns_one_fail_closed_dnd_controller(controller) -> 
             ),
             "Focus activity is unavailable.",
         ),
-    ),
-)
-def test_focus_summary_withholds_private_detail_without_public_active_truth(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-    observation: FocusStatusObservation,
-    expected: str,
-) -> None:
-    secret = "private-focus-must-not-appear"
-    controller.settings = controller.settings.with_focus_sync_enabled(True)
-    controller.dnd_controller = SimpleNamespace(
-        projection=compose_dnd_contributions(()),
-        focus_observation=observation,
-        named_focus_identifiers=(secret,),
-    )
-    monkeypatch.setattr(
-        status_bar.focus_sync,
-        "active_focus_mode_identifiers",
-        lambda: pytest.fail("summary reread private Focus activity"),
-    )
-    monkeypatch.setattr(
-        status_bar.focus_sync,
-        "configured_focus_modes",
-        lambda: pytest.fail("summary reread private Focus names"),
-    )
+    ):
+        secret = "private-focus-must-not-appear"
+        controller.settings = controller.settings.with_focus_sync_enabled(True)
+        controller.dnd_controller = SimpleNamespace(
+            projection=compose_dnd_contributions(()),
+            focus_observation=observation,
+            named_focus_identifiers=(secret,),
+        )
+        monkeypatch.setattr(
+            status_bar.focus_sync,
+            "active_focus_mode_identifiers",
+            lambda: pytest.fail("summary reread private Focus activity"),
+        )
+        monkeypatch.setattr(
+            status_bar.focus_sync,
+            "configured_focus_modes",
+            lambda: pytest.fail("summary reread private Focus names"),
+        )
 
-    summary = controller.active_focus_summary()
+        summary = controller.active_focus_summary()
 
-    assert summary == expected
-    assert secret not in summary
+        assert summary == expected
+        assert secret not in summary
 
 
-def test_settings_and_menu_summary_share_the_gated_focus_view(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_settings_and_menu_summary_share_the_gated_focus_view__and_1_more(controller,
+    monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: settings_and_menu_summary_share_the_gated_focus_view
     from jrbar.settings_window import refresh_dnd_settings_controls
 
     secret = "private-focus-must-not-reach-surfaces"
@@ -211,11 +202,8 @@ def test_settings_and_menu_summary_share_the_gated_focus_view(
     assert settings_values == ["No Focus is active.", "No Focus is active."]
     assert secret not in repr(signature)
 
-
-def test_focus_summary_uses_retained_named_detail_only_while_public_active(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: focus_summary_uses_retained_named_detail_only_while_public_active
+    monkeypatch.undo()
     controller.settings = controller.settings.with_focus_sync_enabled(True)
     controller.dnd_controller = SimpleNamespace(
         projection=compose_dnd_contributions(()),
@@ -239,7 +227,9 @@ def test_focus_summary_uses_retained_named_detail_only_while_public_active(
     assert controller.active_focus_summary() == "focus-work \u2014 shared dim"
 
 
-def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis(controller) -> None:
+
+def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis__and_2_more(controller) -> None:
+    # --- scenario: mute_keeps_visual_grant_and_refuses_each_outbound_axis
     controller.dnd_controller = SimpleNamespace(projection=_projection(DndMode.MUTE))
 
     grant = controller.interrupt_grant(status_bar.signals_module.SIGNAL_COMPLETION)
@@ -250,10 +240,8 @@ def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis(controller) -> N
     assert grant.audible is False
     assert grant.webhook_allowed is False
 
-
-@pytest.mark.parametrize(
-    ("mode", "event", "expected"),
-    (
+    # --- scenario: webhook_effect_site_consumes_the_exact_outbound_axis
+    for mode, event, expected in (
         (DndMode.MUTE, "jrbar.completion", False),
         (DndMode.DIM, "jrbar.completion", True),
         (DndMode.PAUSE, "jrbar.completion", False),
@@ -261,128 +249,108 @@ def test_mute_keeps_visual_grant_and_refuses_each_outbound_axis(controller) -> N
         (DndMode.ASKS_ONLY, "jrbar.completion", False),
         (DndMode.ASKS_ONLY, "jrbar.escalation", True),
         (DndMode.DARK, "jrbar.escalation", False),
-    ),
-)
-def test_webhook_effect_site_consumes_the_exact_outbound_axis(
-    controller,
-    mode: DndMode,
-    event: str,
-    expected: bool,
-) -> None:
-    controller.dnd_controller = SimpleNamespace(projection=_projection(mode))
+    ):
+        controller.dnd_controller = SimpleNamespace(projection=_projection(mode))
 
-    assert controller.webhook_effect_allowed({"event": event}) is expected
-    assert controller.webhook_effect_allowed({"event": "unknown"}) is False
+        assert controller.webhook_effect_allowed({"event": event}) is expected
+        assert controller.webhook_effect_allowed({"event": "unknown"}) is False
 
-
-@pytest.mark.parametrize(
-    ("dnd_mode", "lifecycle", "expected"),
-    (
+    # --- scenario: standing_display_claim_uses_dnd_admission
+    for dnd_mode, lifecycle, expected in (
         (DndMode.PAUSE, LifecycleMode.ACTIVE, DND_DARK_DISPLAY),
         (DndMode.PAUSE, LifecycleMode.FAILED_VISIBLE, status_bar.LED_DISPLAY_AGENT),
         (DndMode.ASKS_ONLY, LifecycleMode.WAITING, status_bar.LED_DISPLAY_AGENT),
         (DndMode.ASKS_ONLY, LifecycleMode.FAILED_VISIBLE, DND_DARK_DISPLAY),
         (DndMode.DARK, LifecycleMode.WAITING, DND_DARK_DISPLAY),
-    ),
-)
-def test_standing_display_claim_uses_dnd_admission(
-    controller,
-    dnd_mode: DndMode,
-    lifecycle: LifecycleMode,
-    expected: str,
-) -> None:
-    controller.dnd_controller = SimpleNamespace(projection=_projection(dnd_mode))
-    controller.current_attention_projection = _attention(lifecycle)
-
-    assert controller.active_led_display_kind_for_device(_device(), None) == expected
-
-
-@pytest.mark.parametrize("mode", (DndMode.PAUSE, DndMode.ASKS_ONLY, DndMode.DARK))
-def test_restrictive_dnd_transition_consumes_prearmed_finite_cues_without_replay(
-    controller,
-    mode: DndMode,
-) -> None:
-    deadline = time.monotonic() + 60.0
-    for field in (
-        "completion_sweep_until",
-        "all_clear_until",
-        "connection_notice_until",
-        "reminders_glow_until",
-        "calendar_glow_until",
-        "quota_blink_until",
-        "quota_reset_celebration_until",
-        "battery_preview_until",
-        "test_signal_until",
-        "peek_until",
     ):
-        setattr(controller, field, deadline)
-    controller.test_signal_key = "completion"
-    cue = FiniteCue(
-        "pre-dnd-completion",
-        GlanceSemantic.FRESH_COMPLETION,
-        2,
-        0.5,
-    )
-    controller._status_cue_candidates = (cue,)
-    controller._status_finite_cues = controller.status_cue_coordinator.observe(
-        (cue,),
-        now=time.monotonic(),
-        play_motion=True,
-    )
-    controller._status_cue_deadline = controller._status_finite_cues.next_deadline
+        controller.dnd_controller = SimpleNamespace(projection=_projection(dnd_mode))
+        controller.current_attention_projection = _attention(lifecycle)
 
-    restrictive = _projection(mode)
-    controller.dnd_controller = SimpleNamespace(projection=restrictive)
-    controller._dnd_projection_changed(restrictive)
-
-    for field in (
-        "completion_sweep_until",
-        "all_clear_until",
-        "connection_notice_until",
-        "reminders_glow_until",
-        "calendar_glow_until",
-        "quota_blink_until",
-        "quota_reset_celebration_until",
-        "battery_preview_until",
-        "test_signal_until",
-        "peek_until",
-    ):
-        assert getattr(controller, field) == 0.0
-    assert controller.test_signal_key is None
-    assert controller._status_finite_cues.active is None
-    assert controller._status_finite_cues.pending is None
-    assert controller._status_cue_deadline is None
-
-    lifted = compose_dnd_contributions(())
-    controller.dnd_controller.projection = lifted
-    controller._dnd_projection_changed(lifted)
-
-    assert (
-        controller.active_led_display_kind_for_device(_device(), None)
-        == status_bar.LED_DISPLAY_AGENT
-    )
-    after = controller.status_cue_coordinator.observe(
-        (cue,),
-        now=time.monotonic(),
-        play_motion=True,
-    )
-    assert after.active is None
-    assert after.pending is None
+        assert controller.active_led_display_kind_for_device(_device(), None) == expected
 
 
-@pytest.mark.parametrize("mode", (DndMode.MUTE, DndMode.DIM))
-def test_visual_dnd_transition_preserves_prearmed_finite_cues(
-    controller,
-    mode: DndMode,
-) -> None:
-    deadline = time.monotonic() + 60.0
-    controller.completion_sweep_until = deadline
-    visual = _projection(mode)
-    controller.dnd_controller = SimpleNamespace(projection=visual)
 
-    controller._dnd_projection_changed(visual)
+def test_restrictive_dnd_transition_consumes_prearmed_finite_cues_without_replay__and_1_more(controller) -> None:
+    # --- scenario: restrictive_dnd_transition_consumes_prearmed_finite_cues_without_replay
+    for mode in (DndMode.PAUSE, DndMode.ASKS_ONLY, DndMode.DARK):
+        deadline = time.monotonic() + 60.0
+        for field in (
+            "completion_sweep_until",
+            "all_clear_until",
+            "connection_notice_until",
+            "reminders_glow_until",
+            "calendar_glow_until",
+            "quota_blink_until",
+            "quota_reset_celebration_until",
+            "battery_preview_until",
+            "test_signal_until",
+            "peek_until",
+        ):
+            setattr(controller, field, deadline)
+        controller.test_signal_key = "completion"
+        cue = FiniteCue(
+            "pre-dnd-completion",
+            GlanceSemantic.FRESH_COMPLETION,
+            2,
+            0.5,
+        )
+        controller._status_cue_candidates = (cue,)
+        controller._status_finite_cues = controller.status_cue_coordinator.observe(
+            (cue,),
+            now=time.monotonic(),
+            play_motion=True,
+        )
+        controller._status_cue_deadline = controller._status_finite_cues.next_deadline
 
-    assert controller.completion_sweep_until == deadline
+        restrictive = _projection(mode)
+        controller.dnd_controller = SimpleNamespace(projection=restrictive)
+        controller._dnd_projection_changed(restrictive)
+
+        for field in (
+            "completion_sweep_until",
+            "all_clear_until",
+            "connection_notice_until",
+            "reminders_glow_until",
+            "calendar_glow_until",
+            "quota_blink_until",
+            "quota_reset_celebration_until",
+            "battery_preview_until",
+            "test_signal_until",
+            "peek_until",
+        ):
+            assert getattr(controller, field) == 0.0
+        assert controller.test_signal_key is None
+        assert controller._status_finite_cues.active is None
+        assert controller._status_finite_cues.pending is None
+        assert controller._status_cue_deadline is None
+
+        lifted = compose_dnd_contributions(())
+        controller.dnd_controller.projection = lifted
+        controller._dnd_projection_changed(lifted)
+
+        assert (
+            controller.active_led_display_kind_for_device(_device(), None)
+            == status_bar.LED_DISPLAY_AGENT
+        )
+        after = controller.status_cue_coordinator.observe(
+            (cue,),
+            now=time.monotonic(),
+            play_motion=True,
+        )
+        assert after.active is None
+        assert after.pending is None
+
+    # --- scenario: visual_dnd_transition_preserves_prearmed_finite_cues
+    for mode in (DndMode.MUTE, DndMode.DIM):
+        deadline = time.monotonic() + 60.0
+        controller.completion_sweep_until = deadline
+        visual = _projection(mode)
+        controller.dnd_controller = SimpleNamespace(projection=visual)
+
+        controller._dnd_projection_changed(visual)
+
+        assert controller.completion_sweep_until == deadline
+
 
 
 def test_async_calendar_cue_armed_during_pause_is_consumed_without_replay(
@@ -450,41 +418,35 @@ def test_async_calendar_cue_armed_during_pause_is_consumed_without_replay(
     )
 
 
-@pytest.mark.parametrize(
-    "lifecycle",
-    (LifecycleMode.WAITING, LifecycleMode.FAILED_VISIBLE),
-)
-def test_standing_critical_truth_returns_after_fully_dark_without_finite_replay(
-    controller,
-    lifecycle: LifecycleMode,
-) -> None:
-    standing = _attention(lifecycle)
-    controller.current_attention_projection = standing
-    controller.completion_sweep_until = time.monotonic() + 60.0
-    dark = _projection(DndMode.DARK)
-    controller.dnd_controller = SimpleNamespace(projection=dark)
+def test_standing_critical_truth_returns_after_fully_dark_without_finite_replay__and_1_more(controller) -> None:
+    # --- scenario: standing_critical_truth_returns_after_fully_dark_without_finite_replay
+    for lifecycle in (LifecycleMode.WAITING, LifecycleMode.FAILED_VISIBLE):
+        standing = _attention(lifecycle)
+        controller.current_attention_projection = standing
+        controller.completion_sweep_until = time.monotonic() + 60.0
+        dark = _projection(DndMode.DARK)
+        controller.dnd_controller = SimpleNamespace(projection=dark)
 
-    controller._dnd_projection_changed(dark)
+        controller._dnd_projection_changed(dark)
 
-    assert (
-        controller.active_led_display_kind_for_device(_device(), None)
-        == DND_DARK_DISPLAY
-    )
-    assert controller.current_attention_projection is standing
+        assert (
+            controller.active_led_display_kind_for_device(_device(), None)
+            == DND_DARK_DISPLAY
+        )
+        assert controller.current_attention_projection is standing
 
-    lifted = compose_dnd_contributions(())
-    controller.dnd_controller.projection = lifted
-    controller._dnd_projection_changed(lifted)
+        lifted = compose_dnd_contributions(())
+        controller.dnd_controller.projection = lifted
+        controller._dnd_projection_changed(lifted)
 
-    assert controller.completion_sweep_until == 0.0
-    assert controller.current_attention_projection is standing
-    assert (
-        controller.active_led_display_kind_for_device(_device(), None)
-        == status_bar.LED_DISPLAY_AGENT
-    )
+        assert controller.completion_sweep_until == 0.0
+        assert controller.current_attention_projection is standing
+        assert (
+            controller.active_led_display_kind_for_device(_device(), None)
+            == status_bar.LED_DISPLAY_AGENT
+        )
 
-
-def test_dnd_dim_and_dark_scale_both_ambient_and_signal_brightness(controller) -> None:
+    # --- scenario: dnd_dim_and_dark_scale_both_ambient_and_signal_brightness
     device = _device(brightness=200)
     controller.dnd_controller = SimpleNamespace(projection=_projection(DndMode.DIM))
 
@@ -497,6 +459,7 @@ def test_dnd_dim_and_dark_scale_both_ambient_and_signal_brightness(controller) -
     assert controller.effective_signal_brightness_for_device(device) == 0
 
 
+
 class _DndActions:
     def __init__(self, projection) -> None:
         self.projection = projection
@@ -507,10 +470,9 @@ class _DndActions:
         return SimpleNamespace(applied=True, projection=self.projection, failure=None)
 
 
-def test_legacy_quiet_action_delegates_to_durable_mute_override(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_legacy_quiet_action_delegates_to_durable_mute_override__and_2_more(controller,
+    monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: legacy_quiet_action_delegates_to_durable_mute_override
     now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc).timestamp()
     actions = _DndActions(compose_dnd_contributions(()))
     controller.dnd_controller = actions
@@ -525,11 +487,8 @@ def test_legacy_quiet_action_delegates_to_durable_mute_override(
     assert override.created_epoch == now
     assert override.until_epoch == now + 3_600.0
 
-
-def test_legacy_quiet_duration_action_uses_the_same_durable_mute_override(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: legacy_quiet_duration_action_uses_the_same_durable_mute_override
+    monkeypatch.undo()
     now = 1_800_000_000.0
     actions = _DndActions(compose_dnd_contributions(()))
     controller.dnd_controller = actions
@@ -542,11 +501,8 @@ def test_legacy_quiet_duration_action_uses_the_same_durable_mute_override(
     assert override.mode is DndMode.MUTE
     assert override.until_epoch == now + 7_200.0
 
-
-def test_exact_menu_mode_selectors_delegate_to_one_hour_override(
-    controller,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: exact_menu_mode_selectors_delegate_to_one_hour_override
+    monkeypatch.undo()
     now = 1_800_000_000.0
     actions = _DndActions(compose_dnd_contributions(()))
     controller.dnd_controller = actions
@@ -567,7 +523,9 @@ def test_exact_menu_mode_selectors_delegate_to_one_hour_override(
         assert override.until_epoch == now + 3_600.0
 
 
-def test_dnd_environment_selectors_refresh_the_existing_controller(controller) -> None:
+
+def test_dnd_environment_selectors_refresh_the_existing_controller__and_1_more(controller) -> None:
+    # --- scenario: dnd_environment_selectors_refresh_the_existing_controller
     calls: list[str] = []
     preview_releases = []
     controller._effect_studio_physical_preview_adapter = SimpleNamespace(
@@ -603,8 +561,7 @@ def test_dnd_environment_selectors_refresh_the_existing_controller(controller) -
     ]
     assert [reason.value for reason in preview_releases] == ["sleep", "sleep"]
 
-
-def test_dark_display_entry_is_an_explicit_off_program(controller) -> None:
+    # --- scenario: dark_display_entry_is_an_explicit_off_program
     factory, state, label = controller.signal_display_entries()[
         DND_DARK_DISPLAY
     ]
@@ -612,6 +569,7 @@ def test_dark_display_entry_is_an_explicit_off_program(controller) -> None:
     assert factory(255, 8) == "off"
     assert state is status_bar.LedDisplayState.IDLE
     assert label(_device(), None) == "Test Device DND presentation held"
+
 
 
 def test_fully_dark_physical_write_keeps_zero_after_resting_glow_boundary(

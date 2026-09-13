@@ -181,6 +181,89 @@ struct AlcoveEventsTests {
         #expect(forced?.displayLine == "Papillon", "no artist — just the title")
     }
 
+    @Test("the adapter's JSON line reduces like the info dict it stands in for")
+    func adapterSummarize() {
+        #expect(AlcoveMedia.summarize(adapter: [:]) == nil)
+        #expect(AlcoveMedia.summarize(adapter: ["artist": "The Editors"]) == nil,
+                "a payload with no title is still nothing")
+        let media = AlcoveMedia.summarize(adapter: [
+            "title": "Papillon",
+            "artist": "The Editors",
+            "playing": true,
+            "bundleIdentifier": "com.apple.Music",
+            "artworkData": Data([0x89, 0x50]).base64EncodedString(),
+        ])
+        #expect(media?.title == "Papillon")
+        #expect(media?.artist == "The Editors")
+        #expect(media?.playing == true)
+        #expect(media?.bundleIdentifier == "com.apple.Music")
+        #expect(media?.artworkData == Data([0x89, 0x50]))
+        // Garbage artwork base64 is shrugged off, not fatal.
+        #expect(AlcoveMedia.summarize(adapter: ["title": "Papillon",
+                                              "artworkData": "%%%"])?.artworkData == nil)
+    }
+
+    @Test("Music's playerInfo payload carries the strip when MediaRemote reads are gated")
+    func musicPlayerInfoSummarize() {
+        #expect(AlcoveMedia.summarize(musicPlayerInfo: [:]) == nil)
+        #expect(AlcoveMedia.summarize(musicPlayerInfo: ["Player State": "Stopped",
+                                                       "Name": "Papillon"]) == nil,
+                "a stopped player holds no track")
+        let media = AlcoveMedia.summarize(musicPlayerInfo: [
+            "Name": "Papillon", "Artist": "The Editors", "Player State": "Playing"])
+        #expect(media?.title == "Papillon")
+        #expect(media?.playing == true)
+        #expect(media?.bundleIdentifier == "com.apple.Music")
+        #expect(AlcoveMedia.summarize(musicPlayerInfo: ["Name": "Papillon",
+                                                       "Player State": "Paused"])?.playing == false)
+    }
+
+    // MARK: Power
+
+    private func battery(onAC: Bool, charging: Bool, percent: Int = 80,
+                         fullyCharged: Bool = false) -> AlcovePowerState {
+        AlcovePowerState(hasBattery: true, onAC: onAC, charging: charging,
+                         percent: percent, fullyCharged: fullyCharged)
+    }
+
+    @Test("power transitions speak; baselines and drift stay silent")
+    func powerNotice() {
+        let all = AlcoveCapsuleKinds()
+        let onBattery = battery(onAC: false, charging: false)
+        // The first reading is a baseline, and a desktop has no battery.
+        #expect(AlcovePower.notice(from: nil, to: onBattery, id: "p1", kinds: all) == nil)
+        #expect(AlcovePower.notice(from: onBattery,
+                                 to: AlcovePowerState(hasBattery: false, onAC: false, charging: false,
+                                                      percent: nil, fullyCharged: false),
+                                 id: "p1b", kinds: all) == nil)
+        // Unplugged.
+        let unplug = AlcovePower.notice(from: battery(onAC: true, charging: true),
+                                      to: onBattery, id: "p2", kinds: all)
+        #expect(unplug?.kind == .charging)
+        #expect(unplug?.subtitle == "On battery · 80%")
+        #expect(unplug?.key == AlcovePower.noticeKey)
+        // Plugged in and charging.
+        #expect(AlcovePower.notice(from: onBattery, to: battery(onAC: true, charging: true),
+                                   id: "p3", kinds: all)?.subtitle == "Charging · 80%")
+        // On AC but not charging — a held limit is still a transition.
+        #expect(AlcovePower.notice(from: onBattery, to: battery(onAC: true, charging: false),
+                                   id: "p4", kinds: all)?.subtitle == "On AC power · 80%")
+        // Full.
+        #expect(AlcovePower.notice(from: battery(onAC: true, charging: true, percent: 99),
+                                   to: battery(onAC: true, charging: false, percent: 100,
+                                               fullyCharged: true),
+                                   id: "p5", kinds: all)?.subtitle == "Fully charged")
+        // Percent drift alone is not news, and neither is an unchanged read.
+        #expect(AlcovePower.notice(from: onBattery, to: battery(onAC: false, charging: false, percent: 79),
+                                   id: "p6", kinds: all) == nil)
+        #expect(AlcovePower.notice(from: onBattery, to: onBattery, id: "p7", kinds: all) == nil)
+        // The kind switched off silences it.
+        var kinds = AlcoveCapsuleKinds()
+        kinds.charging = false
+        #expect(AlcovePower.notice(from: onBattery, to: battery(onAC: true, charging: true),
+                                   id: "p8", kinds: kinds) == nil)
+    }
+
     // MARK: Layout
 
     @Test("the notice capsule is wider and deeper than idle, still hung from the notch")
@@ -214,6 +297,26 @@ struct AlcoveEventsTests {
         #expect(with - without == 40)
     }
 
+    @Test("a live Screen Bar's band raises every face's content by the same clearance")
+    func ledClearance() {
+        let c = AlcoveIslandLayout.ledBandClearance
+        #expect(AlcoveIslandLayout.idleSize(slotWidth: 185, notchDepth: 32,
+                                            contentWidth: 20, ledClearance: c).height
+                == 32 + AlcoveIslandLayout.lip + c)
+        #expect(AlcoveIslandLayout.noticeSize(slotWidth: 185, notchDepth: 32,
+                                              ledClearance: c).height
+                == 32 + AlcoveIslandLayout.noticeLip + c)
+        #expect(AlcoveIslandLayout.expandedHeight(notchDepth: 32, rows: 1, meters: 0,
+                                                  overflow: false, ledClearance: c)
+                == 32 + AlcoveIslandLayout.expandedNotchInset + c + 20 + 22 + 12)
+        // No notch, no band — a floating pill never grows.
+        #expect(AlcoveIslandLayout.idleSize(slotWidth: 0, notchDepth: 0, contentWidth: 20,
+                                            ledClearance: c).height == 24)
+        let notchless: CGFloat = 8 + 20 + 12
+        #expect(AlcoveIslandLayout.expandedHeight(notchDepth: 0, rows: 0, meters: 0,
+                                                  overflow: false, ledClearance: c) == notchless)
+    }
+
     @Test("the new settings default on and decode tolerantly")
     func settingsDecode() throws {
         let s = try JSONDecoder().decode(AlcoveSettings.self, from: Data("{}".utf8))
@@ -228,7 +331,9 @@ struct AlcoveEventsTests {
         #expect(off.capsuleKinds.ask == true, "a mistyped leaf falls back to its default")
         var state = ToysState()
         state.alcove.capsuleKinds.quotaReset = false
+        state.alcove.capsuleKinds.charging = false
         let decoded = try JSONDecoder().decode(ToysState.self, from: JSONEncoder().encode(state))
         #expect(decoded.alcove.capsuleKinds.quotaReset == false)
+        #expect(decoded.alcove.capsuleKinds.charging == false)
     }
 }

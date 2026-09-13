@@ -61,7 +61,8 @@ def write_grok_auth(home, *, expires_at=None, email="jr@example.com"):
 # --- grok ------------------------------------------------------------------
 
 
-def test_grok_auth_status_live_expired_missing(tmp_path):
+def test_grok_auth_status_live_expired_missing__and_2_more(tmp_path) -> None:
+    # --- scenario: grok_auth_status_live_expired_missing
     assert grok_auth_status(tmp_path, 1000.0)[0] == "missing"
     write_grok_auth(tmp_path, expires_at=500.0)
     assert grok_auth_status(tmp_path, 1000.0)[0] == "expired"
@@ -70,8 +71,7 @@ def test_grok_auth_status_live_expired_missing(tmp_path):
     assert status == "ok"
     assert email == "jr@example.com"
 
-
-def test_repair_grok_clears_wedged_token_when_cli_is_signed_in(tmp_path):
+    # --- scenario: repair_grok_clears_wedged_token_when_cli_is_signed_in
     write_grok_auth(tmp_path)
     store = FakeStore({("grok", "token"): "stale-stored-token-000000"})
     result = repair_grok_credential(store, home=tmp_path, now=1000.0)
@@ -80,13 +80,13 @@ def test_repair_grok_clears_wedged_token_when_cli_is_signed_in(tmp_path):
     assert ("grok", "token") in store.deleted
     assert "signed in" in result.message
 
-
-def test_repair_grok_expired_names_grok_login(tmp_path):
+    # --- scenario: repair_grok_expired_names_grok_login
     write_grok_auth(tmp_path, expires_at=1.0)
     store = FakeStore()
     result = repair_grok_credential(store, home=tmp_path, now=1000.0)
     assert result.outcome is RepairOutcome.NEEDS_SIGN_IN
     assert "grok login" in result.message
+
 
 
 # --- claude ----------------------------------------------------------------
@@ -99,7 +99,8 @@ def claude_payload(*, access="tok", expires_at=None, refresh="refresh-token"):
     return json.dumps({"claudeAiOauth": oauth})
 
 
-def test_repair_claude_names_refresh_token_only_shape_as_provider_owned():
+def test_repair_claude_names_refresh_token_only_shape_as_provider_owned__and_2_more() -> None:
+    # --- scenario: repair_claude_names_refresh_token_only_shape_as_provider_owned
     store = FakeStore()
     result = repair_claude_credential(
         store,
@@ -111,8 +112,7 @@ def test_repair_claude_names_refresh_token_only_shape_as_provider_owned():
     assert "Claude Code owns" in result.message
     assert "sign in" not in result.message.lower()
 
-
-def test_repair_claude_rejects_an_empty_signed_out_shape():
+    # --- scenario: repair_claude_rejects_an_empty_signed_out_shape
     store = FakeStore()
     result = repair_claude_credential(
         store,
@@ -123,8 +123,7 @@ def test_repair_claude_rejects_an_empty_signed_out_shape():
     assert not store.stored
     assert "sign in" in result.message.lower()
 
-
-def test_repair_claude_stores_fresh_token_and_reports_change():
+    # --- scenario: repair_claude_stores_fresh_token_and_reports_change
     store = FakeStore({("claude", "oauth-token"): "old-token"})
     result = repair_claude_credential(
         store,
@@ -134,6 +133,7 @@ def test_repair_claude_stores_fresh_token_and_reports_change():
     assert result.outcome is RepairOutcome.REPAIRED
     assert result.changed
     assert store.secrets[("claude", "oauth-token")] == "b" * 32
+
 
 
 def test_repair_claude_same_token_is_already_healthy():
@@ -378,7 +378,8 @@ def test_codex_app_server_probe_finds_homebrew_under_launchd_path(monkeypatch):
 # --- gates -----------------------------------------------------------------
 
 
-def test_transient_gate_backs_off_and_forced_bypasses():
+def test_transient_gate_backs_off_and_forced_bypasses__and_1_more() -> None:
+    # --- scenario: transient_gate_backs_off_and_forced_bypasses
     gate = FailureGate()
     gate = note_failure(gate, now=0.0, terminal=False, fingerprint=None)
     assert gate.retry_at == TRANSIENT_BACKOFF_SECONDS[0]
@@ -391,8 +392,7 @@ def test_transient_gate_backs_off_and_forced_bypasses():
         gate = note_failure(gate, now=0.0, terminal=False, fingerprint=None)
     assert gate.retry_at == TRANSIENT_BACKOFF_SECONDS[-1]
 
-
-def test_terminal_gate_lifts_on_credential_change():
+    # --- scenario: terminal_gate_lifts_on_credential_change
     fingerprint = (("x", 1, 2, 3),)
     gate = note_failure(
         FailureGate(), now=0.0, terminal=True, fingerprint=fingerprint
@@ -407,6 +407,7 @@ def test_terminal_gate_lifts_on_credential_change():
         fingerprint=fingerprint,
         forced=False,
     )
+
 
 
 def test_credential_fingerprint_tracks_the_source_file(tmp_path):
@@ -473,7 +474,8 @@ def test_repair_grok_defers_to_a_server_rejection(tmp_path):
     )
 
 
-def test_the_claude_gate_can_lift_when_the_keychain_item_changes():
+def test_the_claude_gate_can_lift_when_the_keychain_item_changes__and_1_more() -> None:
+    # --- scenario: the_claude_gate_can_lift_when_the_keychain_item_changes
     """The gate fingerprinted ~/.claude/.credentials.json, which does not
     exist on a Keychain-only machine -- so None == None forever and a
     fresh `claude login` was invisible to it."""
@@ -496,8 +498,7 @@ def test_the_claude_gate_can_lift_when_the_keychain_item_changes():
     assert provider_reconnect.keychain_fingerprint("svc", now=30.0) != cached
     assert isinstance(before, tuple)
 
-
-def test_a_stored_expiry_drives_read_only_sync():
+    # --- scenario: a_stored_expiry_drives_read_only_sync
     from jrbar.provider_reconnect import claude_token_is_stale
 
     class Store:
@@ -514,3 +515,4 @@ def test_a_stored_expiry_drives_read_only_sync():
     assert claude_token_is_stale(Store(None), now=1000.0), "unknown = stale"
     assert claude_token_is_stale(Store("1200"), now=1000.0), "inside the margin"
     assert not claude_token_is_stale(Store("9000"), now=1000.0)
+

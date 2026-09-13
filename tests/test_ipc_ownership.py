@@ -314,7 +314,8 @@ def test_client_leaf_swap_fails_before_sending_to_replacement_peer(
             pass
 
 
-def test_silent_peer_does_not_block_a_later_valid_peer(socket_root: Path) -> None:
+def test_silent_peer_does_not_block_a_later_valid_peer__and_1_more(socket_root: Path) -> None:
+    # --- scenario: silent_peer_does_not_block_a_later_valid_peer
     socket_path = socket_root / "state" / "events.sock"
     received = threading.Event()
     server = HookEventServer(
@@ -346,8 +347,7 @@ def test_silent_peer_does_not_block_a_later_valid_peer(socket_root: Path) -> Non
         silent.close()
         server.stop()
 
-
-def test_stop_closes_stalled_peers_and_joins_server_threads(socket_root: Path) -> None:
+    # --- scenario: stop_closes_stalled_peers_and_joins_server_threads
     socket_path = socket_root / "state" / "events.sock"
     server = HookEventServer(lambda _hint_value: None, socket_path=socket_path)
     server.start()
@@ -381,3 +381,4 @@ def test_stop_closes_stalled_peers_and_joins_server_threads(socket_root: Path) -
     finally:
         for peer in silent_peers:
             peer.close()
+

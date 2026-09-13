@@ -18,7 +18,8 @@ class Credentials:
         self.values[(provider, account)] = secret
 
 
-def test_export_is_owner_private_and_contains_bounded_pairing_material(tmp_path: Path):
+def test_export_is_owner_private_and_contains_bounded_pairing_material__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: export_is_owner_private_and_contains_bounded_pairing_material
     target = tmp_path / "pairing.json"
     export_pairing_document(
         local_device_id="mac-mini",
@@ -35,8 +36,7 @@ def test_export_is_owner_private_and_contains_bounded_pairing_material(tmp_path:
     assert len(document["shared_secret_b64"]) == 44
     assert target.stat().st_mode & 0o777 == 0o600
 
-
-def test_import_stores_secret_in_keychain_and_returns_public_metadata(tmp_path: Path):
+    # --- scenario: import_stores_secret_in_keychain_and_returns_public_metadata
     target = tmp_path / "pairing.json"
     export_pairing_document(
         local_device_id="mac-mini",
@@ -53,8 +53,7 @@ def test_import_stores_secret_in_keychain_and_returns_public_metadata(tmp_path: 
     assert credentials.values[("sidepulse-sync", "pairing-macbook")]
     assert "YmJi" not in repr(result)
 
-
-def test_import_rejects_world_readable_pairing_file(tmp_path: Path):
+    # --- scenario: import_rejects_world_readable_pairing_file
     target = tmp_path / "pairing.json"
     export_pairing_document(
         local_device_id="mac-mini",
@@ -70,6 +69,7 @@ def test_import_rejects_world_readable_pairing_file(tmp_path: Path):
         assert "private" in str(exc)
     else:
         raise AssertionError("world-readable pairing document accepted")
+
 
 
 def test_import_rejects_unknown_or_malformed_document(tmp_path: Path):

@@ -125,7 +125,8 @@ def reader_raising(failure: str):
 # --- A. Optional and inert -------------------------------------------
 
 
-def test_discovery_is_empty_when_tailscale_is_absent():
+def test_discovery_is_empty_when_tailscale_is_absent__and_2_more() -> None:
+    # --- scenario: discovery_is_empty_when_tailscale_is_absent
     """Tailscale is not a dependency. Absent CLI == empty tailnet."""
 
     def missing_runner(arguments, timeout):
@@ -133,15 +134,13 @@ def test_discovery_is_empty_when_tailscale_is_absent():
 
     assert remote_peers.discover_peers(runner=missing_runner) == ()
 
-
-def test_discovery_never_raises_when_the_cli_misbehaves():
+    # --- scenario: discovery_never_raises_when_the_cli_misbehaves
     def hostile_runner(arguments, timeout):
         raise RuntimeError("tailscaled is having a day")
 
     assert remote_peers.discover_peers(runner=hostile_runner) == ()
 
-
-def test_merge_with_no_peers_returns_exactly_the_local_rows():
+    # --- scenario: merge_with_no_peers_returns_exactly_the_local_rows
     """Switching this feature off must not perturb the local ledger."""
     local = (status("claude:session:a"), status("codex:session:b"))
     merged = remote_peers.merge_ledger(
@@ -158,7 +157,9 @@ def test_merge_with_no_peers_returns_exactly_the_local_rows():
     assert all(row.is_remote is False for row in merged.rows)
 
 
-def test_collect_is_inert_when_disabled():
+
+def test_collect_is_inert_when_disabled__and_2_more() -> None:
+    # --- scenario: collect_is_inert_when_disabled
     """Disabled means no discovery call at all, not a filtered result."""
     calls: list[object] = []
 
@@ -173,20 +174,14 @@ def test_collect_is_inert_when_disabled():
     assert result == remote_peers.PeerRefreshResult()
     assert calls == []
 
-
-def test_refresh_without_a_reader_reports_no_transport_and_calls_nothing():
+    # --- scenario: refresh_without_a_reader_reports_no_transport_and_calls_nothing
     result = remote_peers.refresh_peers((peer(),), reader=None)
     assert result.ledgers == ()
     assert result.attempted == 0
     assert [health.failure for health in result.health] == [remote_peers.FAILURE_NO_TRANSPORT]
 
-
-# --- B. A hostname reaches argv --------------------------------------
-
-
-@pytest.mark.parametrize(
-    "hostile",
-    [
+    # --- scenario: hostile_hostnames_are_rejected
+    for hostile in [
         "-oProxyCommand=/bin/sh",  # runs a LOCAL command via ssh option
         "-l",
         "--",
@@ -202,18 +197,17 @@ def test_refresh_without_a_reader_reports_no_transport_and_calls_nothing():
         "",
         "mac-b.",
         "a" * 254,
-    ],
-)
-def test_hostile_hostnames_are_rejected(hostile):
-    assert remote_peers.peer_host_is_safe(hostile) is False
+    ]:
+        assert remote_peers.peer_host_is_safe(hostile) is False
 
 
-@pytest.mark.parametrize("safe", ["mac-b", "mac-b.tailnet.ts.net", "MacBookPro-2", "a"])
-def test_ordinary_hostnames_are_accepted(safe):
-    assert remote_peers.peer_host_is_safe(safe) is True
 
+def test_ordinary_hostnames_are_accepted__and_2_more() -> None:
+    # --- scenario: ordinary_hostnames_are_accepted
+    for safe in ["mac-b", "mac-b.tailnet.ts.net", "MacBookPro-2", "a"]:
+        assert remote_peers.peer_host_is_safe(safe) is True
 
-def test_a_hostile_hostname_cannot_reach_argv():
+    # --- scenario: a_hostile_hostname_cannot_reach_argv
     """The rejection is at the command builder, not only at discovery."""
     with pytest.raises(remote_peers.RemotePeerError) as caught:
         remote_peers.sftp_command(
@@ -225,8 +219,7 @@ def test_a_hostile_hostname_cannot_reach_argv():
         )
     assert caught.value.failure == remote_peers.FAILURE_UNSAFE_HOST
 
-
-def test_refresh_refuses_an_unsafe_host_without_calling_the_reader():
+    # --- scenario: refresh_refuses_an_unsafe_host_without_calling_the_reader
     called: list[str] = []
 
     def read(host, remote_path, *, timeout, max_bytes):
@@ -243,9 +236,10 @@ def test_refresh_refuses_an_unsafe_host_without_calling_the_reader():
     assert [health.failure for health in result.health] == [remote_peers.FAILURE_UNSAFE_HOST]
 
 
-@pytest.mark.parametrize(
-    "hostile",
-    [
+
+def test_hostile_remote_paths_are_rejected__and_1_more() -> None:
+    # --- scenario: hostile_remote_paths_are_rejected
+    for hostile in [
         "relative/path.json",
         "/tmp/*.json",
         "/tmp/a b.json",
@@ -253,14 +247,12 @@ def test_refresh_refuses_an_unsafe_host_without_calling_the_reader():
         "/tmp/x:y.json",
         "/tmp/x\nz.json",
         "",
-    ],
-)
-def test_hostile_remote_paths_are_rejected(hostile):
-    assert remote_peers.remote_path_is_safe(hostile) is False
+    ]:
+        assert remote_peers.remote_path_is_safe(hostile) is False
 
-
-def test_default_remote_path_is_safe():
+    # --- scenario: default_remote_path_is_safe
     assert remote_peers.remote_path_is_safe(remote_peers.DEFAULT_REMOTE_LEDGER_PATH) is True
+
 
 
 # --- C. Discovery ----------------------------------------------------
@@ -306,19 +298,18 @@ def _status_json(**overrides) -> str:
     return json.dumps(payload)
 
 
-def test_discovery_selects_online_agent_capable_peers_only():
+def test_discovery_selects_online_agent_capable_peers_only__and_2_more() -> None:
+    # --- scenario: discovery_selects_online_agent_capable_peers_only
     peers = remote_peers.parse_tailscale_status(_status_json())
     assert [item.host for item in peers] == ["linux-box", "mac-b"]
 
-
-def test_discovery_excludes_self_by_dns_label():
+    # --- scenario: discovery_excludes_self_by_dns_label
     """Nodekey 5 is this machine under a second entry. It must not become
     a peer -- fetching ourselves would double every local row."""
     peers = remote_peers.parse_tailscale_status(_status_json())
     assert "mac-a" not in {item.host for item in peers}
 
-
-def test_discovery_is_capped():
+    # --- scenario: discovery_is_capped
     entries = {
         f"nodekey:{index}": {
             "HostName": f"mac-{index}",
@@ -332,7 +323,9 @@ def test_discovery_is_capped():
     assert len(peers) == remote_peers.MAX_PEERS
 
 
-def test_discovery_rejects_a_peer_whose_dns_label_is_argv_hostile():
+
+def test_discovery_rejects_a_peer_whose_dns_label_is_argv_hostile__and_1_more() -> None:
+    # --- scenario: discovery_rejects_a_peer_whose_dns_label_is_argv_hostile
     entries = {
         "nodekey:9": {
             "HostName": "evil",
@@ -343,8 +336,7 @@ def test_discovery_rejects_a_peer_whose_dns_label_is_argv_hostile():
     }
     assert remote_peers.parse_tailscale_status(_status_json(Peer=entries)) == ()
 
-
-def test_discovery_tolerates_unknown_tailscale_fields():
+    # --- scenario: discovery_tolerates_unknown_tailscale_fields
     """Tailscale's schema is theirs, not ours. New keys must not blank
     the peer list."""
     entries = {
@@ -361,7 +353,9 @@ def test_discovery_tolerates_unknown_tailscale_fields():
     ]
 
 
-def test_discovery_never_reads_tailscale_stderr(monkeypatch):
+
+def test_discovery_never_reads_tailscale_stderr__and_1_more(monkeypatch) -> None:
+    # --- scenario: discovery_never_reads_tailscale_stderr
     """Tailscale can write auth keys to stderr. Reading it is how a secret
     ends up in a log."""
     secret = "redacted-auth-key-from-stderr"
@@ -386,8 +380,8 @@ def test_discovery_never_reads_tailscale_stderr(monkeypatch):
     assert caught.value.failure == remote_peers.FAILURE_UNREACHABLE
     assert secret not in str(caught.value) and secret not in repr(caught.value)
 
-
-def test_discovery_output_is_size_capped(monkeypatch):
+    # --- scenario: discovery_output_is_size_capped
+    monkeypatch.undo()
     class Completed:
         returncode = 0
         stdout = "x" * (remote_peers.MAX_DISCOVERY_BYTES + 1)
@@ -401,10 +395,12 @@ def test_discovery_output_is_size_capped(monkeypatch):
     assert caught.value.failure == remote_peers.FAILURE_TOO_LARGE
 
 
+
 # --- D. Publishing ---------------------------------------------------
 
 
-def test_sub_agents_are_absent_from_the_payload_entirely():
+def test_sub_agents_are_absent_from_the_payload_entirely__and_2_more() -> None:
+    # --- scenario: sub_agents_are_absent_from_the_payload_entirely
     """Not filtered at the receiver -- never sent. Sub-agents are never a
     row, never a light, never an interrupt."""
     payload = json.loads(
@@ -418,15 +414,13 @@ def test_sub_agents_are_absent_from_the_payload_entirely():
     )
     assert [row["agent_id"] for row in payload["rows"]] == ["claude:session:main"]
 
-
-def test_published_rows_are_capped_and_the_drop_is_declared():
+    # --- scenario: published_rows_are_capped_and_the_drop_is_declared
     statuses = tuple(status(f"claude:session:{index:03d}") for index in range(120))
     payload = json.loads(document(statuses=statuses))
     assert len(payload["rows"]) == remote_peers.MAX_ROWS_PER_PEER
     assert payload["truncated_rows"] == 120 - remote_peers.MAX_ROWS_PER_PEER
 
-
-def test_published_document_respects_the_byte_ceiling():
+    # --- scenario: published_document_respects_the_byte_ceiling
     statuses = tuple(
         status(f"claude:session:{index:03d}", display_name="n" * remote_peers.MAX_DISPLAY_NAME_CHARS)
         for index in range(64)
@@ -441,7 +435,9 @@ def test_published_document_respects_the_byte_ceiling():
     assert json.loads(payload)["truncated_rows"] > 0
 
 
-def test_urgent_rows_survive_truncation():
+
+def test_urgent_rows_survive_truncation__and_2_more() -> None:
+    # --- scenario: urgent_rows_survive_truncation
     """Truncation drops the calm, never the blocked.
 
     The blocked session is deliberately named so it sorts LAST by id: if
@@ -455,8 +451,7 @@ def test_urgent_rows_survive_truncation():
     payload = json.loads(document(statuses=statuses))
     assert "claude:session:zzz-blocked" in {row["agent_id"] for row in payload["rows"]}
 
-
-def test_messages_are_withheld_by_default_and_sendable_on_request():
+    # --- scenario: messages_are_withheld_by_default_and_sendable_on_request
     withheld = json.loads(document(statuses=(status(message="rm -rf the database?"),)))
     assert withheld["rows"][0]["message"] is None
 
@@ -465,14 +460,14 @@ def test_messages_are_withheld_by_default_and_sendable_on_request():
     )
     assert shared["rows"][0]["message"] == "rm -rf the database?"
 
-
-def test_published_document_carries_no_local_paths_or_launch_origin():
+    # --- scenario: published_document_carries_no_local_paths_or_launch_origin
     payload = json.loads(
         document(statuses=(status(cwd="/Users/jonathanreed/secret-project", origin="iTerm"),))
     )
     encoded = json.dumps(payload)
     assert "secret-project" not in encoded
     assert "iTerm" not in encoded
+
 
 
 def test_the_wire_schema_has_no_capacity_field():
@@ -492,14 +487,14 @@ def test_the_wire_schema_has_no_capacity_field():
     assert caught.value.failure == remote_peers.FAILURE_MALFORMED
 
 
-def test_publishing_is_off_by_default_and_writes_nothing(tmp_path):
+def test_publishing_is_off_by_default_and_writes_nothing__and_2_more(tmp_path) -> None:
+    # --- scenario: publishing_is_off_by_default_and_writes_nothing
     """A second Mac reading this file is something the owner turns on."""
     target = tmp_path / "remote-ledger.json"
     assert remote_peers.publish_local_ledger((status(),), path=target) is None
     assert not target.exists()
 
-
-def test_publishing_when_enabled_writes_a_parseable_private_document(tmp_path):
+    # --- scenario: publishing_when_enabled_writes_a_parseable_private_document
     target = tmp_path / "remote-ledger.json"
     written = remote_peers.publish_local_ledger(
         (status(),),
@@ -514,8 +509,7 @@ def test_publishing_when_enabled_writes_a_parseable_private_document(tmp_path):
     assert ledger.machine == "mac-a"
     assert ledger.rows[0].source_agent_id == "claude:session:aaa"
 
-
-def test_publishing_honours_the_message_setting(tmp_path):
+    # --- scenario: publishing_honours_the_message_setting
     target = tmp_path / "remote-ledger.json"
     remote_peers.publish_local_ledger(
         (status(message="delete production?"),),
@@ -525,6 +519,7 @@ def test_publishing_honours_the_message_setting(tmp_path):
         settings=remote_peers.RemotePeerSettings(publish_enabled=True),
     )
     assert "delete production?" not in target.read_text(encoding="utf-8")
+
 
 
 def test_the_local_machine_name_is_held_to_the_peer_rules(monkeypatch):
@@ -542,7 +537,8 @@ def test_the_local_machine_name_is_held_to_the_peer_rules(monkeypatch):
     assert remote_peers.local_machine_name("fallback-name") == "fallback-name"
 
 
-def test_publisher_rejects_an_unsafe_machine_name():
+def test_publisher_rejects_an_unsafe_machine_name__and_2_more() -> None:
+    # --- scenario: publisher_rejects_an_unsafe_machine_name
     with pytest.raises(ValueError):
         remote_peers.build_remote_ledger_document(
             machine="mac b; rm -rf /",
@@ -550,11 +546,7 @@ def test_publisher_rejects_an_unsafe_machine_name():
             generated_at=NOW,
         )
 
-
-# --- E. Parsing ------------------------------------------------------
-
-
-def test_round_trip_preserves_the_row():
+    # --- scenario: round_trip_preserves_the_row
     ledger = remote_peers.parse_remote_ledger_document(
         document(statuses=(status("claude:session:aaa", mode=AgentMode.WAITING_FOR_INPUT),))
     )
@@ -566,8 +558,7 @@ def test_round_trip_preserves_the_row():
     assert row.source_agent_id == "claude:session:aaa"
     assert row.status.mode is AgentMode.WAITING_FOR_INPUT
 
-
-def test_remote_agent_ids_are_namespaced_and_cannot_collide_with_local():
+    # --- scenario: remote_agent_ids_are_namespaced_and_cannot_collide_with_local
     ledger = remote_peers.parse_remote_ledger_document(
         document(statuses=(status("claude:session:aaa"),))
     )
@@ -582,24 +573,23 @@ def test_remote_agent_ids_are_namespaced_and_cannot_collide_with_local():
     assert "remote:mac-b:claude:session:aaa" in keys
 
 
-def test_a_namespaced_remote_row_is_not_mistaken_for_a_sub_agent():
+
+def test_a_namespaced_remote_row_is_not_mistaken_for_a_sub_agent__and_2_more() -> None:
+    # --- scenario: a_namespaced_remote_row_is_not_mistaken_for_a_sub_agent
     ledger = remote_peers.parse_remote_ledger_document(
         document(statuses=(status("claude:session:aaa"),))
     )
     assert ledger.rows[0].status.is_subagent is False
 
-
-def test_parser_drops_a_sub_agent_row_a_stale_peer_build_might_send():
+    # --- scenario: parser_drops_a_sub_agent_row_a_stale_peer_build_might_send
     payload = json.loads(document())
     payload["rows"].append(dict(payload["rows"][0], agent_id="claude:agent:worker"))
     ledger = remote_peers.parse_remote_ledger_document(json.dumps(payload))
     assert [row.source_agent_id for row in ledger.rows] == ["claude:session:aaa"]
     assert ledger.dropped_rows == 1
 
-
-@pytest.mark.parametrize(
-    ("mutate", "failure"),
-    [
+    # --- scenario: malformed_documents_are_refused_by_name
+    for mutate, failure in [
         (lambda d: d.__setitem__("version", 2), remote_peers.FAILURE_UNSUPPORTED_VERSION),
         (lambda d: d.__setitem__("document", "something-else"), remote_peers.FAILURE_MALFORMED),
         (lambda d: d.__setitem__("machine", "mac b; id"), remote_peers.FAILURE_MALFORMED),
@@ -607,17 +597,17 @@ def test_parser_drops_a_sub_agent_row_a_stale_peer_build_might_send():
         (lambda d: d.__setitem__("rows", "not-a-list"), remote_peers.FAILURE_TOO_LARGE),
         (lambda d: d.pop("truncated_rows"), remote_peers.FAILURE_MALFORMED),
         (lambda d: d.__setitem__("extra", 1), remote_peers.FAILURE_MALFORMED),
-    ],
-)
-def test_malformed_documents_are_refused_by_name(mutate, failure):
-    payload = json.loads(document())
-    mutate(payload)
-    with pytest.raises(remote_peers.RemotePeerError) as caught:
-        remote_peers.parse_remote_ledger_document(json.dumps(payload))
-    assert caught.value.failure == failure
+    ]:
+        payload = json.loads(document())
+        mutate(payload)
+        with pytest.raises(remote_peers.RemotePeerError) as caught:
+            remote_peers.parse_remote_ledger_document(json.dumps(payload))
+        assert caught.value.failure == failure
 
 
-def test_an_unreadable_timestamp_is_malformed_not_now():
+
+def test_an_unreadable_timestamp_is_malformed_not_now__and_2_more() -> None:
+    # --- scenario: an_unreadable_timestamp_is_malformed_not_now
     """models.parse_datetime falls back to *now* for junk. Here that
     would render a long-dead remote row as fresh."""
     payload = json.loads(document())
@@ -626,14 +616,12 @@ def test_an_unreadable_timestamp_is_malformed_not_now():
         remote_peers.parse_remote_ledger_document(json.dumps(payload))
     assert caught.value.failure == remote_peers.FAILURE_MALFORMED
 
-
-def test_oversize_payloads_are_refused_before_parsing():
+    # --- scenario: oversize_payloads_are_refused_before_parsing
     with pytest.raises(remote_peers.RemotePeerError) as caught:
         remote_peers.parse_remote_ledger_document("x" * (remote_peers.MAX_PAYLOAD_BYTES + 1))
     assert caught.value.failure == remote_peers.FAILURE_TOO_LARGE
 
-
-def test_row_count_is_capped_at_parse_time_too():
+    # --- scenario: row_count_is_capped_at_parse_time_too
     payload = json.loads(document())
     payload["rows"] = [
         dict(payload["rows"][0], agent_id=f"claude:session:{index:04d}")
@@ -642,6 +630,7 @@ def test_row_count_is_capped_at_parse_time_too():
     with pytest.raises(remote_peers.RemotePeerError) as caught:
         remote_peers.parse_remote_ledger_document(json.dumps(payload))
     assert caught.value.failure == remote_peers.FAILURE_TOO_LARGE
+
 
 
 def test_duplicate_json_keys_are_refused():
@@ -676,14 +665,14 @@ def test_json_constants_are_refused_at_the_json_layer(monkeypatch):
     assert caught.value.failure == remote_peers.FAILURE_MALFORMED
 
 
-def test_a_nan_field_is_refused_however_it_arrives():
+def test_a_nan_field_is_refused_however_it_arrives__and_2_more() -> None:
+    # --- scenario: a_nan_field_is_refused_however_it_arrives
     payload = document().replace('"truncated_rows":0', '"truncated_rows":NaN')
     with pytest.raises(remote_peers.RemotePeerError) as caught:
         remote_peers.parse_remote_ledger_document(payload)
     assert caught.value.failure == remote_peers.FAILURE_MALFORMED
 
-
-def test_a_peer_cannot_publish_rows_under_another_machines_name():
+    # --- scenario: a_peer_cannot_publish_rows_under_another_machines_name
     """Identity comes from the channel, never from the payload. A peer
     that calls itself `mac-c` still appears as the peer we contacted --
     otherwise one Mac's rows appear under another Mac's name and the
@@ -696,8 +685,7 @@ def test_a_peer_cannot_publish_rows_under_another_machines_name():
     assert ledger.rows[0].machine == "mac-b"
     assert ledger.rows[0].key.startswith("remote:mac-b:")
 
-
-def test_the_channel_identity_reaches_the_merged_ledger():
+    # --- scenario: the_channel_identity_reaches_the_merged_ledger
     """The whole point, through refresh_peers: a lying payload cannot
     relabel a row."""
     result = remote_peers.refresh_peers(
@@ -714,7 +702,9 @@ def test_the_channel_identity_reaches_the_merged_ledger():
     assert [row.machine for row in merged.remote_rows] == ["mac-b"]
 
 
-def test_a_hostname_and_a_local_hostname_may_disagree_without_losing_the_peer():
+
+def test_a_hostname_and_a_local_hostname_may_disagree_without_losing_the_peer__and_2_more() -> None:
+    # --- scenario: a_hostname_and_a_local_hostname_may_disagree_without_losing_the_peer
     """Tailscale's HostName and a Mac's own hostname routinely differ.
     That must not silently blank the peer's rows."""
     result = remote_peers.refresh_peers(
@@ -725,8 +715,7 @@ def test_a_hostname_and_a_local_hostname_may_disagree_without_losing_the_peer():
     assert len(result.ledgers) == 1
     assert result.ledgers[0].rows and result.health[0].reachable is True
 
-
-def test_an_unsafe_remote_path_stops_the_refresh_before_any_reader_runs():
+    # --- scenario: an_unsafe_remote_path_stops_the_refresh_before_any_reader_runs
     called: list[str] = []
 
     def read(host, remote_path, *, timeout, max_bytes):
@@ -739,18 +728,19 @@ def test_an_unsafe_remote_path_stops_the_refresh_before_any_reader_runs():
     assert called == []
     assert result.health[0].failure == remote_peers.FAILURE_UNSAFE_HOST
 
-
-def test_control_characters_in_a_display_name_are_scrubbed():
+    # --- scenario: control_characters_in_a_display_name_are_scrubbed
     payload = json.loads(document())
     payload["rows"][0]["display_name"] = "ledger\x1b[2Jwiped\n\r"
     ledger = remote_peers.parse_remote_ledger_document(json.dumps(payload))
     assert ledger.rows[0].status.display_name == "ledger [2Jwiped"
 
 
+
 # --- F. The transport is a read, not a shell -------------------------
 
 
-def test_the_fetch_argv_contains_no_remote_command():
+def test_the_fetch_argv_contains_no_remote_command__and_1_more() -> None:
+    # --- scenario: the_fetch_argv_contains_no_remote_command
     """`sftp host:path local` uses the SFTP subsystem. There is no place
     in this argv for `cat`, our CLI, or anything else the peer would
     execute -- which is what makes this a viewer and not an orchestrator."""
@@ -788,8 +778,7 @@ def test_the_fetch_argv_contains_no_remote_command():
     options = {argv[position + 1] for position, value in enumerate(argv) if value == "-o"}
     assert not any(option.startswith(("RemoteCommand", "ProxyCommand", "LocalCommand")) for option in options)
 
-
-def test_the_fetch_never_offers_or_prompts_for_a_credential():
+    # --- scenario: the_fetch_never_offers_or_prompts_for_a_credential
     argv = remote_peers.sftp_command(
         "mac-b", "/x.json", Path("/tmp/out"), timeout=4.0, max_bytes=1024
     )
@@ -801,6 +790,7 @@ def test_the_fetch_never_offers_or_prompts_for_a_credential():
     # No identity file of our choosing: the user's own agent/config decides.
     assert "-i" not in argv
     assert not any(argument.startswith("IdentityFile") for argument in argv)
+
 
 
 def test_the_child_environment_is_an_allowlist(monkeypatch):
@@ -831,7 +821,8 @@ def test_bytes_on_the_wire_are_bounded_by_the_bandwidth_limit():
     assert "-l" in argv
 
 
-def test_the_reader_reads_the_file_and_removes_its_scratch(tmp_path, monkeypatch):
+def test_the_reader_reads_the_file_and_removes_its_scratch__and_2_more(tmp_path, monkeypatch) -> None:
+    # --- scenario: the_reader_reads_the_file_and_removes_its_scratch
     scratch = tmp_path / "scratch"
     payload = document()
     monkeypatch.setattr(remote_peers, "_validated_sftp_path", lambda path: path)
@@ -846,8 +837,8 @@ def test_the_reader_reads_the_file_and_removes_its_scratch(tmp_path, monkeypatch
     assert reader("mac-b", "/x.json", timeout=2.0, max_bytes=remote_peers.MAX_PAYLOAD_BYTES) == payload
     assert list(scratch.iterdir()) == []
 
-
-def test_the_reader_never_leaks_stderr_into_its_failure(tmp_path, monkeypatch):
+    # --- scenario: the_reader_never_leaks_stderr_into_its_failure
+    monkeypatch.undo()
     secret = "tskey-auth-kSECRET"
     monkeypatch.setattr(remote_peers, "_validated_sftp_path", lambda path: path)
     monkeypatch.setattr(
@@ -861,8 +852,8 @@ def test_the_reader_never_leaks_stderr_into_its_failure(tmp_path, monkeypatch):
     assert caught.value.failure == remote_peers.FAILURE_UNREACHABLE
     assert secret not in str(caught.value) and secret not in repr(caught.value)
 
-
-def test_the_reader_refuses_an_oversize_file_and_still_cleans_up(tmp_path, monkeypatch):
+    # --- scenario: the_reader_refuses_an_oversize_file_and_still_cleans_up
+    monkeypatch.undo()
     scratch = tmp_path / "scratch"
     monkeypatch.setattr(remote_peers, "_validated_sftp_path", lambda path: path)
 
@@ -876,6 +867,7 @@ def test_the_reader_refuses_an_oversize_file_and_still_cleans_up(tmp_path, monke
         reader("mac-b", "/x.json", timeout=2.0, max_bytes=1024)
     assert caught.value.failure == remote_peers.FAILURE_TOO_LARGE
     assert list(scratch.iterdir()) == []
+
 
 
 def test_a_hung_transfer_becomes_a_timeout_not_a_hang(tmp_path, monkeypatch):
@@ -895,7 +887,8 @@ def test_a_hung_transfer_becomes_a_timeout_not_a_hang(tmp_path, monkeypatch):
 # --- G. Breaker ------------------------------------------------------
 
 
-def test_the_breaker_opens_after_repeated_failure_and_closes_on_cooldown():
+def test_the_breaker_opens_after_repeated_failure_and_closes_on_cooldown__and_2_more() -> None:
+    # --- scenario: the_breaker_opens_after_repeated_failure_and_closes_on_cooldown
     breaker = remote_peers.PeerBreaker(host="mac-b")
     for _ in range(remote_peers.PEER_BREAKER_TRIP_AFTER - 1):
         breaker = remote_peers.record_peer_failure(breaker, now=0.0)
@@ -906,13 +899,11 @@ def test_the_breaker_opens_after_repeated_failure_and_closes_on_cooldown():
     assert breaker.is_open(remote_peers.PEER_BREAKER_COOLDOWN_SECONDS - 1) is True
     assert breaker.allows(remote_peers.PEER_BREAKER_COOLDOWN_SECONDS) is True
 
-
-def test_one_success_forgives_the_breaker():
+    # --- scenario: one_success_forgives_the_breaker
     breaker = remote_peers.PeerBreaker(host="mac-b", consecutive_failures=5, open_until_monotonic=999.0)
     assert remote_peers.record_peer_success(breaker).allows(0.0) is True
 
-
-def test_an_open_breaker_skips_the_peer_without_contacting_it():
+    # --- scenario: an_open_breaker_skips_the_peer_without_contacting_it
     called: list[str] = []
 
     def read(host, remote_path, *, timeout, max_bytes):
@@ -931,7 +922,9 @@ def test_an_open_breaker_skips_the_peer_without_contacting_it():
     assert result.health[0].failure == remote_peers.FAILURE_BREAKER_OPEN
 
 
-def test_repeated_refresh_failures_trip_the_breaker_through_refresh():
+
+def test_repeated_refresh_failures_trip_the_breaker_through_refresh__and_2_more() -> None:
+    # --- scenario: repeated_refresh_failures_trip_the_breaker_through_refresh
     breakers: tuple[remote_peers.PeerBreaker, ...] = ()
     clock = Clock()
     for _ in range(remote_peers.PEER_BREAKER_TRIP_AFTER):
@@ -944,11 +937,7 @@ def test_repeated_refresh_failures_trip_the_breaker_through_refresh():
         breakers = result.breakers
     assert breakers[0].is_open(clock()) is True
 
-
-# --- H. Nothing stalls a refresh -------------------------------------
-
-
-def test_an_unreachable_peer_does_not_stop_the_reachable_ones():
+    # --- scenario: an_unreachable_peer_does_not_stop_the_reachable_ones
     good = document(machine="mac-c", statuses=(status("claude:session:good"),))
 
     def read(host, remote_path, *, timeout, max_bytes):
@@ -967,8 +956,7 @@ def test_an_unreachable_peer_does_not_stop_the_reachable_ones():
         "mac-c": True,
     }
 
-
-def test_the_whole_refresh_stops_at_its_deadline_without_contacting_more_peers():
+    # --- scenario: the_whole_refresh_stops_at_its_deadline_without_contacting_more_peers
     """Eight peers times four seconds is thirty-two seconds of stalled
     menu. The deadline is the thing that forbids it."""
     clock = Clock()
@@ -992,7 +980,9 @@ def test_the_whole_refresh_stops_at_its_deadline_without_contacting_more_peers()
     assert clock() - 100.0 <= 8.0
 
 
-def test_a_late_peer_gets_only_the_remaining_budget_as_its_timeout():
+
+def test_a_late_peer_gets_only_the_remaining_budget_as_its_timeout__and_2_more() -> None:
+    # --- scenario: a_late_peer_gets_only_the_remaining_budget_as_its_timeout
     clock = Clock()
     offered: list[float] = []
 
@@ -1010,8 +1000,7 @@ def test_a_late_peer_gets_only_the_remaining_budget_as_its_timeout():
     )
     assert offered == [4.0, 2.0]
 
-
-def test_peer_count_is_capped():
+    # --- scenario: peer_count_is_capped
     contacted: list[str] = []
 
     def read(host, remote_path, *, timeout, max_bytes):
@@ -1024,8 +1013,7 @@ def test_peer_count_is_capped():
     )
     assert len(contacted) == remote_peers.MAX_PEERS
 
-
-def test_a_reader_that_explodes_is_contained():
+    # --- scenario: a_reader_that_explodes_is_contained
     def exploding(host, remote_path, *, timeout, max_bytes):
         raise MemoryError("transport went wrong in a new way")
 
@@ -1034,7 +1022,9 @@ def test_a_reader_that_explodes_is_contained():
     assert result.ledgers == ()
 
 
-def test_every_reported_failure_is_from_the_closed_vocabulary():
+
+def test_every_reported_failure_is_from_the_closed_vocabulary__and_2_more() -> None:
+    # --- scenario: every_reported_failure_is_from_the_closed_vocabulary
     for failure in (
         remote_peers.FAILURE_MALFORMED,
         remote_peers.FAILURE_TOO_LARGE,
@@ -1046,11 +1036,7 @@ def test_every_reported_failure_is_from_the_closed_vocabulary():
         )
         assert result.health[0].failure in remote_peers.PEER_FAILURES
 
-
-# --- I. The merged view ----------------------------------------------
-
-
-def test_remote_rows_are_marked_and_carry_their_machine():
+    # --- scenario: remote_rows_are_marked_and_carry_their_machine
     ledger = remote_peers.parse_remote_ledger_document(
         document(machine="mac-b", statuses=(status(display_name="sidepulse"),))
     )
@@ -1068,8 +1054,7 @@ def test_remote_rows_are_marked_and_carry_their_machine():
     assert merged.local_rows[0].remote_marker is None
     assert merged.local_rows[0].ledger_label == "jr-bar"
 
-
-def test_a_remote_row_is_not_locally_actionable():
+    # --- scenario: a_remote_row_is_not_locally_actionable
     """There is no local session behind it. `origin` stays empty so no
     local open-action can claim this row."""
     ledger = remote_peers.parse_remote_ledger_document(document())
@@ -1080,7 +1065,9 @@ def test_a_remote_row_is_not_locally_actionable():
     assert row.status.cwd is None
 
 
-def test_urgency_orders_the_ledger_and_local_wins_a_tie():
+
+def test_urgency_orders_the_ledger_and_local_wins_a_tie__and_2_more() -> None:
+    # --- scenario: urgency_orders_the_ledger_and_local_wins_a_tie
     """Urgency first, then THIS desk. The local machine is deliberately
     named so it sorts last alphabetically and last by display name: only
     the local/remote key can put it above the tied remote row."""
@@ -1105,8 +1092,7 @@ def test_urgency_orders_the_ledger_and_local_wins_a_tie():
         "a-remote-working",
     ]
 
-
-def test_stale_rows_sink_below_live_ones_of_the_same_urgency():
+    # --- scenario: stale_rows_sink_below_live_ones_of_the_same_urgency
     """A row we can no longer vouch for must not outrank one we can.
 
     The stale peer is named so that machine order and display name would
@@ -1134,8 +1120,7 @@ def test_stale_rows_sink_below_live_ones_of_the_same_urgency():
     )
     assert [row.status.display_name for row in merged.rows] == ["z-live", "a-stale"]
 
-
-def test_a_stale_peer_document_marks_its_rows_stale():
+    # --- scenario: a_stale_peer_document_marks_its_rows_stale
     old = remote_peers.parse_remote_ledger_document(
         document(generated_at=NOW - timedelta(seconds=600))
     )
@@ -1148,7 +1133,9 @@ def test_a_stale_peer_document_marks_its_rows_stale():
     assert merged.remote_rows[0].status.stale is True
 
 
-def test_a_fresh_peer_document_does_not_mark_its_rows_stale():
+
+def test_a_fresh_peer_document_does_not_mark_its_rows_stale__and_2_more() -> None:
+    # --- scenario: a_fresh_peer_document_does_not_mark_its_rows_stale
     fresh = remote_peers.parse_remote_ledger_document(
         document(generated_at=NOW - timedelta(seconds=5))
     )
@@ -1160,8 +1147,7 @@ def test_a_fresh_peer_document_does_not_mark_its_rows_stale():
     )
     assert merged.remote_rows[0].status.stale is False
 
-
-def test_a_peer_clock_running_ahead_does_not_make_its_rows_immortal():
+    # --- scenario: a_peer_clock_running_ahead_does_not_make_its_rows_immortal
     """abs()-style ageing pinned a future timestamp at age zero once
     already. A document from the future is not more trustworthy."""
     future = remote_peers.parse_remote_ledger_document(
@@ -1175,8 +1161,7 @@ def test_a_peer_clock_running_ahead_does_not_make_its_rows_immortal():
     )
     assert merged.remote_rows[0].status.stale is True
 
-
-def test_merged_remote_rows_are_capped_across_all_peers():
+    # --- scenario: merged_remote_rows_are_capped_across_all_peers
     ledgers = []
     for index in range(4):
         machine = f"mac-{index}"
@@ -1198,6 +1183,7 @@ def test_merged_remote_rows_are_capped_across_all_peers():
     )
     assert len(merged.remote_rows) == remote_peers.MAX_MERGED_REMOTE_ROWS
     assert merged.dropped_remote_rows == 4 * 40 - remote_peers.MAX_MERGED_REMOTE_ROWS
+
 
 
 def test_merge_reports_which_machines_are_present():
@@ -1236,7 +1222,8 @@ def _merged_with_remote_ask(**merge_kwargs):
     )
 
 
-def test_remote_agents_are_muted_in_the_interrupt_budget_by_default():
+def test_remote_agents_are_muted_in_the_interrupt_budget_by_default__and_2_more() -> None:
+    # --- scenario: remote_agents_are_muted_in_the_interrupt_budget_by_default
     """The ledger shows machine B's blocked agent. The LEDs on machine A
     stay calm. A light on this desk must mean something on this desk."""
     merged = _merged_with_remote_ask()
@@ -1244,15 +1231,13 @@ def test_remote_agents_are_muted_in_the_interrupt_budget_by_default():
     eligible = remote_peers.interrupt_eligible_rows(merged)
     assert [row.key for row in eligible] == ["claude:session:local"]
 
-
-def test_the_owner_can_unmute_one_machine():
+    # --- scenario: the_owner_can_unmute_one_machine
     merged = _merged_with_remote_ask()
     policy = remote_peers.RemoteInterruptPolicy(unmuted_machines=frozenset({"mac-b"}))
     keys = [row.key for row in remote_peers.interrupt_eligible_rows(merged, policy)]
     assert "remote:mac-b:claude:session:asking" in keys
 
-
-def test_unmuting_globally_still_honours_a_per_machine_mute():
+    # --- scenario: unmuting_globally_still_honours_a_per_machine_mute
     merged = _merged_with_remote_ask()
     policy = remote_peers.RemoteInterruptPolicy(
         default_muted=False, muted_machines=frozenset({"mac-b"})
@@ -1262,7 +1247,9 @@ def test_unmuting_globally_still_honours_a_per_machine_mute():
     ]
 
 
-def test_a_stale_remote_ask_never_interrupts_even_when_unmuted():
+
+def test_a_stale_remote_ask_never_interrupts_even_when_unmuted__and_2_more() -> None:
+    # --- scenario: a_stale_remote_ask_never_interrupts_even_when_unmuted
     """A stale row is not proof that anyone is still waiting."""
     ledger = remote_peers.parse_remote_ledger_document(
         document(
@@ -1280,41 +1267,36 @@ def test_a_stale_remote_ask_never_interrupts_even_when_unmuted():
     policy = remote_peers.RemoteInterruptPolicy(default_muted=False)
     assert remote_peers.interrupt_eligible_rows(merged, policy) == ()
 
-
-def test_local_rows_are_never_muted_by_this_policy():
+    # --- scenario: local_rows_are_never_muted_by_this_policy
     merged = _merged_with_remote_ask()
     policy = remote_peers.RemoteInterruptPolicy(muted_machines=frozenset({"mac-a", "mac-b"}))
     assert [row.key for row in remote_peers.interrupt_eligible_rows(merged, policy)] == [
         "claude:session:local"
     ]
 
-
-def test_eligible_statuses_projection_matches_eligible_rows():
+    # --- scenario: eligible_statuses_projection_matches_eligible_rows
     merged = _merged_with_remote_ask()
     rows = remote_peers.interrupt_eligible_rows(merged)
     statuses = remote_peers.interrupt_eligible_statuses(merged)
     assert [row.status for row in rows] == list(statuses)
 
 
-def test_toggling_one_machine_is_reversible():
+
+def test_toggling_one_machine_is_reversible__and_2_more() -> None:
+    # --- scenario: toggling_one_machine_is_reversible
     policy = remote_peers.RemoteInterruptPolicy()
     unmuted = policy.with_machine_muted("mac-b", False)
     assert unmuted.allows_machine("mac-b") is True
     assert unmuted.with_machine_muted("mac-b", True).allows_machine("mac-b") is False
 
-
-# --- K. Settings -----------------------------------------------------
-
-
-def test_settings_default_to_off_and_muted():
+    # --- scenario: settings_default_to_off_and_muted
     settings = remote_peers.RemotePeerSettings()
     assert settings.enabled is False
     assert settings.publish_enabled is False
     assert settings.include_messages is False
     assert settings.interrupt_policy().allows_machine("mac-b") is False
 
-
-def test_settings_round_trip_through_a_dict():
+    # --- scenario: settings_round_trip_through_a_dict
     settings = remote_peers.RemotePeerSettings(
         enabled=True,
         publish_enabled=True,
@@ -1324,7 +1306,9 @@ def test_settings_round_trip_through_a_dict():
     assert remote_peers.RemotePeerSettings.from_dict(settings.to_dict()) == settings.normalized()
 
 
-def test_settings_clamp_hostile_values():
+
+def test_settings_clamp_hostile_values__and_1_more() -> None:
+    # --- scenario: settings_clamp_hostile_values
     settings = remote_peers.RemotePeerSettings.from_dict(
         {
             "max_peers": 10_000,
@@ -1340,10 +1324,10 @@ def test_settings_clamp_hostile_values():
     assert settings.remote_ledger_path == remote_peers.DEFAULT_REMOTE_LEDGER_PATH
     assert settings.unmuted_machines == ("mac-b",)
 
-
-def test_settings_survive_garbage():
+    # --- scenario: settings_survive_garbage
     assert remote_peers.RemotePeerSettings.from_dict("nonsense") == remote_peers.RemotePeerSettings()
     assert remote_peers.RemotePeerSettings.from_dict(None) == remote_peers.RemotePeerSettings()
+
 
 
 def test_collect_uses_settings_bounds(monkeypatch):
@@ -1374,7 +1358,8 @@ def test_collect_uses_settings_bounds(monkeypatch):
 # --- L. The whole path, once -----------------------------------------
 
 
-def test_machine_b_blocked_appears_on_machine_a_and_stays_out_of_its_leds():
+def test_machine_b_blocked_appears_on_machine_a_and_stays_out_of_its_leds__and_2_more() -> None:
+    # --- scenario: machine_b_blocked_appears_on_machine_a_and_stays_out_of_its_leds
     """The acceptance test for this wave, end to end with no network:
     B publishes, A discovers, fetches, merges, and shows it -- and A's
     lights stay calm until the owner says otherwise."""
@@ -1409,8 +1394,7 @@ def test_machine_b_blocked_appears_on_machine_a_and_stays_out_of_its_leds():
     unmuted = remote_peers.RemoteInterruptPolicy(unmuted_machines=frozenset({"mac-b"}))
     assert len(remote_peers.interrupt_eligible_rows(merged, unmuted)) == 2
 
-
-def test_the_ledger_can_say_which_peers_it_could_not_reach():
+    # --- scenario: the_ledger_can_say_which_peers_it_could_not_reach
     result = remote_peers.refresh_peers(
         (peer("mac-b", "mac-b"),),
         reader=reader_raising(remote_peers.FAILURE_TIMED_OUT),
@@ -1428,23 +1412,24 @@ def test_the_ledger_can_say_which_peers_it_could_not_reach():
     assert merged.health[0].failure == remote_peers.FAILURE_TIMED_OUT
     assert merged.local_rows and merged.local_rows[0].status.agent_id == "claude:session:aaa"
 
-
-def test_ledger_rows_reject_an_unsafe_machine_name():
+    # --- scenario: ledger_rows_reject_an_unsafe_machine_name
     with pytest.raises(ValueError):
         remote_peers.LedgerRow(status=status(), machine="mac b; id")
 
 
-def test_merge_rejects_an_unsafe_local_machine_name():
+
+def test_merge_rejects_an_unsafe_local_machine_name__and_1_more() -> None:
+    # --- scenario: merge_rejects_an_unsafe_local_machine_name
     with pytest.raises(ValueError):
         remote_peers.merge_ledger(
             local_statuses=(), local_machine="$(id)", peer_ledgers=(), now=NOW
         )
 
-
-def test_replacing_a_row_keeps_its_remote_marking():
+    # --- scenario: replacing_a_row_keeps_its_remote_marking
     """merge_ledger rewrites rows to mark staleness; the rewrite must not
     quietly turn a remote row local."""
     ledger = remote_peers.parse_remote_ledger_document(document())
     marked = replace(ledger.rows[0], status=replace(ledger.rows[0].status, stale=True))
     assert marked.is_remote is True
     assert marked.machine == "mac-b"
+

@@ -12,6 +12,9 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
     case completed
     case failed
     case quotaReset
+    /// The synthetic power capsule — no daemon event carries it; the
+    /// toy's IOPS poller raises it on real battery transitions only.
+    case charging
 
     /// The SF Symbol the capsule's leading glyph draws. The tint is the
     /// view's business (amber / green / red / the provider's accent) —
@@ -22,6 +25,7 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .completed: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         case .quotaReset: return "arrow.clockwise.circle.fill"
+        case .charging: return "bolt.fill"
         }
     }
 
@@ -32,6 +36,7 @@ public enum AlcoveNoticeKind: String, Equatable, Sendable, CaseIterable {
         case .completed: return "finished"
         case .failed: return "failed"
         case .quotaReset: return "quota reset"
+        case .charging: return "power changed"
         }
     }
 }
@@ -75,13 +80,16 @@ public struct AlcoveCapsuleKinds: Codable, Equatable, Sendable {
     public var completed: Bool
     public var failed: Bool
     public var quotaReset: Bool
+    /// The synthetic power capsules (charger in/out, on battery, full).
+    public var charging: Bool
 
     public init(ask: Bool = true, completed: Bool = true, failed: Bool = true,
-                quotaReset: Bool = true) {
+                quotaReset: Bool = true, charging: Bool = true) {
         self.ask = ask
         self.completed = completed
         self.failed = failed
         self.quotaReset = quotaReset
+        self.charging = charging
     }
 
     public func isOn(_ kind: AlcoveNoticeKind) -> Bool {
@@ -90,11 +98,12 @@ public struct AlcoveCapsuleKinds: Codable, Equatable, Sendable {
         case .completed: return completed
         case .failed: return failed
         case .quotaReset: return quotaReset
+        case .charging: return charging
         }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case ask, completed, failed, quotaReset
+        case ask, completed, failed, quotaReset, charging
     }
 
     public init(from decoder: any Decoder) throws {
@@ -103,6 +112,7 @@ public struct AlcoveCapsuleKinds: Codable, Equatable, Sendable {
         completed = (try? c.decodeIfPresent(Bool.self, forKey: .completed)) ?? true
         failed = (try? c.decodeIfPresent(Bool.self, forKey: .failed)) ?? true
         quotaReset = (try? c.decodeIfPresent(Bool.self, forKey: .quotaReset)) ?? true
+        charging = (try? c.decodeIfPresent(Bool.self, forKey: .charging)) ?? true
     }
 }
 
@@ -292,14 +302,18 @@ public struct AlcoveMedia: Equatable, Sendable {
     public var playing: Bool
     /// `kMRMediaRemoteNowPlayingInfoArtworkData`, a PNG/JPEG payload.
     public var artworkData: Data?
+    /// The now-playing app's bundle id when the source named one — the
+    /// adapter reports it; the raw info dict does not carry it.
+    public var bundleIdentifier: String?
 
     public init(title: String, artist: String? = nil, album: String? = nil,
-                playing: Bool, artworkData: Data? = nil) {
+                playing: Bool, artworkData: Data? = nil, bundleIdentifier: String? = nil) {
         self.title = title
         self.artist = artist
         self.album = album
         self.playing = playing
         self.artworkData = artworkData
+        self.bundleIdentifier = bundleIdentifier
     }
 
     /// "Title — Artist" for the idle strip; the title alone when the
@@ -327,6 +341,115 @@ public struct AlcoveMedia: Equatable, Sendable {
                            album: string("kMRMediaRemoteNowPlayingInfoAlbum"),
                            playing: isPlaying ?? (rate.map { $0 > 0 } ?? false),
                            artworkData: info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data)
+    }
+
+    /// The perl adapter's line — the same now-playing dictionary, already
+    /// reduced by the helper inside the entitled process to plain keys:
+    /// `title` / `artist` / `album` / `playing` / `bundleIdentifier` /
+    /// `artworkData` (base64). nil without a title, the same contract.
+    public static func summarize(adapter payload: [String: Any]) -> AlcoveMedia? {
+        func string(_ key: String) -> String? {
+            guard let raw = (payload[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { return nil }
+            return raw
+        }
+        guard let title = string("title") else { return nil }
+        return AlcoveMedia(title: title,
+                           artist: string("artist"),
+                           album: string("album"),
+                           playing: (payload["playing"] as? Bool) ?? false,
+                           artworkData: (payload["artworkData"] as? String).flatMap { Data(base64Encoded: $0) },
+                           bundleIdentifier: string("bundleIdentifier"))
+    }
+
+    /// Music's own `com.apple.Music.playerInfo` distributed payload —
+    /// `Name` / `Artist` / `Album` / `Player State` ("Playing"). Music
+    /// posts it even on macOS releases where MediaRemote reads are
+    /// gated, so it is the fallback that keeps the strip honest there.
+    /// nil without a `Name`, or when the state says `Stopped`.
+    public static func summarize(musicPlayerInfo payload: [String: Any]) -> AlcoveMedia? {
+        func string(_ key: String) -> String? {
+            guard let raw = (payload[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else { return nil }
+            return raw
+        }
+        if let state = string("Player State"), state == "Stopped" { return nil }
+        guard let title = string("Name") else { return nil }
+        return AlcoveMedia(title: title,
+                           artist: string("Artist"),
+                           album: string("Album"),
+                           playing: string("Player State") == "Playing",
+                           bundleIdentifier: "com.apple.Music")
+    }
+}
+
+/// One reading of the machine's power sources, reduced by the toy's IOPS
+/// poll to what a transition notice needs. `hasBattery` false is a
+/// desktop — nothing in it can ever change.
+public struct AlcovePowerState: Equatable, Sendable {
+    public var hasBattery: Bool
+    /// External power connected (`Power Source State` == "AC Power").
+    public var onAC: Bool
+    /// `Is Charging` — distinct from `onAC`: a full battery on AC isn't
+    /// charging, and a drained one on a weak adapter can sit on AC
+    /// without gaining.
+    public var charging: Bool
+    /// `Current Capacity`, a percent for internal batteries.
+    public var percent: Int?
+    /// `Is Charged`, or full on AC.
+    public var fullyCharged: Bool
+
+    public init(hasBattery: Bool, onAC: Bool, charging: Bool,
+                percent: Int?, fullyCharged: Bool) {
+        self.hasBattery = hasBattery
+        self.onAC = onAC
+        self.charging = charging
+        self.percent = percent
+        self.fullyCharged = fullyCharged
+    }
+
+    /// The percent rendered for a subtitle — "· 84%" or nothing.
+    public var percentText: String {
+        percent.map { " · \($0)%" } ?? ""
+    }
+}
+
+/// Battery transitions → a synthetic `.charging` capsule. Only real
+/// transitions speak: the caller's first reading is a baseline and earns
+/// nothing, a percent-only drift earns nothing, and a machine without a
+/// battery is silent by construction.
+public enum AlcovePower {
+    /// The suppression key is constant — a plug/unplug flicker inside the
+    /// queue's cooldown is strobe, not news.
+    public static let noticeKey = "charging:power"
+
+    /// The notice a transition earns, or nil. `id` is the caller's (the
+    /// toy mints a UUID; tests pass a pin).
+    public static func notice(from old: AlcovePowerState?, to new: AlcovePowerState,
+                              id: String, kinds: AlcoveCapsuleKinds) -> AlcoveNotice? {
+        guard let old, new.hasBattery, kinds.isOn(.charging) else { return nil }
+        guard old != new else { return nil }
+        // A battery appearing or disappearing entirely isn't worth a
+        // capsule either way — only a state the user caused speaks.
+        guard old.hasBattery else { return nil }
+        let percent = new.percentText
+        let subtitle: String
+        if new.fullyCharged, !old.fullyCharged {
+            subtitle = "Fully charged"
+        } else if new.charging, !old.charging {
+            subtitle = "Charging\(percent)"
+        } else if new.onAC, !old.onAC {
+            // On AC but not charging (held charge limit, weak adapter).
+            subtitle = "On AC power\(percent)"
+        } else if !new.onAC, old.onAC {
+            subtitle = "On battery\(percent)"
+        } else if new.charging != old.charging {
+            subtitle = new.charging ? "Charging\(percent)" : "Not charging\(percent)"
+        } else {
+            return nil   // percent drift, time-to-full — not news
+        }
+        return AlcoveNotice(id: id, kind: .charging, title: "Power",
+                            subtitle: subtitle, key: noticeKey)
     }
 }
 
@@ -358,9 +481,12 @@ extension AlcoveIslandLayout {
 
     /// The notice face: wider than idle, deeper than idle, still hung
     /// from the notch — one window morphing, never a second panel.
-    public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat) -> CGSize {
+    /// `ledClearance` keeps the capsule's copy below a live Screen Bar's
+    /// band the same way `idleSize` keeps the dots clear.
+    public static func noticeSize(slotWidth: CGFloat, notchDepth: CGFloat,
+                                  ledClearance: CGFloat = 0) -> CGSize {
         guard notchDepth > 0 else { return CGSize(width: noticeWidth, height: 36) }
         return CGSize(width: max(slotWidth + 2 * shoulder, noticeWidth),
-                      height: notchDepth + noticeLip)
+                      height: notchDepth + noticeLip + ledClearance)
     }
 }

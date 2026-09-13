@@ -158,7 +158,8 @@ def _row(
     )
 
 
-def test_identity_projection_is_canonical_and_content_free_for_each_request() -> None:
+def test_identity_projection_is_canonical_and_content_free_for_each_request__and_2_more() -> None:
+    # --- scenario: identity_projection_is_canonical_and_content_free_for_each_request
     work = _work()
     request = _request(work=work)
     state = _canonical(((request, RequestKind.PERMISSION),))
@@ -178,8 +179,7 @@ def test_identity_projection_is_canonical_and_content_free_for_each_request() ->
     assert plan.alerts[0].question == "Needs your input"
     assert plan.alerts[0].priority is AnnouncerAlertPriority.PERMISSION
 
-
-def test_plan_generation_tracks_initial_equivalent_and_intent_state_generations() -> None:
+    # --- scenario: plan_generation_tracks_initial_equivalent_and_intent_state_generations
     work = _work()
     request = _request(work=work)
     canonical = _canonical(((request, RequestKind.INPUT),))
@@ -200,8 +200,7 @@ def test_plan_generation_tracks_initial_equivalent_and_intent_state_generations(
     )
     assert project_announcer_stack(accepted, canonical, (row,), ()).generation == accepted.generation
 
-
-def test_exact_status_request_key_supplies_bounded_single_line_question() -> None:
+    # --- scenario: exact_status_request_key_supplies_bounded_single_line_question
     work = _work()
     request = _request(work=work)
     state = _canonical(((request, RequestKind.INPUT),))
@@ -218,7 +217,9 @@ def test_exact_status_request_key_supplies_bounded_single_line_question() -> Non
     assert plan.collapsed_text == "Codex Main: Run tests?"
 
 
-def test_stable_order_selection_and_navigation_wrap() -> None:
+
+def test_stable_order_selection_and_navigation_wrap__and_2_more() -> None:
+    # --- scenario: stable_order_selection_and_navigation_wrap
     work_a = _work("work:a")
     work_b = _work("work:b")
     request_a = _request("request:a", work=work_a)
@@ -238,8 +239,7 @@ def test_stable_order_selection_and_navigation_wrap() -> None:
     assert select_previous_announcer_alert(second).selected_identity == second.ordered_identities[0]
     assert select_next_announcer_alert(select_previous_announcer_alert(second)).selected_identity == second.ordered_identities[1]
 
-
-def test_mark_seen_selects_highest_priority_unseen_without_reordering() -> None:
+    # --- scenario: mark_seen_selects_highest_priority_unseen_without_reordering
     work_a = _work("work:a")
     work_b = _work("work:b")
     work_c = _work("work:c")
@@ -266,8 +266,7 @@ def test_mark_seen_selects_highest_priority_unseen_without_reordering() -> None:
     assert seen.ordered_identities == stack.ordered_identities
     assert seen.selected_identity == stack.ordered_identities[2]
 
-
-def test_seen_hides_stack_but_restart_reannounces_and_open_only_advances_generation() -> None:
+    # --- scenario: seen_hides_stack_but_restart_reannounces_and_open_only_advances_generation
     work = _work()
     request = _request(work=work)
     state = _canonical(((request, RequestKind.REVIEW),))
@@ -298,7 +297,9 @@ def test_seen_hides_stack_but_restart_reannounces_and_open_only_advances_generat
     assert generation + 1 == seen.generation
 
 
-def test_stale_intent_is_noop_and_values_are_frozen() -> None:
+
+def test_stale_intent_is_noop_and_values_are_frozen__and_2_more() -> None:
+    # --- scenario: stale_intent_is_noop_and_values_are_frozen
     state = empty_announcer_stack_state()
     stale = AnnouncerStackIntent(AnnouncerStackAction.EXPAND, 99, None)
     assert reduce_announcer_stack_intent(state, stale) == state
@@ -306,32 +307,27 @@ def test_stale_intent_is_noop_and_values_are_frozen() -> None:
     with pytest.raises(FrozenInstanceError):
         state.expanded = True  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    ("kind", "priority"),
-    [
+    # --- scenario: all_canonical_priorities_are_closed_and_exact
+    for kind, priority in [
         (RequestKind.PERMISSION, AnnouncerAlertPriority.PERMISSION),
         (RequestKind.APPROVAL, AnnouncerAlertPriority.APPROVAL),
         (RequestKind.REVIEW, AnnouncerAlertPriority.REVIEW),
         (RequestKind.INPUT, AnnouncerAlertPriority.INPUT),
         (RequestKind.UNKNOWN, AnnouncerAlertPriority.UNKNOWN),
-    ],
-)
-def test_all_canonical_priorities_are_closed_and_exact(kind, priority) -> None:
-    work = _work()
-    request = _request(work=work)
-    if kind is RequestKind.UNKNOWN:
-        row = _row("codex:session:one", None, event_name="UnrecognizedAsk")
-        stack = reconcile_announcer_stack(empty_announcer_stack_state(), None, (row,), ())
-        assert project_announcer_stack(stack, None, (row,), ()).alerts[0].priority is priority
-    else:
-        state = _canonical(((request, kind),))
-        row = _row("codex:session:one", work)
-        stack = reconcile_announcer_stack(empty_announcer_stack_state(), state, (row,), ())
-        assert project_announcer_stack(stack, state, (row,), ()).alerts[0].priority is priority
+    ]:
+        work = _work()
+        request = _request(work=work)
+        if kind is RequestKind.UNKNOWN:
+            row = _row("codex:session:one", None, event_name="UnrecognizedAsk")
+            stack = reconcile_announcer_stack(empty_announcer_stack_state(), None, (row,), ())
+            assert project_announcer_stack(stack, None, (row,), ()).alerts[0].priority is priority
+        else:
+            state = _canonical(((request, kind),))
+            row = _row("codex:session:one", work)
+            stack = reconcile_announcer_stack(empty_announcer_stack_state(), state, (row,), ())
+            assert project_announcer_stack(stack, state, (row,), ()).alerts[0].priority is priority
 
-
-def test_legacy_exact_status_join_refuses_stale_and_mismatched_row_content() -> None:
+    # --- scenario: legacy_exact_status_join_refuses_stale_and_mismatched_row_content
     work = _work()
     request = _request(work=work)
     row = _row("codex:session:one", work, request=request, message="stale row text")
@@ -357,7 +353,9 @@ def test_legacy_exact_status_join_refuses_stale_and_mismatched_row_content() -> 
     assert mismatched_plan.alerts[0].question == "Needs your input"
 
 
-def test_legacy_identity_and_seen_receipt_survive_status_timestamp_refresh() -> None:
+
+def test_legacy_identity_and_seen_receipt_survive_status_timestamp_refresh__and_2_more() -> None:
+    # --- scenario: legacy_identity_and_seen_receipt_survive_status_timestamp_refresh
     row = _row(
         "codex:session:one",
         _work(),
@@ -394,8 +392,7 @@ def test_legacy_identity_and_seen_receipt_survive_status_timestamp_refresh() -> 
         is AnnouncerStackVisibility.HIDDEN
     )
 
-
-def test_one_work_can_project_multiple_live_canonical_requests() -> None:
+    # --- scenario: one_work_can_project_multiple_live_canonical_requests
     work = _work()
     first = _request("request:first", work=work)
     second = _request("request:second", work=work)
@@ -409,8 +406,7 @@ def test_one_work_can_project_multiple_live_canonical_requests() -> None:
     assert len(plan.alerts) == 2
     assert plan.collapsed_text == "Codex Main needs you · 2 asks"
 
-
-def test_subagents_and_unadmitted_work_do_not_enter_canonical_stack() -> None:
+    # --- scenario: subagents_and_unadmitted_work_do_not_enter_canonical_stack
     work = _work()
     request = _request(work=work)
     canonical = _canonical(((request, RequestKind.PERMISSION),))
@@ -422,7 +418,9 @@ def test_subagents_and_unadmitted_work_do_not_enter_canonical_stack() -> None:
     assert project_announcer_stack(stack, canonical, (subagent, unrelated), ()).alerts == ()
 
 
-def test_malformed_actionable_row_is_excluded_without_hiding_valid_row() -> None:
+
+def test_malformed_actionable_row_is_excluded_without_hiding_valid_row__and_2_more() -> None:
+    # --- scenario: malformed_actionable_row_is_excluded_without_hiding_valid_row
     work = _work()
     request = _request(work=work)
     canonical = _canonical(((request, RequestKind.PERMISSION),))
@@ -437,29 +435,24 @@ def test_malformed_actionable_row_is_excluded_without_hiding_valid_row() -> None
     assert plan.total_actionable_count == 1
     assert plan.alerts[0].agent_id == "codex:session:valid"
 
-
-@pytest.mark.parametrize(
-    ("event_name", "tool_name", "priority"),
-    [
+    # --- scenario: legacy_fallback_priority_table_is_exact
+    for event_name, tool_name, priority in [
         ("PermissionRequest", None, AnnouncerAlertPriority.PERMISSION),
         ("PlanApproval", None, AnnouncerAlertPriority.APPROVAL),
         ("ReviewRequest", None, AnnouncerAlertPriority.REVIEW),
         ("Notification", None, AnnouncerAlertPriority.INPUT),
-    ],
-)
-def test_legacy_fallback_priority_table_is_exact(event_name, tool_name, priority) -> None:
-    row = _row(
-        f"codex:session:{event_name}",
-        None,
-        event_name=event_name,
-        tool_name=tool_name,
-    )
-    stack = reconcile_announcer_stack(empty_announcer_stack_state(), None, (row,), ())
-    plan = project_announcer_stack(stack, None, (row,), ())
-    assert plan.alerts[0].priority is priority
+    ]:
+        row = _row(
+            f"codex:session:{event_name}",
+            None,
+            event_name=event_name,
+            tool_name=tool_name,
+        )
+        stack = reconcile_announcer_stack(empty_announcer_stack_state(), None, (row,), ())
+        plan = project_announcer_stack(stack, None, (row,), ())
+        assert plan.alerts[0].priority is priority
 
-
-def test_canonical_exact_status_question_is_capped_at_80_characters() -> None:
+    # --- scenario: canonical_exact_status_question_is_capped_at_80_characters
     work = _work()
     request = _request(work=work)
     canonical = _canonical(((request, RequestKind.INPUT),))
@@ -478,7 +471,9 @@ def test_canonical_exact_status_question_is_capped_at_80_characters() -> None:
     assert len(plan.collapsed_text or "") <= 140
 
 
-def test_priority_refresh_prunes_and_reappears_without_reordering() -> None:
+
+def test_priority_refresh_prunes_and_reappears_without_reordering__and_2_more() -> None:
+    # --- scenario: priority_refresh_prunes_and_reappears_without_reordering
     work_a = _work("work:a")
     work_b = _work("work:b")
     request_a = _request("request:a", work=work_a)
@@ -504,8 +499,7 @@ def test_priority_refresh_prunes_and_reappears_without_reordering() -> None:
     assert reappeared.ordered_identities[1] in dict(reappeared.priorities)
     assert reappeared.first_seen_sequences[1][1] > pruned.next_sequence - 1
 
-
-def test_generation_advances_for_equivalent_reconcile_and_each_accepted_intent() -> None:
+    # --- scenario: generation_advances_for_equivalent_reconcile_and_each_accepted_intent
     state = empty_announcer_stack_state()
     reconciled = reconcile_announcer_stack(state, None, (), ())
     equivalent = reconcile_announcer_stack(reconciled, None, (), ())
@@ -515,8 +509,7 @@ def test_generation_advances_for_equivalent_reconcile_and_each_accepted_intent()
         next_state = reduce_announcer_stack_intent(equivalent, intent)
         assert next_state.generation == equivalent.generation + 1
 
-
-def test_legacy_projection_keeps_copy_caps_and_counts_above_99_visible() -> None:
+    # --- scenario: legacy_projection_keeps_copy_caps_and_counts_above_99_visible
     rows = tuple(
         _row(
             f"codex:session:{index}",
@@ -536,3 +529,4 @@ def test_legacy_projection_keeps_copy_caps_and_counts_above_99_visible() -> None
     assert all(len(alert.source_label) <= 40 for alert in plan.alerts)
     assert all(len(alert.question) <= 80 for alert in plan.alerts)
     assert "\n" not in plan.collapsed_text
+

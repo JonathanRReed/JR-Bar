@@ -17,7 +17,8 @@ def _tree() -> ast.Module:
     return ast.parse(STATUS_BAR.read_text(encoding="utf-8"))
 
 
-def test_public_status_bar_facade_defines_no_integration_worker_or_controller() -> None:
+def test_public_status_bar_facade_defines_no_integration_worker_or_controller__and_2_more() -> None:
+    # --- scenario: public_status_bar_facade_defines_no_integration_worker_or_controller
     source = STATUS_BAR.read_text(encoding="utf-8")
     classes = {
         node.name for node in ast.walk(_tree()) if isinstance(node, ast.ClassDef)
@@ -30,8 +31,7 @@ def test_public_status_bar_facade_defines_no_integration_worker_or_controller() 
     assert "CodexBar" not in source
     assert "codexbar_compat" not in source
 
-
-def test_t3_compatibility_remains_available_through_the_cli() -> None:
+    # --- scenario: t3_compatibility_remains_available_through_the_cli
     source = (ROOT / "src" / "jrbar" / "integration_cli.py").read_text(
         encoding="utf-8"
     )
@@ -39,8 +39,7 @@ def test_t3_compatibility_remains_available_through_the_cli() -> None:
     assert 'choices=("t3code",)' in source
     assert "codexbar" not in source
 
-
-def test_integration_workers_are_appkit_free() -> None:
+    # --- scenario: integration_workers_are_appkit_free
     for name in BACKGROUND_MODULES:
         source = (ROOT / "src" / "jrbar" / name).read_text(encoding="utf-8")
         assert "import AppKit" not in source
@@ -48,3 +47,4 @@ def test_integration_workers_are_appkit_free() -> None:
         assert "import Foundation" not in source
         assert "from Foundation" not in source
         assert "import objc" not in source
+

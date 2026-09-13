@@ -12,7 +12,8 @@ from jrbar.status_feeds import (
 )
 
 
-def test_parse_accepts_statuspage_shape_only() -> None:
+def test_parse_accepts_statuspage_shape_only__and_2_more() -> None:
+    # --- scenario: parse_accepts_statuspage_shape_only
     good = {"status": {"indicator": "major", "description": "Elevated errors"}}
     assert parse_statuspage_indicator(good) == ("major", "Elevated errors")
     assert parse_statuspage_indicator({"status": {}}) is None
@@ -25,8 +26,7 @@ def test_parse_accepts_statuspage_shape_only() -> None:
         is None
     )
 
-
-def test_healthy_feeds_produce_no_incident() -> None:
+    # --- scenario: healthy_feeds_produce_no_incident
     documents = {
         "claude": {"status": {"indicator": "none", "description": "All good"}},
         "codex": {"status": {"indicator": "minor", "description": "API errors"}},
@@ -39,8 +39,7 @@ def test_healthy_feeds_produce_no_incident() -> None:
     assert "OpenAI" in incident_row_title(incidents["codex"])
     assert incidents["codex"].page_url.startswith("https://")
 
-
-def test_poller_exposes_only_fresh_confirmed_incidents() -> None:
+    # --- scenario: poller_exposes_only_fresh_confirmed_incidents
     now = {"value": 100.0}
     documents = iter(
         (
@@ -84,6 +83,7 @@ def test_poller_exposes_only_fresh_confirmed_incidents() -> None:
     poller.poll_once()
     assert poller.incident_for("codex", now=101.0) is None
     assert poller.feed_state("codex", now=101.0) is FeedState.UNAVAILABLE
+
 
 
 def test_poller_distinguishes_healthy_and_stale_feeds() -> None:

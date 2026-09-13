@@ -16,7 +16,8 @@ from jrbar.provider_usage_settings import (
 )
 
 
-def test_pending_reset_delivery_round_trips_across_restart(tmp_path: Path):
+def test_pending_reset_delivery_round_trips_across_restart__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: pending_reset_delivery_round_trips_across_restart
     target = tmp_path / "events.json"
     state = begin_reset_delivery(
         ResetDeliveryState(),
@@ -27,14 +28,12 @@ def test_pending_reset_delivery_round_trips_across_restart(tmp_path: Path):
     save_reset_delivery_state(state, target)
     assert load_reset_delivery_state(target) == state
 
-
-def test_invalid_document_fails_closed(tmp_path: Path):
+    # --- scenario: invalid_document_fails_closed
     target = tmp_path / "events.json"
     target.write_text(json.dumps({"schema_version": 99, "seen": ["bad"]}))
     assert load_reset_delivery_state(target) == ResetDeliveryState()
 
-
-def test_reset_channel_preferences_are_durable_and_default_enabled(tmp_path: Path):
+    # --- scenario: reset_channel_preferences_are_durable_and_default_enabled
     target = tmp_path / "settings.json"
     settings = default_provider_usage_settings().with_reset_channel(
         "codex", "hardware", False
@@ -46,3 +45,4 @@ def test_reset_channel_preferences_are_durable_and_default_enabled(tmp_path: Pat
     assert preference.reset_hardware is False
     assert preference.reset_notification is True
     assert preference.reset_sound is True
+

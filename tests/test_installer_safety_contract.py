@@ -3,7 +3,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_package_installs_payload_without_mutating_external_integrations() -> None:
+def test_package_installs_payload_without_mutating_external_integrations__and_2_more() -> None:
+    # --- scenario: package_installs_payload_without_mutating_external_integrations
     text = (ROOT / "packaging" / "scripts" / "postinstall").read_text()
 
     # The package owns its payload only: the app installs hooks and the
@@ -17,8 +18,7 @@ def test_package_installs_payload_without_mutating_external_integrations() -> No
     assert "/var/db" not in text
     assert "no LaunchAgents, no /usr/local links, no hooks, no receipts" in text
 
-
-def test_package_never_touches_an_unowned_cli_path() -> None:
+    # --- scenario: package_never_touches_an_unowned_cli_path
     text = (ROOT / "packaging" / "scripts" / "postinstall").read_text()
 
     # No /usr/local link at all any more; the bundled binary is called by path.
@@ -32,8 +32,7 @@ def test_package_never_touches_an_unowned_cli_path() -> None:
     ):
         assert helper in text
 
-
-def test_supported_uninstaller_removes_only_owned_integrations() -> None:
+    # --- scenario: supported_uninstaller_removes_only_owned_integrations
     text = (ROOT / "scripts" / "uninstall-macos.sh").read_text()
 
     for command in (
@@ -53,3 +52,4 @@ def test_supported_uninstaller_removes_only_owned_integrations() -> None:
     assert 'PACKAGE_ID="com.jonathanreed.jrbar"' in text
     assert 'LEGACY_PACKAGE_ID="io.sidepulse.app"' in text
     assert 'pkgutil --forget "$package_id"' in text
+

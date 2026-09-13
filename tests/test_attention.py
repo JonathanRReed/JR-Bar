@@ -77,7 +77,8 @@ def snapshot_with(*statuses: AgentStatus) -> MonitorSnapshot:
     )
 
 
-def test_terminal_failure_is_visible_but_not_actionable() -> None:
+def test_terminal_failure_is_visible_but_not_actionable__and_2_more() -> None:
+    # --- scenario: terminal_failure_is_visible_but_not_actionable
     failed = status(event_name="StopFailure", mode=AgentMode.BLOCKED_ERROR)
 
     projection = project_attention(snapshot_with(failed), AgentMonitorSettings())
@@ -87,19 +88,14 @@ def test_terminal_failure_is_visible_but_not_actionable() -> None:
     assert projection.transient_signals[0].repetitions == 2
     assert projection.transient_signals[0].source_agent_id == failed.agent_id
 
-
-def test_transient_tool_failure_never_fires_the_failure_signal() -> None:
-    # A failed tool the agent continues past is routine agentic work; the
-    # red failure blink is reserved for terminal failures the operator
-    # must resolve (StopFailure, PermissionDenied).
+    # --- scenario: transient_tool_failure_never_fires_the_failure_signal
     failed = status(event_name="PostToolUseFailure", mode=AgentMode.WORKING)
 
     projection = project_attention(snapshot_with(failed), AgentMonitorSettings())
 
     assert projection.transient_signals == ()
 
-
-def test_main_permission_request_is_persistent_attention() -> None:
+    # --- scenario: main_permission_request_is_persistent_attention
     snapshot = snapshot_with(
         status(event_name="PermissionRequest", mode=AgentMode.WAITING_FOR_INPUT)
     )
@@ -109,7 +105,9 @@ def test_main_permission_request_is_persistent_attention() -> None:
     assert len(projection.actionable_attention) == 1
 
 
-def test_subagent_attention_obeys_one_setting_everywhere() -> None:
+
+def test_subagent_attention_obeys_one_setting_everywhere__and_2_more() -> None:
+    # --- scenario: subagent_attention_obeys_one_setting_everywhere
     snapshot = snapshot_with(
         status(
             agent_id="claude:agent:worker",
@@ -122,8 +120,7 @@ def test_subagent_attention_obeys_one_setting_everywhere() -> None:
     enabled = replace(AgentMonitorSettings(), subagent_asks_alert=True)
     assert len(project_attention(snapshot, enabled).actionable_attention) == 1
 
-
-def test_consumed_failure_event_does_not_repeat_transient_signal() -> None:
+    # --- scenario: consumed_failure_event_does_not_repeat_transient_signal
     failed = status(event_name="PostToolUseFailure", mode=AgentMode.BLOCKED_ERROR)
 
     projection = project_attention(
@@ -134,8 +131,7 @@ def test_consumed_failure_event_does_not_repeat_transient_signal() -> None:
 
     assert projection.transient_signals == ()
 
-
-def test_duplicate_failure_records_collapse_to_one_signal() -> None:
+    # --- scenario: duplicate_failure_records_collapse_to_one_signal
     failed = status(event_name="StopFailure", mode=AgentMode.BLOCKED_ERROR)
 
     projection = project_attention(
@@ -146,7 +142,9 @@ def test_duplicate_failure_records_collapse_to_one_signal() -> None:
     assert len(projection.transient_signals) == 1
 
 
-def test_failure_aliases_share_one_stable_key_and_consumed_signal() -> None:
+
+def test_failure_aliases_share_one_stable_key_and_consumed_signal__and_2_more() -> None:
+    # --- scenario: failure_aliases_share_one_stable_key_and_consumed_signal
     terminal = status(event_name="PostToolUseFailure", mode=AgentMode.BLOCKED_ERROR)
     legacy = status(event_name="PostToolUse", mode=AgentMode.BLOCKED_ERROR)
 
@@ -159,8 +157,7 @@ def test_failure_aliases_share_one_stable_key_and_consumed_signal() -> None:
     assert stable_event_key(terminal) == stable_event_key(legacy)
     assert projection.transient_signals == ()
 
-
-def test_visible_rows_map_agent_modes_to_lifecycle_without_hiding_failure() -> None:
+    # --- scenario: visible_rows_map_agent_modes_to_lifecycle_without_hiding_failure
     statuses = (
         status(event_name="Test", mode=AgentMode.IDLE_READY),
         status(event_name="PreToolUse", mode=AgentMode.TOOL_RUNNING),
@@ -183,8 +180,7 @@ def test_visible_rows_map_agent_modes_to_lifecycle_without_hiding_failure() -> N
     assert projection.visible_rows[4].actionable is False
     assert projection.visible_rows[4].source_status is statuses[4]
 
-
-def test_mixed_snapshot_prioritizes_waiting_attention_and_its_click_target() -> None:
+    # --- scenario: mixed_snapshot_prioritizes_waiting_attention_and_its_click_target
     base = datetime(2026, 8, 12, 10, tzinfo=timezone.utc)
     first_request = status(
         provider="codex",
@@ -229,7 +225,9 @@ def test_mixed_snapshot_prioritizes_waiting_attention_and_its_click_target() -> 
     assert projection.click_target_agent_id == "codex:session:alpha"
 
 
-def test_canonical_attention_uses_request_truth_and_semantic_failure_edges() -> None:
+
+def test_canonical_attention_uses_request_truth_and_semantic_failure_edges__and_1_more() -> None:
+    # --- scenario: canonical_attention_uses_request_truth_and_semantic_failure_edges
     source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(source, WorkIdentifier("work:canonical"))
     request_key = RequestKey(work_key, RequestIdentifier("request:canonical"))
@@ -303,14 +301,7 @@ def test_canonical_attention_uses_request_truth_and_semantic_failure_edges() -> 
     assert projection.click_target_agent_id is None
     assert projection.transient_signals[0].event_key == failure_key
 
-
-def test_completed_settles_to_idle_on_the_live_projection_path() -> None:
-    # 2026-08-20 final-sweep audit finding #1: the first version of the
-    # 120s completed-decay lived only in the canonical projection, which
-    # has zero non-test callers -- the app projects through
-    # project_attention/_lifecycle_mode, and the done green still held
-    # for 20-60 minutes. This pins the LIVE path, judged against the
-    # snapshot's own collected_at (a clock that actually advances).
+    # --- scenario: completed_settles_to_idle_on_the_live_projection_path
     from datetime import timedelta
 
     from jrbar.operator_state import COMPLETED_RECENT_SECONDS
@@ -341,6 +332,7 @@ def test_completed_settles_to_idle_on_the_live_projection_path() -> None:
     )
 
 
+
 # --- Delegation: a paused main whose sub-agents still work ------------------
 
 
@@ -361,7 +353,8 @@ def _worker(
     )
 
 
-def test_stopped_main_with_working_subagents_projects_as_working() -> None:
+def test_stopped_main_with_working_subagents_projects_as_working__and_2_more() -> None:
+    # --- scenario: stopped_main_with_working_subagents_projects_as_working
     """Claude fires Stop the moment the main turn ends, even while its
     sub-agents carry the work -- a live ledger showed a session
     'completed' for 30+ minutes of continuous delegation."""
@@ -378,8 +371,7 @@ def test_stopped_main_with_working_subagents_projects_as_working() -> None:
         "the dropdown must tell the same story as the light"
     )
 
-
-def test_stopped_main_with_finished_subagents_stays_completed() -> None:
+    # --- scenario: stopped_main_with_finished_subagents_stays_completed
     stopped_main = status(event_name="Stop", mode=AgentMode.COMPLETED)
     finished = _worker(AgentMode.COMPLETED, event_name="SubagentStop")
 
@@ -390,8 +382,7 @@ def test_stopped_main_with_finished_subagents_stays_completed() -> None:
     (main_row,) = projection.visible_rows
     assert main_row.lifecycle_mode is LifecycleMode.COMPLETED_RECENTLY
 
-
-def test_asking_main_keeps_asking_while_subagents_work() -> None:
+    # --- scenario: asking_main_keeps_asking_while_subagents_work
     """The promotion must never mask an ask."""
     asking_main = status(
         event_name="Notification", mode=AgentMode.WAITING_FOR_INPUT
@@ -407,7 +398,9 @@ def test_asking_main_keeps_asking_while_subagents_work() -> None:
     assert main_row.actionable
 
 
-def test_canonical_completed_parent_with_active_child_projects_active() -> None:
+
+def test_canonical_completed_parent_with_active_child_projects_active__and_2_more() -> None:
+    # --- scenario: canonical_completed_parent_with_active_child_projects_active
     source = SourceKey("claude", "hooks", "global", "live_agent_events")
     parent_key = WorkKey(source, WorkIdentifier("work:parent"))
     child_key = WorkKey(source, WorkIdentifier("work:child"))
@@ -463,8 +456,7 @@ def test_canonical_completed_parent_with_active_child_projects_active() -> None:
     (main_row,) = projection.visible_rows
     assert main_row.lifecycle_mode is LifecycleMode.ACTIVE
 
-
-def test_regate_demotes_asks_the_canonical_state_no_longer_holds() -> None:
+    # --- scenario: regate_demotes_asks_the_canonical_state_no_longer_holds
     source = SourceKey("codex", "hooks", "global", "live_agent_events")
     work_key = WorkKey(source, WorkIdentifier("work:held"))
     held_key = RequestKey(work_key, RequestIdentifier("request:held"))
@@ -497,8 +489,7 @@ def test_regate_demotes_asks_the_canonical_state_no_longer_holds() -> None:
     assert held_row.lifecycle_mode is LifecycleMode.UNKNOWN
     assert gated.click_target_agent_id == "codex:session:other"
 
-
-def test_regate_without_live_asks_clears_the_attention_aggregates() -> None:
+    # --- scenario: regate_without_live_asks_clears_the_attention_aggregates
     source = SourceKey("codex", "hooks", "global", "live_agent_events")
     held_key = RequestKey(
         WorkKey(source, WorkIdentifier("work:held")),
@@ -515,6 +506,7 @@ def test_regate_without_live_asks_clears_the_attention_aggregates() -> None:
     assert gated.actionable_attention == ()
     assert gated.lifecycle_mode is LifecycleMode.UNKNOWN
     assert gated.click_target_agent_id is None
+
 
 
 def test_regate_keeps_keyless_asks_and_returns_identity_when_unchanged() -> None:

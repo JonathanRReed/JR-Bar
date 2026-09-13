@@ -104,9 +104,8 @@ def test_default_path_uses_existing_private_state_directory(tmp_path: Path) -> N
     )
 
 
-def test_round_trip_is_deterministic_private_and_exactly_content_free(
-    tmp_path: Path,
-) -> None:
+def test_round_trip_is_deterministic_private_and_exactly_content_free__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: round_trip_is_deterministic_private_and_exactly_content_free
     target = tmp_path / "state" / EFFECT_HISTORY_STORE_NAME
     state = EffectHistory(
         (
@@ -160,10 +159,7 @@ def test_round_trip_is_deterministic_private_and_exactly_content_free(
     ):
         assert forbidden not in serialized
 
-
-def test_restore_health_distinguishes_size_version_corruption_and_availability(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: restore_health_distinguishes_size_version_corruption_and_availability
     target = tmp_path / EFFECT_HISTORY_STORE_NAME
     assert load_effect_history(target).health is EffectHistoryRestoreHealth.MISSING
 
@@ -186,6 +182,7 @@ def test_restore_health_distinguishes_size_version_corruption_and_availability(
         EffectHistoryRestoreHealth.UNAVAILABLE,
     )
     assert "/private/path" not in repr(unavailable)
+
 
 
 @pytest.mark.parametrize(

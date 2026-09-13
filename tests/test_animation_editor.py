@@ -100,19 +100,19 @@ STAGGERED = Animation(
 # --- the model compiles to text the firmware accepts -----------------------
 
 
-@pytest.mark.parametrize("animation", [BREATHING, STAGGERED], ids=["breathing", "staggered"])
-def test_a_compiled_animation_is_accepted_by_the_real_firmware_parser(animation) -> None:
+def test_a_compiled_animation_is_accepted_by_the_real_firmware_parser__and_2_more() -> None:
+    # --- scenario: a_compiled_animation_is_accepted_by_the_real_firmware_parser
     """The whole point. Delete any rendering rule -- the ``; `` segment
     join, the ``roll-right`` spelling, the uppercase hex -- and the firmware
     rejects the bytes here rather than in the owner's hands.
     """
-    controller = _firmware()
-    program = compile_animation(animation)
-    result = controller.parse(program, 0)
-    assert result.ok, f"{result.error_name} at line {result.line} col {result.column}\n{program}"
+    for animation in [BREATHING, STAGGERED]:
+        controller = _firmware()
+        program = compile_animation(animation)
+        result = controller.parse(program, 0)
+        assert result.ok, f"{result.error_name} at line {result.line} col {result.column}\n{program}"
 
-
-def test_compiled_text_is_canonical_and_stable_under_a_round_trip() -> None:
+    # --- scenario: compiled_text_is_canonical_and_stable_under_a_round_trip
     """compile -> parse -> compile must be a fixed point, or the library
     rewrites its own entries every time one is opened and saved.
 
@@ -126,8 +126,7 @@ def test_compiled_text_is_canonical_and_stable_under_a_round_trip() -> None:
     lowercase = parse_animation("#ff9f0a 1.4s pulse\nrepeat")
     assert compile_animation(lowercase) == "#FF9F0A 1400ms pulse\nrepeat"
 
-
-def test_seconds_are_spelled_the_short_way_because_bytes_are_the_budget() -> None:
+    # --- scenario: seconds_are_spelled_the_short_way_because_bytes_are_the_budget
     """512 bytes is the whole program. "2s" instead of "2000ms" is four
     bytes back, every time it appears.
 
@@ -139,7 +138,9 @@ def test_seconds_are_spelled_the_short_way_because_bytes_are_the_budget() -> Non
     assert compile_animation(fractional) == "#FFFFFF 1400ms"
 
 
-def test_a_delay_is_never_emitted_where_the_firmware_would_read_a_duration() -> None:
+
+def test_a_delay_is_never_emitted_where_the_firmware_would_read_a_duration__and_2_more() -> None:
+    # --- scenario: a_delay_is_never_emitted_where_the_firmware_would_read_a_duration
     """The trap in the grammar: "#FF00FF pulse 1s" is a 330 ms pulse
     DELAYED by a second, and "#FF00FF 1s" is a duration -- so a lone delay
     cannot be spelled at all. The model refuses instead of emitting
@@ -160,13 +161,15 @@ def test_a_delay_is_never_emitted_where_the_firmware_would_read_a_duration() -> 
     assert compile_animation(with_easing) == "#FF00FF pulse 1s"
     assert _firmware().parse("#FF00FF pulse 1s", 0).ok
 
+    # --- scenario: every_refusal_is_a_refusal_the_firmware_would_also_make
+    """The anti-decorative-validation test: for each program the model
+    rejects, the real parser is asked what IT thinks, and has to agree --
+    with the specific error, not merely "not ok".
 
-# --- validation refuses exactly what the firmware refuses ------------------
-
-
-@pytest.mark.parametrize(
-    ("program", "firmware_error"),
-    [
+    Deleted any one of these checks and the model happily produces bytes
+    that make the device blink red six times.
+    """
+    for program, firmware_error in [
         ("0:off 100ms", "bad-index"),
         ("#f0f 100ms", "bad-color"),
         ("#FF0000 100ms swoosh", "bad-time"),
@@ -179,28 +182,16 @@ def test_a_delay_is_never_emitted_where_the_firmware_would_read_a_duration() -> 
         ("ff0000 100ms", "syntax"),
         ("#FF0000 100ms ease 100ms 50ms", "trailing-input"),
         ("\n".join(["#FF0000 10ms"] * 21), "too-many-lines"),
-    ],
-)
-def test_every_refusal_is_a_refusal_the_firmware_would_also_make(
-    program: str, firmware_error: str
-) -> None:
-    """The anti-decorative-validation test: for each program the model
-    rejects, the real parser is asked what IT thinks, and has to agree --
-    with the specific error, not merely "not ok".
+    ]:
+        controller = _firmware()
+        result = controller.parse(program, 0)
+        assert not result.ok, f"the firmware accepted {program!r}"
+        assert result.error_name == firmware_error
 
-    Deleted any one of these checks and the model happily produces bytes
-    that make the device blink red six times.
-    """
-    controller = _firmware()
-    result = controller.parse(program, 0)
-    assert not result.ok, f"the firmware accepted {program!r}"
-    assert result.error_name == firmware_error
+        problems = problems_for_program(program)
+        assert [p for p in problems if p.is_error], f"the model accepted {program!r}"
 
-    problems = problems_for_program(program)
-    assert [p for p in problems if p.is_error], f"the model accepted {program!r}"
-
-
-def test_out_of_range_leds_are_a_warning_because_the_firmware_ignores_them() -> None:
+    # --- scenario: out_of_range_leds_are_a_warning_because_the_firmware_ignores_them
     """The one disagreement worth keeping: 9:#FFFFFF PARSES on an 8-LED
     build and then paints nothing. Rejecting it would break the documented
     portability of shared scripts; accepting it silently would let the
@@ -223,7 +214,9 @@ def test_out_of_range_leds_are_a_warning_because_the_firmware_ignores_them() -> 
     assert validate_animation(dot, led_count=2) == ()
 
 
-def test_problem_messages_name_the_step_and_the_fix() -> None:
+
+def test_problem_messages_name_the_step_and_the_fix__and_2_more() -> None:
+    # --- scenario: problem_messages_name_the_step_and_the_fix
     """"step 3: ..." or it is not an error message, it is a shrug.
 
     Deleted _where()'s prefix: every message loses its step number.
@@ -243,8 +236,7 @@ def test_problem_messages_name_the_step_and_the_fix() -> None:
     assert problem.message.startswith("step 3: ")
     assert "#000000" in problem.message
 
-
-def test_a_program_over_the_byte_cap_is_refused_with_its_actual_size() -> None:
+    # --- scenario: a_program_over_the_byte_cap_is_refused_with_its_actual_size
     """Deleted the byte check: compile returns 600+ bytes and the device
     write fails at the last possible moment instead of the first.
     """
@@ -269,8 +261,7 @@ def test_a_program_over_the_byte_cap_is_refused_with_its_actual_size() -> None:
     assert "bytes" in str(caught.value)
     assert str(len(rendered.encode())) in str(caught.value)
 
-
-def test_the_line_cap_counts_comments_the_way_the_firmware_does() -> None:
+    # --- scenario: the_line_cap_counts_comments_the_way_the_firmware_does
     """Measured: the firmware's 20-line cap counts every physical line,
     comments and blanks included.
 
@@ -290,7 +281,9 @@ def test_the_line_cap_counts_comments_the_way_the_firmware_does() -> None:
     assert "too-many-lines" in _codes(validate_animation(animation))
 
 
-def test_a_non_breaking_space_is_caught_before_the_device_sees_it() -> None:
+
+def test_a_non_breaking_space_is_caught_before_the_device_sees_it__and_2_more() -> None:
+    # --- scenario: a_non_breaking_space_is_caught_before_the_device_sees_it
     """The paste hazard. U+00A0 renders exactly like a space and is a
     firmware syntax error; a program copied out of a chat window or a web
     page carries them invisibly.
@@ -302,8 +295,7 @@ def test_a_non_breaking_space_is_caught_before_the_device_sees_it() -> None:
     assert "non-ascii" in _codes(problems)
     assert "U+00A0" in _messages(problems)
 
-
-def test_reading_a_program_never_raises_so_an_editor_can_validate_as_you_type() -> None:
+    # --- scenario: reading_a_program_never_raises_so_an_editor_can_validate_as_you_type
     """Deleted read_program (leaving only the raising parse_animation): the
     settings pane has to wrap every keystroke in try/except and gets one
     problem instead of all of them.
@@ -314,11 +306,7 @@ def test_reading_a_program_never_raises_so_an_editor_can_validate_as_you_type() 
     assert problems_for_program("") == problems_for_program("")
     assert "empty" in _codes(problems_for_program(""))
 
-
-# --- what an animation is worth in time ------------------------------------
-
-
-def test_duration_arithmetic_matches_the_line_rule() -> None:
+    # --- scenario: duration_arithmetic_matches_the_line_rule
     """A line ends at its LONGEST delay-plus-duration; brightness, comments
     and repeat take no time; an untimed line lasts one 60 Hz frame.
 
@@ -331,6 +319,7 @@ def test_duration_arithmetic_matches_the_line_rule() -> None:
     untimed = Animation("t", (PaintStep((WholeBar("#FFFFFF"),)),))
     assert animation_duration_ms(untimed) == 16
     assert loop_duration_ms(untimed) is None
+
 
 
 def test_a_loop_faster_than_two_hertz_is_flagged_and_blocks_a_burn(tmp_path) -> None:
@@ -376,7 +365,8 @@ class _RecordingWriter:
         return Path("/tmp/fake-device") / str(file_name)
 
 
-def test_a_burn_is_a_dry_run_unless_it_is_asked_for_out_loud(tmp_path) -> None:
+def test_a_burn_is_a_dry_run_unless_it_is_asked_for_out_loud__and_1_more(tmp_path) -> None:
+    # --- scenario: a_burn_is_a_dry_run_unless_it_is_asked_for_out_loud
     """The one operation here a person cannot undo by looking away.
 
     Deleted the dry_run default (made it False): every caller that forgot
@@ -394,8 +384,7 @@ def test_a_burn_is_a_dry_run_unless_it_is_asked_for_out_loud(tmp_path) -> None:
     assert writer.calls == [(plan.program, "INIT.LED")]
     assert written.written and not written.dry_run
 
-
-def test_an_invalid_animation_never_reaches_the_writer(tmp_path) -> None:
+    # --- scenario: an_invalid_animation_never_reaches_the_writer
     """The MODEL validator is a gate in its own right, not a preview of what
     the firmware parser will say.
 
@@ -430,7 +419,9 @@ def test_an_invalid_animation_never_reaches_the_writer(tmp_path) -> None:
     assert writer.calls == []
 
 
-def test_a_burn_refuses_when_the_firmware_parser_cannot_be_consulted() -> None:
+
+def test_a_burn_refuses_when_the_firmware_parser_cannot_be_consulted__and_1_more() -> None:
+    # --- scenario: a_burn_refuses_when_the_firmware_parser_cannot_be_consulted
     """Fail closed. INIT.LED replays at every boot, so "we could not check"
     must never mean "go ahead".
 
@@ -458,8 +449,7 @@ def test_a_burn_refuses_when_the_firmware_parser_cannot_be_consulted() -> None:
         )
     assert writer.calls == []
 
-
-def test_the_burn_consults_the_real_firmware_by_default() -> None:
+    # --- scenario: the_burn_consults_the_real_firmware_by_default
     """Not a stub: the default parser IS the packaged sdled.wasm, so a
     caller that passes nothing is still verified against the firmware.
 
@@ -473,7 +463,9 @@ def test_the_burn_consults_the_real_firmware_by_default() -> None:
     assert plan.program == compile_animation(BREATHING)
 
 
-def test_the_payload_is_the_exact_bytes_the_device_will_hold(tmp_path) -> None:
+
+def test_the_payload_is_the_exact_bytes_the_device_will_hold__and_2_more(tmp_path) -> None:
+    # --- scenario: the_payload_is_the_exact_bytes_the_device_will_hold
     """Deleted the payload field (or derived it from a pretty-printed
     rendering): what the owner is shown stops being what is written.
     """
@@ -484,8 +476,7 @@ def test_the_payload_is_the_exact_bytes_the_device_will_hold(tmp_path) -> None:
     assert plan.byte_count == len(plan.program.encode("utf-8"))
     assert plan.byte_count <= MAX_PROGRAM_BYTES
 
-
-def test_a_saved_animation_can_be_burned_by_name_through_led_status(tmp_path) -> None:
+    # --- scenario: a_saved_animation_can_be_burned_by_name_through_led_status
     """The call site the settings window gets. Library -> model -> bytes,
     with the dry run still the default.
 
@@ -511,11 +502,7 @@ def test_a_saved_animation_can_be_burned_by_name_through_led_status(tmp_path) ->
     with pytest.raises(store.AnimationLibraryError):
         burn_saved_animation_to_power_up("Nope", library_path=path, device_path=tmp_path)
 
-
-# --- the personal library --------------------------------------------------
-
-
-def test_the_library_round_trips_through_a_private_file(tmp_path) -> None:
+    # --- scenario: the_library_round_trips_through_a_private_file
     """Deleted atomic_private_write in favour of write_text: the file lands
     world-readable, which is the discipline every other store here keeps.
     """
@@ -532,6 +519,7 @@ def test_the_library_round_trips_through_a_private_file(tmp_path) -> None:
     assert restored.health is store.LibraryHealth.HEALTHY
     assert restored.library == library
     assert restored.library.get("Boot").to_animation().steps == BREATHING.steps
+
 
 
 def test_the_library_is_bounded_in_count_and_in_bytes(tmp_path) -> None:
@@ -559,7 +547,8 @@ def test_the_library_is_bounded_in_count_and_in_bytes(tmp_path) -> None:
         store.AnimationLibrary().with_program("   ", "#FF0000 100ms")
 
 
-def test_the_library_refuses_to_hold_a_program_the_firmware_would_reject() -> None:
+def test_the_library_refuses_to_hold_a_program_the_firmware_would_reject__and_1_more() -> None:
+    # --- scenario: the_library_refuses_to_hold_a_program_the_firmware_would_reject
     """A saved look that cannot be burned is a trap set for the person who
     loads it a month later.
 
@@ -570,8 +559,7 @@ def test_the_library_refuses_to_hold_a_program_the_firmware_would_reject() -> No
         store.AnimationLibrary().with_program("Broken", "0:off 100ms")
     assert "cannot be saved" in str(caught.value)
 
-
-def test_rename_keeps_its_place_and_refuses_a_name_already_taken() -> None:
+    # --- scenario: rename_keeps_its_place_and_refuses_a_name_already_taken
     """Deleted the in-place rename (append instead): a rename silently
     reorders the owner's list, which is how a look gets lost.
     """
@@ -600,35 +588,31 @@ def test_rename_keeps_its_place_and_refuses_a_name_already_taken() -> None:
         library.without("gone")
 
 
-@pytest.mark.parametrize(
-    ("payload", "health"),
-    [
+
+def test_an_unreadable_library_degrades_instead_of_taking_the_window_down__and_1_more(tmp_path) -> None:
+    # --- scenario: an_unreadable_library_degrades_instead_of_taking_the_window_down
+    """Deleted the typed health (letting the decoder raise): opening
+    Settings after a partial write throws instead of showing an empty list.
+    """
+    for payload, health in [
         ("not json at all", store.LibraryHealth.CORRUPT),
         ('{"version":99,"animations":[]}', store.LibraryHealth.UNSUPPORTED),
         ('{"version":1}', store.LibraryHealth.CORRUPT),
         ('{"version":1,"animations":[{"name":"x"}]}', store.LibraryHealth.CORRUPT),
         ('{"version":1,"animations":{}}', store.LibraryHealth.CORRUPT),
-    ],
-)
-def test_an_unreadable_library_degrades_instead_of_taking_the_window_down(
-    tmp_path, payload: str, health
-) -> None:
-    """Deleted the typed health (letting the decoder raise): opening
-    Settings after a partial write throws instead of showing an empty list.
-    """
-    path = tmp_path / "library.json"
-    path.write_text(payload, encoding="utf-8")
-    restored = store.load_animation_library(path)
-    assert restored.health is health
-    assert restored.library.entries == ()
+    ]:
+        path = tmp_path / "library.json"
+        path.write_text(payload, encoding="utf-8")
+        restored = store.load_animation_library(path)
+        assert restored.health is health
+        assert restored.library.entries == ()
 
-    assert (
-        store.load_animation_library(tmp_path / "missing.json").health
-        is store.LibraryHealth.MISSING
-    )
+        assert (
+            store.load_animation_library(tmp_path / "missing.json").health
+            is store.LibraryHealth.MISSING
+        )
 
-
-def test_the_stored_document_has_exactly_the_fields_it_declares(tmp_path) -> None:
+    # --- scenario: the_stored_document_has_exactly_the_fields_it_declares
     """Deleted the exact-field decode: an extra key rides along silently and
     the format drifts.
     """
@@ -644,6 +628,7 @@ def test_the_stored_document_has_exactly_the_fields_it_declares(tmp_path) -> Non
     document["animations"][0]["extra"] = True
     path.write_text(json.dumps(document), encoding="utf-8")
     assert store.load_animation_library(path).health is store.LibraryHealth.CORRUPT
+
 
 
 # --- the three motions that were lies --------------------------------------
@@ -707,7 +692,8 @@ def _unit_shape(program: str) -> tuple[tuple[float, str, float], ...]:
     )
 
 
-def test_blink_and_knock_are_no_longer_the_same_shape() -> None:
+def test_blink_and_knock_are_no_longer_the_same_shape__and_2_more() -> None:
+    # --- scenario: blink_and_knock_are_no_longer_the_same_shape
     """The defect, exactly. Before this wave both patterns emitted the same
     two lines and differed only in how many times they were repeated, so
     their repeating unit was identical.
@@ -721,8 +707,7 @@ def test_blink_and_knock_are_no_longer_the_same_shape() -> None:
     assert _unit_shape(blink) != _unit_shape(knock)
     assert blink.splitlines()[:4] != knock.splitlines()
 
-
-def test_blink_has_hard_edges_and_nothing_else_does() -> None:
+    # --- scenario: blink_has_hard_edges_and_nothing_else_does
     """A cosine blink is a triangle, and a triangle is what breathe already
     is. The word "blink" has to mean the square.
 
@@ -734,8 +719,7 @@ def test_blink_has_hard_edges_and_nothing_else_does() -> None:
     breathe = style_to_program(SignalStyle("#34C759", "breathe", 1.0, 1.0))
     assert "cosine" in breathe and "pulse" in breathe
 
-
-def test_a_knock_is_two_taps_and_then_a_rest() -> None:
+    # --- scenario: a_knock_is_two_taps_and_then_a_rest
     """What makes it a knock rather than a flash: the silence after it. The
     old shape was 567 ms lit / 433 ms dark twice -- more light than dark,
     with no rest at all.
@@ -751,7 +735,9 @@ def test_a_knock_is_two_taps_and_then_a_rest() -> None:
     assert sum(duration for _level, _easing, duration in knock) == 1200
 
 
-def test_a_heartbeat_is_two_unequal_thumps_and_a_flat_rest() -> None:
+
+def test_a_heartbeat_is_two_unequal_thumps_and_a_flat_rest__and_2_more() -> None:
+    # --- scenario: a_heartbeat_is_two_unequal_thumps_and_a_flat_rest
     """Three properties, none of which the old one had: each beat rises AND
     falls inside its own duration (``pulse``), the rest is a flat hold
     (``none``, not a cosine decay that reads as part of the beat), and the
@@ -771,8 +757,7 @@ def test_a_heartbeat_is_two_unequal_thumps_and_a_flat_rest() -> None:
         duration for _easing, duration in dark
     )
 
-
-def test_no_two_signal_patterns_share_a_repeating_unit() -> None:
+    # --- scenario: no_two_signal_patterns_share_a_repeating_unit
     """The general form of the defect, over the whole catalogue.
 
     Restore the old blink/double-blink branch: blink and double-blink
@@ -787,8 +772,7 @@ def test_no_two_signal_patterns_share_a_repeating_unit() -> None:
         assert shape not in shapes, f"{pattern} renders the same shape as {shapes[shape]}"
         shapes[shape] = pattern
 
-
-def test_the_firmware_renders_three_distinguishable_motions() -> None:
+    # --- scenario: the_firmware_renders_three_distinguishable_motions
     """The same claim, measured on the real engine rather than on the text:
     sample the whole-bar brightness of each motion over its own cycle and
     require the three envelopes to differ.
@@ -818,18 +802,19 @@ def test_the_firmware_renders_three_distinguishable_motions() -> None:
     assert sum(envelopes["blink"]) > sum(envelopes["heartbeat"])
 
 
-@pytest.mark.parametrize("pattern", SIGNAL_PATTERNS)
-@pytest.mark.parametrize("speed", [0.1, 1.0, 10.0])
-def test_every_pattern_still_parses_on_the_real_firmware(pattern: str, speed: float) -> None:
+
+def test_every_pattern_still_parses_on_the_real_firmware() -> None:
     """The reshaped motions must stay inside the grammar at every speed the
     settings pane offers.
 
     Deleted the max(1, ...) floors in the new branches: a 0.1 s knock emits
     a 0 ms rest, which the firmware accepts but which collapses the shape.
     """
-    controller = _firmware()
-    program = style_to_program(SignalStyle("#ABCDEF", pattern, speed, 1.0), 128)
-    result = controller.parse(program, 0)
-    assert result.ok, f"{pattern}@{speed}: {result.error_name} line {result.line}"
-    assert len(program.encode()) <= MAX_PROGRAM_BYTES
-    assert len(program.splitlines()) <= MAX_PROGRAM_LINES
+    for pattern in SIGNAL_PATTERNS:
+        for speed in [0.1, 1.0, 10.0]:
+            controller = _firmware()
+            program = style_to_program(SignalStyle("#ABCDEF", pattern, speed, 1.0), 128)
+            result = controller.parse(program, 0)
+            assert result.ok, f"{pattern}@{speed}: {result.error_name} line {result.line}"
+            assert len(program.encode()) <= MAX_PROGRAM_BYTES
+            assert len(program.splitlines()) <= MAX_PROGRAM_LINES

@@ -62,7 +62,8 @@ def test_sender_identity_and_refresh_scope_preserve_exact_instance():
     assert actions.provider_refresh_scope("claude", "default") == ("claude",)
 
 
-def test_generic_action_fallback_refreshes_and_opens_exact_instance(monkeypatch):
+def test_generic_action_fallback_refreshes_and_opens_exact_instance__and_1_more(monkeypatch) -> None:
+    # --- scenario: generic_action_fallback_refreshes_and_opens_exact_instance
     controller = _Controller()
     sender = _Sender({"provider_id": "claude", "source_instance_id": "work"})
     monkeypatch.setattr(actions, "run_provider_usage_action", lambda *_args: False)
@@ -79,8 +80,8 @@ def test_generic_action_fallback_refreshes_and_opens_exact_instance(monkeypatch)
     ]
     assert controller.opened == [sender]
 
-
-def test_connect_action_is_armed_before_instance_scoped_claude_flow(monkeypatch):
+    # --- scenario: connect_action_is_armed_before_instance_scoped_claude_flow
+    monkeypatch.undo()
     controller = _Controller(action_label="Reconnect Claude")
     sender = _Sender({"provider_id": "claude", "source_instance_id": "work"})
     connected = []
@@ -108,7 +109,9 @@ def test_connect_action_is_armed_before_instance_scoped_claude_flow(monkeypatch)
     assert controller.refreshes == []
 
 
-def test_settings_snapshot_cache_projects_all_consumer_domains() -> None:
+
+def test_settings_snapshot_cache_projects_all_consumer_domains__and_1_more() -> None:
+    # --- scenario: settings_snapshot_cache_projects_all_consumer_domains
     settings = (
         default_provider_usage_settings()
         .with_profile(
@@ -149,8 +152,7 @@ def test_settings_snapshot_cache_projects_all_consumer_domains() -> None:
     assert service_updates == [settings]
     assert privacy_updates == [True]
 
-
-def test_provider_menu_toggle_updates_only_the_exact_instance() -> None:
+    # --- scenario: provider_menu_toggle_updates_only_the_exact_instance
     settings = default_provider_usage_settings().with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
@@ -182,6 +184,7 @@ def test_provider_menu_toggle_updates_only_the_exact_instance() -> None:
     assert writes == [(updated, loaded)]
     assert controller._jrbar_provider_usage_settings_snapshot is updated
     assert service_updates == [updated]
+
 
 
 def test_settings_snapshot_change_invalidates_merged_sync_for_old_sharing_policy(
@@ -253,7 +256,8 @@ def test_nonsharing_settings_change_preserves_fresh_merged_sync(monkeypatch) -> 
     assert sync_cache.cached_merged_sync(state, monotonic=lambda: 100.0) is merged
 
 
-def test_profile_session_action_overrides_only_an_exact_nondefault_status() -> None:
+def test_profile_session_action_overrides_only_an_exact_nondefault_status__and_2_more() -> None:
+    # --- scenario: profile_session_action_overrides_only_an_exact_nondefault_status
     settings = default_provider_usage_settings().with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
@@ -281,8 +285,7 @@ def test_profile_session_action_overrides_only_an_exact_nondefault_status() -> N
     assert actions.profile_session_action(controller, status, None) == "terminal"
     assert actions.profile_session_action(controller, status, "app") == "app"
 
-
-def test_profile_control_update_saves_only_the_exact_instance() -> None:
+    # --- scenario: profile_control_update_saves_only_the_exact_instance
     settings = default_provider_usage_settings().with_profile(
         ProviderInstanceProfile(
             ProviderInstanceKey("claude", "work"),
@@ -314,8 +317,7 @@ def test_profile_control_update_saves_only_the_exact_instance() -> None:
     assert writes == [(updated, loaded)]
     assert controller._jrbar_provider_usage_settings_snapshot is updated
 
-
-def test_privacy_mode_rejects_profile_name_save_without_overwriting_alias() -> None:
+    # --- scenario: privacy_mode_rejects_profile_name_save_without_overwriting_alias
     settings = (
         default_provider_usage_settings()
         .with_profile(
@@ -347,6 +349,7 @@ def test_privacy_mode_rejects_profile_name_save_without_overwriting_alias() -> N
 
     assert settings.profile("claude", "work").label == "Client Claude"
     assert writes == []
+
 
 
 def test_profile_popup_update_reads_selected_exact_choice() -> None:

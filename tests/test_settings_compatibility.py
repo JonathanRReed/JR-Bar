@@ -33,13 +33,13 @@ _GLOBAL_ACTION_SHORTCUT = {
 }
 
 
-def test_new_settings_leave_global_actions_unassigned(tmp_path: Path) -> None:
+def test_new_settings_leave_global_actions_unassigned__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: new_settings_leave_global_actions_unassigned
     settings = load_settings(tmp_path / "missing-settings.json")
 
     assert settings.global_action_shortcuts == {}
 
-
-def test_new_settings_leave_dnd_inactive_with_exact_defaults(tmp_path: Path) -> None:
+    # --- scenario: new_settings_leave_dnd_inactive_with_exact_defaults
     settings = load_settings(tmp_path / "missing-settings.json")
 
     assert settings.dnd_schedule_enabled is False
@@ -53,6 +53,7 @@ def test_new_settings_leave_dnd_inactive_with_exact_defaults(tmp_path: Path) -> 
     assert settings.dnd_focus_mode == "pause"
     assert settings.dnd_persisted_refusals == ()
     assert settings.focus_sync_enabled is False
+
 
 
 def test_dnd_scalars_round_trip_losslessly_and_preserve_unknown_fields(
@@ -83,43 +84,35 @@ def test_dnd_scalars_round_trip_losslessly_and_preserve_unknown_fields(
     assert document["future_top_level"] == {"preserve": True}
 
 
-@pytest.mark.parametrize(
-    ("field", "bad_value", "expected"),
-    (
+def test_malformed_dnd_scalar_is_individually_defaulted_and_reported(tmp_path: Path) -> None:
+    for field, bad_value, expected in (
         ("dnd_schedule_enabled", 1, False),
         ("dnd_schedule_start_minutes", True, 1320),
         ("dnd_schedule_end_minutes", 1440, 420),
         ("dnd_schedule_mode", "future_mode", "dark"),
         ("dnd_dim_fraction", 0.0, 0.15),
         ("dnd_focus_mode", "resume", "pause"),
-    ),
-)
-def test_malformed_dnd_scalar_is_individually_defaulted_and_reported(
-    tmp_path: Path,
-    field: str,
-    bad_value: object,
-    expected: object,
-) -> None:
-    target = tmp_path / "settings.json"
-    document = {
-        "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
-        **_DND_FIELDS,
-        "dnd_override_mode": None,
-        "dnd_override_created_epoch": None,
-        "dnd_override_until_epoch": None,
-    }
-    document[field] = bad_value
-    target.write_text(json.dumps(document), encoding="utf-8")
+    ):
+        target = tmp_path / "settings.json"
+        document = {
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            **_DND_FIELDS,
+            "dnd_override_mode": None,
+            "dnd_override_created_epoch": None,
+            "dnd_override_until_epoch": None,
+        }
+        document[field] = bad_value
+        target.write_text(json.dumps(document), encoding="utf-8")
 
-    loaded = load_settings_document(target)
+        loaded = load_settings_document(target)
 
-    assert getattr(loaded.settings, field) == expected
-    assert tuple(item.field for item in loaded.settings.dnd_persisted_refusals) == (
-        field,
-    )
-    for valid_field, valid_value in _DND_FIELDS.items():
-        if valid_field not in {field, "dnd_override_mode", "dnd_override_created_epoch", "dnd_override_until_epoch"}:
-            assert getattr(loaded.settings, valid_field) == valid_value
+        assert getattr(loaded.settings, field) == expected
+        assert tuple(item.field for item in loaded.settings.dnd_persisted_refusals) == (
+            field,
+        )
+        for valid_field, valid_value in _DND_FIELDS.items():
+            if valid_field not in {field, "dnd_override_mode", "dnd_override_created_epoch", "dnd_override_until_epoch"}:
+                assert getattr(loaded.settings, valid_field) == valid_value
 
 
 def test_malformed_dnd_override_is_ignored_as_one_typed_refusal(
@@ -161,9 +154,8 @@ def test_dnd_save_rejects_invalid_programmatic_values(tmp_path: Path) -> None:
     assert not target.exists()
 
 
-def test_global_action_shortcuts_round_trip_without_losing_unknown_top_level_fields(
-    tmp_path: Path,
-) -> None:
+def test_global_action_shortcuts_round_trip_without_losing_unknown_top_level_fields__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: global_action_shortcuts_round_trip_without_losing_unknown_top_level_fields
     target = tmp_path / "settings.json"
     target.write_text(
         json.dumps(
@@ -184,10 +176,7 @@ def test_global_action_shortcuts_round_trip_without_losing_unknown_top_level_fie
     assert document["global_action_shortcuts"] == _GLOBAL_ACTION_SHORTCUT
     assert document["future_top_level"] == {"preserve": True}
 
-
-def test_global_action_shortcuts_are_owned_so_clear_does_not_resurrect_entries(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: global_action_shortcuts_are_owned_so_clear_does_not_resurrect_entries
     target = tmp_path / "settings.json"
     target.write_text(
         json.dumps(
@@ -208,10 +197,7 @@ def test_global_action_shortcuts_are_owned_so_clear_does_not_resurrect_entries(
     assert document["global_action_shortcuts"] == {}
     assert document["future_top_level"] == "keep"
 
-
-def test_newer_settings_schema_is_read_only_and_never_overwritten(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: newer_settings_schema_is_read_only_and_never_overwritten
     target = tmp_path / "settings.json"
     original = {
         "settings_schema_version": 999,
@@ -233,9 +219,9 @@ def test_newer_settings_schema_is_read_only_and_never_overwritten(
     assert json.loads(target.read_text(encoding="utf-8")) == original
 
 
-def test_legacy_convenience_loader_also_blocks_future_schema_writes(
-    tmp_path: Path,
-) -> None:
+
+def test_legacy_convenience_loader_also_blocks_future_schema_writes__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: legacy_convenience_loader_also_blocks_future_schema_writes
     target = tmp_path / "settings.json"
     original = {"settings_schema_version": 99, "future": "keep"}
     target.write_text(json.dumps(original), encoding="utf-8")
@@ -246,10 +232,7 @@ def test_legacy_convenience_loader_also_blocks_future_schema_writes(
         save_settings(settings.with_tips_enabled(False), target)
     assert json.loads(target.read_text(encoding="utf-8")) == original
 
-
-def test_schema_one_migrates_to_two_without_changing_user_values(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: schema_one_migrates_to_two_without_changing_user_values
     target = tmp_path / "settings.json"
     target.write_text(
         json.dumps(
@@ -273,7 +256,9 @@ def test_schema_one_migrates_to_two_without_changing_user_values(
     assert document["future_but_readable_extension"] == {"keep": True}
 
 
-def test_current_schema_round_trip_is_idempotent(tmp_path: Path) -> None:
+
+def test_current_schema_round_trip_is_idempotent__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: current_schema_round_trip_is_idempotent
     target = tmp_path / "settings.json"
     first = load_settings(target)
     save_settings(first, target)
@@ -284,8 +269,7 @@ def test_current_schema_round_trip_is_idempotent(tmp_path: Path) -> None:
 
     assert target.read_text(encoding="utf-8") == before
 
-
-def test_invalid_schema_version_preserves_corrupt_source(tmp_path: Path) -> None:
+    # --- scenario: invalid_schema_version_preserves_corrupt_source
     target = tmp_path / "settings.json"
     target.write_text(
         json.dumps({"settings_schema_version": True, "sentinel": "keep"}),
@@ -298,3 +282,4 @@ def test_invalid_schema_version_preserves_corrupt_source(tmp_path: Path) -> None
     assert not target.exists()
     corrupt = target.with_name("settings.json.corrupt")
     assert json.loads(corrupt.read_text(encoding="utf-8"))["sentinel"] == "keep"
+

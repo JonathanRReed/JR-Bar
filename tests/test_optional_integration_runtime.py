@@ -23,7 +23,8 @@ class Monitor:
         self.ready.set()
 
 
-def test_default_off_runtime_does_not_construct_or_read_optional_sources():
+def test_default_off_runtime_does_not_construct_or_read_optional_sources__and_2_more() -> None:
+    # --- scenario: default_off_runtime_does_not_construct_or_read_optional_sources
     def forbidden(*_args, **_kwargs):
         raise AssertionError("disabled optional source was touched")
 
@@ -40,8 +41,7 @@ def test_default_off_runtime_does_not_construct_or_read_optional_sources():
     runtime.close()
     assert target.monitor.calls == []
 
-
-def test_close_does_not_wait_for_settings_io_or_publish_after_loader_returns():
+    # --- scenario: close_does_not_wait_for_settings_io_or_publish_after_loader_returns
     loading = threading.Event()
     release_loader = threading.Event()
     ui_calls = []
@@ -76,8 +76,7 @@ def test_close_does_not_wait_for_settings_io_or_publish_after_loader_returns():
     assert deck_loads == []
     assert ui_calls == []
 
-
-def test_close_does_not_wait_for_blocked_deck_settings_io():
+    # --- scenario: close_does_not_wait_for_blocked_deck_settings_io
     loading = threading.Event()
     release_loader = threading.Event()
     target = SimpleNamespace()
@@ -101,7 +100,9 @@ def test_close_does_not_wait_for_blocked_deck_settings_io():
     assert runtime.wait_until_configured(1)
 
 
-def test_enabled_creator_micro_discovery_runs_off_the_caller():
+
+def test_enabled_creator_micro_discovery_runs_off_the_caller__and_2_more() -> None:
+    # --- scenario: enabled_creator_micro_discovery_runs_off_the_caller
     calls = []
     configured = threading.Event()
 
@@ -133,8 +134,7 @@ def test_enabled_creator_micro_discovery_runs_off_the_caller():
     runtime.close()
     assert calls and calls[0] != caller
 
-
-def test_enabled_creator_micro_without_approved_identity_fails_closed():
+    # --- scenario: enabled_creator_micro_without_approved_identity_fails_closed
     target = SimpleNamespace(monitor=Monitor())
     settings = SimpleNamespace(
         creator_micro_enabled=True,
@@ -153,10 +153,8 @@ def test_enabled_creator_micro_without_approved_identity_fails_closed():
     runtime.close()
     assert target._creator_micro_output_receipt.reason == "device_identity_required"
 
-
-@pytest.mark.parametrize(
-    "mode,signal,want",
-    [
+    # --- scenario: creator_semantic_mapping_is_explicit
+    for mode, signal, want in [
         (AgentMode.WAITING_FOR_INPUT, None, "input_required"),
         (AgentMode.BLOCKED_ERROR, None, "failure"),
         (AgentMode.WORKING, None, "active"),
@@ -169,13 +167,13 @@ def test_enabled_creator_micro_without_approved_identity_fails_closed():
         (AgentMode.BLOCKED_ERROR, "reset", "failure"),
         (AgentMode.WORKING, "quota_warning", "active"),
         (AgentMode.WORKING, "reset", "reset"),
-    ],
-)
-def test_creator_semantic_mapping_is_explicit(mode, signal, want):
-    assert creator_semantic_state(mode, signal=signal).value == want
+    ]:
+        assert creator_semantic_state(mode, signal=signal).value == want
 
 
-def test_output_service_negotiates_before_writes_and_retries_a_conflict():
+
+def test_output_service_negotiates_before_writes_and_retries_a_conflict__and_2_more() -> None:
+    # --- scenario: output_service_negotiates_before_writes_and_retries_a_conflict
     """A conflict used to end the worker for the daemon's life. Now the
     receipt stays visible and the adapter's own retry is asked to reconnect."""
     calls, receipts = [], []
@@ -230,8 +228,7 @@ def test_output_service_negotiates_before_writes_and_retries_a_conflict():
     assert "recover" in calls and "idle" in calls and calls[-1] == "close"
     assert receipts[-1].reason == "device_conflict"
 
-
-def test_output_service_reports_unsupported_firmware_without_applying():
+    # --- scenario: output_service_reports_unsupported_firmware_without_applying
     class Adapter:
         conflict = SimpleNamespace(active=False)
 
@@ -258,8 +255,7 @@ def test_output_service_reports_unsupported_firmware_without_applying():
     service.close()
     assert receipts[-1].reason == "unsupported_firmware"
 
-
-def test_output_service_recovers_from_an_unexpected_poll_failure():
+    # --- scenario: output_service_recovers_from_an_unexpected_poll_failure
     """A bug in a poll or one malformed packet used to kill deck I/O
     until the daemon restarted: the worker's outer except latched
     ``_closed`` and the service could never start again. An unexpected
@@ -314,7 +310,9 @@ def test_output_service_recovers_from_an_unexpected_poll_failure():
     assert builds[1].polls > 0
 
 
-def test_input_is_delivered_while_output_is_idle_on_the_same_transport_owner():
+
+def test_input_is_delivered_while_output_is_idle_on_the_same_transport_owner__and_1_more() -> None:
+    # --- scenario: input_is_delivered_while_output_is_idle_on_the_same_transport_owner
     from collections import deque
 
     from jrbar.creator_micro_adapter import CreatorMicro2Adapter, CreatorMicro2Framer, RpcStreamDecoder
@@ -373,8 +371,7 @@ def test_input_is_delivered_while_output_is_idle_on_the_same_transport_owner():
     assert len(owners) == 1
     assert threading.get_ident() not in owners
 
-
-def test_runtime_wires_saved_macros_and_revokes_delivery_when_disabled():
+    # --- scenario: runtime_wires_saved_macros_and_revokes_delivery_when_disabled
     from jrbar.deck_actions import DeckAction
     from jrbar.deck_actions_macos import MacDeckActionExecutor
     from jrbar.deck_control_settings import DeckControlSettings
@@ -414,7 +411,9 @@ def test_runtime_wires_saved_macros_and_revokes_delivery_when_disabled():
     assert batches[0].owner.deliver(batches[0], executor) == ()
 
 
-def test_master_device_switch_uses_serialized_reconfiguration_instead_of_starting_a_second_owner(monkeypatch):
+
+def test_master_device_switch_uses_serialized_reconfiguration_instead_of_starting_a_second_owner__and_1_more(monkeypatch) -> None:
+    # --- scenario: master_device_switch_uses_serialized_reconfiguration_instead_of_starting_a_second_owner
     from jrbar import integration_settings
     from jrbar.optional_integration_runtime import set_creator_micro_output_enabled_async
 
@@ -434,8 +433,8 @@ def test_master_device_switch_uses_serialized_reconfiguration_instead_of_startin
     assert not saved[0].creator_micro_enabled
     assert calls == ["applyCreatorMicroSettings:"]
 
-
-def test_master_device_settings_last_intent_wins_during_a_slow_save(monkeypatch):
+    # --- scenario: master_device_settings_last_intent_wins_during_a_slow_save
+    monkeypatch.undo()
     from jrbar import integration_settings
     from jrbar.optional_integration_runtime import set_creator_micro_output_enabled_async
 
@@ -467,7 +466,9 @@ def test_master_device_settings_last_intent_wins_during_a_slow_save(monkeypatch)
     assert len(receipts) == 1 and receipts[0].enabled is False
 
 
-def test_creator_output_uses_the_same_user_colors_and_brightness_policy_as_other_devices():
+
+def test_creator_output_uses_the_same_user_colors_and_brightness_policy_as_other_devices__and_2_more() -> None:
+    # --- scenario: creator_output_uses_the_same_user_colors_and_brightness_policy_as_other_devices
     from jrbar.colors import ColorSettings
     from jrbar.deck_control_settings import DeckControlSettings
 
@@ -511,8 +512,7 @@ def test_creator_output_uses_the_same_user_colors_and_brightness_policy_as_other
     assert frames[0].color == 0x123456
     assert frames[0].brightness == 0.2
 
-
-def test_a_retryable_connect_failure_keeps_its_reason_instead_of_a_bare_reconnecting():
+    # --- scenario: a_retryable_connect_failure_keeps_its_reason_instead_of_a_bare_reconnecting
     """A pad the OS will not let us open never stops being retryable, so
     "reconnecting" is the only thing the owner would ever see. The receipt
     has to keep saying which refusal it is."""
@@ -551,8 +551,7 @@ def test_a_retryable_connect_failure_keeps_its_reason_instead_of_a_bare_reconnec
     assert service._thread is not None and service._thread.is_alive()
     service.close()
 
-
-def test_a_missing_pad_still_reads_as_reconnecting_with_the_reason_kept():
+    # --- scenario: a_missing_pad_still_reads_as_reconnecting_with_the_reason_kept
     """Nothing to connect to is the case "reconnecting" was written for; the
     exception's own words still travel, so the log is not silent."""
     receipts = []
@@ -572,3 +571,4 @@ def test_a_missing_pad_still_reads_as_reconnecting_with_the_reason_kept():
     service.close()
     assert receipts[0].reason == "reconnecting"
     assert receipts[0].detail == "Creator Micro 2 not found"
+

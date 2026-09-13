@@ -60,7 +60,8 @@ def _status(monitor: LiveAgentMonitor):
     return statuses[0]
 
 
-def test_hook_stamp_carries_microseconds() -> None:
+def test_hook_stamp_carries_microseconds__and_1_more() -> None:
+    # --- scenario: hook_stamp_carries_microseconds
     line = format_hook_payload("codex", "{}")
     stamp = line["logged_at"]
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z", stamp), stamp
@@ -68,8 +69,7 @@ def test_hook_stamp_carries_microseconds() -> None:
     assert parsed.tzinfo is not None
     assert abs((datetime.now(timezone.utc) - parsed).total_seconds()) < 5
 
-
-def test_event_token_dedupes_copies_inside_one_second() -> None:
+    # --- scenario: event_token_dedupes_copies_inside_one_second
     from jrbar.provider_adapters import ProviderEventName
 
     def token(epoch: float) -> EventToken:
@@ -79,9 +79,9 @@ def test_event_token_dedupes_copies_inside_one_second() -> None:
     assert token(1789056116.25) != token(1789056117.0)
 
 
-def test_interrupt_then_session_end_in_one_second_ends_the_session(tmp_path: Path) -> None:
-    # Whole-second stamps, as every record before this fix was written:
-    # the rank alone must still end the session.
+
+def test_interrupt_then_session_end_in_one_second_ends_the_session__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: interrupt_then_session_end_in_one_second_ends_the_session
     start = _ago(8.0, whole=True)
     stamp = _ago(4.0, whole=True)
     monitor = _replay(
@@ -96,8 +96,7 @@ def test_interrupt_then_session_end_in_one_second_ends_the_session(tmp_path: Pat
     )
     assert _status(monitor).mode is AgentMode.COMPLETED
 
-
-def test_instant_reprompt_after_stop_keeps_the_session_working(tmp_path: Path) -> None:
+    # --- scenario: instant_reprompt_after_stop_keeps_the_session_working
     monitor = _replay(
         tmp_path,
         [
@@ -108,3 +107,4 @@ def test_instant_reprompt_after_stop_keeps_the_session_working(tmp_path: Path) -
         ],
     )
     assert _status(monitor).mode is AgentMode.WORKING
+

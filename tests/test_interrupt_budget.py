@@ -101,7 +101,8 @@ def test_a_focus_never_holds_a_critical_signal(kind: str) -> None:
     assert grant.hold_seconds is None
 
 
-def test_the_owners_named_courtesy_signals_are_declared_courtesy() -> None:
+def test_the_owners_named_courtesy_signals_are_declared_courtesy__and_2_more() -> None:
+    # --- scenario: the_owners_named_courtesy_signals_are_declared_courtesy
     """Named one by one, because the list is the law and not something
     to be inferred: usage, messages and completions must not
     escalate through a Focus."""
@@ -114,8 +115,7 @@ def test_the_owners_named_courtesy_signals_are_declared_courtesy() -> None:
         signals.interrupt_class(signals.SIGNAL_COMPLETION) == signals.INTERRUPT_COURTESY
     )
 
-
-def test_only_an_explicit_silent_focus_reaches_a_critical_signal_and_only_its_sound() -> None:
+    # --- scenario: only_an_explicit_silent_focus_reaches_a_critical_signal_and_only_its_sound
     """The single crack Focus has in the critical rung: a per-Focus
     "Silent" hushes the escalation chime. It never takes the light."""
     ordinary = signals.grant_interrupt(
@@ -135,8 +135,7 @@ def test_only_an_explicit_silent_focus_reaches_a_critical_signal_and_only_its_so
     assert silent.allowed, "silent takes the sound, never the light"
     assert not silent.audible
 
-
-def test_no_focus_and_no_snooze_lets_the_courtesy_signals_through() -> None:
+    # --- scenario: no_focus_and_no_snooze_lets_the_courtesy_signals_through
     """The negative guard: the hold must be caused by a Focus, not
     permanently on. A budget that refuses everything would pass every
     test above and be a broken product."""
@@ -144,6 +143,7 @@ def test_no_focus_and_no_snooze_lets_the_courtesy_signals_through() -> None:
         grant = signals.grant_interrupt(kind, budget=signals.InterruptBudget())
         assert grant.allowed, kind
         assert grant.reason == signals.INTERRUPT_GRANTED
+
 
 
 @pytest.mark.parametrize(
@@ -225,7 +225,8 @@ def test_outbound_effect_axes_are_independent(
     assert (grant.banner_allowed, grant.audible, grant.webhook_allowed) == expected
 
 
-def test_silent_focus_outbound_reason_uses_the_final_effect_axes() -> None:
+def test_silent_focus_outbound_reason_uses_the_final_effect_axes__and_2_more() -> None:
+    # --- scenario: silent_focus_outbound_reason_uses_the_final_effect_axes
     grant = signals.grant_interrupt(
         signals.INTERRUPT_ESCALATION,
         budget=signals.InterruptBudget(
@@ -244,11 +245,7 @@ def test_silent_focus_outbound_reason_uses_the_final_effect_axes() -> None:
     assert not grant.outbound_allowed
     assert grant.outbound_reason == signals.INTERRUPT_REFUSED_DND
 
-
-# --- B. One budget ----------------------------------------------------
-
-
-def test_a_courtesy_burst_is_exactly_three_and_is_configurable() -> None:
+    # --- scenario: a_courtesy_burst_is_exactly_three_and_is_configurable
     """"Everything else is a burst of exactly 3." One number, one place,
     and a dial for the owner who wants a different one."""
     default = signals.grant_interrupt(
@@ -269,14 +266,15 @@ def test_a_courtesy_burst_is_exactly_three_and_is_configurable() -> None:
     assert louder.repetitions == 5
     assert louder.hold_seconds > default.hold_seconds
 
-
-def test_a_nonsense_burst_falls_back_to_the_locked_default() -> None:
+    # --- scenario: a_nonsense_burst_falls_back_to_the_locked_default
     for nonsense in (0, -4, None, "three", True, 10_000):
         budget = signals.InterruptBudget(burst=nonsense).normalized()
         assert 1 <= budget.burst <= signals.MAX_ALERT_BURST
 
 
-def test_an_undeclared_kind_is_refused() -> None:
+
+def test_an_undeclared_kind_is_refused__and_2_more() -> None:
+    # --- scenario: an_undeclared_kind_is_refused
     """Fail closed. A signal added later that forgets to say which rung
     it is on does not get to blink at someone during a meeting by
     default -- it gets nothing until it declares itself."""
@@ -284,8 +282,7 @@ def test_an_undeclared_kind_is_refused() -> None:
     assert not grant.allowed
     assert grant.reason == signals.INTERRUPT_REFUSED_UNDECLARED
 
-
-def test_every_styled_signal_declares_an_interrupt_class() -> None:
+    # --- scenario: every_styled_signal_declares_an_interrupt_class
     """The style catalogue and the class table are the same population.
     A style that can claim the bar with no declared class would be
     silently refused forever -- a feature nobody can use."""
@@ -296,8 +293,7 @@ def test_every_styled_signal_declares_an_interrupt_class() -> None:
     )
     assert not undeclared, undeclared
 
-
-def test_the_burst_law_and_the_hold_helper_agree() -> None:
+    # --- scenario: the_burst_law_and_the_hold_helper_agree
     """signal_hold_seconds is the same arithmetic for callers holding a
     style rather than a grant -- not a second, drifting copy of it."""
     for key, style in signals.DEFAULT_SIGNAL_STYLES.items():
@@ -312,10 +308,12 @@ def test_the_burst_law_and_the_hold_helper_agree() -> None:
             )
 
 
+
 # --- Nothing above 2Hz, ever ------------------------------------------
 
 
-def test_nothing_the_budget_grants_ever_repeats_faster_than_two_hertz() -> None:
+def test_nothing_the_budget_grants_ever_repeats_faster_than_two_hertz__and_2_more() -> None:
+    # --- scenario: nothing_the_budget_grants_ever_repeats_faster_than_two_hertz
     """Every kind, at every speed the settings pane can dial, including
     the 0.1s floor of the style catalogue (10Hz) and the notification
     default's 0.3s (3.33Hz). A cadence that would strobe is slowed;
@@ -340,8 +338,7 @@ def test_nothing_the_budget_grants_ever_repeats_faster_than_two_hertz() -> None:
                 assert grant.hertz <= signals.MAX_INTERRUPT_HZ, (kind, speed, pattern)
                 assert grant.cycle_seconds >= signals.MIN_INTERRUPT_CYCLE_SECONDS
 
-
-def test_the_2hz_floor_slows_a_cadence_and_changes_nothing_else() -> None:
+    # --- scenario: the_2hz_floor_slows_a_cadence_and_changes_nothing_else
     fast = signals.SignalStyle("#34C759", signals.PATTERN_BLINK, 0.1, 0.6)
     slowed = signals.budgeted_style(fast)
     assert slowed.speed_seconds == signals.MIN_INTERRUPT_CYCLE_SECONDS
@@ -356,8 +353,7 @@ def test_the_2hz_floor_slows_a_cadence_and_changes_nothing_else() -> None:
         if style.speed_seconds >= signals.MIN_INTERRUPT_CYCLE_SECONDS:
             assert signals.budgeted_style(style).speed_seconds == style.speed_seconds
 
-
-def test_a_default_burst_of_three_at_the_2hz_floor_is_the_shortest_burst() -> None:
+    # --- scenario: a_default_burst_of_three_at_the_2hz_floor_is_the_shortest_burst
     """The floor is a floor, not a fixed cadence: a slow signal keeps
     its own pace."""
     fastest = signal_hold_seconds(
@@ -368,6 +364,7 @@ def test_a_default_burst_of_three_at_the_2hz_floor_is_the_shortest_burst() -> No
         signals.SignalStyle("#FFFFFF", signals.PATTERN_BREATHE, 2.6, 1.0)
     )
     assert slow == pytest.approx(3 * 2.6 + signals.INTERRUPT_SETTLE_SECONDS)
+
 
 
 # --- Settings ---------------------------------------------------------
@@ -669,9 +666,8 @@ def test_the_burst_budget_sets_how_long_a_sweep_claims_the_bar(controller) -> No
     assert six == pytest.approx(signal_hold_seconds(style, burst=6), abs=0.5)
 
 
-def test_a_signal_dialled_into_strobe_range_is_slowed_before_the_hardware(
-    controller,
-) -> None:
+def test_a_signal_dialled_into_strobe_range_is_slowed_before_the_hardware__and_2_more(controller,) -> None:
+    # --- scenario: a_signal_dialled_into_strobe_range_is_slowed_before_the_hardware
     """The 2Hz law reaching an actual program. The settings pane still
     offers 0.1s (a preview thumbnail is not an interrupt); what plays AT
     the owner is floored at 500ms."""
@@ -704,10 +700,7 @@ def test_a_signal_dialled_into_strobe_range_is_slowed_before_the_hardware(
     assert sum(durations) == 500
     assert max(durations) < 500
 
-
-def test_an_escalation_chime_is_hushed_only_by_an_explicit_silent_focus(
-    controller,
-) -> None:
+    # --- scenario: an_escalation_chime_is_hushed_only_by_an_explicit_silent_focus
     """Wired: an ordinary Focus does not take the chime (critical
     escalates through Focus); a per-Focus "Silent" does."""
     _turn_on_a_focus(controller)
@@ -721,10 +714,7 @@ def test_an_escalation_chime_is_hushed_only_by_an_explicit_silent_focus(
     # And the light is untouched either way.
     assert controller.may_interrupt(signals.INTERRUPT_ESCALATION)
 
-
-def test_the_controller_budget_carries_the_three_inputs_the_law_needs(
-    controller,
-) -> None:
+    # --- scenario: the_controller_budget_carries_the_three_inputs_the_law_needs
     """The gate is fed, not hardcoded: burst plus one retained DND projection."""
     controller.settings = controller.settings.with_alert_burst(4)
     _turn_on_a_focus(controller)
@@ -742,6 +732,7 @@ def test_the_controller_budget_carries_the_three_inputs_the_law_needs(
     assert budget.banner_allowed is False
     assert budget.audible_allowed is False
     assert budget.webhook_allowed is False
+
 
 
 def test_a_reminder_that_arrives_during_a_focus_is_not_replayed_later(

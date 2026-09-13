@@ -24,17 +24,16 @@ KNOWN = {
 }
 
 
-def test_hash_matches_codex_for_matcher_events():
+def test_hash_matches_codex_for_matcher_events__and_2_more() -> None:
+    # --- scenario: hash_matches_codex_for_matcher_events
     assert hook_identity_hash("SessionStart", command=COMMAND, matcher="*") == KNOWN["SessionStart"]
     assert hook_identity_hash("PreToolUse", command=COMMAND, matcher="*") == KNOWN["PreToolUse"]
 
-
-def test_hash_drops_matcher_for_matcherless_events():
+    # --- scenario: hash_drops_matcher_for_matcherless_events
     assert hook_identity_hash("Stop", command=COMMAND, matcher="*") == KNOWN["Stop"]
     assert hook_identity_hash("Stop", command=COMMAND, matcher=None) == KNOWN["Stop"]
 
-
-def test_timeout_normalization():
+    # --- scenario: timeout_normalization
     assert normalized_timeout("PreToolUse", None) == 600
     assert normalized_timeout("PreToolUse", 30) == 30
     assert normalized_timeout("SessionEnd", None) == 1
@@ -42,7 +41,9 @@ def test_timeout_normalization():
     assert normalized_timeout("Interrupt", 2) == 2
 
 
-def test_trusted_hashes_for_config_keys_by_group_and_handler():
+
+def test_trusted_hashes_for_config_keys_by_group_and_handler__and_1_more() -> None:
+    # --- scenario: trusted_hashes_for_config_keys_by_group_and_handler
     config = f"""
 [[hooks.SessionStart]]
 matcher = "*"
@@ -75,9 +76,9 @@ timeout = 3
         "SessionEnd", command=COMMAND, matcher="*", timeout=3
     )
 
-
-def test_trusted_hashes_for_config_tolerates_bad_toml():
+    # --- scenario: trusted_hashes_for_config_tolerates_bad_toml
     assert trusted_hashes_for_config("[[hooks", Path("/x"), is_ours=lambda c: True) == {}
+
 
 
 def test_state_keys_use_the_path_codex_canonicalizes(tmp_path: Path) -> None:

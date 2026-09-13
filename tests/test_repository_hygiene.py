@@ -19,18 +19,18 @@ def _git_ls_files(*patterns: str) -> tuple[str, ...]:
     return tuple(line for line in result.stdout.splitlines() if line)
 
 
-def test_generated_work_directory_is_not_tracked() -> None:
+def test_generated_work_directory_is_not_tracked__and_2_more() -> None:
+    # --- scenario: generated_work_directory_is_not_tracked
     assert _git_ls_files("work") == ()
 
-
-def test_generated_installers_are_not_tracked() -> None:
+    # --- scenario: generated_installers_are_not_tracked
     assert _git_ls_files("*.pkg", "*.dmg") == ()
 
-
-def test_local_output_classes_are_ignored() -> None:
+    # --- scenario: local_output_classes_are_ignored
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
 
     assert "work/" in ignore
     assert "*.pkg" in ignore
     assert "*.dmg" in ignore
     assert ".venv/" in ignore
+

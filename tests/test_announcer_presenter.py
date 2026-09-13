@@ -20,7 +20,8 @@ def _hidden_plan():
     )
 
 
-def test_bridge_validates_and_retains_one_typed_presentation() -> None:
+def test_bridge_validates_and_retains_one_typed_presentation__and_2_more() -> None:
+    # --- scenario: bridge_validates_and_retains_one_typed_presentation
     bridge = AnnouncerStackPresentationBridge(MagicMock)
     handler = MagicMock()
     plan = _hidden_plan()
@@ -35,8 +36,7 @@ def test_bridge_validates_and_retains_one_typed_presentation() -> None:
     with pytest.raises(TypeError, match="invalid announcer answer plan"):
         bridge.set(plan, handler, answer_plan=object(), answer_handler=handler)
 
-
-def test_bridge_owns_panel_visibility_and_bounded_close() -> None:
+    # --- scenario: bridge_owns_panel_visibility_and_bounded_close
     panel = MagicMock()
     panel_factory = MagicMock(return_value=panel)
     bridge = AnnouncerStackPresentationBridge(panel_factory)
@@ -69,8 +69,7 @@ def test_bridge_owns_panel_visibility_and_bounded_close() -> None:
     panel.close.assert_called_once_with()
     assert bridge.plan is None
 
-
-def test_bridge_hides_existing_panel_when_window_is_unavailable() -> None:
+    # --- scenario: bridge_hides_existing_panel_when_window_is_unavailable
     panel = MagicMock()
     bridge = AnnouncerStackPresentationBridge(lambda: panel)
     bridge.set(_hidden_plan(), MagicMock())
@@ -81,7 +80,9 @@ def test_bridge_hides_existing_panel_when_window_is_unavailable() -> None:
     panel.update.assert_not_called()
 
 
-def test_explicit_nonempty_legacy_text_clears_only_hidden_empty_typed_plan() -> None:
+
+def test_explicit_nonempty_legacy_text_clears_only_hidden_empty_typed_plan__and_1_more() -> None:
+    # --- scenario: explicit_nonempty_legacy_text_clears_only_hidden_empty_typed_plan
     bridge = AnnouncerStackPresentationBridge(MagicMock)
     handler = MagicMock()
     bridge.set(_hidden_plan(), handler)
@@ -93,8 +94,7 @@ def test_explicit_nonempty_legacy_text_clears_only_hidden_empty_typed_plan() -> 
     assert bridge.answer_plan is None
     assert bridge.answer_handler is None
 
-
-def test_empty_legacy_text_does_not_clear_hidden_empty_typed_plan() -> None:
+    # --- scenario: empty_legacy_text_does_not_clear_hidden_empty_typed_plan
     bridge = AnnouncerStackPresentationBridge(MagicMock)
     handler = MagicMock()
     plan = _hidden_plan()
@@ -103,3 +103,4 @@ def test_empty_legacy_text_does_not_clear_hidden_empty_typed_plan() -> None:
     assert bridge.clear_hidden_empty_plan_for_legacy_text("") is False
     assert bridge.plan is plan
     assert bridge.intent_handler is handler
+

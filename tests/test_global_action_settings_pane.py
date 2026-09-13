@@ -134,9 +134,9 @@ class _RejectingResponder(NSView):
         return False
 
 
-@pytest.mark.parametrize(
-    ("state", "chord", "detail", "value", "status", "retry_visible"),
-    [
+def test_refresh_projects_every_recorder_state_into_retained_controls__and_2_more() -> None:
+    # --- scenario: refresh_projects_every_recorder_state_into_retained_controls
+    for state, chord, detail, value, status, retry_visible in [
         (
             GlobalActionRecorderState.UNSET,
             None,
@@ -193,30 +193,20 @@ class _RejectingResponder(NSView):
             "Shortcut cleared.",
             False,
         ),
-    ],
-)
-def test_refresh_projects_every_recorder_state_into_retained_controls(
-    state: GlobalActionRecorderState,
-    chord: ShortcutChord | None,
-    detail: str | None,
-    value: str,
-    status: str,
-    retry_visible: bool,
-) -> None:
-    pane = _pane()
-    controls = (pane.recorder, pane.status_field, pane.record_button, pane.clear_button)
+    ]:
+        pane = _pane()
+        controls = (pane.recorder, pane.status_field, pane.record_button, pane.clear_button)
 
-    pane.refresh(_presentation(state, chord, detail=detail))
+        pane.refresh(_presentation(state, chord, detail=detail))
 
-    assert (pane.recorder, pane.status_field, pane.record_button, pane.clear_button) == controls
-    assert pane.recorder.accessibilityValue() == value
-    assert pane.recorder.displayed_value == value
-    assert pane.status_field.stringValue() == status
-    assert pane.status_field.accessibilityValue() == status
-    assert pane.retry_button.isHidden() is not retry_visible
+        assert (pane.recorder, pane.status_field, pane.record_button, pane.clear_button) == controls
+        assert pane.recorder.accessibilityValue() == value
+        assert pane.recorder.displayed_value == value
+        assert pane.status_field.stringValue() == status
+        assert pane.status_field.accessibilityValue() == status
+        assert pane.retry_button.isHidden() is not retry_visible
 
-
-def test_pane_exposes_exact_accessibility_group_recorder_help_and_status() -> None:
+    # --- scenario: pane_exposes_exact_accessibility_group_recorder_help_and_status
     pane = _pane()
 
     assert pane.view.isAccessibilityElement()
@@ -235,8 +225,7 @@ def test_pane_exposes_exact_accessibility_group_recorder_help_and_status() -> No
     assert pane.status_field.accessibilityLabel() == GLOBAL_ACTION_STATUS_LABEL
     assert pane.status_field.accessibilityValue() == "No shortcut assigned."
 
-
-def test_key_view_loop_is_stable_and_includes_visible_controls() -> None:
+    # --- scenario: key_view_loop_is_stable_and_includes_visible_controls
     pane = _pane(presentation=_presentation(GlobalActionRecorderState.ACTIVE, _chord()))
 
     assert pane.view.nextKeyView() is pane.recorder
@@ -250,7 +239,9 @@ def test_key_view_loop_is_stable_and_includes_visible_controls() -> None:
     assert pane.retry_button.nextKeyView() is pane.recorder
 
 
-def test_record_moves_focus_in_and_escape_restores_the_prior_responder() -> None:
+
+def test_record_moves_focus_in_and_escape_restores_the_prior_responder__and_2_more() -> None:
+    # --- scenario: record_moves_focus_in_and_escape_restores_the_prior_responder
     pane = _pane(presentation=_presentation(GlobalActionRecorderState.ACTIVE, _chord()))
     window, prior = _host(pane)
     try:
@@ -267,66 +258,58 @@ def test_record_moves_focus_in_and_escape_restores_the_prior_responder() -> None
     finally:
         window.close()
 
+    # --- scenario: every_terminal_outcome_focuses_record_when_prior_cannot_be_restored
+    for prior_condition in ["missing", "refuses_focus"]:
+        for terminal_outcome in ["success", "cancel", "clear", "conflict", "refusal", "save_failure"]:
+            previous = _chord()
 
-@pytest.mark.parametrize("prior_condition", ["missing", "refuses_focus"])
-@pytest.mark.parametrize(
-    "terminal_outcome",
-    ["success", "cancel", "clear", "conflict", "refusal", "save_failure"],
-)
-def test_every_terminal_outcome_focuses_record_when_prior_cannot_be_restored(
-    prior_condition: str,
-    terminal_outcome: str,
-) -> None:
-    previous = _chord()
+            def candidate_result(candidate: ShortcutChord) -> GlobalActionRecorderPresentation:
+                if terminal_outcome == "success":
+                    return _presentation(GlobalActionRecorderState.ACTIVE, candidate)
+                if terminal_outcome == "conflict":
+                    return _presentation(
+                        GlobalActionRecorderState.LOCAL_CONFLICT,
+                        previous,
+                        detail="Open Agent Browser",
+                    )
+                if terminal_outcome == "refusal":
+                    return _presentation(
+                        GlobalActionRecorderState.REGISTRATION_REFUSED,
+                        previous,
+                    )
+                return _presentation(GlobalActionRecorderState.SAVE_FAILURE, previous)
 
-    def candidate_result(candidate: ShortcutChord) -> GlobalActionRecorderPresentation:
-        if terminal_outcome == "success":
-            return _presentation(GlobalActionRecorderState.ACTIVE, candidate)
-        if terminal_outcome == "conflict":
-            return _presentation(
-                GlobalActionRecorderState.LOCAL_CONFLICT,
-                previous,
-                detail="Open Agent Browser",
+            pane = _pane(
+                presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
+                on_candidate=candidate_result,
+                on_clear=lambda: _presentation(GlobalActionRecorderState.CLEARED),
             )
-        if terminal_outcome == "refusal":
-            return _presentation(
-                GlobalActionRecorderState.REGISTRATION_REFUSED,
-                previous,
-            )
-        return _presentation(GlobalActionRecorderState.SAVE_FAILURE, previous)
+            window, prior = _host(pane)
+            try:
+                assert window.makeFirstResponder_(prior)
+                pane.record_button.performClick_(None)
+                if prior_condition == "missing":
+                    pane._prior_first_responder = None
+                else:
+                    pane._prior_first_responder = _RejectingResponder.alloc().initWithFrame_(
+                        ((0.0, 0.0), (10.0, 10.0))
+                    )
 
-    pane = _pane(
-        presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
-        on_candidate=candidate_result,
-        on_clear=lambda: _presentation(GlobalActionRecorderState.CLEARED),
-    )
-    window, prior = _host(pane)
-    try:
-        assert window.makeFirstResponder_(prior)
-        pane.record_button.performClick_(None)
-        if prior_condition == "missing":
-            pane._prior_first_responder = None
-        else:
-            pane._prior_first_responder = _RejectingResponder.alloc().initWithFrame_(
-                ((0.0, 0.0), (10.0, 10.0))
-            )
+                if terminal_outcome == "cancel":
+                    pane.recorder.keyDown_(_KeyEvent(53, "\x1b"))
+                elif terminal_outcome == "clear":
+                    pane.recorder.keyDown_(_KeyEvent(51, "\x7f"))
+                else:
+                    pane.recorder.keyDown_(
+                        _KeyEvent(45, "n", NSEventModifierFlagControl)
+                    )
 
-        if terminal_outcome == "cancel":
-            pane.recorder.keyDown_(_KeyEvent(53, "\x1b"))
-        elif terminal_outcome == "clear":
-            pane.recorder.keyDown_(_KeyEvent(51, "\x7f"))
-        else:
-            pane.recorder.keyDown_(
-                _KeyEvent(45, "n", NSEventModifierFlagControl)
-            )
+                assert not pane.recorder.recording
+                assert window.firstResponder() is pane.record_button
+            finally:
+                window.close()
 
-        assert not pane.recorder.recording
-        assert window.firstResponder() is pane.record_button
-    finally:
-        window.close()
-
-
-def test_valid_modified_key_delegates_validation_and_emits_one_candidate() -> None:
+    # --- scenario: valid_modified_key_delegates_validation_and_emits_one_candidate
     received: list[ShortcutChord] = []
 
     def accept(candidate: ShortcutChord) -> GlobalActionRecorderPresentation:
@@ -366,7 +349,9 @@ def test_valid_modified_key_delegates_validation_and_emits_one_candidate() -> No
         window.close()
 
 
-def test_unmodified_and_reserved_keys_are_rejected_by_global_action_validation() -> None:
+
+def test_unmodified_and_reserved_keys_are_rejected_by_global_action_validation__and_2_more() -> None:
+    # --- scenario: unmodified_and_reserved_keys_are_rejected_by_global_action_validation
     received: list[ShortcutChord] = []
     pane = _pane(on_candidate=lambda candidate: received.append(candidate))
     window, _prior = _host(pane)
@@ -387,48 +372,42 @@ def test_unmodified_and_reserved_keys_are_rejected_by_global_action_validation()
     finally:
         window.close()
 
+    # --- scenario: delete_or_backspace_clears_only_after_recording_begins
+    for key_code, characters in [(51, "\x7f"), (117, "\uf728")]:
+        clear_count = 0
 
-@pytest.mark.parametrize(("key_code", "characters"), [(51, "\x7f"), (117, "\uf728")])
-def test_delete_or_backspace_clears_only_after_recording_begins(
-    key_code: int,
-    characters: str,
-) -> None:
-    clear_count = 0
+        def clear() -> GlobalActionRecorderPresentation:
+            nonlocal clear_count
+            clear_count += 1
+            return _presentation(GlobalActionRecorderState.CLEARED)
 
-    def clear() -> GlobalActionRecorderPresentation:
-        nonlocal clear_count
-        clear_count += 1
-        return _presentation(GlobalActionRecorderState.CLEARED)
+        pane = _pane(
+            presentation=_presentation(GlobalActionRecorderState.ACTIVE, _chord()),
+            on_clear=clear,
+        )
+        delegated: list[object] = []
+        pane.recorder.delegate_unhandled_key = delegated.append
+        event = _KeyEvent(key_code, characters)
 
-    pane = _pane(
-        presentation=_presentation(GlobalActionRecorderState.ACTIVE, _chord()),
-        on_clear=clear,
-    )
-    delegated: list[object] = []
-    pane.recorder.delegate_unhandled_key = delegated.append
-    event = _KeyEvent(key_code, characters)
-
-    pane.recorder.keyDown_(event)
-    assert clear_count == 0
-    assert delegated == [event]
-
-    window, prior = _host(pane)
-    try:
-        assert window.makeFirstResponder_(prior)
-        pane.record_button.performClick_(None)
         pane.recorder.keyDown_(event)
+        assert clear_count == 0
+        assert delegated == [event]
 
-        assert clear_count == 1
-        assert pane.recorder.accessibilityValue() == "Not set"
-        assert pane.status_field.stringValue() == "Shortcut cleared."
-        assert window.firstResponder() is prior
-    finally:
-        window.close()
+        window, prior = _host(pane)
+        try:
+            assert window.makeFirstResponder_(prior)
+            pane.record_button.performClick_(None)
+            pane.recorder.keyDown_(event)
 
+            assert clear_count == 1
+            assert pane.recorder.accessibilityValue() == "Not set"
+            assert pane.status_field.stringValue() == "Shortcut cleared."
+            assert window.firstResponder() is prior
+        finally:
+            window.close()
 
-@pytest.mark.parametrize(
-    ("result_state", "detail", "expected_status"),
-    [
+    # --- scenario: candidate_refusals_exit_recording_and_preserve_previous_binding
+    for result_state, detail, expected_status in [
         (
             GlobalActionRecorderState.LOCAL_CONFLICT,
             "Open Agent Browser",
@@ -439,36 +418,32 @@ def test_delete_or_backspace_clears_only_after_recording_begins(
             None,
             "macOS refused shortcut registration. The previous binding is unchanged.",
         ),
-    ],
-)
-def test_candidate_refusals_exit_recording_and_preserve_previous_binding(
-    result_state: GlobalActionRecorderState,
-    detail: str | None,
-    expected_status: str,
-) -> None:
-    previous = _chord()
-    pane = _pane(
-        presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
-        on_candidate=lambda _candidate: _presentation(
-            result_state,
-            previous,
-            detail=detail,
-        ),
-    )
-    window, prior = _host(pane)
-    try:
-        assert window.makeFirstResponder_(prior)
-        pane.record_button.performClick_(None)
-        pane.recorder.keyDown_(_KeyEvent(45, "n", NSEventModifierFlagControl))
+    ]:
+        previous = _chord()
+        pane = _pane(
+            presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
+            on_candidate=lambda _candidate: _presentation(
+                result_state,
+                previous,
+                detail=detail,
+            ),
+        )
+        window, prior = _host(pane)
+        try:
+            assert window.makeFirstResponder_(prior)
+            pane.record_button.performClick_(None)
+            pane.recorder.keyDown_(_KeyEvent(45, "n", NSEventModifierFlagControl))
 
-        assert window.firstResponder() is prior
-        assert pane.recorder.accessibilityValue() == "⌃K"
-        assert pane.status_field.stringValue() == expected_status
-    finally:
-        window.close()
+            assert window.firstResponder() is prior
+            assert pane.recorder.accessibilityValue() == "⌃K"
+            assert pane.status_field.stringValue() == expected_status
+        finally:
+            window.close()
 
 
-def test_typed_candidate_save_failure_restores_previous_binding() -> None:
+
+def test_typed_candidate_save_failure_restores_previous_binding__and_2_more() -> None:
+    # --- scenario: typed_candidate_save_failure_restores_previous_binding
     previous = _chord()
 
     def fail_save(_candidate: ShortcutChord) -> GlobalActionRecorderPresentation:
@@ -492,85 +467,82 @@ def test_typed_candidate_save_failure_restores_previous_binding() -> None:
     finally:
         window.close()
 
+    # --- scenario: unexpected_callback_exceptions_propagate
+    for callback_name in ["candidate", "clear", "retry"]:
+        previous = _chord()
 
-@pytest.mark.parametrize("callback_name", ["candidate", "clear", "retry"])
-def test_unexpected_callback_exceptions_propagate(callback_name: str) -> None:
-    previous = _chord()
+        def integration_bug(*_args) -> GlobalActionRecorderPresentation:
+            raise RuntimeError(f"{callback_name} integration bug")
 
-    def integration_bug(*_args) -> GlobalActionRecorderPresentation:
-        raise RuntimeError(f"{callback_name} integration bug")
+        pane = _pane(
+            presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
+            on_candidate=integration_bug if callback_name == "candidate" else None,
+            on_clear=integration_bug if callback_name == "clear" else None,
+            on_retry=integration_bug if callback_name == "retry" else None,
+        )
+        if callback_name == "candidate":
+            window, _prior = _host(pane)
+            pane.record_button.performClick_(None)
+        else:
+            window = None
 
-    pane = _pane(
-        presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
-        on_candidate=integration_bug if callback_name == "candidate" else None,
-        on_clear=integration_bug if callback_name == "clear" else None,
-        on_retry=integration_bug if callback_name == "retry" else None,
-    )
-    if callback_name == "candidate":
-        window, _prior = _host(pane)
-        pane.record_button.performClick_(None)
-    else:
-        window = None
+        try:
+            with pytest.raises(RuntimeError, match=f"{callback_name} integration bug"):
+                if callback_name == "candidate":
+                    pane.recorder.keyDown_(
+                        _KeyEvent(45, "n", NSEventModifierFlagControl)
+                    )
+                elif callback_name == "clear":
+                    pane.clearShortcut_(None)
+                else:
+                    pane.retryShortcut_(None)
+            assert pane.status_field.stringValue() == "Shortcut active."
+        finally:
+            if window is not None:
+                window.close()
 
-    try:
-        with pytest.raises(RuntimeError, match=f"{callback_name} integration bug"):
+    # --- scenario: malformed_callback_refresh_results_propagate
+    for callback_name in ["candidate", "clear", "retry"]:
+        for malformed in [None, object()]:
+            previous = _chord()
+
+            def malformed_result(*_args):
+                return malformed
+
+            pane = _pane(
+                presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
+                on_candidate=malformed_result if callback_name == "candidate" else None,
+                on_clear=malformed_result if callback_name == "clear" else None,
+                on_retry=malformed_result if callback_name == "retry" else None,
+            )
             if callback_name == "candidate":
-                pane.recorder.keyDown_(
-                    _KeyEvent(45, "n", NSEventModifierFlagControl)
-                )
-            elif callback_name == "clear":
-                pane.clearShortcut_(None)
+                window, _prior = _host(pane)
+                pane.record_button.performClick_(None)
             else:
-                pane.retryShortcut_(None)
-        assert pane.status_field.stringValue() == "Shortcut active."
-    finally:
-        if window is not None:
-            window.close()
+                window = None
+
+            try:
+                with pytest.raises(
+                    ValueError,
+                    match="global action recorder presentation is invalid",
+                ):
+                    if callback_name == "candidate":
+                        pane.recorder.keyDown_(
+                            _KeyEvent(45, "n", NSEventModifierFlagControl)
+                        )
+                    elif callback_name == "clear":
+                        pane.clearShortcut_(None)
+                    else:
+                        pane.retryShortcut_(None)
+                assert pane.status_field.stringValue() == "Shortcut active."
+            finally:
+                if window is not None:
+                    window.close()
 
 
-@pytest.mark.parametrize("callback_name", ["candidate", "clear", "retry"])
-@pytest.mark.parametrize("malformed", [None, object()])
-def test_malformed_callback_refresh_results_propagate(
-    callback_name: str,
-    malformed: object,
-) -> None:
-    previous = _chord()
 
-    def malformed_result(*_args):
-        return malformed
-
-    pane = _pane(
-        presentation=_presentation(GlobalActionRecorderState.ACTIVE, previous),
-        on_candidate=malformed_result if callback_name == "candidate" else None,
-        on_clear=malformed_result if callback_name == "clear" else None,
-        on_retry=malformed_result if callback_name == "retry" else None,
-    )
-    if callback_name == "candidate":
-        window, _prior = _host(pane)
-        pane.record_button.performClick_(None)
-    else:
-        window = None
-
-    try:
-        with pytest.raises(
-            ValueError,
-            match="global action recorder presentation is invalid",
-        ):
-            if callback_name == "candidate":
-                pane.recorder.keyDown_(
-                    _KeyEvent(45, "n", NSEventModifierFlagControl)
-                )
-            elif callback_name == "clear":
-                pane.clearShortcut_(None)
-            else:
-                pane.retryShortcut_(None)
-        assert pane.status_field.stringValue() == "Shortcut active."
-    finally:
-        if window is not None:
-            window.close()
-
-
-def test_direct_malformed_refresh_input_propagates() -> None:
+def test_direct_malformed_refresh_input_propagates__and_2_more() -> None:
+    # --- scenario: direct_malformed_refresh_input_propagates
     pane = _pane()
 
     with pytest.raises(
@@ -579,8 +551,7 @@ def test_direct_malformed_refresh_input_propagates() -> None:
     ):
         pane.refresh(object())  # type: ignore[arg-type]
 
-
-def test_clear_and_retry_callbacks_exit_recording_and_refresh_in_place() -> None:
+    # --- scenario: clear_and_retry_callbacks_exit_recording_and_refresh_in_place
     previous = _chord()
     retried = 0
 
@@ -613,8 +584,7 @@ def test_clear_and_retry_callbacks_exit_recording_and_refresh_in_place() -> None
     finally:
         window.close()
 
-
-def test_refresh_replaces_callbacks_without_rebuilding_or_using_stale_closures() -> None:
+    # --- scenario: refresh_replaces_callbacks_without_rebuilding_or_using_stale_closures
     old: list[ShortcutChord] = []
     new: list[ShortcutChord] = []
 
@@ -644,7 +614,9 @@ def test_refresh_replaces_callbacks_without_rebuilding_or_using_stale_closures()
         window.close()
 
 
-def test_non_recording_keydown_delegates_without_consuming_text_input() -> None:
+
+def test_non_recording_keydown_delegates_without_consuming_text_input__and_1_more() -> None:
+    # --- scenario: non_recording_keydown_delegates_without_consuming_text_input
     pane = _pane()
     event = _KeyEvent(0, "a")
     delegated: list[object] = []
@@ -654,8 +626,7 @@ def test_non_recording_keydown_delegates_without_consuming_text_input() -> None:
 
     assert delegated == [event]
 
-
-def test_source_uses_no_event_monitor_or_cgeventtap() -> None:
+    # --- scenario: source_uses_no_event_monitor_or_cgeventtap
     source = (
         Path(__file__).parents[1] / "src/jrbar/global_action_settings_pane.py"
     ).read_text()
@@ -663,6 +634,7 @@ def test_source_uses_no_event_monitor_or_cgeventtap() -> None:
     assert "addGlobalMonitorForEvents" not in source
     assert "addLocalMonitorForEvents" not in source
     assert "CGEventTap" not in source
+
 
 
 class _Registry:
@@ -751,7 +723,8 @@ def _integrated_target(
     return target, lifecycle
 
 
-def test_integrated_set_projects_success_from_committed_settings_and_registry() -> None:
+def test_integrated_set_projects_success_from_committed_settings_and_registry__and_2_more() -> None:
+    # --- scenario: integrated_set_projects_success_from_committed_settings_and_registry
     previous = _chord()
     candidate = _chord(45, "N", ShortcutModifier.COMMAND)
     target, lifecycle = _integrated_target(persisted=previous, active=previous)
@@ -768,10 +741,8 @@ def test_integrated_set_projects_success_from_committed_settings_and_registry() 
     )
     assert pane.pending_operation is None
 
-
-@pytest.mark.parametrize(
-    ("failure", "state"),
-    [
+    # --- scenario: failed_set_preserves_previous_chord_and_retry_repeats_exact_candidate
+    for failure, state in [
         (
             GlobalActionChangeResult(
                 False,
@@ -783,37 +754,30 @@ def test_integrated_set_projects_success_from_committed_settings_and_registry() 
             GlobalActionChangeResult(False, save_failure="write_refused"),
             GlobalActionRecorderState.SAVE_FAILURE,
         ),
-    ],
-)
-def test_failed_set_preserves_previous_chord_and_retry_repeats_exact_candidate(
-    failure: GlobalActionChangeResult,
-    state: GlobalActionRecorderState,
-) -> None:
-    previous = _chord()
-    candidate = _chord(45, "N", ShortcutModifier.COMMAND)
-    target, lifecycle = _integrated_target(persisted=previous, active=previous)
-    lifecycle.results = [failure, GlobalActionChangeResult(True)]
-    pane = build_global_action_settings_pane(target)
+    ]:
+        previous = _chord()
+        candidate = _chord(45, "N", ShortcutModifier.COMMAND)
+        target, lifecycle = _integrated_target(persisted=previous, active=previous)
+        lifecycle.results = [failure, GlobalActionChangeResult(True)]
+        pane = build_global_action_settings_pane(target)
 
-    pane._submit_candidate(candidate)
+        pane._submit_candidate(candidate)
 
-    assert pane._presentation == _presentation(state, previous)
-    assert pane.pending_operation is not None
-    pane.retryShortcut_(None)
-    assert lifecycle.calls == [
-        ("set", GlobalActionID.REVEAL_CURRENT_ASK, candidate),
-        ("set", GlobalActionID.REVEAL_CURRENT_ASK, candidate),
-    ]
-    assert pane._presentation == _presentation(
-        GlobalActionRecorderState.ACTIVE,
-        candidate,
-    )
-    assert pane.pending_operation is None
+        assert pane._presentation == _presentation(state, previous)
+        assert pane.pending_operation is not None
+        pane.retryShortcut_(None)
+        assert lifecycle.calls == [
+            ("set", GlobalActionID.REVEAL_CURRENT_ASK, candidate),
+            ("set", GlobalActionID.REVEAL_CURRENT_ASK, candidate),
+        ]
+        assert pane._presentation == _presentation(
+            GlobalActionRecorderState.ACTIVE,
+            candidate,
+        )
+        assert pane.pending_operation is None
 
-
-@pytest.mark.parametrize(
-    ("failure", "state"),
-    [
+    # --- scenario: failed_clear_preserves_previous_chord_and_retry_repeats_clear
+    for failure, state in [
         (
             GlobalActionChangeResult(
                 False,
@@ -825,30 +789,27 @@ def test_failed_set_preserves_previous_chord_and_retry_repeats_exact_candidate(
             GlobalActionChangeResult(False, save_failure="concurrent_write"),
             GlobalActionRecorderState.SAVE_FAILURE,
         ),
-    ],
-)
-def test_failed_clear_preserves_previous_chord_and_retry_repeats_clear(
-    failure: GlobalActionChangeResult,
-    state: GlobalActionRecorderState,
-) -> None:
-    previous = _chord()
-    target, lifecycle = _integrated_target(persisted=previous, active=previous)
-    lifecycle.results = [failure, GlobalActionChangeResult(True)]
-    pane = build_global_action_settings_pane(target)
+    ]:
+        previous = _chord()
+        target, lifecycle = _integrated_target(persisted=previous, active=previous)
+        lifecycle.results = [failure, GlobalActionChangeResult(True)]
+        pane = build_global_action_settings_pane(target)
 
-    pane.clearShortcut_(None)
+        pane.clearShortcut_(None)
 
-    assert pane._presentation == _presentation(state, previous)
-    pane.retryShortcut_(None)
-    assert lifecycle.calls == [
-        ("clear", GlobalActionID.REVEAL_CURRENT_ASK),
-        ("clear", GlobalActionID.REVEAL_CURRENT_ASK),
-    ]
-    assert pane._presentation == _presentation(GlobalActionRecorderState.CLEARED)
-    assert pane.pending_operation is None
+        assert pane._presentation == _presentation(state, previous)
+        pane.retryShortcut_(None)
+        assert lifecycle.calls == [
+            ("clear", GlobalActionID.REVEAL_CURRENT_ASK),
+            ("clear", GlobalActionID.REVEAL_CURRENT_ASK),
+        ]
+        assert pane._presentation == _presentation(GlobalActionRecorderState.CLEARED)
+        assert pane.pending_operation is None
 
 
-def test_startup_registration_mismatch_retries_refresh_from_settings() -> None:
+
+def test_startup_registration_mismatch_retries_refresh_from_settings__and_2_more() -> None:
+    # --- scenario: startup_registration_mismatch_retries_refresh_from_settings
     persisted = _chord()
     target, lifecycle = _integrated_target(persisted=persisted, active=None)
     pane = build_global_action_settings_pane(target)
@@ -865,8 +826,7 @@ def test_startup_registration_mismatch_retries_refresh_from_settings() -> None:
         persisted,
     )
 
-
-def test_startup_malformed_persisted_shortcut_projects_visible_refusal() -> None:
+    # --- scenario: startup_malformed_persisted_shortcut_projects_visible_refusal
     raw = {
         GlobalActionID.REVEAL_CURRENT_ASK.value: {
             "key_code": 40,
@@ -894,8 +854,7 @@ def test_startup_malformed_persisted_shortcut_projects_visible_refusal() -> None
     assert target.settings.global_action_shortcuts == raw
     assert lifecycle.calls == []
 
-
-def test_retained_refresh_keeps_valid_binding_visible_with_unknown_entry() -> None:
+    # --- scenario: retained_refresh_keeps_valid_binding_visible_with_unknown_entry
     persisted = _chord()
     target, lifecycle = _integrated_target(persisted=persisted, active=persisted)
     pane = build_global_action_settings_pane(target)
@@ -926,6 +885,7 @@ def test_retained_refresh_keeps_valid_binding_visible_with_unknown_entry() -> No
     }
     assert target.settings.global_action_shortcuts == raw
     assert lifecycle.calls == []
+
 
 
 def test_settings_refresh_retains_controls_pending_retry_and_current_callbacks() -> None:

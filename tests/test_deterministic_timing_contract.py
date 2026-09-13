@@ -47,23 +47,16 @@ def _is_unbounded_join(node: ast.Call) -> bool:
     )
 
 
-@pytest.mark.parametrize(
-    "source",
-    ("worker.join()", "worker.join(None)", "worker.join(timeout=None)"),
-)
-def test_join_detector_rejects_every_unbounded_form(source: str) -> None:
-    assert _is_unbounded_join(_call(source)) is True
+def test_join_detector_rejects_every_unbounded_form__and_2_more() -> None:
+    # --- scenario: join_detector_rejects_every_unbounded_form
+    for source in ("worker.join()", "worker.join(None)", "worker.join(timeout=None)"):
+        assert _is_unbounded_join(_call(source)) is True
 
+    # --- scenario: join_detector_accepts_explicitly_bounded_forms
+    for source in ("worker.join(0.1)", "worker.join(timeout=0.1)"):
+        assert _is_unbounded_join(_call(source)) is False
 
-@pytest.mark.parametrize(
-    "source",
-    ("worker.join(0.1)", "worker.join(timeout=0.1)"),
-)
-def test_join_detector_accepts_explicitly_bounded_forms(source: str) -> None:
-    assert _is_unbounded_join(_call(source)) is False
-
-
-def test_tests_do_not_sleep_or_join_without_a_bound() -> None:
+    # --- scenario: tests_do_not_sleep_or_join_without_a_bound
     violations: list[str] = []
     for path, tree in _test_trees():
         source = path.read_text(encoding="utf-8")
@@ -87,6 +80,7 @@ def test_tests_do_not_sleep_or_join_without_a_bound() -> None:
             if _is_unbounded_join(node):
                 violations.append(f"{path.name}:{node.lineno}: unbounded join")
     assert violations == []
+
 
 
 def test_test_random_generators_always_have_an_explicit_seed() -> None:

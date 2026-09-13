@@ -79,7 +79,8 @@ def test_native_names_canonicalise_and_tool_permission_is_an_ask() -> None:
     assert done is not None and done.event_name == "Stop"
 
 
-def test_hook_client_prints_the_empty_verdict_for_gemini(tmp_path: Path) -> None:
+def test_hook_client_prints_the_empty_verdict_for_gemini__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: hook_client_prints_the_empty_verdict_for_gemini
     completed = subprocess.run(
         [sys.executable, "-m", "jrbar.hook_client", "--provider", "gemini", "--log", str(tmp_path / "gemini.jsonl")],
         input="{}", capture_output=True, text=True, timeout=30,
@@ -95,8 +96,7 @@ def test_hook_client_prints_the_empty_verdict_for_gemini(tmp_path: Path) -> None
         quiet = subprocess.run([str(shim), "--provider", "pi"], input="{}", capture_output=True, text=True, timeout=10, env={"JRBAR_STATE_DIR": str(tmp_path / "state")}, check=False)
         assert quiet.stdout == ""
 
-
-def test_gemini_chat_log_is_read_as_a_transcript(tmp_path: Path) -> None:
+    # --- scenario: gemini_chat_log_is_read_as_a_transcript
     root = tmp_path / ".gemini" / "tmp" / "downloads" / "chats"
     root.mkdir(parents=True)
     path = root / "session-2026-09-10T12-00-e355ddc8.jsonl"
@@ -119,8 +119,9 @@ def test_gemini_chat_log_is_read_as_a_transcript(tmp_path: Path) -> None:
     assert list(iter_gemini_transcript_file(tmp_path / "missing.jsonl")) == []
 
 
-@pytest.mark.parametrize("provider", ["pi", "gemini"])
-def test_ingress_accepts_the_new_providers(provider: str) -> None:
-    from jrbar.hook_ingress_protocol import _HOOK_PROVIDERS
 
-    assert provider in _HOOK_PROVIDERS
+def test_ingress_accepts_the_new_providers() -> None:
+    for provider in ["pi", "gemini"]:
+        from jrbar.hook_ingress_protocol import _HOOK_PROVIDERS
+
+        assert provider in _HOOK_PROVIDERS

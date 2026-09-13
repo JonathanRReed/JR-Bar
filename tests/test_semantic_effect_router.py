@@ -60,7 +60,8 @@ def _suppressed(
     }
 
 
-def test_semantic_vocabulary_and_priority_match_the_approved_order() -> None:
+def test_semantic_vocabulary_and_priority_match_the_approved_order__and_2_more() -> None:
+    # --- scenario: semantic_vocabulary_and_priority_match_the_approved_order
     assert tuple(item.value for item in SemanticEventKind) == (
         "ask",
         "failure",
@@ -90,8 +91,7 @@ def test_semantic_vocabulary_and_priority_match_the_approved_order() -> None:
         SemanticEventKind.IDLE,
     )
 
-
-def test_highest_semantic_priority_wins_and_reports_every_loser() -> None:
+    # --- scenario: highest_semantic_priority_wins_and_reports_every_loser
     candidates = (
         _candidate("work-2", SemanticEventKind.WORK, sequence=2),
         _candidate("failure-1", SemanticEventKind.FAILURE, sequence=1),
@@ -118,8 +118,7 @@ def test_highest_semantic_priority_wins_and_reports_every_loser() -> None:
         "work-2": SuppressionReason.LOWER_PRIORITY,
     }
 
-
-def test_every_default_semantic_resolves_through_the_runtime_registry() -> None:
+    # --- scenario: every_default_semantic_resolves_through_the_runtime_registry
     for semantic in SemanticEventKind:
         selection = route_semantic_effects((_candidate(semantic.value, semantic),))
 
@@ -128,7 +127,9 @@ def test_every_default_semantic_resolves_through_the_runtime_registry() -> None:
         assert selection.destination_surfaces
 
 
-def test_equal_semantics_use_sequence_then_key_without_input_order_dependence() -> None:
+
+def test_equal_semantics_use_sequence_then_key_without_input_order_dependence__and_2_more() -> None:
+    # --- scenario: equal_semantics_use_sequence_then_key_without_input_order_dependence
     older = _candidate("z-older", SemanticEventKind.WORK, sequence=1)
     alpha = _candidate("a-newer", SemanticEventKind.WORK, sequence=2)
     omega = _candidate("z-newer", SemanticEventKind.WORK, sequence=2)
@@ -142,10 +143,8 @@ def test_equal_semantics_use_sequence_then_key_without_input_order_dependence() 
         "z-older",
     )
 
-
-@pytest.mark.parametrize(
-    ("admission", "candidates", "winner_key"),
-    (
+    # --- scenario: display_admission_uses_existing_dnd_capabilities
+    for admission, candidates, winner_key in (
         (
             DisplayAdmission.ALL,
             (
@@ -175,39 +174,31 @@ def test_equal_semantics_use_sequence_then_key_without_input_order_dependence() 
             (_candidate("ask", SemanticEventKind.ASK),),
             None,
         ),
-    ),
-)
-def test_display_admission_uses_existing_dnd_capabilities(
-    admission: DisplayAdmission,
-    candidates: tuple[SemanticEffectCandidate, ...],
-    winner_key: str | None,
-) -> None:
-    selection = route_semantic_effects(
-        candidates,
-        display_admission=admission,
-    )
+    ):
+        selection = route_semantic_effects(
+            candidates,
+            display_admission=admission,
+        )
 
-    assert (
-        selection.winner.key if selection.winner is not None else None
-    ) == winner_key
-    refused = {
-        item.candidate.key
-        for item in selection.suppressed
-        if item.reason is SuppressionReason.DISPLAY_ADMISSION
-    }
-    if admission is DisplayAdmission.CRITICAL:
-        assert refused == {"work"}
-    elif admission is DisplayAdmission.ASKS:
-        assert refused == {"failure"}
-    elif admission is DisplayAdmission.NONE:
-        assert refused == {"ask"}
-    else:
-        assert refused == set()
+        assert (
+            selection.winner.key if selection.winner is not None else None
+        ) == winner_key
+        refused = {
+            item.candidate.key
+            for item in selection.suppressed
+            if item.reason is SuppressionReason.DISPLAY_ADMISSION
+        }
+        if admission is DisplayAdmission.CRITICAL:
+            assert refused == {"work"}
+        elif admission is DisplayAdmission.ASKS:
+            assert refused == {"failure"}
+        elif admission is DisplayAdmission.NONE:
+            assert refused == {"ask"}
+        else:
+            assert refused == set()
 
-
-@pytest.mark.parametrize(
-    ("suppression", "reason"),
-    (
+    # --- scenario: courtesy_hold_suppresses_courtesy_but_leaves_idle_presence
+    for suppression, reason in (
         (
             CourtesySuppression(focus=True),
             SuppressionReason.COURTESY_FOCUS,
@@ -220,29 +211,26 @@ def test_display_admission_uses_existing_dnd_capabilities(
             CourtesySuppression(budget_exhausted=True),
             SuppressionReason.COURTESY_BUDGET,
         ),
-    ),
-)
-def test_courtesy_hold_suppresses_courtesy_but_leaves_idle_presence(
-    suppression: CourtesySuppression,
-    reason: SuppressionReason,
-) -> None:
-    completion = _candidate("completion", SemanticEventKind.COMPLETION)
-    environment = _candidate("battery", SemanticEventKind.ENVIRONMENT)
-    idle = _candidate("idle", SemanticEventKind.IDLE)
+    ):
+        completion = _candidate("completion", SemanticEventKind.COMPLETION)
+        environment = _candidate("battery", SemanticEventKind.ENVIRONMENT)
+        idle = _candidate("idle", SemanticEventKind.IDLE)
 
-    selection = route_semantic_effects(
-        (completion, environment, idle),
-        courtesy_suppression=suppression,
-    )
+        selection = route_semantic_effects(
+            (completion, environment, idle),
+            courtesy_suppression=suppression,
+        )
 
-    assert selection.winner == idle
-    assert _suppressed(selection) == {
-        "completion": reason,
-        "battery": reason,
-    }
+        assert selection.winner == idle
+        assert _suppressed(selection) == {
+            "completion": reason,
+            "battery": reason,
+        }
 
 
-def test_scene_assignment_changes_routine_effect_but_not_urgent_override() -> None:
+
+def test_scene_assignment_changes_routine_effect_but_not_urgent_override__and_2_more() -> None:
+    # --- scenario: scene_assignment_changes_routine_effect_but_not_urgent_override
     effect_map = replace(
         DEFAULT_SEMANTIC_EFFECT_MAP,
         scene_assignments=(
@@ -272,8 +260,7 @@ def test_scene_assignment_changes_routine_effect_but_not_urgent_override() -> No
     assert ask.registry_effect_identifier == "alert"
     assert failure.registry_effect_identifier == "alert"
 
-
-def test_reduce_motion_uses_registry_fallback_and_effective_surfaces() -> None:
+    # --- scenario: reduce_motion_uses_registry_fallback_and_effective_surfaces
     registry = EffectRegistry(
         (
             EffectDefinition(
@@ -312,8 +299,7 @@ def test_reduce_motion_uses_registry_fallback_and_effective_surfaces() -> None:
     assert selection.reduce_motion_substitution == "still"
     assert selection.destination_surfaces == ("screen_bar",)
 
-
-def test_missing_effect_and_unsupported_surface_do_not_block_next_candidate() -> None:
+    # --- scenario: missing_effect_and_unsupported_surface_do_not_block_next_candidate
     missing_map = _replace_effect(SemanticEventKind.ASK, "not-registered")
     ask = _candidate("ask", SemanticEventKind.ASK)
     idle = _candidate("idle", SemanticEventKind.IDLE)
@@ -337,6 +323,7 @@ def test_missing_effect_and_unsupported_surface_do_not_block_next_candidate() ->
         _suppressed(unsupported)["work"]
         is SuppressionReason.NO_SUPPORTED_DESTINATION
     )
+
 
 
 def test_router_inputs_are_immutable_bounded_and_strictly_typed() -> None:

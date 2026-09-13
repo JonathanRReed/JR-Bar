@@ -37,7 +37,8 @@ def test_synthetic_payloads_end_workers_then_session():
     assert all(p["jrbar_synthetic"] for p in payloads)
 
 
-def test_reap_only_sweeps_live_rows_and_routes_through_hook_pipeline(tmp_path: Path):
+def test_reap_only_sweeps_live_rows_and_routes_through_hook_pipeline__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: reap_only_sweeps_live_rows_and_routes_through_hook_pipeline
     pr.record_agent_process("codex", "dead", pr.ProcessEntry(301, 1, 6.0, "codex"), state_dir=tmp_path)
     pr.record_agent_process("codex", "done", pr.ProcessEntry(302, 1, 6.0, "codex"), state_dir=tmp_path)
     sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=lambda: {1: pr.ProcessEntry(1, 0, 0.0, "launchd")}, claude_index_loader=dict)
@@ -65,8 +66,7 @@ def test_reap_only_sweeps_live_rows_and_routes_through_hook_pipeline(tmp_path: P
     assert payload["hook_event_name"] == "SessionEnd" and payload["session_id"] == "dead"
     assert passed_handler is handler
 
-
-def test_reap_swallows_pipeline_errors(tmp_path: Path):
+    # --- scenario: reap_swallows_pipeline_errors
     pr.record_agent_process("codex", "dead", pr.ProcessEntry(301, 1, 6.0, "codex"), state_dir=tmp_path)
     sweeper = pr.ProcessSweeper(state_dir=tmp_path, table_loader=lambda: {1: pr.ProcessEntry(1, 0, 0.0, "launchd")}, claude_index_loader=dict)
 
@@ -83,8 +83,7 @@ def test_reap_swallows_pipeline_errors(tmp_path: Path):
     assert result.synthesized_events == 0 and len(result.ended_sessions) == 1
     assert result.failed_sends == 1
 
-
-def test_reap_retries_a_send_the_first_attempt_lost(tmp_path: Path):
+    # --- scenario: reap_retries_a_send_the_first_attempt_lost
     """The whole point of the cooldown: a failed terminal write is a delay,
     not a disappearance. The session stays on the live list, and once the
     grace window passes the sweep emits the end again."""
@@ -139,7 +138,9 @@ def test_reap_retries_a_send_the_first_attempt_lost(tmp_path: Path):
     assert sent[0]["hook_event_name"] == "SessionEnd"
 
 
-def test_reap_reports_the_sessions_it_found_alive(tmp_path: Path):
+
+def test_reap_reports_the_sessions_it_found_alive__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: reap_reports_the_sessions_it_found_alive
     """The other half of the sweep. ``status_for_snapshot`` needs it: without
     it the silence timer is the only evidence there is, and a long tool run
     that goes quiet gets called dead while its process is right there."""
@@ -164,8 +165,7 @@ def test_reap_reports_the_sessions_it_found_alive(tmp_path: Path):
     assert result.live_sessions == frozenset({("codex", "alive")})
     assert [d.record.session_id for d in result.ended_sessions] == ["dead"]
 
-
-def test_reap_still_works_with_a_sweeper_that_only_knows_sweep(tmp_path: Path):
+    # --- scenario: reap_still_works_with_a_sweeper_that_only_knows_sweep
     """A double from before the live half existed vouches for nothing, which
     leaves the silence rule exactly as it was."""
 
@@ -182,3 +182,4 @@ def test_reap_still_works_with_a_sweeper_that_only_knows_sweep(tmp_path: Path):
     )
     assert result.live_sessions == frozenset()
     assert result.ended_sessions == ()
+

@@ -272,7 +272,8 @@ def test_every_renderer_neutral_family_compiles_to_a_named_accessible_effect(
     assert all(output.static_fallback_program for output in dispatch.outputs)
 
 
-def test_explicit_priority_selects_one_output_per_surface() -> None:
+def test_explicit_priority_selects_one_output_per_surface__and_2_more() -> None:
+    # --- scenario: explicit_priority_selects_one_output_per_surface
     dispatch = compile_ambient_effect_dispatch(
         ask_heartbeat=_ask(),
         recovery_grace=_recovery(),
@@ -287,8 +288,7 @@ def test_explicit_priority_selects_one_output_per_surface() -> None:
     assert all(output.family is AmbientEffectFamily.ASK_HEARTBEAT for output in dispatch.outputs)
     assert len(dispatch.suppressed) == 4
 
-
-def test_reduce_motion_plans_compile_static_output_without_losing_identity_or_text() -> None:
+    # --- scenario: reduce_motion_plans_compile_static_output_without_losing_identity_or_text
     moving = compile_ambient_effect_dispatch(completion_meniscus=_meniscus())
     static = compile_ambient_effect_dispatch(completion_meniscus=_meniscus(reduce_motion=True))
 
@@ -300,8 +300,7 @@ def test_reduce_motion_plans_compile_static_output_without_losing_identity_or_te
     assert "Reduce Motion" in static_output.accessibility_text
     assert static_output.program == static_output.static_fallback_program
 
-
-def test_dot_binary_heartbeat_owns_dot_while_richer_surface_effects_remain_elsewhere() -> None:
+    # --- scenario: dot_binary_heartbeat_owns_dot_while_richer_surface_effects_remain_elsewhere
     dispatch = compile_ambient_effect_dispatch(
         ask_heartbeat=_ask(),
         dot_binary_heartbeat=plan_dot_binary_heartbeat(
@@ -319,7 +318,9 @@ def test_dot_binary_heartbeat_owns_dot_while_richer_surface_effects_remain_elsew
     assert "0:" in dot.program and "1:" in dot.program
 
 
-def test_every_program_is_parser_valid_bounded_and_capped_at_two_hertz() -> None:
+
+def test_every_program_is_parser_valid_bounded_and_capped_at_two_hertz__and_1_more() -> None:
+    # --- scenario: every_program_is_parser_valid_bounded_and_capped_at_two_hertz
     dispatch = compile_ambient_effect_dispatch(
         glance_light=_glance(),
         firefly_completion=_firefly(),
@@ -341,8 +342,7 @@ def test_every_program_is_parser_valid_bounded_and_capped_at_two_hertz() -> None
         assert 0 < output.duration_ms <= MAX_AMBIENT_OUTPUT_DURATION_MS
         assert output.expires_after_ms == output.duration_ms
 
-
-def test_semantic_colors_are_typed_normalized_and_do_not_mutate_inputs() -> None:
+    # --- scenario: semantic_colors_are_typed_normalized_and_do_not_mutate_inputs
     colors = AmbientSemanticColors(work="#123abc")
     selection = route_semantic_effects(
         (SemanticEffectCandidate("semantic:work", SemanticEventKind.WORK),)
@@ -359,6 +359,7 @@ def test_semantic_colors_are_typed_normalized_and_do_not_mutate_inputs() -> None
         dispatch.outputs = ()  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         dispatch.outputs[0].program = "off"  # type: ignore[misc]
+
 
 
 def test_semantic_program_override_plays_the_assigned_effect() -> None:

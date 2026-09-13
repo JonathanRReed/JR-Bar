@@ -18,7 +18,8 @@ def request(**changes):
     return LocalAPIRequest(**values)
 
 
-def test_redacted_read_request_round_trips_exact_schema():
+def test_redacted_read_request_round_trips_exact_schema__and_2_more() -> None:
+    # --- scenario: redacted_read_request_round_trips_exact_schema
     decoded = decode_request(request().encode())
     assert decoded.client_id == "streamdeck"
     assert json.loads(redacted_response("status.read", {"state": "idle"}, generated_at=101).encode())["privacy"] == "redacted"
@@ -28,8 +29,7 @@ def test_redacted_read_request_round_trips_exact_schema():
     assert decoded_signed.auth == signed.auth
     assert decoded_signed.payload == {}
 
-
-def test_unknown_fields_and_oversized_payload_rejected():
+    # --- scenario: unknown_fields_and_oversized_payload_rejected
     document = json.loads(request().encode())
     document["extra"] = True
     with pytest.raises(ValueError):
@@ -43,8 +43,7 @@ def test_unknown_fields_and_oversized_payload_rejected():
     with pytest.raises(ValueError, match="authentication"):
         decode_request(request(auth="not-a-valid-tag").encode())
 
-
-def test_authenticated_request_requires_valid_signature_and_replay_guard():
+    # --- scenario: authenticated_request_requires_valid_signature_and_replay_guard
     signed = request().sign(b"secret")
     guard = ReplayGuard()
     validate_authenticated_request(signed, b"secret", now=110, replay_guard=guard)
@@ -52,6 +51,7 @@ def test_authenticated_request_requires_valid_signature_and_replay_guard():
         validate_authenticated_request(signed, b"secret", now=110, replay_guard=guard)
     with pytest.raises(ValueError, match="authentication"):
         validate_authenticated_request(request().sign(b"wrong"), b"secret", now=110)
+
 
 
 def test_expired_and_non_read_capabilities_rejected():

@@ -45,7 +45,8 @@ FRAMEWORK_CALLBACKS = frozenset(
 )
 
 
-def test_every_selector_shaped_callback_is_referenced() -> None:
+def test_every_selector_shaped_callback_is_referenced__and_1_more() -> None:
+    # --- scenario: every_selector_shaped_callback_is_referenced
     sources = {path.name: path.read_text() for path in SRC.glob("*.py")}
     blob = "\n".join(sources.values())
 
@@ -89,8 +90,7 @@ def test_every_selector_shaped_callback_is_referenced() -> None:
         + "\n  ".join(orphans)
     )
 
-
-def test_every_timer_binding_names_a_real_callback() -> None:
+    # --- scenario: every_timer_binding_names_a_real_callback
     """The declarative half of the same invariant: every entry in
     PRESENTATION_TIMER_BINDINGS must name a method the controller
     actually defines -- a renamed callback must fail HERE, not as a
@@ -102,3 +102,4 @@ def test_every_timer_binding_names_a_real_callback() -> None:
     assert len(names) >= 15
     for name in names:
         assert re.search(rf"^    def {re.escape(name)}\(self", text, re.M), name
+

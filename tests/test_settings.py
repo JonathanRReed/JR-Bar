@@ -116,7 +116,8 @@ def test_legacy_settings_do_not_import_broad_usage_or_transcript_history(
     assert restored.capacity_history_retention_days == 7
 
 
-def test_invalid_or_boolean_retention_fails_closed_to_seven_days(tmp_path: Path) -> None:
+def test_invalid_or_boolean_retention_fails_closed_to_seven_days__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: invalid_or_boolean_retention_fails_closed_to_seven_days
     """Malformed settings cannot expand the privacy window or enable history."""
     for value in (14, 365, True, "90"):
         target = tmp_path / f"settings-{value}.json"
@@ -134,8 +135,7 @@ def test_invalid_or_boolean_retention_fails_closed_to_seven_days(tmp_path: Path)
         assert restored.capacity_history_enabled is True
         assert restored.capacity_history_retention_days == 7
 
-
-def test_invalid_programmatic_retention_is_not_serialized(tmp_path: Path) -> None:
+    # --- scenario: invalid_programmatic_retention_is_not_serialized
     """A non-UI caller cannot persist a privacy window outside 7, 30, or 90 days."""
     target = tmp_path / "settings.json"
 
@@ -145,6 +145,7 @@ def test_invalid_programmatic_retention_is_not_serialized(tmp_path: Path) -> Non
     )
 
     assert json.loads(target.read_text())["capacity_history_retention_days"] == 7
+
 
 
 def test_operator_history_retention_defaults_to_zero_and_off() -> None:
@@ -172,9 +173,8 @@ def test_operator_history_retention_round_trips_supported_choices(tmp_path: Path
         assert load_settings(target).operator_history_retention_days == retention_days
 
 
-def test_operator_history_migration_and_malformed_values_fail_closed(
-    tmp_path: Path,
-) -> None:
+def test_operator_history_migration_and_malformed_values_fail_closed__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: operator_history_migration_and_malformed_values_fail_closed
     """Broad legacy consent and malformed exact values must leave history disabled."""
     legacy_target = tmp_path / "settings-legacy.json"
     legacy_target.write_text(
@@ -196,10 +196,7 @@ def test_operator_history_migration_and_malformed_values_fail_closed(
 
         assert load_settings(target).operator_history_retention_days == 0
 
-
-def test_invalid_programmatic_operator_retention_is_serialized_off(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: invalid_programmatic_operator_retention_is_serialized_off
     """Non-UI callers cannot persist an unsupported operator-history window."""
     target = tmp_path / "settings.json"
 
@@ -210,10 +207,7 @@ def test_invalid_programmatic_operator_retention_is_serialized_off(
 
     assert json.loads(target.read_text())["operator_history_retention_days"] == 0
 
-
-def test_settings_migration_disables_legacy_quota_authority_and_runway(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: settings_migration_disables_legacy_quota_authority_and_runway
     """Old quota preferences load safely but cannot remain active authority.
 
     `claude_plan_limits_enabled` is back in this set, and for a sharper
@@ -291,6 +285,7 @@ def test_settings_migration_disables_legacy_quota_authority_and_runway(
     assert migrated["led_display"] == LED_DISPLAY_QUOTA_RUNWAY
     assert migrated["devices"][0]["led_display"] == LED_DISPLAY_QUOTA_RUNWAY
     assert migrated["webhook_events"] == ["completion"]
+
 
 
 def test_settings_migration_programmatic_legacy_quota_controls_fail_closed(
@@ -474,9 +469,8 @@ def test_removing_a_provider_animation_actually_persists(tmp_path: Path) -> None
     assert json.loads(path.read_text())["colors"]["provider_animation"] == {}
 
 
-def test_scene_pack_selection_round_trips_and_decodes_tolerantly(
-    tmp_path: Path,
-) -> None:
+def test_scene_pack_selection_round_trips_and_decodes_tolerantly__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: scene_pack_selection_round_trips_and_decodes_tolerantly
     target = tmp_path / "settings.json"
     settings = AgentMonitorSettings().with_active_scene_pack("quiet-work")
 
@@ -501,10 +495,7 @@ def test_scene_pack_selection_round_trips_and_decodes_tolerantly(
         with pytest.raises(ValueError):
             AgentMonitorSettings().with_active_scene_pack(invalid)
 
-
-def test_ambient_cue_settings_default_off_and_round_trip(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: ambient_cue_settings_default_off_and_round_trip
     defaults = AgentMonitorSettings()
     assert defaults.rainstick_idle_enabled is False
     assert defaults.rainstick_night_enabled is False
@@ -544,6 +535,7 @@ def test_ambient_cue_settings_default_off_and_round_trip(
     assert tolerant.rainstick_idle_enabled is False
     assert tolerant.milestone_odometer_enabled is False
     assert tolerant.milestone_odometer_steps == (10, 25, 50, 100)
+
 
 
 def test_device_resting_glow_persists_and_defaults_to_zero(tmp_path: Path) -> None:

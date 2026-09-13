@@ -54,7 +54,8 @@ def _calls(node):
     return tuple(result)
 
 
-def test_provider_usage_runs_through_background_service_and_main_thread_apply():
+def test_provider_usage_runs_through_background_service_and_main_thread_apply__and_2_more() -> None:
+    # --- scenario: provider_usage_runs_through_background_service_and_main_thread_apply
     request_calls = _calls(_method("_request_provider_usage"))
     apply_calls = _calls(_method("applyProviderUsageState_"))
     refresh_calls = _calls(_method("refresh_"))
@@ -78,8 +79,7 @@ def test_provider_usage_runs_through_background_service_and_main_thread_apply():
     )
     assert "refresh_now" not in refresh_calls
 
-
-def test_usage_apply_and_menu_projection_do_not_reload_settings_on_the_ui_thread():
+    # --- scenario: usage_apply_and_menu_projection_do_not_reload_settings_on_the_ui_thread
     ready = _method("_provider_usage_ready")
     ready_calls = _calls(ready)
     apply_calls = _calls(_method("applyProviderUsageState_"))
@@ -118,8 +118,7 @@ def test_usage_apply_and_menu_projection_do_not_reload_settings_on_the_ui_thread
     assert "setToolTip_" in menu_source
     assert "setAccessibilityLabel_" in menu_source
 
-
-def test_unknown_menu_settings_hide_observed_instances_and_enable_privacy() -> None:
+    # --- scenario: unknown_menu_settings_hide_observed_instances_and_enable_privacy
     state = SimpleNamespace(
         snapshots=(
             SimpleNamespace(provider_id="claude", source_instance_id="work"),
@@ -139,7 +138,9 @@ def test_unknown_menu_settings_hide_observed_instances_and_enable_privacy() -> N
     assert privacy_mode is True
 
 
-def test_usage_summary_and_checkbox_repaint_do_not_reload_settings():
+
+def test_usage_summary_and_checkbox_repaint_do_not_reload_settings__and_2_more() -> None:
+    # --- scenario: usage_summary_and_checkbox_repaint_do_not_reload_settings
     summary_calls = _calls(
         _function(SETTINGS_CATEGORY_MODULE, "refresh_native_usage_summary")
     )
@@ -151,8 +152,7 @@ def test_usage_summary_and_checkbox_repaint_do_not_reload_settings():
     assert "load_provider_usage_settings" not in summary_calls
     assert "load_provider_usage_settings" not in checkbox_calls
 
-
-def test_settings_navigation_uses_cached_page_refreshes_only():
+    # --- scenario: settings_navigation_uses_cached_page_refreshes_only
     forbidden = {
         "reconcile_device_runtime",
         "refresh_settings_window",
@@ -177,8 +177,7 @@ def test_settings_navigation_uses_cached_page_refreshes_only():
     assert "_BaseStatusBarController.show_settings_window" not in show_source
     assert "build_settings_window" in show_source
 
-
-def test_settings_destination_refresh_policy_is_extracted_and_narrow():
+    # --- scenario: settings_destination_refresh_policy_is_extracted_and_narrow
     controller_calls = set(_calls(_method("_refresh_settings_destination")))
     helper_calls = set(
         _calls(_function(SETTINGS_REFRESH_MODULE, "refresh_settings_destination"))
@@ -197,7 +196,9 @@ def test_settings_destination_refresh_policy_is_extracted_and_narrow():
     }
 
 
-def test_provider_feedback_dispatch_is_extracted_behind_controller_methods():
+
+def test_provider_feedback_dispatch_is_extracted_behind_controller_methods__and_2_more() -> None:
+    # --- scenario: provider_feedback_dispatch_is_extracted_behind_controller_methods
     delegates = {
         "_alert_new_critical_pace": "alert_new_critical_pace",
         "_report_reconnect_outcome": "report_reconnect_outcome",
@@ -209,8 +210,7 @@ def test_provider_feedback_dispatch_is_extracted_behind_controller_methods():
         assert _calls(_method(method_name)).count(helper_name) == 1
         _function(FEEDBACK_ACTIONS_MODULE, helper_name)
 
-
-def test_first_run_display_does_not_scan_system_provider_or_device_state():
+    # --- scenario: first_run_display_does_not_scan_system_provider_or_device_state
     calls = set(_calls(_function(ONBOARDING_MODULE, "refresh_setup_window")))
 
     assert not calls & {
@@ -222,8 +222,7 @@ def test_first_run_display_does_not_scan_system_provider_or_device_state():
         "status_bar_devices",
     }
 
-
-def test_first_run_and_lighting_use_exact_sleep_and_idle_policies():
+    # --- scenario: first_run_and_lighting_use_exact_sleep_and_idle_policies
     setup_source = ast.unparse(_function(ONBOARDING_MODULE, "run_first_launch_setup"))
     sleep_source = ast.unparse(_function(ONBOARDING_MODULE, "set_sleep_dim"))
     idle_source = ast.unparse(_function(ONBOARDING_MODULE, "set_idle_auto_off"))
@@ -236,7 +235,9 @@ def test_first_run_and_lighting_use_exact_sleep_and_idle_policies():
     assert "with_idle_auto_off_enabled" in idle_source
 
 
-def test_settings_panes_consume_device_and_alcove_caches_without_probing():
+
+def test_settings_panes_consume_device_and_alcove_caches_without_probing__and_2_more() -> None:
+    # --- scenario: settings_panes_consume_device_and_alcove_caches_without_probing
     devices_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "_build_devices_pane")))
     alcove_calls = set(_calls(_function(SETTINGS_WINDOW_MODULE, "alcove_follow_projection")))
 
@@ -245,8 +246,7 @@ def test_settings_panes_consume_device_and_alcove_caches_without_probing():
     assert "alcove_follow_blocker" not in alcove_calls
     assert "latest_alcove_status" in alcove_calls
 
-
-def test_local_usage_settings_mutations_refresh_all_cached_projections():
+    # --- scenario: local_usage_settings_mutations_refresh_all_cached_projections
     assert "apply_provider_usage_settings_snapshot" in _calls(
         _method("toggleUsageMenuElement_")
     )
@@ -254,8 +254,7 @@ def test_local_usage_settings_mutations_refresh_all_cached_projections():
     assert "toggle_provider_menu_visibility" in provider_calls
     assert "load_provider_usage_settings" not in provider_calls
 
-
-def test_per_provider_reset_selector_persists_master_and_each_channel():
+    # --- scenario: per_provider_reset_selector_persists_master_and_each_channel
     method = _function(RESET_ACTION_MODULE, "toggle_provider_reset_setting")
     source = ast.unparse(method)
 
@@ -266,14 +265,15 @@ def test_per_provider_reset_selector_persists_master_and_each_channel():
     assert "refresh_native_usage_summary" in source
 
 
-def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action():
+
+def test_profile_settings_selector_delegates_save_and_ui_freshness_as_one_action__and_2_more() -> None:
+    # --- scenario: profile_settings_selector_delegates_save_and_ui_freshness_as_one_action
     calls = _calls(_method("updateProviderInstanceProfile_"))
 
     assert "save_provider_instance_profile_setting" in calls
     assert "update_provider_instance_profile" not in calls
 
-
-def test_usage_center_and_why_panel_forward_the_user_privacy_setting():
+    # --- scenario: usage_center_and_why_panel_forward_the_user_privacy_setting
     source = MODULE.read_text(encoding="utf-8")
     why_method = _method("why_panel_body")
     why_helper = _function(STATUS_PROJECTION_MODULE, "provider_usage_why_panel_body")
@@ -282,8 +282,7 @@ def test_usage_center_and_why_panel_forward_the_user_privacy_setting():
     assert _calls(why_method).count("provider_usage_why_panel_body") == 1
     assert "privacy_mode=privacy_mode" in ast.unparse(why_helper)
 
-
-def test_compact_usage_menu_receives_exact_active_provider_instances():
+    # --- scenario: compact_usage_menu_receives_exact_active_provider_instances
     method = _function(STATUS_PROJECTION_MODULE, "active_usage_instances")
     menu_calls = _calls(_function(MENU_MODULE, "native_usage_menu_item"))
 
@@ -292,7 +291,9 @@ def test_compact_usage_menu_receives_exact_active_provider_instances():
     assert "source_instance_id" in ast.unparse(method)
 
 
-def test_menu_replaces_legacy_capacity_card_with_compact_native_usage():
+
+def test_menu_replaces_legacy_capacity_card_with_compact_native_usage__and_2_more() -> None:
+    # --- scenario: menu_replaces_legacy_capacity_card_with_compact_native_usage
     source = MODULE.read_text(encoding="utf-8")
     menu_source = MENU_MODULE.read_text(encoding="utf-8")
     assert "_original_build_menu" in source
@@ -302,26 +303,25 @@ def test_menu_replaces_legacy_capacity_card_with_compact_native_usage():
     assert "No reading" not in source
     assert "no reading" not in source
 
-
-def test_wrapper_does_not_rebind_objc_super_through_a_mutable_global():
+    # --- scenario: wrapper_does_not_rebind_objc_super_through_a_mutable_global
     source = MODULE.read_text(encoding="utf-8")
     assert "def init(" not in source
     assert "objc.super(" not in source
 
-
-def test_termination_closes_provider_service():
+    # --- scenario: termination_closes_provider_service
     calls = _calls(_method("applicationWillTerminate_"))
     assert "close" in calls
 
 
-def test_session_opening_consults_exact_instance_policy_before_legacy_router():
+
+def test_session_opening_consults_exact_instance_policy_before_legacy_router__and_1_more() -> None:
+    # --- scenario: session_opening_consults_exact_instance_policy_before_legacy_router
     calls = _calls(_method("open_session"))
 
     assert "profile_session_action" in calls
     assert "open_session" in calls
 
-
-def test_why_panel_override_preserves_the_base_context_keyword_contract():
+    # --- scenario: why_panel_override_preserves_the_base_context_keyword_contract
     method = _method("why_panel_body")
     kwonly = [argument.arg for argument in method.args.kwonlyargs]
     assert kwonly == ["why_context", "wall_clock"]
@@ -335,6 +335,7 @@ def test_why_panel_override_preserves_the_base_context_keyword_contract():
     )
     keywords = {keyword.arg for keyword in base_call.keywords}
     assert "why_context" in keywords
+
 
 
 _STATUS_BAR_PROBE_PREAMBLE = """
@@ -401,7 +402,8 @@ def _run_status_bar_probe(body: str) -> None:
     assert completed.returncode == 0, completed.stderr
 
 
-def test_refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes():
+def test_refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes__and_1_more() -> None:
+    # --- scenario: refresh_gate_is_fresh_before_two_minutes_and_due_at_two_minutes
     _run_status_bar_probe(
         """
 controller = FakeController()
@@ -422,8 +424,7 @@ assert len(controller.refreshes) == 2
 """
     )
 
-
-def test_capacity_projection_uses_injected_wall_clock():
+    # --- scenario: capacity_projection_uses_injected_wall_clock
     _run_status_bar_probe(
         """
 controller = FakeController(capacity_state())
@@ -437,3 +438,4 @@ assert "just checked" in fresh
 assert "checked 1m ago" in due
 """
     )
+

@@ -2,10 +2,14 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
-/// The tank (docs/TOYS.md): one `TimelineView` + `Canvas`. Fish
-/// positions are integrated from each `Fish`'s constants and the frame
-/// clock, so `toy.fish` only has to change when the session set does,
-/// and the timeline pauses while the window is covered.
+/// The tank (docs/TOYS.md): a still `Canvas` for everything that never
+/// moves (water, sand, the non-swaying decor — rasterized once by
+/// `.drawingGroup` and recomposited for free), an additive light pass
+/// (god rays, caustic dapples, a slow sheen drift), and a live
+/// `TimelineView` + `Canvas` for the swimmers. Fish positions are
+/// integrated from each `Fish`'s constants and the frame clock, so
+/// `toy.fish` only has to change when the session set does, and the
+/// timelines pause while the window is covered.
 struct AquariumView: View {
     /// A fixed scene for the snapshot renderer (JRBarAppTests): the
     /// tank drawn without a toy. The app only ever uses `init(toy:)`.
@@ -38,88 +42,135 @@ struct AquariumView: View {
         let showLabels = toy?.store?.state.aquarium.showLabels ?? fixture?.showLabels ?? true
         let density = max(0.1, toy?.store?.state.aquarium.density ?? fixture?.density ?? 1)
         let paused = toy?.windowOccluded ?? fixture?.paused ?? false
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { context in
-            let t = context.date.timeIntervalSince1970
-            // Memoized on the fish array: the timeline ticks 30×/s but
-            // the roster only moves with the sessions, so an unchanged
-            // roster reuses the last sort instead of rebuilding it.
-            let order = fishOrder(fish)
-            let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
-            Canvas { canvas, size in
-                drawWater(canvas: &canvas, size: size, t: t)
-                drawGodRays(canvas: &canvas, size: size, t: t)
-                drawSand(canvas: &canvas, size: size)
-                // The empty-tank caption's capsule: decor keeps clear
-                // of it, and it draws last, over the sand.
-                let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
-                drawDecor(canvas: &canvas, size: size, t: t, density: density,
-                          front: false, keepClear: caption?.rect)
-                drawJellyfish(canvas: &canvas, size: size, t: t, resident: empty)
-                drawPlankton(canvas: &canvas, size: size, t: t, density: density, front: false)
-                drawBubbles(canvas: &canvas, size: size, t: t, density: density)
-                // A batch of finishes pops the chest: a fast plume off
-                // its lid while the milestone window is still open.
-                let leavers = order.ordered.filter {
-                    !$0.isFry && $0.state == .leaving
-                        && context.date.timeIntervalSince($0.stateSince)
-                            < AquariumModel.milestoneWindow
+        ZStack {
+            // The still tank: water, sand and every decor piece that
+            // doesn't sway. A slow two-second tick lets the day/night
+            // wash keep breathing (and keeps the caption's decor
+            // culling in step with retiring fish); `.drawingGroup`
+            // rasterizes the result, so each live frame costs one
+            // texture composite instead of ~240 path builds.
+            TimelineView(.animation(minimumInterval: 2, paused: paused)) { context in
+                Canvas { canvas, size in
+                    drawWater(canvas: &canvas, size: size,
+                              t: context.date.timeIntervalSince1970)
+                    drawSand(canvas: &canvas, size: size)
+                    let empty = fish.isEmpty
+                        || fish.allSatisfy { $0.isRetired(at: context.date) }
+                    let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
+                    drawStaticDecor(canvas: &canvas, size: size, density: density,
+                                    keepClear: caption?.rect)
                 }
-                if leavers.count >= AquariumModel.milestoneCount,
-                   let first = leavers.map(\.stateSince).min() {
-                    drawChestBurst(canvas: &canvas, size: size,
-                                   age: context.date.timeIntervalSince(first))
-                }
-                // Mains lay out first so fry can orbit their parents.
-                var layouts: [String: Layout] = [:]
-                for aFish in order.ordered where !aFish.isFry && !aFish.isRetired(at: context.date) {
-                    layouts[aFish.id] = layout(of: aFish, in: size, at: t, now: context.date)
-                }
-                // A finished fish drops a meal: the pellets and who
-                // comes to eat them are planned before the fish draw,
-                // because an eater's dart bends its layout.
-                let meals = completionMeals(in: size, now: context.date,
-                                            roster: order.ordered)
-                applyPursuits(meals, to: &layouts, now: context.date)
-                hoverProbe.boxes.removeAll(keepingCapacity: true)
-                for aFish in order.ordered where !aFish.isRetired(at: context.date) {
-                    let parent = parentContext(of: aFish, mains: order.mains, layouts: layouts)
-                    let l = layouts[aFish.id]
-                        ?? layout(of: aFish, in: size, at: t, now: context.date, parent: parent)
-                    layouts[aFish.id] = l
-                    drawFish(canvas: &canvas, size: size, t: t, now: context.date,
-                             fish: aFish, layout: l, parent: parent, showLabels: showLabels)
-                    // The hover/tap hit area: a soft-edged box around
-                    // the drawn body, front-most fish wins.
-                    let len = 46 * l.scale * aFish.species.sizeScale
-                        * (aFish.isFry ? AquariumModel.fryScale : 1)
-                    let hgt = len * aFish.species.aspect
-                    hoverProbe.boxes.append((
-                        aFish.id,
-                        CGRect(x: l.x - len * 0.62, y: l.y - hgt * 0.85,
-                               width: len * 1.24, height: hgt * 1.7)))
-                }
-                drawMeals(canvas: &canvas, meals: meals, now: context.date)
-                drawSnail(canvas: &canvas, size: size, t: t)
-                drawDecor(canvas: &canvas, size: size, t: t, density: density,
-                          front: true, keepClear: caption?.rect)
-                drawPlankton(canvas: &canvas, size: size, t: t, density: density, front: true)
-                // The surface draws over everything: a surfacing fish
-                // reads as under the waterline, not pasted on top.
-                drawSurface(canvas: &canvas, size: size, t: t)
-                drawGlass(canvas: &canvas, size: size)
-                // A hovered or tapped fish gets a name tag over the
-                // glass — this is how a fry says its worker's name.
-                let probe = hoverProbe.point
-                    ?? (hoverProbe.flashUntil > context.date ? hoverProbe.flashPoint : nil)
-                if let point = probe,
-                   let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
-                   let l = layouts[hit.id],
-                   let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
-                    drawNameplate(canvas: &canvas, size: size,
-                                  fish: hitFish, layout: l)
-                }
-                if let caption {
-                    drawEmpty(canvas: &canvas, size: size, caption: caption)
+            }
+            .drawingGroup(opaque: false, colorMode: .nonLinear)
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { context in
+                let t = context.date.timeIntervalSince1970
+                // Memoized on the fish array: the timeline ticks 30×/s
+                // but the roster only moves with the sessions, so an
+                // unchanged roster reuses the last sort instead of
+                // rebuilding it.
+                let order = fishOrder(fish)
+                let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
+                ZStack {
+                    // The light pass: rays, caustic dapples on the dune
+                    // crest and a slow sheen drift through the column.
+                    // The canvas composites additively over the still
+                    // tank, so these read as light, not pale decals —
+                    // and the rays get to pool on the sand, which they
+                    // never could while the floor drew over them.
+                    Canvas { canvas, size in
+                        drawGodRays(canvas: &canvas, size: size, t: t)
+                        drawSandCaustics(canvas: &canvas, size: size, t: t)
+                        drawWaterSheen(canvas: &canvas, size: size, t: t)
+                    }
+                    .blendMode(.plusLighter)
+                    .allowsHitTesting(false)
+                    Canvas { canvas, size in
+                        // The empty-tank caption's capsule: decor keeps
+                        // clear of it, and it draws last, over the sand.
+                        let caption = empty ? captionLayout(canvas: &canvas, size: size) : nil
+                        drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
+                                      front: false, keepClear: caption?.rect)
+                        drawJellyfish(canvas: &canvas, size: size, t: t, resident: empty)
+                        drawPlankton(canvas: &canvas, size: size, t: t,
+                                     density: density, front: false)
+                        drawBubbles(canvas: &canvas, size: size, t: t, density: density)
+                        // A batch of finishes pops the chest: a fast
+                        // plume off its lid while the milestone window
+                        // is still open.
+                        let leavers = order.ordered.filter {
+                            !$0.isFry && $0.state == .leaving
+                                && context.date.timeIntervalSince($0.stateSince)
+                                    < AquariumModel.milestoneWindow
+                        }
+                        if leavers.count >= AquariumModel.milestoneCount,
+                           let first = leavers.map(\.stateSince).min() {
+                            drawChestBurst(canvas: &canvas, size: size,
+                                           age: context.date.timeIntervalSince(first))
+                        }
+                        // Mains lay out first so fry can orbit their
+                        // parents.
+                        var layouts: [String: Layout] = [:]
+                        for aFish in order.ordered
+                        where !aFish.isFry && !aFish.isRetired(at: context.date) {
+                            layouts[aFish.id] = layout(of: aFish, in: size,
+                                                       at: t, now: context.date)
+                        }
+                        // A finished fish drops a meal: the pellets and
+                        // who comes to eat them are planned before the
+                        // fish draw, because an eater's dart bends its
+                        // layout.
+                        let meals = completionMeals(in: size, now: context.date,
+                                                    roster: order.ordered)
+                        applyPursuits(meals, to: &layouts, now: context.date)
+                        hoverProbe.boxes.removeAll(keepingCapacity: true)
+                        for aFish in order.ordered where !aFish.isRetired(at: context.date) {
+                            let parent = parentContext(of: aFish, mains: order.mains,
+                                                       layouts: layouts)
+                            let l = layouts[aFish.id]
+                                ?? layout(of: aFish, in: size, at: t,
+                                          now: context.date, parent: parent)
+                            layouts[aFish.id] = l
+                            drawFish(canvas: &canvas, size: size, t: t, now: context.date,
+                                     fish: aFish, layout: l, parent: parent,
+                                     showLabels: showLabels)
+                            // The hover/tap hit area: a soft-edged box
+                            // around the drawn body, front-most fish wins.
+                            let len = 46 * l.scale * aFish.species.sizeScale
+                                * (aFish.isFry ? AquariumModel.fryScale : 1)
+                            let hgt = len * aFish.species.aspect
+                            hoverProbe.boxes.append((
+                                aFish.id,
+                                CGRect(x: l.x - len * 0.62, y: l.y - hgt * 0.85,
+                                       width: len * 1.24, height: hgt * 1.7)))
+                        }
+                        drawMeals(canvas: &canvas, meals: meals, now: context.date)
+                        drawSnail(canvas: &canvas, size: size, t: t)
+                        drawLiveDecor(canvas: &canvas, size: size, t: t, density: density,
+                                      front: true, keepClear: caption?.rect)
+                        drawPlankton(canvas: &canvas, size: size, t: t,
+                                     density: density, front: true)
+                        // The surface draws over everything: a surfacing
+                        // fish reads as under the waterline, not pasted
+                        // on top.
+                        drawSurface(canvas: &canvas, size: size, t: t)
+                        drawGlass(canvas: &canvas, size: size)
+                        // A hovered or tapped fish gets a name tag over
+                        // the glass — this is how a fry says its
+                        // worker's name.
+                        let probe = hoverProbe.point
+                            ?? (hoverProbe.flashUntil > context.date
+                                ? hoverProbe.flashPoint : nil)
+                        if let point = probe,
+                           let hit = hoverProbe.boxes.last(where: { $0.rect.contains(point) }),
+                           let l = layouts[hit.id],
+                           let hitFish = order.ordered.first(where: { $0.id == hit.id }) {
+                            drawNameplate(canvas: &canvas, size: size,
+                                          fish: hitFish, layout: l)
+                        }
+                        if let caption {
+                            drawEmpty(canvas: &canvas, size: size, caption: caption)
+                        }
+                    }
                 }
             }
         }
@@ -168,6 +219,47 @@ struct AquariumView: View {
     }
 
     @ViewState private var orderCache = FishOrder()
+
+    /// Resolved label glyphs, kept across frames: `resolve` +
+    /// `measure` were the priciest part of drawing a fish on a busy
+    /// tank, and a label's glyphs never change between reduces. A
+    /// plain reference held in `ViewState` — it's a memo, not state.
+    private final class TextCache {
+        /// Floating name chips under swimming fish (9.5 medium).
+        var chips: [String: (text: GraphicsContext.ResolvedText, size: CGSize)] = [:]
+        /// The hover/tap nameplate (caption2 semibold).
+        var tags: [String: (text: GraphicsContext.ResolvedText, size: CGSize)] = [:]
+
+        func chip(for label: String, canvas: GraphicsContext)
+            -> (text: GraphicsContext.ResolvedText, size: CGSize) {
+            if let hit = chips[label] { return hit }
+            let c = canvas
+            let resolved = c.resolve(
+                Text(label)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.90)))
+            let measured = resolved.measure(in: CGSize(width: 1000, height: 40))
+            if chips.count > 128 { chips.removeAll(keepingCapacity: true) }
+            chips[label] = (resolved, measured)
+            return (resolved, measured)
+        }
+
+        func tag(for label: String, canvas: GraphicsContext)
+            -> (text: GraphicsContext.ResolvedText, size: CGSize) {
+            if let hit = tags[label] { return hit }
+            let c = canvas
+            let resolved = c.resolve(
+                Text(label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.97)))
+            let measured = resolved.measure(in: CGSize(width: 1000, height: 40))
+            if tags.count > 128 { tags.removeAll(keepingCapacity: true) }
+            tags[label] = (resolved, measured)
+            return (resolved, measured)
+        }
+    }
+
+    @ViewState private var textCache = TextCache()
 
     /// The mains table and the back-to-front draw order, rebuilt only
     /// when the fish array itself changes — never twice on the same
@@ -359,10 +451,15 @@ struct AquariumView: View {
 
     /// The milestone burst: a fast plume of bubbles off the chest lid
     /// while the window is open — a batch of finishes pops the chest.
+    /// Anchored to the seeded chest piece, so the plume actually rises
+    /// off the lid wherever the layout put it.
     private func drawChestBurst(canvas: inout GraphicsContext, size: CGSize, age: Double) {
         guard age < 4.2 else { return }
-        let chestX = size.width - 104
-        let baseY = size.height - 62
+        let chest = Self.decor.first(where: { $0.kind == .chest })
+        let chestX = (chest?.x ?? 0.85) * size.width
+        // Start just over the lid: the chest stands `h` tall on the bed.
+        let baseY = chest.map { decorBaseY($0, in: size) - 26 * $0.scale * Self.decorBoost }
+            ?? size.height - 80
         for i in 0..<14 {
             let h = AquariumModel.stableHash("burst-\(i)")
             let u = Double(h & 0xFF) / 0xFF
@@ -389,11 +486,9 @@ struct AquariumView: View {
             * (fish.isFry ? AquariumModel.fryScale : 1)
         let height = length * fish.species.aspect
         let tag = canvas
-        let resolved = tag.resolve(
-            Text(fish.label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.97)))
-        let textSize = resolved.measure(in: CGSize(width: size.width, height: 40))
+        let resolved: GraphicsContext.ResolvedText
+        let textSize: CGSize
+        (resolved, textSize) = textCache.tag(for: fish.label, canvas: canvas)
         let cx = min(max(l.x, textSize.width / 2 + 14),
                      size.width - textSize.width / 2 - 14)
         let cy = max(l.y - height * 0.5 - 18, 16)
@@ -409,20 +504,24 @@ struct AquariumView: View {
     // MARK: Water
 
     /// The column of water itself: a many-stop gradient from the bright
-    /// green-teal surface down to a deep indigo floor, a warm glow
+    /// green-teal surface down to a deep indigo floor — more stops in
+    /// the deep half now, so the column keeps a blue-green cast all the
+    /// way down instead of collapsing to flat navy — a warm glow
     /// where the light comes in, and a faint cool counter-glow low on
-    /// the right so the far side never goes dead flat.
+    /// the right so the far side never goes dead flat. Drawn in the
+    /// still pass; the only animated parts are the two slow washes.
     private func drawWater(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         canvas.fill(
             Path(CGRect(origin: .zero, size: size)),
             with: .linearGradient(
                 Gradient(stops: [
                     .init(color: Color(red: 0.46, green: 0.79, blue: 0.72), location: 0),
-                    .init(color: Color(red: 0.28, green: 0.64, blue: 0.64), location: 0.12),
-                    .init(color: Color(red: 0.12, green: 0.45, blue: 0.58), location: 0.34),
-                    .init(color: Color(red: 0.06, green: 0.28, blue: 0.50), location: 0.58),
-                    .init(color: Color(red: 0.03, green: 0.15, blue: 0.39), location: 0.80),
-                    .init(color: Color(red: 0.02, green: 0.07, blue: 0.25), location: 1),
+                    .init(color: Color(red: 0.27, green: 0.65, blue: 0.65), location: 0.12),
+                    .init(color: Color(red: 0.13, green: 0.49, blue: 0.60), location: 0.30),
+                    .init(color: Color(red: 0.06, green: 0.31, blue: 0.51), location: 0.52),
+                    .init(color: Color(red: 0.035, green: 0.19, blue: 0.41), location: 0.72),
+                    .init(color: Color(red: 0.02, green: 0.11, blue: 0.31), location: 0.88),
+                    .init(color: Color(red: 0.015, green: 0.06, blue: 0.22), location: 1),
                 ]),
                 startPoint: CGPoint(x: size.width / 2, y: 0),
                 endPoint: CGPoint(x: size.width / 2, y: size.height)))
@@ -459,7 +558,8 @@ struct AquariumView: View {
     /// own layer: a gradient across the beam gives the soft edges and a
     /// masking gradient fades it with depth, so there are no hard
     /// polygon sides. They breathe & sway a couple of degrees; Reduce
-    /// Motion holds them still.
+    /// Motion holds them still. This draws in the additive pass, so a
+    /// ray that reaches the floor lights the sand it lands on.
     private func drawGodRays(canvas: inout GraphicsContext, size: CGSize, t: Double) {
         let rayColor = Color(red: 0.86, green: 0.97, blue: 0.93)
         for i in 0..<5 {
@@ -502,6 +602,70 @@ struct AquariumView: View {
                     ]),
                     startPoint: .zero, endPoint: CGPoint(x: 0, y: length)))
             }
+        }
+    }
+
+    /// Caustic dapples: a few soft pools of warm light riding the dune
+    /// crest, wandering back and forth and breathing on slow, seeded
+    /// phases — sunlight focused through the surface ripples onto the
+    /// bed. Drawn in the additive pass so they read as light, and
+    /// seeded through the same murmur-style scramble the speckles use
+    /// so FNV-1a's low bits can't park them in a row.
+    private func drawSandCaustics(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        for i in 0..<4 {
+            var h = AquariumModel.stableHash("caustic-\(i)")
+            h ^= h >> 33
+            h &*= 0xff51afd7ed558ccd
+            h ^= h >> 33
+            let x0 = Double(h & 0xFFFF) / 0xFFFF
+            let phase = Double((h >> 16) & 0xFF) / 0xFF * .pi * 2
+            // Ping-pong wander: sin keeps the pool sliding without the
+            // wrap-around jump a `frac` drift would take at the wall.
+            let wander = reduceMotion ? 0.5
+                : 0.5 + 0.5 * sin(t * (0.05 + Double((h >> 24) & 0xFF) / 0xFF * 0.05) + phase)
+            let cx = size.width * (0.08 + 0.84 * (x0 * 0.45 + wander * 0.55))
+            let cy = sandTop(atX: cx, in: size) + 5 + Double((h >> 32) & 0xF)
+            let rx = 46 + Double((h >> 40) & 0xFF) / 0xFF * 58
+            let ry = rx * (0.15 + Double((h >> 48) & 0xF) / 0xF * 0.09)
+            let breathe = reduceMotion ? 0.55
+                : 0.55 + 0.45 * sin(t * 0.23 + phase * 1.9)
+            var s = canvas
+            s.translateBy(x: cx, y: cy)
+            s.scaleBy(x: rx, y: ry)
+            s.fill(Path(ellipseIn: CGRect(x: -1, y: -1, width: 2, height: 2)),
+                   with: .radialGradient(
+                       Gradient(colors: [
+                           Color(red: 1.0, green: 0.94, blue: 0.74).opacity(0.10 * breathe),
+                           .clear]),
+                       center: .zero, startRadius: 0, endRadius: 1))
+        }
+    }
+
+    /// A slow luminance drift through the column: two broad, soft
+    /// light pools sliding against each other on multi-minute periods.
+    /// The water feels like it moves even between the rays; Reduce
+    /// Motion holds both still.
+    private func drawWaterSheen(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let spots: [(cx: Double, cy: Double, r: Double, period: Double,
+                     phase: Double, alpha: Double)] = [
+            (0.42, 0.26, 0.34, 190, 0, 0.050),
+            (0.68, 0.58, 0.26, 310, 2.1, 0.034),
+        ]
+        for spot in spots {
+            let drift = reduceMotion ? 0 : sin(t * .pi * 2 / spot.period + spot.phase)
+            var s = canvas
+            s.translateBy(x: size.width * (spot.cx + 0.15 * drift), y: size.height * spot.cy)
+            s.rotate(by: .radians(-0.45))
+            s.scaleBy(x: 1, y: 0.62)
+            s.fill(Path(ellipseIn: CGRect(x: -size.width * spot.r, y: -size.width * spot.r,
+                                          width: size.width * spot.r * 2,
+                                          height: size.width * spot.r * 2)),
+                   with: .radialGradient(
+                       Gradient(colors: [
+                           Color(red: 0.75, green: 0.95, blue: 0.88).opacity(spot.alpha),
+                           .clear]),
+                       center: .zero, startRadius: 0,
+                       endRadius: size.width * spot.r))
         }
     }
 
@@ -838,32 +1002,71 @@ struct AquariumView: View {
     /// out by `AquariumModel.decorSet` so the tank looks the same
     /// every launch. `density` decides how much of the set shows —
     /// the signature pieces come first, so a sparse tank keeps them.
-    /// `front` splits the set at depth 0.6: near pieces draw over the
-    /// fish as foreground parallax. `keepClear` (the empty-tank
-    /// caption's capsule) culls any piece rooted inside it — nothing
-    /// sits under the plaque.
-    private func drawDecor(canvas: inout GraphicsContext, size: CGSize, t: Double,
-                           density: Double, front: Bool, keepClear: CGRect? = nil) {
+    /// `keepClear` (the empty-tank caption's capsule) culls any piece
+    /// rooted inside it — nothing sits under the plaque.
+    private func decorVisible(_ piece: TankDecor, shown: Int,
+                              clearZone: CGRect?, in size: CGSize) -> Bool {
+        guard piece.id < shown else { return false }
+        if let clearZone,
+           clearZone.contains(CGPoint(x: piece.x * size.width,
+                                      y: decorBaseY(piece, in: size))) {
+            return false
+        }
+        return true
+    }
+
+    /// The still dressing → the cached bed pass: every piece that
+    /// doesn't move, back layer only (deep pieces sit under the fish;
+    /// near pieces stay live so nothing ends up behind a fish it
+    /// should shade). Kelp & grass sway and stay out of the cache —
+    /// the live pass draws them.
+    private func drawStaticDecor(canvas: inout GraphicsContext, size: CGSize,
+                                 density: Double, keepClear: CGRect? = nil) {
         let shown = Int((Double(Self.decor.count) * min(1, density)).rounded(.up))
         // The capsule sits on the sand face below the dune line; the
         // zone reaches up over the dune face behind it so nothing is
         // rooted inside the plaque's footprint either.
         let clearZone = keepClear?.insetBy(dx: -10, dy: -34)
-        for piece in Self.decor.prefix(shown) where (piece.depth > 0.6) == front {
-            if let clearZone,
-               clearZone.contains(CGPoint(x: piece.x * size.width,
-                                          y: decorBaseY(piece, in: size))) {
-                continue
-            }
+        for piece in Self.decor where piece.depth <= 0.6 {
+            guard decorVisible(piece, shown: shown,
+                               clearZone: clearZone, in: size) else { continue }
             switch piece.kind {
-            case .kelp: drawKelp(canvas: &canvas, size: size, t: t, piece: piece)
             case .rock: drawRocks(canvas: &canvas, size: size, piece: piece)
             case .coral: drawCoral(canvas: &canvas, size: size, piece: piece)
-            case .grass: drawGrass(canvas: &canvas, size: size, t: t, piece: piece)
             case .shell: drawShell(canvas: &canvas, size: size, piece: piece)
             case .bottle: drawBottle(canvas: &canvas, size: size, piece: piece)
             case .starfish: drawStarfish(canvas: &canvas, size: size, piece: piece)
-            case .chest: drawChest(canvas: &canvas, size: size, t: t, piece: piece)
+            case .chest: drawChest(canvas: &canvas, size: size, piece: piece)
+            case .kelp, .grass: break // they sway — the live pass draws them
+            }
+        }
+    }
+
+    /// The moving dressing → the live pass: kelp & grass on both depth
+    /// passes (they sway), the chest's occasional burp bubble, and any
+    /// near-glass piece — `front` splits the set at depth 0.6 so near
+    /// pieces draw over the fish as foreground parallax.
+    private func drawLiveDecor(canvas: inout GraphicsContext, size: CGSize, t: Double,
+                               density: Double, front: Bool, keepClear: CGRect? = nil) {
+        let shown = Int((Double(Self.decor.count) * min(1, density)).rounded(.up))
+        let clearZone = keepClear?.insetBy(dx: -10, dy: -34)
+        for piece in Self.decor where (piece.depth > 0.6) == front {
+            guard decorVisible(piece, shown: shown,
+                               clearZone: clearZone, in: size) else { continue }
+            switch piece.kind {
+            case .kelp: drawKelp(canvas: &canvas, size: size, t: t, piece: piece)
+            case .grass: drawGrass(canvas: &canvas, size: size, t: t, piece: piece)
+            case .chest where !front:
+                drawChestBurp(canvas: &canvas, size: size, t: t, piece: piece)
+            case .chest: // a front chest can't sit in the bed cache — draw it live
+                drawChest(canvas: &canvas, size: size, piece: piece)
+                drawChestBurp(canvas: &canvas, size: size, t: t, piece: piece)
+            case .rock where front: drawRocks(canvas: &canvas, size: size, piece: piece)
+            case .coral where front: drawCoral(canvas: &canvas, size: size, piece: piece)
+            case .shell where front: drawShell(canvas: &canvas, size: size, piece: piece)
+            case .bottle where front: drawBottle(canvas: &canvas, size: size, piece: piece)
+            case .starfish where front: drawStarfish(canvas: &canvas, size: size, piece: piece)
+            default: break
             }
         }
     }
@@ -1392,9 +1595,10 @@ struct AquariumView: View {
 
     /// The treasure chest on the dune floor: a domed lid, wood planks
     /// shaded top to bottom, brass bands & a latch, a pool of shadow
-    /// under it — and every few seconds it burps a single bubble, the
-    /// tank's smallest joke.
-    private func drawChest(canvas: inout GraphicsContext, size: CGSize, t: Double, piece: TankDecor) {
+    /// under it. The chest itself is still — it lives in the cached
+    /// bed pass; its one moving part (the burp bubble) is
+    /// `drawChestBurp` in the live pass.
+    private func drawChest(canvas: inout GraphicsContext, size: CGSize, piece: TankDecor) {
         let w = 40 * piece.scale * Self.decorBoost
         let h = 26 * piece.scale * Self.decorBoost
         let x = piece.x * size.width
@@ -1452,8 +1656,17 @@ struct AquariumView: View {
                     with: .color(brass.opacity(0.85)))
         canvas.fill(Path(ellipseIn: CGRect(x: x - 1.6, y: y - h * 0.66, width: 3.2, height: 4)),
                     with: .color(woodDark.opacity(0.9)))
+    }
 
+    /// Every few seconds the chest burps a single bubble, the tank's
+    /// smallest joke — the only moving part, so it draws in the live
+    /// pass. Reduce Motion holds it in.
+    private func drawChestBurp(canvas: inout GraphicsContext, size: CGSize,
+                               t: Double, piece: TankDecor) {
         guard !reduceMotion else { return }
+        let h = 26 * piece.scale * Self.decorBoost
+        let x = piece.x * size.width
+        let y = decorBaseY(piece, in: size) + 2
         let period = 6 + Double(piece.bits & 0xFF) / 0xFF * 5
         let rise = frac(t / period + Double((piece.bits >> 8) & 0xFF) / 0xFF)
         guard rise < 0.6 else { return }
@@ -2317,15 +2530,17 @@ struct AquariumView: View {
         let tailSwing = reduceMotion ? 0 : sin(beat - 0.85) * 0.11 * l.wag
         let sway = reduceMotion ? 0 : sin(beat - 0.8) * 0.045 * l.wag
 
-        // A low fish pools a soft shadow on the sand under it; the
-        // pool fades out as it climbs.
+        // A fish pools a soft shadow on the sand under it; the pool
+        // fades out as it climbs. The window is wide enough that
+        // mid-depth lanes still ground the tank a little — cheap
+        // depth, one gradient fill.
         if fish.state != .leaving {
             let floorY = sandTop(atX: l.x, in: size) + 3
             let clearance = floorY - (l.y + height * 0.5)
-            if clearance < 90 {
+            if clearance < 140 {
                 groundShadow(canvas: &canvas, x: l.x, y: floorY,
                              halfW: length * 0.48, halfH: 4.5,
-                             alpha: 0.30 * clamp01(1 - max(0, clearance) / 90) * l.opacity)
+                             alpha: 0.30 * clamp01(1 - max(0, clearance) / 140) * l.opacity)
             }
         }
 
@@ -2474,11 +2689,9 @@ struct AquariumView: View {
         if showLabels, !fish.isFry {
             var lc = canvas
             lc.opacity = l.opacity * (fish.state == .sinking ? 0.45 : 0.85)
-            let resolved = lc.resolve(
-                Text(fish.label)
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.90)))
-            let textSize = resolved.measure(in: CGSize(width: size.width, height: 40))
+            // Resolved glyphs are cached across frames — the label
+            // doesn't change between reduces, only its anchor does.
+            let (resolved, textSize) = textCache.chip(for: fish.label, canvas: canvas)
             let chipX = min(max(l.x, textSize.width / 2 + 14), size.width - textSize.width / 2 - 14)
             let chipY = min(l.y + height / 2 + 14, size.height - 14)
             let chip = CGRect(x: chipX - textSize.width / 2 - 6.5,

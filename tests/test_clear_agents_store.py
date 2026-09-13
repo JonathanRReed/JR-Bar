@@ -364,7 +364,8 @@ class _ExtendedReceipt(CompletionPresentationReceipt):
     transcript: str = ""
 
 
-def test_save_refuses_forged_or_secret_extended_receipts(tmp_path: Path) -> None:
+def test_save_refuses_forged_or_secret_extended_receipts__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: save_refuses_forged_or_secret_extended_receipts
     target = tmp_path / CLEAR_AGENTS_STORE_NAME
     sentinel = "Bearer sk-private /Users/private/transcript"
     forged = object.__new__(ClearAgentsState)
@@ -381,8 +382,7 @@ def test_save_refuses_forged_or_secret_extended_receipts(tmp_path: Path) -> None
 
     assert not target.exists()
 
-
-def test_save_refuses_encoded_state_over_byte_budget(tmp_path: Path) -> None:
+    # --- scenario: save_refuses_encoded_state_over_byte_budget
     target = tmp_path / CLEAR_AGENTS_STORE_NAME
     receipts = tuple(
         CompletionPresentationReceipt(
@@ -405,3 +405,4 @@ def test_save_refuses_encoded_state_over_byte_budget(tmp_path: Path) -> None:
         save_clear_agents_state(target, state)
 
     assert not target.exists()
+

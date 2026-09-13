@@ -82,7 +82,8 @@ def observation(
     )
 
 
-def test_signed_packet_round_trip_and_tamper_rejection():
+def test_signed_packet_round_trip_and_tamper_rejection__and_2_more() -> None:
+    # --- scenario: signed_packet_round_trip_and_tamper_rejection
     packet = ProviderSyncPacket(
         schema_version=1,
         device_id="mac-mini",
@@ -104,8 +105,7 @@ def test_signed_packet_round_trip_and_tamper_rejection():
     else:
         raise AssertionError("tampered sync packet accepted")
 
-
-def test_authentic_but_stale_packet_is_rejected_on_decode():
+    # --- scenario: authentic_but_stale_packet_is_rejected_on_decode
     packet = ProviderSyncPacket(
         schema_version=1,
         device_id="mac-mini",
@@ -127,8 +127,7 @@ def test_authentic_but_stale_packet_is_rejected_on_decode():
     else:
         raise AssertionError("stale sync packet accepted")
 
-
-def test_authentic_packet_from_beyond_clock_skew_is_rejected() -> None:
+    # --- scenario: authentic_packet_from_beyond_clock_skew_is_rejected
     now = 1000.0
     packet = ProviderSyncPacket(
         1,
@@ -144,47 +143,47 @@ def test_authentic_packet_from_beyond_clock_skew_is_rejected() -> None:
         decode_signed_packet(encode_signed_packet(packet, secret), secret, now=now)
 
 
-@pytest.mark.parametrize("kind", ("quota", "machine"))
-def test_packet_rejects_each_future_dated_observation(kind: str) -> None:
-    generated_at = 1000.0
-    observed_at = generated_at + SYNC_PACKET_FUTURE_SKEW_SECONDS + 1.0
-    packet = ProviderSyncPacket(
-        1,
-        "mac-mini",
-        generated_at,
-        (snapshot("claude", observed_at, 25),) if kind == "quota" else (),
-        (observation("mac-mini", "claude", observed_at, 100),)
-        if kind == "machine"
-        else (),
-        (kind,) if kind == "quota" else ("token_usage",),
-    )
-    secret = b"fixture-shared-secret-32-bytes!!"
 
-    with pytest.raises(StaleSyncPacketError, match="observation"):
-        decode_signed_packet(encode_signed_packet(packet, secret), secret, now=generated_at)
+def test_packet_rejects_each_future_dated_observation__and_2_more() -> None:
+    # --- scenario: packet_rejects_each_future_dated_observation
+    for kind in ("quota", "machine"):
+        generated_at = 1000.0
+        observed_at = generated_at + SYNC_PACKET_FUTURE_SKEW_SECONDS + 1.0
+        packet = ProviderSyncPacket(
+            1,
+            "mac-mini",
+            generated_at,
+            (snapshot("claude", observed_at, 25),) if kind == "quota" else (),
+            (observation("mac-mini", "claude", observed_at, 100),)
+            if kind == "machine"
+            else (),
+            (kind,) if kind == "quota" else ("token_usage",),
+        )
+        secret = b"fixture-shared-secret-32-bytes!!"
 
+        with pytest.raises(StaleSyncPacketError, match="observation"):
+            decode_signed_packet(encode_signed_packet(packet, secret), secret, now=generated_at)
 
-@pytest.mark.parametrize("kind", ("quota", "machine"))
-def test_packet_rejects_observations_materially_older_than_its_stamp(kind: str) -> None:
-    generated_at = 1_000_000.0
-    observed_at = generated_at - SYNC_OBSERVATION_MAX_PACKET_DELTA_SECONDS - 1.0
-    packet = ProviderSyncPacket(
-        1,
-        "mac-mini",
-        generated_at,
-        (snapshot("claude", observed_at, 25),) if kind == "quota" else (),
-        (observation("mac-mini", "claude", observed_at, 100),)
-        if kind == "machine"
-        else (),
-        ("quota",) if kind == "quota" else ("token_usage",),
-    )
-    secret = b"fixture-shared-secret-32-bytes!!"
+    # --- scenario: packet_rejects_observations_materially_older_than_its_stamp
+    for kind in ("quota", "machine"):
+        generated_at = 1_000_000.0
+        observed_at = generated_at - SYNC_OBSERVATION_MAX_PACKET_DELTA_SECONDS - 1.0
+        packet = ProviderSyncPacket(
+            1,
+            "mac-mini",
+            generated_at,
+            (snapshot("claude", observed_at, 25),) if kind == "quota" else (),
+            (observation("mac-mini", "claude", observed_at, 100),)
+            if kind == "machine"
+            else (),
+            ("quota",) if kind == "quota" else ("token_usage",),
+        )
+        secret = b"fixture-shared-secret-32-bytes!!"
 
-    with pytest.raises(StaleSyncPacketError, match="observation"):
-        decode_signed_packet(encode_signed_packet(packet, secret), secret, now=generated_at)
+        with pytest.raises(StaleSyncPacketError, match="observation"):
+            decode_signed_packet(encode_signed_packet(packet, secret), secret, now=generated_at)
 
-
-def test_account_quota_uses_freshest_observation_and_is_never_summed():
+    # --- scenario: account_quota_uses_freshest_observation_and_is_never_summed
     local = ProviderSyncPacket(
         1,
         "mac-mini",
@@ -207,7 +206,9 @@ def test_account_quota_uses_freshest_observation_and_is_never_summed():
     assert merged.total_input_tokens == 150
 
 
-def test_replayed_packet_does_not_double_count_machine_usage():
+
+def test_replayed_packet_does_not_double_count_machine_usage__and_2_more() -> None:
+    # --- scenario: replayed_packet_does_not_double_count_machine_usage
     local = ProviderSyncPacket(
         1,
         "mac-mini",
@@ -228,8 +229,7 @@ def test_replayed_packet_does_not_double_count_machine_usage():
     assert len(merged.machine_usage) == 1
     assert merged.total_input_tokens == 100
 
-
-def test_newer_machine_observation_replaces_older_cumulative_total():
+    # --- scenario: newer_machine_observation_replaces_older_cumulative_total
     older = ProviderSyncPacket(
         1,
         "macbook",
@@ -250,8 +250,7 @@ def test_newer_machine_observation_replaces_older_cumulative_total():
     assert len(merged.machine_usage) == 1
     assert merged.total_input_tokens == 30
 
-
-def test_agent_activity_is_not_part_of_default_packet_categories():
+    # --- scenario: agent_activity_is_not_part_of_default_packet_categories
     packet = ProviderSyncPacket(
         1,
         "mac-mini",
@@ -263,7 +262,9 @@ def test_agent_activity_is_not_part_of_default_packet_categories():
     assert "agent_activity" not in packet.categories
 
 
-def test_sync_merge_preserves_two_same_provider_instances():
+
+def test_sync_merge_preserves_two_same_provider_instances__and_1_more() -> None:
+    # --- scenario: sync_merge_preserves_two_same_provider_instances
     local = ProviderSyncPacket(
         1,
         "mac-mini",
@@ -281,8 +282,7 @@ def test_sync_merge_preserves_two_same_provider_instances():
         for item in merged.quota_snapshots
     } == {("claude", "personal"), ("claude", "work")}
 
-
-def test_machine_usage_keeps_two_same_provider_instances_distinct():
+    # --- scenario: machine_usage_keeps_two_same_provider_instances_distinct
     packet = ProviderSyncPacket(
         1,
         "mac-mini",
@@ -319,3 +319,4 @@ def test_machine_usage_keeps_two_same_provider_instances_distinct():
         "work",
     }
     assert merged.total_input_tokens == 100
+

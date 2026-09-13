@@ -13,23 +13,22 @@ from jrbar.today_menu import (
 )
 
 
-def test_relative_start_phrasing() -> None:
+def test_relative_start_phrasing__and_2_more() -> None:
+    # --- scenario: relative_start_phrasing
     now = datetime(2026, 8, 21, 18, 0, tzinfo=timezone.utc)
     assert _relative_start(now + timedelta(seconds=30), now) == "now"
     assert _relative_start(now + timedelta(minutes=42), now) == "in 42m"
     later = _relative_start(now + timedelta(hours=3), now)
     assert ":" in later  # clock time past the hour horizon
 
-
-def test_title_leads_with_the_next_calendar_event() -> None:
+    # --- scenario: title_leads_with_the_next_calendar_event
     quiet = TodaySnapshot(calendar_line="No events in the next 12 hours")
     assert today_menu_title(quiet) == "Today"
 
     busy = TodaySnapshot(calendar_line="Standup · in 12m")
     assert today_menu_title(busy) == "Today · Standup · in 12m"
 
-
-def test_rows_read_in_order() -> None:
+    # --- scenario: rows_read_in_order
     snapshot = TodaySnapshot(
         calendar_line="Standup · in 12m",
         reminder_lines=("Pay rent", "Call back"),
@@ -40,6 +39,7 @@ def test_rows_read_in_order() -> None:
     assert rows[1][2] == "reminders"
     assert rows[-1][2] == "reminders"
     assert not any(alert for _text, alert, _kind in rows)
+
 
 
 def test_reminder_lines_read_the_tuple_contract(monkeypatch) -> None:

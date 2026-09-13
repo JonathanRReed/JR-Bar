@@ -49,23 +49,22 @@ def state():
     return ProviderUsageState((snapshot,), 1000, 1060, False)
 
 
-def test_state_round_trip_preserves_dynamic_lanes_and_qol_fields(tmp_path: Path):
+def test_state_round_trip_preserves_dynamic_lanes_and_qol_fields__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: state_round_trip_preserves_dynamic_lanes_and_qol_fields
     target = tmp_path / "usage.json"
     save_provider_usage_state(state(), target)
     loaded = load_provider_usage_state(target)
     assert loaded == state()
     assert json.loads(target.read_text())["schema_version"] == PROVIDER_USAGE_STORE_SCHEMA_VERSION
 
-
-def test_invalid_or_future_document_fails_closed(tmp_path: Path):
+    # --- scenario: invalid_or_future_document_fails_closed
     target = tmp_path / "usage.json"
     target.write_text(json.dumps({"schema_version": PROVIDER_USAGE_STORE_SCHEMA_VERSION + 1}))
     assert load_provider_usage_state(target).snapshots == ()
     target.write_text("{bad")
     assert load_provider_usage_state(target).snapshots == ()
 
-
-def test_store_rejects_refreshing_state(tmp_path: Path):
+    # --- scenario: store_rejects_refreshing_state
     target = tmp_path / "usage.json"
     try:
         save_provider_usage_state(
@@ -78,7 +77,9 @@ def test_store_rejects_refreshing_state(tmp_path: Path):
         raise AssertionError("transient refreshing state persisted")
 
 
-def test_store_preserves_two_same_provider_instances(tmp_path: Path):
+
+def test_store_preserves_two_same_provider_instances__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: store_preserves_two_same_provider_instances
     first = state().snapshots[0]
     second = type(first)(
         provider_id=first.provider_id,
@@ -106,8 +107,7 @@ def test_store_preserves_two_same_provider_instances(tmp_path: Path):
         ("codex", "work"),
     }
 
-
-def test_store_migrates_snapshot_without_instance_to_default(tmp_path: Path):
+    # --- scenario: store_migrates_snapshot_without_instance_to_default
     target = tmp_path / "usage.json"
     save_provider_usage_state(state(), target)
     document = json.loads(target.read_text())
@@ -116,3 +116,4 @@ def test_store_migrates_snapshot_without_instance_to_default(tmp_path: Path):
     target.write_text(json.dumps(document))
     loaded = load_provider_usage_state(target)
     assert loaded.snapshots[0].source_instance_id == "default"
+

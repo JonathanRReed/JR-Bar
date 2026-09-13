@@ -57,15 +57,15 @@ def _history_day(
     )
 
 
-def test_policy_requires_explicit_consent_and_bounds_retention() -> None:
+def test_policy_requires_explicit_consent_and_bounds_retention__and_2_more() -> None:
+    # --- scenario: policy_requires_explicit_consent_and_bounds_retention
     assert AwaySummaryPolicy().consent is AwaySummaryConsent.DISABLED
     assert AwaySummaryPolicy(consent=True).consent is AwaySummaryConsent.ENABLED
 
     with pytest.raises(ValueError):
         AwaySummaryPolicy(consent=True, retention_days=8)
 
-
-def test_disabled_projection_does_not_expose_retained_or_unread_content() -> None:
+    # --- scenario: disabled_projection_does_not_expose_retained_or_unread_content
     ledger = record_activity(ActivityLedger(), _entry(NOW - 10.0))
 
     projection = project_away_summary(
@@ -80,8 +80,7 @@ def test_disabled_projection_does_not_expose_retained_or_unread_content() -> Non
     assert projection.unseen_items == ()
     assert projection.live_unread_watermark == ledger.last_seen_epoch
 
-
-def test_first_launch_is_quiet_without_erasing_the_live_watermark() -> None:
+    # --- scenario: first_launch_is_quiet_without_erasing_the_live_watermark
     ledger = record_activity(ActivityLedger(last_seen_epoch=NOW - 100.0), _entry(NOW - 10.0))
 
     projection = project_away_summary(
@@ -98,7 +97,9 @@ def test_first_launch_is_quiet_without_erasing_the_live_watermark() -> None:
     assert projection.live_unread_watermark == NOW - 100.0
 
 
-def test_projection_separates_retained_items_from_live_unread_items() -> None:
+
+def test_projection_separates_retained_items_from_live_unread_items__and_2_more() -> None:
+    # --- scenario: projection_separates_retained_items_from_live_unread_items
     old = _entry(NOW - 8 * 86_400.0, kind=ActivityKind.BLOCKED)
     seen = _entry(NOW - 500.0, kind=ActivityKind.ASKED)
     unseen = _entry(NOW - 50.0, kind=ActivityKind.COMPLETED)
@@ -122,8 +123,7 @@ def test_projection_separates_retained_items_from_live_unread_items() -> None:
     assert projection.retained_items == projection.items
     assert projection.live_unread_watermark == NOW - 100.0
 
-
-def test_seen_projection_keeps_retained_history_and_does_not_clear_it() -> None:
+    # --- scenario: seen_projection_keeps_retained_history_and_does_not_clear_it
     entry = _entry(NOW - 10.0)
     ledger = record_activity(ActivityLedger(last_seen_epoch=NOW), entry)
 
@@ -138,8 +138,7 @@ def test_seen_projection_keeps_retained_history_and_does_not_clear_it() -> None:
     assert projection.items
     assert projection.unseen_items == ()
 
-
-def test_operator_history_contributes_only_bounded_outcome_counters() -> None:
+    # --- scenario: operator_history_contributes_only_bounded_outcome_counters
     projection = project_away_summary(
         ActivityLedger(),
         OperatorHistoryState((_history_day(),)),
@@ -153,7 +152,9 @@ def test_operator_history_contributes_only_bounded_outcome_counters() -> None:
     assert all("ignored detail" not in sentence for sentence in projection.summary_sentences)
 
 
-def test_projection_order_and_count_are_deterministically_bounded() -> None:
+
+def test_projection_order_and_count_are_deterministically_bounded__and_2_more() -> None:
+    # --- scenario: projection_order_and_count_are_deterministically_bounded
     ledger = ActivityLedger()
     for index in range(MAX_AWAY_SUMMARY_ITEMS + 10):
         ledger = record_activity(
@@ -173,8 +174,7 @@ def test_projection_order_and_count_are_deterministically_bounded() -> None:
         (item.occurred_at_epoch for item in projection.items), reverse=True
     )
 
-
-def test_acknowledgement_advances_only_the_live_activity_watermark() -> None:
+    # --- scenario: acknowledgement_advances_only_the_live_activity_watermark
     entry = _entry(NOW - 10.0)
     ledger = record_activity(ActivityLedger(last_seen_epoch=NOW - 20.0), entry)
     acknowledged = acknowledge_away_summary(ledger, NOW)
@@ -182,8 +182,7 @@ def test_acknowledgement_advances_only_the_live_activity_watermark() -> None:
     assert acknowledged.last_seen_epoch == NOW
     assert acknowledged.entries == ledger.entries
 
-
-def test_projection_models_have_no_content_storage_fields() -> None:
+    # --- scenario: projection_models_have_no_content_storage_fields
     fields_by_model = {
         model.__name__: {field.name for field in fields(model)}
         for model in (
@@ -198,3 +197,4 @@ def test_projection_models_have_no_content_storage_fields() -> None:
         "content",
         "detail",
     }
+

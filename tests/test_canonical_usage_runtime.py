@@ -120,9 +120,8 @@ def _codex_row(*, input_tokens: int = 11) -> dict[str, object]:
     }
 
 
-def test_provider_usage_result_is_immutable_source_scoped_and_privacy_safe(
-    tmp_path: Path,
-) -> None:
+def test_provider_usage_result_is_immutable_source_scoped_and_privacy_safe__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: provider_usage_result_is_immutable_source_scoped_and_privacy_safe
     root = tmp_path / "private-client-root"
     cache = tmp_path / "state" / "usage.json"
     raw_message_id = "message-private-account"
@@ -159,10 +158,7 @@ def test_provider_usage_result_is_immutable_source_scoped_and_privacy_safe(
     for private_value in (str(root), str(transcript), raw_message_id, raw_model):
         assert private_value not in rendered
 
-
-def test_provider_pricing_reports_covered_only_partial_and_complete_estimates(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: provider_pricing_reports_covered_only_partial_and_complete_estimates
     source = _source("claude", "transcript_usage")
     mixed_root = tmp_path / "mixed"
     _write_rows(
@@ -202,10 +198,7 @@ def test_provider_pricing_reports_covered_only_partial_and_complete_estimates(
     assert known.covered_cache_savings_estimate_usd == pytest.approx(2.7)
     assert known.pricing_as_of == "2026-08-26"
 
-
-def test_provider_local_failure_cache_and_health_never_cross_source_keys(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: provider_local_failure_cache_and_health_never_cross_source_keys
     claude_root = tmp_path / "claude"
     codex_root = tmp_path / "codex"
     claude_root.mkdir()
@@ -246,9 +239,9 @@ def test_provider_local_failure_cache_and_health_never_cross_source_keys(
     }
 
 
-def test_old_or_other_source_cache_forces_one_cold_scan_and_warm_scan_writes_nothing(
-    tmp_path: Path,
-) -> None:
+
+def test_old_or_other_source_cache_forces_one_cold_scan_and_warm_scan_writes_nothing__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: old_or_other_source_cache_forces_one_cold_scan_and_warm_scan_writes_nothing
     root = tmp_path / "claude"
     cache = tmp_path / "state" / "usage.json"
     _write_rows(
@@ -271,10 +264,7 @@ def test_old_or_other_source_cache_forces_one_cold_scan_and_warm_scan_writes_not
     assert warm.coverage.cache_hits == 1
     write.assert_not_called()
 
-
-def test_compatibility_aggregator_combines_independent_provider_results(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: compatibility_aggregator_combines_independent_provider_results
     claude_root = tmp_path / "claude"
     codex_root = tmp_path / "codex"
     _write_rows(
@@ -289,6 +279,7 @@ def test_compatibility_aggregator_combines_independent_provider_results(
     assert totals.codex_tokens == 19
     assert totals.source_coverage["claude"].status is UsageSourceStatus.OK
     assert totals.source_coverage["codex"].status is UsageSourceStatus.OK
+
 
 
 def _lane(

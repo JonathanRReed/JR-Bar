@@ -169,7 +169,8 @@ def _fake_legacy_capture(request, quartz):
 # --- 1. the four outcomes are four values, not one None -----------------
 
 
-def test_denied_screen_recording_is_named_and_never_captures(monkeypatch) -> None:
+def test_denied_screen_recording_is_named_and_never_captures__and_2_more(monkeypatch) -> None:
+    # --- scenario: denied_screen_recording_is_named_and_never_captures
     """The permission case must be knowable WITHOUT attempting a capture.
 
     Without preflight, a denied capture comes back as a blank image and is
@@ -186,8 +187,8 @@ def test_denied_screen_recording_is_named_and_never_captures(monkeypatch) -> Non
     assert outcome.observation is None
     assert quartz.create_calls == 0, "denied must not even try to capture"
 
-
-def test_a_missing_window_is_not_an_unusable_image(monkeypatch) -> None:
+    # --- scenario: a_missing_window_is_not_an_unusable_image
+    monkeypatch.undo()
     monkeypatch.setitem(sys.modules, "Quartz", _FakeQuartz(image=None))
     missing = capture_alcove_observation(
         _request(), screen_recording=True, image_capture=_fake_legacy_capture
@@ -202,8 +203,8 @@ def test_a_missing_window_is_not_an_unusable_image(monkeypatch) -> None:
     assert unusable.status is AlcoveCaptureStatus.IMAGE_UNUSABLE
     assert missing.status is not unusable.status
 
-
-def test_a_nil_data_provider_is_unusable_rather_than_a_crash(monkeypatch) -> None:
+    # --- scenario: a_nil_data_provider_is_unusable_rather_than_a_crash
+    monkeypatch.undo()
     monkeypatch.setitem(
         sys.modules,
         "Quartz",
@@ -217,7 +218,9 @@ def test_a_nil_data_provider_is_unusable_rather_than_a_crash(monkeypatch) -> Non
     assert outcome.status is AlcoveCaptureStatus.IMAGE_UNUSABLE
 
 
-def test_an_unexpected_failure_still_cannot_raise_but_must_say_so(monkeypatch) -> None:
+
+def test_an_unexpected_failure_still_cannot_raise_but_must_say_so__and_2_more(monkeypatch) -> None:
+    # --- scenario: an_unexpected_failure_still_cannot_raise_but_must_say_so
     class Exploding(_FakeQuartz):
         def CGWindowListCreateImage(self, *_args):
             raise RuntimeError("no window server")
@@ -231,8 +234,8 @@ def test_an_unexpected_failure_still_cannot_raise_but_must_say_so(monkeypatch) -
     assert outcome.status is AlcoveCaptureStatus.CAPTURE_FAILED
     assert outcome.observation is None
 
-
-def test_a_measurable_capsule_reports_captured_with_its_geometry(monkeypatch) -> None:
+    # --- scenario: a_measurable_capsule_reports_captured_with_its_geometry
+    monkeypatch.undo()
     """The success path must survive being made honest."""
     width_px, height_px = 624, 74
     pixels = bytearray(width_px * height_px * 4)
@@ -255,8 +258,8 @@ def test_a_measurable_capsule_reports_captured_with_its_geometry(monkeypatch) ->
     assert outcome.observation is not None
     assert outcome.observation.width == pytest.approx(272.0, abs=1.0)
 
-
-def test_macos_15_never_falls_back_to_obsolete_window_capture(monkeypatch) -> None:
+    # --- scenario: macos_15_never_falls_back_to_obsolete_window_capture
+    monkeypatch.undo()
     import jrbar.alcove_observation as module
 
     quartz = _FakeQuartz(image=_FakeImage())
@@ -274,9 +277,9 @@ def test_macos_15_never_falls_back_to_obsolete_window_capture(monkeypatch) -> No
     assert quartz.create_calls == 0
 
 
-def test_macos_15_screen_capture_kit_image_uses_the_existing_scanner(
-    monkeypatch,
-) -> None:
+
+def test_macos_15_screen_capture_kit_image_uses_the_existing_scanner__and_1_more(monkeypatch,) -> None:
+    # --- scenario: macos_15_screen_capture_kit_image_uses_the_existing_scanner
     import jrbar.alcove_observation as module
 
     width_px, height_px = 624, 74
@@ -297,10 +300,8 @@ def test_macos_15_screen_capture_kit_image_uses_the_existing_scanner(
     assert outcome.observation.width == pytest.approx(272.0, abs=1.0)
     assert quartz.create_calls == 0
 
-
-def test_screen_capture_kit_targets_only_the_selected_alcove_window(
-    monkeypatch,
-) -> None:
+    # --- scenario: screen_capture_kit_targets_only_the_selected_alcove_window
+    monkeypatch.undo()
     import jrbar.alcove_observation as module
 
     captured_image = object()
@@ -385,7 +386,9 @@ def test_screen_capture_kit_targets_only_the_selected_alcove_window(
     assert Configuration.last.source_rect == (0.0, 0.0, 624.0, 74.0)
 
 
-def test_an_outcome_cannot_claim_success_with_nothing_to_show() -> None:
+
+def test_an_outcome_cannot_claim_success_with_nothing_to_show__and_2_more() -> None:
+    # --- scenario: an_outcome_cannot_claim_success_with_nothing_to_show
     """The pairing is the invariant that replaces None, so enforce it."""
     with pytest.raises(ValueError, match="observation"):
         AlcoveCaptureOutcome(AlcoveCaptureStatus.CAPTURED)
@@ -394,11 +397,7 @@ def test_an_outcome_cannot_claim_success_with_nothing_to_show() -> None:
     with pytest.raises(ValueError, match="not_following"):
         AlcoveCaptureOutcome(AlcoveCaptureStatus.NOT_FOLLOWING)
 
-
-# --- 2. the reason survives the worker thread ---------------------------
-
-
-def test_the_worker_reports_the_reason_the_buffer_never_could() -> None:
+    # --- scenario: the_worker_reports_the_reason_the_buffer_never_could
     """An empty buffer is not a diagnosis.
 
     The buffer only ever carries successes, so before this the main thread
@@ -421,8 +420,7 @@ def test_the_worker_reports_the_reason_the_buffer_never_could() -> None:
     finally:
         worker.close(timeout_seconds=1.0)
 
-
-def test_a_capture_that_declines_to_say_why_is_a_failure_not_a_silence() -> None:
+    # --- scenario: a_capture_that_declines_to_say_why_is_a_failure_not_a_silence
     buffer = AlcoveObservationBuffer()
     done = threading.Event()
 
@@ -440,10 +438,12 @@ def test_a_capture_that_declines_to_say_why_is_a_failure_not_a_silence() -> None
         worker.close(timeout_seconds=1.0)
 
 
+
 # --- 3. preflight: cached, and never a surprise prompt ------------------
 
 
-def test_preflight_is_cached_and_refreshable() -> None:
+def test_preflight_is_cached_and_refreshable__and_1_more() -> None:
+    # --- scenario: preflight_is_cached_and_refreshable
     calls: list[int] = []
 
     def probe() -> bool:
@@ -461,8 +461,7 @@ def test_preflight_is_cached_and_refreshable() -> None:
     assert len(calls) == 2
     assert screen_recording_granted(force=True, now=200.0, preflight=lambda: False) is False
 
-
-def test_an_unaskable_preflight_is_unknown_not_denied() -> None:
+    # --- scenario: an_unaskable_preflight_is_unknown_not_denied
     """None is not False. Telling someone their permission is off when we
     simply could not ask is the same dishonesty, pointing the other way."""
     assert screen_recording_granted(preflight=lambda: None) is None
@@ -470,6 +469,7 @@ def test_an_unaskable_preflight_is_unknown_not_denied() -> None:
     assert alcove_follow_blocker(following=True) is not (
         AlcoveCaptureStatus.SCREEN_RECORDING_DENIED
     )
+
 
 
 def test_default_window_presence_lookup_is_cached_and_never_runs_inline(
@@ -532,22 +532,20 @@ def test_nothing_on_the_background_path_may_request_access(monkeypatch) -> None:
     assert requested == [1]
 
 
-def test_requesting_access_invalidates_the_cached_answer() -> None:
+def test_requesting_access_invalidates_the_cached_answer__and_1_more() -> None:
+    # --- scenario: requesting_access_invalidates_the_cached_answer
     assert screen_recording_granted(preflight=lambda: False) is False
     request_screen_recording_access(request=lambda: True)
     assert screen_recording_granted(preflight=lambda: True) is True
 
-
-# --- 4. the status record logs on transition, not per frame -------------
-
-
-def test_a_repeated_outcome_is_recorded_but_reported_once() -> None:
+    # --- scenario: a_repeated_outcome_is_recorded_but_reported_once
     assert note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED) is True
     assert note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED) is False
     assert note_alcove_status(AlcoveCaptureStatus.CAPTURED) is True
     snapshot = latest_alcove_status()
     assert snapshot is not None
     assert snapshot.status is AlcoveCaptureStatus.CAPTURED
+
 
 
 # --- 5. the device: preflight where following is enabled ----------------
@@ -750,7 +748,8 @@ def test_a_missing_alcove_window_is_reported_as_such(monkeypatch) -> None:
     assert logged == ["alcove: no capsule window on screen"]
 
 
-def test_turning_following_off_is_said_out_loud(monkeypatch) -> None:
+def test_turning_following_off_is_said_out_loud__and_2_more(monkeypatch) -> None:
+    # --- scenario: turning_following_off_is_said_out_loud
     device, _module, logged = _alcove_device(monkeypatch, granted=True)
     device.follow_alcove_width = False
 
@@ -761,8 +760,8 @@ def test_turning_following_off_is_said_out_loud(monkeypatch) -> None:
     assert snapshot.status is AlcoveCaptureStatus.NOT_FOLLOWING
     assert logged == ["alcove: following is off"]
 
-
-def test_the_worker_reason_reaches_the_log_once_per_transition(monkeypatch) -> None:
+    # --- scenario: the_worker_reason_reaches_the_log_once_per_transition
+    monkeypatch.undo()
     device, _module, logged = _alcove_device(monkeypatch, granted=True)
 
     class Observer:
@@ -791,8 +790,8 @@ def test_the_worker_reason_reaches_the_log_once_per_transition(monkeypatch) -> N
         "alcove: capture failed",
     ]
 
-
-def test_the_first_hardware_geometry_fallback_is_logged(monkeypatch) -> None:
+    # --- scenario: the_first_hardware_geometry_fallback_is_logged
+    monkeypatch.undo()
     """The one line that DID exist could never print the failing state.
 
     Its sentinel for "not logged yet" was None -- the same value
@@ -827,6 +826,7 @@ def test_the_first_hardware_geometry_fallback_is_logged(monkeypatch) -> None:
     assert "alcove follow: hardware geometry" in lines
 
 
+
 _CONTOUR = (
     (464.0, 8.0),
     (464.0, 32.0),
@@ -851,7 +851,8 @@ def _publish_capsule(device) -> None:
     )
 
 
-def test_a_granted_permission_still_follows_the_capsule(monkeypatch) -> None:
+def test_a_granted_permission_still_follows_the_capsule__and_2_more(monkeypatch) -> None:
+    # --- scenario: a_granted_permission_still_follows_the_capsule
     """Requirement 5: do not regress the working path.
 
     Bracket geometry and the window level both key off a real
@@ -885,8 +886,8 @@ def test_a_granted_permission_still_follows_the_capsule(monkeypatch) -> None:
     snapshot = latest_alcove_status()
     assert snapshot is not None and snapshot.status is AlcoveCaptureStatus.CAPTURED
 
-
-def test_compact_mode_keeps_measuring_the_capsule(monkeypatch) -> None:
+    # --- scenario: compact_mode_keeps_measuring_the_capsule
+    monkeypatch.undo()
     """Wrap OFF is the polite mode, not a teardown.
 
     Turning wrap off used to stop observation outright. It must still
@@ -919,11 +920,8 @@ def test_compact_mode_keeps_measuring_the_capsule(monkeypatch) -> None:
     assert device.view.silhouettes[-1] == (600.0, 272.0, 32.0, _CONTOUR)
     assert device.window.levels[-1] >= module.ABOVE_ALCOVE_WINDOW_LEVEL
 
-
-# --- 6. doctor: a bounded, content-free code ---------------------------
-
-
-def test_doctor_reports_the_permission_as_its_own_code(monkeypatch) -> None:
+    # --- scenario: doctor_reports_the_permission_as_its_own_code
+    monkeypatch.undo()
     from jrbar import doctor
 
     note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED)
@@ -937,31 +935,28 @@ def test_doctor_reports_the_permission_as_its_own_code(monkeypatch) -> None:
     assert finding.count == 0 and finding.limit == 1
 
 
-@pytest.mark.parametrize(
-    ("status", "code_name"),
-    [
+
+def test_every_outcome_has_a_distinct_doctor_code__and_2_more(monkeypatch) -> None:
+    # --- scenario: every_outcome_has_a_distinct_doctor_code
+    for status, code_name in [
         (AlcoveCaptureStatus.CAPTURED, "HEALTHY"),
         (AlcoveCaptureStatus.SCREEN_RECORDING_DENIED, "NOT_PERMITTED"),
         (AlcoveCaptureStatus.WINDOW_UNAVAILABLE, "NOT_RUNNING"),
         (AlcoveCaptureStatus.IMAGE_UNUSABLE, "UNSUPPORTED"),
         (AlcoveCaptureStatus.CAPTURE_FAILED, "RECOVERING"),
-    ],
-)
-def test_every_outcome_has_a_distinct_doctor_code(
-    monkeypatch, status, code_name
-) -> None:
-    from jrbar import doctor
+    ]:
+        from jrbar import doctor
 
-    note_alcove_status(status)
-    monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
-    monkeypatch.setattr(doctor, "alcove_follow_blocker", lambda **_kwargs: None)
+        note_alcove_status(status)
+        monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
+        monkeypatch.setattr(doctor, "alcove_follow_blocker", lambda **_kwargs: None)
 
-    finding = doctor._alcove_follow_state_probe()
+        finding = doctor._alcove_follow_state_probe()
 
-    assert finding.code is getattr(doctor.DiagnosticCode, code_name)
+        assert finding.code is getattr(doctor.DiagnosticCode, code_name)
 
-
-def test_doctor_never_upgrades_no_obvious_blocker_into_success(monkeypatch) -> None:
+    # --- scenario: doctor_never_upgrades_no_obvious_blocker_into_success
+    monkeypatch.undo()
     """"Nothing is in the way" is not "it works"."""
     import jrbar.alcove_observation as module
     from jrbar import doctor
@@ -974,8 +969,8 @@ def test_doctor_never_upgrades_no_obvious_blocker_into_success(monkeypatch) -> N
 
     assert finding.code is doctor.DiagnosticCode.RECOVERING
 
-
-def test_a_stale_reading_is_not_presented_as_current(monkeypatch) -> None:
+    # --- scenario: a_stale_reading_is_not_presented_as_current
+    monkeypatch.undo()
     import jrbar.alcove_observation as module
     from jrbar import doctor
 
@@ -992,7 +987,9 @@ def test_a_stale_reading_is_not_presented_as_current(monkeypatch) -> None:
     assert finding.code is doctor.DiagnosticCode.STALE
 
 
-def test_the_alcove_finding_is_in_the_manifest_and_encodes(monkeypatch) -> None:
+
+def test_the_alcove_finding_is_in_the_manifest_and_encodes__and_1_more(monkeypatch) -> None:
+    # --- scenario: the_alcove_finding_is_in_the_manifest_and_encodes
     from jrbar import doctor
 
     note_alcove_status(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED)
@@ -1012,10 +1009,9 @@ def test_the_alcove_finding_is_in_the_manifest_and_encodes(monkeypatch) -> None:
         is doctor.DiagnosticCode.NOT_PERMITTED
     )
 
-
-@pytest.mark.parametrize(
-    ("state", "code"),
-    [
+    # --- scenario: doctor_maps_every_confidence_state
+    monkeypatch.undo()
+    for state, code in [
         (AlcoveConfidenceState.FRESH, "HEALTHY"),
         (AlcoveConfidenceState.STALE, "STALE"),
         (AlcoveConfidenceState.PERMISSION_DENIED, "NOT_PERMITTED"),
@@ -1023,21 +1019,20 @@ def test_the_alcove_finding_is_in_the_manifest_and_encodes(monkeypatch) -> None:
         (AlcoveConfidenceState.UNSUPPORTED, "UNSUPPORTED"),
         (AlcoveConfidenceState.NOT_FOLLOWING, "NOT_CONFIGURED"),
         (AlcoveConfidenceState.RECOVERING, "RECOVERING"),
-    ],
-)
-def test_doctor_maps_every_confidence_state(monkeypatch, state, code) -> None:
-    from jrbar import doctor
+    ]:
+        from jrbar import doctor
 
-    projection = SimpleNamespace(state=state)
-    monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
-    monkeypatch.setattr(doctor, "alcove_follow_blocker", lambda **_kwargs: None)
-    monkeypatch.setattr(doctor, "latest_alcove_status", lambda: None)
-    monkeypatch.setattr(doctor, "project_alcove_confidence", lambda **_kwargs: projection)
+        projection = SimpleNamespace(state=state)
+        monkeypatch.setattr(doctor, "_alcove_following_enabled", lambda: True)
+        monkeypatch.setattr(doctor, "alcove_follow_blocker", lambda **_kwargs: None)
+        monkeypatch.setattr(doctor, "latest_alcove_status", lambda: None)
+        monkeypatch.setattr(doctor, "project_alcove_confidence", lambda **_kwargs: projection)
 
-    finding = doctor._alcove_follow_state_probe()
+        finding = doctor._alcove_follow_state_probe()
 
-    assert finding.code is getattr(doctor.DiagnosticCode, code)
-    assert finding.count == int(state is AlcoveConfidenceState.FRESH)
+        assert finding.code is getattr(doctor.DiagnosticCode, code)
+        assert finding.count == int(state is AlcoveConfidenceState.FRESH)
+
 
 
 def test_doctor_manifest_is_version_four_and_allows_seven_codes() -> None:

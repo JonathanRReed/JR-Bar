@@ -63,13 +63,13 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.lstat().st_mode)
 
 
-def test_default_store_uses_private_application_support_path(tmp_path: Path) -> None:
+def test_default_store_uses_private_application_support_path__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: default_store_uses_private_application_support_path
     assert default_operator_history_path(tmp_path) == (
         tmp_path / "Library" / "Application Support" / "JR-Bar" / "operator-history.json"
     )
 
-
-def test_zero_retention_is_disabled_and_creates_no_filesystem_state(tmp_path: Path) -> None:
+    # --- scenario: zero_retention_is_disabled_and_creates_no_filesystem_state
     """The default disabled store must stay idle even when runtime facts arrive."""
     target = tmp_path / "Application Support" / "JR-Bar" / "operator-history.json"
     store = OperatorHistoryStore(target, retention_days=0)
@@ -79,6 +79,7 @@ def test_zero_retention_is_disabled_and_creates_no_filesystem_state(tmp_path: Pa
     assert store.state == OperatorHistoryState()
     assert not store.dirty
     assert not target.parent.exists()
+
 
 
 def test_saving_zero_retention_removes_an_existing_store_without_recreating_it(
@@ -415,9 +416,8 @@ def test_store_refuses_parent_swap_while_opening(tmp_path: Path, operation: str)
     assert load_operator_history(outside / target.name).state == OperatorHistoryState()
 
 
-def test_missing_corrupt_unsupported_and_oversize_are_visible_health_states(
-    tmp_path: Path,
-) -> None:
+def test_missing_corrupt_unsupported_and_oversize_are_visible_health_states__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: missing_corrupt_unsupported_and_oversize_are_visible_health_states
     missing = load_operator_history(tmp_path / "missing" / "operator-history.json")
     assert missing.health is OperatorHistoryRestoreHealth.MISSING
 
@@ -434,10 +434,7 @@ def test_missing_corrupt_unsupported_and_oversize_are_visible_health_states(
     oversize = load_operator_history(target)
     assert oversize.health is OperatorHistoryRestoreHealth.UNAVAILABLE
 
-
-def test_file_growth_during_read_is_refused_without_retaining_payload(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: file_growth_during_read_is_refused_without_retaining_payload
     target = tmp_path / "operator-history.json"
     save_operator_history(target, OperatorHistoryState((_day(),)), retention_days=7, now=NOW)
     real_read = os.read
@@ -457,6 +454,7 @@ def test_file_growth_during_read_is_refused_without_retaining_payload(
     assert restored.health is OperatorHistoryRestoreHealth.UNAVAILABLE
     diagnostic = target.with_name("operator-history.json.corrupt")
     assert "PRIVATE SENTINEL" not in diagnostic.read_text()
+
 
 
 def test_atomic_replace_failure_preserves_previous_state(tmp_path: Path) -> None:
@@ -550,7 +548,8 @@ def test_corrupt_restore_projection_never_claims_clean_no_observation(
     assert projection.summary_sentences == ("Operator history could not be restored.",)
 
 
-def test_exact_clear_removes_only_operator_history_and_clears_memory(tmp_path: Path) -> None:
+def test_exact_clear_removes_only_operator_history_and_clears_memory__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: exact_clear_removes_only_operator_history_and_clears_memory
     target = tmp_path / "operator-history.json"
     capacity = tmp_path / "capacity-history.json"
     capacity.write_text("capacity stays")
@@ -565,8 +564,7 @@ def test_exact_clear_removes_only_operator_history_and_clears_memory(tmp_path: P
     assert not target.exists()
     assert capacity.read_text() == "capacity stays"
 
-
-def test_clear_failure_preserves_in_memory_truth_and_disk_for_retry(tmp_path: Path) -> None:
+    # --- scenario: clear_failure_preserves_in_memory_truth_and_disk_for_retry
     target = tmp_path / "operator-history.json"
     store = OperatorHistoryStore(target, retention_days=7)
     store.add_rows((_day(),))
@@ -582,8 +580,7 @@ def test_clear_failure_preserves_in_memory_truth_and_disk_for_retry(tmp_path: Pa
     assert store.state == OperatorHistoryState((_day(),))
     assert target.exists()
 
-
-def test_clear_wins_a_flush_that_already_observed_dirty_state(tmp_path: Path) -> None:
+    # --- scenario: clear_wins_a_flush_that_already_observed_dirty_state
     """A concurrent consent clear cannot be followed by a stale flush recreating the file."""
     target = tmp_path / "operator-history.json"
     store = OperatorHistoryStore(target, retention_days=7)
@@ -623,6 +620,7 @@ def test_clear_wins_a_flush_that_already_observed_dirty_state(tmp_path: Path) ->
     assert store.state == OperatorHistoryState()
     assert not store.dirty
     assert not target.exists()
+
 
 
 @pytest.mark.parametrize("link_kind", ("symlink", "hardlink"))

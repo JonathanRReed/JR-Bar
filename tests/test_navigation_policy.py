@@ -150,7 +150,8 @@ def _kinds(actions: tuple[object, ...]) -> tuple[OperatorActionKind, ...]:
     return tuple(action.kind for action in actions)  # type: ignore[attr-defined]
 
 
-def test_exact_fresh_authorized_candidate_is_ready() -> None:
+def test_exact_fresh_authorized_candidate_is_ready__and_2_more() -> None:
+    # --- scenario: exact_fresh_authorized_candidate_is_ready
     """Dropping the exact candidate checks would open a guessed target."""
     key = _work_key()
 
@@ -169,10 +170,9 @@ def test_exact_fresh_authorized_candidate_is_ready() -> None:
     assert result.source_generation == 7
     assert result.reason is None
 
-
-@pytest.mark.parametrize(
-    ("candidates", "expected_kind", "expected_reason"),
-    (
+    # --- scenario: nonexecutable_candidate_states_refuse_with_product_copy
+    """Treating any non-ready result as executable would cross the authority boundary."""
+    for candidates, expected_kind, expected_reason in (
         ((), NavigationResolutionKind.MISSING, "Not available"),
         (
             (_candidate(freshness=SourceFreshness.STALE),),
@@ -194,23 +194,15 @@ def test_exact_fresh_authorized_candidate_is_ready() -> None:
             NavigationResolutionKind.DISABLED,
             "Not available",
         ),
-    ),
-)
-def test_nonexecutable_candidate_states_refuse_with_product_copy(
-    candidates: tuple[NavigationCandidate, ...],
-    expected_kind: NavigationResolutionKind,
-    expected_reason: str,
-) -> None:
-    """Treating any non-ready result as executable would cross the authority boundary."""
-    result = resolve_navigation(_work_key(), "open:primary", candidates)
+    ):
+        result = resolve_navigation(_work_key(), "open:primary", candidates)
 
-    assert result.kind is expected_kind
-    assert result.target_kind is None
-    assert result.target_value is None
-    assert result.reason == expected_reason
+        assert result.kind is expected_kind
+        assert result.target_kind is None
+        assert result.target_value is None
+        assert result.reason == expected_reason
 
-
-def test_source_instance_collision_does_not_match_by_display_identity() -> None:
+    # --- scenario: source_instance_collision_does_not_match_by_display_identity
     """Matching only provider and work ID would cross two source instances."""
     requested = _work_key(source=_source("local:01"))
     other = _work_key(source=_source("local:02"))
@@ -225,7 +217,9 @@ def test_source_instance_collision_does_not_match_by_display_identity() -> None:
     assert result.reason == "Not available"
 
 
-def test_activation_generation_mismatch_refuses_changed_target() -> None:
+
+def test_activation_generation_mismatch_refuses_changed_target__and_2_more() -> None:
+    # --- scenario: activation_generation_mismatch_refuses_changed_target
     """Ignoring the activation generation would execute a replacement target."""
     result = resolve_navigation(
         _work_key(),
@@ -240,8 +234,7 @@ def test_activation_generation_mismatch_refuses_changed_target() -> None:
     assert result.source_generation == 8
     assert result.reason == "Target changed"
 
-
-def test_action_id_must_match_exactly() -> None:
+    # --- scenario: action_id_must_match_exactly
     """Falling back from a missing action ID would open a different surface."""
     result = resolve_navigation(
         _work_key(),
@@ -251,8 +244,7 @@ def test_action_id_must_match_exactly() -> None:
 
     assert result.kind is NavigationResolutionKind.MISSING
 
-
-def test_oversized_target_is_disabled_without_exposing_it() -> None:
+    # --- scenario: oversized_target_is_disabled_without_exposing_it
     """Passing an oversized target through would bypass the bounded opener contract."""
     candidate = _candidate(target_value="codex://threads/" + "a" * 4096)
 
@@ -263,28 +255,24 @@ def test_oversized_target_is_disabled_without_exposing_it() -> None:
     assert result.reason == "Not available"
 
 
-@pytest.mark.parametrize(
-    "candidate",
-    (
+
+def test_url_and_terminal_targets_are_provider_allowlisted__and_2_more() -> None:
+    # --- scenario: url_and_terminal_targets_are_provider_allowlisted
+    """Accepting arbitrary schemes or executables would add command authority."""
+    for candidate in (
         _candidate(target_value="https://example.com/session"),
         _candidate(target_value="codex://threads/session-01;open /tmp/other"),
         _candidate(
             target_kind="terminal",
             target_value="cd /tmp/project && bash -c 'open /tmp/other'",
         ),
-    ),
-)
-def test_url_and_terminal_targets_are_provider_allowlisted(
-    candidate: NavigationCandidate,
-) -> None:
-    """Accepting arbitrary schemes or executables would add command authority."""
-    result = resolve_navigation(_work_key(), "open:primary", (candidate,))
+    ):
+        result = resolve_navigation(_work_key(), "open:primary", (candidate,))
 
-    assert result.kind is NavigationResolutionKind.DISABLED
-    assert result.reason == "Not available"
+        assert result.kind is NavigationResolutionKind.DISABLED
+        assert result.reason == "Not available"
 
-
-def test_shared_actions_have_one_stable_order_for_eligible_request() -> None:
+    # --- scenario: shared_actions_have_one_stable_order_for_eligible_request
     """Per-surface ordering would make destructive-looking local actions inconsistent."""
     work = _work_truth()
     navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
@@ -309,10 +297,9 @@ def test_shared_actions_have_one_stable_order_for_eligible_request() -> None:
         "Pin",
     )
 
-
-@pytest.mark.parametrize(
-    ("phase", "eligibility", "local_acknowledged", "expected"),
-    (
+    # --- scenario: request_phase_and_eligibility_control_local_acknowledgement
+    """Inferring acknowledgement from a non-actionable phase would author provider truth."""
+    for phase, eligibility, local_acknowledged, expected in (
         (
             RequestPhase.LIVE_UNACKNOWLEDGED,
             AcknowledgementEligibility.ELIGIBLE,
@@ -343,33 +330,27 @@ def test_shared_actions_have_one_stable_order_for_eligible_request() -> None:
             False,
             None,
         ),
-    ),
-)
-def test_request_phase_and_eligibility_control_local_acknowledgement(
-    phase: RequestPhase,
-    eligibility: AcknowledgementEligibility,
-    local_acknowledged: bool,
-    expected: OperatorActionKind | None,
-) -> None:
-    """Inferring acknowledgement from a non-actionable phase would author provider truth."""
-    work = _work_truth()
-    navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
-    actions = build_operator_actions(
-        work=work,
-        request=_request_truth(work.key, phase=phase, eligibility=eligibility),
-        local=_local(acknowledged=local_acknowledged),
-        navigation=navigation,
-    )
-    acknowledgement_kinds = {
-        OperatorActionKind.ACKNOWLEDGE,
-        OperatorActionKind.RESUME_ESCALATION,
-    }
+    ):
+        work = _work_truth()
+        navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
+        actions = build_operator_actions(
+            work=work,
+            request=_request_truth(work.key, phase=phase, eligibility=eligibility),
+            local=_local(acknowledged=local_acknowledged),
+            navigation=navigation,
+        )
+        acknowledgement_kinds = {
+            OperatorActionKind.ACKNOWLEDGE,
+            OperatorActionKind.RESUME_ESCALATION,
+        }
 
-    actual = tuple(action.kind for action in actions if action.kind in acknowledgement_kinds)
-    assert actual == (() if expected is None else (expected,))
+        actual = tuple(action.kind for action in actions if action.kind in acknowledgement_kinds)
+        assert actual == (() if expected is None else (expected,))
 
 
-def test_actionable_request_never_exposes_snooze_even_if_local_state_is_forged() -> None:
+
+def test_actionable_request_never_exposes_snooze_even_if_local_state_is_forged__and_2_more() -> None:
+    # --- scenario: actionable_request_never_exposes_snooze_even_if_local_state_is_forged
     """Offering Snooze for a current ask could hide work that still needs the user."""
     work = _work_truth()
     navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
@@ -384,8 +365,7 @@ def test_actionable_request_never_exposes_snooze_even_if_local_state_is_forged()
     assert OperatorActionKind.SNOOZE not in _kinds(actions)
     assert OperatorActionKind.UNSNOOZE not in _kinds(actions)
 
-
-def test_live_nonactionable_request_does_not_block_visibility_only_snooze() -> None:
+    # --- scenario: live_nonactionable_request_does_not_block_visibility_only_snooze
     """Treating every live phase as actionable would disable safe local organization."""
     work = _work_truth()
     navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
@@ -402,37 +382,31 @@ def test_live_nonactionable_request_does_not_block_visibility_only_snooze() -> N
 
     assert OperatorActionKind.SNOOZE in _kinds(actions)
 
-
-@pytest.mark.parametrize(
-    ("position", "count", "expected_moves"),
-    (
+    # --- scenario: pinned_move_actions_respect_exact_bounds
+    """An off-by-one move would publish a local action that cannot succeed."""
+    for position, count, expected_moves in (
         (0, 1, ()),
         (0, 3, (OperatorActionKind.MOVE_PIN_DOWN,)),
         (1, 3, (OperatorActionKind.MOVE_PIN_UP, OperatorActionKind.MOVE_PIN_DOWN)),
         (2, 3, (OperatorActionKind.MOVE_PIN_UP,)),
-    ),
-)
-def test_pinned_move_actions_respect_exact_bounds(
-    position: int,
-    count: int,
-    expected_moves: tuple[OperatorActionKind, ...],
-) -> None:
-    """An off-by-one move would publish a local action that cannot succeed."""
-    work = _work_truth()
-    navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
+    ):
+        work = _work_truth()
+        navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
 
-    actions = build_operator_actions(
-        work=work,
-        request=None,
-        local=_local(pinned=True, pin_position=position, pin_count=count),
-        navigation=navigation,
-    )
-    move_kinds = {OperatorActionKind.MOVE_PIN_UP, OperatorActionKind.MOVE_PIN_DOWN}
+        actions = build_operator_actions(
+            work=work,
+            request=None,
+            local=_local(pinned=True, pin_position=position, pin_count=count),
+            navigation=navigation,
+        )
+        move_kinds = {OperatorActionKind.MOVE_PIN_UP, OperatorActionKind.MOVE_PIN_DOWN}
 
-    assert tuple(action.kind for action in actions if action.kind in move_kinds) == expected_moves
+        assert tuple(action.kind for action in actions if action.kind in move_kinds) == expected_moves
 
 
-def test_nonactionable_local_actions_switch_to_inverse_actions() -> None:
+
+def test_nonactionable_local_actions_switch_to_inverse_actions__and_2_more() -> None:
+    # --- scenario: nonactionable_local_actions_switch_to_inverse_actions
     """Ignoring local state would make reversible organization actions one-way."""
     work = _work_truth()
     navigation = resolve_navigation(work.key, "open:primary", (_candidate(work.key),))
@@ -451,8 +425,7 @@ def test_nonactionable_local_actions_switch_to_inverse_actions() -> None:
         OperatorActionKind.UNSNOOZE,
     )
 
-
-def test_open_descriptor_keeps_exact_navigation_refusal_reason() -> None:
+    # --- scenario: open_descriptor_keeps_exact_navigation_refusal_reason
     """Replacing a precise refusal with an enabled Open would cause guessed navigation."""
     work = _work_truth()
     navigation = resolve_navigation(work.key, "open:primary", ())
@@ -468,8 +441,7 @@ def test_open_descriptor_keeps_exact_navigation_refusal_reason() -> None:
     assert actions[0].enabled is False
     assert actions[0].disabled_reason == "Not available"
 
-
-def test_builder_rejects_cross_work_request_and_navigation() -> None:
+    # --- scenario: builder_rejects_cross_work_request_and_navigation
     """Joining by a nonexact key would mix actions across two sessions."""
     work = _work_truth()
     other_work = _work_truth(_work_key("work:02"))
@@ -497,7 +469,9 @@ def test_builder_rejects_cross_work_request_and_navigation() -> None:
         )
 
 
-def test_public_records_are_frozen_and_local_pin_state_is_strict() -> None:
+
+def test_public_records_are_frozen_and_local_pin_state_is_strict__and_2_more() -> None:
+    # --- scenario: public_records_are_frozen_and_local_pin_state_is_strict
     """Mutable or internally inconsistent records would invalidate later action guards."""
     candidate = _candidate()
     with pytest.raises(Exception):
@@ -506,14 +480,12 @@ def test_public_records_are_frozen_and_local_pin_state_is_strict() -> None:
     with pytest.raises(ValueError, match="pin"):
         replace(_local(), pinned=True, pin_position=None, pin_count=1)
 
-
-def test_action_identity_is_bounded_product_owned_opaque_text() -> None:
+    # --- scenario: action_identity_is_bounded_product_owned_opaque_text
     """Allowing path-shaped action IDs would leak source content into represented objects."""
     with pytest.raises(ValueError, match="candidate"):
         _candidate(action_id="open /tmp/private-project")
 
-
-def test_ready_resolution_cannot_be_forged_with_a_nonallowlisted_target() -> None:
+    # --- scenario: ready_resolution_cannot_be_forged_with_a_nonallowlisted_target
     """A forged ready record must not make a later shared descriptor executable."""
     with pytest.raises(ValueError, match="ready"):
         NavigationResolution(
@@ -525,3 +497,4 @@ def test_ready_resolution_cannot_be_forged_with_a_nonallowlisted_target() -> Non
             source_generation=7,
             reason=None,
         )
+

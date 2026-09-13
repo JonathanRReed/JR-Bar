@@ -26,7 +26,8 @@ class Runtime:
         )
 
 
-def test_request_runs_off_caller_thread_and_coalesces():
+def test_request_runs_off_caller_thread_and_coalesces__and_2_more() -> None:
+    # --- scenario: request_runs_off_caller_thread_and_coalesces
     gate = threading.Event()
     runtime = Runtime(gate)
     service = ProviderSyncService(runtime)
@@ -45,8 +46,7 @@ def test_request_runs_off_caller_thread_and_coalesces():
     assert callbacks and callbacks[0].refreshing is False
     assert service.close(timeout_seconds=1.0)
 
-
-def test_request_after_worker_capture_runs_latest_state():
+    # --- scenario: request_after_worker_capture_runs_latest_state
     class RecordingRuntime:
         def __init__(self):
             self.states = []
@@ -90,8 +90,7 @@ def test_request_after_worker_capture_runs_latest_state():
     finally:
         service.close(timeout_seconds=1.0)
 
-
-def test_identical_request_after_worker_capture_reuses_inflight_refresh():
+    # --- scenario: identical_request_after_worker_capture_reuses_inflight_refresh
     class RecordingRuntime:
         def __init__(self):
             self.calls = 0
@@ -122,7 +121,9 @@ def test_identical_request_after_worker_capture_reuses_inflight_refresh():
         service.close(timeout_seconds=1.0)
 
 
-def test_request_during_callback_delivery_triggers_a_fresh_sync_run():
+
+def test_request_during_callback_delivery_triggers_a_fresh_sync_run__and_2_more() -> None:
+    # --- scenario: request_during_callback_delivery_triggers_a_fresh_sync_run
     class RecordingRuntime:
         def __init__(self):
             self.calls = 0
@@ -165,8 +166,7 @@ def test_request_during_callback_delivery_triggers_a_fresh_sync_run():
     finally:
         service.close(timeout_seconds=1.0)
 
-
-def test_close_reports_when_in_flight_worker_exceeds_timeout():
+    # --- scenario: close_reports_when_in_flight_worker_exceeds_timeout
     started = threading.Event()
     gate = threading.Event()
 
@@ -187,8 +187,7 @@ def test_close_reports_when_in_flight_worker_exceeds_timeout():
     assert service.close(timeout_seconds=1.0) is True
     assert service.snapshot().closed is True
 
-
-def test_runtime_error_becomes_bounded_failure():
+    # --- scenario: runtime_error_becomes_bounded_failure
     class Broken:
         def refresh(self, _state):
             raise RuntimeError("private error detail")
@@ -198,6 +197,7 @@ def test_runtime_error_becomes_bounded_failure():
     assert result.refreshing is False
     assert result.refresh is None
     assert result.reason == "sync_refresh_failed"
+
 
 
 def test_close_prevents_new_work():

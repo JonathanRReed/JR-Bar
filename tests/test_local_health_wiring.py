@@ -77,7 +77,8 @@ def test_production_health_snapshot_reads_only_existing_memory_owners(
     assert "private-event-name" not in rendered
 
 
-def test_production_shutdown_records_latency_without_changing_close_order() -> None:
+def test_production_shutdown_records_latency_without_changing_close_order__and_2_more() -> None:
+    # --- scenario: production_shutdown_records_latency_without_changing_close_order
     events: list[str] = []
     performance = PerformanceRegistry()
 
@@ -126,8 +127,7 @@ def test_production_shutdown_records_latency_without_changing_close_order() -> N
     assert metric.count == 1
     assert metric.error_count == 0
 
-
-def test_production_shutdown_records_error_and_does_not_swallow_it() -> None:
+    # --- scenario: production_shutdown_records_error_and_does_not_swallow_it
     performance = PerformanceRegistry()
     target = _target(performance)
 
@@ -146,8 +146,7 @@ def test_production_shutdown_records_error_and_does_not_swallow_it() -> None:
     assert metric.count == 1
     assert metric.error_count == 1
 
-
-def test_refresh_records_duration_before_sampling_local_health() -> None:
+    # --- scenario: refresh_records_duration_before_sampling_local_health
     source = (
         Path(__file__).parents[1]
         / "src"
@@ -161,3 +160,4 @@ def test_refresh_records_duration_before_sampling_local_health() -> None:
     assert refresh_block.index('"refresh",') < refresh_block.index(
         "self.local_health_snapshot()"
     )
+

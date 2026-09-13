@@ -110,7 +110,8 @@ def controller(request):
 # --------------------------------------------------------------------------
 
 
-def test_only_declared_windows_become_lanes() -> None:
+def test_only_declared_windows_become_lanes__and_2_more() -> None:
+    # --- scenario: only_declared_windows_become_lanes
     """An undeclared window must be dropped, not borrow a declared lane."""
     lanes = _observations(
         {
@@ -141,8 +142,7 @@ def test_only_declared_windows_become_lanes() -> None:
         ("sonnet", QuotaEffect.MODEL),
     )
 
-
-def test_an_unknown_model_sub_cap_is_dropped_rather_than_renamed() -> None:
+    # --- scenario: an_unknown_model_sub_cap_is_dropped_rather_than_renamed
     """A tier we never declared cannot arrive wearing a declared tier's name."""
     lanes = _observations(
         {
@@ -160,8 +160,7 @@ def test_an_unknown_model_sub_cap_is_dropped_rather_than_renamed() -> None:
 
     assert tuple(lane.semantic_name for lane in lanes) == ("Weekly",)
 
-
-def test_the_contract_stamps_the_semantics_not_the_payload() -> None:
+    # --- scenario: the_contract_stamps_the_semantics_not_the_payload
     """Provider labels must not become display semantics or horizons."""
     lanes = _observations(
         {"five_hour": {"utilization": 10.0}, "seven_day_opus": {"utilization": 88.0}}
@@ -178,7 +177,9 @@ def test_the_contract_stamps_the_semantics_not_the_payload() -> None:
     )
 
 
-def test_declaration_order_survives_a_reshuffled_payload() -> None:
+
+def test_declaration_order_survives_a_reshuffled_payload__and_2_more() -> None:
+    # --- scenario: declaration_order_survives_a_reshuffled_payload
     """Reading order is a product decision, not the endpoint's key order."""
     lanes = _observations(
         {
@@ -194,13 +195,7 @@ def test_declaration_order_survives_a_reshuffled_payload() -> None:
         "Weekly Opus",
     )
 
-
-# --------------------------------------------------------------------------
-# The two numbers that are easy to get quietly wrong.
-# --------------------------------------------------------------------------
-
-
-def test_utilization_is_percent_used_and_is_inverted_exactly_once() -> None:
+    # --- scenario: utilization_is_percent_used_and_is_inverted_exactly_once
     """88% used is 12% LEFT. Inverting twice, or not at all, reads as calm."""
     lanes = _observations(
         {
@@ -218,8 +213,7 @@ def test_utilization_is_percent_used_and_is_inverted_exactly_once() -> None:
     assert sonnet.value.state is ObservationState.OBSERVED_ZERO
     assert opus.value.state is ObservationState.OBSERVED
 
-
-def test_one_out_of_range_window_does_not_take_the_batch_down() -> None:
+    # --- scenario: one_out_of_range_window_does_not_take_the_batch_down
     """A bad weekly reading must not cost the owner the Opus sub-cap too."""
     descriptor = _descriptor()
     evidence = claude_quota.capacity_evidence_from_windows(
@@ -241,7 +235,9 @@ def test_one_out_of_range_window_does_not_take_the_batch_down() -> None:
     assert lanes[1].value.remaining == 12.0
 
 
-def test_the_evidence_stays_used_first_until_the_single_conversion() -> None:
+
+def test_the_evidence_stays_used_first_until_the_single_conversion__and_2_more() -> None:
+    # --- scenario: the_evidence_stays_used_first_until_the_single_conversion
     """One place converts, so there is one place to get it wrong."""
     descriptor = _descriptor()
     evidence = claude_quota.capacity_evidence_from_windows(
@@ -253,8 +249,7 @@ def test_the_evidence_stays_used_first_until_the_single_conversion() -> None:
     assert evidence.lanes[0].metric_kind is EvidenceMetricKind.PERCENT_USED
     assert evidence.lanes[0].percent == 88.0
 
-
-def test_a_window_without_a_credible_reset_stays_reset_less() -> None:
+    # --- scenario: a_window_without_a_credible_reset_stays_reset_less
     """No reset must mean no epoch -- a faked one becomes a fake countdown."""
     lanes = _observations(
         {
@@ -268,8 +263,7 @@ def test_a_window_without_a_credible_reset_stays_reset_less() -> None:
         assert lane.reset.state is ResetState.UNKNOWN
         assert lane.reset.reset_epoch is None
 
-
-def test_iso_and_epoch_resets_both_become_one_future_fact() -> None:
+    # --- scenario: iso_and_epoch_resets_both_become_one_future_fact
     """The endpoint has used both spellings; neither may be the odd one out."""
     lanes = _observations(
         {
@@ -287,6 +281,7 @@ def test_iso_and_epoch_resets_both_become_one_future_fact() -> None:
     assert opus.reset.reset_epoch == NOW + 10_800.0
     assert five_hour.reset.window_minutes == 300.0
     assert weekly.reset.window_minutes == 10_080.0
+
 
 
 # --------------------------------------------------------------------------
@@ -574,7 +569,8 @@ def test_the_card_grows_for_extra_windows_without_moving_a_single_row() -> None:
     ) == (42, 25, 8)
 
 
-def test_in_place_updates_never_silently_drop_a_window(controller) -> None:
+def test_in_place_updates_never_silently_drop_a_window__and_1_more(controller) -> None:
+    # --- scenario: in_place_updates_never_silently_drop_a_window
     """A card built for one window must not eat a second one when it appears."""
     target, status_bar = controller
 
@@ -598,8 +594,7 @@ def test_in_place_updates_never_silently_drop_a_window(controller) -> None:
     assert target._menu_signature == "unchanged"
     assert len(target._usage_menu_window_labels["claude"]) == 3
 
-
-def test_the_publish_path_still_refuses_untyped_observations(controller) -> None:
+    # --- scenario: the_publish_path_still_refuses_untyped_observations
     """The producer is the only way in; a hand-rolled tuple stays refused."""
     target, _status_bar = controller
     target.settings = target.settings.with_claude_plan_limits_enabled(True)
@@ -635,6 +630,7 @@ def test_the_publish_path_still_refuses_untyped_observations(controller) -> None
         )
 
     assert target._usage_provider_states["claude"].consecutive_failures == 1
+
 
 
 # --------------------------------------------------------------------------

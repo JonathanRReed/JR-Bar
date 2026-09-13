@@ -117,7 +117,8 @@ def test_external_edit_after_load_is_not_overwritten(tmp_path: Path) -> None:
     assert json.loads(target.read_text(encoding="utf-8")) == external
 
 
-def test_t3_partial_update_does_not_clear_the_other_field() -> None:
+def test_t3_partial_update_does_not_clear_the_other_field__and_2_more() -> None:
+    # --- scenario: t3_partial_update_does_not_clear_the_other_field
     configured = load_integration_settings().settings.with_t3code(
         base_dir="/tmp/t3",
         environment_id="env-a",
@@ -134,20 +135,19 @@ def test_t3_partial_update_does_not_clear_the_other_field() -> None:
     assert base_updated.t3code_activity_statistics_enabled is True
     assert environment_updated.t3code_activity_statistics_enabled is True
 
-
-def test_t3_activity_statistics_are_a_separate_default_off_setting() -> None:
+    # --- scenario: t3_activity_statistics_are_a_separate_default_off_setting
     settings = load_integration_settings().settings
 
     assert settings.t3code_activity_statistics_enabled is False
     assert settings.with_enabled("t3code", True).t3code_activity_statistics_enabled is False
     assert settings.with_t3code(activity_statistics_enabled=True).t3code_activity_statistics_enabled is True
 
-
-def test_creator_micro_integration_is_default_off() -> None:
+    # --- scenario: creator_micro_integration_is_default_off
     settings = load_integration_settings().settings
 
     assert settings.creator_micro_enabled is False
     assert settings.creator_micro_device_serial is None
+
 
 
 def test_creator_micro_settings_round_trip(tmp_path: Path) -> None:
@@ -162,9 +162,8 @@ def test_creator_micro_settings_round_trip(tmp_path: Path) -> None:
     assert restored.creator_micro_device_serial == "CM2-123"
 
 
-def test_legacy_creator_micro_enablement_without_identity_fails_closed(
-    tmp_path: Path,
-) -> None:
+def test_legacy_creator_micro_enablement_without_identity_fails_closed__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: legacy_creator_micro_enablement_without_identity_fails_closed
     target = tmp_path / "integrations.json"
     target.write_text(
         json.dumps(
@@ -181,10 +180,7 @@ def test_legacy_creator_micro_enablement_without_identity_fails_closed(
     assert restored.creator_micro_enabled is False
     assert restored.creator_micro_device_serial is None
 
-
-def test_malformed_integration_settings_fail_closed_read_only(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: malformed_integration_settings_fail_closed_read_only
     target = tmp_path / "integrations.json"
     target.write_text("{not-json", encoding="utf-8")
 
@@ -195,10 +191,7 @@ def test_malformed_integration_settings_fail_closed_read_only(
     with pytest.raises(IntegrationSettingsWriteRefusedError):
         save_integration_settings(loaded.settings, target, loaded=loaded)
 
-
-def test_untracked_save_refuses_a_malformed_existing_document(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: untracked_save_refuses_a_malformed_existing_document
     target = tmp_path / "integrations.json"
     target.write_text("{not-json", encoding="utf-8")
 
@@ -206,3 +199,4 @@ def test_untracked_save_refuses_a_malformed_existing_document(
         save_integration_settings(load_integration_settings().settings, target)
 
     assert target.read_text(encoding="utf-8") == "{not-json"
+

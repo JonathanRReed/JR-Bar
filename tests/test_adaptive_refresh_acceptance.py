@@ -127,7 +127,8 @@ def _menu_controller_with_refresh_states(*, controller=None):
     return target, StatusBarController
 
 
-def test_adaptive_cadence_plan_preserves_current_interval_precedence() -> None:
+def test_adaptive_cadence_plan_preserves_current_interval_precedence__and_2_more() -> None:
+    # --- scenario: adaptive_cadence_plan_preserves_current_interval_precedence
     adaptive_refresh = _adaptive_refresh()
 
     plan = adaptive_refresh.plan_adaptive_refresh_cadence(
@@ -151,10 +152,8 @@ def test_adaptive_cadence_plan_preserves_current_interval_precedence() -> None:
         ambient_usage_visible=True,
     )
 
-
-@pytest.mark.parametrize(
-    ("menu_opened", "ambient", "snapshots", "reason", "interval"),
-    (
+    # --- scenario: adaptive_cadence_plan_explains_each_current_rung
+    for menu_opened, ambient, snapshots, reason, interval in (
         (9_990.0, False, (), "recent_menu", 120.0),
         (9_000.0, False, (), "warm_menu", 300.0),
         (6_000.0, False, (), "aging_menu", 900.0),
@@ -162,29 +161,20 @@ def test_adaptive_cadence_plan_preserves_current_interval_precedence() -> None:
         (None, True, (), "ambient_usage", 300.0),
         (None, False, (_usage_snapshot(state="error"),), "degraded_source", 120.0),
         (None, False, (_usage_snapshot(reset_at=10_120.0),), "reset_watch", 120.0),
-    ),
-)
-def test_adaptive_cadence_plan_explains_each_current_rung(
-    menu_opened,
-    ambient,
-    snapshots,
-    reason,
-    interval,
-) -> None:
-    adaptive_refresh = _adaptive_refresh()
+    ):
+        adaptive_refresh = _adaptive_refresh()
 
-    plan = adaptive_refresh.plan_adaptive_refresh_cadence(
-        snapshots,
-        observed_at=10_000.0,
-        menu_last_opened_at=menu_opened,
-        ambient_usage_visible=ambient,
-    )
+        plan = adaptive_refresh.plan_adaptive_refresh_cadence(
+            snapshots,
+            observed_at=10_000.0,
+            menu_last_opened_at=menu_opened,
+            ambient_usage_visible=ambient,
+        )
 
-    assert plan.reason.value == reason
-    assert plan.interval_seconds == interval
+        assert plan.reason.value == reason
+        assert plan.interval_seconds == interval
 
-
-def test_adaptive_cadence_reason_is_stable_for_mixed_short_interval_causes() -> None:
+    # --- scenario: adaptive_cadence_reason_is_stable_for_mixed_short_interval_causes
     adaptive_refresh = _adaptive_refresh()
     degraded = _usage_snapshot(state="error")
     reset_watch = _usage_snapshot(reset_at=10_120.0)
@@ -203,7 +193,9 @@ def test_adaptive_cadence_reason_is_stable_for_mixed_short_interval_causes() -> 
     assert forward.interval_seconds == 120.0
 
 
-def test_rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff() -> None:
+
+def test_rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff__and_2_more() -> None:
+    # --- scenario: rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff
     adaptive_refresh = _adaptive_refresh()
 
     plan = adaptive_refresh.plan_adaptive_refresh_cadence(
@@ -214,8 +206,7 @@ def test_rate_limiting_keeps_the_idle_cadence_for_failure_gate_backoff() -> None
     assert plan.reason is adaptive_refresh.AdaptiveRefreshReason.IDLE
     assert plan.interval_seconds == 1800.0
 
-
-def test_menu_open_admission_returns_a_bounded_receipt() -> None:
+    # --- scenario: menu_open_admission_returns_a_bounded_receipt
     adaptive_refresh = _adaptive_refresh()
     notifications = []
     plans = []
@@ -243,8 +234,7 @@ def test_menu_open_admission_returns_a_bounded_receipt() -> None:
         "wall_clock",
     }
 
-
-def test_menu_open_admission_preserves_planner_failure_semantics() -> None:
+    # --- scenario: menu_open_admission_preserves_planner_failure_semantics
     adaptive_refresh = _adaptive_refresh()
     notifications = []
 
@@ -267,6 +257,7 @@ def test_menu_open_admission_preserves_planner_failure_semantics() -> None:
 
     assert notifications == [1_000.0]
     assert not hasattr(controller, "_jrbar_adaptive_refresh_visit_receipt")
+
 
 
 def test_maybe_refresh_usage_summary_does_not_run_io_on_the_caller_thread(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -328,9 +319,8 @@ def test_provider_usage_service_exposes_the_current_cadence_plan() -> None:
     assert isinstance(plan, adaptive_refresh.AdaptiveRefreshPlan)
 
 
-def test_provider_usage_service_cadence_receipt_tracks_the_last_accepted_refresh(
-    tmp_path,
-) -> None:
+def test_provider_usage_service_cadence_receipt_tracks_the_last_accepted_refresh__and_2_more(tmp_path,) -> None:
+    # --- scenario: provider_usage_service_cadence_receipt_tracks_the_last_accepted_refresh
     adaptive_refresh = _adaptive_refresh()
     from jrbar.provider_usage_runtime import ProviderUsageService
     from jrbar.provider_usage_settings import default_provider_usage_settings
@@ -358,10 +348,7 @@ def test_provider_usage_service_cadence_receipt_tracks_the_last_accepted_refresh
     )
     assert service.cadence_plan().interval_seconds == 120.0
 
-
-def test_menu_attention_pulls_the_cached_due_time_forward_without_collection(
-    tmp_path,
-) -> None:
+    # --- scenario: menu_attention_pulls_the_cached_due_time_forward_without_collection
     adaptive_refresh = _adaptive_refresh()
     from jrbar.provider_usage_runtime import ProviderUsageService
     from jrbar.provider_usage_settings import default_provider_usage_settings
@@ -413,10 +400,7 @@ def test_menu_attention_pulls_the_cached_due_time_forward_without_collection(
     service.close()
     assert collection_times == [10_000.0, 10_120.0]
 
-
-def test_ambient_visibility_pulls_the_cached_due_time_forward_without_collection(
-    tmp_path,
-) -> None:
+    # --- scenario: ambient_visibility_pulls_the_cached_due_time_forward_without_collection
     adaptive_refresh = _adaptive_refresh()
     from jrbar.provider_usage_runtime import ProviderUsageService
     from jrbar.provider_usage_settings import default_provider_usage_settings
@@ -447,3 +431,4 @@ def test_ambient_visibility_pulls_the_cached_due_time_forward_without_collection
         is adaptive_refresh.AdaptiveRefreshReason.AMBIENT_USAGE
     )
     assert collection_times == [10_000.0]
+

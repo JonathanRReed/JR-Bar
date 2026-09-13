@@ -24,16 +24,15 @@ def _evaluate(settings: AutoDimSettings, *, now_minutes: int = 12 * 60, display=
     )
 
 
-def test_default_is_off_and_keeps_todays_factor() -> None:
+def test_default_is_off_and_keeps_todays_factor__and_2_more() -> None:
+    # --- scenario: default_is_off_and_keeps_todays_factor
     assert AutoDimSettings().mode == "off"
     result = _evaluate(AutoDimSettings(), display=0.1, ambient=0.0)
     assert result == auto_dim.OFF_RESULT
     assert result.factor == 1.0 and result.available is True
 
-
-@pytest.mark.parametrize(
-    "start,end,now,active",
-    [
+    # --- scenario: schedule_window_math
+    for start, end, now, active in [
         (22 * 60, 7 * 60, 23 * 60, True),  # wraps midnight, evening
         (22 * 60, 7 * 60, 3 * 60, True),  # wraps midnight, small hours
         (22 * 60, 7 * 60, 12 * 60, False),
@@ -42,13 +41,10 @@ def test_default_is_off_and_keeps_todays_factor() -> None:
         (9 * 60, 17 * 60, 12 * 60, True),  # same-day window
         (9 * 60, 17 * 60, 20 * 60, False),
         (9 * 60, 9 * 60, 9 * 60, False),  # empty window never dims
-    ],
-)
-def test_schedule_window_math(start: int, end: int, now: int, active: bool) -> None:
-    assert schedule_active(start, end, now) is active
+    ]:
+        assert schedule_active(start, end, now) is active
 
-
-def test_schedule_mode_applies_the_fraction_inside_the_window_only() -> None:
+    # --- scenario: schedule_mode_applies_the_fraction_inside_the_window_only
     settings = AutoDimSettings(mode="schedule", schedule_start_minutes=22 * 60, schedule_end_minutes=7 * 60, schedule_fraction=0.3)
     inside = _evaluate(settings, now_minutes=23 * 60)
     outside = _evaluate(settings, now_minutes=12 * 60)
@@ -56,7 +52,9 @@ def test_schedule_mode_applies_the_fraction_inside_the_window_only() -> None:
     assert (outside.source, outside.factor) == ("schedule", 1.0)
 
 
-def test_display_mode_follows_the_display_with_a_floor_and_reports_unavailable() -> None:
+
+def test_display_mode_follows_the_display_with_a_floor_and_reports_unavailable__and_1_more() -> None:
+    # --- scenario: display_mode_follows_the_display_with_a_floor_and_reports_unavailable
     settings = AutoDimSettings(mode="display", display_min_fraction=0.15)
     assert _evaluate(settings, display=0.6) == AutoDimResult("display", "display", 0.6, True, 0.6)
     assert _evaluate(settings, display=0.02).factor == 0.15
@@ -68,8 +66,7 @@ def test_display_mode_follows_the_display_with_a_floor_and_reports_unavailable()
 
     assert _evaluate(settings, display=boom).available is False
 
-
-def test_ambient_mode_interpolates_lux_and_falls_back_to_the_display() -> None:
+    # --- scenario: ambient_mode_interpolates_lux_and_falls_back_to_the_display
     settings = AutoDimSettings(
         mode="ambient", ambient_min_fraction=0.1, ambient_lux_floor=5.0, ambient_lux_ceiling=405.0, display_min_fraction=0.2
     )
@@ -83,6 +80,7 @@ def test_ambient_mode_interpolates_lux_and_falls_back_to_the_display() -> None:
     assert (fallback.mode, fallback.source, fallback.factor, fallback.available) == ("ambient", "display", 0.5, False)
     nothing = _evaluate(settings, ambient=None, display=None)
     assert (nothing.source, nothing.factor, nothing.available) == ("display", 1.0, False)
+
 
 
 def test_settings_document_round_trips_and_normalises_bad_values(tmp_path: Path) -> None:

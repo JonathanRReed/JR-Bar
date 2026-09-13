@@ -14,14 +14,14 @@ from jrbar.demo_sandbox import (
 START = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
 
 
-def test_catalog_exposes_named_deterministic_scenarios() -> None:
+def test_catalog_exposes_named_deterministic_scenarios__and_2_more() -> None:
+    # --- scenario: catalog_exposes_named_deterministic_scenarios
     names = available_scenarios()
     assert names == DEMO_SCENARIOS
     assert "overview" in names
     assert {"ask", "error", "completion", "quota", "fleet", "dnd", "low_power"} <= set(names)
 
-
-def test_same_seed_and_clock_produce_identical_run() -> None:
+    # --- scenario: same_seed_and_clock_produce_identical_run
     first = DemoSandbox(start_time=START, seed=17).run("overview")
     second = DemoSandbox(start_time=START, seed=17).run(DemoScenario.OVERVIEW)
 
@@ -29,8 +29,7 @@ def test_same_seed_and_clock_produce_identical_run() -> None:
     assert first.events
     assert first.final_snapshot.at >= START
 
-
-def test_different_seed_changes_only_deterministic_fixture_values() -> None:
+    # --- scenario: different_seed_changes_only_deterministic_fixture_values
     first = DemoSandbox(start_time=START, seed=17).run("quota")
     second = DemoSandbox(start_time=START, seed=18).run("quota")
 
@@ -40,7 +39,9 @@ def test_different_seed_changes_only_deterministic_fixture_values() -> None:
     assert first.final_snapshot.quotas
 
 
-def test_overview_covers_all_requested_domains_without_side_effects() -> None:
+
+def test_overview_covers_all_requested_domains_without_side_effects__and_2_more() -> None:
+    # --- scenario: overview_covers_all_requested_domains_without_side_effects
     run = DemoSandbox(start_time=START, seed=3).run("overview")
     kinds = {event.kind for event in run.events}
 
@@ -54,8 +55,7 @@ def test_overview_covers_all_requested_domains_without_side_effects() -> None:
     assert run.safety.user_state_mutation is False
     assert run.safety.deterministic is True
 
-
-def test_events_are_bounded_and_strictly_ordered() -> None:
+    # --- scenario: events_are_bounded_and_strictly_ordered
     run = DemoSandbox(start_time=START, seed=1, max_events=3).run("overview")
 
     assert len(run.events) == 3
@@ -63,8 +63,7 @@ def test_events_are_bounded_and_strictly_ordered() -> None:
     assert [event.sequence for event in run.events] == [0, 1, 2]
     assert list(run.events) == sorted(run.events, key=lambda event: (event.at, event.sequence))
 
-
-def test_ask_and_error_are_high_priority_light_states() -> None:
+    # --- scenario: ask_and_error_are_high_priority_light_states
     ask = DemoSandbox(start_time=START, seed=1).run("ask").final_snapshot
     error = DemoSandbox(start_time=START, seed=1).run("error").final_snapshot
 
@@ -75,7 +74,9 @@ def test_ask_and_error_are_high_priority_light_states() -> None:
     assert error.light.pattern == "blink"
 
 
-def test_dnd_suppresses_courtesy_completion_but_keeps_safety_metadata() -> None:
+
+def test_dnd_suppresses_courtesy_completion_but_keeps_safety_metadata__and_2_more() -> None:
+    # --- scenario: dnd_suppresses_courtesy_completion_but_keeps_safety_metadata
     snapshot = DemoSandbox(start_time=START, seed=1).run("dnd").final_snapshot
 
     assert snapshot.dnd is True
@@ -83,8 +84,7 @@ def test_dnd_suppresses_courtesy_completion_but_keeps_safety_metadata() -> None:
     assert snapshot.light.mode is DemoLightMode.SUPPRESSED
     assert snapshot.light.reason == "dnd"
 
-
-def test_low_power_clamps_light_to_calm_low_energy_output() -> None:
+    # --- scenario: low_power_clamps_light_to_calm_low_energy_output
     snapshot = DemoSandbox(start_time=START, seed=1).run("low_power").final_snapshot
 
     assert snapshot.low_power is True
@@ -92,8 +92,7 @@ def test_low_power_clamps_light_to_calm_low_energy_output() -> None:
     assert snapshot.light.pattern == "steady"
     assert snapshot.light.reason == "low_power"
 
-
-def test_fleet_scenario_keeps_remote_machine_and_agent_distinct() -> None:
+    # --- scenario: fleet_scenario_keeps_remote_machine_and_agent_distinct
     snapshot = DemoSandbox(start_time=START, seed=2).run("fleet").final_snapshot
 
     assert any(machine.remote for machine in snapshot.machines)
@@ -101,7 +100,9 @@ def test_fleet_scenario_keeps_remote_machine_and_agent_distinct() -> None:
     assert any(device.machine_id == "remote-build" for device in snapshot.devices)
 
 
-def test_snapshot_adapter_is_content_minimized_and_render_ready() -> None:
+
+def test_snapshot_adapter_is_content_minimized_and_render_ready__and_2_more() -> None:
+    # --- scenario: snapshot_adapter_is_content_minimized_and_render_ready
     snapshot = DemoSandbox(start_time=START, seed=2).run("ask").final_snapshot
 
     rows = snapshot.to_projection_rows()
@@ -114,8 +115,7 @@ def test_snapshot_adapter_is_content_minimized_and_render_ready() -> None:
     assert render.surface == "screen_bar"
     assert render.light_mode == "asking"
 
-
-def test_unknown_scenario_is_rejected_without_io() -> None:
+    # --- scenario: unknown_scenario_is_rejected_without_io
     sandbox = DemoSandbox(start_time=START, seed=0)
 
     try:
@@ -125,8 +125,7 @@ def test_unknown_scenario_is_rejected_without_io() -> None:
     else:
         raise AssertionError("unknown scenarios must be rejected")
 
-
-def test_demo_is_reachable_from_both_cli_surfaces() -> None:
+    # --- scenario: demo_is_reachable_from_both_cli_surfaces
     from jrbar.cli import build_jrbar_parser, build_parser, cmd_demo
 
     for parser in (build_jrbar_parser(), build_parser()):
@@ -134,3 +133,4 @@ def test_demo_is_reachable_from_both_cli_surfaces() -> None:
         assert parsed.func is cmd_demo
         assert parsed.scenario == "notification_light"
         assert parsed.seed == 9
+

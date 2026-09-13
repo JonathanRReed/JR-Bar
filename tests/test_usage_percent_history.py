@@ -50,7 +50,8 @@ def _retention(*policies):
     )
 
 
-def test_filter_records_first_sight_and_movement_only() -> None:
+def test_filter_records_first_sight_and_movement_only__and_2_more() -> None:
+    # --- scenario: filter_records_first_sight_and_movement_only
     fresh, updated = filter_new_observations(
         {}, [("grok", "default", "weekly", 88.0)], now_epoch=NOW_EPOCH
     )
@@ -75,8 +76,7 @@ def test_filter_records_first_sight_and_movement_only() -> None:
     )
     assert len(fresh4) == 1
 
-
-def test_filter_keeps_same_provider_lane_independent_per_source_instance() -> None:
+    # --- scenario: filter_keeps_same_provider_lane_independent_per_source_instance
     fresh, updated = filter_new_observations(
         {},
         [
@@ -92,8 +92,7 @@ def test_filter_keeps_same_provider_lane_independent_per_source_instance() -> No
         ("claude", "work", "weekly"),
     }
 
-
-def test_filter_rejects_junk() -> None:
+    # --- scenario: filter_rejects_junk
     fresh, _ = filter_new_observations(
         {},
         [
@@ -108,7 +107,9 @@ def test_filter_rejects_junk() -> None:
     assert fresh == []
 
 
-def test_graph_model_charts_every_provider_with_history() -> None:
+
+def test_graph_model_charts_every_provider_with_history__and_1_more() -> None:
+    # --- scenario: graph_model_charts_every_provider_with_history
     day = 86_400.0
     text = "".join(
         [
@@ -136,8 +137,7 @@ def test_graph_model_charts_every_provider_with_history() -> None:
     # for days before any sample existed (audit, 2026-08-26).
     assert by_provider["devin"] == (-1.0, -1.0, 55.0)
 
-
-def test_graph_model_keeps_same_provider_instances_as_exact_series() -> None:
+    # --- scenario: graph_model_keeps_same_provider_instances_as_exact_series
     day = 86_400.0
     text = "".join(
         (
@@ -182,7 +182,9 @@ def test_graph_model_keeps_same_provider_instances_as_exact_series() -> None:
     assert by_identity[("claude", "work")]["values"] == (60.0, 60.0, 30.0)
 
 
-def test_append_writes_private_jsonl(tmp_path) -> None:
+
+def test_append_writes_private_jsonl__and_2_more(tmp_path) -> None:
+    # --- scenario: append_writes_private_jsonl
     target = tmp_path / "usage-percent-history.jsonl"
     records, _ = filter_new_observations(
         {}, [("claude", "default", "weekly", 71.0)], now_epoch=NOW_EPOCH
@@ -194,8 +196,7 @@ def test_append_writes_private_jsonl(tmp_path) -> None:
     assert stored["source_instance_id"] == "default"
     assert stored["remaining_percent"] == 71.0
 
-
-def test_append_prunes_each_exact_instance_by_its_retention(tmp_path) -> None:
+    # --- scenario: append_prunes_each_exact_instance_by_its_retention
     day = 86_400.0
     target = tmp_path / "usage-percent-history.jsonl"
     target.write_text(
@@ -253,8 +254,7 @@ def test_append_prunes_each_exact_instance_by_its_retention(tmp_path) -> None:
         ("work", 70.0)
     ]
 
-
-def test_append_migrates_legacy_rows_to_default_instance(tmp_path) -> None:
+    # --- scenario: append_migrates_legacy_rows_to_default_instance
     target = tmp_path / "usage-percent-history.jsonl"
     target.write_text(_line("claude", "weekly", 72.0, NOW_EPOCH))
 
@@ -267,6 +267,7 @@ def test_append_migrates_legacy_rows_to_default_instance(tmp_path) -> None:
 
     stored = json.loads(target.read_text().strip())
     assert stored["source_instance_id"] == "default"
+
 
 
 def test_recording_advances_dedupe_only_after_writer_accepts(monkeypatch, tmp_path) -> None:

@@ -60,7 +60,8 @@ def test_render_is_content_free_and_lists_providers() -> None:
     assert "python -m jrbar.hook_client --provider claude" in text
 
 
-def test_registered_commands_read_folded_yaml_and_embedded_argv(tmp_path: Path) -> None:
+def test_registered_commands_read_folded_yaml_and_embedded_argv__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: registered_commands_read_folded_yaml_and_embedded_argv
     hermes = tmp_path / "config.yaml"
     hermes.write_text(
         "hooks:\n  pre_tool_call:\n  - command: /opt/jrbar/bin/jrbar-hook --provider \n      hermes --log /tmp/hermes.jsonl\n"
@@ -76,8 +77,7 @@ def test_registered_commands_read_folded_yaml_and_embedded_argv(tmp_path: Path) 
     assert classify_command(found[0]) == "shim"
     assert registered_commands(handler, "opencode") == []
 
-
-def test_registered_commands_unwrap_the_antigravity_envelope_and_skip_fallbacks(tmp_path: Path) -> None:
+    # --- scenario: registered_commands_unwrap_the_antigravity_envelope_and_skip_fallbacks
     hooks = tmp_path / "hooks.json"
     hooks.write_text(json.dumps({"jrbar-status": {"Stop": [{"type": "command", "command": "payload=\"$(cat)\"; printf '{\"hook_event_name\":\"Stop\",\"antigravity\":%s}' \"${payload:-null}\" | /opt/jrbar/bin/jrbar-hook --provider antigravity --log /tmp/antigravity.jsonl >/dev/null 2>&1; printf '{}'", "timeout": 10}]}}))
     found = registered_commands(hooks, "antigravity")
@@ -87,8 +87,7 @@ def test_registered_commands_unwrap_the_antigravity_envelope_and_skip_fallbacks(
     extension.write_text('const HOOK_COMMAND = ["/opt/jrbar/bin/jrbar-hook", "--provider", "pi", "--log", "/tmp/pi.jsonl"];\nconst FALLBACK_COMMAND = ["/venv/bin/python", "-m", "jrbar.hook_client", "--provider", "pi", "--log", "/tmp/pi.jsonl"];\n')
     assert [classify_command(parts) for parts in registered_commands(extension, "pi")] == ["shim"]
 
-
-def test_registered_commands_unfold_hermes_long_path_scalars(tmp_path: Path) -> None:
+    # --- scenario: registered_commands_unfold_hermes_long_path_scalars
     """Hermes folds a plain scalar wherever the line got long: after the
     bundled shim path and after ``--log``, not only after ``--provider``."""
     hermes = tmp_path / "config.yaml"
@@ -104,6 +103,7 @@ def test_registered_commands_unfold_hermes_long_path_scalars(tmp_path: Path) -> 
     found = registered_commands(hermes, "hermes")
     assert found == [[shim, "--provider", "hermes", "--log", "/Users/someone/.local/state/jrbar/hermes.jsonl"]]
     assert classify_command(found[0]) == "shim"
+
 
 
 def test_hook_shim_path_finds_the_bundled_shim_when_frozen(tmp_path: Path, monkeypatch) -> None:

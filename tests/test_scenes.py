@@ -19,22 +19,21 @@ from jrbar.scenes import (
 from jrbar.settings import AgentMonitorSettings, load_settings, save_settings
 
 
-def test_all_scenes_have_bounded_policies():
+def test_all_scenes_have_bounded_policies__and_2_more() -> None:
+    # --- scenario: all_scenes_have_bounded_policies
     assert set(SCENE_POLICIES) == set(Scene)
     for policy in SCENE_POLICIES.values():
         assert 0.0 <= policy.brightness <= 1.0
         assert isinstance(policy.display_admission, DisplayAdmission)
 
-
-def test_scene_parsing_fails_closed():
+    # --- scenario: scene_parsing_fails_closed
     assert scene_from_value("focus") is Scene.FOCUS
     assert scene_from_value("unknown") is None
     assert scene_from_value(None) is None
     assert policy_for_scene("unknown") is None
     assert policy_for_scene("focus", reduce_motion="yes") is None
 
-
-def test_reduce_motion_changes_effective_motion_without_mutating_policy():
+    # --- scenario: reduce_motion_changes_effective_motion_without_mutating_policy
     policy = policy_for_scene(Scene.DEMO, reduce_motion=True)
     assert policy is not None
     assert policy.motion is MotionLevel.FULL
@@ -42,7 +41,9 @@ def test_reduce_motion_changes_effective_motion_without_mutating_policy():
     assert policy_for_scene(Scene.DEMO).effective_motion is MotionLevel.FULL
 
 
-def test_effective_policy_consumes_existing_accessibility_snapshot():
+
+def test_effective_policy_consumes_existing_accessibility_snapshot__and_2_more() -> None:
+    # --- scenario: effective_policy_consumes_existing_accessibility_snapshot
     preferences = AccessibilityDisplayPreferences(reduce_motion=True)
 
     policy = effective_policy_for_scene(
@@ -54,15 +55,14 @@ def test_effective_policy_consumes_existing_accessibility_snapshot():
     assert policy.motion is MotionLevel.FULL
     assert policy.effective_motion is MotionLevel.STATIC
 
-
-def test_scene_semantics():
+    # --- scenario: scene_semantics
     assert policy_for_scene(Scene.NIGHT).notifications is NotificationMode.NONE
     assert policy_for_scene(Scene.DND).device_selection is DeviceSelection.NONE
     assert policy_for_scene(Scene.CALM).surface_role is SurfaceRole.AMBIENT
 
-
-def test_options_are_stable_and_complete():
+    # --- scenario: options_are_stable_and_complete
     assert scene_options() == tuple(Scene)
+
 
 
 def test_settings_persist_active_scene_and_apply_accessibility_snapshot(tmp_path):
@@ -105,7 +105,8 @@ def _pack_row(scene: Scene, **fields) -> ScenePolicy:
     return ScenePolicy(**values)
 
 
-def test_policy_for_scene_merges_pack_overrides_over_the_base_policy():
+def test_policy_for_scene_merges_pack_overrides_over_the_base_policy__and_2_more() -> None:
+    # --- scenario: policy_for_scene_merges_pack_overrides_over_the_base_policy
     overrides = {
         Scene.CALM: _pack_row(
             Scene.CALM,
@@ -142,8 +143,7 @@ def test_policy_for_scene_merges_pack_overrides_over_the_base_policy():
     )
     assert reduced is not None and reduced.reduce_motion is True
 
-
-def test_policy_for_scene_override_rows_fail_closed_to_the_base_policy():
+    # --- scenario: policy_for_scene_override_rows_fail_closed_to_the_base_policy
     base = policy_for_scene(Scene.FOCUS)
 
     assert policy_for_scene(Scene.FOCUS, overrides=object()) == base
@@ -172,8 +172,7 @@ def test_policy_for_scene_override_rows_fail_closed_to_the_base_policy():
         == base
     )
 
-
-def test_effective_policy_for_scene_forwards_pack_overrides():
+    # --- scenario: effective_policy_for_scene_forwards_pack_overrides
     overrides = {Scene.DEMO: _pack_row(Scene.DEMO, brightness=0.1)}
 
     policy = effective_policy_for_scene(Scene.DEMO, overrides=overrides)
@@ -181,6 +180,7 @@ def test_effective_policy_for_scene_forwards_pack_overrides():
     assert policy is not None
     assert policy.brightness == 0.1
     assert policy.reduce_motion is False
+
 
 
 def test_settings_resolve_the_selected_scene_through_the_active_pack(

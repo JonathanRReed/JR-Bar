@@ -120,7 +120,8 @@ def test_status_txt_fifo_does_not_block_inventory(tmp_path: Path) -> None:
     assert hardware_status_serial(mount) is None
 
 
-def test_symlinked_mount_candidate_is_not_inventoried(tmp_path: Path) -> None:
+def test_symlinked_mount_candidate_is_not_inventoried__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: symlinked_mount_candidate_is_not_inventoried
     real_mount = tmp_path / "real-volume"
     real_mount.mkdir()
     _write_status(real_mount)
@@ -128,12 +129,12 @@ def test_symlinked_mount_candidate_is_not_inventoried(tmp_path: Path) -> None:
 
     assert inventory_mounts(tmp_path, runner=_runner_for(real_mount)) == ()
 
-
-def test_refine_is_a_noop_without_serial(tmp_path: Path) -> None:
+    # --- scenario: refine_is_a_noop_without_serial
     from jrbar.device_identity import DeviceHardwareFacts
 
     facts = DeviceHardwareFacts(mount_path="/Volumes/SidePulse", product_name="SIDEPULSE")
     assert refine_facts_with_hardware_status(facts, tmp_path) is facts
+
 
 
 def test_rekeyed_ghost_entry_is_not_persistable() -> None:
@@ -193,7 +194,8 @@ def _working_status(event_name: str, age_seconds: float):
     )
 
 
-def test_working_after_tool_failure_demotes_like_post_tool() -> None:
+def test_working_after_tool_failure_demotes_like_post_tool__and_2_more() -> None:
+    # --- scenario: working_after_tool_failure_demotes_like_post_tool
     from jrbar._collector_legacy import status_for_snapshot
     from jrbar.models import AgentMode
 
@@ -203,8 +205,7 @@ def test_working_after_tool_failure_demotes_like_post_tool() -> None:
     )
     assert effective.mode is AgentMode.ENDED_UNCONFIRMED
 
-
-def test_hook_silent_working_demotes_after_silence_window() -> None:
+    # --- scenario: hook_silent_working_demotes_after_silence_window
     """A "working" agent with no hook events for 10 minutes is a dead one
     (crashed turn, killed terminal) -- it must not pulse for the full
     hour-long stale window as a phantom."""
@@ -220,8 +221,7 @@ def test_hook_silent_working_demotes_after_silence_window() -> None:
     )
     assert effective.mode is AgentMode.ENDED_UNCONFIRMED
 
-
-def test_recent_working_stays_working() -> None:
+    # --- scenario: recent_working_stays_working
     from jrbar._collector_legacy import status_for_snapshot
     from jrbar.models import AgentMode
 
@@ -233,7 +233,9 @@ def test_recent_working_stays_working() -> None:
         assert effective.mode is AgentMode.WORKING
 
 
-def test_long_thinking_turn_survives_the_post_tool_window() -> None:
+
+def test_long_thinking_turn_survives_the_post_tool_window__and_1_more() -> None:
+    # --- scenario: long_thinking_turn_survives_the_post_tool_window
     """WORKING that is NOT post-tool (agent mid-turn, thinking) gets the
     LONGER silence window, not the 2-minute post-tool one -- derived
     from the shared constant so the pin moves with the ratified line."""
@@ -257,8 +259,7 @@ def test_long_thinking_turn_survives_the_post_tool_window() -> None:
         is AgentMode.ENDED_UNCONFIRMED
     )
 
-
-def test_a_whisper_too_dim_to_hold_its_hue_goes_honestly_dark():
+    # --- scenario: a_whisper_too_dim_to_hold_its_hue_goes_honestly_dark
     """2026-08-20, photographed live: at drive 1-2 the green die emits
     several times more light than red or blue, so 'barely-visible white'
     #010101 rendered as a clearly GREEN glow -- 'why is the SidePulse
@@ -275,3 +276,4 @@ def test_a_whisper_too_dim_to_hold_its_hue_goes_honestly_dark():
     assert apply_strip_transfer_to_hex("#010530", NEUTRAL_CHANNEL_GAINS) != "#000000"
     # And true black stays black.
     assert apply_strip_transfer_to_hex("#000000", NEUTRAL_CHANNEL_GAINS) == "#000000"
+

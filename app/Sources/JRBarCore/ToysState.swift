@@ -177,7 +177,9 @@ public struct BuddySpot: Codable, Equatable, Sendable {
 /// and eaten crumbs. `freePosition` is where a drag parked it on the
 /// screen — nil keeps it docked under the notch — `tucked` hides it
 /// until the next session event or a card re-enable, and `showCaption`
-/// is the quiet "what it's doing" line under the floating pill.
+/// is the quiet "what it's doing" line under the floating pill. `scale`
+/// is the floating buddy's size dial — the docked pill keeps its 18pt
+/// self whatever this says; the notch slot is fixed.
 public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var character: String
@@ -189,11 +191,25 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public var tucked: Bool
     /// The caption under the floating buddy.
     public var showCaption: Bool
+    /// The floating pet's size multiplier, stored clamped into
+    /// `scaleRange` so a hand edit can't grow a screen-filling (or
+    /// invisible) buddy.
+    public var scale: Double
+
+    /// The size slider's reach — 1× is the docked size, 3× is desk-pet.
+    public static let scaleRange: ClosedRange<Double> = 1.0...3.0
+
+    /// Scale only means something inside `scaleRange`; a non-finite
+    /// value reads as the default.
+    public static func clampedScale(_ value: Double) -> Double {
+        guard value.isFinite else { return 1.0 }
+        return min(scaleRange.upperBound, max(scaleRange.lowerBound, value))
+    }
 
     public init(enabled: Bool = false, character: String = "dot",
                 buddyName: String = "", care: BuddyCare = BuddyCare(),
                 freePosition: BuddySpot? = nil, tucked: Bool = false,
-                showCaption: Bool = true) {
+                showCaption: Bool = true, scale: Double = 1.0) {
         self.enabled = enabled
         self.character = character
         self.buddyName = buddyName
@@ -201,6 +217,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         self.freePosition = freePosition
         self.tucked = tucked
         self.showCaption = showCaption
+        self.scale = Self.clampedScale(scale)
     }
 
     /// The stored name as a `BuddyCharacter`; unknown strings (a newer
@@ -218,7 +235,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, character, buddyName, care, freePosition, tucked, showCaption
+        case enabled, character, buddyName, care, freePosition, tucked, showCaption, scale
     }
 
     public init(from decoder: any Decoder) throws {
@@ -232,6 +249,8 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         freePosition = (try? c.decodeIfPresent(BuddySpot.self, forKey: .freePosition)) ?? nil
         tucked = (try? c.decodeIfPresent(Bool.self, forKey: .tucked)) ?? false
         showCaption = (try? c.decodeIfPresent(Bool.self, forKey: .showCaption)) ?? true
+        // Missing or mistyped is 1×; a number outside the dial clamps.
+        scale = Self.clampedScale((try? c.decodeIfPresent(Double.self, forKey: .scale)) ?? 1.0)
     }
 }
 

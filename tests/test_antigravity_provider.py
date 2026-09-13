@@ -118,7 +118,8 @@ def _run_installed_command(command: str, stdin: str) -> subprocess.CompletedProc
 # --------------------------------------------------------------------------
 
 
-def test_antigravity_is_a_registered_hook_provider_with_its_native_event_keys() -> None:
+def test_antigravity_is_a_registered_hook_provider_with_its_native_event_keys__and_2_more() -> None:
+    # --- scenario: antigravity_is_a_registered_hook_provider_with_its_native_event_keys
     """The spec's .events are hooks.json CONFIG KEYS, not canonical events.
 
     Registering canonical names here would write a hooks.json whose keys
@@ -131,8 +132,7 @@ def test_antigravity_is_a_registered_hook_provider_with_its_native_event_keys() 
     assert "antigravity" in providers.HOOK_PROVIDERS
     assert spec.config_path(Path("/home/x")) == Path("/home/x/.gemini/config/hooks.json")
 
-
-def test_pretooluse_is_never_registered_for_antigravity() -> None:
+    # --- scenario: pretooluse_is_never_registered_for_antigravity
     """Its stdout contract has no neutral value.
 
     `decision` is required and is one of allow/deny/ask/force_ask. Any value
@@ -143,14 +143,15 @@ def test_pretooluse_is_never_registered_for_antigravity() -> None:
     assert "PreToolUse" not in providers.ANTIGRAVITY_EVENTS
     assert "PreToolUse" not in providers.ANTIGRAVITY_CANONICAL_EVENTS
 
-
-def test_antigravity_native_event_names_stay_out_of_the_canonical_vocabulary() -> None:
+    # --- scenario: antigravity_native_event_names_stay_out_of_the_canonical_vocabulary
     """PreInvocation is a config key; it must never be an ingested event name."""
     assert "PreInvocation" not in providers.KNOWN_EVENTS
     assert providers.canonical_event_name("PreInvocation") is None
 
 
-def test_antigravity_hook_source_negotiates_and_is_invocable() -> None:
+
+def test_antigravity_hook_source_negotiates_and_is_invocable__and_1_more() -> None:
+    # --- scenario: antigravity_hook_source_negotiates_and_is_invocable
     """The gate that makes every other test here worth anything.
 
     A provider missing from the first-party contract table registers, installs,
@@ -164,8 +165,7 @@ def test_antigravity_hook_source_negotiates_and_is_invocable() -> None:
         ObservationAuthority.DIRECT_PROVIDER_OBSERVATION
     )
 
-
-def test_antigravity_declares_no_actionable_requests_capability() -> None:
+    # --- scenario: antigravity_declares_no_actionable_requests_capability
     """PreToolUse is the only Antigravity event that names a user decision.
 
     Since it is never installed, nothing in this feed can carry a live request,
@@ -181,12 +181,14 @@ def test_antigravity_declares_no_actionable_requests_capability() -> None:
     assert declared == {CapabilityIdentifier("live_agent_events")}
 
 
+
 # --------------------------------------------------------------------------
 # Installation
 # --------------------------------------------------------------------------
 
 
-def test_install_uses_the_grouped_shape_only_for_tool_events(tmp_path: Path) -> None:
+def test_install_uses_the_grouped_shape_only_for_tool_events__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: install_uses_the_grouped_shape_only_for_tool_events
     """Antigravity requires {matcher, hooks} for PostToolUse and a flat list
     for PreInvocation and Stop. The wrong shape is silently inert config."""
     config, _log = _install(tmp_path)
@@ -201,8 +203,7 @@ def test_install_uses_the_grouped_shape_only_for_tool_events(tmp_path: Path) -> 
         assert entry[flat_event][0]["type"] == "command"
         assert entry[flat_event][0]["timeout"] == install.ANTIGRAVITY_HOOK_TIMEOUT_SECONDS
 
-
-def test_install_preserves_other_tools_named_hooks(tmp_path: Path) -> None:
+    # --- scenario: install_preserves_other_tools_named_hooks
     """hooks.json is a shared user-level file keyed by hook name."""
     foreign = {
         "team-linter": {
@@ -216,6 +217,7 @@ def test_install_preserves_other_tools_named_hooks(tmp_path: Path) -> None:
 
     assert data["team-linter"] == foreign["team-linter"]
     assert "jrbar-status" in data
+
 
 
 def test_reinstall_changes_nothing_and_uninstall_removes_only_our_entry(
@@ -381,7 +383,8 @@ def test_installed_command_survives_an_empty_payload(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_conversation_id_becomes_the_work_identity() -> None:
+def test_conversation_id_becomes_the_work_identity__and_1_more() -> None:
+    # --- scenario: conversation_id_becomes_the_work_identity
     record = _record({"conversationId": _CONVERSATION, "terminationReason": "model_stop"})
 
     assert type(record) is NormalizedProviderRecord
@@ -389,8 +392,7 @@ def test_conversation_id_becomes_the_work_identity() -> None:
     assert record.provider_work_id.value == _CONVERSATION
     assert record.safe_label == f"Antigravity {_CONVERSATION}"
 
-
-def test_workspace_and_transcript_paths_never_reach_the_record() -> None:
+    # --- scenario: workspace_and_transcript_paths_never_reach_the_record
     """The payload carries the user's file paths. The ledger has no use for
     them, so nothing but the conversation id is lifted out of the envelope."""
     record = _record(
@@ -405,6 +407,7 @@ def test_workspace_and_transcript_paths_never_reach_the_record() -> None:
     encoded = json.dumps(normalized_provider_record_to_payload(record))
 
     assert "secret-client" not in encoded
+
 
 
 @pytest.mark.parametrize(
@@ -429,7 +432,8 @@ def test_a_conversation_id_that_is_not_an_opaque_token_fails_closed(
     assert record.diagnostic.identifier.value == "invalid_provider_identity"
 
 
-def test_an_event_with_no_conversation_id_is_reported_as_missing_identity() -> None:
+def test_an_event_with_no_conversation_id_is_reported_as_missing_identity__and_2_more() -> None:
+    # --- scenario: an_event_with_no_conversation_id_is_reported_as_missing_identity
     """Antigravity can hand a hook a payload we cannot attribute. That has to
     read as a known gap, not as a silently invented unit of work."""
     record = _record({"terminationReason": "model_stop"})
@@ -447,13 +451,7 @@ def test_an_event_with_no_conversation_id_is_reported_as_missing_identity() -> N
     assert batch.work_facts == ()
     assert [d.identifier.value for d in batch.diagnostics] == ["missing_work_identity"]
 
-
-# --------------------------------------------------------------------------
-# Outcome refinement
-# --------------------------------------------------------------------------
-
-
-def test_stop_reasons_map_to_their_real_outcomes() -> None:
+    # --- scenario: stop_reasons_map_to_their_real_outcomes
     base = {"conversationId": _CONVERSATION, "fullyIdle": True}
 
     assert _lifecycle({**base, "terminationReason": "model_stop"}) is WorkLifecycle.COMPLETED
@@ -466,8 +464,7 @@ def test_stop_reasons_map_to_their_real_outcomes() -> None:
         is WorkLifecycle.UNKNOWN
     )
 
-
-def test_an_unrecognised_termination_reason_still_ends_the_work() -> None:
+    # --- scenario: an_unrecognised_termination_reason_still_ends_the_work
     """Antigravity documents the reason list with an "e.g." -- the set is
     open. Dropping an unlisted reason would strand the work ACTIVE in the
     ledger forever, which is worse than saying "ended, outcome unknown"."""
@@ -483,7 +480,9 @@ def test_an_unrecognised_termination_reason_still_ends_the_work() -> None:
     assert record.event_name is ProviderEventName.STOP_INCOMPLETE
 
 
-def test_stop_with_background_work_outstanding_is_not_completed() -> None:
+
+def test_stop_with_background_work_outstanding_is_not_completed__and_2_more() -> None:
+    # --- scenario: stop_with_background_work_outstanding_is_not_completed
     """fullyIdle is Antigravity telling us the parent is not finished.
 
     Claiming COMPLETED here is the failure this project already paid for
@@ -500,8 +499,7 @@ def test_stop_with_background_work_outstanding_is_not_completed() -> None:
         is not WorkLifecycle.COMPLETED
     )
 
-
-def test_a_failing_tool_call_does_not_mark_the_work_failed() -> None:
+    # --- scenario: a_failing_tool_call_does_not_mark_the_work_failed
     """PostToolUse carries the tool's own exit status and the loop keeps
     running. An agent whose test command exits 1 has not failed, and the
     blocked light blinks until it is dealt with."""
@@ -512,8 +510,7 @@ def test_a_failing_tool_call_does_not_mark_the_work_failed() -> None:
 
     assert lifecycle is WorkLifecycle.ACTIVE
 
-
-def test_a_non_string_outcome_field_fails_closed() -> None:
+    # --- scenario: a_non_string_outcome_field_fails_closed
     record = _record(
         {"conversationId": _CONVERSATION, "terminationReason": {"unexpected": "shape"}}
     )
@@ -522,7 +519,9 @@ def test_a_non_string_outcome_field_fails_closed() -> None:
     assert record.diagnostic.identifier.value == "invalid_provider_outcome"
 
 
-def test_unmapped_antigravity_event_names_are_dropped_not_guessed() -> None:
+
+def test_unmapped_antigravity_event_names_are_dropped_not_guessed__and_2_more() -> None:
+    # --- scenario: unmapped_antigravity_event_names_are_dropped_not_guessed
     """A hand-written hook that forwarded a raw native name must not be
     silently reinterpreted as some neighbouring event."""
     line = json.dumps(
@@ -535,17 +534,16 @@ def test_unmapped_antigravity_event_names_are_dropped_not_guessed() -> None:
 
     assert providers.parse_log_line("antigravity", line) is None
 
-
-def test_hook_command_rejects_an_event_name_the_envelope_cannot_emit() -> None:
+    # --- scenario: hook_command_rejects_an_event_name_the_envelope_cannot_emit
     with pytest.raises(ValueError):
         install.antigravity_hook_command("PreToolUse", Path("/tmp/x.jsonl"))
 
-
-def test_unparsed_payloads_never_become_a_hook_event() -> None:
+    # --- scenario: unparsed_payloads_never_become_a_hook_event
     """Guards the envelope: a bare Antigravity payload has no event name."""
     bare = json.dumps({"conversationId": _CONVERSATION, "terminationReason": "model_stop"})
 
     assert providers.parse_log_line("antigravity", bare) is None
+
 
 
 def test_hook_event_round_trip_keeps_the_declared_provider() -> None:

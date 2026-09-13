@@ -106,47 +106,41 @@ def freeze_wall_clock(monkeypatch, seconds_after_last_event: float) -> None:
     )
 
 
-@pytest.mark.parametrize("provider", ALL_PROVIDERS)
-def test_a_silent_active_work_stops_claiming_the_lights(provider, monkeypatch) -> None:
-    state = state_that_went_quiet(provider, WorkLifecycle.ACTIVE)
-    freeze_wall_clock(monkeypatch, active_silence_seconds_for(provider) + 60.0)
-
-    projection = project_attention_from_operator_state(
-        state, (), AgentMonitorSettings()
-    )
-    assert all(
-        row.lifecycle_mode.value != "active" for row in projection.visible_rows
-    ), f"{provider}: the lights still claim a session that went quiet"
-
-
-@pytest.mark.parametrize("provider", ALL_PROVIDERS)
-def test_a_silent_active_work_stops_being_counted(provider, monkeypatch) -> None:
-    state = state_that_went_quiet(provider, WorkLifecycle.ACTIVE)
-    freeze_wall_clock(monkeypatch, active_silence_seconds_for(provider) + 60.0)
-
-    assert project_canonical_mailbox(state).active_count == 0, (
-        f"{provider}: still counted as working after going quiet"
-    )
-
-
-@pytest.mark.parametrize("provider", ALL_PROVIDERS)
-def test_a_finished_turn_does_not_hold_its_completion_forever(
-    provider, monkeypatch
+def test_a_silent_active_work_stops_claiming_the_lights_and_being_counted(
+    monkeypatch,
 ) -> None:
+    for provider in ALL_PROVIDERS:
+        state = state_that_went_quiet(provider, WorkLifecycle.ACTIVE)
+        freeze_wall_clock(monkeypatch, active_silence_seconds_for(provider) + 60.0)
+
+        projection = project_attention_from_operator_state(
+            state, (), AgentMonitorSettings()
+        )
+        assert all(
+            row.lifecycle_mode.value != "active" for row in projection.visible_rows
+        ), f"{provider}: the lights still claim a session that went quiet"
+        assert project_canonical_mailbox(state).active_count == 0, (
+            f"{provider}: still counted as working after going quiet"
+        )
+
+
+def test_a_finished_turn_does_not_hold_its_completion_forever__and_2_more(monkeypatch) -> None:
+    # --- scenario: a_finished_turn_does_not_hold_its_completion_forever
     """The exact reported symptom: the completion sweep never retiring."""
-    state = state_that_went_quiet(provider, WorkLifecycle.COMPLETED)
-    freeze_wall_clock(monkeypatch, 3_600.0)
+    for provider in ALL_PROVIDERS:
+        state = state_that_went_quiet(provider, WorkLifecycle.COMPLETED)
+        freeze_wall_clock(monkeypatch, 3_600.0)
 
-    projection = project_attention_from_operator_state(
-        state, (), AgentMonitorSettings()
-    )
-    assert all(
-        row.lifecycle_mode.value != "completed_recently"
-        for row in projection.visible_rows
-    ), f"{provider}: still showing 'just finished' an hour later"
+        projection = project_attention_from_operator_state(
+            state, (), AgentMonitorSettings()
+        )
+        assert all(
+            row.lifecycle_mode.value != "completed_recently"
+            for row in projection.visible_rows
+        ), f"{provider}: still showing 'just finished' an hour later"
 
-
-def test_work_still_inside_its_window_is_left_alone(monkeypatch) -> None:
+    # --- scenario: work_still_inside_its_window_is_left_alone
+    monkeypatch.undo()
     """The fix must not retire work that is merely between tool calls."""
     state = state_that_went_quiet("claude", WorkLifecycle.ACTIVE)
     freeze_wall_clock(monkeypatch, ACTIVE_SILENCE_SECONDS - 30.0)
@@ -156,8 +150,8 @@ def test_work_still_inside_its_window_is_left_alone(monkeypatch) -> None:
     )
     assert any(row.lifecycle_mode.value == "active" for row in projection.visible_rows)
 
-
-def test_a_wall_clock_behind_the_evidence_cannot_rejuvenate_work(monkeypatch) -> None:
+    # --- scenario: a_wall_clock_behind_the_evidence_cannot_rejuvenate_work
+    monkeypatch.undo()
     """A machine whose clock sits behind the events (restore after sleep,
     a clock stepped backwards) must not make silent work look young."""
     state = state_that_went_quiet("claude", WorkLifecycle.ACTIVE)
@@ -168,3 +162,4 @@ def test_a_wall_clock_behind_the_evidence_cannot_rejuvenate_work(monkeypatch) ->
     )
     # Floored at the observed moment: neither aged out nor rejuvenated.
     assert all(row.lifecycle_mode.value != "completed_recently" for row in projection.visible_rows)
+

@@ -72,7 +72,8 @@ def _stored_attributes(node: ast.AST) -> frozenset[str]:
     )
 
 
-def test_full_refresh_is_admitted_through_the_single_controller_layer() -> None:
+def test_full_refresh_is_admitted_through_the_single_controller_layer__and_2_more() -> None:
+    # --- scenario: full_refresh_is_admitted_through_the_single_controller_layer
     public_source = STATUS_BAR.read_text(encoding="utf-8")
     production_calls = _call_names(_method(PRODUCTION_STATUS_BAR, "refresh_"))
 
@@ -84,8 +85,7 @@ def test_full_refresh_is_admitted_through_the_single_controller_layer() -> None:
         "_LegacyStatusBarController.refresh_"
     )
 
-
-def test_slow_refresh_producers_delegate_to_latest_wins_services() -> None:
+    # --- scenario: slow_refresh_producers_delegate_to_latest_wins_services
     transcript = _call_names(_effective_method("ingest_transcript_fallback"))
     intake = _call_names(_effective_method("refresh_intake_report"))
     ledger = _call_names(_effective_method("publish_local_ledger_now"))
@@ -97,24 +97,21 @@ def test_slow_refresh_producers_delegate_to_latest_wins_services() -> None:
     assert "self._ledger_publisher" in ledger
     assert "_legacy.publish_local_ledger" not in ledger
 
-
-def test_intake_refresh_does_not_renew_the_probe_timestamp() -> None:
+    # --- scenario: intake_refresh_does_not_renew_the_probe_timestamp
     method = _effective_method("refresh_intake_report")
 
     assert "_intake_probed_at" not in _stored_attributes(method)
     assert "self._intake_service" in _call_names(method)
 
 
-def test_escalation_urgency_calls_the_stage_reader() -> None:
+
+def test_escalation_urgency_calls_the_stage_reader__and_2_more() -> None:
+    # --- scenario: escalation_urgency_calls_the_stage_reader
     calls = _call_names(_effective_method("_observe_refresh_state"))
 
     assert "stage_reader" in calls
 
-
-def test_hook_bursts_use_the_legacy_refresh_floor() -> None:
-    # The dispatch site lives in the retained legacy controller; the
-    # coalescing override lives in the production layer. The contract spans
-    # all three files.
+    # --- scenario: hook_bursts_use_the_legacy_refresh_floor
     text = "\n".join(
         path.read_text(encoding="utf-8")
         for path in (
@@ -130,8 +127,7 @@ def test_hook_bursts_use_the_legacy_refresh_floor() -> None:
     assert '"refreshFromEvent:"' in text
     assert '"trailingRefreshFire:"' in text
 
-
-def test_full_refresh_heartbeat_uses_the_normal_status_interval() -> None:
+    # --- scenario: full_refresh_heartbeat_uses_the_normal_status_interval
     text = PRODUCTION_STATUS_BAR.read_text(encoding="utf-8")
 
     assert (
@@ -140,7 +136,9 @@ def test_full_refresh_heartbeat_uses_the_normal_status_interval() -> None:
     )
 
 
-def test_background_runtime_modules_cannot_import_appkit_or_objc() -> None:
+
+def test_background_runtime_modules_cannot_import_appkit_or_objc__and_1_more() -> None:
+    # --- scenario: background_runtime_modules_cannot_import_appkit_or_objc
     for name in BACKGROUND_MODULES:
         text = (ROOT / "src" / "jrbar" / name).read_text(encoding="utf-8")
         assert "import AppKit" not in text
@@ -149,8 +147,7 @@ def test_background_runtime_modules_cannot_import_appkit_or_objc() -> None:
         assert "from Foundation" not in text
         assert "import objc" not in text
 
-
-def test_refresh_boundary_has_no_direct_blocking_io_calls() -> None:
+    # --- scenario: refresh_boundary_has_no_direct_blocking_io_calls
     forbidden = {
         "subprocess.run",
         "subprocess.Popen",
@@ -165,3 +162,4 @@ def test_refresh_boundary_has_no_direct_blocking_io_calls() -> None:
     calls = set(_call_names(_method(PRODUCTION_STATUS_BAR, "refresh_")))
 
     assert not (calls & forbidden)
+

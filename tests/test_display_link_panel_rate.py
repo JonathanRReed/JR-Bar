@@ -235,37 +235,36 @@ def _delivered_fps(monkeypatch, device, virtual_device, clock, callback_hz, seco
 # --- 1. the rate asked for is a rate that exists -----------------------------
 
 
-@pytest.mark.parametrize("panel", PANELS, ids=lambda hz: f"{hz:g}Hz")
-def test_the_negotiated_rate_is_one_the_panel_can_actually_produce(panel: float) -> None:
+def test_the_negotiated_rate_is_one_the_panel_can_actually_produce__and_1_more() -> None:
+    # --- scenario: the_negotiated_rate_is_one_the_panel_can_actually_produce
     """The whole defect in one assertion.
 
     Before: 144 Hz negotiated 120, and 144/120 = 1.2 -- there is no such scan.
     A 24 Hz panel negotiated 60, which is 2.5x more frames than the hardware
     emits. Both numbers then travelled into the gate as facts.
     """
-    rate = display_link_fps(panel)
-    divisor = panel / rate
-    assert divisor == pytest.approx(round(divisor)), (
-        f"{panel:g} Hz panel: negotiated {rate:g}, which is panel/{divisor:g} -- "
-        "a display link can only be handed whole scans"
-    )
-    assert rate <= DISPLAY_LINK_MAX_FPS + 1e-9
-    assert rate > 0.0
+    for panel in PANELS:
+        rate = display_link_fps(panel)
+        divisor = panel / rate
+        assert divisor == pytest.approx(round(divisor)), (
+            f"{panel:g} Hz panel: negotiated {rate:g}, which is panel/{divisor:g} -- "
+            "a display link can only be handed whole scans"
+        )
+        assert rate <= DISPLAY_LINK_MAX_FPS + 1e-9
+        assert rate > 0.0
 
-
-def test_an_unreadable_panel_still_gets_a_usable_rate() -> None:
+    # --- scenario: an_unreadable_panel_still_gets_a_usable_rate
     """No screen to ask is not a reason to install no driver."""
     assert display_link_fps(None) == 60.0
     assert display_link_fps(0.0) == 60.0
 
 
+
 # --- 2. the request and the assumption are one number ------------------------
 
 
-@pytest.mark.parametrize("panel", PANELS, ids=lambda hz: f"{hz:g}Hz")
-@pytest.mark.parametrize("gentle", (False, True), ids=("transition", "breathe"))
 def test_the_requested_range_admits_exactly_the_rate_the_policy_assumed(
-    monkeypatch, panel: float, gentle: bool
+    monkeypatch,
 ) -> None:
     """A range is only useful if you can predict what it yields.
 
@@ -274,23 +273,25 @@ def test_the_requested_range_admits_exactly_the_rate_the_policy_assumed(
     Three different failure modes, one of which is a request the hardware cannot
     honour. Asking for a single achievable number removes all three.
     """
-    device, _screen, _virtual_device, _clock = _linked_device(
-        monkeypatch, panel, gentle=gentle
-    )
-    schedule = device._render_schedule
-    link = device.view.links[0]
+    for panel in PANELS:
+        for gentle in (False, True):
+            device, _screen, _virtual_device, _clock = _linked_device(
+                monkeypatch, panel, gentle=gentle
+            )
+            schedule = device._render_schedule
+            link = device.view.links[0]
 
-    assert len(device.view.links) == 1
-    assert link.frame_ranges == [
-        (schedule.driver_fps, schedule.driver_fps, schedule.driver_fps)
-    ], "the link must be asked for exactly the rate the schedule assumed"
-    assert _rates_inside(link.frame_ranges[0], panel) == pytest.approx(
-        (schedule.driver_fps,)
-    ), (
-        f"{panel:g} Hz: the requested range admits "
-        f"{[f'{r:g}' for r in _rates_inside(link.frame_ranges[0], panel)]}, so the "
-        "rate the gate quantises against is a guess"
-    )
+            assert len(device.view.links) == 1
+            assert link.frame_ranges == [
+                (schedule.driver_fps, schedule.driver_fps, schedule.driver_fps)
+            ], "the link must be asked for exactly the rate the schedule assumed"
+            assert _rates_inside(link.frame_ranges[0], panel) == pytest.approx(
+                (schedule.driver_fps,)
+            ), (
+                f"{panel:g} Hz: the requested range admits "
+                f"{[f'{r:g}' for r in _rates_inside(link.frame_ranges[0], panel)]}, "
+                "so the rate the gate quantises against is a guess"
+            )
 
 
 # --- 3. what actually reaches the screen -------------------------------------
@@ -311,18 +312,7 @@ DELIVERED_TABLE = (
 )
 
 
-@pytest.mark.parametrize(
-    ("panel", "link_fps", "transition_fps", "breathe_fps"),
-    DELIVERED_TABLE,
-    ids=[f"{row[0]:g}Hz" for row in DELIVERED_TABLE],
-)
-def test_the_screen_gets_the_rate_the_policy_names(
-    monkeypatch,
-    panel: float,
-    link_fps: float,
-    transition_fps: float,
-    breathe_fps: float,
-) -> None:
+def test_the_screen_gets_the_rate_the_policy_names(monkeypatch) -> None:
     """Named == delivered, on every panel, at both ceilings the link is used at.
 
     Before, on a 144 Hz panel: named 60, delivered 72 -- 20% over a ceiling that
@@ -330,53 +320,47 @@ def test_the_screen_gets_the_rate_the_policy_names(
     breathe. On 165 Hz: named 60, delivered 41.25. On 24 Hz: named 60, delivered
     24.
     """
-    for gentle, expected in ((False, transition_fps), (True, breathe_fps)):
-        clock = _Clock()
-        device, _screen, virtual_device, clock = _linked_device(
-            monkeypatch, panel, gentle=gentle, clock=clock
-        )
-        schedule = device._render_schedule
-        assert schedule.driver_fps == pytest.approx(link_fps)
-        assert schedule.cadence.fps == pytest.approx(expected)
-        # The callbacks arrive at the rate the PANEL produces, which is the one
-        # rate the requested range admits -- not at the rate anyone hoped for.
-        physical = _rates_inside(device.view.links[0].frame_ranges[0], panel)
-        assert len(physical) == 1
-        delivered = _delivered_fps(
-            monkeypatch, device, virtual_device, clock, physical[0]
-        )
-        assert delivered == pytest.approx(expected, abs=0.2), (
-            f"{panel:g} Hz / {'breathe' if gentle else 'transition'}: policy names "
-            f"{schedule.cadence.fps:g}, screen gets {delivered:g}"
-        )
+    for panel, link_fps, transition_fps, breathe_fps in DELIVERED_TABLE:
+        for gentle, expected in ((False, transition_fps), (True, breathe_fps)):
+            clock = _Clock()
+            device, _screen, virtual_device, clock = _linked_device(
+                monkeypatch, panel, gentle=gentle, clock=clock
+            )
+            schedule = device._render_schedule
+            assert schedule.driver_fps == pytest.approx(link_fps), panel
+            assert schedule.cadence.fps == pytest.approx(expected), panel
+            # The callbacks arrive at the rate the PANEL produces, which is the
+            # one rate the requested range admits -- not the rate anyone hoped.
+            physical = _rates_inside(device.view.links[0].frame_ranges[0], panel)
+            assert len(physical) == 1
+            delivered = _delivered_fps(
+                monkeypatch, device, virtual_device, clock, physical[0]
+            )
+            assert delivered == pytest.approx(expected, abs=0.2), (
+                f"{panel:g} Hz / {'breathe' if gentle else 'transition'}: policy "
+                f"names {schedule.cadence.fps:g}, screen gets {delivered:g}"
+            )
 
 
-@pytest.mark.parametrize(
-    ("panel", "_link", "transition_fps", "breathe_fps"),
-    DELIVERED_TABLE,
-    ids=[f"{row[0]:g}Hz" for row in DELIVERED_TABLE],
-)
-def test_no_panel_is_painted_faster_than_the_policy_allowed(
-    panel: float, _link: float, transition_fps: float, breathe_fps: float
-) -> None:
+def test_no_panel_is_painted_faster_than_the_policy_allowed() -> None:
     """Ceilings are the thing the ceiling is for.
 
     A 144 Hz panel used to be painted at 72 under a 60 ceiling because the
     driver period the gate held against was a period nothing was ticking at.
     """
-    for gentle, expected in ((False, transition_fps), (True, breathe_fps)):
-        ceiling = choose_render_cadence(
-            RenderEnvironment(), True, gentle_motion=gentle
-        ).fps
-        assert expected <= ceiling + 1e-9
+    for panel, _link, transition_fps, breathe_fps in DELIVERED_TABLE:
+        for gentle, expected in ((False, transition_fps), (True, breathe_fps)):
+            ceiling = choose_render_cadence(
+                RenderEnvironment(), True, gentle_motion=gentle
+            ).fps
+            assert expected <= ceiling + 1e-9, (panel, gentle)
 
 
 # --- 4. a stale panel reading is a wrong panel reading -----------------------
 
 
-def test_a_screen_change_negotiates_for_the_new_panel_not_the_cached_one(
-    monkeypatch,
-) -> None:
+def test_a_screen_change_negotiates_for_the_new_panel_not_the_cached_one__and_1_more(monkeypatch,) -> None:
+    # --- scenario: a_screen_change_negotiates_for_the_new_panel_not_the_cached_one
     """`_panel_refresh_hz` caches for five seconds; a screen change ends that.
 
     Without the cache drop in `screenDidChange_` the rebuilt link is negotiated
@@ -402,10 +386,8 @@ def test_a_screen_change_negotiates_for_the_new_panel_not_the_cached_one(
     delivered = _delivered_fps(monkeypatch, device, virtual_device, clock, 120.0)
     assert delivered == pytest.approx(60.0, abs=0.2)
 
-
-def test_a_link_registered_for_the_old_panel_is_replaced_not_reused(
-    monkeypatch,
-) -> None:
+    # --- scenario: a_link_registered_for_the_old_panel_is_replaced_not_reused
+    monkeypatch.undo()
     """`screenDidChange_` is not the only way a panel rate moves.
 
     `_panel_refresh_hz` re-reads every five seconds, so the policy can pick up a
@@ -431,6 +413,7 @@ def test_a_link_registered_for_the_old_panel_is_replaced_not_reused(
     assert device.view.links[0].invalidated == 1
     assert device.view.links[1].frame_ranges == [(48.0, 48.0, 48.0)]
     assert device._render_schedule.driver_fps == pytest.approx(48.0)
+
 
 
 def test_a_motion_class_flip_keeps_the_link_it_has(monkeypatch) -> None:
@@ -528,14 +511,12 @@ def test_an_adaptive_panel_cannot_wander_out_from_under_the_policy(
         )
 
 
-@pytest.mark.parametrize("rate", PROMOTION_ADAPTIVE, ids=lambda hz: f"{hz:g}Hz")
-def test_every_adaptive_rate_is_itself_negotiable_if_it_is_ever_reported(
-    rate: float,
-) -> None:
+def test_every_adaptive_rate_is_itself_negotiable_if_it_is_ever_reported() -> None:
     """If a panel ever reports one of these as its maximum -- an external
     variable-refresh display does -- the negotiated rate must be that rate, not
     a floor of 60 invented on its behalf."""
-    negotiated = display_link_fps(rate)
-    assert negotiated == pytest.approx(rate)
-    divisor = rate / negotiated
-    assert divisor == pytest.approx(round(divisor))
+    for rate in PROMOTION_ADAPTIVE:
+        negotiated = display_link_fps(rate)
+        assert negotiated == pytest.approx(rate), rate
+        divisor = rate / negotiated
+        assert divisor == pytest.approx(round(divisor))

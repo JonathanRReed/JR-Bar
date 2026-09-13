@@ -41,14 +41,14 @@ def _error(reply) -> dict:
     return reply["error"]
 
 
-def test_sessions_carry_remote_flags(world) -> None:
+def test_sessions_carry_remote_flags__and_2_more(world) -> None:
+    # --- scenario: sessions_carry_remote_flags
     sessions = world.state()["sessions"]
     assert sessions
     assert all("remote" in s for s in sessions)
     assert all(s["remote"] is False for s in sessions)
 
-
-def test_dismiss_session_hides_until_it_speaks(world) -> None:
+    # --- scenario: dismiss_session_hides_until_it_speaks
     sid = world.state()["sessions"][0]["id"]
     reply = _call(world, "dismiss_session", {"session": sid})
     assert reply["ok"] is True
@@ -58,8 +58,7 @@ def test_dismiss_session_hides_until_it_speaks(world) -> None:
     world.set_mode(sid, "working", "active", "provider")
     assert sid in {s["id"] for s in world.state()["sessions"]}
 
-
-def test_dismiss_session_refusals(world) -> None:
+    # --- scenario: dismiss_session_refusals
     assert _error(_call(world, "dismiss_session", {"session": "nope"}))["code"] == "not_found"
 
     sid = world.state()["sessions"][0]["id"]
@@ -67,7 +66,9 @@ def test_dismiss_session_refusals(world) -> None:
     assert _error(_call(world, "dismiss_session", {"session": sid}))["code"] == "refused"
 
 
-def test_asks_carry_answer_flags(world) -> None:
+
+def test_asks_carry_answer_flags__and_2_more(world) -> None:
+    # --- scenario: asks_carry_answer_flags
     sid = world.state()["sessions"][0]["id"]  # a claude session
     world.open_ask(sid, "Run tests?", kind="permission")
     ask = next(a for a in world.state()["asks"] if a["session"] == sid)
@@ -78,8 +79,7 @@ def test_asks_carry_answer_flags(world) -> None:
     ask = next(a for a in world.state()["asks"] if a["session"] == gemini)
     assert ask["answerable"] is False and ask["replyable"] is False
 
-
-def test_history_watermark_and_mark_seen(world) -> None:
+    # --- scenario: history_watermark_and_mark_seen
     first = _call(world, "list_history")
     assert first["ok"] is True
     assert any(r["unseen"] for r in first["result"]["rows"])
@@ -91,11 +91,11 @@ def test_history_watermark_and_mark_seen(world) -> None:
     assert after["result"]["last_seen"] == seen["result"]["last_seen"]
     assert all(r["unseen"] is False for r in after["result"]["rows"])
 
-
-def test_serve_token_is_deterministic(world) -> None:
+    # --- scenario: serve_token_is_deterministic
     reply = _call(world, "serve_token")
     assert reply["ok"] is True
     assert reply["result"]["token"] == "mock-serve-token-7f02"
+
 
 
 def test_scene_packs_list_preview_and_import(world, tmp_path) -> None:

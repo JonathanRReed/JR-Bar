@@ -154,7 +154,8 @@ def test_menu_close_preserves_countdown_needed_by_visible_profile_settings(
     assert target._capacity_countdown_deadline is not None
 
 
-def test_canonical_menu_open_still_requests_usage_sources(controller) -> None:
+def test_canonical_menu_open_still_requests_usage_sources__and_1_more(controller) -> None:
+    # --- scenario: canonical_menu_open_still_requests_usage_sources
     target, _status_bar = controller
     target.last_snapshot = SimpleNamespace(
         operator_state=SimpleNamespace(),
@@ -169,8 +170,7 @@ def test_canonical_menu_open_still_requests_usage_sources(controller) -> None:
 
     refresh.assert_called_once_with(reason="menu-open")
 
-
-def test_no_capacity_timer_exists_without_due_or_visible_reason(controller) -> None:
+    # --- scenario: no_capacity_timer_exists_without_due_or_visible_reason
     target, _status_bar = controller
     target._usage_provider_states = {
         provider_id: state.__class__(
@@ -190,6 +190,7 @@ def test_no_capacity_timer_exists_without_due_or_visible_reason(controller) -> N
     schedule.assert_not_called()
     assert target._capacity_reset_timer is None
     assert target._capacity_countdown_timer is None
+
 
 
 def test_duplicate_exact_sources_create_one_generation_and_one_batch_worker(

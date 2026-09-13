@@ -102,7 +102,8 @@ def test_macos_reconnect_reapplies_nonexclusive_policy(backend):
     transport.close()
 
 
-def test_macos_refuses_the_open_when_input_monitoring_is_denied(backend):
+def test_macos_refuses_the_open_when_input_monitoring_is_denied__and_1_more(backend) -> None:
+    # --- scenario: macos_refuses_the_open_when_input_monitoring_is_denied
     """Bluetooth puts the keyboard and vendor collections on one macOS HID
     device, so a denial makes every open fail with an unexplained I/O error.
     Naming it is the difference between "grant this" and "the pad is gone"."""
@@ -114,8 +115,7 @@ def test_macos_refuses_the_open_when_input_monitoring_is_denied(backend):
     assert state.opened == []
     assert state.checked == [1]  # kIOHIDRequestTypeListenEvent
 
-
-def test_macos_opens_when_access_was_never_decided(backend):
+    # --- scenario: macos_opens_when_access_was_never_decided
     """``unknown`` is nobody having been asked yet: the open itself is what
     raises the prompt, so refusing here would never let it be granted."""
     state, _native, transport = backend
@@ -123,6 +123,7 @@ def test_macos_opens_when_access_was_never_decided(backend):
     transport.open()
     assert state.opened == [b"vendor-collection"]
     transport.close()
+
 
 
 def test_input_monitoring_check_treats_a_missing_getter_as_no_evidence(monkeypatch):

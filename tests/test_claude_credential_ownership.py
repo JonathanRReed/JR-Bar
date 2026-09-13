@@ -47,9 +47,8 @@ def test_credentials_has_no_third_party_keychain_write_surface():
     assert "add-generic-password" not in source
 
 
-def test_expired_claude_credential_never_reaches_network_process_or_store(
-    monkeypatch,
-):
+def test_expired_claude_credential_never_reaches_network_process_or_store__and_1_more(monkeypatch,) -> None:
+    # --- scenario: expired_claude_credential_never_reaches_network_process_or_store
     from jrbar import claude_quota, credentials
     from jrbar.provider_reconnect import RepairOutcome, repair_claude_credential
 
@@ -86,10 +85,8 @@ def test_expired_claude_credential_never_reaches_network_process_or_store(
     assert calls == []
     assert store.stored == []
 
-
-def test_hostile_expired_payload_cannot_become_an_argument_or_stored_secret(
-    monkeypatch,
-):
+    # --- scenario: hostile_expired_payload_cannot_become_an_argument_or_stored_secret
+    monkeypatch.undo()
     from jrbar import claude_quota, credentials
     from jrbar.provider_reconnect import RepairOutcome, repair_claude_credential
 
@@ -120,6 +117,7 @@ def test_hostile_expired_payload_cannot_become_an_argument_or_stored_secret(
     assert hostile not in result.message
     assert calls == []
     assert store.secrets == {}
+
 
 
 def test_valid_claude_access_token_is_copied_into_jr_bar_store_with_expiry():

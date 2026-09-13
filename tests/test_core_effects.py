@@ -68,7 +68,8 @@ def registry(pack):
     return core_effects.registry_with_packs((pack,))
 
 
-def test_catalog_document_carries_every_effect_with_a_safe_preview(registry, pack) -> None:
+def test_catalog_document_carries_every_effect_with_a_safe_preview__and_1_more(registry, pack) -> None:
+    # --- scenario: catalog_document_carries_every_effect_with_a_safe_preview
     document = core_effects.catalog_document(registry, (pack,), generation=3, pack_paths={"nightlab": "/tmp/nightlab.json"})
     ids = {effect["id"] for effect in document["effects"]}
     assert {"none", "pulse", "alert", "blink", "aurora", "pack:nightlab:ember"} <= ids
@@ -103,8 +104,7 @@ def test_catalog_document_carries_every_effect_with_a_safe_preview(registry, pac
     assert document["generation"] == 3
     json.dumps(document)
 
-
-def test_render_uses_the_chosen_color_cadence_and_motion(registry, pack) -> None:
+    # --- scenario: render_uses_the_chosen_color_cadence_and_motion
     alert = registry.require("alert")
     assert core_effects.render_effect(alert, {}, color="#123456") == "#123456 500ms none\noff 500ms none\nrepeat"
     blink = registry.require("blink")
@@ -125,6 +125,7 @@ def test_render_uses_the_chosen_color_cadence_and_motion(registry, pack) -> None
     beacon = registry.require("pack:nightlab:beacon")
     parameters = core_effects.normalize_parameters(beacon, {}, pack_effect=core_effects.pack_effect_for((pack,), beacon.identifier))
     assert "#FF2D1A 500ms none" in core_effects.render_effect(beacon, parameters)
+
 
 
 def test_assignment_document_merges_sidecar_parameters(tmp_path: Path) -> None:

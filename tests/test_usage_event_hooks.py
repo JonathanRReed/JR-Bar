@@ -54,7 +54,8 @@ def snapshot(lanes, *, provider="claude", state=ProviderSourceState.READY):
 THRESHOLDS = {"claude": 20.0}
 
 
-def test_quota_low_fires_on_the_downward_crossing_only() -> None:
+def test_quota_low_fires_on_the_downward_crossing_only__and_2_more() -> None:
+    # --- scenario: quota_low_fires_on_the_downward_crossing_only
     events = detect_usage_hook_events(
         (snapshot((lane(25.0),)),),
         (snapshot((lane(18.0),)),),
@@ -71,8 +72,7 @@ def test_quota_low_fires_on_the_downward_crossing_only() -> None:
     )
     assert again == ()
 
-
-def test_quota_reached_and_reset_edges() -> None:
+    # --- scenario: quota_reached_and_reset_edges
     reached = detect_usage_hook_events(
         (snapshot((lane(3.0),)),),
         (snapshot((lane(0.0),)),),
@@ -88,8 +88,7 @@ def test_quota_reached_and_reset_edges() -> None:
     )
     assert [event.name for event in reset] == ["quota_reset"]
 
-
-def test_provider_availability_edges() -> None:
+    # --- scenario: provider_availability_edges
     down = detect_usage_hook_events(
         (snapshot((lane(50.0),)),),
         (snapshot((lane(50.0),), state=ProviderSourceState.UNAVAILABLE),),
@@ -109,6 +108,7 @@ def test_provider_availability_edges() -> None:
         (), (snapshot((lane(5.0),)),), thresholds=THRESHOLDS
     )
     assert fresh == ()
+
 
 
 def test_runner_invokes_the_executable_with_event_argv(tmp_path) -> None:

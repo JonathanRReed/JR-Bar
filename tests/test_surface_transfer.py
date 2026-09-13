@@ -104,28 +104,25 @@ def _as_hex(light: tuple[float, ...]) -> str:
 # --- the reconciliation ----------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "name", [key for key in STATE_COLORS if key != "idle"]
-)
-def test_both_surfaces_emit_the_same_relative_light_for_the_same_hex(
-    name: str,
-) -> None:
+def test_both_surfaces_emit_the_same_relative_light_for_the_same_hex__and_2_more() -> None:
+    # --- scenario: both_surfaces_emit_the_same_relative_light_for_the_same_hex
     """The headline. Every state, both surfaces, channel by channel."""
-    hex_color = STATE_COLORS[name]
-    strip = _strip_light(hex_color)
-    screen = _screen_light(hex_color)
-    for emitted, painted in zip(strip, screen):
-        assert emitted == pytest.approx(painted, abs=1.5 * ONE_DRIVE_STEP)
-    # And therefore they look like each other, and like the hex itself.
-    assert relative_luminance(_as_hex(strip)) == pytest.approx(
-        relative_luminance(hex_color), abs=0.01
-    )
-    assert relative_luminance(_as_hex(screen)) == pytest.approx(
-        relative_luminance(hex_color), abs=0.01
-    )
+    for name, hex_color in STATE_COLORS.items():
+        if name == "idle":
+            continue
+        strip = _strip_light(hex_color)
+        screen = _screen_light(hex_color)
+        for emitted, painted in zip(strip, screen):
+            assert emitted == pytest.approx(painted, abs=1.5 * ONE_DRIVE_STEP), name
+        # And therefore they look like each other, and like the hex itself.
+        assert relative_luminance(_as_hex(strip)) == pytest.approx(
+            relative_luminance(hex_color), abs=0.01
+        ), name
+        assert relative_luminance(_as_hex(screen)) == pytest.approx(
+            relative_luminance(hex_color), abs=0.01
+        ), name
 
-
-def test_the_notch_no_longer_turns_the_ask_colour_orange() -> None:
+    # --- scenario: the_notch_no_longer_turns_the_ask_colour_orange
     """#FF3A00 read as #FF5700 on screen: red was already at full so the 1.22
     core boost clipped it while green took its whole 22%, and the hue slid.
     That is not bloom, it is a hue error, and it is the single most visible
@@ -142,8 +139,7 @@ def test_the_notch_no_longer_turns_the_ask_colour_orange() -> None:
         assert blue == 0.0
         assert red <= 1.0  # and nothing may clip, which is how the ratio broke
 
-
-def test_a_fade_ceiling_is_the_same_breath_on_both_surfaces() -> None:
+    # --- scenario: a_fade_ceiling_is_the_same_breath_on_both_surfaces
     """0.5 emitted 50% of full light on the strip and 21% on screen -- the
     same dial driving two different animations."""
     for hex_color in ("#00E5FF", "#FF3A00", "#00FF66"):
@@ -155,7 +151,9 @@ def test_a_fade_ceiling_is_the_same_breath_on_both_surfaces() -> None:
         assert 0.19 < strip_fraction < 0.24
 
 
-def test_device_brightness_dims_both_surfaces_by_the_same_amount() -> None:
+
+def test_device_brightness_dims_both_surfaces_by_the_same_amount__and_2_more() -> None:
+    # --- scenario: device_brightness_dims_both_surfaces_by_the_same_amount
     """The firmware multiplies the DRIVE bytes by N/255, so on the strip
     brightness is a scale on light, while the Screen Bar's engine multiplies
     the encoded code. Decoding N as well is what makes them agree."""
@@ -173,8 +171,7 @@ def test_device_brightness_dims_both_surfaces_by_the_same_amount() -> None:
     # slider is dim rather than black. Everything above that must still match.
     assert strip_scale == pytest.approx(screen_scale, abs=0.02)
 
-
-def test_screen_core_does_not_apply_semantic_intensity_twice() -> None:
+    # --- scenario: screen_core_does_not_apply_semantic_intensity_twice
     """The sampled RGB already contains animation and brightness intensity."""
     red, green, blue, alpha = tone_mapped_led_color(
         0.5,
@@ -188,8 +185,7 @@ def test_screen_core_does_not_apply_semantic_intensity_twice() -> None:
     assert (red, green, blue) == (0.5, 0.25, 0.0)
     assert alpha == 1.0, "using 0.5 here composites the same dimming a second time"
 
-
-def test_screen_glow_layer_uses_alpha_only_as_its_layer_calibration() -> None:
+    # --- scenario: screen_glow_layer_uses_alpha_only_as_its_layer_calibration
     bright = tone_mapped_led_color(1.0, 0.5, 0.0, 1.0, alpha_scale=0.18)
     dim = tone_mapped_led_color(0.2, 0.1, 0.0, 0.2, alpha_scale=0.18)
 
@@ -197,10 +193,12 @@ def test_screen_glow_layer_uses_alpha_only_as_its_layer_calibration() -> None:
     assert dim[3] == pytest.approx(0.18)
 
 
+
 # --- the strip's assumption, stated once and correctable -------------------
 
 
-def test_the_strips_response_is_one_named_constant() -> None:
+def test_the_strips_response_is_one_named_constant__and_2_more() -> None:
+    # --- scenario: the_strips_response_is_one_named_constant
     """It is an INFERENCE from LEDS_FORMAT.md ("Brightness scales the RGB
     values", no gamma anywhere in the DSL spec), not a measurement. If someone
     holds the strip beside a #808080 patch and they match, the firmware
@@ -226,8 +224,7 @@ def test_the_strips_response_is_one_named_constant() -> None:
         led_status.STRIP_CODE_TO_LIGHT_EXPONENT = original
     assert strip_drive_code(128) == 55  # and the lever is back where it was
 
-
-def test_a_lit_led_holds_its_floor_only_when_it_can_hold_its_hue() -> None:
+    # --- scenario: a_lit_led_holds_its_floor_only_when_it_can_hold_its_hue
     """The per-CHANNEL floor survives (a channel that means light never
     rounds to nothing inside a color that can say its hue), but a WHOLE
     LED whose brightest drive lands below STRIP_HUE_HOLDING_DRIVE now
@@ -242,11 +239,7 @@ def test_a_lit_led_holds_its_floor_only_when_it_can_hold_its_hue() -> None:
     assert apply_strip_transfer_to_hex("#020204", NEUTRAL_CHANNEL_GAINS) == "#000000"
     assert strip_drive_code(0, 0.0) == 0  # a zero gain is still off
 
-
-# --- the calibration that must not move ------------------------------------
-
-
-def test_the_owners_white_still_drives_the_byte_he_matched_by_eye() -> None:
+    # --- scenario: the_owners_white_still_drives_the_byte_he_matched_by_eye
     """The only ground truth in the whole pipeline: codes (255, 97, 255) look
     neutral on his strip. At the calibration reference every channel is at
     full, decode(1.0) == 1.0, and the transfer collapses to the same multiply
@@ -256,7 +249,9 @@ def test_the_owners_white_still_drives_the_byte_he_matched_by_eye() -> None:
     assert strip_drive_code(255, OWNER_GAINS[1]) == OWNER_WHITE_DRIVE_CODE
 
 
-def test_the_channel_gain_is_still_a_plain_multiply() -> None:
+
+def test_the_channel_gain_is_still_a_plain_multiply__and_2_more() -> None:
+    # --- scenario: the_channel_gain_is_still_a_plain_multiply
     """A guard against re-adopting the refuted "gamma-correct the gain" fix.
 
     Reading the stored 0.38 as a gamma-encoded number and decoding it to
@@ -277,8 +272,7 @@ def test_the_channel_gain_is_still_a_plain_multiply() -> None:
     # of a calibration verified by eye.
     assert round(255 * OWNER_GAINS[1] ** (1 / 2.2)) == 164
 
-
-def test_the_white_balance_now_holds_all_the_way_down_the_fade() -> None:
+    # --- scenario: the_white_balance_now_holds_all_the_way_down_the_fade
     """A calibration is a promise about the RATIO of light between channels.
     Because the strip's drive byte is linear light, the ratio after the
     transfer is exactly the gain at every level -- which is what the old
@@ -291,11 +285,7 @@ def test_the_white_balance_now_holds_all_the_way_down_the_fade() -> None:
         red, green, _blue = _codes(apply_strip_transfer_to_hex(source, OWNER_GAINS))
         assert green / red == pytest.approx(OWNER_GAINS[1], abs=0.02)
 
-
-# --- the write boundary ----------------------------------------------------
-
-
-def test_the_transform_rewrites_hexes_and_brightness_and_nothing_else() -> None:
+    # --- scenario: the_transform_rewrites_hexes_and_brightness_and_nothing_else
     program = "brightness 128\noff 160ms cosine\n0:#00E5FF 760ms pulse 0ms\nrepeat"
     result = apply_strip_transfer_to_program(program, NEUTRAL_CHANNEL_GAINS)
     assert "#00E5FF" not in result
@@ -306,7 +296,9 @@ def test_the_transform_rewrites_hexes_and_brightness_and_nothing_else() -> None:
     assert result.count("#") == 1
 
 
-def test_ambient_visibility_floor_survives_the_strip_transfer() -> None:
+
+def test_ambient_visibility_floor_survives_the_strip_transfer__and_1_more() -> None:
+    # --- scenario: ambient_visibility_floor_survives_the_strip_transfer
     """The shared sRGB floor must remain visibly on after linear-PWM output."""
     from jrbar.brightness_policy import (
         MIN_AMBIENT_VISIBLE_BRIGHTNESS,
@@ -333,8 +325,7 @@ def test_ambient_visibility_floor_survives_the_strip_transfer() -> None:
     # only ever moves this number up.
     assert transferred.startswith("brightness 16\n")
 
-
-def test_neutral_gains_still_change_the_program_because_the_surface_differs() -> None:
+    # --- scenario: neutral_gains_still_change_the_program_because_the_surface_differs
     """The transfer is not a no-op at neutral gains, and that is the point:
     an uncalibrated strip was just as mismatched as a calibrated one."""
     program = "#00E5FF 1600ms pulse"
@@ -344,7 +335,9 @@ def test_neutral_gains_still_change_the_program_because_the_surface_differs() ->
     assert apply_strip_transfer_to_hex("#FF00FF", NEUTRAL_CHANNEL_GAINS) == "#FF00FF"
 
 
-def test_the_controller_writes_transferred_bytes_to_the_device(tmp_path) -> None:
+
+def test_the_controller_writes_transferred_bytes_to_the_device__and_1_more(tmp_path) -> None:
+    # --- scenario: the_controller_writes_transferred_bytes_to_the_device
     """The one that matters: what actually lands in LEDS.LED."""
     from jrbar.led_status import AgentLedController
     from jrbar.models import AgentMode
@@ -363,8 +356,7 @@ def test_the_controller_writes_transferred_bytes_to_the_device(tmp_path) -> None
     # ...and specifically not the old encoded-gain-only bytes.
     assert apply_channel_gain_to_hex("#00E5FF", OWNER_GAINS) not in written
 
-
-def test_the_dedupe_identity_goes_through_the_same_transform(tmp_path) -> None:
+    # --- scenario: the_dedupe_identity_goes_through_the_same_transform
     """The identity used for write-dedup has to be post-processed exactly like
     the live program, or a calibration change stops invalidating it."""
     from jrbar.led_status import AgentLedController
@@ -377,10 +369,12 @@ def test_the_dedupe_identity_goes_through_the_same_transform(tmp_path) -> None:
     assert neutral != calibrated
 
 
+
 # --- the transfer itself ---------------------------------------------------
 
 
-def test_srgb_transfer_matches_the_standard_at_its_named_points() -> None:
+def test_srgb_transfer_matches_the_standard_at_its_named_points__and_2_more() -> None:
+    # --- scenario: srgb_transfer_matches_the_standard_at_its_named_points
     assert srgb_to_linear(0.0) == 0.0
     assert srgb_to_linear(1.0) == pytest.approx(1.0)
     # The piecewise knee, where the linear segment hands over to the power
@@ -391,19 +385,18 @@ def test_srgb_transfer_matches_the_standard_at_its_named_points() -> None:
     # a linear pass-through.
     assert srgb_to_linear(0.5) == pytest.approx(0.21404, rel=1e-4)
 
-
-@pytest.mark.parametrize("code", range(0, 256))
-def test_every_8_bit_code_survives_a_decode_encode_round_trip(code: int) -> None:
+    # --- scenario: every_8_bit_code_survives_a_decode_encode_round_trip
     """No colour may drift just for passing through the shared maths."""
-    restored = round(linear_to_srgb(srgb_to_linear(code / 255.0)) * 255.0)
-    assert restored == code
+    for code in range(0, 256):
+        restored = round(linear_to_srgb(srgb_to_linear(code / 255.0)) * 255.0)
+        assert restored == code
 
+    # --- scenario: the_strip_transform_is_monotonic_and_bounded
+    for code in range(0, 256):
+        drive = strip_drive_code(code)
+        assert 0 <= drive <= code  # linear PWM of an sRGB code can only go down
+        assert drive >= strip_drive_code(max(0, code - 1))
 
-@pytest.mark.parametrize("code", range(0, 256))
-def test_the_strip_transform_is_monotonic_and_bounded(code: int) -> None:
-    drive = strip_drive_code(code)
-    assert 0 <= drive <= code  # linear PWM of an sRGB code can only go down
-    assert drive >= strip_drive_code(max(0, code - 1))
 
 
 # --- The hue-fidelity floor -------------------------------------------------
@@ -415,40 +408,34 @@ def test_the_strip_transform_is_monotonic_and_bounded(code: int) -> None:
 _FIDELITY_GAINS = (0.44, 0.3, 0.874)
 
 
-def test_a_dim_saturated_color_is_lifted_with_its_ratio_held() -> None:
+def test_a_dim_saturated_color_is_lifted_with_its_ratio_held__and_2_more() -> None:
+    # --- scenario: a_dim_saturated_color_is_lifted_with_its_ratio_held
     from jrbar.led_status import apply_strip_transfer_to_hex
 
     lifted = apply_strip_transfer_to_hex("#031A14", _FIDELITY_GAINS)
     assert lifted != "#000000"
     assert max(_codes(lifted)) == 14
 
-
-def test_whispers_still_crush_to_honest_black() -> None:
+    # --- scenario: whispers_still_crush_to_honest_black
     from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert apply_strip_transfer_to_hex("#010101", _FIDELITY_GAINS) == "#000000"
     assert apply_strip_transfer_to_hex("#010806", _FIDELITY_GAINS) == "#000000"
 
-
-def test_grays_are_never_lifted() -> None:
+    # --- scenario: grays_are_never_lifted
     from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert max(_codes(apply_strip_transfer_to_hex("#404040", _FIDELITY_GAINS))) < 14
 
 
-def test_bright_colors_are_untouched_by_the_floor() -> None:
+
+def test_bright_colors_are_untouched_by_the_floor__and_2_more() -> None:
+    # --- scenario: bright_colors_are_untouched_by_the_floor
     from jrbar.led_status import apply_strip_transfer_to_hex
 
     assert max(_codes(apply_strip_transfer_to_hex("#10A37F", _FIDELITY_GAINS))) >= 14
 
-
-# --- the 0-100% slider, end to end -----------------------------------------
-# "if you take it below 90%, it just breaks in terms of brightness -- make
-# sure it works for the full brightness scale" (2026-09-10). Three things had
-# to be true and none of them were.
-
-
-def test_every_percentage_of_the_slider_is_a_distinct_lit_drive() -> None:
+    # --- scenario: every_percentage_of_the_slider_is_a_distinct_lit_drive
     """The whole range has to be usable, not just the top tenth."""
     from jrbar.led_status import STRIP_MIN_LIT_BRIGHTNESS_DRIVE, brightness_drive_code
 
@@ -459,8 +446,7 @@ def test_every_percentage_of_the_slider_is_a_distinct_lit_drive() -> None:
     # Before the floor existed: 5% -> 1, 10% -> 3, 20% -> 8 out of 255.
     assert brightness_drive_code(round(0.05 * 255)) >= STRIP_MIN_LIT_BRIGHTNESS_DRIVE
 
-
-def test_zero_is_still_off_and_full_is_still_full() -> None:
+    # --- scenario: zero_is_still_off_and_full_is_still_full
     from jrbar.led_status import brightness_drive_code
 
     assert brightness_drive_code(0) == 0
@@ -469,15 +455,16 @@ def test_zero_is_still_off_and_full_is_still_full() -> None:
     assert brightness_drive_code(9999) == 255
 
 
-def test_the_curve_is_perceptual_not_linear() -> None:
+
+def test_the_curve_is_perceptual_not_linear__and_2_more() -> None:
+    # --- scenario: the_curve_is_perceptual_not_linear
     """A gamma mapping is the point -- the floor lifts it, it does not
     straighten it. Half the slider is a fifth of the light, as on screen."""
     from jrbar.led_status import brightness_drive_code
 
     assert 0.19 < brightness_drive_code(128) / 255.0 < 0.25
 
-
-def test_a_linked_scale_is_a_fraction_of_LIGHT_and_is_applied_once() -> None:
+    # --- scenario: a_linked_scale_is_a_fraction_of_LIGHT_and_is_applied_once
     """``linked_dot_scale`` 0.3 must mean 30% of the strip's light.
 
     Multiplying the CODE by 0.3 and letting the write boundary decode the
@@ -502,8 +489,7 @@ def test_a_linked_scale_is_a_fraction_of_LIGHT_and_is_applied_once() -> None:
     once = apply_strip_transfer_to_program("brightness 131\n#D187F5")
     assert apply_strip_transfer_to_program(once) != once
 
-
-def test_the_document_reports_what_the_device_receives() -> None:
+    # --- scenario: the_document_reports_what_the_device_receives
     from jrbar.led_status import delivered_brightness
 
     assert delivered_brightness("brightness 58\n#791BFF") == pytest.approx(58 / 255)
@@ -511,6 +497,7 @@ def test_the_document_reports_what_the_device_receives() -> None:
     # Last one wins, exactly as the firmware reads it.
     assert delivered_brightness("brightness 200\nbrightness 12\n#FFFFFF") == pytest.approx(12 / 255)
     assert delivered_brightness("") == 1.0
+
 
 
 def test_a_finite_cue_knows_when_it_stops_and_a_loop_does_not() -> None:

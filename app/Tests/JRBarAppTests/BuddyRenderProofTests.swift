@@ -69,4 +69,52 @@ struct BuddyRenderProofTests {
         }
         #expect(written.count == BuddyCharacter.allCases.count * moods.count)
     }
+
+    /// The floating buddy at each dial stop: the same layout math
+    /// `NotchBuddyView` applies — draw at 18pt, `scaleEffect`, claim the
+    /// scaled frame, scale the padding — so a human can eyeball that 3×
+    /// reads as a desk pet, not a magnified toolbar chip. Everything is
+    /// vector, so nothing resamples.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write /tmp/buddy-proof PNGs"))
+    func scaledSnapshots() throws {
+        let dir = URL(fileURLWithPath: "/tmp/buddy-proof", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var written: [String] = []
+        for character in BuddyCharacter.allCases {
+            for scale in [1.0, 2.0, 3.0] {
+                let figure = BuddyFigure(character: character, mood: .pacing,
+                                         tint: .accentColor, phase: 2.35,
+                                         hopProgress: nil, waveAge: nil, slumpAge: nil,
+                                         leans: false, still: true, askCount: 0,
+                                         care: .content, trick: nil,
+                                         treatAge: nil, crumbAge: nil)
+                // The view's own recipe: 18pt canvas, scale transform,
+                // then the scaled footprint and padding.
+                let staged = figure
+                    .frame(width: 18, height: 18)
+                    .scaleEffect(scale)
+                    .frame(width: 18 * scale, height: 18 * scale)
+                    .padding(.horizontal, 9 * scale)
+                    .padding(.vertical, 6 * scale)
+                    .background(RoundedRectangle(cornerRadius: 15 * scale, style: .continuous)
+                        .fill(Color(white: 0.13)))
+                    .padding(4)
+                    .environment(\.colorScheme, .dark)
+                let renderer = ImageRenderer(content: staged)
+                renderer.scale = 2
+                guard let image = renderer.nsImage,
+                      let tiff = image.tiffRepresentation,
+                      let rep = NSBitmapImageRep(data: tiff),
+                      let png = rep.representation(using: .png, properties: [:]) else {
+                    Issue.record("render failed for \(character.rawValue) at \(scale)×")
+                    continue
+                }
+                let name = "\(character.rawValue)-\(Int(scale))x.png"
+                try png.write(to: dir.appendingPathComponent(name))
+                written.append(name)
+            }
+        }
+        #expect(written.count == BuddyCharacter.allCases.count * 3)
+    }
 }

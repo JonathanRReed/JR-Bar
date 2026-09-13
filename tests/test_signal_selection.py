@@ -45,7 +45,8 @@ def _select(
     )
 
 
-def test_signal_claim_precedence_pins_the_exact_current_order_and_metadata() -> None:
+def test_signal_claim_precedence_pins_the_exact_current_order_and_metadata__and_2_more() -> None:
+    # --- scenario: signal_claim_precedence_pins_the_exact_current_order_and_metadata
     assert tuple(
         (
             spec.key.value,
@@ -56,26 +57,17 @@ def test_signal_claim_precedence_pins_the_exact_current_order_and_metadata() -> 
         for spec in SIGNAL_CLAIM_PRECEDENCE
     ) == EXPECTED_CLAIMS
 
+    # --- scenario: every_earlier_active_claim_wins_over_every_later_active_claim
+    for earlier_index in range(len(SIGNAL_CLAIM_PRECEDENCE)):
+        earlier = SIGNAL_CLAIM_PRECEDENCE[earlier_index]
+        for later_index in range(earlier_index + 1, len(SIGNAL_CLAIM_PRECEDENCE)):
+            later = SIGNAL_CLAIM_PRECEDENCE[later_index]
+            assert _select({earlier.key, later.key}) == earlier.display_kind, (
+                earlier,
+                later,
+            )
 
-@pytest.mark.parametrize(
-    ("earlier_index", "later_index"),
-    tuple(
-        (earlier_index, later_index)
-        for earlier_index in range(len(SIGNAL_CLAIM_PRECEDENCE))
-        for later_index in range(earlier_index + 1, len(SIGNAL_CLAIM_PRECEDENCE))
-    ),
-)
-def test_every_earlier_active_claim_wins_over_every_later_active_claim(
-    earlier_index: int,
-    later_index: int,
-) -> None:
-    earlier = SIGNAL_CLAIM_PRECEDENCE[earlier_index]
-    later = SIGNAL_CLAIM_PRECEDENCE[later_index]
-
-    assert _select({earlier.key, later.key}) == earlier.display_kind
-
-
-def test_evaluation_stops_immediately_after_the_first_active_claim() -> None:
+    # --- scenario: evaluation_stops_immediately_after_the_first_active_claim
     evaluated: list[SignalClaimKey] = []
     winning_key = SignalClaimKey.LOW_BATTERY
 
@@ -98,30 +90,21 @@ def test_evaluation_stops_immediately_after_the_first_active_claim() -> None:
     ]
 
 
-@pytest.mark.parametrize(
-    "claim_key",
-    [spec.key for spec in SIGNAL_CLAIM_PRECEDENCE if spec.muted_by_asks_only],
-)
-def test_asks_only_skips_exactly_the_existing_courtesy_claims(
-    claim_key: SignalClaimKey,
-) -> None:
-    assert _select({claim_key}, signal_policy="asks_only") == "agent"
 
+def test_asks_only_skips_exactly_the_existing_courtesy_claims__and_2_more() -> None:
+    # --- scenario: asks_only_skips_exactly_the_existing_courtesy_claims
+    for spec in SIGNAL_CLAIM_PRECEDENCE:
+        if spec.muted_by_asks_only:
+            assert _select({spec.key}, signal_policy="asks_only") == "agent", spec
 
-@pytest.mark.parametrize(
-    "claim_key",
-    [spec.key for spec in SIGNAL_CLAIM_PRECEDENCE if not spec.muted_by_asks_only],
-)
-def test_asks_only_preserves_critical_pinned_and_ambient_claims(
-    claim_key: SignalClaimKey,
-) -> None:
-    expected = next(
-        spec.display_kind for spec in SIGNAL_CLAIM_PRECEDENCE if spec.key is claim_key
-    )
-    assert _select({claim_key}, signal_policy="asks_only") == expected
+    # --- scenario: asks_only_preserves_critical_pinned_and_ambient_claims
+    for spec in SIGNAL_CLAIM_PRECEDENCE:
+        if not spec.muted_by_asks_only:
+            assert (
+                _select({spec.key}, signal_policy="asks_only") == spec.display_kind
+            ), spec
 
-
-def test_asks_only_does_not_evaluate_muted_claims() -> None:
+    # --- scenario: asks_only_does_not_evaluate_muted_claims
     evaluated: list[SignalClaimKey] = []
 
     def evaluate(key: SignalClaimKey) -> bool:
@@ -141,13 +124,13 @@ def test_asks_only_does_not_evaluate_muted_claims() -> None:
     assert SignalClaimKey.QUOTA not in evaluated
 
 
-def test_no_active_claim_returns_the_supplied_default() -> None:
+
+def test_no_active_claim_returns_the_supplied_default__and_2_more() -> None:
+    # --- scenario: no_active_claim_returns_the_supplied_default
     assert _select(set()) == "agent"
 
-
-@pytest.mark.parametrize(
-    ("display_admission", "claim_key", "expected"),
-    (
+    # --- scenario: display_admission_filters_claim_capabilities_before_evaluation
+    for display_admission, claim_key, expected in (
         (DisplayAdmission.ALL, SignalClaimKey.REMINDERS, "reminders"),
         (DisplayAdmission.CRITICAL, SignalClaimKey.REMINDERS, None),
         (DisplayAdmission.CRITICAL, SignalClaimKey.LOW_BATTERY, "low_battery"),
@@ -156,31 +139,23 @@ def test_no_active_claim_returns_the_supplied_default() -> None:
         (DisplayAdmission.ASKS, SignalClaimKey.FAILURE, None),
         (DisplayAdmission.ASKS, SignalClaimKey.ESCALATION, "escalation"),
         (DisplayAdmission.NONE, SignalClaimKey.ESCALATION, None),
-    ),
-)
-def test_display_admission_filters_claim_capabilities_before_evaluation(
-    display_admission: DisplayAdmission,
-    claim_key: SignalClaimKey,
-    expected: str | None,
-) -> None:
-    evaluated: list[SignalClaimKey] = []
+    ):
+        evaluated: list[SignalClaimKey] = []
 
-    result = select_active_led_display_kind(
-        evaluate=lambda key: evaluated.append(key) is None and key is claim_key,
-        signal_policy=None,
-        default_display_kind="agent",
-        display_admission=display_admission,
-        default_claim_admission=DisplayAdmission.ALL,
-    )
+        result = select_active_led_display_kind(
+            evaluate=lambda key: evaluated.append(key) is None and key is claim_key,
+            signal_policy=None,
+            default_display_kind="agent",
+            display_admission=display_admission,
+            default_claim_admission=DisplayAdmission.ALL,
+        )
 
-    assert result == expected
-    if expected is None:
-        assert claim_key not in evaluated
+        assert result == expected, (display_admission, claim_key)
+        if expected is None:
+            assert claim_key not in evaluated
 
-
-@pytest.mark.parametrize(
-    ("display_admission", "standing_admission", "expected"),
-    (
+    # --- scenario: standing_agent_truth_uses_its_current_semantic_capability
+    for display_admission, standing_admission, expected in (
         (DisplayAdmission.ALL, DisplayAdmission.ALL, "agent"),
         (DisplayAdmission.CRITICAL, DisplayAdmission.ALL, None),
         (DisplayAdmission.CRITICAL, DisplayAdmission.CRITICAL, "agent"),
@@ -188,21 +163,16 @@ def test_display_admission_filters_claim_capabilities_before_evaluation(
         (DisplayAdmission.ASKS, DisplayAdmission.CRITICAL, None),
         (DisplayAdmission.ASKS, DisplayAdmission.ASKS, "agent"),
         (DisplayAdmission.NONE, DisplayAdmission.ASKS, None),
-    ),
-)
-def test_standing_agent_truth_uses_its_current_semantic_capability(
-    display_admission: DisplayAdmission,
-    standing_admission: DisplayAdmission,
-    expected: str | None,
-) -> None:
-    assert (
-        _select(
-            set(),
-            display_admission=display_admission,
-            default_claim_admission=standing_admission,
-        )
-        == expected
-    )
+    ):
+        assert (
+            _select(
+                set(),
+                display_admission=display_admission,
+                default_claim_admission=standing_admission,
+            )
+            == expected
+        ), (display_admission, standing_admission)
+
 
 
 def test_evaluator_exception_is_not_swallowed() -> None:

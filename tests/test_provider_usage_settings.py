@@ -16,7 +16,8 @@ from jrbar.provider_usage_settings import (
 )
 
 
-def test_defaults_enable_consumer_providers_but_not_openai_admin() -> None:
+def test_defaults_enable_consumer_providers_but_not_openai_admin__and_2_more() -> None:
+    # --- scenario: defaults_enable_consumer_providers_but_not_openai_admin
     settings = default_provider_usage_settings()
     assert settings.preference("codex").enabled is True
     assert settings.preference("claude").enabled is True
@@ -24,8 +25,7 @@ def test_defaults_enable_consumer_providers_but_not_openai_admin() -> None:
     assert settings.preference("openai-api").enabled is False
     assert all(not item.browser_sources for item in settings.providers)
 
-
-def test_configuration_updates_are_immutable_and_provider_scoped() -> None:
+    # --- scenario: configuration_updates_are_immutable_and_provider_scoped
     original = default_provider_usage_settings()
     updated = (
         original.with_enabled("cursor", False)
@@ -37,8 +37,7 @@ def test_configuration_updates_are_immutable_and_provider_scoped() -> None:
     assert updated.preference("devin").browser_sources is True
     assert updated.preference("devin").option("organization") == "org_example"
 
-
-def test_round_trip_preserves_unknown_fields() -> None:
+    # --- scenario: round_trip_preserves_unknown_fields
     original = {
         "settings_schema_version": PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
         "future_extension": {"keep": True},
@@ -63,7 +62,9 @@ def test_round_trip_preserves_unknown_fields() -> None:
     )["enabled"] is False
 
 
-def test_future_schema_is_read_only() -> None:
+
+def test_future_schema_is_read_only__and_1_more() -> None:
+    # --- scenario: future_schema_is_read_only
     loaded = load_provider_usage_settings(
         reader=lambda _path: json.dumps(
             {
@@ -84,8 +85,7 @@ def test_future_schema_is_read_only() -> None:
     else:
         raise AssertionError("future settings were overwritten")
 
-
-def test_browser_sources_are_rejected_for_providers_without_browser_support() -> None:
+    # --- scenario: browser_sources_are_rejected_for_providers_without_browser_support
     settings = default_provider_usage_settings()
     try:
         settings.with_browser_sources("antigravity", True)
@@ -95,7 +95,9 @@ def test_browser_sources_are_rejected_for_providers_without_browser_support() ->
         raise AssertionError("unsupported browser source was enabled")
 
 
-def test_menu_display_and_visibility_round_trip(tmp_path) -> None:
+
+def test_menu_display_and_visibility_round_trip__and_1_more(tmp_path) -> None:
+    # --- scenario: menu_display_and_visibility_round_trip
     path = tmp_path / "provider-usage.json"
     updated = (
         default_provider_usage_settings()
@@ -114,10 +116,7 @@ def test_menu_display_and_visibility_round_trip(tmp_path) -> None:
     assert loaded.preference("claude").menu_visible is True
     assert loaded.hidden_menu_providers() == frozenset({"devin"})
 
-
-def test_menu_display_tolerates_old_documents_and_junk(tmp_path) -> None:
-    # A pre-menu_display document (and garbage values) must load as the
-    # defaults: everything visible, everything shown.
+    # --- scenario: menu_display_tolerates_old_documents_and_junk
     path = tmp_path / "provider-usage.json"
     path.write_text(
         json.dumps(
@@ -141,6 +140,7 @@ def test_menu_display_tolerates_old_documents_and_junk(tmp_path) -> None:
     assert loaded.hidden_menu_providers() == frozenset()
 
 
+
 def test_menu_flag_rejects_unknown_names() -> None:
     import pytest
 
@@ -150,9 +150,8 @@ def test_menu_flag_rejects_unknown_names() -> None:
         default_provider_usage_settings().with_menu_flag("show_everything", True)
 
 
-def test_loaded_settings_exposes_source_digest_and_refuses_external_edit(
-    tmp_path: Path,
-) -> None:
+def test_loaded_settings_exposes_source_digest_and_refuses_external_edit__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: loaded_settings_exposes_source_digest_and_refuses_external_edit
     path = tmp_path / "provider-usage.json"
     save_provider_usage_settings(default_provider_usage_settings(), path)
     loaded = load_provider_usage_settings(path)
@@ -170,10 +169,7 @@ def test_loaded_settings_exposes_source_digest_and_refuses_external_edit(
         )
     assert json.loads(path.read_text(encoding="utf-8")) == external
 
-
-def test_loaded_missing_settings_refuses_file_that_appears_before_save(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: loaded_missing_settings_refuses_file_that_appears_before_save
     path = tmp_path / "provider-usage.json"
     loaded = load_provider_usage_settings(path)
     path.write_text('{"owner":"external"}', encoding="utf-8")
@@ -181,10 +177,7 @@ def test_loaded_missing_settings_refuses_file_that_appears_before_save(
     with pytest.raises(ProviderUsageSettingsWriteRefusedError):
         save_provider_usage_settings(loaded.settings, path, loaded=loaded)
 
-
-def test_loaded_settings_refuses_stale_write_after_sibling_instance_changes(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: loaded_settings_refuses_stale_write_after_sibling_instance_changes
     path = tmp_path / "provider-usage.json"
     settings = default_provider_usage_settings()
     work = replace(
@@ -218,6 +211,7 @@ def test_loaded_settings_refuses_stale_write_after_sibling_instance_changes(
     )
 
 
+
 def test_two_same_provider_instances_round_trip_without_collapsing(tmp_path: Path) -> None:
     path = tmp_path / "provider-usage.json"
     settings = default_provider_usage_settings()
@@ -239,7 +233,8 @@ def test_two_same_provider_instances_round_trip_without_collapsing(tmp_path: Pat
     ]
 
 
-def test_legacy_provider_rows_migrate_to_default_source_instance() -> None:
+def test_legacy_provider_rows_migrate_to_default_source_instance__and_1_more() -> None:
+    # --- scenario: legacy_provider_rows_migrate_to_default_source_instance
     loaded = load_provider_usage_settings(
         reader=lambda _path: json.dumps(
             {
@@ -258,8 +253,7 @@ def test_legacy_provider_rows_migrate_to_default_source_instance() -> None:
     assert loaded.preference("claude").source_instance_id == "default"
     assert loaded.preference("claude").enabled is False
 
-
-def test_instance_mutation_is_exact_and_provider_only_lookup_uses_default() -> None:
+    # --- scenario: instance_mutation_is_exact_and_provider_only_lookup_uses_default
     settings = default_provider_usage_settings()
     work = replace(settings.preference("claude"), source_instance_id="work")
     settings = settings.with_instance(work).with_enabled(
@@ -272,7 +266,9 @@ def test_instance_mutation_is_exact_and_provider_only_lookup_uses_default() -> N
     assert settings.preference("claude", "work").enabled is False
 
 
-def test_two_same_provider_instances_persist_distinct_profiles(tmp_path: Path) -> None:
+
+def test_two_same_provider_instances_persist_distinct_profiles__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: two_same_provider_instances_persist_distinct_profiles
     path = tmp_path / "provider-usage.json"
     settings = default_provider_usage_settings()
     personal = ProviderInstanceProfile(
@@ -307,8 +303,7 @@ def test_two_same_provider_instances_persist_distinct_profiles(tmp_path: Path) -
     assert loaded.preference("claude").profile.open_session_action == "app"
     assert loaded.preference("claude", "work").profile.open_session_action == "terminal"
 
-
-def test_profile_references_round_trip_without_exposing_secret_material(tmp_path: Path) -> None:
+    # --- scenario: profile_references_round_trip_without_exposing_secret_material
     path = tmp_path / "provider-usage.json"
     profile = ProviderInstanceProfile(
         ProviderInstanceKey("claude", "work"),
@@ -336,7 +331,9 @@ def test_profile_references_round_trip_without_exposing_secret_material(tmp_path
     assert "secret" not in repr(loaded).lower()
 
 
-def test_legacy_schema_two_rows_migrate_profile_defaults_and_refuse_mismatch() -> None:
+
+def test_legacy_schema_two_rows_migrate_profile_defaults_and_refuse_mismatch__and_2_more() -> None:
+    # --- scenario: legacy_schema_two_rows_migrate_profile_defaults_and_refuse_mismatch
     loaded = load_provider_usage_settings(
         reader=lambda _path: json.dumps(
             {
@@ -366,61 +363,52 @@ def test_legacy_schema_two_rows_migrate_profile_defaults_and_refuse_mismatch() -
             )
         )
 
-
-@pytest.mark.parametrize(
-    ("field", "invalid", "fallback"),
-    (
+    # --- scenario: invalid_profile_field_does_not_reset_unrelated_provider_choices
+    for field, invalid, fallback in (
         ("label", "", "Claude"),
         ("color_override", "not-a-color", None),
         ("retention_days", 8, 7),
         ("remote_sharing_choice", "everything", "never"),
         ("open_session_action", "browser", "app"),
-    ),
-)
-def test_invalid_profile_field_does_not_reset_unrelated_provider_choices(
-    field: str,
-    invalid: object,
-    fallback: object,
-) -> None:
-    profile_values = {
-        "label": "Claude Work",
-        "color_override": "#112233",
-        "retention_days": 30,
-        "remote_sharing_choice": "status_only",
-        "open_session_action": "terminal",
-    }
-    profile_values[field] = invalid
-    loaded = load_provider_usage_settings(
-        reader=lambda _path: json.dumps(
-            {
-                "settings_schema_version": PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
-                "providers": [
-                    {
-                        "provider_id": "claude",
-                        "enabled": False,
-                        "browser_sources": False,
-                        "menu_visible": False,
-                        "threshold_remaining": 33,
-                        "options": {"account": "work"},
-                        **profile_values,
-                    }
-                ],
-            }
+    ):
+        profile_values = {
+            "label": "Claude Work",
+            "color_override": "#112233",
+            "retention_days": 30,
+            "remote_sharing_choice": "status_only",
+            "open_session_action": "terminal",
+        }
+        profile_values[field] = invalid
+        loaded = load_provider_usage_settings(
+            reader=lambda _path: json.dumps(
+                {
+                    "settings_schema_version": PROVIDER_USAGE_SETTINGS_SCHEMA_VERSION,
+                    "providers": [
+                        {
+                            "provider_id": "claude",
+                            "enabled": False,
+                            "browser_sources": False,
+                            "menu_visible": False,
+                            "threshold_remaining": 33,
+                            "options": {"account": "work"},
+                            **profile_values,
+                        }
+                    ],
+                }
+            )
         )
-    )
 
-    preference = loaded.settings.preference("claude")
-    assert preference.enabled is False
-    assert preference.menu_visible is False
-    assert preference.threshold_remaining == 33
-    assert preference.option("account") == "work"
-    assert getattr(preference, field) == fallback
-    for valid_field, value in profile_values.items():
-        if valid_field != field:
-            assert getattr(preference, valid_field) == value
+        preference = loaded.settings.preference("claude")
+        assert preference.enabled is False
+        assert preference.menu_visible is False
+        assert preference.threshold_remaining == 33
+        assert preference.option("account") == "work"
+        assert getattr(preference, field) == fallback
+        for valid_field, value in profile_values.items():
+            if valid_field != field:
+                assert getattr(preference, valid_field) == value
 
-
-def test_malformed_instance_identity_does_not_discard_valid_rows() -> None:
+    # --- scenario: malformed_instance_identity_does_not_discard_valid_rows
     loaded = load_provider_usage_settings(
         reader=lambda _path: json.dumps(
             {
@@ -454,3 +442,4 @@ def test_malformed_instance_identity_does_not_discard_valid_rows() -> None:
         for preference in loaded.settings.providers
         if preference.source_instance_id != "default"
     ) == (("claude", "work"),)
+

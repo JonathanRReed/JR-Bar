@@ -232,9 +232,8 @@ def test_hardware_smoke_never_writes_an_invalid_backup(
     assert target.read_bytes() == backup
 
 
-def test_bootstrap_defaults_to_python_312_even_when_313_is_available(
-    tmp_path: Path,
-) -> None:
+def test_bootstrap_defaults_to_python_312_even_when_313_is_available__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: bootstrap_defaults_to_python_312_even_when_313_is_available
     log = tmp_path / "interpreters.log"
     _fake_python(tmp_path / "bin" / "python3.13", "3.13", log)
     _fake_python(tmp_path / "bin" / "python3.12", "3.12", log)
@@ -246,10 +245,7 @@ def test_bootstrap_defaults_to_python_312_even_when_313_is_available(
     assert "3.12" in log.read_text(encoding="utf-8").splitlines()
     assert "3.13" not in log.read_text(encoding="utf-8").splitlines()
 
-
-def test_bootstrap_rejects_existing_venv_with_wrong_python_without_replacing_it(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: bootstrap_rejects_existing_venv_with_wrong_python_without_replacing_it
     existing = tmp_path / "venv" / "bin" / "python"
     _fake_python(existing, "3.13")
     original = existing.read_bytes()
@@ -261,6 +257,7 @@ def test_bootstrap_rejects_existing_venv_with_wrong_python_without_replacing_it(
     assert "existing virtual environment" in result.stderr.lower()
     assert "Python 3.12" in result.stderr
     assert existing.read_bytes() == original
+
 
 
 def test_release_gate_accepts_detached_head_only_at_fresh_origin_main(tmp_path: Path) -> None:
@@ -354,7 +351,8 @@ def test_release_gate_rejects_detached_old_commit(tmp_path: Path) -> None:
     assert "origin/main" in result.stderr
 
 
-def test_authoritative_release_gate_requires_every_external_evidence_class() -> None:
+def test_authoritative_release_gate_requires_every_external_evidence_class__and_2_more() -> None:
+    # --- scenario: authoritative_release_gate_requires_every_external_evidence_class
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
     receipt_runner = (ROOT / "scripts" / "release_evidence.py").read_text()
     for required in (
@@ -373,8 +371,7 @@ def test_authoritative_release_gate_requires_every_external_evidence_class() -> 
     assert "stapling-receipt" in text
     assert '["/usr/bin/xcrun", "stapler", "validate", str(args.pkg)]' in receipt_runner
 
-
-def test_release_gate_verifies_the_0_8_bundle_layout_it_actually_builds() -> None:
+    # --- scenario: release_gate_verifies_the_0_8_bundle_layout_it_actually_builds
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     # 0.8 assembles the candidate at build/macos-pkg/app; build/macos-pkg/swift
@@ -393,8 +390,7 @@ def test_release_gate_verifies_the_0_8_bundle_layout_it_actually_builds() -> Non
     assert "sealed, team" in text
     assert "Sparkle.framework" in text
 
-
-def test_release_gate_runs_the_bundled_daemon_doctor_against_the_installed_app() -> None:
+    # --- scenario: release_gate_runs_the_bundled_daemon_doctor_against_the_installed_app
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     # Contents/MacOS/JR-Bar is the Swift menu-bar app and takes no arguments.
@@ -408,7 +404,9 @@ def test_release_gate_runs_the_bundled_daemon_doctor_against_the_installed_app()
     assert 'hook shim: $app/Contents/Helpers/jrbar-hook' in text
 
 
-def test_release_gate_quiesces_the_running_app_before_it_installs_over_it() -> None:
+
+def test_release_gate_quiesces_the_running_app_before_it_installs_over_it__and_2_more() -> None:
+    # --- scenario: release_gate_quiesces_the_running_app_before_it_installs_over_it
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     # A running JR-Bar rewrites its own settings as devices and sessions come
@@ -422,8 +420,7 @@ def test_release_gate_quiesces_the_running_app_before_it_installs_over_it() -> N
     assert "relaunching" in text
     assert "start_app" in text
 
-
-def test_release_gate_installs_into_the_home_applications_folder_by_default() -> None:
+    # --- scenario: release_gate_installs_into_the_home_applications_folder_by_default
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     # /Applications needs an administrator password, which would stall the
@@ -437,8 +434,7 @@ def test_release_gate_installs_into_the_home_applications_folder_by_default() ->
     # exercise the root-only supported uninstaller.
     assert 'INSTALLED_APP="/Applications/JR-Bar.app"' in text
 
-
-def test_release_gate_records_every_exact_candidate_receipt_kind() -> None:
+    # --- scenario: release_gate_records_every_exact_candidate_receipt_kind
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
     for required in (
         "source-gate",
@@ -467,7 +463,9 @@ def test_release_gate_records_every_exact_candidate_receipt_kind() -> None:
         assert required in text
 
 
-def test_release_manifest_consumes_receipts_instead_of_asserting_success() -> None:
+
+def test_release_manifest_consumes_receipts_instead_of_asserting_success__and_2_more() -> None:
+    # --- scenario: release_manifest_consumes_receipts_instead_of_asserting_success
     text = (ROOT / "scripts" / "generate_release_manifest.py").read_text()
 
     assert 'parser.add_argument("--candidate"' in text
@@ -476,8 +474,7 @@ def test_release_manifest_consumes_receipts_instead_of_asserting_success() -> No
     assert 'notarization_verified": True' not in text
     assert 'installed_upgrade": True' not in text
 
-
-def test_installed_app_receipt_binds_the_installed_tree_to_the_exact_candidate() -> None:
+    # --- scenario: installed_app_receipt_binds_the_installed_tree_to_the_exact_candidate
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     # An installed bundle that merely looks right is not evidence. The
@@ -488,8 +485,7 @@ def test_installed_app_receipt_binds_the_installed_tree_to_the_exact_candidate()
     assert "require_strict_version_upgrade" in text
     assert "sha256_tree" in text
 
-
-def test_release_publication_is_draft_first_and_rolls_back_on_failure() -> None:
+    # --- scenario: release_publication_is_draft_first_and_rolls_back_on_failure
     text = (ROOT / "scripts" / "publish_release.sh").read_text()
     assert "git status --porcelain --untracked-files=all" in text
     assert "--draft" in text
@@ -498,7 +494,9 @@ def test_release_publication_is_draft_first_and_rolls_back_on_failure() -> None:
     assert "--cleanup-tag" in text
 
 
-def test_release_gate_binds_exact_sparkle_assets_and_app_notary_evidence() -> None:
+
+def test_release_gate_binds_exact_sparkle_assets_and_app_notary_evidence__and_1_more() -> None:
+    # --- scenario: release_gate_binds_exact_sparkle_assets_and_app_notary_evidence
     text = (ROOT / "scripts" / "verify_macos_release.sh").read_text()
 
     for required in (
@@ -520,8 +518,7 @@ def test_release_gate_binds_exact_sparkle_assets_and_app_notary_evidence() -> No
     assert "SPARKLE_PRIVATE_KEY" not in text
     assert "NOTARY_PASSWORD" not in text
 
-
-def test_performance_evidence_requires_measured_budgets_and_trace_review() -> None:
+    # --- scenario: performance_evidence_requires_measured_budgets_and_trace_review
     evidence = {
         "warm_launch_ms": 450,
         "menu_open_p95_ms": 40,
@@ -538,3 +535,4 @@ def test_performance_evidence_requires_measured_budgets_and_trace_review() -> No
 
     evidence["menu_open_p95_ms"] = 75
     assert any(failure.startswith("menu_open_p95_ms") for failure in validate_performance_evidence(evidence))
+

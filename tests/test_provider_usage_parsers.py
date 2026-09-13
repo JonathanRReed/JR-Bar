@@ -11,7 +11,8 @@ from jrbar.provider_usage_parsers import (
 )
 
 
-def test_codex_preserves_spark_weekly_as_a_dynamic_lane() -> None:
+def test_codex_preserves_spark_weekly_as_a_dynamic_lane__and_2_more() -> None:
+    # --- scenario: codex_preserves_spark_weekly_as_a_dynamic_lane
     snapshot = parse_codex_usage(
         windows=[
             {
@@ -47,8 +48,7 @@ def test_codex_preserves_spark_weekly_as_a_dynamic_lane() -> None:
     assert by_label["Spark Weekly"].bindable is False
     assert snapshot.model_count == 2
 
-
-def test_claude_preserves_fable_and_model_scoped_windows() -> None:
+    # --- scenario: claude_preserves_fable_and_model_scoped_windows
     snapshot = parse_claude_usage(
         windows=[
             {"label": "5-hour", "used_percent": 10, "resets_at": 2000},
@@ -62,8 +62,7 @@ def test_claude_preserves_fable_and_model_scoped_windows() -> None:
     assert fable.remaining_percent == 20
     assert fable.bindable is False
 
-
-def test_cursor_usage_summary_maps_plan_auto_api_and_extra_spend() -> None:
+    # --- scenario: cursor_usage_summary_maps_plan_auto_api_and_extra_spend
     snapshot = parse_cursor_usage(
         {
             "planUsage": {"usedPercent": 35},
@@ -85,7 +84,9 @@ def test_cursor_usage_summary_maps_plan_auto_api_and_extra_spend() -> None:
     assert snapshot.account_label == "person@example.com"
 
 
-def test_devin_maps_daily_and_weekly_windows() -> None:
+
+def test_devin_maps_daily_and_weekly_windows__and_2_more() -> None:
+    # --- scenario: devin_maps_daily_and_weekly_windows
     snapshot = parse_devin_usage(
         {
             "daily": {"used_percent": 25, "resets_at": 2000},
@@ -100,8 +101,7 @@ def test_devin_maps_daily_and_weekly_windows() -> None:
     ]
     assert snapshot.account_label == "org_example"
 
-
-def test_grok_maps_cli_proxy_credit_usage_and_reset() -> None:
+    # --- scenario: grok_maps_cli_proxy_credit_usage_and_reset
     snapshot = parse_grok_usage(
         {
             "config": {
@@ -116,8 +116,7 @@ def test_grok_maps_cli_proxy_credit_usage_and_reset() -> None:
     assert snapshot.lanes[0].remaining_percent == 28
     assert snapshot.account_label == "person@example.com"
 
-
-def test_antigravity_maps_four_summary_buckets() -> None:
+    # --- scenario: antigravity_maps_four_summary_buckets
     snapshot = parse_antigravity_usage(
         {
             "response": {
@@ -170,7 +169,9 @@ def test_antigravity_maps_four_summary_buckets() -> None:
     assert snapshot.lanes[0].remaining_percent == 40
 
 
-def test_openai_usage_aggregates_tokens_models_requests_and_cost() -> None:
+
+def test_openai_usage_aggregates_tokens_models_requests_and_cost__and_2_more() -> None:
+    # --- scenario: openai_usage_aggregates_tokens_models_requests_and_cost
     snapshot = parse_openai_api_usage(
         {
             "usage": {
@@ -202,14 +203,7 @@ def test_openai_usage_aggregates_tokens_models_requests_and_cost() -> None:
     assert snapshot.model_count == 2
     assert snapshot.estimated_cost_usd == 2.75
 
-
-def test_claude_reads_the_utilization_key_claude_quota_actually_emits() -> None:
-    # 2026-08-20 live failure: claude_quota.windows_from_payload emits
-    # each window as {"label", "utilization", "resets_at", ...} (the
-    # OAuth endpoint's own name), but parse_claude_usage read only
-    # "used_percent" -- every lane's remaining_percent was None, and the
-    # menu showed "Claude · ready" with no numbers despite a fully
-    # successful fetch.
+    # --- scenario: claude_reads_the_utilization_key_claude_quota_actually_emits
     snapshot = parse_claude_usage(
         windows=[
             {"label": "5-hour", "utilization": 26.0, "resets_at": 2000,
@@ -223,12 +217,7 @@ def test_claude_reads_the_utilization_key_claude_quota_actually_emits() -> None:
     assert by_label["5-hour"].remaining_percent == 74.0
     assert by_label["Weekly"].remaining_percent == 88.5
 
-
-def test_codex_merged_account_weekly_primary_is_labeled_weekly() -> None:
-    # After the Codex/ChatGPT merge the CLI reports the WEEKLY window as
-    # "primary" (window_minutes 10080; Pro has no 5-hour at all). The
-    # old positional rule labeled a week's budget "5-hour" -- usage that
-    # looked frozen because the real lane never existed. Duration wins.
+    # --- scenario: codex_merged_account_weekly_primary_is_labeled_weekly
     snapshot = parse_codex_usage(
         windows=[
             {"label": "primary", "used_percent": 3.0,
@@ -252,7 +241,9 @@ def test_codex_merged_account_weekly_primary_is_labeled_weekly() -> None:
     assert [lane.label for lane in classic.lanes] == ["5-hour", "Weekly"]
 
 
-def test_devin_reads_the_flat_shape_the_endpoint_actually_returns() -> None:
+
+def test_devin_reads_the_flat_shape_the_endpoint_actually_returns__and_2_more() -> None:
+    # --- scenario: devin_reads_the_flat_shape_the_endpoint_actually_returns
     """The live payload is flat -- {"daily_percentage": 80, ...} -- not a
     nested per-window object. Reading only the nested shape meant a
     correctly authenticated card showed zero lanes, so completing the
@@ -272,15 +263,13 @@ def test_devin_reads_the_flat_shape_the_endpoint_actually_returns() -> None:
     assert lanes["weekly"].remaining_percent == 60.0
     assert lanes["daily"].reset_at is not None
 
-
-def test_devin_reads_a_fraction_as_a_share_not_a_percent() -> None:
-    # 0.8 means 80% used, not 0.8% -- matching the reference client.
+    # --- scenario: devin_reads_a_fraction_as_a_share_not_a_percent
     snapshot = parse_devin_usage({"daily_percentage": 0.8}, observed_at=1000)
     assert abs(snapshot.lanes[0].remaining_percent - 20.0) < 1e-9
 
-
-def test_devin_still_reads_the_nested_shape() -> None:
+    # --- scenario: devin_still_reads_the_nested_shape
     snapshot = parse_devin_usage(
         {"daily": {"used_percent": 10, "resets_at": 2000}}, observed_at=1000
     )
     assert snapshot.lanes[0].remaining_percent == 90.0
+

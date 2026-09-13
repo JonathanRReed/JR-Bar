@@ -9,11 +9,11 @@ class Fact:
     value: int
 
 
-def test_stable_digest_is_order_independent_for_mappings() -> None:
+def test_stable_digest_is_order_independent_for_mappings__and_2_more() -> None:
+    # --- scenario: stable_digest_is_order_independent_for_mappings
     assert stable_digest({"b": 2, "a": 1}) == stable_digest({"a": 1, "b": 2})
 
-
-def test_store_reports_only_changed_domains_and_keeps_generation_on_noop() -> None:
+    # --- scenario: store_reports_only_changed_domains_and_keeps_generation_on_noop
     store = CoreStateStore()
     first = store.observe(
         {
@@ -42,8 +42,7 @@ def test_store_reports_only_changed_domains_and_keeps_generation_on_noop() -> No
     assert changed.from_generation == 1
     assert changed.to_generation == 2
 
-
-def test_removed_domain_and_urgent_change_are_reported() -> None:
+    # --- scenario: removed_domain_and_urgent_change_are_reported
     store = CoreStateStore()
     store.observe(
         {
@@ -60,6 +59,7 @@ def test_removed_domain_and_urgent_change_are_reported() -> None:
 
     assert delta.changed_domains == {CoreDomain.AGENTS, CoreDomain.ATTENTION}
     assert delta.urgent is True
+
 
 
 def test_long_private_text_is_hashed_not_retained() -> None:

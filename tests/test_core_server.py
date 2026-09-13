@@ -92,7 +92,8 @@ def _connect(server: CoreServer) -> socket.socket:
     return client
 
 
-def test_socket_is_private_and_greets_with_hello_state_lights_settings(server: CoreServer) -> None:
+def test_socket_is_private_and_greets_with_hello_state_lights_settings__and_2_more(server: CoreServer) -> None:
+    # --- scenario: socket_is_private_and_greets_with_hello_state_lights_settings
     mode = stat.S_IMODE(os.stat(server.socket_path).st_mode)
     assert mode == 0o600
     client = _connect(server)
@@ -106,8 +107,7 @@ def test_socket_is_private_and_greets_with_hello_state_lights_settings(server: C
     assert all(frame["v"] == 1 for frame in frames)
     client.close()
 
-
-def test_commands_reply_in_order_and_unknown_command_is_refused(server: CoreServer) -> None:
+    # --- scenario: commands_reply_in_order_and_unknown_command_is_refused
     client = _connect(server)
     _read_frames(client, 4)
     client.sendall(encode_frame({"t": "command", "v": 1, "id": "c-1", "name": "ping", "args": {"value": 7}}))
@@ -123,8 +123,7 @@ def test_commands_reply_in_order_and_unknown_command_is_refused(server: CoreServ
     assert server.stats["commands"] == 4
     client.close()
 
-
-def test_state_is_coalesced_latest_wins_and_bounded(server: CoreServer) -> None:
+    # --- scenario: state_is_coalesced_latest_wins_and_bounded
     client = _connect(server)
     _read_frames(client, 4)
     started = time.monotonic()
@@ -142,7 +141,9 @@ def test_state_is_coalesced_latest_wins_and_bounded(server: CoreServer) -> None:
     client.close()
 
 
-def test_identical_documents_are_not_rebroadcast(server: CoreServer) -> None:
+
+def test_identical_documents_are_not_rebroadcast__and_2_more(server: CoreServer) -> None:
+    # --- scenario: identical_documents_are_not_rebroadcast
     client = _connect(server)
     _read_frames(client, 4)
     server._min_interval["state"] = 0
@@ -167,8 +168,7 @@ def test_identical_documents_are_not_rebroadcast(server: CoreServer) -> None:
     client.close()
     second.close()
 
-
-def test_events_and_logs_are_not_coalesced(server: CoreServer) -> None:
+    # --- scenario: events_and_logs_are_not_coalesced
     client = _connect(server)
     _read_frames(client, 4)
     for index in range(5):
@@ -182,8 +182,7 @@ def test_events_and_logs_are_not_coalesced(server: CoreServer) -> None:
     assert frames[5]["message"] == "hello"
     client.close()
 
-
-def test_frames_are_capped_at_one_mebibyte(server: CoreServer) -> None:
+    # --- scenario: frames_are_capped_at_one_mebibyte
     client = _connect(server)
     _read_frames(client, 4)
     server.publish_event({"kind": "completed", "blob": "x" * (MAX_FRAME_BYTES + 10)})
@@ -198,7 +197,9 @@ def test_frames_are_capped_at_one_mebibyte(server: CoreServer) -> None:
     client.close()
 
 
-def test_foreign_uid_peer_is_refused(sock_dir: Path) -> None:
+
+def test_foreign_uid_peer_is_refused__and_1_more(sock_dir: Path) -> None:
+    # --- scenario: foreign_uid_peer_is_refused
     instance = _server(sock_dir, peer_uid_reader=lambda _connection: os.geteuid() + 1)
     instance.start()
     try:
@@ -210,8 +211,7 @@ def test_foreign_uid_peer_is_refused(sock_dir: Path) -> None:
     finally:
         instance.stop()
 
-
-def test_fifth_client_is_refused_and_stale_socket_is_replaced(sock_dir: Path) -> None:
+    # --- scenario: fifth_client_is_refused_and_stale_socket_is_replaced
     path = sock_dir / "core.sock"
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stale.bind(str(path))
@@ -236,6 +236,7 @@ def test_fifth_client_is_refused_and_stale_socket_is_replaced(sock_dir: Path) ->
             client.close()
         instance.stop()
     assert not path.exists()
+
 
 
 def test_a_client_that_stops_reading_is_dropped_without_wedging_fanout(
@@ -317,10 +318,9 @@ def test_a_client_that_stops_reading_is_dropped_without_wedging_fanout(
     reader.close()
 
 
-def test_event_queue_is_bounded_and_drops_oldest(
-    sock_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_event_queue_is_bounded_and_drops_oldest__and_1_more(sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,) -> None:
+    # --- scenario: event_queue_is_bounded_and_drops_oldest
     """Without a running flusher the queue must still stay bounded:
     event/log frames shed oldest-first while coalesced documents keep
     their latest-wins slot."""
@@ -333,11 +333,8 @@ def test_event_queue_is_bounded_and_drops_oldest(
     kept = [json.loads(frame)["index"] for frame in instance._queue]
     assert kept == [6, 7, 8, 9]
 
-
-def test_stale_socket_probe_ambiguity_never_unlinks(
-    sock_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # --- scenario: stale_socket_probe_ambiguity_never_unlinks
+    monkeypatch.undo()
     """A probe TIMEOUT is not proof of death: a wedged-but-live daemon
     reads identically, so the path must be left alone and startup must
     refuse -- only ECONNREFUSED may unlink (ipc.py parity)."""
@@ -383,6 +380,7 @@ def test_stale_socket_probe_ambiguity_never_unlinks(
         client.close()
     finally:
         instance.stop()
+
 
 
 def test_dispatch_runs_on_the_reader_thread_and_reply_is_serialisable(sock_dir: Path) -> None:

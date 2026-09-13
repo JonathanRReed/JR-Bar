@@ -68,7 +68,8 @@ def _isolated_probe_caches():
     settings_window.reset_event_access_cache()
 
 
-def test_auto_brightness_does_not_claim_to_work_without_a_reading() -> None:
+def test_auto_brightness_does_not_claim_to_work_without_a_reading__and_2_more() -> None:
+    # --- scenario: auto_brightness_does_not_claim_to_work_without_a_reading
     """The checkbox was the only evidence, and it is not evidence.
 
     display_brightness.py says in its own first paragraph that Apple can
@@ -87,8 +88,7 @@ def test_auto_brightness_does_not_claim_to_work_without_a_reading() -> None:
     assert "won't report screen brightness" in honest
     assert working == "Auto-Brightness on"
 
-
-def test_auto_brightness_summary_resolves_the_reading_for_its_caller() -> None:
+    # --- scenario: auto_brightness_summary_resolves_the_reading_for_its_caller
     """status_bar's refresh path calls this positionally and cannot be
     edited from here, so the probe has to happen inside the function."""
     with patch.object(
@@ -102,8 +102,7 @@ def test_auto_brightness_summary_resolves_the_reading_for_its_caller() -> None:
 
     assert "won't report screen brightness" in text
 
-
-def test_a_switched_off_auto_brightness_says_nothing_about_the_reading() -> None:
+    # --- scenario: a_switched_off_auto_brightness_says_nothing_about_the_reading
     """An unavailable reading is only news while the switch is ON."""
     with patch.object(
         settings_window, "screen_brightness_readable", return_value=False
@@ -111,6 +110,7 @@ def test_a_switched_off_auto_brightness_says_nothing_about_the_reading() -> None
         text = settings_window.calibration_summary_text(False, 1.0, 1.0, 1.0)
 
     assert text == "Auto-Brightness off"
+
 
 
 def test_calibration_percentages_survive_the_honest_prefix() -> None:
@@ -130,30 +130,27 @@ def _controller_settings(**changes):
     return SimpleNamespace(settings=SimpleNamespace(**values))
 
 
-@pytest.mark.parametrize(
-    ("status", "expected"),
-    (
-        ("authorized", "Granted"),
-        ("denied", "Denied"),
-        ("not_determined", "has not been asked"),
-        ("unavailable", "unavailable on this Mac"),
-    ),
-)
-def test_every_calendar_access_answer_reads_differently(status, expected) -> None:
+def test_every_calendar_access_answer_reads_differently__and_2_more() -> None:
+    # --- scenario: every_calendar_access_answer_reads_differently
     """Four EventKit answers, four sentences.
 
     Before this row the switch said ON for all four, and a denial that
     macOS will never re-ask looked exactly like a working feature with
     no events today.
     """
-    target = _controller_settings()
-    with patch.object(settings_window, "_event_access_status", return_value=status):
-        text = settings_window.calendar_access_status_text(target)
+    for status, expected in (
+        ("authorized", "Granted"),
+        ("denied", "Denied"),
+        ("not_determined", "has not been asked"),
+        ("unavailable", "unavailable on this Mac"),
+    ):
+        target = _controller_settings()
+        with patch.object(settings_window, "_event_access_status", return_value=status):
+            text = settings_window.calendar_access_status_text(target)
 
-    assert expected in text
+        assert expected in text
 
-
-def test_eventkit_missing_is_not_reported_as_a_denial() -> None:
+    # --- scenario: eventkit_missing_is_not_reported_as_a_denial
     """calendar_watch RAISES for "EventKit cannot be used here".
 
     Collapsing that into "denied" would send the owner to a Privacy pane
@@ -165,8 +162,7 @@ def test_eventkit_missing_is_not_reported_as_a_denial() -> None:
 
     assert settings_window._event_access_status("probe", watch) == "unavailable"
 
-
-def test_reminders_access_names_its_own_privacy_pane() -> None:
+    # --- scenario: reminders_access_names_its_own_privacy_pane
     target = _controller_settings()
     with patch.object(settings_window, "_event_access_status", return_value="denied"):
         text = settings_window.reminders_access_status_text(target)
@@ -175,7 +171,9 @@ def test_reminders_access_names_its_own_privacy_pane() -> None:
     assert "Calendars" not in text
 
 
-def test_an_off_switch_does_not_report_a_permission_at_all() -> None:
+
+def test_an_off_switch_does_not_report_a_permission_at_all__and_1_more() -> None:
+    # --- scenario: an_off_switch_does_not_report_a_permission_at_all
     """And does not import EventKit to find that out.
 
     `authorization_status` pulls the framework in on first use; a pane
@@ -191,8 +189,7 @@ def test_an_off_switch_does_not_report_a_permission_at_all() -> None:
 
     assert text == "Not used while this is off."
 
-
-def test_the_event_access_rows_refresh_with_the_rest_of_the_window() -> None:
+    # --- scenario: the_event_access_rows_refresh_with_the_rest_of_the_window
     """Panes build once. Granting access in System Settings stales them."""
 
     class _Label:
@@ -218,6 +215,7 @@ def test_the_event_access_rows_refresh_with_the_rest_of_the_window() -> None:
 
     assert "Denied" in calendar.value
     assert "Denied" in reminders.value
+
 
 
 # --- Extend glow along the menu bar --------------------------------------
@@ -256,7 +254,8 @@ class _UnreadableScreen:
         raise AttributeError("no auxiliary areas on this macOS")
 
 
-def test_a_display_with_no_notch_is_not_a_full_menu_bar() -> None:
+def test_a_display_with_no_notch_is_not_a_full_menu_bar__and_2_more() -> None:
+    # --- scenario: a_display_with_no_notch_is_not_a_full_menu_bar
     """Both produce a zero-wide wing; only one is ever going to change.
 
     An external monitor has no menu-bar area beside a notch it does not
@@ -273,14 +272,12 @@ def test_a_display_with_no_notch_is_not_a_full_menu_bar() -> None:
     assert notchless is ScreenBarWingState.NO_SAFE_AREA
     assert crowded is ScreenBarWingState.MENU_BAR_FULL
 
-
-def test_a_screen_that_will_not_report_is_not_a_screen_with_no_notch() -> None:
+    # --- scenario: a_screen_that_will_not_report_is_not_a_screen_with_no_notch
     state = screen_bar_wing_state(_UnreadableScreen(), 200.0, wrap_menu_bar=True)
 
     assert state is ScreenBarWingState.UNREADABLE
 
-
-def test_room_beside_the_notch_reports_as_extended() -> None:
+    # --- scenario: room_beside_the_notch_reports_as_extended
     state = screen_bar_wing_state(
         _Screen(left=180.0, right=180.0), 200.0, wrap_menu_bar=True
     )
@@ -288,23 +285,23 @@ def test_room_beside_the_notch_reports_as_extended() -> None:
     assert state is ScreenBarWingState.EXTENDED
 
 
-def test_a_manual_wing_length_is_not_a_measurement() -> None:
+
+def test_a_manual_wing_length_is_not_a_measurement__and_2_more() -> None:
+    # --- scenario: a_manual_wing_length_is_not_a_measurement
     state = screen_bar_wing_state(
         _NotchlessScreen(), 200.0, wrap_menu_bar=True, wing_length=18.0
     )
 
     assert state is ScreenBarWingState.MANUAL
 
-
-def test_the_switch_being_off_outranks_every_measurement() -> None:
+    # --- scenario: the_switch_being_off_outranks_every_measurement
     state = screen_bar_wing_state(
         _NotchlessScreen(), 200.0, wrap_menu_bar=False
     )
 
     assert state is ScreenBarWingState.NOT_EXTENDING
 
-
-def test_every_wing_state_has_its_own_sentence() -> None:
+    # --- scenario: every_wing_state_has_its_own_sentence
     messages = {
         settings_window.SCREEN_BAR_WING_MESSAGES[state] for state in ScreenBarWingState
     }
@@ -312,10 +309,12 @@ def test_every_wing_state_has_its_own_sentence() -> None:
     assert len(messages) == len(ScreenBarWingState)
 
 
+
 # --- Cloud agents and peers ----------------------------------------------
 
 
-def test_a_failed_bind_is_not_reported_as_a_pending_start() -> None:
+def test_a_failed_bind_is_not_reported_as_a_pending_start__and_1_more() -> None:
+    # --- scenario: a_failed_bind_is_not_reported_as_a_pending_start
     """"Enabled -- starts with the app." was printed AFTER it had failed.
 
     start_cloud_ingest_server sets cloud_ingest back to None and logs
@@ -331,8 +330,7 @@ def test_a_failed_bind_is_not_reported_as_a_pending_start() -> None:
     assert "Nothing is listening" in text
     assert "starts with the app" not in text
 
-
-def test_a_listening_server_still_publishes_its_address() -> None:
+    # --- scenario: a_listening_server_still_publishes_its_address
     target = SimpleNamespace(
         settings=SimpleNamespace(cloud_ingest_enabled=True),
         cloud_ingest=SimpleNamespace(address=("127.0.0.1", 8123)),
@@ -344,6 +342,7 @@ def test_a_listening_server_still_publishes_its_address() -> None:
     )
 
 
+
 def _peer_target(*, attempted: int = 0, health: tuple = ()):
     return SimpleNamespace(
         settings=SimpleNamespace(remote_peers=SimpleNamespace(enabled=True)),
@@ -351,7 +350,8 @@ def _peer_target(*, attempted: int = 0, health: tuple = ()):
     )
 
 
-def test_a_missing_tailscale_is_named_instead_of_promised_peers() -> None:
+def test_a_missing_tailscale_is_named_instead_of_promised_peers__and_2_more() -> None:
+    # --- scenario: a_missing_tailscale_is_named_instead_of_promised_peers
     """"No peers found yet." argued the opposite of the truth.
 
     "yet" promises a peer is still coming. With no CLI to discover one
@@ -366,8 +366,7 @@ def test_a_missing_tailscale_is_named_instead_of_promised_peers() -> None:
     assert "Tailscale is not installed" in text
     assert "yet" not in text
 
-
-def test_no_round_trip_yet_is_not_an_empty_answer() -> None:
+    # --- scenario: no_round_trip_yet_is_not_an_empty_answer
     with patch.object(
         settings_window.remote_peers, "tailscale_available", return_value=True
     ):
@@ -380,11 +379,7 @@ def test_no_round_trip_yet_is_not_an_empty_answer() -> None:
     assert checked == "No other Macs are running JR-Bar right now."
     assert unchecked != checked
 
-
-# --- Codex hook trust ----------------------------------------------------
-
-
-def test_no_codex_binary_is_not_the_same_as_nothing_to_trust() -> None:
+    # --- scenario: no_codex_binary_is_not_the_same_as_nothing_to_trust
     """Both used to be an empty dict, and the installer returned on it.
 
     Codex refuses to run a hook whose hash it has not trusted, so this
@@ -406,7 +401,9 @@ def test_no_codex_binary_is_not_the_same_as_nothing_to_trust() -> None:
     assert missing.hashes == {} and silent.hashes == {}
 
 
-def test_a_confirmed_handshake_carries_its_hashes() -> None:
+
+def test_a_confirmed_handshake_carries_its_hashes__and_2_more() -> None:
+    # --- scenario: a_confirmed_handshake_carries_its_hashes
     with (
         patch("jrbar.install.codex_cli_path", return_value=Path("/usr/bin/codex")),
         patch(
@@ -419,15 +416,13 @@ def test_a_confirmed_handshake_carries_its_hashes() -> None:
     assert trust.status is CodexHookTrustStatus.TRUSTED
     assert trust.hashes == {"key": "sha256:abc"}
 
-
-def test_a_trust_status_cannot_disagree_with_its_payload() -> None:
+    # --- scenario: a_trust_status_cannot_disagree_with_its_payload
     with pytest.raises(ValueError):
         CodexHookTrust(CodexHookTrustStatus.TRUSTED)
     with pytest.raises(ValueError):
         CodexHookTrust(CodexHookTrustStatus.CLI_NOT_FOUND, {"key": "sha256:abc"})
 
-
-def test_an_install_that_could_not_get_trusted_says_so() -> None:
+    # --- scenario: an_install_that_could_not_get_trusted_says_so
     """`changed` was the installer's only bit, and it was True here."""
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
@@ -450,7 +445,9 @@ def test_an_install_that_could_not_get_trusted_says_so() -> None:
     assert result.to_dict()["codex_trust"] == "cli_not_found"
 
 
-def test_a_trusted_install_carries_no_warning() -> None:
+
+def test_a_trusted_install_carries_no_warning__and_2_more() -> None:
+    # --- scenario: a_trusted_install_carries_no_warning
     with tempfile.TemporaryDirectory() as tmp:
         base = Path(tmp)
         config = base / "config.toml"
@@ -475,8 +472,7 @@ def test_a_trusted_install_carries_no_warning() -> None:
     assert result.codex_trust is CodexHookTrustStatus.TRUSTED
     assert result.public_warning == ""
 
-
-def test_a_provider_without_a_handshake_is_not_reported_as_untrusted() -> None:
+    # --- scenario: a_provider_without_a_handshake_is_not_reported_as_untrusted
     """None means "this provider has no trust step", not "it failed"."""
     result = InstallResult("claude", Path("/tmp/c"), Path("/tmp/l"), True)
 
@@ -484,11 +480,7 @@ def test_a_provider_without_a_handshake_is_not_reported_as_untrusted() -> None:
     assert result.public_warning == ""
     assert result.to_dict()["warning"] == ""
 
-
-# --- Doctor ---------------------------------------------------------------
-
-
-def test_a_failed_probe_does_not_render_a_total_it_never_counted() -> None:
+    # --- scenario: a_failed_probe_does_not_render_a_total_it_never_counted
     """"unavailable [0/32]" reads as 32 paths checked and none private.
 
     The probe raised before reading one of them. The manifest ceiling is
@@ -525,6 +517,7 @@ def test_a_failed_probe_does_not_render_a_total_it_never_counted() -> None:
     assert finding.code is DiagnosticCode.UNAVAILABLE
     assert (finding.count, finding.limit) == (0, 0)
     assert "private path modes: unavailable [0/0]" in render_diagnostic_result(result)
+
 
 
 class SweepSettingsSurfaceTests(unittest.TestCase):

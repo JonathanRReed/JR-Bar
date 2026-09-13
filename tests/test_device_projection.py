@@ -46,7 +46,8 @@ def _projection() -> AttentionProjection:
     )
 
 
-def test_provider_pin_filters_main_and_worker_rows() -> None:
+def test_provider_pin_filters_main_and_worker_rows__and_2_more() -> None:
+    # --- scenario: provider_pin_filters_main_and_worker_rows
     projection = projection_for_provider(_projection(), "claude")
 
     assert tuple(row.agent_id for row in projection.visible_rows) == ("claude:main",)
@@ -54,14 +55,12 @@ def test_provider_pin_filters_main_and_worker_rows() -> None:
     assert projection.lifecycle_mode is LifecycleMode.WAITING
     assert projection.dominant_provider == "claude"
 
-
-def test_unpinned_projection_preserves_the_canonical_projection() -> None:
+    # --- scenario: unpinned_projection_preserves_the_canonical_projection
     original = _projection()
 
     assert projection_for_provider(original, None) is original
 
-
-def test_actionable_attention_bypasses_provider_pin() -> None:
+    # --- scenario: actionable_attention_bypasses_provider_pin
     row = _row("codex:ask", "codex", LifecycleMode.WAITING)
     original = AttentionProjection(
         lifecycle_mode=LifecycleMode.WAITING,
@@ -75,7 +74,9 @@ def test_actionable_attention_bypasses_provider_pin() -> None:
     assert projection_for_provider(original, "claude") is original
 
 
-def test_pin_without_matching_rows_returns_idle_projection() -> None:
+
+def test_pin_without_matching_rows_returns_idle_projection__and_2_more() -> None:
+    # --- scenario: pin_without_matching_rows_returns_idle_projection
     projection = projection_for_provider(_projection(), "gemini")
 
     assert projection.lifecycle_mode is LifecycleMode.IDLE
@@ -84,8 +85,7 @@ def test_pin_without_matching_rows_returns_idle_projection() -> None:
     assert projection.dominant_provider is None
     assert projection.click_target_agent_id is None
 
-
-def test_provider_local_orphan_worker_is_chosen_before_cross_provider_priority() -> None:
+    # --- scenario: provider_local_orphan_worker_is_chosen_before_cross_provider_priority
     projection = AttentionProjection(
         lifecycle_mode=LifecycleMode.WAITING,
         actionable_attention=(),
@@ -115,8 +115,7 @@ def test_provider_local_orphan_worker_is_chosen_before_cross_provider_priority()
     assert projected.light_rows[0].agent_id == "claude:worker"
     assert projected.lifecycle_mode is LifecycleMode.ACTIVE
 
-
-def test_projection_does_not_duplicate_orphan_worker_rows() -> None:
+    # --- scenario: projection_does_not_duplicate_orphan_worker_rows
     worker = _row("claude:worker", "claude", worker=True)
     projection = AttentionProjection(
         lifecycle_mode=LifecycleMode.ACTIVE,
@@ -132,3 +131,4 @@ def test_projection_does_not_duplicate_orphan_worker_rows() -> None:
 
     assert projected.visible_rows == ()
     assert projected.worker_rows == (worker,)
+

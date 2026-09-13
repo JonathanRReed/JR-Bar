@@ -52,7 +52,8 @@ def _pack(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_v1_scene_pack_migrates_to_complete_existing_scene_policies() -> None:
+def test_v1_scene_pack_migrates_to_complete_existing_scene_policies__and_2_more() -> None:
+    # --- scenario: v1_scene_pack_migrates_to_complete_existing_scene_policies
     legacy = _pack(
         version=None,
         schema_version=1,
@@ -81,8 +82,7 @@ def test_v1_scene_pack_migrates_to_complete_existing_scene_policies() -> None:
     assert pack.scenes[0].policy.motion is MotionLevel.STATIC
     assert json.loads(export_scene_pack(pack).decode("utf-8"))["version"] == 2
 
-
-def test_import_plan_previews_normal_and_reduce_motion_without_mutation() -> None:
+    # --- scenario: import_plan_previews_normal_and_reduce_motion_without_mutation
     source = _pack()
 
     plan = plan_scene_pack_import(source)
@@ -97,10 +97,8 @@ def test_import_plan_previews_normal_and_reduce_motion_without_mutation() -> Non
     assert demo.normal.effective_motion is MotionLevel.FULL
     assert demo.reduced_motion.effective_motion is MotionLevel.STATIC
 
-
-@pytest.mark.parametrize(
-    "override",
-    [
+    # --- scenario: scene_pack_rejects_unsafe_inaccessible_or_invalid_data
+    for override in [
         {"safety": {"data_only": True, "network": True}},
         {
             "accessibility": {
@@ -139,13 +137,10 @@ def test_import_plan_previews_normal_and_reduce_motion_without_mutation() -> Non
                 }
             ]
         },
-    ],
-)
-def test_scene_pack_rejects_unsafe_inaccessible_or_invalid_data(
-    override: dict[str, object],
-) -> None:
-    with pytest.raises(ScenePackError):
-        validate_scene_pack(_pack(**override))
+    ]:
+        with pytest.raises(ScenePackError):
+            validate_scene_pack(_pack(**override))
+
 
 
 def test_scene_pack_rejects_duplicate_scene_overrides() -> None:

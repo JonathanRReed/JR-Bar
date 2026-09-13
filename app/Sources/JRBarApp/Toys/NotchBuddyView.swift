@@ -17,6 +17,11 @@ import SwiftUI
 /// a "+1" crumb whenever it eats a completed session.
 struct NotchBuddyView: View {
     let toy: NotchBuddyToy
+    /// The floating panel's size multiplier — the docked pill leaves it
+    /// at 1. Everything inside is vector (paths, shapes, text), so this
+    /// rides the render tree as a transform, not a resample: strokes,
+    /// eyes and the badge stay crisp at 3×.
+    var scale: Double = 1
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The window a hop plays across; `NotchBuddyToy.hopUntil` sets it.
@@ -51,8 +56,12 @@ struct NotchBuddyView: View {
             .help(summary.statusLine)
         }
         .frame(width: 18, height: 18)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 6)
+        .scaleEffect(scale)
+        // The layout claims the scaled footprint, so the breathing room
+        // — and the hit target — grows with the pet.
+        .frame(width: 18 * scale, height: 18 * scale)
+        .padding(.horizontal, 9 * scale)
+        .padding(.vertical, 6 * scale)
         .fixedSize()
         .contentShape(Rectangle())
         .onTapGesture { toy.tapped() }

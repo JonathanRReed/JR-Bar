@@ -43,7 +43,8 @@ def adapter(response, **kwargs):
     return result, transport
 
 
-def test_explicit_budget_can_read_a_fragmented_payload_larger_than_lighting_messages():
+def test_explicit_budget_can_read_a_fragmented_payload_larger_than_lighting_messages__and_2_more() -> None:
+    # --- scenario: explicit_budget_can_read_a_fragmented_payload_larger_than_lighting_messages
     raw = json.dumps({"profiles": [], "label": "é" * 12_000}, ensure_ascii=False)
     device, _ = adapter({"id": 1, "method": "fs.read", "params": {"data": raw}},
                         rpc_max_bytes=132_096)
@@ -51,8 +52,7 @@ def test_explicit_budget_can_read_a_fragmented_payload_larger_than_lighting_mess
     assert receipt.code == "applied"
     assert response["params"]["data"] == raw
 
-
-def test_explicit_budget_is_framed_completely_and_defaults_still_reject_large_messages():
+    # --- scenario: explicit_budget_is_framed_completely_and_defaults_still_reject_large_messages
     data = json.dumps({"label": "x" * 12_000})
     device, transport = adapter({"id": 1, "result": {"ok": 1}}, rpc_max_bytes=132_096)
     receipt, _ = device._call("fs.write", {"file": "keymap.json", "data": data})
@@ -66,25 +66,26 @@ def test_explicit_budget_is_framed_completely_and_defaults_still_reject_large_me
     assert not transport.writes
     assert not small.conflict.issued_ids
 
-
-def test_wrong_method_with_matching_response_id_cannot_verify_a_write():
+    # --- scenario: wrong_method_with_matching_response_id_cannot_verify_a_write
     device, transport = adapter({"id": 1, "method": "device.status", "params": {"ok": 1}})
     receipt, _ = device._call("fs.write", {"file": "keymap.json", "data": "{}"})
     assert receipt.code == "malformed_report"
     assert transport.closed
 
 
-def test_file_budget_cannot_disable_global_bound():
+
+def test_file_budget_cannot_disable_global_bound__and_1_more() -> None:
+    # --- scenario: file_budget_cannot_disable_global_bound
     import pytest
 
     for invalid in (True, 0, -1, 132_097, float("inf")):
         with pytest.raises(ValueError):
             adapter({"id": 1, "result": {}}, rpc_max_bytes=invalid)
 
-
-def test_oversized_response_disconnects_and_does_not_leave_a_partial_stream():
+    # --- scenario: oversized_response_disconnects_and_does_not_leave_a_partial_stream
     device, transport = adapter({"id": 1, "result": {"data": "x" * 4000}})
     receipt, _ = device._call("fs.read", {"file": "keymap.json"})
     assert receipt.code == "malformed_report"
     assert transport.closed
     assert not device.connected
+

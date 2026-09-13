@@ -30,7 +30,8 @@ def _worker(**changes) -> RuntimeWorkerSnapshot:
     )
 
 
-def test_health_monitor_projects_all_nine_content_free_aggregates() -> None:
+def test_health_monitor_projects_all_nine_content_free_aggregates__and_2_more() -> None:
+    # --- scenario: health_monitor_projects_all_nine_content_free_aggregates
     now = [100.0]
     monitor = LocalHealthMonitor(monotonic=lambda: now[0])
     presentation = PresentationMetrics()
@@ -92,8 +93,7 @@ def test_health_monitor_projects_all_nine_content_free_aggregates() -> None:
     assert second.peak_queue_depth == 3
     assert second.source_freshness_seconds == 12
 
-
-def test_counter_reset_and_saturation_rebaseline_rates_as_unavailable() -> None:
+    # --- scenario: counter_reset_and_saturation_rebaseline_rates_as_unavailable
     now = [10.0]
     monitor = LocalHealthMonitor(monotonic=lambda: now[0])
     metrics = PresentationMetrics()
@@ -138,8 +138,7 @@ def test_counter_reset_and_saturation_rebaseline_rates_as_unavailable() -> None:
     assert saturated.delivered_fps is None
     assert saturated.render_duty_cycle_percent is None
 
-
-def test_independent_duration_counters_do_not_false_saturate_when_summed() -> None:
+    # --- scenario: independent_duration_counters_do_not_false_saturate_when_summed
     now = [20.0]
     monitor = LocalHealthMonitor(monotonic=lambda: now[0])
     metrics = PresentationMetrics()
@@ -172,7 +171,9 @@ def test_independent_duration_counters_do_not_false_saturate_when_summed() -> No
     assert observed.delivered_fps == 1.0
 
 
-def test_invalid_or_unobserved_inputs_remain_unavailable() -> None:
+
+def test_invalid_or_unobserved_inputs_remain_unavailable__and_2_more() -> None:
+    # --- scenario: invalid_or_unobserved_inputs_remain_unavailable
     monitor = LocalHealthMonitor(monotonic=lambda: 10.0)
     snapshot = monitor.observe(
         presentation=PresentationMetrics().snapshot(),
@@ -192,8 +193,7 @@ def test_invalid_or_unobserved_inputs_remain_unavailable() -> None:
     assert snapshot.shutdown_latency is None
     assert snapshot.refresh_duration is None
 
-
-def test_formatter_has_exact_fixed_rows_and_excludes_unowned_metric_content() -> None:
+    # --- scenario: formatter_has_exact_fixed_rows_and_excludes_unowned_metric_content
     performance = PerformanceRegistry()
     performance.record("private/session/path", 1, outcome="https://secret.invalid")
     snapshot = LocalHealthMonitor(monotonic=lambda: 10.0).observe(
@@ -224,8 +224,7 @@ def test_formatter_has_exact_fixed_rows_and_excludes_unowned_metric_content() ->
     assert "secret" not in rendered
     assert "https" not in rendered
 
-
-def test_formatter_reuses_the_fixed_source_row_for_bounded_dnd_facts() -> None:
+    # --- scenario: formatter_reuses_the_fixed_source_row_for_bounded_dnd_facts
     snapshot = LocalHealthMonitor(monotonic=lambda: 10.0).observe(
         presentation=PresentationMetrics().snapshot(),
         performance=PerformanceRegistry().snapshot(),
@@ -244,3 +243,4 @@ def test_formatter_reuses_the_fixed_source_row_for_bounded_dnd_facts() -> None:
         "Source freshness: Unavailable; DND Dim; source Scheduled; "
         "returns 2027-01-15 08:00Z"
     ) in rendered
+

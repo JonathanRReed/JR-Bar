@@ -23,27 +23,28 @@ def facts(**changes) -> DeviceHardwareFacts:
     return DeviceHardwareFacts(**values)
 
 
-def test_serial_number_is_the_strongest_stable_identity() -> None:
+def test_serial_number_is_the_strongest_stable_identity__and_2_more() -> None:
+    # --- scenario: serial_number_is_the_strongest_stable_identity
     identity = derive_device_identity(facts(serial_number="SERIAL-123"))
     assert identity.kind is DeviceKind.DOT
     assert identity.key.startswith("sidepulse:dot:serial:")
     assert "SERIAL-123" not in identity.key
 
-
-def test_volume_uuid_survives_mount_path_change() -> None:
+    # --- scenario: volume_uuid_survives_mount_path_change
     first = derive_device_identity(facts(mount_path="/Volumes/SidePulse"))
     second = derive_device_identity(
         facts(mount_path="/Volumes/SidePulse 1", disk_identifier="disk9s1")
     )
     assert first.key == second.key
 
-
-def test_disk_identifier_is_used_when_uuid_is_unavailable() -> None:
+    # --- scenario: disk_identifier_is_used_when_uuid_is_unavailable
     identity = derive_device_identity(facts(volume_uuid=None))
     assert identity.key.startswith("sidepulse:dot:disk:")
 
 
-def test_virtual_screen_bar_has_one_fixed_identity() -> None:
+
+def test_virtual_screen_bar_has_one_fixed_identity__and_2_more() -> None:
+    # --- scenario: virtual_screen_bar_has_one_fixed_identity
     identity = derive_device_identity(
         facts(
             mount_path="screen-bar",
@@ -56,8 +57,7 @@ def test_virtual_screen_bar_has_one_fixed_identity() -> None:
     assert identity.kind is DeviceKind.SCREEN_BAR
     assert identity.key == "sidepulse:screen-bar"
 
-
-def test_ephemeral_and_non_sidepulse_mounts_are_rejected() -> None:
+    # --- scenario: ephemeral_and_non_sidepulse_mounts_are_rejected
     assert derive_device_identity(
         facts(mount_path="/var/folders/x/SidePulseDot")
     ) is None
@@ -65,14 +65,15 @@ def test_ephemeral_and_non_sidepulse_mounts_are_rejected() -> None:
         facts(mount_path="/Volumes/Backup", product_name="Backup")
     ) is None
 
-
-def test_device_labels_never_repeat_the_product_suffix() -> None:
+    # --- scenario: device_labels_never_repeat_the_product_suffix
     assert normalize_device_label("SidePulse Dot Dot", DeviceKind.DOT) == "SidePulse Dot"
     assert normalize_device_label("SidePulse Pro Pro", DeviceKind.PRO) == "SidePulse Pro"
     assert normalize_device_label("SidePulse", DeviceKind.DOT) == "SidePulse Dot"
 
 
-def test_migration_merges_remounts_and_preserves_preferences() -> None:
+
+def test_migration_merges_remounts_and_preserves_preferences__and_1_more() -> None:
+    # --- scenario: migration_merges_remounts_and_preserves_preferences
     rows = (
         RememberedDeviceRow(
             device_id="/Volumes/SidePulse",
@@ -112,8 +113,7 @@ def test_migration_merges_remounts_and_preserves_preferences() -> None:
         "resting_glow": 0.1,
     }
 
-
-def test_disconnected_legacy_rows_are_deduplicated_by_kind() -> None:
+    # --- scenario: disconnected_legacy_rows_are_deduplicated_by_kind
     rows = (
         RememberedDeviceRow(
             "/Volumes/Old", "SidePulse Dot", "/Volumes/Old", {"brightness": 50}, 1.0
@@ -126,3 +126,4 @@ def test_disconnected_legacy_rows_are_deduplicated_by_kind() -> None:
     assert len(migrated) == 1
     assert migrated[0].name == "SidePulse Dot"
     assert migrated[0].preferences["brightness"] == 80
+

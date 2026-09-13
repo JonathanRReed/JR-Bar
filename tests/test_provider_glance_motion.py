@@ -50,7 +50,8 @@ def _compose(color_settings=None, provider="codex"):
     )
 
 
-def test_solo_agent_honors_the_provider_animation() -> None:
+def test_solo_agent_honors_the_provider_animation__and_2_more() -> None:
+    # --- scenario: solo_agent_honors_the_provider_animation
     base = ColorSettings.defaults()
     chase = _compose(color_settings=base)
     breathe = _compose(base.with_agent_animation("codex", "breathe"))
@@ -74,8 +75,7 @@ def test_solo_agent_honors_the_provider_animation() -> None:
     )
     assert other.dsl == chase.dsl
 
-
-def test_urgent_semantics_ignore_the_override() -> None:
+    # --- scenario: urgent_semantics_ignore_the_override
     base = ColorSettings.defaults().with_agent_animation("codex", "steady")
     resolved = resolve_glance(
         GlanceInputs(
@@ -104,8 +104,7 @@ def test_urgent_semantics_ignore_the_override() -> None:
     # An ask must never be flattened to steady by a provider preference.
     assert program.motion is not MotionClass.STATIC
 
-
-def test_every_animation_style_renders_a_distinct_program() -> None:
+    # --- scenario: every_animation_style_renders_a_distinct_program
     """The expanded vocabulary (heartbeat/scanner/comet/flicker) must
     each survive the safety compiler as its own shape -- a style that
     fails closed to the static glyph is a dead menu entry."""
@@ -123,7 +122,9 @@ def test_every_animation_style_renders_a_distinct_program() -> None:
     assert len(set(programs.values())) == len(programs)
 
 
-def test_multi_agent_segments_support_the_new_rhythms() -> None:
+
+def test_multi_agent_segments_support_the_new_rhythms__and_1_more() -> None:
+    # --- scenario: multi_agent_segments_support_the_new_rhythms
     """The per-LED segment builder must give heartbeat and flicker real
     shapes and degrade positional sweeps to the travelling wave."""
     from jrbar.colors import _motion_segments
@@ -168,8 +169,7 @@ def test_multi_agent_segments_support_the_new_rhythms() -> None:
     # step of the pile a hard edge on an otherwise smooth strip.
     assert "cosine" in stack and "pulse" not in stack
 
-
-def test_new_motions_pass_firmware_grammar_and_byte_budget() -> None:
+    # --- scenario: new_motions_pass_firmware_grammar_and_byte_budget
     """EVERY motion must stay CONTINUOUS and firmware-valid on both
     compiled LED counts. Scanner and tide shipped silently STATIC on
     the 2-LED Dot -- their loops landed under the safety envelope's 1s
@@ -207,3 +207,4 @@ def test_new_motions_pass_firmware_grammar_and_byte_budget() -> None:
                 program.dsl, led_count=led_count
             )
             assert result.accepted, (style, led_count, result.reason)
+

@@ -17,7 +17,8 @@ from jrbar.settings_navigation import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_settings_navigation_has_eight_stable_categories() -> None:
+def test_settings_navigation_has_eight_stable_categories__and_2_more() -> None:
+    # --- scenario: settings_navigation_has_eight_stable_categories
     assert [category.label for category in SETTINGS_CATEGORIES] == [
         "Overview",
         "Agents & Providers",
@@ -33,8 +34,7 @@ def test_settings_navigation_has_eight_stable_categories() -> None:
     assert len(sidebar_items()) == 8
     assert len({category.key for category in SETTINGS_CATEGORIES}) == 8
 
-
-def test_global_action_recorder_stays_inside_existing_overview_page() -> None:
+    # --- scenario: global_action_recorder_stays_inside_existing_overview_page
     overview = category_for_key("profile")
 
     assert overview.label == "Overview"
@@ -43,8 +43,7 @@ def test_global_action_recorder_stays_inside_existing_overview_page() -> None:
     ]
     assert "global_actions" not in legacy_page_keys()
 
-
-def test_every_retained_pane_has_exactly_one_visible_home() -> None:
+    # --- scenario: every_retained_pane_has_exactly_one_visible_home
     pages = [
         page.key
         for category in SETTINGS_CATEGORIES
@@ -73,7 +72,9 @@ def test_every_retained_pane_has_exactly_one_visible_home() -> None:
     assert NATIVE_USAGE_PAGE in pages
 
 
-def test_lighting_is_one_workspace_with_three_clear_subpages() -> None:
+
+def test_lighting_is_one_workspace_with_three_clear_subpages__and_1_more() -> None:
+    # --- scenario: lighting_is_one_workspace_with_three_clear_subpages
     lighting = category_for_key("color_studio")
 
     assert lighting.label == "Lighting"
@@ -84,8 +85,7 @@ def test_lighting_is_one_workspace_with_three_clear_subpages() -> None:
     ]
     assert category_for_key(NATIVE_EFFECT_STUDIO_PAGE) is lighting
 
-
-def test_category_lookup_accepts_category_and_child_keys() -> None:
+    # --- scenario: category_lookup_accepts_category_and_child_keys
     usage = category_for_key("usage")
     assert category_for_key(NATIVE_USAGE_PAGE) is usage
     assert category_for_key("history") is usage
@@ -93,3 +93,4 @@ def test_category_lookup_accepts_category_and_child_keys() -> None:
     assert page_for_request(usage, "debug") == NATIVE_USAGE_PAGE
     with pytest.raises(KeyError):
         category_for_key("missing")
+

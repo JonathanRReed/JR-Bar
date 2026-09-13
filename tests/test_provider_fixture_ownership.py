@@ -18,7 +18,8 @@ from jrbar.providers import PROVIDER_REGISTRY
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "providers"
 
 
-def test_manifest_has_one_synthetic_owned_fixture_for_every_registered_provider() -> None:
+def test_manifest_has_one_synthetic_owned_fixture_for_every_registered_provider__and_2_more() -> None:
+    # --- scenario: manifest_has_one_synthetic_owned_fixture_for_every_registered_provider
     manifest = load_provider_fixture_ownership_manifest()
 
     assert manifest.cross_provider_identifiers == ()
@@ -27,22 +28,22 @@ def test_manifest_has_one_synthetic_owned_fixture_for_every_registered_provider(
     assert all(entry.synthetic for entry in manifest.entries)
     assert all(entry.reviewed_on == "2026-08-29" for entry in manifest.entries)
 
-
-def test_fixture_ownership_validator_checks_fixture_hash_and_exact_owner() -> None:
+    # --- scenario: fixture_ownership_validator_checks_fixture_hash_and_exact_owner
     manifest = validate_provider_fixture_ownership(FIXTURE_ROOT)
 
     assert manifest.schema_version == 1
     assert all(entry.sha256.startswith("sha256:") for entry in manifest.entries)
     assert all(entry.fixture_version == 1 for entry in manifest.entries)
 
-
-def test_clean_install_probe_requires_the_packaged_ownership_manifest() -> None:
+    # --- scenario: clean_install_probe_requires_the_packaged_ownership_manifest
     clean_install = Path(__file__).parents[1] / "scripts" / "verify_clean_install.py"
 
     assert '"provider_fixture_ownership.json"' in clean_install.read_text(encoding="utf-8")
 
 
-def test_fixture_ownership_validator_rejects_owner_mismatch(tmp_path: Path) -> None:
+
+def test_fixture_ownership_validator_rejects_owner_mismatch__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: fixture_ownership_validator_rejects_owner_mismatch
     copied = tmp_path / "providers"
     _copy_fixture_tree(copied)
     target = copied / "codex" / "codex-session-start.json"
@@ -53,29 +54,24 @@ def test_fixture_ownership_validator_rejects_owner_mismatch(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="provider ownership"):
         validate_provider_fixture_ownership(copied)
 
-
-@pytest.mark.parametrize(
-    "bad_value",
-    [
+    # --- scenario: fixture_ownership_validator_rejects_sensitive_or_content_like_payload
+    for bad_value in [
         "/Users/example/private.jsonl",
         "person@example.invalid",
         "Bearer synthetic-secret",
         "user prompt text",
         "transcript content",
-    ],
-)
-def test_fixture_ownership_validator_rejects_sensitive_or_content_like_payload(
-    tmp_path: Path, bad_value: str
-) -> None:
-    copied = tmp_path / "providers"
-    _copy_fixture_tree(copied)
-    target = copied / "codex" / "codex-session-start.json"
-    document = json.loads(target.read_text())
-    document["payload"]["synthetic_value"] = bad_value
-    target.write_text(json.dumps(document, indent=2) + "\n")
+    ]:
+        copied = tmp_path / "providers"
+        _copy_fixture_tree(copied)
+        target = copied / "codex" / "codex-session-start.json"
+        document = json.loads(target.read_text())
+        document["payload"]["synthetic_value"] = bad_value
+        target.write_text(json.dumps(document, indent=2) + "\n")
 
-    with pytest.raises(ValueError, match="fixture content"):
-        validate_provider_fixture_ownership(copied)
+        with pytest.raises(ValueError, match="fixture content"):
+            validate_provider_fixture_ownership(copied)
+
 
 
 def test_fixture_ownership_allowlist_is_explicit_and_can_name_cross_provider_ids(

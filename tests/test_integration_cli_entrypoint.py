@@ -54,7 +54,8 @@ def test_public_cli_routes_provider_integration_and_foreground_status_commands(
     ]
 
 
-def test_cli_entrypoint_keeps_the_foreground_status_bar_import_inside_the_branch() -> None:
+def test_cli_entrypoint_keeps_the_foreground_status_bar_import_inside_the_branch__and_1_more() -> None:
+    # --- scenario: cli_entrypoint_keeps_the_foreground_status_bar_import_inside_the_branch
     tree = _source_tree(ROOT / "src" / "jrbar" / "cli_entry.py")
 
     top_level_imports = [
@@ -75,17 +76,14 @@ def test_cli_entrypoint_keeps_the_foreground_status_bar_import_inside_the_branch
     assert nested_imports[0].names[0].name == "main"
     assert nested_imports[0].names[0].asname == "status_bar_main"
 
-
-def test_bundled_daemon_entry_is_the_public_router_only() -> None:
-    # jrbar-core (the frozen helper inside JR-Bar.app) is the CLI router:
-    # `core`, `agent-monitor install all`, `hooks doctor`, `doctor`. The
-    # Swift app is the UI, so the old no-argument status-bar branch is gone.
+    # --- scenario: bundled_daemon_entry_is_the_public_router_only
     source = (ROOT / "packaging" / "jrbar_entry.py").read_text(encoding="utf-8")
 
     assert "from jrbar.cli_entry import jrbar_main" in source
     assert "from jrbar.cli import jrbar_main" not in source
     assert "provider_usage_status_bar" not in source
     assert "status_bar_main" not in source
+
 
 
 def test_bundled_daemon_entry_emulates_python_dash_m(tmp_path) -> None:

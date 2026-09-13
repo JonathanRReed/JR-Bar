@@ -67,9 +67,8 @@ def test_codex_combines_local_quota_tokens_models_and_cost(tmp_path: Path):
     assert result.estimated_cost_usd == 1.5
 
 
-def test_codex_live_rate_limit_replaces_a_newer_but_stale_local_percentage(
-    tmp_path: Path,
-):
+def test_codex_live_rate_limit_replaces_a_newer_but_stale_local_percentage__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: codex_live_rate_limit_replaces_a_newer_but_stale_local_percentage
     result = collect_codex(
         preference("codex"),
         home=tmp_path,
@@ -103,10 +102,7 @@ def test_codex_live_rate_limit_replaces_a_newer_but_stale_local_percentage(
     assert result.cached_input_tokens == 25
     assert result.output_tokens == 50
 
-
-def test_codex_live_rate_limit_skips_the_default_cold_transcript_scan(
-    tmp_path: Path,
-):
+    # --- scenario: codex_live_rate_limit_skips_the_default_cold_transcript_scan
     import jrbar.provider_usage_codex_claude as subject
 
     with (
@@ -135,7 +131,9 @@ def test_codex_live_rate_limit_skips_the_default_cold_transcript_scan(
     assert result.lanes[0].source_id == "codex-app-server"
 
 
-def test_codex_without_rollout_evidence_is_actionable(tmp_path: Path):
+
+def test_codex_without_rollout_evidence_is_actionable__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: codex_without_rollout_evidence_is_actionable
     result = collect_codex(
         preference("codex"),
         home=tmp_path,
@@ -145,8 +143,7 @@ def test_codex_without_rollout_evidence_is_actionable(tmp_path: Path):
     assert result.state.value == "source_not_found"
     assert result.action_label == "Use Codex once or sign in"
 
-
-def test_claude_combines_oauth_windows_and_local_tokens(tmp_path: Path):
+    # --- scenario: claude_combines_oauth_windows_and_local_tokens
     result = collect_claude(
         preference("claude"),
         home=tmp_path,
@@ -171,6 +168,7 @@ def test_claude_combines_oauth_windows_and_local_tokens(tmp_path: Path):
     assert next(lane for lane in result.lanes if lane.model == "fable").remaining_percent == 20
     assert result.cached_input_tokens == 100
     assert result.cache_savings_usd == 0.75
+
 
 
 def test_claude_default_quota_refresh_never_falls_back_to_a_cold_scan(
@@ -204,7 +202,8 @@ def test_claude_default_quota_refresh_never_falls_back_to_a_cold_scan(
     assert result.lanes[0].remaining_percent == 5
 
 
-def test_claude_cached_local_scan_reuses_bounded_aggregate(tmp_path: Path):
+def test_claude_cached_local_scan_reuses_bounded_aggregate__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: claude_cached_local_scan_reuses_bounded_aggregate
     import jrbar.provider_usage_codex_claude as subject
 
     cache = {
@@ -231,8 +230,7 @@ def test_claude_cached_local_scan_reuses_bounded_aggregate(tmp_path: Path):
         "cache_savings_usd": None,
     }
 
-
-def test_claude_without_explicit_usage_connection_is_actionable(tmp_path: Path):
+    # --- scenario: claude_without_explicit_usage_connection_is_actionable
     result = collect_claude(
         preference("claude"),
         home=tmp_path,
@@ -243,3 +241,4 @@ def test_claude_without_explicit_usage_connection_is_actionable(tmp_path: Path):
     )
     assert result.state.value == "needs_consent"
     assert result.action_label == "Connect Claude usage"
+

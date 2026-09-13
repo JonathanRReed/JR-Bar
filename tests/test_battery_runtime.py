@@ -24,7 +24,8 @@ def _stub_apple_tool_identity(monkeypatch):
     monkeypatch.setattr("jrbar._battery_legacy.trusted_system_tool", lambda name: Path("/usr/bin") / name)
 
 
-def test_battery_reader_has_a_strict_subprocess_timeout() -> None:
+def test_battery_reader_has_a_strict_subprocess_timeout__and_2_more() -> None:
+    # --- scenario: battery_reader_has_a_strict_subprocess_timeout
     calls = []
 
     def runner(*args, **kwargs):
@@ -38,8 +39,7 @@ def test_battery_reader_has_a_strict_subprocess_timeout() -> None:
 
     assert calls[0][1]["timeout"] == BATTERY_READ_TIMEOUT_SECONDS
 
-
-def test_hardware_model_probes_are_also_strictly_bounded() -> None:
+    # --- scenario: hardware_model_probes_are_also_strictly_bounded
     calls = []
 
     def runner(*args, **kwargs):
@@ -54,8 +54,7 @@ def test_hardware_model_probes_are_also_strictly_bounded() -> None:
         for _args, kwargs in calls
     )
 
-
-def test_request_returns_immediately_and_installs_result_asynchronously() -> None:
+    # --- scenario: request_returns_immediately_and_installs_result_asynchronously
     release = threading.Event()
     completed = threading.Event()
     snapshot = BatterySnapshot(percent=64)
@@ -77,7 +76,9 @@ def test_request_returns_immediately_and_installs_result_asynchronously() -> Non
     assert service.observation().snapshot == snapshot
 
 
-def test_timeout_preserves_last_known_good_snapshot() -> None:
+
+def test_timeout_preserves_last_known_good_snapshot__and_1_more() -> None:
+    # --- scenario: timeout_preserves_last_known_good_snapshot
     calls = 0
     completed = threading.Event()
     first = BatterySnapshot(percent=72)
@@ -109,8 +110,7 @@ def test_timeout_preserves_last_known_good_snapshot() -> None:
     assert observation.snapshot == first
     assert observation.reason == BATTERY_REASON_TIMED_OUT
 
-
-def test_pending_requests_coalesce_to_the_latest_parameters() -> None:
+    # --- scenario: pending_requests_coalesce_to_the_latest_parameters
     first_release = threading.Event()
     latest_complete = threading.Event()
     calls = []
@@ -137,3 +137,4 @@ def test_pending_requests_coalesce_to_the_latest_parameters() -> None:
     assert latest_complete.wait(1.0)
     assert calls == [90.0, 140.0]
     assert service.observation().snapshot.full_charge_watts == 140.0
+

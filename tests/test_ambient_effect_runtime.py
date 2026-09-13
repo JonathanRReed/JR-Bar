@@ -171,9 +171,8 @@ def _operator_event(subject, kind, watermark):
     )
 
 
-def test_runtime_projects_successful_delivery_and_acknowledgement_across_surfaces(
-    monkeypatch,
-) -> None:
+def test_runtime_projects_successful_delivery_and_acknowledgement_across_surfaces__and_2_more(monkeypatch,) -> None:
+    # --- scenario: runtime_projects_successful_delivery_and_acknowledgement_across_surfaces
     controller_type = _controller_type()
     receipt = install_ambient_effect_runtime(controller_type)
     assert install_ambient_effect_runtime(controller_type) is receipt
@@ -210,10 +209,8 @@ def test_runtime_projects_successful_delivery_and_acknowledgement_across_surface
     )
     assert isinstance(controller._glance_light_state, GlanceLightState)
 
-
-def test_runtime_consumes_cached_provider_assignment_without_reading_disk(
-    monkeypatch,
-) -> None:
+    # --- scenario: runtime_consumes_cached_provider_assignment_without_reading_disk
+    monkeypatch.undo()
     controller_type = _controller_type()
     install_ambient_effect_runtime(controller_type)
     controller = controller_type()
@@ -253,10 +250,8 @@ def test_runtime_consumes_cached_provider_assignment_without_reading_disk(
 
     assert controller._semantic_effect_selection.registry_effect_identifier == "pulse"
 
-
-def test_hardware_consumption_resolves_device_assignments_without_mutating_global(
-    monkeypatch,
-) -> None:
+    # --- scenario: hardware_consumption_resolves_device_assignments_without_mutating_global
+    monkeypatch.undo()
     controller_type = _controller_type()
     install_ambient_effect_runtime(controller_type)
     controller = controller_type()
@@ -334,6 +329,7 @@ def test_hardware_consumption_resolves_device_assignments_without_mutating_globa
         global_dispatch.for_surface(AmbientEffectSurface.SCREEN_BAR).effect_identity
         == "notification"
     )
+
 
 
 def test_device_assignment_cannot_replace_higher_priority_urgent_output(
@@ -459,9 +455,8 @@ def test_turn_length_ember_does_not_mask_multiple_active_works(monkeypatch) -> N
     assert controller._ambient_fleet_plan.accepted is True
 
 
-def test_completion_event_projects_the_finite_completion_effect_family(
-    monkeypatch,
-) -> None:
+def test_completion_event_projects_the_finite_completion_effect_family__and_1_more(monkeypatch,) -> None:
+    # --- scenario: completion_event_projects_the_finite_completion_effect_family
     controller_type = _controller_type()
     install_ambient_effect_runtime(controller_type)
     controller = controller_type()
@@ -484,10 +479,8 @@ def test_completion_event_projects_the_finite_completion_effect_family(
     assert controller._milestone_odometer_plan is None
     assert controller._courtesy_signature_plan is None
 
-
-def test_runtime_dispatch_expires_without_bypassing_the_surface_owner(
-    monkeypatch,
-) -> None:
+    # --- scenario: runtime_dispatch_expires_without_bypassing_the_surface_owner
+    monkeypatch.undo()
     controller_type = _controller_type()
     install_ambient_effect_runtime(controller_type)
     controller = controller_type()
@@ -531,6 +524,7 @@ def test_runtime_dispatch_expires_without_bypassing_the_surface_owner(
     ) is None
 
 
+
 def _cue_settings(**overrides):
     base = {
         "active_scene": "calm",
@@ -544,9 +538,8 @@ def _cue_settings(**overrides):
     return SimpleNamespace(**base)
 
 
-def test_opted_in_cues_plan_presentations_while_defaults_stay_silent(
-    monkeypatch,
-) -> None:
+def test_opted_in_cues_plan_presentations_while_defaults_stay_silent__and_2_more(monkeypatch,) -> None:
+    # --- scenario: opted_in_cues_plan_presentations_while_defaults_stay_silent
     controller_type = _controller_type()
     install_ambient_effect_runtime(controller_type)
     monkeypatch.setattr(
@@ -570,10 +563,8 @@ def test_opted_in_cues_plan_presentations_while_defaults_stay_silent(
     assert rainstick.disposition.value == "move"
     assert rainstick.animated is True
 
-
-def test_milestone_odometer_counts_completions_and_fails_closed_on_bad_steps(
-    monkeypatch,
-) -> None:
+    # --- scenario: milestone_odometer_counts_completions_and_fails_closed_on_bad_steps
+    monkeypatch.undo()
     controller_type = _controller_type()
     install_ambient_effect_runtime(controller_type)
     state, work_key, _request_key, watermark = _canonical_state(
@@ -613,10 +604,8 @@ def test_milestone_odometer_counts_completions_and_fails_closed_on_bad_steps(
     disabled.observe_operator_history_events((event,), state)
     assert disabled._milestone_odometer_state.completed_count == 0
 
-
-def test_the_active_scene_pack_overrides_the_policy_the_runtime_resolves(
-    monkeypatch,
-) -> None:
+    # --- scenario: the_active_scene_pack_overrides_the_policy_the_runtime_resolves
+    monkeypatch.undo()
     from jrbar.dnd_policy import DisplayAdmission
     from jrbar.scenes import SCENE_POLICIES, Scene
 
@@ -651,3 +640,4 @@ def test_the_active_scene_pack_overrides_the_policy_the_runtime_resolves(
     plan = controller._rainstick_idle_plan
     assert plan.disposition.value == "suppress"
     assert {reason.value for reason in plan.suppression_reasons} == {"dnd"}
+

@@ -52,7 +52,8 @@ from jrbar.provider_facts import (
 # --------------------------------------------------------------------------
 
 
-def test_a_raising_draw_callback_never_reaches_appkit() -> None:
+def test_a_raising_draw_callback_never_reaches_appkit__and_2_more() -> None:
+    # --- scenario: a_raising_draw_callback_never_reaches_appkit
     """`PyObjCErr_ToObjCWithGILState` -> `_crashOnException:` -> SIGTRAP."""
     draw_guard.reset_draw_failures()
 
@@ -64,8 +65,7 @@ def test_a_raising_draw_callback_never_reaches_appkit() -> None:
     assert Boom().drawRect_(None) is None
     assert draw_guard.draw_failures() == (("Boom", 1),)
 
-
-def test_the_guard_keeps_the_selector_shape_pyobjc_needs() -> None:
+    # --- scenario: the_guard_keeps_the_selector_shape_pyobjc_needs
     class View:
         @draw_guard.guard_draw
         def drawRect_(self, rect):
@@ -75,8 +75,7 @@ def test_the_guard_keeps_the_selector_shape_pyobjc_needs() -> None:
     assert View.drawRect_.__code__.co_argcount == 2
     assert View().drawRect_("rect") == "rect"
 
-
-def test_repeated_failures_stay_bounded() -> None:
+    # --- scenario: repeated_failures_stay_bounded
     draw_guard.reset_draw_failures()
     for index in range(draw_guard.MAX_TRACKED_DRAW_FAILURES + 5):
         draw_guard.record_draw_failure(f"View{index}", RuntimeError("x"))
@@ -87,7 +86,9 @@ def test_repeated_failures_stay_bounded() -> None:
     draw_guard.reset_draw_failures()
 
 
-def test_the_usage_graph_survives_a_model_it_cannot_plot() -> None:
+
+def test_the_usage_graph_survives_a_model_it_cannot_plot__and_1_more() -> None:
+    # --- scenario: the_usage_graph_survives_a_model_it_cannot_plot
     """365 days of history reach this view; one bad value must not be fatal."""
     status_bar = pytest.importorskip("jrbar.status_bar")
     draw_guard.reset_draw_failures()
@@ -108,8 +109,7 @@ def test_the_usage_graph_survives_a_model_it_cannot_plot() -> None:
 
     assert draw_guard.draw_failures() == ()
 
-
-def test_a_model_that_crossed_the_main_thread_boundary_is_still_read() -> None:
+    # --- scenario: a_model_that_crossed_the_main_thread_boundary_is_still_read
     """An NSDictionary proxy is not a `dict`; rejecting it drew an empty year."""
     status_bar = pytest.importorskip("jrbar.status_bar")
     Foundation = pytest.importorskip("Foundation")
@@ -122,6 +122,7 @@ def test_a_model_that_crossed_the_main_thread_boundary_is_still_read() -> None:
 
     assert not isinstance(bridged, dict)
     assert view.model.get("metric") == "tokens"
+
 
 
 # --------------------------------------------------------------------------
@@ -246,7 +247,8 @@ def _quarantined():
     return jumped.state
 
 
-def test_a_routine_partial_batch_no_longer_erases_earned_confirmations() -> None:
+def test_a_routine_partial_batch_no_longer_erases_earned_confirmations__and_2_more() -> None:
+    # --- scenario: a_routine_partial_batch_no_longer_erases_earned_confirmations
     """Hook records without a request identity arrive PARTIAL. Constantly.
 
     Escape used to require `TIMING_RECOVERY_CONFIRMATIONS` batches in a row,
@@ -283,8 +285,7 @@ def test_a_routine_partial_batch_no_longer_erases_earned_confirmations() -> None
     assert clean_two.works[0].source_freshness is SourceFreshness.FRESH
     assert clean_two.works[0].timing_uncertain is False
 
-
-def test_lifecycle_updates_are_applied_again_once_the_source_is_out() -> None:
+    # --- scenario: lifecycle_updates_are_applied_again_once_the_source_is_out
     """The quarantine drops the SEMANTIC half of every batch. That is the freeze."""
     state = _quarantined()
     # One clean batch, then a routine partial one, then the batch that closes
@@ -335,8 +336,7 @@ def test_lifecycle_updates_are_applied_again_once_the_source_is_out() -> None:
 
     assert closed.works[0].lifecycle is WorkLifecycle.COMPLETED
 
-
-def test_the_quarantine_expires_on_a_clock_that_stayed_continuous() -> None:
+    # --- scenario: the_quarantine_expires_on_a_clock_that_stayed_continuous
     """A source that never assembles a clean run must not be held forever.
 
     `uncertain_since_monotonic` is re-stamped every time the clock jumps again,
@@ -364,7 +364,9 @@ def test_the_quarantine_expires_on_a_clock_that_stayed_continuous() -> None:
     }
 
 
-def test_a_source_still_losing_is_not_released_by_the_lease() -> None:
+
+def test_a_source_still_losing_is_not_released_by_the_lease__and_1_more() -> None:
+    # --- scenario: a_source_still_losing_is_not_released_by_the_lease
     """The lease relaxes corroboration; it never invents recovery."""
     state = _quarantined()
     still_lost = reduce_operator_state(
@@ -383,8 +385,7 @@ def test_a_source_still_losing_is_not_released_by_the_lease() -> None:
 
     assert still_lost.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN
 
-
-def test_quiescent_only_quarantine_survives_the_v2_round_trip() -> None:
+    # --- scenario: quiescent_only_quarantine_survives_the_v2_round_trip
     """The live-source election can leave the GLOBAL clock STABLE while
     quiescent sources still hold timing entries. v2 used to reconstruct
     per-source stamps from the global uncertain_since -- impossible in
@@ -423,6 +424,7 @@ def test_quiescent_only_quarantine_survives_the_v2_round_trip() -> None:
     }
     healed = _v2_state_from_document(legacy)
     assert healed.timing_uncertain_sources == ()
+
 
 
 def test_a_rebooted_strip_voids_the_write_dedupe(tmp_path):

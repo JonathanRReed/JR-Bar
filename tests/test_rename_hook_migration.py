@@ -19,7 +19,8 @@ def _nested(command: str) -> dict[str, object]:
     return {"matcher": "*", "hooks": [{"type": "command", "command": command}]}
 
 
-def test_detect_log_path_never_adopts_a_pre_rename_log(tmp_path: Path) -> None:
+def test_detect_log_path_never_adopts_a_pre_rename_log__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: detect_log_path_never_adopts_a_pre_rename_log
     old_log = tmp_path / OLD_STATE / "claude.jsonl"
     settings = tmp_path / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)
@@ -30,8 +31,7 @@ def test_detect_log_path_never_adopts_a_pre_rename_log(tmp_path: Path) -> None:
     assert providers.is_legacy_log_path(old_log)
     assert not providers.is_legacy_log_path(providers.default_log_path("claude", tmp_path))
 
-
-def test_claude_install_replaces_every_pre_rename_entry(tmp_path: Path) -> None:
+    # --- scenario: claude_install_replaces_every_pre_rename_entry
     config = tmp_path / "settings.json"
     old_log = tmp_path / OLD_STATE / "claude.jsonl"
     new_log = tmp_path / "state" / "claude.jsonl"
@@ -71,8 +71,7 @@ def test_claude_install_replaces_every_pre_rename_entry(tmp_path: Path) -> None:
     repeat = install.install_claude_hooks(log_path=new_log, config_path=config, python_executable=sys.executable)
     assert not repeat.changed
 
-
-def test_grok_install_strips_our_hooks_from_the_pre_rename_file(tmp_path: Path) -> None:
+    # --- scenario: grok_install_strips_our_hooks_from_the_pre_rename_file
     hooks_dir = tmp_path / ".grok" / "hooks"
     hooks_dir.mkdir(parents=True)
     config = hooks_dir / "jrbar.json"
@@ -103,7 +102,9 @@ def test_grok_install_strips_our_hooks_from_the_pre_rename_file(tmp_path: Path) 
     assert "sidepulse.hook_client" not in config.read_text()
 
 
-def test_grok_install_deletes_a_pre_rename_file_that_held_only_our_hooks(tmp_path: Path) -> None:
+
+def test_grok_install_deletes_a_pre_rename_file_that_held_only_our_hooks__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: grok_install_deletes_a_pre_rename_file_that_held_only_our_hooks
     hooks_dir = tmp_path / ".grok" / "hooks"
     hooks_dir.mkdir(parents=True)
     legacy = hooks_dir / "sidepulse.json"
@@ -119,8 +120,7 @@ def test_grok_install_deletes_a_pre_rename_file_that_held_only_our_hooks(tmp_pat
     assert not legacy.exists()
     assert list(hooks_dir.glob("sidepulse.json.bak*"))
 
-
-def test_kiro_install_removes_the_managed_pre_rename_agent_file_only(tmp_path: Path) -> None:
+    # --- scenario: kiro_install_removes_the_managed_pre_rename_agent_file_only
     agents = tmp_path / ".kiro" / "agents"
     agents.mkdir(parents=True)
     legacy = agents / "sidepulse.json"
@@ -148,8 +148,7 @@ def test_kiro_install_removes_the_managed_pre_rename_agent_file_only(tmp_path: P
     )
     assert foreign.is_file()
 
-
-def test_opencode_install_removes_the_pre_rename_plugin_when_it_is_ours(tmp_path: Path) -> None:
+    # --- scenario: opencode_install_removes_the_pre_rename_plugin_when_it_is_ours
     plugins = tmp_path / ".config" / "opencode" / "plugins"
     plugins.mkdir(parents=True)
     legacy = plugins / "sidepulse.js"
@@ -167,7 +166,9 @@ def test_opencode_install_removes_the_pre_rename_plugin_when_it_is_ours(tmp_path
     assert legacy.is_file()
 
 
-def test_openclaw_install_replaces_the_pre_rename_entry_and_handler_dir(tmp_path: Path) -> None:
+
+def test_openclaw_install_replaces_the_pre_rename_entry_and_handler_dir__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: openclaw_install_replaces_the_pre_rename_entry_and_handler_dir
     root = tmp_path / ".openclaw"
     config = root / "openclaw.json"
     legacy_dir = root / "hooks" / "sidepulse-status"
@@ -197,8 +198,7 @@ def test_openclaw_install_replaces_the_pre_rename_entry_and_handler_dir(tmp_path
     assert (root / "hooks" / "jrbar-status" / "handler.ts").is_file()
     assert not legacy_dir.exists()
 
-
-def test_openclaw_install_leaves_a_foreign_hook_with_the_old_name_alone(tmp_path: Path) -> None:
+    # --- scenario: openclaw_install_leaves_a_foreign_hook_with_the_old_name_alone
     root = tmp_path / ".openclaw"
     config = root / "openclaw.json"
     foreign_dir = root / "hooks" / "sidepulse-status"
@@ -215,8 +215,7 @@ def test_openclaw_install_leaves_a_foreign_hook_with_the_old_name_alone(tmp_path
     assert entries["jrbar-status"] == {"enabled": True}
     assert (foreign_dir / "handler.ts").read_text().startswith("export default { somebodyElse")
 
-
-def test_antigravity_install_replaces_our_pre_rename_named_hook_only(tmp_path: Path) -> None:
+    # --- scenario: antigravity_install_replaces_our_pre_rename_named_hook_only
     config = tmp_path / ".gemini" / "config" / "hooks.json"
     config.parent.mkdir(parents=True)
     old_log = tmp_path / OLD_STATE / "antigravity.jsonl"
@@ -244,6 +243,7 @@ def test_antigravity_install_replaces_our_pre_rename_named_hook_only(tmp_path: P
     )
     data = json.loads(config.read_text())
     assert set(data) == {"jrbar-status", "sidepulse-status"}
+
 
 
 def test_openclaw_detection_sees_a_pre_rename_install(tmp_path: Path) -> None:

@@ -29,7 +29,8 @@ from jrbar.alcove_observation import (
 )
 
 
-def test_alcove_silhouette_is_frozen_and_rejects_unsafe_boundary_values() -> None:
+def test_alcove_silhouette_is_frozen_and_rejects_unsafe_boundary_values__and_2_more() -> None:
+    # --- scenario: alcove_silhouette_is_frozen_and_rejects_unsafe_boundary_values
     contour = ((40.0, 0.0), (40.0, 20.0), (120.0, 20.0), (120.0, 0.0), (40.0, 0.0))
     silhouette = AlcoveSilhouette(80.0, 80.0, 20.0, contour)
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -46,10 +47,8 @@ def test_alcove_silhouette_is_frozen_and_rejects_unsafe_boundary_values() -> Non
         with pytest.raises(ValueError):
             AlcoveSilhouette(**values)
 
-
-@pytest.mark.parametrize(
-    ("status", "age", "geometry_age", "expected"),
-    [
+    # --- scenario: confidence_projection_resolves_raw_capture_facts
+    for status, age, geometry_age, expected in [
         (AlcoveCaptureStatus.CAPTURED, 0.0, 0.0, AlcoveConfidenceState.FRESH),
         (AlcoveCaptureStatus.CAPTURED, 0.0, 2.01, AlcoveConfidenceState.STALE),
         (AlcoveCaptureStatus.IMAGE_UNUSABLE, 0.0, None, AlcoveConfidenceState.UNSUPPORTED),
@@ -60,15 +59,12 @@ def test_alcove_silhouette_is_frozen_and_rejects_unsafe_boundary_values() -> Non
             AlcoveConfidenceState.UNSUPPORTED,
         ),
         (AlcoveCaptureStatus.CAPTURE_FAILED, 0.0, None, AlcoveConfidenceState.RECOVERING),
-    ],
-)
-def test_confidence_projection_resolves_raw_capture_facts(status, age, geometry_age, expected) -> None:
-    snapshot = AlcoveStatusSnapshot(status=status, updated_at=100.0, geometry_age_seconds=geometry_age, geometry_available=geometry_age is not None)
-    projection = project_alcove_confidence(following=True, snapshot=snapshot, blocker=None, now=100.0 + age)
-    assert projection.state is expected
+    ]:
+        snapshot = AlcoveStatusSnapshot(status=status, updated_at=100.0, geometry_age_seconds=geometry_age, geometry_available=geometry_age is not None)
+        projection = project_alcove_confidence(following=True, snapshot=snapshot, blocker=None, now=100.0 + age)
+        assert projection.state is expected
 
-
-def test_confidence_projection_precedence_and_boundaries() -> None:
+    # --- scenario: confidence_projection_precedence_and_boundaries
     captured = AlcoveStatusSnapshot(AlcoveCaptureStatus.CAPTURED, 100.0, 0.0, True)
     assert project_alcove_confidence(following=False, snapshot=captured, blocker=None, now=100.0).state is AlcoveConfidenceState.NOT_FOLLOWING
     assert project_alcove_confidence(following=True, snapshot=captured, blocker=AlcoveCaptureStatus.SCREEN_RECORDING_DENIED, now=100.0).state is AlcoveConfidenceState.PERMISSION_DENIED
@@ -79,7 +75,9 @@ def test_confidence_projection_precedence_and_boundaries() -> None:
     assert project_alcove_confidence(following=True, snapshot=captured, blocker=None, now=130.0).state is AlcoveConfidenceState.STALE
 
 
-def test_confidence_projection_copy_intents_and_permission_action() -> None:
+
+def test_confidence_projection_copy_intents_and_permission_action__and_2_more() -> None:
+    # --- scenario: confidence_projection_copy_intents_and_permission_action
     fresh = project_alcove_confidence(
         following=True,
         snapshot=AlcoveStatusSnapshot(AlcoveCaptureStatus.CAPTURED, 100.0, 0.0, True),
@@ -98,14 +96,12 @@ def test_confidence_projection_copy_intents_and_permission_action() -> None:
     assert denied.motion_intent is AlcoveMotionIntent.STATIC
     assert "Screen Recording" in denied.message
 
-
-def test_projection_rejects_invalid_clock_and_geometry_age() -> None:
+    # --- scenario: projection_rejects_invalid_clock_and_geometry_age
     invalid = AlcoveStatusSnapshot(AlcoveCaptureStatus.CAPTURED, 100.0, -1.0, True)
     assert project_alcove_confidence(following=True, snapshot=invalid, blocker=None, now=100.0).state is AlcoveConfidenceState.RECOVERING
     assert project_alcove_confidence(following=True, snapshot=None, blocker=None, now=math.nan).state is AlcoveConfidenceState.RECOVERING
 
-
-def test_recovering_holds_geometry_without_starting_settle() -> None:
+    # --- scenario: recovering_holds_geometry_without_starting_settle
     projection = project_alcove_confidence(
         following=True,
         snapshot=AlcoveStatusSnapshot(AlcoveCaptureStatus.CAPTURE_FAILED, 100.0, 0.0, True),
@@ -116,7 +112,9 @@ def test_recovering_holds_geometry_without_starting_settle() -> None:
     assert projection.motion_intent is AlcoveMotionIntent.HOLD
 
 
-def test_recorded_blocker_statuses_project_without_a_live_blocker() -> None:
+
+def test_recorded_blocker_statuses_project_without_a_live_blocker__and_2_more() -> None:
+    # --- scenario: recorded_blocker_statuses_project_without_a_live_blocker
     denied = project_alcove_confidence(
         following=True,
         snapshot=AlcoveStatusSnapshot(AlcoveCaptureStatus.SCREEN_RECORDING_DENIED, 100.0),
@@ -132,14 +130,12 @@ def test_recorded_blocker_statuses_project_without_a_live_blocker() -> None:
     assert denied.state is AlcoveConfidenceState.PERMISSION_DENIED
     assert disconnected.state is AlcoveConfidenceState.DISCONNECTED
 
-
-def test_recovery_hold_expires_after_eight_seconds() -> None:
+    # --- scenario: recovery_hold_expires_after_eight_seconds
     snapshot = AlcoveStatusSnapshot(AlcoveCaptureStatus.CAPTURE_FAILED, 100.0, 0.0, True)
     assert project_alcove_confidence(following=True, snapshot=snapshot, blocker=None, now=108.0).geometry_intent is AlcoveGeometryIntent.HOLD_LAST_GOOD
     assert project_alcove_confidence(following=True, snapshot=snapshot, blocker=None, now=108.01).geometry_intent is AlcoveGeometryIntent.USE_SCREEN_BAR_GEOMETRY
 
-
-def test_note_captured_status_records_fresh_geometry_by_default() -> None:
+    # --- scenario: note_captured_status_records_fresh_geometry_by_default
     import jrbar.alcove_observation as observation_module
 
     observation_module.reset_alcove_status()
@@ -148,6 +144,7 @@ def test_note_captured_status_records_fresh_geometry_by_default() -> None:
     assert snapshot is not None
     assert snapshot.geometry_age_seconds == 0.0
     assert snapshot.geometry_available is True
+
 
 
 def test_reducer_reports_last_good_age_without_changing_current_hold() -> None:
@@ -212,7 +209,8 @@ def _observation(**changes) -> AlcoveObservation:
     return AlcoveObservation(**values)
 
 
-def test_valid_observation_preserves_measured_center_size_contour_and_identity() -> None:
+def test_valid_observation_preserves_measured_center_size_contour_and_identity__and_2_more() -> None:
+    # --- scenario: valid_observation_preserves_measured_center_size_contour_and_identity
     request = _request()
     observation = _observation()
 
@@ -225,10 +223,8 @@ def test_valid_observation_preserves_measured_center_size_contour_and_identity()
     assert observation.generation == request.generation
     assert observation.screen_id == request.screen_id
 
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
+    # --- scenario: invalid_or_stale_observations_are_rejected
+    for mutation in [
         {"generation": 8},
         {"screen_id": "external:2"},
         {"window_number": 100},
@@ -241,19 +237,15 @@ def test_valid_observation_preserves_measured_center_size_contour_and_identity()
         {"center_x": -40.0},
         {"contour": ((620.0, 8.0),) * 65},
         {"contour": ((620.0, 8.0), (math.nan, 9.0), (620.0, 8.0))},
-    ],
-)
-def test_invalid_or_stale_observations_are_rejected(mutation: dict[str, object]) -> None:
-    assert not validate_observation(
-        replace(_observation(), **mutation),
-        _request(),
-        now=101.0,
-    )
+    ]:
+        assert not validate_observation(
+            replace(_observation(), **mutation),
+            _request(),
+            now=101.0,
+        )
 
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
+    # --- scenario: invalid_plain_request_geometry_cannot_validate
+    for mutation in [
         {"screen_id": ""},
         {"display_id": 0},
         {"window_number": 0},
@@ -261,17 +253,17 @@ def test_invalid_or_stale_observations_are_rejected(mutation: dict[str, object])
         {"window_width": math.inf},
         {"menu_band_height": -1.0},
         {"scale": math.nan},
-    ],
-)
-def test_invalid_plain_request_geometry_cannot_validate(mutation: dict[str, object]) -> None:
-    assert not validate_observation(
-        _observation(),
-        replace(_request(), **mutation),
-        now=101.0,
-    )
+    ]:
+        assert not validate_observation(
+            _observation(),
+            replace(_request(), **mutation),
+            now=101.0,
+        )
 
 
-def test_rapid_same_window_replacement_rejects_old_or_pre_request_capture() -> None:
+
+def test_rapid_same_window_replacement_rejects_old_or_pre_request_capture__and_2_more() -> None:
+    # --- scenario: rapid_same_window_replacement_rejects_old_or_pre_request_capture
     active = _request(request_id=22, requested_at=100.5)
 
     assert not validate_observation(
@@ -290,8 +282,7 @@ def test_rapid_same_window_replacement_rejects_old_or_pre_request_capture() -> N
         now=101.0,
     )
 
-
-def test_reducer_tracks_both_directions_and_never_holds_a_too_wide_bracket() -> None:
+    # --- scenario: reducer_tracks_both_directions_and_never_holds_a_too_wide_bracket
     """A bracket narrower than the capsule hides inside Alcove's black; a
     bracket WIDER than it is a glowing sliver on the wallpaper. Narrowing
     therefore adopts immediately -- the old 3-second damping was 3 seconds
@@ -313,8 +304,7 @@ def test_reducer_tracks_both_directions_and_never_holds_a_too_wide_bracket() -> 
     assert reducer.apply(_observation(width=209.7, captured_at=104.0), request, now=104.1)
     assert reducer.current(now=104.1).width == 210.0
 
-
-def test_reducer_holds_last_good_for_eight_seconds_then_uses_hardware_fallback() -> None:
+    # --- scenario: reducer_holds_last_good_for_eight_seconds_then_uses_hardware_fallback
     reducer = AlcoveObservationReducer()
     request = _request()
     assert reducer.apply(_observation(), request, now=100.1)
@@ -324,7 +314,9 @@ def test_reducer_holds_last_good_for_eight_seconds_then_uses_hardware_fallback()
     assert ALCOVE_HOLD_SECONDS == 8.0
 
 
-def test_reducer_never_invents_a_center_without_a_valid_observation() -> None:
+
+def test_reducer_never_invents_a_center_without_a_valid_observation__and_2_more() -> None:
+    # --- scenario: reducer_never_invents_a_center_without_a_valid_observation
     reducer = AlcoveObservationReducer()
     request = _request()
 
@@ -332,8 +324,7 @@ def test_reducer_never_invents_a_center_without_a_valid_observation() -> None:
     assert not reducer.apply(_observation(center_x=math.nan), request, now=100.1)
     assert reducer.current(now=100.1) is None
 
-
-def test_raw_alpha_scan_uses_synthetic_provider_bytes_and_returns_plain_geometry() -> None:
+    # --- scenario: raw_alpha_scan_uses_synthetic_provider_bytes_and_returns_plain_geometry
     width_px = 200
     height_px = 80
     pixels = bytearray(width_px * height_px * 4)
@@ -361,8 +352,7 @@ def test_raw_alpha_scan_uses_synthetic_provider_bytes_and_returns_plain_geometry
     assert len(observation.contour) <= 64
     assert observation.contour[0] == observation.contour[-1]
 
-
-def test_worker_has_one_capture_in_flight_and_only_the_latest_request_pending() -> None:
+    # --- scenario: worker_has_one_capture_in_flight_and_only_the_latest_request_pending
     entered = threading.Event()
     release = threading.Event()
     captured: list[int] = []
@@ -410,7 +400,9 @@ def test_worker_has_one_capture_in_flight_and_only_the_latest_request_pending() 
     assert maximum_active == 1
 
 
-def test_worker_publishes_only_frozen_plain_values() -> None:
+
+def test_worker_publishes_only_frozen_plain_values__and_1_more() -> None:
+    # --- scenario: worker_publishes_only_frozen_plain_values
     buffer = AlcoveObservationBuffer()
     completed = threading.Event()
 
@@ -444,8 +436,7 @@ def test_worker_publishes_only_frozen_plain_values() -> None:
         for forbidden in ("NSBitmapImageRep", "NSImage", "NSView", "NSWindow", "NSScreen")
     )
 
-
-def test_worker_drops_a_late_capture_result_after_close() -> None:
+    # --- scenario: worker_drops_a_late_capture_result_after_close
     buffer = AlcoveObservationBuffer()
     entered = threading.Event()
     release = threading.Event()
@@ -463,3 +454,4 @@ def test_worker_drops_a_late_capture_result_after_close() -> None:
     assert worker.wait_idle(timeout_seconds=2.0)
 
     assert buffer.take() is None
+

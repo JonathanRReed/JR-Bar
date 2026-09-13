@@ -15,7 +15,8 @@ from jrbar.provider_usage_settings import default_provider_usage_settings
 from jrbar.provider_usage_sync_settings import default_provider_sync_settings
 
 
-def test_projection_separates_collection_presentation_and_sync_settings() -> None:
+def test_projection_separates_collection_presentation_and_sync_settings__and_2_more() -> None:
+    # --- scenario: projection_separates_collection_presentation_and_sync_settings
     usage = (
         default_provider_usage_settings()
         .with_enabled("cursor", False)
@@ -33,8 +34,7 @@ def test_projection_separates_collection_presentation_and_sync_settings() -> Non
     assert projection.presentation.menu.privacy_mode is False
     assert projection.sync.device_id == "mac-mini"
 
-
-def test_projections_are_immutable_and_do_not_cross_boundaries() -> None:
+    # --- scenario: projections_are_immutable_and_do_not_cross_boundaries
     projection = project_provider_feature_settings(
         default_provider_usage_settings(),
         default_provider_sync_settings(),
@@ -47,8 +47,7 @@ def test_projections_are_immutable_and_do_not_cross_boundaries() -> None:
     assert not hasattr(projection.presentation, "peers")
     assert not hasattr(projection.sync, "menu_display")
 
-
-def test_reset_channel_defaults_reach_the_presentation_projection() -> None:
+    # --- scenario: reset_channel_defaults_reach_the_presentation_projection
     projection = project_provider_feature_settings(
         default_provider_usage_settings(),
         default_provider_sync_settings(),
@@ -60,7 +59,9 @@ def test_reset_channel_defaults_reach_the_presentation_projection() -> None:
     assert feature.reset_sound is True
 
 
-def test_change_receipt_is_exact_bounded_and_monotonic() -> None:
+
+def test_change_receipt_is_exact_bounded_and_monotonic__and_2_more() -> None:
+    # --- scenario: change_receipt_is_exact_bounded_and_monotonic
     initial = project_provider_feature_settings(
         default_provider_usage_settings(),
         default_provider_sync_settings(),
@@ -82,8 +83,7 @@ def test_change_receipt_is_exact_bounded_and_monotonic() -> None:
     )
     assert len(changed.receipt.changed_feature_ids) <= ProviderSettingsChangeReceipt.MAX_FEATURE_IDS
 
-
-def test_privacy_mode_is_a_presentation_only_setting() -> None:
+    # --- scenario: privacy_mode_is_a_presentation_only_setting
     initial = project_provider_feature_settings(
         default_provider_usage_settings(),
         default_provider_sync_settings(),
@@ -98,8 +98,7 @@ def test_privacy_mode_is_a_presentation_only_setting() -> None:
     assert "presentation.menu.privacy_mode" in changed.receipt.changed_feature_ids
     assert not hasattr(changed.collection, "privacy_mode")
 
-
-def test_change_receipt_rejects_non_monotonic_revision() -> None:
+    # --- scenario: change_receipt_rejects_non_monotonic_revision
     initial = project_provider_feature_settings(
         default_provider_usage_settings(),
         default_provider_sync_settings(),
@@ -114,7 +113,9 @@ def test_change_receipt_rejects_non_monotonic_revision() -> None:
         )
 
 
-def test_tracker_advances_revision_and_reports_empty_receipt_for_unchanged_values() -> None:
+
+def test_tracker_advances_revision_and_reports_empty_receipt_for_unchanged_values__and_2_more() -> None:
+    # --- scenario: tracker_advances_revision_and_reports_empty_receipt_for_unchanged_values
     tracker = ProviderSettingsChangeTracker()
     settings = default_provider_usage_settings()
     sync = default_provider_sync_settings()
@@ -127,8 +128,7 @@ def test_tracker_advances_revision_and_reports_empty_receipt_for_unchanged_value
     assert second.receipt.changed_feature_ids == frozenset()
     assert tracker.projection is second
 
-
-def test_collection_options_and_sync_changes_have_domain_ids() -> None:
+    # --- scenario: collection_options_and_sync_changes_have_domain_ids
     before = project_provider_feature_settings(
         default_provider_usage_settings(),
         default_provider_sync_settings(),
@@ -143,8 +143,7 @@ def test_collection_options_and_sync_changes_have_domain_ids() -> None:
         {"collection.devin.options", "sync.device_id"}
     )
 
-
-def test_instance_policy_projection_keeps_domains_exact_and_private() -> None:
+    # --- scenario: instance_policy_projection_keeps_domains_exact_and_private
     settings = default_provider_usage_settings()
 
     projection = feature_settings.project_instance_policies(settings)
@@ -163,3 +162,4 @@ def test_instance_policy_projection_keeps_domains_exact_and_private() -> None:
     assert not hasattr(projection.visual.provider("claude"), "credential_account_reference")
     assert not hasattr(projection.retention.provider("claude"), "consent_reference")
     assert not hasattr(projection.sharing.provider("claude"), "credential_account_reference")
+

@@ -5,7 +5,8 @@ import pytest
 from jrbar.provider_account_identity import project_provider_account_identity
 
 
-def test_user_alias_precedes_safe_account_label() -> None:
+def test_user_alias_precedes_safe_account_label__and_2_more() -> None:
+    # --- scenario: user_alias_precedes_safe_account_label
     identity = project_provider_account_identity(
         provider_id="claude",
         source_instance_id="internal:profile-42",
@@ -18,40 +19,33 @@ def test_user_alias_precedes_safe_account_label() -> None:
     assert identity.full_label == "Client Claude · person@example.com"
     assert "internal:profile-42" not in repr(identity)
 
-
-@pytest.mark.parametrize(
-    "unsafe_label",
-    (
+    # --- scenario: opaque_or_private_account_labels_use_a_stable_safe_suffix
+    for unsafe_label in (
         "org-7535461b-1234-4abc-9def-0123456789ab",
         "d3a51c1c-2b9a-4371-b335-3928397be5cd",
         "acct_8f14e45fceea167a5a36dedd4bea2543",
         "/Users/person/.codex/profiles/work",
         "4e07408562bedb8b60ce05c1decfe3ad16b722309",
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
-    ),
-)
-def test_opaque_or_private_account_labels_use_a_stable_safe_suffix(
-    unsafe_label: str,
-) -> None:
-    first = project_provider_account_identity(
-        provider_id="codex",
-        source_instance_id="profile:private-workspace",
-        account_label=unsafe_label,
-    )
-    second = project_provider_account_identity(
-        provider_id="codex",
-        source_instance_id="profile:private-workspace",
-        account_label=unsafe_label,
-    )
+    ):
+        first = project_provider_account_identity(
+            provider_id="codex",
+            source_instance_id="profile:private-workspace",
+            account_label=unsafe_label,
+        )
+        second = project_provider_account_identity(
+            provider_id="codex",
+            source_instance_id="profile:private-workspace",
+            account_label=unsafe_label,
+        )
 
-    assert first == second
-    assert first.primary_label.startswith("Codex #")
-    assert first.account_detail is None
-    assert unsafe_label not in repr(first)
-    assert "private-workspace" not in repr(first)
+        assert first == second
+        assert first.primary_label.startswith("Codex #")
+        assert first.account_detail is None
+        assert unsafe_label not in repr(first)
+        assert "private-workspace" not in repr(first)
 
-
-def test_privacy_mode_suppresses_alias_and_account_detail() -> None:
+    # --- scenario: privacy_mode_suppresses_alias_and_account_detail
     identity = project_provider_account_identity(
         provider_id="claude",
         source_instance_id="work",
@@ -66,6 +60,7 @@ def test_privacy_mode_suppresses_alias_and_account_detail() -> None:
     assert identity.collision_suffix == "private"
     assert "person@example.com" not in repr(identity)
     assert "Client Claude" not in repr(identity)
+
 
 
 def test_privacy_mode_strings_do_not_depend_on_private_account_label() -> None:

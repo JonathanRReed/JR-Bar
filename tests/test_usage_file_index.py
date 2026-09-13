@@ -99,7 +99,8 @@ def test_compressed_corruption_is_a_bounded_per_row_miss(tmp_path, monkeypatch, 
     reopened.close()
 
 
-def test_source_or_version_change_discards_old_rows_but_keeps_secret(tmp_path: Path) -> None:
+def test_source_or_version_change_discards_old_rows_but_keeps_secret__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: source_or_version_change_discards_old_rows_but_keeps_secret
     path = tmp_path / "usage.sqlite"
     index = _open(path)
     assert index is not None
@@ -117,8 +118,7 @@ def test_source_or_version_change_discards_old_rows_but_keeps_secret(tmp_path: P
     assert other.dedupe_secret == SECRET
     other.close()
 
-
-def test_prune_retains_only_live_keys(tmp_path: Path) -> None:
+    # --- scenario: prune_retains_only_live_keys
     path = tmp_path / "usage.sqlite"
     index = _open(path)
     assert index is not None
@@ -133,6 +133,7 @@ def test_prune_retains_only_live_keys(tmp_path: Path) -> None:
     assert reopened.get("b") is None
     assert reopened.get("c") is not None
     reopened.close()
+
 
 
 def test_row_and_document_caps_reject_new_rows_without_evicting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -210,7 +211,8 @@ def test_compatible_warm_open_reads_while_another_index_has_pending_writes(tmp_p
     writer.close()
 
 
-def test_two_open_writers_recheck_row_capacity_after_other_writer_commits(tmp_path, monkeypatch):
+def test_two_open_writers_recheck_row_capacity_after_other_writer_commits__and_1_more(tmp_path, monkeypatch) -> None:
+    # --- scenario: two_open_writers_recheck_row_capacity_after_other_writer_commits
     from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_ROWS", 2)
@@ -226,8 +228,8 @@ def test_two_open_writers_recheck_row_capacity_after_other_writer_commits(tmp_pa
     assert second.get("first") == _document(1)
     second.close()
 
-
-def test_compressed_size_boundary_and_concatenated_members(tmp_path, monkeypatch):
+    # --- scenario: compressed_size_boundary_and_concatenated_members
+    monkeypatch.undo()
     from jrbar import usage_file_index
 
     monkeypatch.setattr(usage_file_index, "MAX_DOCUMENT_BYTES", 8192)
@@ -247,6 +249,7 @@ def test_compressed_size_boundary_and_concatenated_members(tmp_path, monkeypatch
     assert reopened.get("exact") == document
     assert reopened.get("concatenated") is None
     reopened.close()
+
 
 
 def test_get_rejects_payload_larger_than_document_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -366,13 +369,13 @@ def test_locked_database_is_a_cache_miss(tmp_path: Path) -> None:
         blocker.close()
 
 
-def test_invalid_seed_secret_is_rejected_without_creating_database(tmp_path: Path) -> None:
+def test_invalid_seed_secret_is_rejected_without_creating_database__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: invalid_seed_secret_is_rejected_without_creating_database
     path = tmp_path / "usage.sqlite"
     assert _open(path, secret="not-a-secret") is None
     assert not path.exists()
 
-
-def test_payload_is_json_and_contains_no_key_or_metadata_copy(tmp_path: Path) -> None:
+    # --- scenario: payload_is_json_and_contains_no_key_or_metadata_copy
     path = tmp_path / "usage.sqlite"
     index = _open(path)
     assert index is not None
@@ -384,3 +387,4 @@ def test_payload_is_json_and_contains_no_key_or_metadata_copy(tmp_path: Path) ->
     finally:
         connection.close()
     assert json.loads(payload) == _document()
+

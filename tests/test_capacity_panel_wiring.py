@@ -114,9 +114,8 @@ def _terminate(target) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_the_why_panel_carries_a_capacity_section_after_a_real_refresh(
-    controller,
-) -> None:
+def test_the_why_panel_carries_a_capacity_section_after_a_real_refresh__and_1_more(controller,) -> None:
+    # --- scenario: the_why_panel_carries_a_capacity_section_after_a_real_refresh
     """The seam: one real codex refresh, and the panel gains the section.
 
     Driven through `_run_codex_refresh` -- worker to publish to
@@ -136,10 +135,7 @@ def test_the_why_panel_carries_a_capacity_section_after_a_real_refresh(
     assert "5-hour" in section
     assert "15% left" in section
 
-
-def test_the_open_panel_refresh_renders_the_same_body_as_opening_it(
-    controller,
-) -> None:
+    # --- scenario: the_open_panel_refresh_renders_the_same_body_as_opening_it
     """An open panel that shrinks on its next tick is the same defect as a
     section that never shipped."""
     target, status_bar, _history = controller
@@ -161,6 +157,7 @@ def test_the_open_panel_refresh_renders_the_same_body_as_opening_it(
         assert target.refresh_why_panel() is True
 
     assert rendered and CAPACITY_SECTION_TITLE in rendered[0]
+
 
 
 def _drifted_spark_snapshot(status_bar):
@@ -210,9 +207,8 @@ def _drifted_spark_snapshot(status_bar):
     )
 
 
-def test_a_refused_window_is_named_in_the_panel_not_merely_counted(
-    controller,
-) -> None:
+def test_a_refused_window_is_named_in_the_panel_not_merely_counted__and_1_more(controller,) -> None:
+    # --- scenario: a_refused_window_is_named_in_the_panel_not_merely_counted
     """The card can only say "1 window unavailable". This says which, and why.
 
     Driven through the REAL `authorised_capacity_lanes`, so the refusal is
@@ -237,10 +233,7 @@ def test_a_refused_window_is_named_in_the_panel_not_merely_counted(
     assert "Not applicable · Healthy · Scope is not supported" in detail_lines
     assert "unknown_effect" not in section
 
-
-def test_the_effect_refusal_is_stated_once_for_the_card_not_once_per_row(
-    controller,
-) -> None:
+    # --- scenario: the_effect_refusal_is_stated_once_for_the_card_not_once_per_row
     """`refusal_text` answers "may this fire an alert", which in a build with
     no `CapacityAccountBinding` is "no" for every lane alike. Printed per
     row it appeared under every percentage on screen; a panel that repeats
@@ -266,7 +259,9 @@ def test_the_effect_refusal_is_stated_once_for_the_card_not_once_per_row(
     assert not [line for line in lane_rows if reason in line.lower()]
 
 
-def test_the_capacity_section_prints_no_payload_prompt_or_path(controller) -> None:
+
+def test_the_capacity_section_prints_no_payload_prompt_or_path__and_1_more(controller) -> None:
+    # --- scenario: the_capacity_section_prints_no_payload_prompt_or_path
     """The pledge at the bottom of this panel covers the whole panel."""
     target, status_bar, _history = controller
     _run_codex_refresh(target, status_bar, _limits(85.0))
@@ -275,8 +270,7 @@ def test_the_capacity_section_prints_no_payload_prompt_or_path(controller) -> No
     for forbidden in ("/Users/", "http://", "https://", "Bearer ", "session_id"):
         assert forbidden not in section
 
-
-def test_the_panel_is_built_from_the_authority_projection(controller) -> None:
+    # --- scenario: the_panel_is_built_from_the_authority_projection
     """Not from `authorised.lanes`, and not from the raw window list.
 
     `AuthorisedCapacity` flattens each refusal to a bare code; the
@@ -293,6 +287,7 @@ def test_the_panel_is_built_from_the_authority_projection(controller) -> None:
     }
     models = target.capacity_detail_models(now=time.time())
     assert models and all(type(model) is CapacityDetailModel for model in models)
+
 
 
 # --------------------------------------------------------------------------
@@ -511,13 +506,14 @@ def test_a_history_file_that_cannot_be_read_is_no_history_not_a_crash(
 # --------------------------------------------------------------------------
 
 
-def test_the_renderer_refuses_anything_that_is_not_a_detail_model() -> None:
+def test_the_renderer_refuses_anything_that_is_not_a_detail_model__and_1_more() -> None:
+    # --- scenario: the_renderer_refuses_anything_that_is_not_a_detail_model
     for bad in ((object(),), [], "models"):
         with pytest.raises(ValueError):
             capacity_detail_text(bad)
 
-
-def test_no_capacity_reading_says_so_rather_than_printing_an_empty_heading() -> None:
+    # --- scenario: no_capacity_reading_says_so_rather_than_printing_an_empty_heading
     text = capacity_detail_text(())
     assert CAPACITY_SECTION_TITLE in text
     assert "No capacity reading has been authorised yet." in text
+

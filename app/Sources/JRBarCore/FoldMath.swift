@@ -85,34 +85,30 @@ public struct DeltaSpring: Sendable {
     public var atRest: Bool { value <= 0.002 && abs(velocity) < 0.05 }
 }
 
-/// The piece that makes the fold feel attached to your finger instead
-/// of dragged behind it: dead reckoning off the sensor's own edges.
+/// The hinge tracker — deliberately simple, because prediction was the
+/// bug.
 ///
-/// The hinge report is a 10 Hz sensor — probed at 240 Hz it only
-/// changes value every ~100 ms, stepping 9–13° on a moderate close and
-/// sitting perfectly steady at rest. A predictor that reads poll-to-poll
-/// deltas sees a sawtooth (a 10° step at the poll that first catches it,
-/// then zero velocity until the next edge); this tracker treats only a
-/// value CHANGE as information. Each edge updates a blended velocity
-/// estimate and resets the anchor; `tick` extrapolates that velocity
-/// from the edge for at most `maxExtrapolation`, clamped to ±`leadLimit`.
-/// The ~100 ms of sensor latency is covered by the extrapolation, and
-/// at each edge the dead-reckoned position is already near the new
-/// value, so the toy's one easing stage only absorbs the residual —
-/// there is deliberately no smoothing in here, two stages would add lag.
+/// The reference implementation's whole motion pipeline is: read the
+/// sensor, ease toward it. Measured against it, our dead-reckoning
+/// extrapolation was the judder source: on a real close each 10 Hz edge
+/// is 9–13°, so the velocity estimate led 8° past the truth and the next
+/// edge yanked it back — a multi-degree sawtooth riding every close,
+/// worst exactly when the lid moves fast. The ~100 ms of sensor latency
+/// it covered costs less than the sawtooth it bought: the display spring
+/// already turns the staircase into a ramp, so the render angle is now
+/// simply the last accepted edge, and the spring carries the glide.
 ///
-/// Feed it every accepted hinge sample (unchanged polls return early);
-/// tick it on every render frame. All times are host seconds
-/// (CACurrentMediaTime).
+/// Velocity survives only as an input to the motion-blur boost — it is
+/// estimated at edges, capped at a physical slam speed, and never feeds
+/// the render. All times are host seconds (CACurrentMediaTime).
 public struct LidTracker: Sendable {
-    /// What the renderer should draw: the last edge plus its bounded
-    /// extrapolation — the measurement itself while parked.
+    /// What the renderer should draw: the last accepted hinge reading.
+    /// The spring downstream owns every millisecond of smoothing.
     public private(set) var renderAngle = 0.0
     /// Lid velocity in deg/s, estimated at each edge and blended.
-    /// Negative is closing. Feeds the motion-aware blur.
+    /// Negative is closing. Cosmetic — feeds only the motion-aware blur.
     public private(set) var velocity = 0.0
 
-    private var edgeAngle = 0.0
     private var edgeAt: TimeInterval = 0
     private var lastRaw: Double = 0
     private var primed = false
@@ -120,23 +116,17 @@ public struct LidTracker: Sendable {
     /// The measured sensor cadence: the HID report only changes every
     /// ~100 ms, so polls between edges carry no information.
     public static let samplePeriod: TimeInterval = 0.1
-    /// How far past an edge the velocity may be trusted — a little more
-    /// than one sensor period covers the report's own latency.
-    public static let maxExtrapolation: TimeInterval = 0.15
-    /// The extrapolation can never run further than this from the edge.
-    public static let leadLimit: Double = 8
-    /// No new edge for this long and the lid counts as parked — one
-    /// extra edge after a pause is just the lid moving again.
+    /// No new edge for this long and the lid counts as parked — the
+    /// blur boost stops reading motion it cannot see.
     public static let restAfter: TimeInterval = 0.3
     /// How much each edge's velocity estimate moves the blended one.
     public static let velocityBlend: Double = 0.6
     /// A lid cannot move faster than a slam; an edge-rate beyond this is
-    /// the timestamp's noise, not the hinge's truth — unbounded it
-    /// would lurch the extrapolation to the lead cap and snap back.
+    /// the timestamp's noise, not the hinge's truth.
     public static let maxLidSpeed: Double = 240
     /// A counter-directional edge slower than this is sensor wobble, not
     /// intent: it pulls the estimate gently instead of snapping the
-    /// direction (which is what made a parked-at-an-edge wobble zigzag).
+    /// direction.
     public static let reversalFloor: Double = 15
 
     public init() {}
@@ -150,7 +140,6 @@ public struct LidTracker: Sendable {
         guard raw.isFinite, at.isFinite else { return }
         guard primed else {
             primed = true
-            edgeAngle = raw
             edgeAt = at
             lastRaw = raw
             renderAngle = raw
@@ -159,37 +148,29 @@ public struct LidTracker: Sendable {
         }
         guard raw != lastRaw else { return }
         let dt = max(0.02, at - edgeAt)
-        let vNew = max(-Self.maxLidSpeed, min(Self.maxLidSpeed, (raw - edgeAngle) / dt))
+        let vNew = max(-Self.maxLidSpeed, min(Self.maxLidSpeed, (raw - renderAngle) / dt))
         if vNew * velocity < 0 {
             if abs(vNew) >= Self.reversalFloor {
-                // A real reversal: the blended estimate would ride the
-                // old direction through the turn and overshoot exactly
-                // where the eye catches it — take the new one whole.
+                // A real reversal: take the new direction whole — a
+                // blended estimate rides the old way through the turn.
                 velocity = vNew
             } else {
-                // Wobble against the travel: a weak pull only, so the
-                // estimate keeps pointing where the lid is going.
+                // Wobble against the travel: a weak pull only.
                 velocity += (vNew - velocity) * Self.velocityBlend * 0.4
             }
         } else {
             velocity = velocity == 0 ? vNew : velocity + (vNew - velocity) * Self.velocityBlend
         }
-        edgeAngle = raw
+        renderAngle = raw
         edgeAt = at
         lastRaw = raw
     }
 
-    /// Per-render-frame dead reckoning: the render angle is the last
-    /// edge plus its velocity for up to `maxExtrapolation` — long enough
-    /// to cover the sensor's ~100 ms latency, short enough that a wrong
-    /// estimate can't run away. Parked (`restAfter` quiet) the velocity
-    /// is zero and the render angle IS the last edge.
+    /// Per render frame: no extrapolation, just the blur boost's decay —
+    /// `restAfter` quiet and the velocity reads zero.
     public mutating func tick(dt: Double, at: TimeInterval) {
         guard at.isFinite, primed else { return }
-        let since = at - edgeAt
-        if since > Self.restAfter { velocity = 0 }
-        let extrap = velocity * min(since, Self.maxExtrapolation)
-        renderAngle = edgeAngle + min(Self.leadLimit, max(-Self.leadLimit, extrap))
+        if at - edgeAt > Self.restAfter { velocity = 0 }
     }
 }
 

@@ -88,7 +88,8 @@ def _coverage(totals, provider_id: str):
     return totals.source_coverage[provider_id]
 
 
-def test_missing_roots_are_not_reported_as_observed_empty_usage(tmp_path: Path) -> None:
+def test_missing_roots_are_not_reported_as_observed_empty_usage__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: missing_roots_are_not_reported_as_observed_empty_usage
     totals = scan_usage(
         tmp_path / "missing-claude",
         codex_root=tmp_path / "missing-codex",
@@ -102,8 +103,7 @@ def test_missing_roots_are_not_reported_as_observed_empty_usage(tmp_path: Path) 
         assert coverage.files_discovered == 0
         assert coverage.files_read == 0
 
-
-def test_existing_empty_roots_are_successfully_observed(tmp_path: Path) -> None:
+    # --- scenario: existing_empty_roots_are_successfully_observed
     claude_root = tmp_path / "claude"
     codex_root = tmp_path / "codex"
     claude_root.mkdir()
@@ -119,8 +119,7 @@ def test_existing_empty_roots_are_successfully_observed(tmp_path: Path) -> None:
         assert coverage.files_discovered == 0
         assert coverage.files_read == 0
 
-
-def test_readable_provider_files_report_local_counts_and_totals(tmp_path: Path) -> None:
+    # --- scenario: readable_provider_files_report_local_counts_and_totals
     claude_root = tmp_path / "claude"
     codex_root = tmp_path / "codex"
     _write_rows(claude_root / "project" / "claude.jsonl", _claude_row("m1"))
@@ -136,6 +135,7 @@ def test_readable_provider_files_report_local_counts_and_totals(tmp_path: Path) 
         assert coverage.files_discovered == 1
         assert coverage.files_read == 1
         assert coverage.cache_hits == 0
+
 
 
 def test_warm_unchanged_physical_files_are_cache_hits_not_parser_reads(

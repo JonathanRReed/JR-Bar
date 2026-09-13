@@ -67,7 +67,8 @@ class _RecordingMenuItem:
         return "read back from AppKit"
 
 
-def test_building_the_menu_snapshot_never_reads_accessibility_off_an_item() -> None:
+def test_building_the_menu_snapshot_never_reads_accessibility_off_an_item__and_1_more() -> None:
+    # --- scenario: building_the_menu_snapshot_never_reads_accessibility_off_an_item
     """Any read here fake-opens the menu and runs menuWillOpen_."""
     item = _RecordingMenuItem("Agent Mailbox · 3 active · 0 need you")
 
@@ -83,8 +84,7 @@ def test_building_the_menu_snapshot_never_reads_accessibility_off_an_item() -> N
     assert item.accessibility_reads == []
     assert state.accessibility_label == "Agent Mailbox summary"
 
-
-def test_every_root_item_kind_still_gets_a_screen_reader_label() -> None:
+    # --- scenario: every_root_item_kind_still_gets_a_screen_reader_label
     """Not reading back is not the same as not labelling."""
     labels = {
         key: status_bar._native_item_state(
@@ -108,6 +108,7 @@ def test_every_root_item_kind_still_gets_a_screen_reader_label() -> None:
     assert len(set(labels.values())) == len(labels)
 
 
+
 # --- the LaunchServices probe ----------------------------------------------
 
 
@@ -126,7 +127,8 @@ class _BlockingProbe:
         return True
 
 
-def test_the_alcove_probe_is_sampled_once_then_never_blocks_again() -> None:
+def test_the_alcove_probe_is_sampled_once_then_never_blocks_again__and_2_more() -> None:
+    # --- scenario: the_alcove_probe_is_sampled_once_then_never_blocks_again
     probe = _BlockingProbe()
     probe.release.set()
     presence = virtual_device.AlcovePresenceProbe(probe=probe, ttl_seconds=3.0)
@@ -137,8 +139,7 @@ def test_the_alcove_probe_is_sampled_once_then_never_blocks_again() -> None:
 
     assert len(probe.calls) == 1
 
-
-def test_a_stale_alcove_answer_is_refreshed_off_the_main_thread() -> None:
+    # --- scenario: a_stale_alcove_answer_is_refreshed_off_the_main_thread
     probe = _BlockingProbe()
     probe.release.set()
     presence = virtual_device.AlcovePresenceProbe(probe=probe, ttl_seconds=3.0)
@@ -157,8 +158,7 @@ def test_a_stale_alcove_answer_is_refreshed_off_the_main_thread() -> None:
     assert probe.calls[0] == main_thread
     assert probe.calls[1] != main_thread
 
-
-def test_a_slow_refresh_never_stalls_the_caller_and_is_not_stampeded() -> None:
+    # --- scenario: a_slow_refresh_never_stalls_the_caller_and_is_not_stampeded
     """A 2s timer must not queue a thread per tick behind a slow probe."""
     probe = _BlockingProbe()
     probe.release.set()
@@ -174,6 +174,7 @@ def test_a_slow_refresh_never_stalls_the_caller_and_is_not_stampeded() -> None:
 
     assert elapsed < 0.5
     assert len(probe.calls) <= 2
+
 
 
 def test_the_probe_answers_not_running_rather_than_raising() -> None:

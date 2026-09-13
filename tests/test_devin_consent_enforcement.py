@@ -43,7 +43,8 @@ def _grant(
     )
 
 
-def test_browser_sources_setting_alone_never_invokes_a_browser_reader(monkeypatch):
+def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_more(monkeypatch) -> None:
+    # --- scenario: browser_sources_setting_alone_never_invokes_a_browser_reader
     from jrbar import browser_session_import
     from jrbar import provider_usage_collectors as collectors
 
@@ -70,8 +71,8 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader(monkeypatc
     assert result.state.value == "source_not_found"
     assert calls == [], "organization remains required, but no browser was read"
 
-
-def test_explicit_import_never_falls_back_to_a_broad_browser_scan(monkeypatch):
+    # --- scenario: explicit_import_never_falls_back_to_a_broad_browser_scan
+    monkeypatch.undo()
     from jrbar import browser_session_import, provider_browser_access
     from jrbar.provider_browser_consent import LoadedBrowserConsents
 
@@ -103,8 +104,8 @@ def test_explicit_import_never_falls_back_to_a_broad_browser_scan(monkeypatch):
     assert provider_browser_access._import_browser_session("devin") is None
     assert broad_reads == []
 
-
-def test_unauthorized_background_repair_requires_exact_persisted_consent(monkeypatch):
+    # --- scenario: unauthorized_background_repair_requires_exact_persisted_consent
+    monkeypatch.undo()
     from jrbar import browser_session_import
     from jrbar import provider_usage_collectors as collectors
     from jrbar.provider_browser_consent import LoadedBrowserConsents
@@ -140,6 +141,7 @@ def test_unauthorized_background_repair_requires_exact_persisted_consent(monkeyp
 
     assert result.state.value == "needs_sign_in"
     assert broad_reads == []
+
 
 
 def test_consent_resolver_fails_closed_before_reading_for_missing_or_wrong_scope(

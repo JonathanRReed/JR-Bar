@@ -20,9 +20,9 @@ from jrbar.turn_length_ember import (
 )
 
 
-@pytest.mark.parametrize(
-    ("elapsed", "bucket", "label", "minimum", "maximum"),
-    [
+def test_age_bands_have_disclosed_half_open_boundaries__and_2_more() -> None:
+    # --- scenario: age_bands_have_disclosed_half_open_boundaries
+    for elapsed, bucket, label, minimum, maximum in [
         (0, TurnAgeBucket.UNDER_TWO_MINUTES, "Under 2 minutes", 0.0, 120.0),
         (119.999, TurnAgeBucket.UNDER_TWO_MINUTES, "Under 2 minutes", 0.0, 120.0),
         (
@@ -60,20 +60,15 @@ from jrbar.turn_length_ember import (
             1_800.0,
             None,
         ),
-    ],
-)
-def test_age_bands_have_disclosed_half_open_boundaries(
-    elapsed, bucket, label, minimum, maximum
-) -> None:
-    band = age_band_for_elapsed(elapsed)
+    ]:
+        band = age_band_for_elapsed(elapsed)
 
-    assert band.bucket is bucket
-    assert band.label == label
-    assert band.minimum_seconds == minimum
-    assert band.maximum_seconds == maximum
+        assert band.bucket is bucket
+        assert band.label == label
+        assert band.minimum_seconds == minimum
+        assert band.maximum_seconds == maximum
 
-
-def test_age_band_contract_is_complete_ordered_and_broad() -> None:
+    # --- scenario: age_band_contract_is_complete_ordered_and_broad
     assert tuple(band.bucket for band in TURN_AGE_BANDS) == tuple(TurnAgeBucket)
     assert TURN_AGE_BANDS[0].minimum_seconds == 0.0
     for previous, current in pairwise(TURN_AGE_BANDS):
@@ -81,8 +76,7 @@ def test_age_band_contract_is_complete_ordered_and_broad() -> None:
         assert current.minimum_seconds - previous.minimum_seconds >= 120.0
     assert TURN_AGE_BANDS[-1].maximum_seconds is None
 
-
-def test_normal_plan_is_renderer_shaped_and_only_claims_elapsed_time() -> None:
+    # --- scenario: normal_plan_is_renderer_shaped_and_only_claims_elapsed_time
     plan = plan_turn_length_ember(elapsed_seconds=300)
 
     assert plan.visible is True
@@ -100,7 +94,9 @@ def test_normal_plan_is_renderer_shaped_and_only_claims_elapsed_time() -> None:
     assert "difficulty" in plan.accessibility_text
 
 
-def test_visual_values_change_only_at_disclosed_bucket_boundaries() -> None:
+
+def test_visual_values_change_only_at_disclosed_bucket_boundaries__and_2_more() -> None:
+    # --- scenario: visual_values_change_only_at_disclosed_bucket_boundaries
     before = plan_turn_length_ember(elapsed_seconds=599.999)
     boundary = plan_turn_length_ember(elapsed_seconds=600)
     within = plan_turn_length_ember(elapsed_seconds=1_799.999)
@@ -114,8 +110,7 @@ def test_visual_values_change_only_at_disclosed_bucket_boundaries() -> None:
         within.luminance,
     )
 
-
-def test_reduce_motion_preserves_age_semantics_as_steady_light() -> None:
+    # --- scenario: reduce_motion_preserves_age_semantics_as_steady_light
     regular = plan_turn_length_ember(elapsed_seconds=900)
     reduced = plan_turn_length_ember(elapsed_seconds=900, reduce_motion=True)
 
@@ -129,8 +124,7 @@ def test_reduce_motion_preserves_age_semantics_as_steady_light() -> None:
     assert reduced.animated is False
     assert reduced.degradation == (EmberDegradation.REDUCE_MOTION,)
 
-
-def test_low_power_clamps_energy_and_removes_animation() -> None:
+    # --- scenario: low_power_clamps_energy_and_removes_animation
     plan = plan_turn_length_ember(elapsed_seconds=3_600, low_power=True)
 
     assert plan.visible is True
@@ -141,7 +135,9 @@ def test_low_power_clamps_energy_and_removes_animation() -> None:
     assert plan.degradation == (EmberDegradation.LOW_POWER,)
 
 
-def test_fair_thermal_pressure_slows_and_clamps_the_breathe() -> None:
+
+def test_fair_thermal_pressure_slows_and_clamps_the_breathe__and_2_more() -> None:
+    # --- scenario: fair_thermal_pressure_slows_and_clamps_the_breathe
     plan = plan_turn_length_ember(elapsed_seconds=3_600, thermal=ThermalState.FAIR)
 
     assert plan.visible is True
@@ -151,8 +147,7 @@ def test_fair_thermal_pressure_slows_and_clamps_the_breathe() -> None:
     assert plan.breathe_period_seconds == FAIR_THERMAL_BREATHE_PERIOD_SECONDS
     assert plan.degradation == (EmberDegradation.THERMAL_FAIR,)
 
-
-def test_serious_thermal_pressure_keeps_a_dim_static_age_signal() -> None:
+    # --- scenario: serious_thermal_pressure_keeps_a_dim_static_age_signal
     plan = plan_turn_length_ember(elapsed_seconds=3_600, thermal="SERIOUS")
 
     assert plan.visible is True
@@ -162,8 +157,7 @@ def test_serious_thermal_pressure_keeps_a_dim_static_age_signal() -> None:
     assert plan.breathe_period_seconds is None
     assert plan.degradation == (EmberDegradation.THERMAL_SERIOUS,)
 
-
-def test_critical_thermal_pressure_suppresses_all_light_output() -> None:
+    # --- scenario: critical_thermal_pressure_suppresses_all_light_output
     plan = plan_turn_length_ember(elapsed_seconds=3_600, thermal="critical")
 
     assert plan.visible is False
@@ -176,7 +170,9 @@ def test_critical_thermal_pressure_suppresses_all_light_output() -> None:
     assert "critical thermal pressure" in plan.accessibility_text
 
 
-def test_combined_constraints_have_stable_reasons_and_strictest_output() -> None:
+
+def test_combined_constraints_have_stable_reasons_and_strictest_output__and_2_more() -> None:
+    # --- scenario: combined_constraints_have_stable_reasons_and_strictest_output
     plan = plan_turn_length_ember(
         elapsed_seconds=3_600,
         reduce_motion=True,
@@ -194,55 +190,48 @@ def test_combined_constraints_have_stable_reasons_and_strictest_output() -> None
         EmberDegradation.THERMAL_SERIOUS,
     )
 
-
-@pytest.mark.parametrize(
-    ("kwargs", "reason"),
-    [
+    # --- scenario: inactive_or_hidden_surface_returns_zeroed_hidden_plan
+    for kwargs, reason in [
         ({"turn_active": False}, "no turn is active"),
         ({"surface_visible": False}, "surface is not visible"),
-    ],
-)
-def test_inactive_or_hidden_surface_returns_zeroed_hidden_plan(kwargs, reason) -> None:
-    plan = plan_turn_length_ember(elapsed_seconds=300, **kwargs)
+    ]:
+        plan = plan_turn_length_ember(elapsed_seconds=300, **kwargs)
 
-    assert plan.visible is False
-    assert plan.bucket is TurnAgeBucket.TWO_TO_TEN_MINUTES
-    assert plan.saturation == 0.0
-    assert plan.luminance == 0.0
-    assert plan.motion is EmberMotion.HIDDEN
-    assert plan.breathe_period_seconds is None
-    assert reason in plan.accessibility_text
-    assert SEMANTIC_DISCLOSURE in plan.accessibility_text
+        assert plan.visible is False
+        assert plan.bucket is TurnAgeBucket.TWO_TO_TEN_MINUTES
+        assert plan.saturation == 0.0
+        assert plan.luminance == 0.0
+        assert plan.motion is EmberMotion.HIDDEN
+        assert plan.breathe_period_seconds is None
+        assert reason in plan.accessibility_text
+        assert SEMANTIC_DISCLOSURE in plan.accessibility_text
 
-
-def test_plans_are_immutable() -> None:
+    # --- scenario: plans_are_immutable
     plan = plan_turn_length_ember(elapsed_seconds=0)
 
     with pytest.raises(FrozenInstanceError):
         plan.luminance = 1.0  # type: ignore[misc]
 
 
-@pytest.mark.parametrize("value", [None, True, "1", -1, float("nan"), float("inf")])
-def test_elapsed_seconds_refuses_non_finite_or_non_numeric_values(value) -> None:
-    with pytest.raises(TurnLengthEmberError):
-        plan_turn_length_ember(elapsed_seconds=value)
 
+def test_elapsed_seconds_refuses_non_finite_or_non_numeric_values__and_2_more() -> None:
+    # --- scenario: elapsed_seconds_refuses_non_finite_or_non_numeric_values
+    for value in [None, True, "1", -1, float("nan"), float("inf")]:
+        with pytest.raises(TurnLengthEmberError):
+            plan_turn_length_ember(elapsed_seconds=value)
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
+    # --- scenario: boolean_inputs_are_strict
+    for field, value in [
         ("turn_active", 1),
         ("surface_visible", "yes"),
         ("reduce_motion", None),
         ("low_power", 0),
-    ],
-)
-def test_boolean_inputs_are_strict(field, value) -> None:
-    with pytest.raises(TurnLengthEmberError, match=field):
-        plan_turn_length_ember(elapsed_seconds=0, **{field: value})
+    ]:
+        with pytest.raises(TurnLengthEmberError, match=field):
+            plan_turn_length_ember(elapsed_seconds=0, **{field: value})
 
+    # --- scenario: thermal_input_is_bounded
+    for thermal in [None, 0, "warm", ""]:
+        with pytest.raises(TurnLengthEmberError, match="thermal"):
+            plan_turn_length_ember(elapsed_seconds=0, thermal=thermal)
 
-@pytest.mark.parametrize("thermal", [None, 0, "warm", ""])
-def test_thermal_input_is_bounded(thermal) -> None:
-    with pytest.raises(TurnLengthEmberError, match="thermal"):
-        plan_turn_length_ember(elapsed_seconds=0, thermal=thermal)

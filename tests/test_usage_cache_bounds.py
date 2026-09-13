@@ -56,7 +56,8 @@ def _scan(root: Path, cache: Path, *, since_epoch: float) -> usage_stats.UsageTo
     return usage_stats.scan_usage(root, cache, since_epoch=since_epoch)
 
 
-def test_records_outside_the_widest_window_are_not_cached(tmp_path: Path) -> None:
+def test_records_outside_the_widest_window_are_not_cached__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: records_outside_the_widest_window_are_not_cached
     """A 7-day window must not leave 90 days of records resident forever."""
     now = time.time()
     root = tmp_path / "projects"
@@ -83,8 +84,7 @@ def test_records_outside_the_widest_window_are_not_cached(tmp_path: Path) -> Non
         "a record 60 days old was retained for a 7-day window"
     )
 
-
-def test_widening_the_window_rescans_instead_of_undercounting(tmp_path: Path) -> None:
+    # --- scenario: widening_the_window_rescans_instead_of_undercounting
     """The failure mode retention introduces, guarded.
 
     A truncated entry still matches its file on (mtime, size, device, inode).
@@ -113,8 +113,7 @@ def test_widening_the_window_rescans_instead_of_undercounting(tmp_path: Path) ->
         "widening the window returned a truncated cache entry as complete"
     )
 
-
-def test_unbounded_window_still_retains_everything(tmp_path: Path) -> None:
+    # --- scenario: unbounded_window_still_retains_everything
     """since_epoch=0 means 'no window'; retention must not silently apply."""
     now = time.time()
     root = tmp_path / "projects"
@@ -139,9 +138,9 @@ def test_unbounded_window_still_retains_everything(tmp_path: Path) -> None:
     assert len(cached) == 2, "an unbounded scan must cache every record"
 
 
-def test_cache_write_respects_the_byte_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+
+def test_cache_write_respects_the_byte_budget__and_1_more(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: cache_write_respects_the_byte_budget
     """The budget binds even when every record is inside the window."""
     now = time.time()
     root = tmp_path / "projects"
@@ -165,10 +164,8 @@ def test_cache_write_respects_the_byte_budget(
     assert len(payload["files"]) < 6, "the byte budget never bound"
     assert cache.stat().st_size < 40_000, "cache far exceeded its budget"
 
-
-def test_oversized_cache_is_refused_not_parsed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+    # --- scenario: oversized_cache_is_refused_not_parsed
+    monkeypatch.undo()
     """A cache written by any other version must degrade to a cold scan."""
     now = time.time()
     root = tmp_path / "projects"
@@ -181,6 +178,7 @@ def test_oversized_cache_is_refused_not_parsed(
     totals = _scan(root, cache, since_epoch=now - 7 * DAY)
 
     assert totals.records, "an oversized cache must not break the scan"
+
 
 
 def test_dedupe_digest_is_truncated(tmp_path: Path) -> None:
@@ -287,7 +285,8 @@ def test_a_spent_budget_still_remembers_the_files_that_cost_nothing(
     assert len(remembered) == 7, "the byte budget never bound at all"
 
 
-def test_the_file_cap_does_not_bind_before_the_byte_budget(tmp_path: Path) -> None:
+def test_the_file_cap_does_not_bind_before_the_byte_budget__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: the_file_cap_does_not_bind_before_the_byte_budget
     """A real corpus is 5,605 transcripts; the cap used to be 4,096."""
     assert usage_stats.USAGE_CACHE_MAX_FILES >= 8192
     assert (
@@ -295,8 +294,7 @@ def test_the_file_cap_does_not_bind_before_the_byte_budget(tmp_path: Path) -> No
         < usage_stats.USAGE_CACHE_MAX_BYTES
     ), "remembering an out-of-window file must stay affordable at the cap"
 
-
-def test_a_remembered_empty_entry_is_served_from_cache(tmp_path: Path) -> None:
+    # --- scenario: a_remembered_empty_entry_is_served_from_cache
     """Prove the read is actually skipped, not merely that the entry exists."""
     now = time.time()
     root = tmp_path / "projects"
@@ -315,6 +313,7 @@ def test_a_remembered_empty_entry_is_served_from_cache(tmp_path: Path) -> None:
     assert second.source_coverage["claude"].cache_hits == 2, (
         "the out-of-window file was re-read instead of served from cache"
     )
+
 
 
 def test_year_of_positive_files_does_not_repeat_reads_past_the_view_cache_budget(

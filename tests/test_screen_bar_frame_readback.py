@@ -42,7 +42,8 @@ class _ClampingWindow:
         self._frame = _Rect((x, y), (min(width, self._max_width), height))
 
 
-def test_a_clamped_frame_is_read_back_not_assumed() -> None:
+def test_a_clamped_frame_is_read_back_not_assumed__and_1_more() -> None:
+    # --- scenario: a_clamped_frame_is_read_back_not_assumed
     window = _ClampingWindow(max_width=800.0)
     window.setFrame_display_(((0.0, 0.0), (1200.0, 40.0)), True)
 
@@ -57,8 +58,7 @@ def test_a_clamped_frame_is_read_back_not_assumed() -> None:
     assert content != requested
     assert content == (800.0, 40.0)
 
-
-def test_the_reposition_path_reads_the_frame_back() -> None:
+    # --- scenario: the_reposition_path_reads_the_frame_back
     """Guards the actual source, so a refactor cannot quietly drop it."""
     from pathlib import Path
 
@@ -71,3 +71,4 @@ def test_the_reposition_path_reads_the_frame_back() -> None:
         "the granted frame is no longer read back after setFrame_display_; "
         "the view will be sized from a frame the window may not have"
     )
+

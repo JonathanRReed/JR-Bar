@@ -23,24 +23,25 @@ def _windows(*levels: int):
     ] + [{"kCGWindowOwnerName": "Finder", "kCGWindowLayer": 0}]
 
 
-def test_sits_one_above_alcoves_highest_window() -> None:
+def test_sits_one_above_alcoves_highest_window__and_2_more() -> None:
+    # --- scenario: sits_one_above_alcoves_highest_window
     level = alcove_window_level(window_lister=lambda: _windows(2147483628, 2147483629))
     assert level == 2147483630
 
-
-def test_follows_alcove_upward_if_it_ever_raises_its_level() -> None:
+    # --- scenario: follows_alcove_upward_if_it_ever_raises_its_level
     """The whole point: a future Alcove must not be able to hide us."""
     level = alcove_window_level(window_lister=lambda: _windows(2147483630))
     assert level > 2147483630
 
-
-def test_never_drops_below_the_previous_behavior() -> None:
+    # --- scenario: never_drops_below_the_previous_behavior
     assert alcove_window_level(window_lister=lambda: _windows(5)) == (
         ABOVE_ALCOVE_WINDOW_LEVEL
     )
 
 
-def test_falls_back_when_alcove_is_absent_or_probing_fails() -> None:
+
+def test_falls_back_when_alcove_is_absent_or_probing_fails__and_2_more() -> None:
+    # --- scenario: falls_back_when_alcove_is_absent_or_probing_fails
     assert alcove_window_level(window_lister=list) == ABOVE_ALCOVE_WINDOW_LEVEL
 
     def _broken():
@@ -48,8 +49,7 @@ def test_falls_back_when_alcove_is_absent_or_probing_fails() -> None:
 
     assert alcove_window_level(window_lister=_broken) == ABOVE_ALCOVE_WINDOW_LEVEL
 
-
-def test_window_probe_coalesces_hot_reads_and_invalidates_on_screen_change() -> None:
+    # --- scenario: window_probe_coalesces_hot_reads_and_invalidates_on_screen_change
     """A presentation tick only schedules discovery; it never performs it inline."""
     calls: list[tuple[float, float]] = []
     queued: list[object] = []
@@ -87,8 +87,7 @@ def test_window_probe_coalesces_hot_reads_and_invalidates_on_screen_change() -> 
     assert second is not None and second.values[1] == 1956.0
     assert calls == [(0.0, 1512.0), (1512.0, 1920.0)]
 
-
-def test_window_probe_refreshes_once_after_ttl_while_serving_cached_geometry() -> None:
+    # --- scenario: window_probe_refreshes_once_after_ttl_while_serving_cached_geometry
     queued: list[object] = []
     calls = 0
 
@@ -118,3 +117,4 @@ def test_window_probe_refreshes_once_after_ttl_while_serving_cached_geometry() -
     refreshed = probe.read(0.0, 1512.0, now=2.1)
     assert refreshed is not None and refreshed.values[0] == 2
     assert calls == 2
+

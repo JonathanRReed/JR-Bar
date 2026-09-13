@@ -63,7 +63,8 @@ def _status(session: str, mode: AgentMode = AgentMode.WORKING, *, provider: str 
 # --- the pure vocabulary ----------------------------------------------------
 
 
-def test_receipt_sentences_are_the_python_apps_own() -> None:
+def test_receipt_sentences_are_the_python_apps_own__and_2_more() -> None:
+    # --- scenario: receipt_sentences_are_the_python_apps_own
     from jrbar import creator_micro_setup_controller
 
     assert receipt_message("keymap_verified") == "Creator Micro 2 stored keymap verified. Reconnect if needed, then check inputs."
@@ -78,8 +79,7 @@ def test_receipt_sentences_are_the_python_apps_own() -> None:
     assert creator_micro_setup_controller._preview_text.__module__ == "jrbar.creator_micro_setup_controller"
     assert set(SETUP_RECEIPT_MESSAGES) >= {"keymap_restored", "already_restored", "recovery_required", "cancelled"}
 
-
-def test_control_labels_input_kinds_and_transports() -> None:
+    # --- scenario: control_labels_input_kinds_and_transports
     assert control_label(0) == "Key 1" and control_label(12) == "Key 13"
     assert control_label(13) == "Encoder 1 input 1" and control_label(19) == "Joystick sector 4"
     assert control_label(20) == "Analog sector 1" and control_label(23) == "Analog sector 4"
@@ -91,8 +91,7 @@ def test_control_labels_input_kinds_and_transports() -> None:
     assert input_kind(21, "axis_sector") == "analog"
     assert transport_word(1) == "usb" and transport_word(2) == "bluetooth" and transport_word(None) is None
 
-
-def test_plan_document_carries_the_review_text_and_controls() -> None:
+    # --- scenario: plan_document_carries_the_review_text_and_controls
     plan = plan_keymap(keymap(), {"layer_index": 1, "profile_index": 0}, profile_index=0, layer_index=0)
     document = plan_document(plan)
     assert document["profile"] == 0 and document["layer"] == 0 and document["include_auxiliary"] is False
@@ -101,6 +100,7 @@ def test_plan_document_carries_the_review_text_and_controls() -> None:
     assert document["preview"].startswith("Selected profile 1, layer 1:\n\nKey 0: KC_A -> KV_OAI_AG00;")
     assert "Dial and joystick mappings stay unchanged." in document["preview"]
     assert document["controls"] == [{"index": index, "label": f"Key {index + 1}"} for index in range(13)]
+
 
 
 def test_keymap_facts_read_the_backup_and_the_recovery_journal(tmp_path: Path) -> None:
@@ -136,7 +136,8 @@ def test_keymap_facts_read_the_backup_and_the_recovery_journal(tmp_path: Path) -
     assert keymap_facts(backup).state == "unknown"
 
 
-def test_slot_colours_follow_the_lighting_layer() -> None:
+def test_slot_colours_follow_the_lighting_layer__and_1_more() -> None:
+    # --- scenario: slot_colours_follow_the_lighting_layer
     assert slot_color("input_required") == "#FF3A00"
     # A failed key is not an ask key. These were the same hex until
     # 2026-09-10; if they ever match again the pad has lost the distinction.
@@ -149,8 +150,7 @@ def test_slot_colours_follow_the_lighting_layer() -> None:
     assert slot_color("active", driven=False) == core_deck.OFF_COLOR
     assert slot_color("active", brightness=0.0) == core_deck.DARK_COLOR
 
-
-def test_deck_document_has_the_shape_the_app_decodes() -> None:
+    # --- scenario: deck_document_has_the_shape_the_app_decodes
     device = device_document(serial=SERIAL, transport="bluetooth", connected=True, approved=True, layer=0, profile=0,
                              receipt={"code": "ready", "message": "Creator Micro 2 ready.", "at": 1.0})
     document = build_deck_document(
@@ -182,6 +182,7 @@ def test_deck_document_has_the_shape_the_app_decodes() -> None:
                                settings={})["rail"] == {"edge": "off"}
 
 
+
 # --- the daemon --------------------------------------------------------------
 
 
@@ -201,7 +202,8 @@ def test_every_deck_command_is_registered() -> None:
     assert DECK_COMMANDS <= set(command_names())
 
 
-def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one(headless) -> None:  # noqa: F811
+def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one__and_1_more(headless) -> None:
+    # --- scenario: state_carries_the_deck_with_no_pad_and_with_an_unapproved_one
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     state = controller._core_build_state()
@@ -226,8 +228,7 @@ def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one(headless)
     doctor = controller._core_dispatch("doctor", {})
     assert doctor["devices"]["creator-micro"] == "connected"
 
-
-def test_board_commands_pin_bank_rail_and_clear(headless) -> None:  # noqa: F811
+    # --- scenario: board_commands_pin_bank_rail_and_clear
     controller = headless
     controller.applicationDidFinishLaunching_(None)
     live = [_status(f"session-{index:02d}") for index in range(15)]
@@ -281,6 +282,7 @@ def test_board_commands_pin_bank_rail_and_clear(headless) -> None:  # noqa: F811
     assert deck["slots"][0]["identity"] == second["identity"] and deck["slots"][0]["pinned"] is True
     assert deck["slots"][0]["session"] is None and deck["slots"][1]["session"] is not None
     assert sum(1 for slot in deck["slots"] if slot["session"]) == 12
+
 
 
 def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: F811
@@ -353,7 +355,8 @@ def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.Mon
     assert (reserved.value.code, reserved.value.message) == ("not_found", "Reserved: session not observed.")
 
 
-def test_physical_inputs_become_events_and_state(headless) -> None:  # noqa: F811
+def test_physical_inputs_become_events_and_state__and_1_more(headless) -> None:
+    # --- scenario: physical_inputs_become_events_and_state
     from jrbar.deck_control_settings import DeckControlSettings
     from jrbar.deck_input import ControlInput
     from jrbar.deck_input_dispatch import DeckInputDispatch
@@ -382,8 +385,7 @@ def test_physical_inputs_become_events_and_state(headless) -> None:  # noqa: F81
     assert delivered == [controller._core_build_state()["deck"]["slots"][0]["identity"]]
     assert controller._deck_action_receipt.code == "navigation_requested"
 
-
-def test_output_receipts_become_deck_receipt_events_and_the_conflict_flag(headless) -> None:  # noqa: F811
+    # --- scenario: output_receipts_become_deck_receipt_events_and_the_conflict_flag
     from jrbar.optional_integration_runtime import CreatorMicroOutputReceipt
 
     controller = headless
@@ -403,6 +405,7 @@ def test_output_receipts_become_deck_receipt_events_and_the_conflict_flag(headle
     controller.applyCreatorMicroOutputReceipt_(CreatorMicroOutputReceipt(False, "reconnecting"))
     assert controller._core_build_state()["deck"]["device"]["conflict"] is None
     assert _events(controller, "deck_receipt")[-1]["message"] == "Creator Micro 2: reconnecting."
+
 
 
 # --- keymap setup against the fake device -----------------------------------
@@ -735,7 +738,8 @@ def _plan_with(changes):
     return KeymapPlan("{}", "{}", "a", "b", tuple(changes), 0, 0)
 
 
-def test_the_inspected_pad_outranks_the_local_journal_about_its_own_keymap():
+def test_the_inspected_pad_outranks_the_local_journal_about_its_own_keymap__and_2_more() -> None:
+    # --- scenario: the_inspected_pad_outranks_the_local_journal_about_its_own_keymap
     """A pad configured by a build that kept no recovery journal reads as
     stock from the files alone, which tells the owner his keys still type
     letters while every one of them is a JR-Bar device input."""
@@ -750,17 +754,16 @@ def test_the_inspected_pad_outranks_the_local_journal_about_its_own_keymap():
     )
     assert observed_keymap_state(untouched, "applied") == "stock"
 
-
-def test_a_half_configured_layer_is_neither_word():
+    # --- scenario: a_half_configured_layer_is_neither_word
     """Guessing here decides whether Apply or Restore is offered."""
     from jrbar.core_deck import observed_keymap_state
 
     assert observed_keymap_state(_plan_with(("Key 4: KC_E -> KV_OAI_AG04; x",)), "stock") == "unknown"
 
-
-def test_an_interrupted_transfer_still_outranks_the_inspection():
+    # --- scenario: an_interrupted_transfer_still_outranks_the_inspection
     """The pad may be holding half a keymap; recovery is the urgent fact."""
     from jrbar.core_deck import observed_keymap_state
 
     assert observed_keymap_state(_plan_with(()), "recovering") == "recovering"
     assert observed_keymap_state(None, "stock") == "stock"
+

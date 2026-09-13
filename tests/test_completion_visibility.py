@@ -52,7 +52,8 @@ def _status(
     )
 
 
-def test_clearable_completions_current_rows_shadow_stale_duplicates() -> None:
+def test_clearable_completions_current_rows_shadow_stale_duplicates__and_2_more() -> None:
+    # --- scenario: clearable_completions_current_rows_shadow_stale_duplicates
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     current_completion = _status(
         "claude:session:current",
@@ -81,8 +82,7 @@ def test_clearable_completions_current_rows_shadow_stale_duplicates() -> None:
 
     assert selected == (current_completion,)
 
-
-def test_clearable_completions_preserve_exclusions_and_newest_first_order() -> None:
+    # --- scenario: clearable_completions_preserve_exclusions_and_newest_first_order
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     latest_b = _status("claude:session:b", updated_at=now - timedelta(seconds=5))
     latest_a = _status("claude:session:a", updated_at=now - timedelta(seconds=5))
@@ -114,8 +114,7 @@ def test_clearable_completions_preserve_exclusions_and_newest_first_order() -> N
         include_subagents=True,
     ) == (subagent,)
 
-
-def test_clearable_completions_keep_same_agent_from_distinct_sources() -> None:
+    # --- scenario: clearable_completions_keep_same_agent_from_distinct_sources
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     first = _status(
         "claude:session:shared",
@@ -138,7 +137,9 @@ def test_clearable_completions_keep_same_agent_from_distinct_sources() -> None:
     assert selected == (first, second)
 
 
-def test_unseen_completions_apply_every_acknowledgement_exclusion() -> None:
+
+def test_unseen_completions_apply_every_acknowledgement_exclusion__and_2_more() -> None:
+    # --- scenario: unseen_completions_apply_every_acknowledgement_exclusion
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     eligible = _status("claude:session:eligible", updated_at=now)
     subagent = _status("claude:agent:worker", updated_at=now)
@@ -184,8 +185,7 @@ def test_unseen_completions_apply_every_acknowledgement_exclusion() -> None:
 
     assert selected == (eligible,)
 
-
-def test_unseen_completions_deduplicate_with_current_rows_winning_and_keep_order() -> None:
+    # --- scenario: unseen_completions_deduplicate_with_current_rows_winning_and_keep_order
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     first = _status("claude:session:first", updated_at=now - timedelta(seconds=20))
     second = _status("claude:session:second", updated_at=now - timedelta(seconds=10))
@@ -212,8 +212,7 @@ def test_unseen_completions_deduplicate_with_current_rows_winning_and_keep_order
 
     assert selected == (first, second, stale_only)
 
-
-def test_unseen_completion_becomes_eligible_after_attended_window() -> None:
+    # --- scenario: unseen_completion_becomes_eligible_after_attended_window
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     completion = _status("claude:session:done", updated_at=now)
 
@@ -232,7 +231,9 @@ def test_unseen_completion_becomes_eligible_after_attended_window() -> None:
     assert selected == (completion,)
 
 
-def test_unseen_completion_receipts_are_exact_to_event_time_and_source() -> None:
+
+def test_unseen_completion_receipts_are_exact_to_event_time_and_source__and_2_more() -> None:
+    # --- scenario: unseen_completion_receipts_are_exact_to_event_time_and_source
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     agent_id = "claude:session:reused"
     earlier = now - timedelta(minutes=1)
@@ -274,8 +275,7 @@ def test_unseen_completion_receipts_are_exact_to_event_time_and_source() -> None
 
     assert selected == (current,)
 
-
-def test_unseen_completions_keep_same_agent_from_distinct_sources() -> None:
+    # --- scenario: unseen_completions_keep_same_agent_from_distinct_sources
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     first = _status(
         "claude:session:shared",
@@ -302,8 +302,7 @@ def test_unseen_completions_keep_same_agent_from_distinct_sources() -> None:
 
     assert selected == (first, second)
 
-
-def test_unseen_completion_without_exact_work_key_cannot_be_receipt_suppressed() -> None:
+    # --- scenario: unseen_completion_without_exact_work_key_cannot_be_receipt_suppressed
     now = datetime(2026, 8, 29, 12, 0, tzinfo=timezone.utc)
     unkeyed = _status(
         "claude:session:unkeyed",
@@ -335,6 +334,7 @@ def test_unseen_completion_without_exact_work_key_cannot_be_receipt_suppressed()
     )
 
     assert selected == (unkeyed,)
+
 
 
 def test_seen_id_plan_prioritizes_sorted_visible_completions_then_retained_ids() -> None:
@@ -402,7 +402,8 @@ def _row(
 NOW = 1_789_000_000.0
 
 
-def test_a_live_session_stays_listed_and_a_quiet_one_drops_out_after_ten_minutes() -> None:
+def test_a_live_session_stays_listed_and_a_quiet_one_drops_out_after_ten_minutes__and_2_more() -> None:
+    # --- scenario: a_live_session_stays_listed_and_a_quiet_one_drops_out_after_ten_minutes
     working = _row("claude:session:working", updated_at=NOW - 30.0)
     waiting = _row("claude:session:waiting", updated_at=NOW - 300.0)
     just_quiet = _row("claude:session:quiet", lifecycle="stale", stale=True, updated_at=NOW - 9 * 60.0)
@@ -415,8 +416,7 @@ def test_a_live_session_stays_listed_and_a_quiet_one_drops_out_after_ten_minutes
     assert session_visibility(long_quiet, now=NOW) == HIDDEN
     assert session_visibility(ancient, now=NOW) == HIDDEN
 
-
-def test_a_completion_is_listed_for_twenty_minutes_and_then_only_in_history() -> None:
+    # --- scenario: a_completion_is_listed_for_twenty_minutes_and_then_only_in_history
     fresh = _row("claude:session:fresh", lifecycle="completed", stale=True, updated_at=NOW - 3.5 * 60.0)
     edge = _row("claude:session:edge", lifecycle="completed", stale=True, updated_at=NOW - 18 * 60.0)
     aged = _row("claude:session:aged", lifecycle="completed", stale=True, updated_at=NOW - 41 * 60.0)
@@ -435,8 +435,7 @@ def test_a_completion_is_listed_for_twenty_minutes_and_then_only_in_history() ->
         == HIDDEN
     )
 
-
-def test_the_twenty_minute_drop_out_needs_only_a_test_clock() -> None:
+    # --- scenario: the_twenty_minute_drop_out_needs_only_a_test_clock
     """No waiting: the windows are arguments, so `now` does the ageing."""
     row = _row("claude:session:one", lifecycle="completed", stale=True, updated_at=NOW)
     assert session_visibility(row, now=NOW + 19 * 60.0) == VISIBLE_COMPLETION
@@ -446,7 +445,9 @@ def test_the_twenty_minute_drop_out_needs_only_a_test_clock() -> None:
     assert session_visibility(live, now=NOW + 11 * 60.0) == HIDDEN
 
 
-def test_acknowledgement_hides_a_row_until_that_session_speaks_again() -> None:
+
+def test_acknowledgement_hides_a_row_until_that_session_speaks_again__and_2_more() -> None:
+    # --- scenario: acknowledgement_hides_a_row_until_that_session_speaks_again
     finished_at = NOW - 120.0
     row = _row("claude:session:done", lifecycle="completed", stale=True, updated_at=finished_at)
     acknowledged = {"claude:session:done": finished_at}
@@ -463,8 +464,7 @@ def test_acknowledgement_hides_a_row_until_that_session_speaks_again() -> None:
         == HIDDEN
     )
 
-
-def test_acknowledged_epoch_by_session_keeps_the_newest_receipt_per_session() -> None:
+    # --- scenario: acknowledged_epoch_by_session_keeps_the_newest_receipt_per_session
     source = SourceKey("claude", "hooks", "local.test", "live_agent_events")
     keys = (
         CompletionPresentationKey(source, "claude:session:a", "Stop", NOW - 500.0),
@@ -476,8 +476,7 @@ def test_acknowledged_epoch_by_session_keeps_the_newest_receipt_per_session() ->
         "claude:session:b": NOW - 900.0,
     }
 
-
-def test_the_list_holds_live_rows_and_hidden_count_names_the_rest() -> None:
+    # --- scenario: the_list_holds_live_rows_and_hidden_count_names_the_rest
     """The owner's screenshot, as data: 15 rows, 7 of them long over."""
     rows = [
         _row("claude:agent:w1", kind="worker", parent="claude:session:live", updated_at=NOW - 12.0),
@@ -504,7 +503,9 @@ def test_the_list_holds_live_rows_and_hidden_count_names_the_rest() -> None:
     assert completions == ("devin:session:done-now", "devin:session:done-18")
 
 
-def test_a_worker_is_never_listed_without_its_parent() -> None:
+
+def test_a_worker_is_never_listed_without_its_parent__and_2_more() -> None:
+    # --- scenario: a_worker_is_never_listed_without_its_parent
     rows = [
         _row("claude:session:gone", lifecycle="stale", stale=True, updated_at=NOW - 40 * 60.0),
         # A worker whose own clock is fresh, under a parent that is long over.
@@ -517,8 +518,7 @@ def test_a_worker_is_never_listed_without_its_parent() -> None:
     # One main hidden; the worker went with it and is not counted again.
     assert hidden == 1
 
-
-def test_clearing_every_listed_row_leaves_only_live_sessions() -> None:
+    # --- scenario: clearing_every_listed_row_leaves_only_live_sessions
     live = _row("claude:session:live", updated_at=NOW - 10.0)
     rows = [
         live,
@@ -539,8 +539,7 @@ def test_clearing_every_listed_row_leaves_only_live_sessions() -> None:
     assert listed == [live]
     assert hidden == 3 and completions == ()
 
-
-def test_an_open_ask_pins_its_session_into_the_list() -> None:
+    # --- scenario: an_open_ask_pins_its_session_into_the_list
     """Visibility may not evict a session the daemon is still asking about.
 
     Live, ``state.asks`` carried an ask for a session ``state.sessions``
@@ -565,6 +564,7 @@ def test_an_open_ask_pins_its_session_into_the_list() -> None:
     )
     # Pinning is exact: another session's ask does not rescue this row.
     assert session_visibility(ancient, now=NOW, pinned_ids=("claude:session:other",)) == HIDDEN
+
 
 
 def test_pinning_carries_a_worker_and_its_parent_together() -> None:

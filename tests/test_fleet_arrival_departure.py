@@ -84,7 +84,8 @@ def _settle_transition(
     )
 
 
-def test_first_trusted_observation_establishes_a_silent_baseline() -> None:
+def test_first_trusted_observation_establishes_a_silent_baseline__and_2_more() -> None:
+    # --- scenario: first_trusted_observation_establishes_a_silent_baseline
     decision = observe_fleet_arrival_departure(
         _observation(
             RemoteMachineLiveness.ONLINE,
@@ -101,8 +102,7 @@ def test_first_trusted_observation_establishes_a_silent_baseline() -> None:
     assert decision.state.stable_liveness is RemoteMachineLiveness.ONLINE
     assert decision.state.stable_liveness_identity == "episode:already-online"
 
-
-def test_confirmed_departure_yields_one_quiet_finite_endpoint_wink() -> None:
+    # --- scenario: confirmed_departure_yields_one_quiet_finite_endpoint_wink
     decision = _settle_transition(
         _baseline(),
         RemoteMachineLiveness.OFFLINE,
@@ -128,8 +128,7 @@ def test_confirmed_departure_yields_one_quiet_finite_endpoint_wink() -> None:
     assert decision.state.stable_liveness is RemoteMachineLiveness.OFFLINE
     assert decision.state.candidate_liveness is None
 
-
-def test_confirmed_arrival_uses_the_arrival_endpoint_and_exact_episode() -> None:
+    # --- scenario: confirmed_arrival_uses_the_arrival_endpoint_and_exact_episode
     decision = _settle_transition(
         _baseline(
             RemoteMachineLiveness.OFFLINE,
@@ -149,7 +148,9 @@ def test_confirmed_arrival_uses_the_arrival_endpoint_and_exact_episode() -> None
     assert decision.state.stable_liveness_identity == "episode:online-22"
 
 
-def test_connection_flapping_cancels_candidates_without_any_cue() -> None:
+
+def test_connection_flapping_cancels_candidates_without_any_cue__and_2_more() -> None:
+    # --- scenario: connection_flapping_cancels_candidates_without_any_cue
     state = _baseline()
 
     offline = observe_fleet_arrival_departure(
@@ -180,8 +181,7 @@ def test_connection_flapping_cancels_candidates_without_any_cue() -> None:
     assert online_again.state is not None
     assert online_again.state.last_cue_identity is None
 
-
-def test_changed_episode_identity_restarts_settlement_from_zero() -> None:
+    # --- scenario: changed_episode_identity_restarts_settlement_from_zero
     state = _baseline()
     first = observe_fleet_arrival_departure(
         _observation(RemoteMachineLiveness.OFFLINE, 1.0, episode="episode:off-a"),
@@ -213,8 +213,7 @@ def test_changed_episode_identity_restarts_settlement_from_zero() -> None:
     assert confirmed.cue is not None
     assert confirmed.cue.identity.liveness_identity == "episode:off-b"
 
-
-def test_post_cue_hold_suppresses_churn_without_freezing_liveness_truth() -> None:
+    # --- scenario: post_cue_hold_suppresses_churn_without_freezing_liveness_truth
     departed = _settle_transition(
         _baseline(),
         RemoteMachineLiveness.OFFLINE,
@@ -252,9 +251,10 @@ def test_post_cue_hold_suppresses_churn_without_freezing_liveness_truth() -> Non
     assert later_departure.cue.identity.liveness_identity == "episode:off-later"
 
 
-@pytest.mark.parametrize(
-    ("inputs", "reason"),
-    (
+
+def test_presentation_policy_withholds_courtesy_but_commits_confirmed_truth__and_2_more() -> None:
+    # --- scenario: presentation_policy_withholds_courtesy_but_commits_confirmed_truth
+    for inputs, reason in (
         (
             {"dnd_display_admission": DisplayAdmission.NONE},
             FleetCueSuppressionReason.DND,
@@ -275,33 +275,27 @@ def test_post_cue_hold_suppresses_churn_without_freezing_liveness_truth() -> Non
             {"finite_cue_available": False},
             FleetCueSuppressionReason.FINITE_CUE_UNAVAILABLE,
         ),
-    ),
-)
-def test_presentation_policy_withholds_courtesy_but_commits_confirmed_truth(
-    inputs: dict[str, object],
-    reason: FleetCueSuppressionReason,
-) -> None:
-    decision = _settle_transition(
-        _baseline(),
-        RemoteMachineLiveness.OFFLINE,
-        episode="episode:policy-offline",
-        started_at=1.0,
-        confirmed_at=6.0,
-        **inputs,
-    )
+    ):
+        decision = _settle_transition(
+            _baseline(),
+            RemoteMachineLiveness.OFFLINE,
+            episode="episode:policy-offline",
+            started_at=1.0,
+            confirmed_at=6.0,
+            **inputs,
+        )
 
-    assert decision.cue is not None
-    assert decision.cue.disposition is FleetCueDisposition.SUPPRESS
-    assert decision.cue.suppression_reason is reason
-    assert decision.cue.duration_ms == 0
-    assert decision.cue.passes == 0
-    assert decision.cue.loops == 0
-    assert decision.state is not None
-    assert decision.state.stable_liveness is RemoteMachineLiveness.OFFLINE
-    assert decision.state.last_cue_identity is None
+        assert decision.cue is not None
+        assert decision.cue.disposition is FleetCueDisposition.SUPPRESS
+        assert decision.cue.suppression_reason is reason
+        assert decision.cue.duration_ms == 0
+        assert decision.cue.passes == 0
+        assert decision.cue.loops == 0
+        assert decision.state is not None
+        assert decision.state.stable_liveness is RemoteMachineLiveness.OFFLINE
+        assert decision.state.last_cue_identity is None
 
-
-def test_reduce_motion_substitutes_one_finite_static_endpoint_highlight() -> None:
+    # --- scenario: reduce_motion_substitutes_one_finite_static_endpoint_highlight
     decision = _settle_transition(
         _baseline(RemoteMachineLiveness.OFFLINE),
         RemoteMachineLiveness.ONLINE,
@@ -319,8 +313,7 @@ def test_reduce_motion_substitutes_one_finite_static_endpoint_highlight() -> Non
     assert decision.cue.returns_to_baseline is True
     assert decision.cue.animated is False
 
-
-def test_accessibility_contract_is_content_free_and_does_not_expose_identities() -> None:
+    # --- scenario: accessibility_contract_is_content_free_and_does_not_expose_identities
     decision = _settle_transition(
         _baseline(),
         RemoteMachineLiveness.OFFLINE,
@@ -341,7 +334,9 @@ def test_accessibility_contract_is_content_free_and_does_not_expose_identities()
     assert "one quiet endpoint cue" in accessibility.announcement.lower()
 
 
-def test_untrusted_mismatched_and_stale_observations_never_mutate_state() -> None:
+
+def test_untrusted_mismatched_and_stale_observations_never_mutate_state__and_2_more() -> None:
+    # --- scenario: untrusted_mismatched_and_stale_observations_never_mutate_state
     state = _baseline(observed_at=10.0)
 
     untrusted = observe_fleet_arrival_departure(
@@ -379,8 +374,7 @@ def test_untrusted_mismatched_and_stale_observations_never_mutate_state() -> Non
     assert stale.state is state
     assert all(decision.cue is None for decision in (untrusted, mismatch, stale))
 
-
-def test_same_timestamp_only_accepts_an_exact_repeat() -> None:
+    # --- scenario: same_timestamp_only_accepts_an_exact_repeat
     state = _baseline(observed_at=10.0, episode="episode:exact")
 
     exact = observe_fleet_arrival_departure(
@@ -405,27 +399,24 @@ def test_same_timestamp_only_accepts_an_exact_repeat() -> None:
     assert conflict.refusal is FleetObservationRefusal.CONFLICTING_TIMESTAMP
     assert conflict.state is state
 
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    (
+    # --- scenario: settle_and_hold_windows_are_strictly_bounded
+    for field, value in (
         ("join_settle_seconds", 0.0),
         ("join_settle_seconds", MAX_SETTLE_SECONDS + 0.1),
         ("departure_settle_seconds", float("inf")),
         ("cue_hold_seconds", 0.0),
         ("cue_hold_seconds", MAX_CUE_HOLD_SECONDS + 0.1),
-    ),
-)
-def test_settle_and_hold_windows_are_strictly_bounded(field: str, value: float) -> None:
-    inputs = {
-        "join_settle_seconds": DEFAULT_JOIN_SETTLE_SECONDS,
-        "departure_settle_seconds": DEFAULT_DEPARTURE_SETTLE_SECONDS,
-        "cue_hold_seconds": DEFAULT_CUE_HOLD_SECONDS,
-    }
-    inputs[field] = value
+    ):
+        inputs = {
+            "join_settle_seconds": DEFAULT_JOIN_SETTLE_SECONDS,
+            "departure_settle_seconds": DEFAULT_DEPARTURE_SETTLE_SECONDS,
+            "cue_hold_seconds": DEFAULT_CUE_HOLD_SECONDS,
+        }
+        inputs[field] = value
 
-    with pytest.raises(ValueError, match="window"):
-        FleetArrivalDeparturePolicy(**inputs)
+        with pytest.raises(ValueError, match="window"):
+            FleetArrivalDeparturePolicy(**inputs)
+
 
 
 def test_state_policy_and_decision_are_immutable() -> None:

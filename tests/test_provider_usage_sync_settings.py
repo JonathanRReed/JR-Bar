@@ -14,15 +14,15 @@ from jrbar.provider_usage_sync_settings import (
 )
 
 
-def test_defaults_are_disabled_and_exclude_agent_activity() -> None:
+def test_defaults_are_disabled_and_exclude_agent_activity__and_2_more() -> None:
+    # --- scenario: defaults_are_disabled_and_exclude_agent_activity
     settings = default_provider_sync_settings()
     assert settings.enabled is False
     assert settings.device_id is None
     assert settings.categories == ("quota", "token_usage")
     assert settings.peers == ()
 
-
-def test_peer_configuration_is_immutable_and_secret_is_only_a_keychain_reference() -> None:
+    # --- scenario: peer_configuration_is_immutable_and_secret_is_only_a_keychain_reference
     original = default_provider_sync_settings().with_device_id("mac-mini")
     updated = original.with_peer(
         peer_id="macbook",
@@ -37,15 +37,16 @@ def test_peer_configuration_is_immutable_and_secret_is_only_a_keychain_reference
     assert updated.peers[0].secret_account == "pairing-macbook"
     assert not hasattr(updated.peers[0], "secret")
 
-
-def test_agent_activity_is_an_explicit_opt_in_category() -> None:
+    # --- scenario: agent_activity_is_an_explicit_opt_in_category
     settings = default_provider_sync_settings().with_categories(
         ("quota", "token_usage", "agent_activity")
     )
     assert settings.categories[-1] == "agent_activity"
 
 
-def test_round_trip_preserves_unknown_fields(tmp_path: Path) -> None:
+
+def test_round_trip_preserves_unknown_fields__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: round_trip_preserves_unknown_fields
     target = tmp_path / "sync.json"
     target.write_text(
         json.dumps(
@@ -70,8 +71,7 @@ def test_round_trip_preserves_unknown_fields(tmp_path: Path) -> None:
     assert document["enabled"] is True
     assert document["device_id"] == "mac-mini"
 
-
-def test_future_schema_is_read_only(tmp_path: Path) -> None:
+    # --- scenario: future_schema_is_read_only
     target = tmp_path / "sync.json"
     target.write_text(
         json.dumps(
@@ -89,6 +89,7 @@ def test_future_schema_is_read_only(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("future sync settings were overwritten")
+
 
 
 def test_host_and_remote_path_reject_command_or_batch_injection() -> None:
@@ -113,9 +114,8 @@ def test_host_and_remote_path_reject_command_or_batch_injection() -> None:
             raise AssertionError("unsafe peer configuration accepted")
 
 
-def test_loaded_sync_settings_exposes_source_digest_and_refuses_external_edit(
-    tmp_path: Path,
-) -> None:
+def test_loaded_sync_settings_exposes_source_digest_and_refuses_external_edit__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: loaded_sync_settings_exposes_source_digest_and_refuses_external_edit
     target = tmp_path / "sync.json"
     save_provider_sync_settings(default_provider_sync_settings(), target)
     loaded = load_provider_sync_settings(target)
@@ -129,13 +129,11 @@ def test_loaded_sync_settings_exposes_source_digest_and_refuses_external_edit(
         save_provider_sync_settings(loaded.settings, target, loaded=loaded)
     assert json.loads(target.read_text(encoding="utf-8")) == external
 
-
-def test_loaded_missing_sync_settings_refuses_file_that_appears_before_save(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: loaded_missing_sync_settings_refuses_file_that_appears_before_save
     target = tmp_path / "sync.json"
     loaded = load_provider_sync_settings(target)
     target.write_text('{"owner":"external"}', encoding="utf-8")
 
     with pytest.raises(ProviderSyncSettingsWriteRefusedError):
         save_provider_sync_settings(loaded.settings, target, loaded=loaded)
+

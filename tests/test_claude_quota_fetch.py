@@ -53,14 +53,14 @@ USAGE_PAYLOAD = {
 }
 
 
-def test_no_credential_still_fails_closed() -> None:
+def test_no_credential_still_fails_closed__and_2_more() -> None:
+    # --- scenario: no_credential_still_fails_closed
     """The pre-existing zero-argument contract is preserved."""
     with pytest.raises(ClaudeQuotaUnavailableError) as excinfo:
         fetch_windows()
     assert str(excinfo.value) == claude_quota.CLAUDE_REMOTE_QUOTA_UNSUPPORTED
 
-
-def test_live_read_returns_every_window_including_the_model_subcap() -> None:
+    # --- scenario: live_read_returns_every_window_including_the_model_subcap
     requester = _requester(USAGE_PAYLOAD)
     windows = fetch_windows(access_token="tok", requester=requester)
 
@@ -71,8 +71,7 @@ def test_live_read_returns_every_window_including_the_model_subcap() -> None:
     assert by_label["5-hour"]["utilization"] == pytest.approx(42.5)
     assert by_label["Opus only"]["utilization"] == pytest.approx(88.0)
 
-
-def test_request_presents_the_expected_contract() -> None:
+    # --- scenario: request_presents_the_expected_contract
     requester = _requester(USAGE_PAYLOAD)
     fetch_windows(access_token="tok-123", requester=requester)
 
@@ -85,7 +84,9 @@ def test_request_presents_the_expected_contract() -> None:
     assert headers["user-agent"].startswith("claude-code/")
 
 
-def test_the_usage_read_does_not_ride_urllib() -> None:
+
+def test_the_usage_read_does_not_ride_urllib__and_2_more() -> None:
+    # --- scenario: the_usage_read_does_not_ride_urllib
     """It carries a bearer token: it belongs on the same guarded,
     same-origin transport as the token request, not on the client
     Cloudflare fingerprints."""
@@ -95,25 +96,20 @@ def test_the_usage_read_does_not_ride_urllib() -> None:
     assert "urllib" not in source
     assert "request_via_apple_stack" in source
 
-
-@pytest.mark.parametrize(
-    ("code", "expected"),
-    [
+    # --- scenario: http_failures_map_to_reason_codes
+    for code, expected in [
         (401, claude_quota.CLAUDE_REMOTE_QUOTA_UNAUTHORIZED),
         (429, claude_quota.CLAUDE_REMOTE_QUOTA_RATE_LIMITED),
         (500, claude_quota.CLAUDE_REMOTE_QUOTA_SERVER_ERROR),
-    ],
-)
-def test_http_failures_map_to_reason_codes(code: int, expected: str) -> None:
-    def requester(url, *, method, headers, body=None, timeout):
-        return code, b"boom"
+    ]:
+        def requester(url, *, method, headers, body=None, timeout):
+            return code, b"boom"
 
-    with pytest.raises(ClaudeQuotaUnavailableError) as excinfo:
-        fetch_windows(access_token="tok", requester=requester)
-    assert str(excinfo.value) == expected
+        with pytest.raises(ClaudeQuotaUnavailableError) as excinfo:
+            fetch_windows(access_token="tok", requester=requester)
+        assert str(excinfo.value) == expected
 
-
-def test_network_failure_is_a_code_not_a_traceback() -> None:
+    # --- scenario: network_failure_is_a_code_not_a_traceback
     def requester(url, *, method, headers, body=None, timeout):
         raise OSError("no route to host")
 
@@ -122,7 +118,9 @@ def test_network_failure_is_a_code_not_a_traceback() -> None:
     assert str(excinfo.value) == claude_quota.CLAUDE_REMOTE_QUOTA_NETWORK
 
 
-def test_a_server_body_never_reaches_the_error_text() -> None:
+
+def test_a_server_body_never_reaches_the_error_text__and_2_more() -> None:
+    # --- scenario: a_server_body_never_reaches_the_error_text
     """Error strings surface in the UI and in doctor output."""
     secret_ish = "account_id=acct_0xdeadbeef owner=someone@example.com"
 
@@ -134,16 +132,15 @@ def test_a_server_body_never_reaches_the_error_text() -> None:
     assert "acct_0xdeadbeef" not in str(excinfo.value)
     assert "example.com" not in str(excinfo.value)
 
-
-def test_oversized_response_is_refused() -> None:
+    # --- scenario: oversized_response_is_refused
     def requester(url, *, method, headers, body=None, timeout):
         return 200, b"{" + b"x" * (claude_quota.CLAUDE_USAGE_MAX_BYTES + 10)
 
     with pytest.raises(ClaudeQuotaUnavailableError):
         fetch_windows(access_token="tok", requester=requester)
 
-
-def test_empty_payload_is_reported_not_silently_empty() -> None:
+    # --- scenario: empty_payload_is_reported_not_silently_empty
     with pytest.raises(ClaudeQuotaUnavailableError) as excinfo:
         fetch_windows(access_token="tok", requester=_requester({}))
     assert str(excinfo.value) == claude_quota.CLAUDE_REMOTE_QUOTA_NO_WINDOWS
+

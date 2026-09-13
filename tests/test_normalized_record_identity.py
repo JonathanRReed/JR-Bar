@@ -37,7 +37,8 @@ def _normalized(event_name: str, work_id: str, parent: str | None) -> str:
     )
 
 
-def test_a_normalized_main_record_keys_by_its_session() -> None:
+def test_a_normalized_main_record_keys_by_its_session__and_2_more() -> None:
+    # --- scenario: a_normalized_main_record_keys_by_its_session
     record = parse_log_line(
         "claude", _normalized("pre_tool_use", "session-abc", None)
     )
@@ -46,8 +47,7 @@ def test_a_normalized_main_record_keys_by_its_session() -> None:
     assert record.agent_id is None
     assert record.status_key == "claude:session:session-abc"
 
-
-def test_a_normalized_subagent_record_keys_by_agent_under_its_parent() -> None:
+    # --- scenario: a_normalized_subagent_record_keys_by_agent_under_its_parent
     record = parse_log_line(
         "claude", _normalized("pre_tool_use", "worker-1", "session-abc")
     )
@@ -56,11 +56,11 @@ def test_a_normalized_subagent_record_keys_by_agent_under_its_parent() -> None:
     assert record.session_id == "session-abc"
     assert record.status_key == "claude:agent:worker-1"
 
-
-def test_two_normalized_sessions_never_share_a_status_key() -> None:
+    # --- scenario: two_normalized_sessions_never_share_a_status_key
     first = parse_log_line("claude", _normalized("stop", "session-a", None))
     second = parse_log_line(
         "claude", _normalized("pre_tool_use", "session-b", None)
     )
     assert first is not None and second is not None
     assert first.status_key != second.status_key
+

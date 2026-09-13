@@ -59,7 +59,8 @@ def _pack(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def test_gallery_projects_registry_metadata_in_stable_searchable_rows() -> None:
+def test_gallery_projects_registry_metadata_in_stable_searchable_rows__and_2_more() -> None:
+    # --- scenario: gallery_projects_registry_metadata_in_stable_searchable_rows
     registry = EffectRegistry(
         (
             EffectDefinition(
@@ -87,14 +88,12 @@ def test_gallery_projects_registry_metadata_in_stable_searchable_rows() -> None:
     assert rows[0].reduce_motion_effect_id == "still"
     assert rows[0].energy == "medium"
 
+    # --- scenario: gallery_rejects_invalid_or_unbounded_search_values
+    for query in (None, 3, "x" * 121):
+        with pytest.raises(EffectStudioError):
+            build_gallery_rows(EffectRegistry(), query=query)
 
-@pytest.mark.parametrize("query", (None, 3, "x" * 121))
-def test_gallery_rejects_invalid_or_unbounded_search_values(query: object) -> None:
-    with pytest.raises(EffectStudioError):
-        build_gallery_rows(EffectRegistry(), query=query)
-
-
-def test_gallery_index_projects_pack_license_without_mutable_state() -> None:
+    # --- scenario: gallery_index_projects_pack_license_without_mutable_state
     licensed = _pack(
         license={
             "spdx_id": "MIT",
@@ -118,12 +117,13 @@ def test_gallery_index_projects_pack_license_without_mutable_state() -> None:
         projection.pack_id = "changed"  # type: ignore[misc]
 
 
-def test_gallery_index_rejects_duplicate_pack_ids() -> None:
+
+def test_gallery_index_rejects_duplicate_pack_ids__and_2_more() -> None:
+    # --- scenario: gallery_index_rejects_duplicate_pack_ids
     with pytest.raises(EffectStudioError, match="duplicate gallery pack"):
         build_gallery_index((_pack(), _pack()))
 
-
-def test_surface_simulations_are_side_by_side_and_resolve_reduced_motion() -> None:
+    # --- scenario: surface_simulations_are_side_by_side_and_resolve_reduced_motion
     registry = EffectRegistry(
         (
             EffectDefinition(
@@ -158,8 +158,7 @@ def test_surface_simulations_are_side_by_side_and_resolve_reduced_motion() -> No
     assert cells[1].supported is False
     assert cells[2].supported is True
 
-
-def test_synthetic_timeline_is_bounded_ordered_and_scrubbable() -> None:
+    # --- scenario: synthetic_timeline_is_bounded_ordered_and_scrubbable
     timeline = build_synthetic_timeline(
         (
             SyntheticScenario.ONE_AGENT,
@@ -184,7 +183,9 @@ def test_synthetic_timeline_is_bounded_ordered_and_scrubbable() -> None:
     assert timeline.reduce_motion is True
 
 
-def test_synthetic_timeline_rejects_invalid_values_and_event_overflow() -> None:
+
+def test_synthetic_timeline_rejects_invalid_values_and_event_overflow__and_2_more() -> None:
+    # --- scenario: synthetic_timeline_rejects_invalid_values_and_event_overflow
     with pytest.raises(EffectStudioError):
         build_synthetic_timeline((SyntheticScenario.ONE_AGENT,), paused="yes")
     with pytest.raises(EffectStudioError):
@@ -194,8 +195,7 @@ def test_synthetic_timeline_rejects_invalid_values_and_event_overflow() -> None:
             (SyntheticScenario.ONE_AGENT,) * (MAX_SYNTHETIC_EVENTS + 1)
         )
 
-
-def test_session_action_plans_are_explicit_and_do_not_mutate_preview_session() -> None:
+    # --- scenario: session_action_plans_are_explicit_and_do_not_mutate_preview_session
     committed_colors = ColorSettings.defaults()
     candidate_colors = committed_colors.with_agent_color("claude", "#10A37F")
     session = StudioPreviewSession(committed_colors, candidate_colors)
@@ -229,8 +229,7 @@ def test_session_action_plans_are_explicit_and_do_not_mutate_preview_session() -
     assert session.candidate == candidate_colors
     assert session.previewing is True
 
-
-def test_session_plans_fail_closed_for_missing_effects_or_wrong_session_type() -> None:
+    # --- scenario: session_plans_fail_closed_for_missing_effects_or_wrong_session_type
     registry = EffectRegistry((EffectDefinition("before", "Before", "Before.", "idle"),))
     with pytest.raises(EffectStudioError):
         plan_preview(StudioPreviewSession(ColorSettings.defaults()), "before", "missing", registry)
@@ -238,7 +237,9 @@ def test_session_plans_fail_closed_for_missing_effects_or_wrong_session_type() -
         plan_revert(object(), "before", registry)
 
 
-def test_physical_preview_requires_exact_consent_and_has_bounded_release_plan() -> None:
+
+def test_physical_preview_requires_exact_consent_and_has_bounded_release_plan__and_2_more() -> None:
+    # --- scenario: physical_preview_requires_exact_consent_and_has_bounded_release_plan
     denied = plan_physical_preview(
         "pulse",
         "device-1",
@@ -258,25 +259,17 @@ def test_physical_preview_requires_exact_consent_and_has_bounded_release_plan() 
     assert allowed.status_label == "Previewing, not saved"
     assert allowed.release_triggers == PHYSICAL_PREVIEW_RELEASE_TRIGGERS
 
+    # --- scenario: physical_preview_rejects_ambiguous_consent_or_invalid_duration
+    for consent, duration in ((1, 10.0), (True, 0.0), (True, MAX_PHYSICAL_PREVIEW_SECONDS + 0.1)):
+        with pytest.raises(EffectStudioError):
+            plan_physical_preview(
+                "pulse",
+                "device-1",
+                consent_granted=consent,
+                duration_seconds=duration,
+            )
 
-@pytest.mark.parametrize(
-    ("consent", "duration"),
-    ((1, 10.0), (True, 0.0), (True, MAX_PHYSICAL_PREVIEW_SECONDS + 0.1)),
-)
-def test_physical_preview_rejects_ambiguous_consent_or_invalid_duration(
-    consent: object,
-    duration: float,
-) -> None:
-    with pytest.raises(EffectStudioError):
-        plan_physical_preview(
-            "pulse",
-            "device-1",
-            consent_granted=consent,
-            duration_seconds=duration,
-        )
-
-
-def test_all_assignment_scopes_return_data_only_plans() -> None:
+    # --- scenario: all_assignment_scopes_return_data_only_plans
     targets = {
         AssignmentScope.GLOBAL: None,
         AssignmentScope.SEMANTIC: SemanticFamily.FAILURE.value,
@@ -296,25 +289,20 @@ def test_all_assignment_scopes_return_data_only_plans() -> None:
     assert plans[-1].scene_policy is not None
     assert plans[-1].scene_policy.scene is Scene.NIGHT
 
-@pytest.mark.parametrize(
-    ("scope", "target"),
-    (
+
+def test_assignment_scopes_fail_closed_for_invalid_targets__and_2_more() -> None:
+    # --- scenario: assignment_scopes_fail_closed_for_invalid_targets
+    for scope, target in (
         (AssignmentScope.GLOBAL, "not-global"),
         (AssignmentScope.SEMANTIC, "unknown"),
         (AssignmentScope.PROVIDER, None),
         (AssignmentScope.SCENE, "unknown"),
         ("global", None),
-    ),
-)
-def test_assignment_scopes_fail_closed_for_invalid_targets(
-    scope: object,
-    target: object,
-) -> None:
-    with pytest.raises(EffectStudioError):
-        plan_assignment("pulse", scope, target)
+    ):
+        with pytest.raises(EffectStudioError):
+            plan_assignment("pulse", scope, target)
 
-
-def test_pack_import_and_export_plans_reuse_safe_data_only_pack_contract() -> None:
+    # --- scenario: pack_import_and_export_plans_reuse_safe_data_only_pack_contract
     licensed = _pack(license={"spdx_id": "MIT", "label": "MIT License"})
     import_plan = plan_pack_import(licensed)
     export_plan = plan_pack_export(licensed)
@@ -330,8 +318,7 @@ def test_pack_import_and_export_plans_reuse_safe_data_only_pack_contract() -> No
     assert export_plan.payload.startswith(b'{"accessibility"')
     assert b"\n" not in export_plan.payload
 
-
-def test_pack_import_rejects_registry_collisions_without_mutating_registry() -> None:
+    # --- scenario: pack_import_rejects_registry_collisions_without_mutating_registry
     definition = EffectDefinition(
         "pack:calm-pack:soft-pulse",
         "Existing",
@@ -345,7 +332,9 @@ def test_pack_import_rejects_registry_collisions_without_mutating_registry() -> 
     assert registry.require(definition.identifier) is definition
 
 
-def test_why_effect_projection_is_bounded_content_free_registry_metadata() -> None:
+
+def test_why_effect_projection_is_bounded_content_free_registry_metadata__and_1_more() -> None:
+    # --- scenario: why_effect_projection_is_bounded_content_free_registry_metadata
     projection = project_why_effect(
         "pulse",
         source_age_seconds=12.5,
@@ -374,29 +363,24 @@ def test_why_effect_projection_is_bounded_content_free_registry_metadata() -> No
     with pytest.raises(FrozenInstanceError):
         projection.priority = 1  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    "changes",
-    (
+    # --- scenario: why_effect_projection_fails_closed_for_untyped_or_unbounded_facts
+    for changes in (
         {"source_age_seconds": -1.0},
         {"source_age_seconds": True},
         {"priority": 100},
         {"suppressed_signals": ("notification",)},
         {"policy_decisions": ("route_winner",)},
         {"expires_in_seconds": -1.0},
-    ),
-)
-def test_why_effect_projection_fails_closed_for_untyped_or_unbounded_facts(
-    changes: dict[str, object],
-) -> None:
-    facts: dict[str, object] = {
-        "source_age_seconds": 12.5,
-        "priority": 4,
-        "suppressed_signals": (),
-        "policy_decisions": (),
-        "expires_in_seconds": None,
-    }
-    facts.update(changes)
+    ):
+        facts: dict[str, object] = {
+            "source_age_seconds": 12.5,
+            "priority": 4,
+            "suppressed_signals": (),
+            "policy_decisions": (),
+            "expires_in_seconds": None,
+        }
+        facts.update(changes)
 
-    with pytest.raises(EffectStudioError):
-        project_why_effect("pulse", **facts)
+        with pytest.raises(EffectStudioError):
+            project_why_effect("pulse", **facts)
+

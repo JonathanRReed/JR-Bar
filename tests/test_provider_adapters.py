@@ -230,7 +230,8 @@ class _StringSubclass(str):
     pass
 
 
-def test_minimization_drops_all_private_copy_and_never_traverses_unknown_values() -> None:
+def test_minimization_drops_all_private_copy_and_never_traverses_unknown_values__and_2_more() -> None:
+    # --- scenario: minimization_drops_all_private_copy_and_never_traverses_unknown_values
     """Retaining or reflecting ingress copy would persist secrets outside the hook boundary."""
     sentinels = (
         "sk-private-raw",
@@ -274,8 +275,7 @@ def test_minimization_drops_all_private_copy_and_never_traverses_unknown_values(
     assert normalized.provider_request_id is not None
     assert normalized.provider_request_id.value == "request:safe-01"
 
-
-def test_raw_mapping_subclasses_are_ignored_without_execution() -> None:
+    # --- scenario: raw_mapping_subclasses_are_ignored_without_execution
     """Treating arbitrary mappings as provider data could execute attacker-controlled methods."""
     event = _event(event_name="Stop")
     object.__setattr__(event, "raw", _ExplosiveDict(event.raw))
@@ -286,8 +286,7 @@ def test_raw_mapping_subclasses_are_ignored_without_execution() -> None:
     assert normalized.event_name is ProviderEventName.STOP
     assert normalized.sequence is None
 
-
-def test_official_cursor_stop_hashes_identity_and_discards_workspace_copy() -> None:
+    # --- scenario: official_cursor_stop_hashes_identity_and_discards_workspace_copy
     """Persisting Cursor's conversation or workspace fields would cross the private boundary."""
     normalized, batch = _batch(
         _official_event("cursor", "stop", dict(_OFFICIAL_CURSOR_STOP))
@@ -312,53 +311,41 @@ def test_official_cursor_stop_hashes_identity_and_discards_workspace_copy() -> N
         assert forbidden not in persisted
 
 
-@pytest.mark.parametrize(
-    ("status", "event_name", "lifecycle"),
-    [
+
+def test_cursor_stop_uses_only_documented_typed_status__and_2_more() -> None:
+    # --- scenario: cursor_stop_uses_only_documented_typed_status
+    """A generic stop rule would collapse Cursor errors and aborts into green completion."""
+    for status, event_name, lifecycle in [
         ("completed", "stop", WorkLifecycle.COMPLETED),
         ("error", "stop_failure", WorkLifecycle.FAILED),
         ("aborted", "stop_interrupted", WorkLifecycle.UNKNOWN),
-    ],
-)
-def test_cursor_stop_uses_only_documented_typed_status(
-    status: str,
-    event_name: str,
-    lifecycle: WorkLifecycle,
-) -> None:
-    """A generic stop rule would collapse Cursor errors and aborts into green completion."""
-    payload = {**_OFFICIAL_CURSOR_STOP, "status": status}
-    normalized, batch = _batch(_official_event("cursor", "stop", payload))
+    ]:
+        payload = {**_OFFICIAL_CURSOR_STOP, "status": status}
+        normalized, batch = _batch(_official_event("cursor", "stop", payload))
 
-    assert type(normalized) is NormalizedProviderRecord
-    assert normalized.event_name.value == event_name
-    assert batch.work_facts[0].lifecycle is lifecycle
-    assert batch.request_facts == ()
+        assert type(normalized) is NormalizedProviderRecord
+        assert normalized.event_name.value == event_name
+        assert batch.work_facts[0].lifecycle is lifecycle
+        assert batch.request_facts == ()
 
-
-@pytest.mark.parametrize(
-    "conversation_id",
-    [
+    # --- scenario: cursor_rejects_nonopaque_official_conversation_identity
+    """Hashing malformed or credential-shaped input would launder it into durable identity."""
+    for conversation_id in [
         "sk-live-private-token",
         "/Users/private-company/project",
         "conversation\nid",
         "c" * 129,
         17,
-    ],
-)
-def test_cursor_rejects_nonopaque_official_conversation_identity(
-    conversation_id: object,
-) -> None:
-    """Hashing malformed or credential-shaped input would launder it into durable identity."""
-    payload = {**_OFFICIAL_CURSOR_STOP, "conversation_id": conversation_id}
-    normalized, batch = _batch(_official_event("cursor", "stop", payload))
+    ]:
+        payload = {**_OFFICIAL_CURSOR_STOP, "conversation_id": conversation_id}
+        normalized, batch = _batch(_official_event("cursor", "stop", payload))
 
-    assert type(normalized) is InertProviderRecord
-    assert normalized.diagnostic.identifier.value == "invalid_provider_identity"
-    assert batch.work_facts == ()
-    assert batch.request_facts == ()
+        assert type(normalized) is InertProviderRecord
+        assert normalized.diagnostic.identifier.value == "invalid_provider_identity"
+        assert batch.work_facts == ()
+        assert batch.request_facts == ()
 
-
-def test_cursor_rejects_ambiguous_identity_fields() -> None:
+    # --- scenario: cursor_rejects_ambiguous_identity_fields
     """Competing identity fields must not let input order choose the persisted work key."""
     payload = {
         **_OFFICIAL_CURSOR_STOP,
@@ -371,7 +358,9 @@ def test_cursor_rejects_ambiguous_identity_fields() -> None:
     assert batch.work_facts == ()
 
 
-def test_cursor_accepts_documented_session_alias_only_when_it_matches() -> None:
+
+def test_cursor_accepts_documented_session_alias_only_when_it_matches__and_2_more() -> None:
+    # --- scenario: cursor_accepts_documented_session_alias_only_when_it_matches
     """Cursor documents session_id as the conversation ID on sessionStart."""
     conversation_id = _OFFICIAL_CURSOR_STOP["conversation_id"]
     payload = {
@@ -391,10 +380,9 @@ def test_cursor_accepts_documented_session_alias_only_when_it_matches() -> None:
         "27ce7b1041ec353270cba707d3b4a7128b13160e7097b1b35aba6b61bace5a14"
     )
 
-
-@pytest.mark.parametrize(
-    ("outcome", "event_name", "lifecycle"),
-    [
+    # --- scenario: official_hermes_turn_outcomes_stay_distinct
+    """Hermes turn outcome booleans, not event-name heuristics, own terminal semantics."""
+    for outcome, event_name, lifecycle in [
         (
             {"completed": True, "failed": False, "interrupted": False},
             "stop",
@@ -415,34 +403,26 @@ def test_cursor_accepts_documented_session_alias_only_when_it_matches() -> None:
             "stop_incomplete",
             WorkLifecycle.UNKNOWN,
         ),
-    ],
-)
-def test_official_hermes_turn_outcomes_stay_distinct(
-    outcome: dict[str, bool],
-    event_name: str,
-    lifecycle: WorkLifecycle,
-) -> None:
-    """Hermes turn outcome booleans, not event-name heuristics, own terminal semantics."""
-    payload = dict(_OFFICIAL_HERMES_TURN_END)
-    payload["extra"] = {**_OFFICIAL_HERMES_TURN_END["extra"], **outcome}
-    normalized, batch = _batch(
-        _official_event("hermes", "on_session_end", payload)
-    )
+    ]:
+        payload = dict(_OFFICIAL_HERMES_TURN_END)
+        payload["extra"] = {**_OFFICIAL_HERMES_TURN_END["extra"], **outcome}
+        normalized, batch = _batch(
+            _official_event("hermes", "on_session_end", payload)
+        )
 
-    assert type(normalized) is NormalizedProviderRecord
-    assert normalized.event_name.value == event_name
-    assert batch.work_facts[0].lifecycle is lifecycle
-    persisted = repr(normalized_provider_record_to_payload(normalized))
-    for forbidden in (
-        payload["cwd"],
-        payload["extra"]["task_id"],
-        payload["extra"]["turn_exit_reason"],
-        "extra",
-    ):
-        assert forbidden not in persisted
+        assert type(normalized) is NormalizedProviderRecord
+        assert normalized.event_name.value == event_name
+        assert batch.work_facts[0].lifecycle is lifecycle
+        persisted = repr(normalized_provider_record_to_payload(normalized))
+        for forbidden in (
+            payload["cwd"],
+            payload["extra"]["task_id"],
+            payload["extra"]["turn_exit_reason"],
+            "extra",
+        ):
+            assert forbidden not in persisted
 
-
-def test_hermes_reduced_exit_shape_cannot_claim_completion() -> None:
+    # --- scenario: hermes_reduced_exit_shape_cannot_claim_completion
     """Reduced CLI exit payloads omit outcome truth and must remain unknown."""
     payload = {
         "hook_event_name": "on_session_end",
@@ -462,7 +442,9 @@ def test_hermes_reduced_exit_shape_cannot_claim_completion() -> None:
     assert batch.work_facts[0].lifecycle is WorkLifecycle.UNKNOWN
 
 
-def test_hermes_finalize_and_api_error_preserve_provider_meaning() -> None:
+
+def test_hermes_finalize_and_api_error_preserve_provider_meaning__and_1_more() -> None:
+    # --- scenario: hermes_finalize_and_api_error_preserve_provider_meaning
     """Teardown and a failed provider attempt are neither ordinary completed turns."""
     finalize_payload = {
         "hook_event_name": "on_session_finalize",
@@ -503,8 +485,7 @@ def test_hermes_finalize_and_api_error_preserve_provider_meaning() -> None:
     assert "private provider error copy" not in repr(api_error)
     assert "private request copy" not in repr(api_error_batch)
 
-
-def test_hermes_rejects_ambiguous_outcome_and_nonopaque_identity() -> None:
+    # --- scenario: hermes_rejects_ambiguous_outcome_and_nonopaque_identity
     """Malformed terminal truth and path identity must fail closed without a lifecycle fact."""
     ambiguous = dict(_OFFICIAL_HERMES_TURN_END)
     ambiguous["extra"] = {
@@ -528,6 +509,7 @@ def test_hermes_rejects_ambiguous_outcome_and_nonopaque_identity() -> None:
     assert type(identity_record) is InertProviderRecord
     assert identity_record.diagnostic.identifier.value == "invalid_provider_identity"
     assert identity_batch.work_facts == ()
+
 
 
 # Literal conformance fixtures intentionally do not import the legacy registry.
@@ -625,44 +607,35 @@ _CONFORMANCE = (
 )
 
 
-@pytest.mark.parametrize(
-    ("provider", "native_event", "canonical_event", "lifecycle", "opens_request"),
-    _CONFORMANCE,
-)
-def test_static_provider_event_conformance_is_exact(
-    provider: str,
-    native_event: str,
-    canonical_event: str,
-    lifecycle: WorkLifecycle | None,
-    opens_request: bool,
-) -> None:
+def test_static_provider_event_conformance_is_exact__and_2_more() -> None:
+    # --- scenario: static_provider_event_conformance_is_exact
     """A generic event-name branch could grant unsupported semantics to one provider."""
-    raw = {"request_id": "request:01"} if opens_request else {}
-    normalized, batch = _batch(_event(provider, native_event, raw=raw))
+    for provider, native_event, canonical_event, lifecycle, opens_request in _CONFORMANCE:
+        raw = {"request_id": "request:01"} if opens_request else {}
+        normalized, batch = _batch(_event(provider, native_event, raw=raw))
 
-    assert type(normalized) is NormalizedProviderRecord
-    assert normalized.event_name.value == canonical_event
-    assert normalized.source_key == _source(provider)
-    assert batch.source_key == normalized.source_key
-    assert tuple(fact.lifecycle for fact in batch.work_facts) == (
-        () if lifecycle is None else (lifecycle,)
-    )
-    assert len(batch.request_facts) == int(opens_request)
-    if opens_request:
-        request = batch.request_facts[0]
-        assert request.state is ProviderRequestState.LIVE
-        assert request.request_kind is RequestKind.PERMISSION
-        assert request.key.work_key.source_key == _source(provider)
-    for fact in (*batch.work_facts, *batch.request_facts):
-        fact_source = (
-            fact.key.source_key
-            if hasattr(fact.key, "source_key")
-            else fact.key.work_key.source_key
+        assert type(normalized) is NormalizedProviderRecord
+        assert normalized.event_name.value == canonical_event
+        assert normalized.source_key == _source(provider)
+        assert batch.source_key == normalized.source_key
+        assert tuple(fact.lifecycle for fact in batch.work_facts) == (
+            () if lifecycle is None else (lifecycle,)
         )
-        assert fact_source.source_instance_id == "source:local-01"
+        assert len(batch.request_facts) == int(opens_request)
+        if opens_request:
+            request = batch.request_facts[0]
+            assert request.state is ProviderRequestState.LIVE
+            assert request.request_kind is RequestKind.PERMISSION
+            assert request.key.work_key.source_key == _source(provider)
+        for fact in (*batch.work_facts, *batch.request_facts):
+            fact_source = (
+                fact.key.source_key
+                if hasattr(fact.key, "source_key")
+                else fact.key.work_key.source_key
+            )
+            assert fact_source.source_instance_id == "source:local-01"
 
-
-def test_unknown_event_is_inert_partial_and_text_cannot_classify_it() -> None:
+    # --- scenario: unknown_event_is_inert_partial_and_text_cannot_classify_it
     """Unknown provider copy must not create lifecycle, request, failure, or completion truth."""
     normalized, batch = _batch(
         _event(
@@ -680,8 +653,7 @@ def test_unknown_event_is_inert_partial_and_text_cannot_classify_it() -> None:
     assert batch.source_health is SourceHealth.PARTIAL
     assert batch.source_freshness is SourceFreshness.PARTIAL
 
-
-def test_question_phrases_paths_and_raw_failures_do_not_override_typed_events() -> None:
+    # --- scenario: question_phrases_paths_and_raw_failures_do_not_override_typed_events
     """Message and payload heuristics would reintroduce phantom asks and failures."""
     stop, stop_batch = _batch(
         _event(
@@ -709,21 +681,22 @@ def test_question_phrases_paths_and_raw_failures_do_not_override_typed_events() 
     assert post_batch.request_facts == ()
 
 
-@pytest.mark.parametrize("message", ["permission needed", "done", "complete"])
-def test_notification_text_is_semantically_inert_without_typed_kind(message: str) -> None:
+
+def test_notification_text_is_semantically_inert_without_typed_kind__and_2_more() -> None:
+    # --- scenario: notification_text_is_semantically_inert_without_typed_kind
     """Notification prose is private display copy, not canonical provider truth."""
-    normalized, batch = _batch(
-        _event("claude", "Notification", raw={"message": message}, message=message)
-    )
+    for message in ["permission needed", "done", "complete"]:
+        normalized, batch = _batch(
+            _event("claude", "Notification", raw={"message": message}, message=message)
+        )
 
-    assert type(normalized) is NormalizedProviderRecord
-    assert normalized.notification_kind is None
-    assert batch.work_facts == ()
-    assert batch.request_facts == ()
-    assert batch.source_health is SourceHealth.HEALTHY
+        assert type(normalized) is NormalizedProviderRecord
+        assert normalized.notification_kind is None
+        assert batch.work_facts == ()
+        assert batch.request_facts == ()
+        assert batch.source_health is SourceHealth.HEALTHY
 
-
-def test_unknown_typed_notification_kind_is_inert_partial() -> None:
+    # --- scenario: unknown_typed_notification_kind_is_inert_partial
     """A future typed notification value must stay visible without gaining semantics."""
     normalized, batch = _batch(
         _event(
@@ -739,8 +712,7 @@ def test_unknown_typed_notification_kind_is_inert_partial() -> None:
     assert batch.request_facts == ()
     assert batch.source_health is SourceHealth.PARTIAL
 
-
-def test_allowlisted_typed_notification_requires_exact_request_identity() -> None:
+    # --- scenario: allowlisted_typed_notification_requires_exact_request_identity
     """A typed notification without a request key must not open an unanswerable ask."""
     with_id, with_id_batch = _batch(
         _event(
@@ -769,7 +741,9 @@ def test_allowlisted_typed_notification_requires_exact_request_identity() -> Non
     assert without_id_batch.source_health is SourceHealth.PARTIAL
 
 
-def test_permission_request_without_provider_request_id_creates_no_request() -> None:
+
+def test_permission_request_without_provider_request_id_creates_no_request__and_2_more() -> None:
+    # --- scenario: permission_request_without_provider_request_id_creates_no_request
     """Synthesizing a request identity from work or text would make unsafe actions durable."""
     normalized, batch = _batch(_event("codex", "PermissionRequest"))
 
@@ -782,8 +756,7 @@ def test_permission_request_without_provider_request_id_creates_no_request() -> 
         "missing_request_identity",
     )
 
-
-def test_transcript_fallback_cannot_open_an_actionable_request() -> None:
+    # --- scenario: transcript_fallback_cannot_open_an_actionable_request
     """Fallback observations do not have authority to create an operator action."""
     normalized, batch = _batch(
         _event("codex", "PermissionRequest", raw={"request_id": "request:01"}),
@@ -798,8 +771,7 @@ def test_transcript_fallback_cannot_open_an_actionable_request() -> None:
         "insufficient_request_authority",
     )
 
-
-def test_codex_usage_limit_stop_failure_closes_active_work_without_private_copy() -> None:
+    # --- scenario: codex_usage_limit_stop_failure_closes_active_work_without_private_copy
     source = _source()
     active_record, active_batch = _batch(
         _event("codex", "PreToolUse", epoch=_EPOCH),
@@ -846,7 +818,9 @@ def test_codex_usage_limit_stop_failure_closes_active_work_without_private_copy(
     assert "private-usage-limit-error" not in repr(failure_batch)
 
 
-def test_fallback_completion_cannot_override_newer_direct_active_truth() -> None:
+
+def test_fallback_completion_cannot_override_newer_direct_active_truth__and_2_more() -> None:
+    # --- scenario: fallback_completion_cannot_override_newer_direct_active_truth
     """Authority must outrank arrival time for one exact source-scoped work key."""
     source = _source()
     direct_record, direct_batch = _batch(
@@ -876,8 +850,7 @@ def test_fallback_completion_cannot_override_newer_direct_active_truth() -> None
     assert fallback.state.works[0].lifecycle is WorkLifecycle.ACTIVE
     assert TransitionKind.COMPLETED not in tuple(event.kind for event in fallback.events)
 
-
-def test_source_and_contract_identity_must_match_exactly() -> None:
+    # --- scenario: source_and_contract_identity_must_match_exactly
     """A mismatched source envelope could attribute one provider's event to another source."""
     source = _source("codex", instance="source:expected")
     normalized = minimize_hook_event(
@@ -891,8 +864,7 @@ def test_source_and_contract_identity_must_match_exactly() -> None:
     assert normalized.source_key == source
     assert normalized.diagnostic.identifier.value == "source_identity_mismatch"
 
-
-def test_source_identity_rejects_scalar_subclasses_at_ingress() -> None:
+    # --- scenario: source_identity_rejects_scalar_subclasses_at_ingress
     """A value-equal scalar subclass must not cross the exact source-key boundary."""
     source = SourceKey(
         _StringSubclass("codex"),
@@ -910,7 +882,9 @@ def test_source_identity_rejects_scalar_subclasses_at_ingress() -> None:
         )
 
 
-def test_missing_live_event_capability_keeps_record_inert() -> None:
+
+def test_missing_live_event_capability_keeps_record_inert__and_2_more() -> None:
+    # --- scenario: missing_live_event_capability_keeps_record_inert
     """An identity-only contract must not grant lifecycle observation authority."""
     source = _source()
     contract = negotiate_provider_contract(
@@ -932,8 +906,7 @@ def test_missing_live_event_capability_keeps_record_inert() -> None:
     assert type(normalized) is InertProviderRecord
     assert normalized.diagnostic.identifier.value == "contract_not_observable"
 
-
-def test_normalized_and_inert_record_codecs_are_exact_and_round_trip() -> None:
+    # --- scenario: normalized_and_inert_record_codecs_are_exact_and_round_trip
     """An additive or coercive persistence codec could smuggle private provider payloads."""
     normalized = _normalize(
         _event(
@@ -983,23 +956,21 @@ def test_normalized_and_inert_record_codecs_are_exact_and_round_trip() -> None:
         {**inert_payload, "diagnostic_id": "provider_supplied_copy"}
     ) is None
 
-
-@pytest.mark.parametrize(
-    "poison",
-    [
+    # --- scenario: record_decoder_rejects_nonexact_or_executable_containers
+    """Decoding arbitrary mapping shapes could execute code or accept unknown schemas."""
+    for poison in [
         None,
         [],
         _PoisonMapping(),
         _ExplosiveDict(),
         {"version": {"major": 2, "minor": 0}},
-    ],
-)
-def test_record_decoder_rejects_nonexact_or_executable_containers(poison: object) -> None:
-    """Decoding arbitrary mapping shapes could execute code or accept unknown schemas."""
-    assert normalized_provider_record_from_payload(poison) is None
+    ]:
+        assert normalized_provider_record_from_payload(poison) is None
 
 
-def test_record_decoder_rejects_extra_missing_invalid_and_secret_shaped_fields() -> None:
+
+def test_record_decoder_rejects_extra_missing_invalid_and_secret_shaped_fields__and_2_more() -> None:
+    # --- scenario: record_decoder_rejects_extra_missing_invalid_and_secret_shaped_fields
     """Strict scalar validation must fail closed without retaining invalid persisted copy."""
     record = _normalize(_event("codex", "PreToolUse"))
     assert type(record) is NormalizedProviderRecord
@@ -1024,8 +995,7 @@ def test_record_decoder_rejects_extra_missing_invalid_and_secret_shaped_fields()
     ):
         assert normalized_provider_record_from_payload(payload) is None
 
-
-def test_record_decoder_rejects_cross_provider_event_and_notification_pairs() -> None:
+    # --- scenario: record_decoder_rejects_cross_provider_event_and_notification_pairs
     """A globally known event must not bypass its provider-specific conformance table."""
     record = _normalize(_event("codex", "PreToolUse"))
     assert type(record) is NormalizedProviderRecord
@@ -1044,8 +1014,7 @@ def test_record_decoder_rejects_cross_provider_event_and_notification_pairs() ->
     ):
         assert normalized_provider_record_from_payload(payload) is None
 
-
-def test_reducer_composition_emits_typed_edges_and_ignores_out_of_order_records() -> None:
+    # --- scenario: reducer_composition_emits_typed_edges_and_ignores_out_of_order_records
     """Adapters and the reducer must compose without a second lifecycle interpretation."""
     _, active_batch = _batch(_event("codex", "PreToolUse", epoch=_EPOCH))
     _, request_batch = _batch(
@@ -1087,7 +1056,9 @@ def test_reducer_composition_emits_typed_edges_and_ignores_out_of_order_records(
     assert old.events == ()
 
 
-def test_permission_request_with_tool_call_derives_its_request_identity() -> None:
+
+def test_permission_request_with_tool_call_derives_its_request_identity__and_1_more() -> None:
+    # --- scenario: permission_request_with_tool_call_derives_its_request_identity
     """Codex and Claude Code PermissionRequest hooks name the call, never the request.
 
     The identity is the turn plus the exact tool call (Codex's escalation
@@ -1133,8 +1104,7 @@ def test_permission_request_with_tool_call_derives_its_request_identity() -> Non
     assert len(resolved_batch.request_facts) == 1
     assert resolved_batch.request_facts[0].state is ProviderRequestState.RESOLVED
 
-
-def test_record_level_diagnostics_do_not_read_as_source_loss() -> None:
+    # --- scenario: record_level_diagnostics_do_not_read_as_source_loss
     """A record without a request identity is still a fresh observation.
 
     PARTIAL freshness is what the reducer treats as loss of the source; an
@@ -1148,3 +1118,4 @@ def test_record_level_diagnostics_do_not_read_as_source_loss() -> None:
     assert tuple(item.identifier.value for item in batch.diagnostics) == (
         "missing_request_identity",
     )
+

@@ -49,7 +49,8 @@ def _animation(
     return Animation(name="finite cue", steps=tuple(steps))  # type: ignore[arg-type]
 
 
-def test_one_shot_intro_is_never_repeated() -> None:
+def test_one_shot_intro_is_never_repeated__and_2_more() -> None:
+    # --- scenario: one_shot_intro_is_never_repeated
     animation = _animation(900)
 
     plan = plan_one_shot_intro("completion-intro", animation)
@@ -63,8 +64,7 @@ def test_one_shot_intro_is_never_repeated() -> None:
     assert plan.total_duration_ms == 900
     assert plan.substitution_reason is None
 
-
-def test_intro_and_loop_form_one_bounded_plan() -> None:
+    # --- scenario: intro_and_loop_form_one_bounded_plan
     intro = _animation(300)
     loop = _animation(700, repeat=2)
 
@@ -81,8 +81,7 @@ def test_intro_and_loop_form_one_bounded_plan() -> None:
     assert plan.loop.total_duration_ms == 1400
     assert plan.total_duration_ms == 1700
 
-
-def test_unbounded_firmware_repeat_becomes_a_finite_product_loop() -> None:
+    # --- scenario: unbounded_firmware_repeat_becomes_a_finite_product_loop
     animation = _animation(800, repeat=None)
 
     plan = plan_finite_loop("work-loop", animation)
@@ -101,7 +100,9 @@ def test_unbounded_firmware_repeat_becomes_a_finite_product_loop() -> None:
     assert plan.total_duration_ms == 800 * MAX_FINITE_REPETITIONS
 
 
-def test_explicit_repeat_request_cannot_weaken_the_hard_bound() -> None:
+
+def test_explicit_repeat_request_cannot_weaken_the_hard_bound__and_2_more() -> None:
+    # --- scenario: explicit_repeat_request_cannot_weaken_the_hard_bound
     animation = _animation(600)
 
     plan = plan_finite_loop(
@@ -117,8 +118,7 @@ def test_explicit_repeat_request_cannot_weaken_the_hard_bound() -> None:
     assert isinstance(plan.loop.animation.steps[-1], RepeatStep)
     assert plan.loop.animation.steps[-1].count == MAX_FINITE_REPETITIONS
 
-
-def test_finite_source_repeat_count_is_preserved_when_within_bounds() -> None:
+    # --- scenario: finite_source_repeat_count_is_preserved_when_within_bounds
     animation = _animation(750, repeat=2)
 
     plan = plan_finite_loop("failure-loop", animation)
@@ -128,8 +128,7 @@ def test_finite_source_repeat_count_is_preserved_when_within_bounds() -> None:
     assert plan.loop.repetitions == 2
     assert plan.loop.repetitions_clamped is False
 
-
-def test_short_loop_receives_rest_to_enforce_safe_cadence() -> None:
+    # --- scenario: short_loop_receives_rest_to_enforce_safe_cadence
     animation = _animation(100, repeat=2)
 
     plan = plan_finite_loop("ask-heartbeat", animation)
@@ -151,7 +150,9 @@ def test_short_loop_receives_rest_to_enforce_safe_cadence() -> None:
     assert plan.loop.animation.steps[2].count == 2
 
 
-def test_cycle_at_safety_boundary_is_not_modified() -> None:
+
+def test_cycle_at_safety_boundary_is_not_modified__and_2_more() -> None:
+    # --- scenario: cycle_at_safety_boundary_is_not_modified
     animation = _animation(MIN_SAFE_CYCLE_MS, repeat=2)
 
     plan = plan_finite_loop("boundary-loop", animation)
@@ -161,8 +162,7 @@ def test_cycle_at_safety_boundary_is_not_modified() -> None:
     assert plan.loop.cadence.adjusted is False
     assert plan.loop.cadence.safe is True
 
-
-def test_steps_after_firmware_repeat_are_a_one_shot_tail() -> None:
+    # --- scenario: steps_after_firmware_repeat_are_a_one_shot_tail
     animation = _animation(700, repeat=2, tail_duration_ms=250)
 
     plan = plan_finite_loop("loop-with-tail", animation)
@@ -172,8 +172,7 @@ def test_steps_after_firmware_repeat_are_a_one_shot_tail() -> None:
     assert plan.loop.post_loop_duration_ms == 250
     assert plan.loop.total_duration_ms == 1650
 
-
-def test_duration_budget_can_reduce_repetitions_without_truncating_a_cycle() -> None:
+    # --- scenario: duration_budget_can_reduce_repetitions_without_truncating_a_cycle
     animation = _animation(800, repeat=2, tail_duration_ms=200)
 
     plan = plan_finite_loop(
@@ -189,7 +188,9 @@ def test_duration_budget_can_reduce_repetitions_without_truncating_a_cycle() -> 
     assert plan.total_duration_ms == 1000
 
 
-def test_effect_that_cannot_fit_one_whole_cycle_uses_static_fallback() -> None:
+
+def test_effect_that_cannot_fit_one_whole_cycle_uses_static_fallback__and_2_more() -> None:
+    # --- scenario: effect_that_cannot_fit_one_whole_cycle_uses_static_fallback
     animation = _animation(900, repeat=2, tail_duration_ms=300)
 
     plan = plan_finite_loop(
@@ -206,8 +207,7 @@ def test_effect_that_cannot_fit_one_whole_cycle_uses_static_fallback() -> None:
     assert plan.loop is None
     assert plan.total_duration_ms == 0
 
-
-def test_intro_that_exceeds_duration_budget_uses_static_fallback() -> None:
+    # --- scenario: intro_that_exceeds_duration_budget_uses_static_fallback
     plan = plan_one_shot_intro(
         "oversized-intro",
         _animation(1200),
@@ -217,8 +217,7 @@ def test_intro_that_exceeds_duration_budget_uses_static_fallback() -> None:
     assert plan.decision is FiniteEffectDecision.STATIC_SUBSTITUTE
     assert plan.substitution_reason is StaticSubstitutionReason.DURATION_BUDGET
 
-
-def test_reduce_motion_substitutes_static_before_any_motion_planning() -> None:
+    # --- scenario: reduce_motion_substitutes_static_before_any_motion_planning
     plan = plan_finite_effect(
         "ambient-motion",
         intro_animation=_animation(300),
@@ -238,7 +237,9 @@ def test_reduce_motion_substitutes_static_before_any_motion_planning() -> None:
     assert plan.total_duration_ms == 0
 
 
-def test_zero_duration_motion_fails_closed_to_static() -> None:
+
+def test_zero_duration_motion_fails_closed_to_static__and_2_more() -> None:
+    # --- scenario: zero_duration_motion_fails_closed_to_static
     plan = plan_finite_loop(
         "zero-loop",
         Animation(name="zero", steps=()),
@@ -248,8 +249,7 @@ def test_zero_duration_motion_fails_closed_to_static() -> None:
     assert plan.decision is FiniteEffectDecision.STATIC_SUBSTITUTE
     assert plan.substitution_reason is StaticSubstitutionReason.NO_TIMED_MOTION
 
-
-def test_plans_and_nested_phases_are_immutable() -> None:
+    # --- scenario: plans_and_nested_phases_are_immutable
     plan = plan_finite_effect(
         "immutable",
         intro_animation=_animation(200),
@@ -267,10 +267,8 @@ def test_plans_and_nested_phases_are_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         plan.loop.cadence.inserted_rest_ms = 0  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    ("kwargs", "message"),
-    (
+    # --- scenario: invalid_policy_inputs_are_rejected
+    for kwargs, message in (
         ({}, "an introduction or loop animation is required"),
         ({"intro_animation": _animation(100), "requested_repetitions": 2}, "require a loop animation"),
         ({"reduce_motion": 1}, "reduce motion must be a boolean"),
@@ -284,29 +282,25 @@ def test_plans_and_nested_phases_are_immutable() -> None:
             {"max_total_duration_ms": MAX_FINITE_TOTAL_DURATION_MS + 1},
             "maximum total duration cannot exceed",
         ),
-    ),
-)
-def test_invalid_policy_inputs_are_rejected(
-    kwargs: dict[str, object],
-    message: str,
-) -> None:
-    with pytest.raises(ValueError, match=message):
-        plan_finite_effect("effect", **kwargs)  # type: ignore[arg-type]
+    ):
+        with pytest.raises(ValueError, match=message):
+            plan_finite_effect("effect", **kwargs)  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("value", ("", " padded", "padded ", "x" * 129, 7))
-def test_effect_and_fallback_keys_are_bounded_opaque_text(value: object) -> None:
-    with pytest.raises(ValueError, match="effect key"):
-        plan_finite_effect(value, intro_animation=_animation(100))  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="static fallback key"):
-        plan_finite_effect(
-            "effect",
-            intro_animation=_animation(100),
-            static_fallback_key=value,  # type: ignore[arg-type]
-        )
 
+def test_effect_and_fallback_keys_are_bounded_opaque_text__and_2_more() -> None:
+    # --- scenario: effect_and_fallback_keys_are_bounded_opaque_text
+    for value in ("", " padded", "padded ", "x" * 129, 7):
+        with pytest.raises(ValueError, match="effect key"):
+            plan_finite_effect(value, intro_animation=_animation(100))  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="static fallback key"):
+            plan_finite_effect(
+                "effect",
+                intro_animation=_animation(100),
+                static_fallback_key=value,  # type: ignore[arg-type]
+            )
 
-def test_multiple_source_repeat_markers_are_rejected() -> None:
+    # --- scenario: multiple_source_repeat_markers_are_rejected
     animation = Animation(
         name="invalid",
         steps=(_paint(600), RepeatStep(1), RepeatStep(1)),
@@ -315,24 +309,24 @@ def test_multiple_source_repeat_markers_are_rejected() -> None:
     with pytest.raises(ValueError, match="at most one repeat"):
         plan_finite_loop("invalid-loop", animation)
 
-
-def test_one_shot_intro_rejects_a_source_repeat_marker() -> None:
+    # --- scenario: one_shot_intro_rejects_a_source_repeat_marker
     with pytest.raises(ValueError, match="one-shot introduction"):
         plan_one_shot_intro("invalid-intro", _animation(600, repeat=1))
 
 
-@pytest.mark.parametrize("count", (0, -1, True, 65536))
-def test_invalid_source_repeat_count_is_rejected(count: object) -> None:
-    animation = Animation(
-        name="invalid repeat",
-        steps=(_paint(600), RepeatStep(count)),  # type: ignore[arg-type]
-    )
 
-    with pytest.raises(ValueError, match="invalid repeat count"):
-        plan_finite_loop("invalid-loop", animation)
+def test_invalid_source_repeat_count_is_rejected__and_1_more() -> None:
+    # --- scenario: invalid_source_repeat_count_is_rejected
+    for count in (0, -1, True, 65536):
+        animation = Animation(
+            name="invalid repeat",
+            steps=(_paint(600), RepeatStep(count)),  # type: ignore[arg-type]
+        )
 
+        with pytest.raises(ValueError, match="invalid repeat count"):
+            plan_finite_loop("invalid-loop", animation)
 
-def test_explicit_repetition_override_must_be_a_positive_integer() -> None:
+    # --- scenario: explicit_repetition_override_must_be_a_positive_integer
     animation = _animation(600)
 
     for value in (0, -1, True, 1.5, "2"):
@@ -342,3 +336,4 @@ def test_explicit_repetition_override_must_be_a_positive_integer() -> None:
                 animation,
                 requested_repetitions=value,  # type: ignore[arg-type]
             )
+

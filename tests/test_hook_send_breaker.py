@@ -31,15 +31,15 @@ def test_timeout_is_tight_enough_to_be_invisible() -> None:
     assert HOOK_EVENT_SEND_TIMEOUT_SECONDS <= 0.05
 
 
-def test_ordinary_sends_stop_after_repeated_failure(breaker) -> None:
+def test_ordinary_sends_stop_after_repeated_failure__and_2_more(breaker) -> None:
+    # --- scenario: ordinary_sends_stop_after_repeated_failure
     now = 100.0
     for _ in range(HOOK_BREAKER_TRIP_AFTER):
         assert breaker.should_attempt("PreToolUse", now) is True
         breaker.record(delivered=False, now=now)
     assert breaker.should_attempt("PreToolUse", now) is False
 
-
-def test_terminal_events_are_always_attempted(breaker) -> None:
+    # --- scenario: terminal_events_are_always_attempted
     now = 100.0
     for _ in range(HOOK_BREAKER_TRIP_AFTER * 5):
         breaker.record(delivered=False, now=now)
@@ -48,8 +48,7 @@ def test_terminal_events_are_always_attempted(breaker) -> None:
     # ...while ordinary chatter stays suppressed.
     assert breaker.should_attempt("PostToolUse", now) is False
 
-
-def test_one_success_closes_the_breaker(breaker) -> None:
+    # --- scenario: one_success_closes_the_breaker
     now = 100.0
     for _ in range(HOOK_BREAKER_TRIP_AFTER):
         breaker.record(delivered=False, now=now)
@@ -58,7 +57,9 @@ def test_one_success_closes_the_breaker(breaker) -> None:
     assert breaker.should_attempt("PreToolUse", now) is True
 
 
-def test_suppression_expires_on_its_own(breaker) -> None:
+
+def test_suppression_expires_on_its_own__and_1_more(breaker) -> None:
+    # --- scenario: suppression_expires_on_its_own
     for _ in range(HOOK_BREAKER_TRIP_AFTER):
         breaker.record(delivered=False, now=100.0)
     assert breaker.should_attempt("PreToolUse", 100.0) is False
@@ -70,12 +71,12 @@ def test_suppression_expires_on_its_own(breaker) -> None:
     breaker.sentinel_path().write_text(_json.dumps(data))
     assert breaker.should_attempt("PreToolUse", 100.0) is True
 
-
-def test_dropped_sends_are_counted_not_silent(breaker) -> None:
+    # --- scenario: dropped_sends_are_counted_not_silent
     for _ in range(HOOK_BREAKER_TRIP_AFTER):
         breaker.record(delivered=False, now=100.0)
     breaker.should_attempt("PreToolUse", 100.0)
     assert breaker.suppressed_sends >= 1
+
 
 
 

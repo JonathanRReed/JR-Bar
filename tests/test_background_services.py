@@ -5,7 +5,8 @@ from jrbar.intake_runtime import INTAKE_REASON_UNAVAILABLE, IntakeProbeService
 from jrbar.ledger_runtime import RemoteLedgerPublisher
 
 
-def test_intake_probe_runs_off_caller_and_coalesces_identical_requests() -> None:
+def test_intake_probe_runs_off_caller_and_coalesces_identical_requests__and_2_more() -> None:
+    # --- scenario: intake_probe_runs_off_caller_and_coalesces_identical_requests
     release = threading.Event()
     completed = threading.Event()
     calls = []
@@ -29,8 +30,7 @@ def test_intake_probe_runs_off_caller_and_coalesces_identical_requests() -> None
     assert [label for label, _result in results] == ["first", "middle", "latest"]
     assert all(result.probes == ("probe",) for _label, result in results)
 
-
-def test_intake_failure_uses_a_closed_reason_code() -> None:
+    # --- scenario: intake_failure_uses_a_closed_reason_code
     completed = threading.Event()
     results = []
     service = IntakeProbeService(lambda: (_ for _ in ()).throw(OSError("private")))
@@ -40,8 +40,7 @@ def test_intake_failure_uses_a_closed_reason_code() -> None:
     assert completed.wait(1.0)
     assert results[0].reason == INTAKE_REASON_UNAVAILABLE
 
-
-def test_forced_intake_request_queues_one_fresh_probe_after_in_flight_work() -> None:
+    # --- scenario: forced_intake_request_queues_one_fresh_probe_after_in_flight_work
     first_started = threading.Event()
     release_first = threading.Event()
     completed = threading.Event()
@@ -68,6 +67,7 @@ def test_forced_intake_request_queues_one_fresh_probe_after_in_flight_work() -> 
     assert completed.wait(1.0)
     assert calls == [1, 2]
     assert results == [("initial", 1), ("forced", 2)]
+
 
 
 def test_remote_ledger_publication_is_latest_wins_and_off_caller() -> None:

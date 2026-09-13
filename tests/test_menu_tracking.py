@@ -71,15 +71,15 @@ def _item(
     )
 
 
-def test_identical_menu_has_no_publication() -> None:
+def test_identical_menu_has_no_publication__and_2_more() -> None:
+    # --- scenario: identical_menu_has_no_publication
     row = _item("row")
     publication = plan_menu_publication((row,), (row,), tracking=True)
 
     assert publication.kind is MenuPublicationKind.NO_CHANGE
     assert publication.patches == ()
 
-
-def test_non_geometric_copy_and_state_patch_in_place() -> None:
+    # --- scenario: non_geometric_copy_and_state_patch_in_place
     before = _item("row", title="Agent 9m")
     after = replace(
         before,
@@ -95,8 +95,7 @@ def test_non_geometric_copy_and_state_patch_in_place() -> None:
     assert publication.kind is MenuPublicationKind.PATCH_IN_PLACE
     assert publication.patches == (after,)
 
-
-def test_title_geometry_change_defers_instead_of_moving_highlighted_row() -> None:
+    # --- scenario: title_geometry_change_defers_instead_of_moving_highlighted_row
     before = _item("row", title="9m", width=20)
     after = replace(before, title="10m", measured_width=28)
 
@@ -106,7 +105,9 @@ def test_title_geometry_change_defers_instead_of_moving_highlighted_row() -> Non
     assert publication.patches == ()
 
 
-def test_each_structural_change_defers_during_tracking() -> None:
+
+def test_each_structural_change_defers_during_tracking__and_2_more() -> None:
+    # --- scenario: each_structural_change_defers_during_tracking
     first = _item("first", order=0, submenu="actions")
     second = _item("second", order=1)
     structural_variants = (
@@ -126,8 +127,7 @@ def test_each_structural_change_defers_during_tracking() -> None:
         assert publication.kind is MenuPublicationKind.DEFER_REBUILD
         assert publication.patches == ()
 
-
-def test_one_hundred_row_copy_burst_patches_without_reordering() -> None:
+    # --- scenario: one_hundred_row_copy_burst_patches_without_reordering
     previous = tuple(_item(f"row:{index}", order=index) for index in range(100))
     current = tuple(
         replace(row, title=f"Agent {index}", accessibility_value=f"Row {index}") for index, row in enumerate(previous)
@@ -138,8 +138,7 @@ def test_one_hundred_row_copy_burst_patches_without_reordering() -> None:
     assert publication.kind is MenuPublicationKind.PATCH_IN_PLACE
     assert publication.patches == current
 
-
-def test_exact_boundary_schedule_rejects_early_and_stale_callbacks() -> None:
+    # --- scenario: exact_boundary_schedule_rejects_early_and_stale_callbacks
     schedule = ExactBoundarySchedule()
     first = schedule.replace(101.25)
     second = schedule.replace(102.5)
@@ -150,15 +149,16 @@ def test_exact_boundary_schedule_rejects_early_and_stale_callbacks() -> None:
     assert schedule.callback_due(second, now_epoch=104.0) is False
 
 
-def test_exact_next_copy_boundary_is_preserved_without_bucket_rounding() -> None:
+
+def test_exact_next_copy_boundary_is_preserved_without_bucket_rounding__and_2_more() -> None:
+    # --- scenario: exact_next_copy_boundary_is_preserved_without_bucket_rounding
     schedule = ExactBoundarySchedule()
     token = schedule.replace(1_800_000_012.345678)
 
     assert token.deadline_epoch == 1_800_000_012.345678
     assert schedule.deadline_epoch == 1_800_000_012.345678
 
-
-def test_native_registry_patches_real_item_without_replacing_highlighted_identity() -> None:
+    # --- scenario: native_registry_patches_real_item_without_replacing_highlighted_identity
     before = _item("row", title="Agent 9m")
     after = replace(before, title="Agent 8m", state=1)
     native = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(before.title, None, "")
@@ -172,8 +172,7 @@ def test_native_registry_patches_real_item_without_replacing_highlighted_identit
     assert native.title() == "Agent 8m"
     assert native.state() == 1
 
-
-def test_native_registry_defers_custom_view_copy_and_coalesces_latest_rebuild() -> None:
+    # --- scenario: native_registry_defers_custom_view_copy_and_coalesces_latest_rebuild
     before = _item("row", title="Agent 9m")
     native = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(before.title, None, "")
     native.setView_(NSView.alloc().init())
@@ -187,6 +186,7 @@ def test_native_registry_defers_custom_view_copy_and_coalesces_latest_rebuild() 
     assert native.title() == "Agent 9m"
     assert registry.take_deferred_after_close() == latest
     assert registry.take_deferred_after_close() is None
+
 
 
 def test_native_registry_defers_geometry_change_and_preserves_item_identity() -> None:
@@ -262,7 +262,8 @@ def _application() -> None:
     NSApplication.sharedApplication()
 
 
-def test_agent_browser_uses_one_reusable_native_window_and_standard_controls() -> None:
+def test_agent_browser_uses_one_reusable_native_window_and_standard_controls__and_2_more() -> None:
+    # --- scenario: agent_browser_uses_one_reusable_native_window_and_standard_controls
     controller = AgentBrowserWindowController.alloc().init()
     window = controller.window
 
@@ -272,8 +273,7 @@ def test_agent_browser_uses_one_reusable_native_window_and_standard_controls() -
     assert controller.open_with_projection(_projection(_document("one")), show=False) is window
     assert controller.open_with_projection(_projection(_document("two")), show=False) is window
 
-
-def test_injected_root_items_cap_urgent_rows_and_keep_action_depth_shallow() -> None:
+    # --- scenario: injected_root_items_cap_urgent_rows_and_keep_action_depth_shallow
     rows = tuple(_document(f"urgent:{index}", actionable=True) for index in range(5))
     actions = {
         row.work_key: (
@@ -311,8 +311,7 @@ def test_injected_root_items_cap_urgent_rows_and_keep_action_depth_shallow() -> 
     assert type(browser.representedObject()) is AgentBrowserOpenPayload
     assert browser.representedObject().generation == 7
 
-
-def test_root_header_says_active_and_means_active() -> None:
+    # --- scenario: root_header_says_active_and_means_active
     """"N active" is the working count, never the retained count.
 
     Live: 27 retained families, 16 of them completed and 8 idle, and the
@@ -337,7 +336,9 @@ def test_root_header_says_active_and_means_active() -> None:
     assert items[0].title() == "Agent Mailbox · 1 active · 0 need you"
 
 
-def test_injected_root_exposes_enabled_exact_shelf_overflow() -> None:
+
+def test_injected_root_exposes_enabled_exact_shelf_overflow__and_2_more() -> None:
+    # --- scenario: injected_root_exposes_enabled_exact_shelf_overflow
     rows = tuple(
         _document(f"urgent:{index}", actionable=True) for index in range(5)
     )
@@ -361,8 +362,7 @@ def test_injected_root_exposes_enabled_exact_shelf_overflow() -> None:
     )
     assert items[-1].title() == "Open Agent Browser…"
 
-
-def test_injected_root_expands_snooze_presets_without_nested_action_menu() -> None:
+    # --- scenario: injected_root_expands_snooze_presets_without_nested_action_menu
     row = _document("quiet", actionable=True)
     snooze = _action(OperatorActionKind.SNOOZE, "Snooze")
 
@@ -386,8 +386,7 @@ def test_injected_root_expands_snooze_presets_without_nested_action_menu() -> No
         assert action.submenu() is None
         assert action.representedObject().snooze_preset is not None
 
-
-def test_injected_root_browser_payload_can_scope_exact_shelf_or_family() -> None:
+    # --- scenario: injected_root_browser_payload_can_scope_exact_shelf_or_family
     row = _document("scope")
 
     family_items = build_agent_root_items(
@@ -409,7 +408,9 @@ def test_injected_root_browser_payload_can_scope_exact_shelf_or_family() -> None
     assert shelf_items[-1].representedObject().family_key is None
 
 
-def test_background_projection_preserves_selected_work_key_and_search_selection() -> None:
+
+def test_background_projection_preserves_selected_work_key_and_search_selection__and_2_more() -> None:
+    # --- scenario: background_projection_preserves_selected_work_key_and_search_selection
     first = _document("first")
     second = _document("second")
     controller = AgentBrowserWindowController.alloc().init()
@@ -423,8 +424,7 @@ def test_background_projection_preserves_selected_work_key_and_search_selection(
     assert controller.selected_work_key == second.work_key
     assert tuple(controller.search_field.currentEditor().selectedRange()) == (1, 3)
 
-
-def test_close_clears_query_and_worker_scope_but_keeps_last_selection_in_memory() -> None:
+    # --- scenario: close_clears_query_and_worker_scope_but_keeps_last_selection_in_memory
     selected = _document("selected")
     controller = AgentBrowserWindowController.alloc().init()
     controller.open_with_projection(_projection(selected), show=False)
@@ -438,8 +438,7 @@ def test_close_clears_query_and_worker_scope_but_keeps_last_selection_in_memory(
     assert controller.worker_scope is None
     assert controller.last_selected_work_key == selected.work_key
 
-
-def test_worker_button_enters_exact_selected_family_scope() -> None:
+    # --- scenario: worker_button_enters_exact_selected_family_scope
     family = replace(_document("family"), worker_count=2)
     worker = _document("worker")
     controller = AgentBrowserWindowController.alloc().init()
@@ -459,7 +458,9 @@ def test_worker_button_enters_exact_selected_family_scope() -> None:
     assert controller.projection.rows == (worker,)
 
 
-def test_keyboard_flow_moves_opens_focuses_and_escapes_in_order() -> None:
+
+def test_keyboard_flow_moves_opens_focuses_and_escapes_in_order__and_2_more() -> None:
+    # --- scenario: keyboard_flow_moves_opens_focuses_and_escapes_in_order
     first = _document("first")
     second = _document("second")
     activated: list[AgentBrowserActionPayload] = []
@@ -493,8 +494,7 @@ def test_keyboard_flow_moves_opens_focuses_and_escapes_in_order() -> None:
     assert controller.cancelOperation_(None) == "worker-scope-exited"
     assert controller.cancelOperation_(None) == "window-closed"
 
-
-def test_keyboard_command_dispatch_matches_native_shortcuts() -> None:
+    # --- scenario: keyboard_command_dispatch_matches_native_shortcuts
     first = _document("first")
     second = _document("second")
     activated: list[AgentBrowserActionPayload] = []
@@ -519,8 +519,7 @@ def test_keyboard_command_dispatch_matches_native_shortcuts() -> None:
     assert controller.handle_key_command("escape") is True
     assert controller.search_field.stringValue() == ""
 
-
-def test_keyboard_focus_evidence_records_one_visit_and_root_open_records_none() -> None:
+    # --- scenario: keyboard_focus_evidence_records_one_visit_and_root_open_records_none
     first = _document("first")
     second = _document("second")
     visits: list[WorkKey] = []
@@ -533,7 +532,9 @@ def test_keyboard_focus_evidence_records_one_visit_and_root_open_records_none() 
     assert visits == [second.work_key]
 
 
-def test_action_menu_is_shallow_and_uses_exact_typed_payload_allowlist() -> None:
+
+def test_action_menu_is_shallow_and_uses_exact_typed_payload_allowlist__and_2_more() -> None:
+    # --- scenario: action_menu_is_shallow_and_uses_exact_typed_payload_allowlist
     row = _document("actions", actionable=True)
     controller = AgentBrowserWindowController.alloc().init()
     controller.open_with_projection(
@@ -570,8 +571,7 @@ def test_action_menu_is_shallow_and_uses_exact_typed_payload_allowlist() -> None
         assert item.representedObject().work_key == row.work_key
         assert item.representedObject().generation == 7
 
-
-def test_action_activation_revalidates_generation_and_current_descriptor() -> None:
+    # --- scenario: action_activation_revalidates_generation_and_current_descriptor
     row = _document("generation")
     activated: list[AgentBrowserActionPayload] = []
     controller = AgentBrowserWindowController.alloc().init()
@@ -592,8 +592,7 @@ def test_action_activation_revalidates_generation_and_current_descriptor() -> No
     assert controller.performBrowserAction_(current_item) is True
     assert len(activated) == 1
 
-
-def test_background_projection_replaces_current_action_descriptors_atomically() -> None:
+    # --- scenario: background_projection_replaces_current_action_descriptors_atomically
     row = _document("eligibility")
     controller = AgentBrowserWindowController.alloc().init()
     controller.open_with_projection(
@@ -621,6 +620,7 @@ def test_background_projection_replaces_current_action_descriptors_atomically() 
     item = controller.action_menu_for_selected_row().itemAtIndex_(0)
     assert item.isEnabled() is False
     assert controller.performBrowserAction_(item) is False
+
 
 
 def test_browser_window_routes_bare_keys_to_the_command_vocabulary() -> None:

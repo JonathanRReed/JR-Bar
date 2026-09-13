@@ -36,7 +36,8 @@ def _endpoint(
     )
 
 
-def test_exact_task_evidence_yields_one_finite_source_to_destination_pass() -> None:
+def test_exact_task_evidence_yields_one_finite_source_to_destination_pass__and_2_more() -> None:
+    # --- scenario: exact_task_evidence_yields_one_finite_source_to_destination_pass
     decision = plan_handoff_baton(
         _endpoint(
             event="event:completed",
@@ -70,8 +71,7 @@ def test_exact_task_evidence_yields_one_finite_source_to_destination_pass() -> N
     assert decision.plan.motion.passes == 1
     assert decision.plan.motion.loops == 0
 
-
-def test_shared_project_is_sufficient_when_task_identities_differ() -> None:
+    # --- scenario: shared_project_is_sufficient_when_task_identities_differ
     source = _endpoint(
         event="event:completed",
         agent="agent:one",
@@ -95,49 +95,42 @@ def test_shared_project_is_sufficient_when_task_identities_differ() -> None:
     assert decision.plan.linkage.kind is HandoffLinkKind.PROJECT
     assert decision.plan.linkage.identity == "project:jr-bar"
 
-
-@pytest.mark.parametrize(
-    ("source_project", "source_task", "destination_project", "destination_task"),
-    [
+    # --- scenario: timing_coincidence_never_creates_a_baton_without_linkage_evidence
+    for source_project, source_task, destination_project, destination_task in [
         (None, None, None, None),
         ("project:a", None, "project:b", None),
         (None, "task:a", None, "task:b"),
         ("project:a", "task:a", "project:b", "task:b"),
-    ],
-)
-def test_timing_coincidence_never_creates_a_baton_without_linkage_evidence(
-    source_project: str | None,
-    source_task: str | None,
-    destination_project: str | None,
-    destination_task: str | None,
-) -> None:
-    source = _endpoint(
-        event="event:completed",
-        agent="agent:one",
-        segment="segment:one",
-        name="First agent",
-        observed_at=10.0,
-        project=source_project,
-        task=source_task,
-    )
-    destination = _endpoint(
-        event="event:started",
-        agent="agent:two",
-        segment="segment:two",
-        name="Second agent",
-        observed_at=10.001,
-        project=destination_project,
-        task=destination_task,
-    )
+    ]:
+        source = _endpoint(
+            event="event:completed",
+            agent="agent:one",
+            segment="segment:one",
+            name="First agent",
+            observed_at=10.0,
+            project=source_project,
+            task=source_task,
+        )
+        destination = _endpoint(
+            event="event:started",
+            agent="agent:two",
+            segment="segment:two",
+            name="Second agent",
+            observed_at=10.001,
+            project=destination_project,
+            task=destination_task,
+        )
 
-    decision = plan_handoff_baton(source, destination)
+        decision = plan_handoff_baton(source, destination)
 
-    assert decision.admitted is False
-    assert decision.plan is None
-    assert decision.refusal is HandoffBatonRefusal.MISSING_LINKAGE
+        assert decision.admitted is False
+        assert decision.plan is None
+        assert decision.refusal is HandoffBatonRefusal.MISSING_LINKAGE
 
 
-def test_timing_is_directional_and_must_fit_the_bounded_window() -> None:
+
+def test_timing_is_directional_and_must_fit_the_bounded_window__and_2_more() -> None:
+    # --- scenario: timing_is_directional_and_must_fit_the_bounded_window
     source = _endpoint(
         event="event:completed",
         agent="agent:one",
@@ -167,8 +160,7 @@ def test_timing_is_directional_and_must_fit_the_bounded_window() -> None:
         HandoffBatonRefusal.OUTSIDE_WINDOW
     )
 
-
-def test_source_destination_event_agent_and_segment_identities_must_differ() -> None:
+    # --- scenario: source_destination_event_agent_and_segment_identities_must_differ
     source = _endpoint(
         event="event:source",
         agent="agent:one",
@@ -208,8 +200,7 @@ def test_source_destination_event_agent_and_segment_identities_must_differ() -> 
         HandoffBatonRefusal.SAME_SEGMENT
     )
 
-
-def test_reduce_motion_returns_a_finite_static_destination_highlight() -> None:
+    # --- scenario: reduce_motion_returns_a_finite_static_destination_highlight
     decision = plan_handoff_baton(
         _endpoint(
             event="event:completed",
@@ -241,7 +232,9 @@ def test_reduce_motion_returns_a_finite_static_destination_highlight() -> None:
     assert "static" in decision.plan.accessibility.motion_description.lower()
 
 
-def test_custom_window_is_capped_and_structural_inputs_are_validated() -> None:
+
+def test_custom_window_is_capped_and_structural_inputs_are_validated__and_1_more() -> None:
+    # --- scenario: custom_window_is_capped_and_structural_inputs_are_validated
     source = _endpoint(
         event="event:completed",
         agent="agent:one",
@@ -282,8 +275,7 @@ def test_custom_window_is_capped_and_structural_inputs_are_validated() -> None:
             observed_at=float("inf"),
         )
 
-
-def test_decision_and_nested_plans_are_immutable() -> None:
+    # --- scenario: decision_and_nested_plans_are_immutable
     decision = plan_handoff_baton(
         _endpoint(
             event="event:completed",
@@ -304,3 +296,4 @@ def test_decision_and_nested_plans_are_immutable() -> None:
 
     with pytest.raises(FrozenInstanceError):
         decision.plan.motion.passes = 2  # type: ignore[misc]
+

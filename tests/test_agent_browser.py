@@ -217,9 +217,10 @@ def _document(
     )
 
 
-@pytest.mark.parametrize(
-    ("raw", "expected"),
-    (
+def test_query_normalization_is_nfkc_casefolded_bounded_and_control_safe__and_2_more() -> None:
+    # --- scenario: query_normalization_is_nfkc_casefolded_bounded_and_control_safe
+    """Removing one normalization or rejection branch would expose unstable query behavior."""
+    for raw, expected in (
         ("  \uff23\uff2f\uff24\uff25\uff38\u2003Active  ", "codex active"),
         ("Straße", "strasse"),
         ("", ""),
@@ -231,47 +232,32 @@ def _document(
         ("codex\nactive", ""),
         ("codex\u0000active", ""),
         ("codex\u200bactive", ""),
-    ),
-)
-def test_query_normalization_is_nfkc_casefolded_bounded_and_control_safe(
-    raw: object,
-    expected: str,
-) -> None:
-    """Removing one normalization or rejection branch would expose unstable query behavior."""
-    assert normalize_agent_query(raw) == expected
+    ):
+        assert normalize_agent_query(raw) == expected
 
-
-@pytest.mark.parametrize(
-    ("query", "label", "matches"),
-    (
+    # --- scenario: each_bounded_ranking_tier_is_searchable
+    """Breaking any exact-to-subsequence matcher would lose a documented search tier."""
+    for query, label, matches in (
         ("active", "active", True),
         ("act", "active", True),
         ("you", "needs you", True),
         ("tiv", "active", True),
         ("cde", "codex", True),
         ("czd", "codex", False),
-    ),
-)
-def test_each_bounded_ranking_tier_is_searchable(
-    query: str,
-    label: str,
-    matches: bool,
-) -> None:
-    """Breaking any exact-to-subsequence matcher would lose a documented search tier."""
-    source = SearchLabelSource.PROVIDER if label == "codex" else SearchLabelSource.PRODUCT_STATE
-    document = _document("rank:01", ApprovedSearchLabel(label, source))
+    ):
+        source = SearchLabelSource.PROVIDER if label == "codex" else SearchLabelSource.PRODUCT_STATE
+        document = _document("rank:01", ApprovedSearchLabel(label, source))
 
-    result = project_agent_browser(
-        (document,),
-        AgentBrowserQuery(query),
-        generation=1,
-        selected_work_key=None,
-    )
+        result = project_agent_browser(
+            (document,),
+            AgentBrowserQuery(query),
+            generation=1,
+            selected_work_key=None,
+        )
 
-    assert bool(result.rows) is matches
+        assert bool(result.rows) is matches
 
-
-def test_ranking_keeps_mailbox_order_and_work_key_as_the_final_tie_break() -> None:
+    # --- scenario: ranking_keeps_mailbox_order_and_work_key_as_the_final_tie_break
     """Sorting ties by input permutation would make refreshes reorder equivalent matches."""
     first = _document("work:01", ApprovedSearchLabel("active", SearchLabelSource.PRODUCT_STATE))
     second = _document("work:02", ApprovedSearchLabel("active", SearchLabelSource.PRODUCT_STATE))
@@ -294,7 +280,9 @@ def test_ranking_keeps_mailbox_order_and_work_key_as_the_final_tie_break() -> No
     assert tuple(row.work_key for row in reverse.rows) == expected
 
 
-def test_duplicate_work_keys_and_source_scoped_identity_are_exact() -> None:
+
+def test_duplicate_work_keys_and_source_scoped_identity_are_exact__and_2_more() -> None:
+    # --- scenario: duplicate_work_keys_and_source_scoped_identity_are_exact
     """A lossy ID or duplicate branch would merge separate sources or show one key twice."""
     source_a = _source("local:01")
     source_b = _source("local:02")
@@ -313,8 +301,7 @@ def test_duplicate_work_keys_and_source_scoped_identity_are_exact() -> None:
     assert result.total_count == 2
     assert result.scoped_count == 2
 
-
-def test_only_source_correct_product_vocabulary_enters_the_index() -> None:
+    # --- scenario: only_source_correct_product_vocabulary_enters_the_index
     """Trusting typed-but-unapproved copy would index prompts, paths, secrets, or opaque IDs."""
     unsafe = (
         ApprovedSearchLabel("Fix customer login prompt", SearchLabelSource.PRODUCT_STATE),
@@ -347,8 +334,7 @@ def test_only_source_correct_product_vocabulary_enters_the_index() -> None:
         selected_work_key=None,
     ).rows == (document,)
 
-
-def test_unknown_search_label_source_is_ignored() -> None:
+    # --- scenario: unknown_search_label_source_is_ignored
     """Accepting an unrecognized authority marker would widen the privacy boundary."""
     forged = object.__new__(ApprovedSearchLabel)
     object.__setattr__(forged, "text", "Codex")
@@ -375,7 +361,9 @@ def test_unknown_search_label_source_is_ignored() -> None:
     )
 
 
-def test_build_indexes_product_tokens_but_never_visible_family_or_identity_copy() -> None:
+
+def test_build_indexes_product_tokens_but_never_visible_family_or_identity_copy__and_1_more() -> None:
+    # --- scenario: build_indexes_product_tokens_but_never_visible_family_or_identity_copy
     """Indexing visible/provider-derived copy would disclose prompt, path, project, or ID text."""
     root_key = _work_key("opaque:root:9f8e7d")
     request_key = RequestKey(root_key, RequestIdentifier("request:01"))
@@ -454,8 +442,7 @@ def test_build_indexes_product_tokens_but_never_visible_family_or_identity_copy(
             == documents
         )
 
-
-def test_query_and_projection_have_no_recent_or_persistent_search_state() -> None:
+    # --- scenario: query_and_projection_have_no_recent_or_persistent_search_state
     """Adding history fields would turn an ephemeral query into retained sensitive state."""
     assert {field.name for field in fields(AgentBrowserQuery)} == {"text", "shelf", "family_key"}
     assert {field.name for field in fields(AgentBrowserProjection)} == {
@@ -483,6 +470,7 @@ def test_query_and_projection_have_no_recent_or_persistent_search_state() -> Non
     assert first.rows == (document,)
     assert second.rows == ()
     assert not hasattr(second, "recent_queries")
+
 
 
 @pytest.fixture(scope="module")
@@ -568,7 +556,8 @@ def test_100_primary_and_900_worker_fixture_is_exactly_bounded_and_reachable(
     assert {row.work_key for row in root.rows} == {document.work_key for document in documents}
 
 
-def test_selected_family_retires_stale_worker_without_mutating_primary_watch() -> None:
+def test_selected_family_retires_stale_worker_without_mutating_primary_watch__and_2_more() -> None:
+    # --- scenario: selected_family_retires_stale_worker_without_mutating_primary_watch
     """A stale worker must leave display scope without rewriting primary truth or preference."""
     parent_key = _work_key("family:retirement")
     worker_key = _work_key("worker:terminal")
@@ -639,8 +628,7 @@ def test_selected_family_retires_stale_worker_without_mutating_primary_watch() -
     assert stale_family.rows == ()
     assert stale_family.selected_work_key is None
 
-
-def test_browser_does_not_promote_worker_whose_exact_parent_is_missing() -> None:
+    # --- scenario: browser_does_not_promote_worker_whose_exact_parent_is_missing
     """An unresolved parent link must not become a fabricated primary family."""
     orphan = _work(
         _work_key("worker:orphan"),
@@ -659,8 +647,7 @@ def test_browser_does_not_promote_worker_whose_exact_parent_is_missing() -> None
 
     assert documents == ()
 
-
-def test_browser_parent_swap_moves_worker_to_only_the_current_exact_family() -> None:
+    # --- scenario: browser_parent_swap_moves_worker_to_only_the_current_exact_family
     """A cached parent assignment would expose one worker under two families."""
     first_key = _work_key("family:parent-a")
     second_key = _work_key("family:parent-b")
@@ -705,7 +692,9 @@ def test_browser_parent_swap_moves_worker_to_only_the_current_exact_family() -> 
     ) == (worker_key,)
 
 
-def test_primary_overflow_keeps_exact_count_and_every_retained_family_reachable() -> None:
+
+def test_primary_overflow_keeps_exact_count_and_every_retained_family_reachable__and_2_more() -> None:
+    # --- scenario: primary_overflow_keeps_exact_count_and_every_retained_family_reachable
     """Discarding the 101st seed would make exact overflow and key-anchored navigation lie."""
     roots = tuple(_work(_work_key(f"overflow:{index:03d}"), rank=index + 1) for index in range(101))
     mailbox = _mailbox(roots)
@@ -745,8 +734,7 @@ def test_primary_overflow_keeps_exact_count_and_every_retained_family_reachable(
     reachable.update(selected_root.rows)
     assert {row.work_key for row in reachable} == {root.key for root in roots}
 
-
-def test_collection_owns_one_private_catalog_and_rows_serialize_only_public_fields() -> None:
+    # --- scenario: collection_owns_one_private_catalog_and_rows_serialize_only_public_fields
     """Embedding catalog metadata on a row would leak hidden labels through generic serialization."""
     roots = tuple(
         _work(
@@ -787,8 +775,7 @@ def test_collection_owns_one_private_catalog_and_rows_serialize_only_public_fiel
     }
     assert "SAFE-family:100" not in repr(serialized)
 
-
-def test_one_thousand_retained_families_remain_counted_and_key_reachable() -> None:
+    # --- scenario: one_thousand_retained_families_remain_counted_and_key_reachable
     """A catalog cap below canonical state capacity would silently orphan retained families."""
     roots = tuple(_work(_work_key(f"thousand:{index:03d}"), rank=index + 1) for index in range(1000))
     mailbox = _mailbox(roots)
@@ -820,6 +807,7 @@ def test_one_thousand_retained_families_remain_counted_and_key_reachable() -> No
         assert work_key in {row.work_key for row in anchored.rows}
         assert len(anchored.rows) == 100
         assert anchored.total_count == anchored.scoped_count == 1000
+
 
 
 def test_projection_and_warm_query_p95_meet_pure_model_targets(

@@ -143,7 +143,8 @@ def _active_focus() -> FocusStatusObservation:
     )
 
 
-def test_controller_values_are_immutable_and_initially_inactive() -> None:
+def test_controller_values_are_immutable_and_initially_inactive__and_2_more() -> None:
+    # --- scenario: controller_values_are_immutable_and_initially_inactive
     harness = _Harness()
 
     assert harness.controller.projection.summary == "DND: Off"
@@ -152,8 +153,7 @@ def test_controller_values_are_immutable_and_initially_inactive() -> None:
     with pytest.raises(FrozenInstanceError):
         harness.controller.projection.summary = "changed"  # type: ignore[misc]
 
-
-def test_start_is_idempotent_and_owns_exactly_one_transition_timer() -> None:
+    # --- scenario: start_is_idempotent_and_owns_exactly_one_transition_timer
     harness = _Harness(_scheduled_settings())
 
     first = harness.controller.start()
@@ -172,8 +172,7 @@ def test_start_is_idempotent_and_owns_exactly_one_transition_timer() -> None:
     assert timer.delay == pytest.approx(30 * 60)
     assert harness.focus.observe_count == 1
 
-
-def test_transition_timer_recomputes_from_current_wall_truth() -> None:
+    # --- scenario: transition_timer_recomputes_from_current_wall_truth
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     timer = harness.timer_factory.timers[-1]
@@ -189,7 +188,9 @@ def test_transition_timer_recomputes_from_current_wall_truth() -> None:
     assert len(harness.timer_factory.timers) == 2
 
 
-def test_replaced_timer_callback_is_generation_fenced() -> None:
+
+def test_replaced_timer_callback_is_generation_fenced__and_2_more() -> None:
+    # --- scenario: replaced_timer_callback_is_generation_fenced
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     stale_timer = harness.timer_factory.timers[-1]
@@ -204,10 +205,8 @@ def test_replaced_timer_callback_is_generation_fenced() -> None:
     assert harness.controller.projection is before
     assert harness.timer_factory.timers[-1] is current_timer
 
-
-@pytest.mark.parametrize(
-    "entrypoint",
-    [
+    # --- scenario: environment_entrypoints_reobserve_and_rearm
+    for entrypoint in [
         "handle_wake",
         "handle_sleep",
         "handle_screen_wake",
@@ -216,23 +215,20 @@ def test_replaced_timer_callback_is_generation_fenced() -> None:
         "handle_clock_change",
         "handle_timezone_change",
         "handle_environment_refresh",
-    ],
-)
-def test_environment_entrypoints_reobserve_and_rearm(entrypoint: str) -> None:
-    harness = _Harness(_scheduled_settings())
-    harness.controller.start()
-    previous_timer = harness.timer_factory.timers[-1]
-    previous_observations = harness.focus.observe_count
+    ]:
+        harness = _Harness(_scheduled_settings())
+        harness.controller.start()
+        previous_timer = harness.timer_factory.timers[-1]
+        previous_observations = harness.focus.observe_count
 
-    result = getattr(harness.controller, entrypoint)()
+        result = getattr(harness.controller, entrypoint)()
 
-    assert result.applied
-    assert previous_timer.cancelled
-    assert harness.focus.observe_count == previous_observations + 1
-    assert len(harness.timer_factory.timers) == 2
+        assert result.applied
+        assert previous_timer.cancelled
+        assert harness.focus.observe_count == previous_observations + 1
+        assert len(harness.timer_factory.timers) == 2
 
-
-def test_clock_and_timezone_entrypoints_recompute_the_real_boundary() -> None:
+    # --- scenario: clock_and_timezone_entrypoints_recompute_the_real_boundary
     settings = AgentMonitorSettings().with_dnd_schedule(
         enabled=True,
         start_minutes=22 * 60,
@@ -252,7 +248,9 @@ def test_clock_and_timezone_entrypoints_recompute_the_real_boundary() -> None:
     ).timestamp()
 
 
-def test_close_invalidates_timer_and_all_late_timer_work() -> None:
+
+def test_close_invalidates_timer_and_all_late_timer_work__and_2_more() -> None:
+    # --- scenario: close_invalidates_timer_and_all_late_timer_work
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     timer = harness.timer_factory.timers[-1]
@@ -269,8 +267,7 @@ def test_close_invalidates_timer_and_all_late_timer_work() -> None:
     assert not harness.controller.start().applied
     assert harness.controller.start().failure is DndChangeFailure.CLOSED
 
-
-def test_failed_initial_start_rolls_back_started_generation_and_projection() -> None:
+    # --- scenario: failed_initial_start_rolls_back_started_generation_and_projection
     harness = _Harness(_scheduled_settings())
     harness.zone = object()
 
@@ -283,8 +280,7 @@ def test_failed_initial_start_rolls_back_started_generation_and_projection() -> 
     assert harness.controller.transition_deadline is None
     assert harness.timer_factory.timers == []
 
-
-def test_failed_refresh_keeps_the_existing_generation_projection_and_timer() -> None:
+    # --- scenario: failed_refresh_keeps_the_existing_generation_projection_and_timer
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     before_generation = harness.controller.generation
@@ -304,7 +300,9 @@ def test_failed_refresh_keeps_the_existing_generation_projection_and_timer() -> 
     assert not before_timer.cancelled
 
 
-def test_failed_timer_construction_keeps_the_existing_committed_state() -> None:
+
+def test_failed_timer_construction_keeps_the_existing_committed_state__and_2_more() -> None:
+    # --- scenario: failed_timer_construction_keeps_the_existing_committed_state
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     before_generation = harness.controller.generation
@@ -322,8 +320,7 @@ def test_failed_timer_construction_keeps_the_existing_committed_state() -> None:
     assert harness.timer_factory.timers == [before_timer]
     assert not before_timer.cancelled
 
-
-def test_public_focus_truth_uses_the_configured_mode_only_when_follow_is_on() -> None:
+    # --- scenario: public_focus_truth_uses_the_configured_mode_only_when_follow_is_on
     settings = (
         AgentMonitorSettings()
         .with_focus_sync_enabled(True)
@@ -337,8 +334,7 @@ def test_public_focus_truth_uses_the_configured_mode_only_when_follow_is_on() ->
     assert harness.controller.projection.source is DndSource.MACOS_FOCUS
     assert harness.controller.projection.mode is DndMode.MUTE
 
-
-def test_follow_focus_off_observes_public_status_but_does_not_read_private_detail() -> None:
+    # --- scenario: follow_focus_off_observes_public_status_but_does_not_read_private_detail
     named_reads: list[str] = []
     harness = _Harness(
         AgentMonitorSettings(),
@@ -353,7 +349,9 @@ def test_follow_focus_off_observes_public_status_but_does_not_read_private_detai
     assert named_reads == []
 
 
-def test_named_focus_detail_tightens_but_cannot_replace_public_active_truth() -> None:
+
+def test_named_focus_detail_tightens_but_cannot_replace_public_active_truth__and_2_more() -> None:
+    # --- scenario: named_focus_detail_tightens_but_cannot_replace_public_active_truth
     settings = (
         AgentMonitorSettings()
         .with_focus_sync_enabled(True)
@@ -382,31 +380,26 @@ def test_named_focus_detail_tightens_but_cannot_replace_public_active_truth() ->
     assert not projection.audible_allowed
     assert harness.controller.named_focus_identifiers == ("sleep", "work")
 
+    # --- scenario: missing_named_detail_preserves_public_active_focus
+    for named_reader in [lambda: (), lambda: (_ for _ in ()).throw(PermissionError("no detail"))]:
+        settings = (
+            AgentMonitorSettings()
+            .with_focus_sync_enabled(True)
+            .with_dnd_focus_mode(DndMode.PAUSE)
+        )
+        harness = _Harness(
+            settings,
+            focus=_FocusClient(_active_focus()),
+            named_reader=named_reader,
+        )
 
-@pytest.mark.parametrize(
-    "named_reader",
-    [lambda: (), lambda: (_ for _ in ()).throw(PermissionError("no detail"))],
-)
-def test_missing_named_detail_preserves_public_active_focus(named_reader) -> None:
-    settings = (
-        AgentMonitorSettings()
-        .with_focus_sync_enabled(True)
-        .with_dnd_focus_mode(DndMode.PAUSE)
-    )
-    harness = _Harness(
-        settings,
-        focus=_FocusClient(_active_focus()),
-        named_reader=named_reader,
-    )
+        harness.controller.start()
 
-    harness.controller.start()
+        assert harness.controller.projection.source is DndSource.MACOS_FOCUS
+        assert harness.controller.projection.mode is DndMode.PAUSE
+        assert harness.controller.named_focus_identifiers == ()
 
-    assert harness.controller.projection.source is DndSource.MACOS_FOCUS
-    assert harness.controller.projection.mode is DndMode.PAUSE
-    assert harness.controller.named_focus_identifiers == ()
-
-
-def test_named_detail_never_activates_dnd_when_public_focus_is_inactive() -> None:
+    # --- scenario: named_detail_never_activates_dnd_when_public_focus_is_inactive
     settings = AgentMonitorSettings().with_focus_sync_enabled(True)
     inactive = FocusStatusObservation(
         FocusAuthorization.AUTHORIZED,
@@ -425,9 +418,10 @@ def test_named_detail_never_activates_dnd_when_public_focus_is_inactive() -> Non
     assert named_reads == []
 
 
-@pytest.mark.parametrize(
-    ("method", "argument", "expected"),
-    [
+
+def test_settings_edits_save_then_adopt_one_coherent_candidate__and_2_more() -> None:
+    # --- scenario: settings_edits_save_then_adopt_one_coherent_candidate
+    for method, argument, expected in [
         (
             "set_schedule",
             DndSchedule(True, 60, 120, DndMode.ASKS_ONLY),
@@ -457,26 +451,19 @@ def test_named_detail_never_activates_dnd_when_public_focus_is_inactive() -> Non
             ),
             lambda settings: settings.dnd_override_mode == "dark",
         ),
-    ],
-)
-def test_settings_edits_save_then_adopt_one_coherent_candidate(
-    method: str,
-    argument: object,
-    expected,
-) -> None:
-    harness = _Harness()
-    harness.controller.start()
+    ]:
+        harness = _Harness()
+        harness.controller.start()
 
-    result = getattr(harness.controller, method)(argument)
+        result = getattr(harness.controller, method)(argument)
 
-    assert result.applied
-    assert len(harness.saved) == 1
-    assert harness.saved[0] is harness.settings
-    assert expected(harness.settings)
-    assert harness.controller.projection is result.projection
+        assert result.applied
+        assert len(harness.saved) == 1
+        assert harness.saved[0] is harness.settings
+        assert expected(harness.settings)
+        assert harness.controller.projection is result.projection
 
-
-def test_clear_override_is_a_durable_transaction() -> None:
+    # --- scenario: clear_override_is_a_durable_transaction
     override = DndOverride.for_mode(
         DndMode.MUTE,
         created_epoch=NOW,
@@ -492,37 +479,32 @@ def test_clear_override_is_a_durable_transaction() -> None:
     assert harness.settings.dnd_override_mode is None
     assert harness.controller.projection.summary == "DND: Off"
 
-
-@pytest.mark.parametrize(
-    ("error", "failure"),
-    [
+    # --- scenario: save_refusal_preserves_live_settings_projection_and_timer
+    for error, failure in [
         (SettingsConcurrentWriteError, DndChangeFailure.CONCURRENT_WRITE),
         (SettingsWriteRefusedError, DndChangeFailure.WRITE_REFUSED),
-    ],
-)
-def test_save_refusal_preserves_live_settings_projection_and_timer(
-    error: type[Exception],
-    failure: DndChangeFailure,
-) -> None:
-    harness = _Harness(_scheduled_settings(), save_error=error)
-    harness.controller.start()
-    before_settings = harness.settings
-    before_projection = harness.controller.projection
-    before_timer = harness.timer_factory.timers[-1]
-    before_deadline = harness.controller.transition_deadline
+    ]:
+        harness = _Harness(_scheduled_settings(), save_error=error)
+        harness.controller.start()
+        before_settings = harness.settings
+        before_projection = harness.controller.projection
+        before_timer = harness.timer_factory.timers[-1]
+        before_deadline = harness.controller.transition_deadline
 
-    result = harness.controller.set_dim_fraction(0.25)
+        result = harness.controller.set_dim_fraction(0.25)
 
-    assert not result.applied
-    assert result.failure is failure
-    assert harness.settings is before_settings
-    assert harness.controller.projection is before_projection
-    assert harness.controller.transition_deadline == before_deadline
-    assert harness.timer_factory.timers == [before_timer]
-    assert not before_timer.cancelled
+        assert not result.applied
+        assert result.failure is failure
+        assert harness.settings is before_settings
+        assert harness.controller.projection is before_projection
+        assert harness.controller.transition_deadline == before_deadline
+        assert harness.timer_factory.timers == [before_timer]
+        assert not before_timer.cancelled
 
 
-def test_timer_firing_inside_a_refused_save_is_rearmed_from_durable_truth() -> None:
+
+def test_timer_firing_inside_a_refused_save_is_rearmed_from_durable_truth__and_2_more() -> None:
+    # --- scenario: timer_firing_inside_a_refused_save_is_rearmed_from_durable_truth
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     before_settings = harness.settings
@@ -548,8 +530,7 @@ def test_timer_firing_inside_a_refused_save_is_rearmed_from_durable_truth() -> N
     replacement = harness.timer_factory.timers[-1]
     assert replacement.started and not replacement.cancelled
 
-
-def test_refused_save_survives_invalid_timezone_during_deferred_refresh() -> None:
+    # --- scenario: refused_save_survives_invalid_timezone_during_deferred_refresh
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     fired_timer = harness.timer_factory.timers[-1]
@@ -576,8 +557,7 @@ def test_refused_save_survives_invalid_timezone_during_deferred_refresh() -> Non
     replacement = harness.recovery_timer_factory.timers[0]
     assert replacement.started and not replacement.fired and not replacement.cancelled
 
-
-def test_refused_save_survives_primary_timer_failure_during_deferred_refresh() -> None:
+    # --- scenario: refused_save_survives_primary_timer_failure_during_deferred_refresh
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     fired_timer = harness.timer_factory.timers[-1]
@@ -605,7 +585,9 @@ def test_refused_save_survives_primary_timer_failure_during_deferred_refresh() -
     assert replacement.started and not replacement.fired and not replacement.cancelled
 
 
-def test_refused_save_degrades_coherently_if_both_timer_factories_fail() -> None:
+
+def test_refused_save_degrades_coherently_if_both_timer_factories_fail__and_2_more() -> None:
+    # --- scenario: refused_save_degrades_coherently_if_both_timer_factories_fail
     harness = _Harness(_scheduled_settings())
     harness.controller.start()
     fired_timer = harness.timer_factory.timers[-1]
@@ -631,8 +613,7 @@ def test_refused_save_degrades_coherently_if_both_timer_factories_fail() -> None
     assert harness.controller.projection.next_transition_epoch is None
     assert harness.recovery_timer_factory.timers == []
 
-
-def test_save_reentrancy_is_refused_without_displacing_the_outer_transaction() -> None:
+    # --- scenario: save_reentrancy_is_refused_without_displacing_the_outer_transaction
     harness = _Harness()
     inner_results = []
 
@@ -650,8 +631,7 @@ def test_save_reentrancy_is_refused_without_displacing_the_outer_transaction() -
     assert harness.settings.dnd_focus_mode == "pause"
     assert inner_results[0].failure is DndChangeFailure.SAVE_IN_PROGRESS
 
-
-def test_stale_focus_result_cannot_replace_a_newer_projection() -> None:
+    # --- scenario: stale_focus_result_cannot_replace_a_newer_projection
     settings = AgentMonitorSettings().with_focus_sync_enabled(True)
     harness = _Harness(settings)
     harness.controller.start()
@@ -669,7 +649,9 @@ def test_stale_focus_result_cannot_replace_a_newer_projection() -> None:
     assert harness.controller.projection is current
 
 
-def test_authorization_is_requested_only_by_the_explicit_method() -> None:
+
+def test_authorization_is_requested_only_by_the_explicit_method__and_2_more() -> None:
+    # --- scenario: authorization_is_requested_only_by_the_explicit_method
     focus = _FocusClient()
     harness = _Harness(focus=focus)
     harness.controller.start()
@@ -678,8 +660,7 @@ def test_authorization_is_requested_only_by_the_explicit_method() -> None:
     assert harness.controller.request_focus_authorization()
     assert focus.request_count == 1
 
-
-def test_current_authorization_callback_refreshes_public_truth() -> None:
+    # --- scenario: current_authorization_callback_refreshes_public_truth
     focus = _FocusClient()
     harness = _Harness(focus=focus)
     harness.controller.start()
@@ -691,8 +672,7 @@ def test_current_authorization_callback_refreshes_public_truth() -> None:
     assert harness.controller.focus_observation == _active_focus()
     assert focus.observe_count == 2
 
-
-def test_late_or_superseded_authorization_callbacks_are_fenced() -> None:
+    # --- scenario: late_or_superseded_authorization_callbacks_are_fenced
     focus = _FocusClient()
     harness = _Harness(focus=focus)
     harness.controller.start()
@@ -706,6 +686,7 @@ def test_late_or_superseded_authorization_callbacks_are_fenced() -> None:
     harness.controller.close()
     focus.completions[-1](FocusAuthorization.AUTHORIZED)
     assert harness.focus.observe_count == 1
+
 
 
 def test_invalid_inputs_are_refused_before_save() -> None:

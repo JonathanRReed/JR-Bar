@@ -35,7 +35,8 @@ def _source() -> SourceKey:
     return SourceKey("codex", "quota", "source:local-01", "remote_quota_windows")
 
 
-def test_account_binding_is_frozen_exact_and_has_no_display_identity() -> None:
+def test_account_binding_is_frozen_exact_and_has_no_display_identity__and_2_more() -> None:
+    # --- scenario: account_binding_is_frozen_exact_and_has_no_display_identity
     """Dropping source, pool, or opaque-account validation could merge unrelated plans."""
     binding = CapacityAccountBinding(
         source=_source(),
@@ -52,10 +53,9 @@ def test_account_binding_is_frozen_exact_and_has_no_display_identity() -> None:
     with pytest.raises(FrozenInstanceError):
         binding.pool_id = "api-org"  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    "changes",
-    (
+    # --- scenario: account_binding_rejects_ambiguous_or_private_identity
+    """Accepting an unsafe binding could expose one account's capacity as another's."""
+    for changes in (
         {"provider_id": "claude"},
         {"auth_mode": ""},
         {"opaque_account_id": "person@example.com"},
@@ -66,41 +66,36 @@ def test_account_binding_is_frozen_exact_and_has_no_display_identity() -> None:
         {"opaque_account_id": "a" * 65},
         {"observed_at": float("nan")},
         {"observed_at": True},
-    ),
-)
-def test_account_binding_rejects_ambiguous_or_private_identity(changes: dict[str, object]) -> None:
-    """Accepting an unsafe binding could expose one account's capacity as another's."""
-    values: dict[str, object] = {
-        "source": _source(),
-        "provider_id": "codex",
-        "auth_mode": "chatgpt-plan",
-        "opaque_account_id": "acct:opaque-01",
-        "pool_id": "consumer",
-        "evidence_class": CapacityEvidenceClass.OFFICIAL_LOCAL,
-        "observed_at": 1_800_000_000.0,
-    }
-    values.update(changes)
+    ):
+        values: dict[str, object] = {
+            "source": _source(),
+            "provider_id": "codex",
+            "auth_mode": "chatgpt-plan",
+            "opaque_account_id": "acct:opaque-01",
+            "pool_id": "consumer",
+            "evidence_class": CapacityEvidenceClass.OFFICIAL_LOCAL,
+            "observed_at": 1_800_000_000.0,
+        }
+        values.update(changes)
 
-    with pytest.raises(CapacityValidationError, match="invalid capacity account binding"):
-        CapacityAccountBinding(**values)  # type: ignore[arg-type]
+        with pytest.raises(CapacityValidationError, match="invalid capacity account binding"):
+            CapacityAccountBinding(**values)  # type: ignore[arg-type]
 
-
-@pytest.mark.parametrize("account_discriminator", ("token:secret", "bearer-account"))
-def test_lane_rejects_credential_shaped_account_discriminators(
-    account_discriminator: str,
-) -> None:
+    # --- scenario: lane_rejects_credential_shaped_account_discriminators
     """Retaining a credential-shaped lane account would leak it into capacity state."""
-    with pytest.raises(CapacityValidationError, match="account discriminator"):
-        QuotaLaneObservation(
-            key=_lane_key(),
-            semantic_name="Session window",
-            horizon=QuotaHorizon.SHORT,
-            value=CapacityValue(CapacityUnit.PERCENT_REMAINING, 45.0, ObservationState.OBSERVED),
-            reset=_reset(),
-            observed_at=1_800_000_000.0,
-            source_health=_health(),
-            account_discriminator=account_discriminator,
-        )
+    for account_discriminator in ("token:secret", "bearer-account"):
+        with pytest.raises(CapacityValidationError, match="account discriminator"):
+            QuotaLaneObservation(
+                key=_lane_key(),
+                semantic_name="Session window",
+                horizon=QuotaHorizon.SHORT,
+                value=CapacityValue(CapacityUnit.PERCENT_REMAINING, 45.0, ObservationState.OBSERVED),
+                reset=_reset(),
+                observed_at=1_800_000_000.0,
+                source_health=_health(),
+                account_discriminator=account_discriminator,
+            )
+
 
 
 def _lane_key(
@@ -165,7 +160,8 @@ def _observation(
     )
 
 
-def test_canonical_enums_keep_truth_and_authority_states_distinct() -> None:
+def test_canonical_enums_keep_truth_and_authority_states_distinct__and_2_more() -> None:
+    # --- scenario: canonical_enums_keep_truth_and_authority_states_distinct
     """Collapsing a missing or withheld state into another state loses authority truth."""
     assert len(set(ObservationState)) == 7
     assert ObservationState.OBSERVED_ZERO is not ObservationState.NULL
@@ -176,8 +172,7 @@ def test_canonical_enums_keep_truth_and_authority_states_distinct() -> None:
     assert SampleDisposition.IDENTITY_AMBIGUOUS is not SampleDisposition.INVALID
     assert ForecastConfidence.UNAVAILABLE is not ForecastConfidence.LOW_LINEAR
 
-
-def test_source_and_lane_keys_are_immutable_stable_value_identities() -> None:
+    # --- scenario: source_and_lane_keys_are_immutable_stable_value_identities
     """Mutable or object-identity keys would split the same lane across observations."""
     source = _source()
     same_source = SourceKey("codex", "quota", "source:local-01", "remote_quota_windows")
@@ -189,77 +184,62 @@ def test_source_and_lane_keys_are_immutable_stable_value_identities() -> None:
     with pytest.raises(FrozenInstanceError):
         source.provider_id = "claude"  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
+    # --- scenario: source_key_rejects_display_and_private_text_as_identity
+    """Display labels, account text, and paths must never become stable source keys."""
+    for field, value in [
         ("provider_id", "Codex Display"),
         ("adapter_id", "Quota Menu"),
         ("source_instance_id", "user@example.com"),
         ("source_instance_id", "/Users/private/quota.json"),
         ("capability_id", "Remote quota"),
-    ],
-)
-def test_source_key_rejects_display_and_private_text_as_identity(
-    field: str,
-    value: str,
-) -> None:
-    """Display labels, account text, and paths must never become stable source keys."""
-    fields = {
-        "provider_id": "codex",
-        "adapter_id": "quota",
-        "source_instance_id": "source:local-01",
-        "capability_id": "remote_quota_windows",
-    }
-    fields[field] = value
+    ]:
+        fields = {
+            "provider_id": "codex",
+            "adapter_id": "quota",
+            "source_instance_id": "source:local-01",
+            "capability_id": "remote_quota_windows",
+        }
+        fields[field] = value
 
-    with pytest.raises(CapacityValidationError, match="invalid source key"):
-        SourceKey(**fields)
+        with pytest.raises(CapacityValidationError, match="invalid source key"):
+            SourceKey(**fields)
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
+
+def test_lane_key_rejects_display_names_paths_and_duration_labels__and_2_more() -> None:
+    # --- scenario: lane_key_rejects_display_names_paths_and_duration_labels
+    """Presentation text and inferred durations must not define quota continuity."""
+    for field, value in [
         ("opaque_scope", "Account One"),
         ("opaque_scope", "person@example.com"),
         ("pool", "/tmp/provider-pool"),
         ("model", "Model Display Name"),
         ("window", "300 minutes"),
-    ],
-)
-def test_lane_key_rejects_display_names_paths_and_duration_labels(
-    field: str,
-    value: str,
-) -> None:
-    """Presentation text and inferred durations must not define quota continuity."""
-    fields = {
-        "source": _source(),
-        "opaque_scope": "all",
-        "pool": "requests",
-        "model": None,
-        "window": "session",
-        "effect": QuotaEffect.ALL_WORKLOADS,
-    }
-    fields[field] = value
+    ]:
+        fields = {
+            "source": _source(),
+            "opaque_scope": "all",
+            "pool": "requests",
+            "model": None,
+            "window": "session",
+            "effect": QuotaEffect.ALL_WORKLOADS,
+        }
+        fields[field] = value
 
-    with pytest.raises(CapacityValidationError, match="invalid quota lane key"):
-        QuotaLaneKey(**fields)
+        with pytest.raises(CapacityValidationError, match="invalid quota lane key"):
+            QuotaLaneKey(**fields)
 
-
-@pytest.mark.parametrize("remaining", [-0.001, 100.001, nan, inf, -inf, True, "50"])
-def test_percent_remaining_rejects_nonfinite_out_of_range_and_non_numeric_values(
-    remaining: object,
-) -> None:
+    # --- scenario: percent_remaining_rejects_nonfinite_out_of_range_and_non_numeric_values
     """Invalid numbers must not enter ranking or appear as provider capacity."""
-    with pytest.raises(CapacityValidationError, match="invalid remaining capacity"):
-        CapacityValue(
-            CapacityUnit.PERCENT_REMAINING,
-            remaining,  # type: ignore[arg-type]
-            ObservationState.OBSERVED,
-        )
+    for remaining in [-0.001, 100.001, nan, inf, -inf, True, "50"]:
+        with pytest.raises(CapacityValidationError, match="invalid remaining capacity"):
+            CapacityValue(
+                CapacityUnit.PERCENT_REMAINING,
+                remaining,  # type: ignore[arg-type]
+                ObservationState.OBSERVED,
+            )
 
-
-def test_zero_remaining_requires_and_preserves_observed_zero_truth() -> None:
+    # --- scenario: zero_remaining_requires_and_preserves_observed_zero_truth
     """Treating an observed zero as missing would hide an exhausted binding lane."""
     value = CapacityValue(
         CapacityUnit.PERCENT_REMAINING,
@@ -283,61 +263,48 @@ def test_zero_remaining_requires_and_preserves_observed_zero_truth() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "state",
-    [ObservationState.NULL, ObservationState.UNAVAILABLE],
-)
-def test_missing_remaining_has_no_numeric_value(state: ObservationState) -> None:
+
+def test_missing_remaining_has_no_numeric_value__and_2_more() -> None:
+    # --- scenario: missing_remaining_has_no_numeric_value
     """Fabricating zero for null or unavailable evidence would manufacture exhaustion."""
-    value = CapacityValue(CapacityUnit.PERCENT_REMAINING, None, state)
+    for state in [ObservationState.NULL, ObservationState.UNAVAILABLE]:
+        value = CapacityValue(CapacityUnit.PERCENT_REMAINING, None, state)
 
-    assert value.remaining is None
-    assert value.state is state
+        assert value.remaining is None
+        assert value.state is state
 
-
-@pytest.mark.parametrize(
-    ("remaining", "state"),
-    [
+    # --- scenario: partial_stale_and_last_known_good_remain_explicit
+    """Fallback or incomplete evidence must retain its state beside any usable value."""
+    for remaining, state in [
         (25.0, ObservationState.PARTIAL),
         (25.0, ObservationState.STALE),
         (25.0, ObservationState.LAST_KNOWN_GOOD),
         (None, ObservationState.PARTIAL),
-    ],
-)
-def test_partial_stale_and_last_known_good_remain_explicit(
-    remaining: float | None,
-    state: ObservationState,
-) -> None:
-    """Fallback or incomplete evidence must retain its state beside any usable value."""
-    value = CapacityValue(CapacityUnit.PERCENT_REMAINING, remaining, state)
+    ]:
+        value = CapacityValue(CapacityUnit.PERCENT_REMAINING, remaining, state)
 
-    assert value.remaining == remaining
-    assert value.state is state
+        assert value.remaining == remaining
+        assert value.state is state
 
-
-@pytest.mark.parametrize(
-    ("remaining", "state"),
-    [
+    # --- scenario: remaining_value_and_state_cannot_contradict_each_other
+    """Contradictory numeric and missing states would make consumers guess authority."""
+    for remaining, state in [
         (None, ObservationState.OBSERVED),
         (None, ObservationState.OBSERVED_ZERO),
         (None, ObservationState.STALE),
         (None, ObservationState.LAST_KNOWN_GOOD),
         (1.0, ObservationState.NULL),
         (1.0, ObservationState.UNAVAILABLE),
-    ],
-)
-def test_remaining_value_and_state_cannot_contradict_each_other(
-    remaining: float | None,
-    state: ObservationState,
-) -> None:
-    """Contradictory numeric and missing states would make consumers guess authority."""
-    with pytest.raises(CapacityValidationError, match="remaining capacity state"):
-        CapacityValue(CapacityUnit.PERCENT_REMAINING, remaining, state)
+    ]:
+        with pytest.raises(CapacityValidationError, match="remaining capacity state"):
+            CapacityValue(CapacityUnit.PERCENT_REMAINING, remaining, state)
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
+
+def test_reset_fact_rejects_contradictory_or_invalid_clock_truth__and_2_more() -> None:
+    # --- scenario: reset_fact_rejects_contradictory_or_invalid_clock_truth
+    """A malformed reset boundary must not become a countdown or continuity fact."""
+    for kwargs in [
         {
             "state": ResetState.FUTURE,
             "reset_epoch": 1_799_999_999.0,
@@ -368,17 +335,11 @@ def test_remaining_value_and_state_cannot_contradict_each_other(
             "window_minutes": 0.0,
             "observed_at": 1_800_000_000.0,
         },
-    ],
-)
-def test_reset_fact_rejects_contradictory_or_invalid_clock_truth(
-    kwargs: dict[str, object],
-) -> None:
-    """A malformed reset boundary must not become a countdown or continuity fact."""
-    with pytest.raises(CapacityValidationError, match="invalid reset fact"):
-        ResetFact(**kwargs)  # type: ignore[arg-type]
+    ]:
+        with pytest.raises(CapacityValidationError, match="invalid reset fact"):
+            ResetFact(**kwargs)  # type: ignore[arg-type]
 
-
-def test_public_capacity_records_validate_types_and_matching_source_identity() -> None:
+    # --- scenario: public_capacity_records_validate_types_and_matching_source_identity
     """Annotations alone would let observations combine facts from sibling sources."""
     other_source = SourceKey("claude", "quota", "source:local-02", "remote_quota_windows")
     with pytest.raises(CapacityValidationError, match="source health"):
@@ -399,30 +360,26 @@ def test_public_capacity_records_validate_types_and_matching_source_identity() -
             account_discriminator="acct:opaque-01",
         )
 
-
-@pytest.mark.parametrize(
-    "account_discriminator",
-    ["person@example.com", "/Users/private/account", "Account Display", "x" * 65],
-)
-def test_observation_rejects_account_display_text_as_discriminator(
-    account_discriminator: str,
-) -> None:
+    # --- scenario: observation_rejects_account_display_text_as_discriminator
     """Account continuity must use only an opaque source-provided discriminator."""
-    observation = _observation()
-    with pytest.raises(CapacityValidationError, match="account discriminator"):
-        QuotaLaneObservation(
-            key=observation.key,
-            semantic_name=observation.semantic_name,
-            horizon=observation.horizon,
-            value=observation.value,
-            reset=observation.reset,
-            observed_at=observation.observed_at,
-            source_health=observation.source_health,
-            account_discriminator=account_discriminator,
-        )
+    for account_discriminator in ["person@example.com", "/Users/private/account", "Account Display", "x" * 65]:
+        observation = _observation()
+        with pytest.raises(CapacityValidationError, match="account discriminator"):
+            QuotaLaneObservation(
+                key=observation.key,
+                semantic_name=observation.semantic_name,
+                horizon=observation.horizon,
+                value=observation.value,
+                reset=observation.reset,
+                observed_at=observation.observed_at,
+                source_health=observation.source_health,
+                account_discriminator=account_discriminator,
+            )
 
 
-def test_snapshot_caps_lanes_and_rejects_duplicate_lane_keys() -> None:
+
+def test_snapshot_caps_lanes_and_rejects_duplicate_lane_keys__and_2_more() -> None:
+    # --- scenario: snapshot_caps_lanes_and_rejects_duplicate_lane_keys
     """Unbounded or duplicate lanes would make input order control capacity truth."""
     first = _observation()
     duplicate = _observation(remaining=20.0)
@@ -444,8 +401,7 @@ def test_snapshot_caps_lanes_and_rejects_duplicate_lane_keys() -> None:
             source_health=(_health(),),
         )
 
-
-def test_feature_lanes_use_opaque_scope_as_their_distinct_identity() -> None:
+    # --- scenario: feature_lanes_use_opaque_scope_as_their_distinct_identity
     """Ignoring opaque scope would collapse sibling feature quotas into one lane."""
     fable = _lane_key(opaque_scope="fable", effect=QuotaEffect.FEATURE)
     deep_research = _lane_key(opaque_scope="deep-research", effect=QuotaEffect.FEATURE)
@@ -462,8 +418,7 @@ def test_feature_lanes_use_opaque_scope_as_their_distinct_identity() -> None:
         "deep-research",
     )
 
-
-def test_duplicate_feature_scope_is_rejected_for_the_same_pool_and_window() -> None:
+    # --- scenario: duplicate_feature_scope_is_rejected_for_the_same_pool_and_window
     """Repeating the same feature scope must not create two conflicting facts."""
     key = _lane_key(opaque_scope="fable", effect=QuotaEffect.FEATURE)
 
@@ -475,7 +430,9 @@ def test_duplicate_feature_scope_is_rejected_for_the_same_pool_and_window() -> N
         )
 
 
-def test_feature_lane_forbids_a_model_discriminator() -> None:
+
+def test_feature_lane_forbids_a_model_discriminator__and_1_more() -> None:
+    # --- scenario: feature_lane_forbids_a_model_discriminator
     """Mixing feature scope with model identity would make authority ambiguous."""
     with pytest.raises(CapacityValidationError, match="invalid quota lane key"):
         _lane_key(
@@ -484,8 +441,7 @@ def test_feature_lane_forbids_a_model_discriminator() -> None:
             effect=QuotaEffect.FEATURE,
         )
 
-
-def test_snapshot_and_execution_context_require_bounded_immutable_tuples() -> None:
+    # --- scenario: snapshot_and_execution_context_require_bounded_immutable_tuples
     """Accepting arbitrary iterables could trigger work or hide unbounded input."""
     with pytest.raises(CapacityValidationError, match="invalid capacity snapshot"):
         CapacitySnapshot(
@@ -510,3 +466,4 @@ def test_snapshot_and_execution_context_require_bounded_immutable_tuples() -> No
     )
     assert context.provider_ids == ("codex",)
     assert context.source_instances == ("source:local-01",)
+

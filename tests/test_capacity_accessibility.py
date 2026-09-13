@@ -115,7 +115,8 @@ def _card(now: float = NOW):
     return build_capacity_card(projection, now)
 
 
-def test_capacity_card_is_one_stable_group_with_children_in_visual_order() -> None:
+def test_capacity_card_is_one_stable_group_with_children_in_visual_order__and_2_more() -> None:
+    # --- scenario: capacity_card_is_one_stable_group_with_children_in_visual_order
     accessibility = build_capacity_card_accessibility(_card(), NOW)
 
     assert accessibility.label == "Capacity"
@@ -128,8 +129,7 @@ def test_capacity_card_is_one_stable_group_with_children_in_visual_order() -> No
     assert accessibility.children[1].value == "80% left, Resets in 1h, Updated 2m ago, stale"
     assert all(child.help == "Capacity limit details" for child in accessibility.children)
 
-
-def test_accessibility_models_define_semantics_without_claiming_appkit_roles() -> None:
+    # --- scenario: accessibility_models_define_semantics_without_claiming_appkit_roles
     group_field_names = {field.name for field in fields(CapacityAccessibilityGroupModel)}
     child_field_names = {field.name for field in fields(CapacityAccessibilityChildModel)}
 
@@ -143,8 +143,7 @@ def test_accessibility_models_define_semantics_without_claiming_appkit_roles() -
     assert "role" not in group_field_names | child_field_names
     assert "color" not in group_field_names | child_field_names
 
-
-def test_stale_and_zero_are_announced_without_relying_on_color() -> None:
+    # --- scenario: stale_and_zero_are_announced_without_relying_on_color
     accessibility = build_capacity_card_accessibility(_card(), NOW)
     spoken = " | ".join(child.value for child in accessibility.children)
 
@@ -154,7 +153,9 @@ def test_stale_and_zero_are_announced_without_relying_on_color() -> None:
     assert "used" not in spoken.lower()
 
 
-def test_no_source_status_remains_nonempty_and_does_not_create_fake_child() -> None:
+
+def test_no_source_status_remains_nonempty_and_does_not_create_fake_child__and_2_more() -> None:
+    # --- scenario: no_source_status_remains_nonempty_and_does_not_create_fake_child
     from jrbar.capacity_authority import CapacityProjection
 
     card = build_capacity_card(CapacityProjection((), ()), NOW)
@@ -164,8 +165,7 @@ def test_no_source_status_remains_nonempty_and_does_not_create_fake_child() -> N
     assert accessibility.value == "No capacity sources"
     assert accessibility.children == ()
 
-
-def test_countdown_announcement_key_is_coalesced_to_one_wall_clock_minute() -> None:
+    # --- scenario: countdown_announcement_key_is_coalesced_to_one_wall_clock_minute
     card = _card()
 
     first = build_capacity_card_accessibility(card, NOW)
@@ -177,8 +177,7 @@ def test_countdown_announcement_key_is_coalesced_to_one_wall_clock_minute() -> N
     assert first.children[0].countdown_announcement_minute == same_minute.children[0].countdown_announcement_minute
     assert next_minute.children[0].countdown_announcement_minute != first.children[0].countdown_announcement_minute
 
-
-def test_manual_refresh_status_is_pure_semantic_state_without_native_role() -> None:
+    # --- scenario: manual_refresh_status_is_pure_semantic_state_without_native_role
     source = SourceKey("codex", "quota", "local:primary", "capacity.v1")
     decision = RefreshDecision(
         RefreshDecisionKind.QUEUED_FOR_COOLDOWN,
@@ -199,6 +198,7 @@ def test_manual_refresh_status_is_pure_semantic_state_without_native_role() -> N
         "can_request",
         "announcement_minute",
     }
+
 
 
 def test_accessibility_text_is_bounded_and_nonempty() -> None:

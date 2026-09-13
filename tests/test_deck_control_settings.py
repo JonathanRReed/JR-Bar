@@ -15,22 +15,24 @@ def test_missing_settings_are_disabled_and_saved_bindings_roundtrip_privately(tm
     assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_disabled_settings_do_not_resolve_any_action():
+def test_disabled_settings_do_not_resolve_any_action__and_1_more() -> None:
+    # --- scenario: disabled_settings_do_not_resolve_any_action
     settings = DeckControlSettings(bindings=((3, DeckAction("open_usage")),))
     assert settings.action_for(3) is None
 
-
-@pytest.mark.parametrize("bindings", [
+    # --- scenario: invalid_or_duplicate_bindings_are_rejected
+    for bindings in [
     ((True, DeckAction("open_usage")),), ((24, DeckAction("open_usage")),),
     ((3, DeckAction("open_usage")), (3, DeckAction("open_agent_browser"))),
     ((3, "open_usage"),),
-])
-def test_invalid_or_duplicate_bindings_are_rejected(bindings):
-    with pytest.raises(ValueError):
-        DeckControlSettings(enabled=True, bindings=bindings)
+]:
+        with pytest.raises(ValueError):
+            DeckControlSettings(enabled=True, bindings=bindings)
 
 
-def test_save_refuses_changed_settings_instead_of_losing_another_edit(tmp_path):
+
+def test_save_refuses_changed_settings_instead_of_losing_another_edit__and_1_more(tmp_path) -> None:
+    # --- scenario: save_refuses_changed_settings_instead_of_losing_another_edit
     path = tmp_path / "private" / "deck-controls.json"
     initial = DeckControlSettings()
     first = DeckControlSettings(enabled=True)
@@ -39,19 +41,19 @@ def test_save_refuses_changed_settings_instead_of_losing_another_edit(tmp_path):
         save_deck_controls(initial, path, expected=initial)
     assert load_deck_controls(path) == first
 
-
-@pytest.mark.parametrize("document", [
+    # --- scenario: malformed_or_future_configuration_is_never_enabled_or_overwritten
+    for document in [
     {"version": 2, "enabled": True, "bindings": []},
     {"version": 1, "enabled": "yes", "bindings": []},
     {"version": 1, "enabled": True, "bindings": [], "script": "unsafe"},
-])
-def test_malformed_or_future_configuration_is_never_enabled_or_overwritten(tmp_path, document):
-    from jrbar.private_io import atomic_private_write
+]:
+        from jrbar.private_io import atomic_private_write
 
-    path = tmp_path / "private" / "deck-controls.json"
-    atomic_private_write(path, json.dumps(document))
-    with pytest.raises(ValueError):
-        load_deck_controls(path)
-    with pytest.raises(ValueError):
-        save_deck_controls(DeckControlSettings(), path, expected=DeckControlSettings())
-    assert json.loads(path.read_text()) == document
+        path = tmp_path / "private" / "deck-controls.json"
+        atomic_private_write(path, json.dumps(document))
+        with pytest.raises(ValueError):
+            load_deck_controls(path)
+        with pytest.raises(ValueError):
+            save_deck_controls(DeckControlSettings(), path, expected=DeckControlSettings())
+        assert json.loads(path.read_text()) == document
+

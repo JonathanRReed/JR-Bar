@@ -266,7 +266,8 @@ def _all_text(text: AccessibilityText) -> str:
     return " ".join((text.label, text.value, text.help))
 
 
-def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text() -> None:
+def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text__and_2_more() -> None:
+    # --- scenario: accessibility_records_are_frozen_and_reject_blank_or_unbounded_text
     text = AccessibilityText("JR-Bar", "No agents need attention", "Open JR-Bar status")
     focus = FocusSnapshot("agent-browser", "search", None, (3, 2), "agents")
     announcement = AccessibilityAnnouncement(
@@ -292,31 +293,19 @@ def test_accessibility_records_are_frozen_and_reject_blank_or_unbounded_text() -
             AnnouncementPriority.ERROR,
         )
 
+    # --- scenario: semantic_text_scale_accepts_only_the_five_exact_percentage_choices
+    for choice, expected in ((100, 1.0), (125, 1.25), (150, 1.5), (175, 1.75), (200, 2.0)):
+        assert normalize_semantic_text_scale(choice) == expected
 
-@pytest.mark.parametrize(
-    ("choice", "expected"),
-    ((100, 1.0), (125, 1.25), (150, 1.5), (175, 1.75), (200, 2.0)),
-)
-def test_semantic_text_scale_accepts_only_the_five_exact_percentage_choices(
-    choice: object,
-    expected: float,
-) -> None:
-    assert normalize_semantic_text_scale(choice) == expected
+    # --- scenario: invalid_semantic_text_scale_normalizes_to_one_hundred_percent
+    for invalid in (None, True, False, 0, 99, 201, 125.0, 1.25, "125", float("nan"), object()):
+        assert normalize_semantic_text_scale(invalid) == 1.0
 
 
-@pytest.mark.parametrize(
-    "invalid",
-    (None, True, False, 0, 99, 201, 125.0, 1.25, "125", float("nan"), object()),
-)
-def test_invalid_semantic_text_scale_normalizes_to_one_hundred_percent(
-    invalid: object,
-) -> None:
-    assert normalize_semantic_text_scale(invalid) == 1.0
 
-
-@pytest.mark.parametrize(
-    ("semantic", "expected_phrase"),
-    (
+def test_status_item_has_stable_role_text_and_nonblank_value_for_every_glance__and_2_more() -> None:
+    # --- scenario: status_item_has_stable_role_text_and_nonblank_value_for_every_glance
+    for semantic, expected_phrase in (
         (GlanceSemantic.ATTENTION, "Needs your attention"),
         (GlanceSemantic.FRESH_FAILURE, "New failure"),
         (GlanceSemantic.FRESH_COMPLETION, "Agent completed"),
@@ -324,24 +313,18 @@ def test_invalid_semantic_text_scale_normalizes_to_one_hundred_percent(
         (GlanceSemantic.UNRESOLVED_FAILURE, "Failure needs review"),
         (GlanceSemantic.CAPACITY, "Capacity status available"),
         (GlanceSemantic.REST, "No agents need attention"),
-    ),
-)
-def test_status_item_has_stable_role_text_and_nonblank_value_for_every_glance(
-    semantic: GlanceSemantic,
-    expected_phrase: str,
-) -> None:
-    state, _, _ = _operator_state()
+    ):
+        state, _, _ = _operator_state()
 
-    result = status_item_accessibility(state, _glance(semantic))
+        result = status_item_accessibility(state, _glance(semantic))
 
-    assert result.label == "JR-Bar"
-    assert result.help == "Open JR-Bar status"
-    assert expected_phrase in result.value
-    assert result.value.strip()
-    assert len(result.value) <= MAX_ACCESSIBILITY_VALUE_LENGTH
+        assert result.label == "JR-Bar"
+        assert result.help == "Open JR-Bar status"
+        assert expected_phrase in result.value
+        assert result.value.strip()
+        assert len(result.value) <= MAX_ACCESSIBILITY_VALUE_LENGTH
 
-
-def test_status_item_preserves_stale_acknowledged_quiet_and_finite_cue_truth() -> None:
+    # --- scenario: status_item_preserves_stale_acknowledged_quiet_and_finite_cue_truth
     state, _, _ = _operator_state(
         lifecycle=WorkLifecycle.WAITING,
         freshness=SourceFreshness.STALE,
@@ -370,59 +353,47 @@ def test_status_item_preserves_stale_acknowledged_quiet_and_finite_cue_truth() -
     assert "Additional updates waiting" in result.value
     assert result.value.strip()
 
-
-@pytest.mark.parametrize(
-    ("lifecycle", "expected"),
-    (
+    # --- scenario: mailbox_row_names_every_lifecycle_without_color
+    for lifecycle, expected in (
         (WorkLifecycle.IDLE, "Idle"),
         (WorkLifecycle.ACTIVE, "Active"),
         (WorkLifecycle.WAITING, "Waiting"),
         (WorkLifecycle.COMPLETED, "Completed"),
         (WorkLifecycle.FAILED, "Failed"),
         (WorkLifecycle.UNKNOWN, "Unknown"),
-    ),
-)
-def test_mailbox_row_names_every_lifecycle_without_color(
-    lifecycle: WorkLifecycle,
-    expected: str,
-) -> None:
-    state, work, _ = _operator_state(lifecycle=lifecycle)
-    del state
+    ):
+        state, work, _ = _operator_state(lifecycle=lifecycle)
+        del state
 
-    result = mailbox_row_accessibility(_mailbox_row(work, worker_count=2))
+        result = mailbox_row_accessibility(_mailbox_row(work, worker_count=2))
 
-    assert result.label == "Codex work:01"
-    assert expected in result.value
-    assert "Source fresh" in result.value
-    assert "2 workers" in result.value
-    assert "Open actions" in result.help
-    assert "red" not in _all_text(result).casefold()
-    assert "green" not in _all_text(result).casefold()
+        assert result.label == "Codex work:01"
+        assert expected in result.value
+        assert "Source fresh" in result.value
+        assert "2 workers" in result.value
+        assert "Open actions" in result.help
+        assert "red" not in _all_text(result).casefold()
+        assert "green" not in _all_text(result).casefold()
 
 
-@pytest.mark.parametrize(
-    ("freshness", "expected"),
-    (
+
+def test_mailbox_row_names_every_source_freshness_state__and_2_more() -> None:
+    # --- scenario: mailbox_row_names_every_source_freshness_state
+    for freshness, expected in (
         (SourceFreshness.FRESH, "Source fresh"),
         (SourceFreshness.STALE, "Source stale"),
         (SourceFreshness.TIMING_UNCERTAIN, "Source timing uncertain"),
         (SourceFreshness.PARTIAL, "Source partially available"),
         (SourceFreshness.UNAVAILABLE, "Source unavailable"),
         (SourceFreshness.RESTORED, "Source restored"),
-    ),
-)
-def test_mailbox_row_names_every_source_freshness_state(
-    freshness: SourceFreshness,
-    expected: str,
-) -> None:
-    _, work, _ = _operator_state(freshness=freshness)
+    ):
+        _, work, _ = _operator_state(freshness=freshness)
 
-    result = mailbox_row_accessibility(_mailbox_row(work))
+        result = mailbox_row_accessibility(_mailbox_row(work))
 
-    assert expected in result.value
+        assert expected in result.value
 
-
-def test_mailbox_local_states_augment_instead_of_replace_lifecycle_truth() -> None:
+    # --- scenario: mailbox_local_states_augment_instead_of_replace_lifecycle_truth
     _, work, request = _operator_state(
         lifecycle=WorkLifecycle.WAITING,
         request_phase=RequestPhase.STALE_HOLD,
@@ -443,10 +414,8 @@ def test_mailbox_local_states_augment_instead_of_replace_lifecycle_truth() -> No
         "Woke, Acknowledged locally, Source stale, 1 worker"
     )
 
-
-@pytest.mark.parametrize(
-    "unsafe_label",
-    (
+    # --- scenario: mailbox_row_replaces_missing_or_private_shaped_family_copy
+    for unsafe_label in (
         "",
         "/Users/alice/private/project",
         "Codex person@example.com",
@@ -456,23 +425,21 @@ def test_mailbox_local_states_augment_instead_of_replace_lifecycle_truth() -> No
         "Codex Traceback: PermissionError",
         "Codex session_01HZX5BX8J8DG6YF7JMV2J0E2G",
         "Codex 123e4567-e89b-12d3-a456-426614174000",
-    ),
-)
-def test_mailbox_row_replaces_missing_or_private_shaped_family_copy(
-    unsafe_label: str,
-) -> None:
-    _, work, _ = _operator_state()
+    ):
+        _, work, _ = _operator_state()
 
-    result = mailbox_row_accessibility(_mailbox_row(work, safe_label=unsafe_label))
+        result = mailbox_row_accessibility(_mailbox_row(work, safe_label=unsafe_label))
 
-    assert result.label == "Codex agent family"
-    if unsafe_label:
-        assert unsafe_label not in _all_text(result)
-    assert len(result.label) <= MAX_ACCESSIBILITY_LABEL_LENGTH
-    assert len(result.help) <= MAX_ACCESSIBILITY_HELP_LENGTH
+        assert result.label == "Codex agent family"
+        if unsafe_label:
+            assert unsafe_label not in _all_text(result)
+        assert len(result.label) <= MAX_ACCESSIBILITY_LABEL_LENGTH
+        assert len(result.help) <= MAX_ACCESSIBILITY_HELP_LENGTH
 
 
-def test_browser_row_exposes_provider_family_lifecycle_triage_freshness_and_workers() -> None:
+
+def test_browser_row_exposes_provider_family_lifecycle_triage_freshness_and_workers__and_2_more() -> None:
+    # --- scenario: browser_row_exposes_provider_family_lifecycle_triage_freshness_and_workers
     _, work, request = _operator_state(
         lifecycle=WorkLifecycle.ACTIVE,
         request_phase=RequestPhase.LIVE_ACKNOWLEDGED,
@@ -502,8 +469,7 @@ def test_browser_row_exposes_provider_family_lifecycle_triage_freshness_and_work
     )
     assert "Open actions" in result.help
 
-
-def test_actionable_browser_row_requires_explicit_canonical_lifecycle() -> None:
+    # --- scenario: actionable_browser_row_requires_explicit_canonical_lifecycle
     _, work, request = _operator_state(
         lifecycle=WorkLifecycle.ACTIVE,
         request_phase=RequestPhase.LIVE_UNACKNOWLEDGED,
@@ -513,8 +479,7 @@ def test_actionable_browser_row_requires_explicit_canonical_lifecycle() -> None:
     with pytest.raises(TypeError):
         browser_row_accessibility(row)  # type: ignore[call-arg]
 
-
-def test_browser_row_keeps_full_semantics_when_navigation_is_disabled() -> None:
+    # --- scenario: browser_row_keeps_full_semantics_when_navigation_is_disabled
     _, work, _ = _operator_state(lifecycle=WorkLifecycle.COMPLETED)
 
     result = browser_row_accessibility(
@@ -529,7 +494,9 @@ def test_browser_row_keeps_full_semantics_when_navigation_is_disabled() -> None:
     assert result.help == "Open unavailable. Source is stale"
 
 
-def test_action_accessibility_exposes_enabled_state_reason_and_key_equivalent() -> None:
+
+def test_action_accessibility_exposes_enabled_state_reason_and_key_equivalent__and_2_more() -> None:
+    # --- scenario: action_accessibility_exposes_enabled_state_reason_and_key_equivalent
     enabled = OperatorActionDescriptor(
         OperatorActionKind.OPEN,
         "Open",
@@ -556,10 +523,8 @@ def test_action_accessibility_exposes_enabled_state_reason_and_key_equivalent() 
         "Source is stale",
     )
 
-
-@pytest.mark.parametrize(
-    ("kind", "interruption", "text", "priority"),
-    (
+    # --- scenario: fresh_actionable_and_terminal_edges_announce_once
+    for kind, interruption, text, priority in (
         (
             TransitionKind.REQUEST_OPENED,
             InterruptionClass.ACTION_REQUIRED,
@@ -584,47 +549,38 @@ def test_action_accessibility_exposes_enabled_state_reason_and_key_equivalent() 
             "An agent completed",
             AnnouncementPriority.SUCCESS,
         ),
-    ),
-)
-def test_fresh_actionable_and_terminal_edges_announce_once(
-    kind: TransitionKind,
-    interruption: InterruptionClass,
-    text: str,
-    priority: AnnouncementPriority,
-) -> None:
-    event = _event(kind, interruption=interruption)
+    ):
+        event = _event(kind, interruption=interruption)
 
-    announcement = announcement_for_transition(event)
+        announcement = announcement_for_transition(event)
 
-    assert announcement is not None
-    assert announcement.text == text
-    assert announcement.priority is priority
-    assert announcement.key.startswith("announcement:")
-    assert len(announcement.key) <= 128
-    assert (
-        announcement_for_transition(
-            event,
-            announced_event_keys=frozenset({event.key}),
+        assert announcement is not None
+        assert announcement.text == text
+        assert announcement.priority is priority
+        assert announcement.key.startswith("announcement:")
+        assert len(announcement.key) <= 128
+        assert (
+            announcement_for_transition(
+                event,
+                announced_event_keys=frozenset({event.key}),
+            )
+            is None
         )
-        is None
-    )
 
-
-@pytest.mark.parametrize(
-    "kind",
-    (
+    # --- scenario: poll_and_ambient_edges_do_not_announce
+    for kind in (
         TransitionKind.BECAME_ACTIVE,
         TransitionKind.BECAME_IDLE,
         TransitionKind.SOURCE_DEGRADED,
         TransitionKind.SOURCE_RECOVERED,
-    ),
-)
-def test_poll_and_ambient_edges_do_not_announce(kind: TransitionKind) -> None:
-    event = _event(kind, interruption=InterruptionClass.AMBIENT)
-    assert announcement_for_transition(event) is None
+    ):
+        event = _event(kind, interruption=InterruptionClass.AMBIENT)
+        assert announcement_for_transition(event) is None
 
 
-def test_stale_quiet_and_locally_acknowledged_transitions_do_not_announce() -> None:
+
+def test_stale_quiet_and_locally_acknowledged_transitions_do_not_announce__and_2_more() -> None:
+    # --- scenario: stale_quiet_and_locally_acknowledged_transitions_do_not_announce
     stale = _event(
         TransitionKind.FAILED,
         interruption=InterruptionClass.IMPORTANT_OUTCOME,
@@ -639,8 +595,7 @@ def test_stale_quiet_and_locally_acknowledged_transitions_do_not_announce() -> N
     assert announcement_for_transition(actionable, quiet=True) is None
     assert announcement_for_transition(actionable, acknowledged_locally=True) is None
 
-
-def test_announcement_key_is_exact_but_does_not_echo_private_identity() -> None:
+    # --- scenario: announcement_key_is_exact_but_does_not_echo_private_identity
     first = _event(
         TransitionKind.COMPLETED,
         interruption=InterruptionClass.COURTESY,
@@ -671,22 +626,17 @@ def test_announcement_key_is_exact_but_does_not_echo_private_identity() -> None:
     for forbidden in ("prompt", "delete-files", "raw-error", "permission-denied"):
         assert forbidden not in rendered
 
+    # --- scenario: focus_snapshot_rejects_invalid_text_selection
+    for invalid_selection in ((-1, 0), (0, -1), (True, 0), (0, 1.5), (0,), [0, 0]):
+        with pytest.raises(ValueError):
+            FocusSnapshot(
+                "agent-browser",
+                "search",
+                None,
+                invalid_selection,  # type: ignore[arg-type]
+                "agents",
+            )
 
-@pytest.mark.parametrize(
-    "invalid_selection",
-    ((-1, 0), (0, -1), (True, 0), (0, 1.5), (0,), [0, 0]),
-)
-def test_focus_snapshot_rejects_invalid_text_selection(
-    invalid_selection: object,
-) -> None:
-    with pytest.raises(ValueError):
-        FocusSnapshot(
-            "agent-browser",
-            "search",
-            None,
-            invalid_selection,  # type: ignore[arg-type]
-            "agents",
-        )
 
 
 def test_all_public_helpers_return_nonempty_bounded_privacy_safe_text() -> None:

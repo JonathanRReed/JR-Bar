@@ -98,9 +98,8 @@ def test_create_only_private_publish_has_one_winner_when_two_writers_race(tmp_pa
     assert list(tmp_path.glob("backup.json.*.tmp")) == []
 
 
-def test_existing_broad_file_and_parent_are_tightened_without_data_loss(
-    tmp_path: Path,
-) -> None:
+def test_existing_broad_file_and_parent_are_tightened_without_data_loss__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: existing_broad_file_and_parent_are_tightened_without_data_loss
     state = tmp_path / "state"
     state.mkdir(mode=0o777)
     target = state / "events.jsonl"
@@ -115,10 +114,7 @@ def test_existing_broad_file_and_parent_are_tightened_without_data_loss(
     assert mode(state) == 0o700
     assert mode(target) == 0o600
 
-
-def test_private_writes_refuse_symlinks_and_non_directory_parents(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: private_writes_refuse_symlinks_and_non_directory_parents
     outside = tmp_path / "outside.txt"
     outside.write_text("outside stays unchanged")
     linked = tmp_path / "state.json"
@@ -133,10 +129,7 @@ def test_private_writes_refuse_symlinks_and_non_directory_parents(
     with pytest.raises(OSError):
         ensure_private_directory(not_a_directory / "child")
 
-
-def test_failed_atomic_replace_preserves_target_and_removes_scratch(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: failed_atomic_replace_preserves_target_and_removes_scratch
     target = tmp_path / "state" / "latest.json"
     atomic_private_write(target, "old state")
 
@@ -148,6 +141,7 @@ def test_failed_atomic_replace_preserves_target_and_removes_scratch(
 
     assert target.read_text() == "old state"
     assert list(target.parent.glob(f"{target.name}.*.tmp")) == []
+
 
 
 def test_append_is_private_and_refuses_preplanted_symlink(tmp_path: Path) -> None:
@@ -601,7 +595,8 @@ def test_retention_removes_age_then_oldest_with_stable_path_tie(
     assert mode(newest) == 0o600
 
 
-def test_retention_refuses_symlink_root(tmp_path: Path) -> None:
+def test_retention_refuses_symlink_root__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: retention_refuses_symlink_root
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "keep.txt").write_text("keep")
@@ -613,8 +608,7 @@ def test_retention_refuses_symlink_root(tmp_path: Path) -> None:
 
     assert (outside / "keep.txt").read_text() == "keep"
 
-
-def test_tail_read_returns_newest_bytes_of_an_over_cap_file(tmp_path: Path) -> None:
+    # --- scenario: tail_read_returns_newest_bytes_of_an_over_cap_file
     """tail=True on an over-cap file yields its newest max_bytes.
 
     The raising default silenced a provider for a day (2026-08-21): its
@@ -637,8 +631,7 @@ def test_tail_read_returns_newest_bytes_of_an_over_cap_file(tmp_path: Path) -> N
     # A file under the cap is returned whole in both modes.
     assert read_private_text(target, max_bytes=1_000_000, tail=True) == "".join(lines)
 
-
-def test_log_slice_reads_only_appended_bytes(tmp_path: Path) -> None:
+    # --- scenario: log_slice_reads_only_appended_bytes
     """The cursor read that keeps per-event reconciles O(new data)."""
     target = tmp_path / "events.jsonl"
     atomic_private_write(target, "one\ntwo\n")
@@ -677,3 +670,4 @@ def test_log_slice_reads_only_appended_bytes(tmp_path: Path) -> None:
     capped, _ = read_private_log_slice(target, cursor=None, max_bytes=16)
     assert capped.endswith("tail-line\n")
     assert len(capped.encode("utf-8")) <= 16
+

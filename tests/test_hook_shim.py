@@ -123,7 +123,8 @@ def _own_start_time() -> float:
     return time.mktime(time.strptime(out.stdout.strip(), "%a %b %d %H:%M:%S %Y"))
 
 
-def test_shim_defaults_the_log_path_when_none_is_given(shim: Path, sock_dir: Path) -> None:
+def test_shim_defaults_the_log_path_when_none_is_given__and_2_more(shim: Path, sock_dir: Path) -> None:
+    # --- scenario: shim_defaults_the_log_path_when_none_is_given
     ingress = _FakeIngress(sock_dir)
     try:
         _run(shim, sock_dir, "codex", "{}")
@@ -132,8 +133,7 @@ def test_shim_defaults_the_log_path_when_none_is_given(shim: Path, sock_dir: Pat
     finally:
         ingress.close()
 
-
-def test_shim_queues_the_payload_when_the_daemon_is_down(shim: Path, sock_dir: Path) -> None:
+    # --- scenario: shim_queues_the_payload_when_the_daemon_is_down
     payload = '{"hook_event_name":"Stop","session_id":"q\\"1","note":"tab\\there"}'
     result = _run(shim, sock_dir, "claude", payload)
     assert result.returncode == 0
@@ -151,14 +151,15 @@ def test_shim_queues_the_payload_when_the_daemon_is_down(shim: Path, sock_dir: P
     _run(shim, sock_dir, "claude", "{}")
     assert len(pending.read_text().splitlines()) == 2
 
-
-def test_cursor_prints_an_empty_object_even_when_nothing_listens(shim: Path, sock_dir: Path) -> None:
+    # --- scenario: cursor_prints_an_empty_object_even_when_nothing_listens
     result = _run(shim, sock_dir, "cursor", '{"hook_event_name":"beforeSubmitPrompt"}')
     assert result.returncode == 0
     assert result.stdout == b"{}\n"
 
 
-def test_shim_never_fails_on_bad_arguments_or_oversize_input(shim: Path, sock_dir: Path) -> None:
+
+def test_shim_never_fails_on_bad_arguments_or_oversize_input__and_1_more(shim: Path, sock_dir: Path) -> None:
+    # --- scenario: shim_never_fails_on_bad_arguments_or_oversize_input
     env = dict(os.environ, JRBAR_STATE_DIR=str(sock_dir))
     assert subprocess.run([str(shim)], input=b"{}", capture_output=True, env=env, timeout=5).returncode == 0
     assert subprocess.run([str(shim), "--provider", "Bad/Name"], input=b"{}", capture_output=True, env=env, timeout=5).returncode == 0
@@ -167,8 +168,7 @@ def test_shim_never_fails_on_bad_arguments_or_oversize_input(shim: Path, sock_di
     assert result.returncode == 0
     assert not (sock_dir / "claude.pending.jsonl").exists()
 
-
-def test_shim_is_fast(shim: Path, sock_dir: Path) -> None:
+    # --- scenario: shim_is_fast
     """Target < 5 ms per hook; the assertion is generous so CI noise cannot fail it."""
     ingress = _FakeIngress(sock_dir)
     try:
@@ -182,3 +182,4 @@ def test_shim_is_fast(shim: Path, sock_dir: Path) -> None:
         assert median < 60.0
     finally:
         ingress.close()
+

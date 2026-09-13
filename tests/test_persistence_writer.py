@@ -11,7 +11,8 @@ from jrbar.persistence_writer import (
 )
 
 
-def test_writer_executes_fifo_on_one_noncaller_thread_and_drains() -> None:
+def test_writer_executes_fifo_on_one_noncaller_thread_and_drains__and_2_more() -> None:
+    # --- scenario: writer_executes_fifo_on_one_noncaller_thread_and_drains
     release = threading.Event()
     started = threading.Event()
     calls: list[tuple[str, str]] = []
@@ -44,8 +45,7 @@ def test_writer_executes_fifo_on_one_noncaller_thread_and_drains() -> None:
     ]
     assert [receipt.result for receipt in receipts] == ["one", "two"]
 
-
-def test_latest_snapshot_replacement_moves_to_fifo_tail() -> None:
+    # --- scenario: latest_snapshot_replacement_moves_to_fifo_tail
     release = threading.Event()
     started = threading.Event()
     calls: list[str] = []
@@ -78,8 +78,7 @@ def test_latest_snapshot_replacement_moves_to_fifo_tail() -> None:
     assert len(replaced) == 1
     assert replaced[0].key == "reset-events"
 
-
-def test_ordered_appends_never_coalesce() -> None:
+    # --- scenario: ordered_appends_never_coalesce
     release = threading.Event()
     started = threading.Event()
     calls: list[int] = []
@@ -99,7 +98,9 @@ def test_ordered_appends_never_coalesce() -> None:
     assert calls == [1, 2]
 
 
-def test_full_and_closed_writer_refuse_without_executing() -> None:
+
+def test_full_and_closed_writer_refuse_without_executing__and_2_more() -> None:
+    # --- scenario: full_and_closed_writer_refuse_without_executing
     release = threading.Event()
     started = threading.Event()
     calls: list[str] = []
@@ -127,8 +128,7 @@ def test_full_and_closed_writer_refuse_without_executing() -> None:
     )
     assert calls == ["queued"]
 
-
-def test_one_reserved_drain_tail_can_exceed_a_full_queue() -> None:
+    # --- scenario: one_reserved_drain_tail_can_exceed_a_full_queue
     release = threading.Event()
     started = threading.Event()
     calls: list[str] = []
@@ -167,8 +167,7 @@ def test_one_reserved_drain_tail_can_exceed_a_full_queue() -> None:
     assert writer.close(timeout_seconds=1.0) is True
     assert calls == ["queued", "drain-tail"]
 
-
-def test_failure_receipt_is_content_free_and_later_work_continues() -> None:
+    # --- scenario: failure_receipt_is_content_free_and_later_work_continues
     receipts = []
     calls: list[str] = []
 
@@ -187,7 +186,9 @@ def test_failure_receipt_is_content_free_and_later_work_continues() -> None:
     assert receipts[1].outcome is PersistenceOutcome.SUCCEEDED
 
 
-def test_close_timeout_is_bounded_but_worker_finishes_after_release() -> None:
+
+def test_close_timeout_is_bounded_but_worker_finishes_after_release__and_1_more() -> None:
+    # --- scenario: close_timeout_is_bounded_but_worker_finishes_after_release
     release = threading.Event()
     started = threading.Event()
 
@@ -204,10 +205,10 @@ def test_close_timeout_is_bounded_but_worker_finishes_after_release() -> None:
     assert writer.close(timeout_seconds=1.0) is True
     assert writer.snapshot().thread_alive is False
 
+    # --- scenario: command_keys_are_narrow_and_normalized
+    for key in ("", ".", "UPPER", "bad key", "../escape"):
+        writer = SerialPersistenceWriter()
+        with pytest.raises(ValueError, match="invalid persistence key"):
+            writer.submit(key, lambda: None)
+        assert writer.close(timeout_seconds=0.0) is True
 
-@pytest.mark.parametrize("key", ("", ".", "UPPER", "bad key", "../escape"))
-def test_command_keys_are_narrow_and_normalized(key: str) -> None:
-    writer = SerialPersistenceWriter()
-    with pytest.raises(ValueError, match="invalid persistence key"):
-        writer.submit(key, lambda: None)
-    assert writer.close(timeout_seconds=0.0) is True

@@ -223,7 +223,8 @@ class _MappingSubclass(dict):
     pass
 
 
-def test_mapping_subclass_from_decoder_is_rejected(tmp_path: Path) -> None:
+def test_mapping_subclass_from_decoder_is_rejected__and_1_more(tmp_path: Path) -> None:
+    # --- scenario: mapping_subclass_from_decoder_is_rejected
     target = tmp_path / "state" / "operator-triage.json"
     save_operator_triage(target, _state(_request_key()))
     forged = _MappingSubclass(
@@ -233,8 +234,7 @@ def test_mapping_subclass_from_decoder_is_rejected(tmp_path: Path) -> None:
     with patch("jrbar.operator_triage_store._decode_document", return_value=forged):
         assert load_operator_triage(target) == LocalTriageState(())
 
-
-def test_failed_replace_preserves_exact_previous_bytes(tmp_path: Path) -> None:
+    # --- scenario: failed_replace_preserves_exact_previous_bytes
     target = tmp_path / "state" / "operator-triage.json"
     old_state = _state(_request_key("request:old"))
     new_state = _state(_request_key("request:new"))
@@ -249,6 +249,7 @@ def test_failed_replace_preserves_exact_previous_bytes(tmp_path: Path) -> None:
 
     assert target.read_bytes() == previous
     assert load_operator_triage(target) == old_state
+
 
 
 @dataclass(frozen=True, slots=True)

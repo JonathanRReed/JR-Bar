@@ -190,7 +190,8 @@ def test_symlinked_legacy_entries_are_skipped(tmp_path: Path) -> None:
     assert not (tmp_path / ".local" / "state" / "jrbar" / "linked.json").exists()
 
 
-def test_area_failure_is_recorded_and_other_areas_continue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_area_failure_is_recorded_and_other_areas_continue__and_1_more(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: area_failure_is_recorded_and_other_areas_continue
     _legacy_tree(tmp_path)
     original = migration._copy_entry
 
@@ -208,8 +209,8 @@ def test_area_failure_is_recorded_and_other_areas_continue(tmp_path: Path, monke
     # No marker while an area failed, so the next run retries it.
     assert not report.marker_path.exists()
 
-
-def test_default_areas_honour_xdg_and_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # --- scenario: default_areas_honour_xdg_and_home
+    monkeypatch.undo()
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xc"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xs"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xd"))
@@ -226,6 +227,7 @@ def test_default_areas_honour_xdg_and_home(tmp_path: Path, monkeypatch: pytest.M
     assert by_home["state"].destination == tmp_path / "home" / ".local" / "state" / "jrbar"
     assert by_home["app-support"].destination == tmp_path / "home" / "Library" / "Application Support" / "JR-Bar"
     assert os.environ["XDG_STATE_HOME"] == str(tmp_path / "xs")
+
 
 
 def test_startup_migration_runs_and_prints_the_summary(

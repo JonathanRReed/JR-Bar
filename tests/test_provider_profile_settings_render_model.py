@@ -52,7 +52,8 @@ def _settings_model() -> ProviderInstanceProfileSettingsModel:
     )
 
 
-def test_render_model_keeps_five_profile_choices_on_the_exact_instance() -> None:
+def test_render_model_keeps_five_profile_choices_on_the_exact_instance__and_2_more() -> None:
+    # --- scenario: render_model_keeps_five_profile_choices_on_the_exact_instance
     model = _settings_model()
 
     row = provider_instance_profile_settings_row(model, "claude", "work")
@@ -85,8 +86,7 @@ def test_render_model_keeps_five_profile_choices_on_the_exact_instance() -> None
         "open_session_action": "terminal",
     }
 
-
-def test_privacy_render_model_hides_aliases_and_distinguishes_same_provider() -> None:
+    # --- scenario: privacy_render_model_hides_aliases_and_distinguishes_same_provider
     settings = (
         default_provider_usage_settings()
         .with_profile(
@@ -117,8 +117,7 @@ def test_privacy_render_model_hides_aliases_and_distinguishes_same_provider() ->
     assert "jonathan@example.com" not in repr(model)
     assert "Client Claude" not in repr(model)
 
-
-def test_render_model_replaces_generated_opaque_profile_label_with_safe_identity() -> None:
+    # --- scenario: render_model_replaces_generated_opaque_profile_label_with_safe_identity
     raw_source = "profile:8f14e45fceea167a5a36dedd4bea2543"
     settings = default_provider_usage_settings().with_profile(
         ProviderInstanceProfile(
@@ -141,7 +140,9 @@ def test_render_model_replaces_generated_opaque_profile_label_with_safe_identity
     assert name.value == row.heading
 
 
-def test_provider_menu_checkbox_keeps_opaque_identity_only_in_action_payload() -> None:
+
+def test_provider_menu_checkbox_keeps_opaque_identity_only_in_action_payload__and_2_more() -> None:
+    # --- scenario: provider_menu_checkbox_keeps_opaque_identity_only_in_action_payload
     raw_source = "profile:8f14e45fceea167a5a36dedd4bea2543"
     target = _SettingsTarget.alloc().init()
     target._jrbar_provider_usage_settings_snapshot = (
@@ -164,8 +165,7 @@ def test_provider_menu_checkbox_keeps_opaque_identity_only_in_action_payload() -
     assert raw_source not in str(box.title())
     assert box.representedObject()["source_instance_id"] == raw_source
 
-
-def test_reset_settings_model_is_per_instance_and_privacy_safe() -> None:
+    # --- scenario: reset_settings_model_is_per_instance_and_privacy_safe
     raw_source = "profile:8f14e45fceea167a5a36dedd4bea2543"
     settings = default_provider_usage_settings().with_profile(
         ProviderInstanceProfile(
@@ -190,8 +190,7 @@ def test_reset_settings_model_is_per_instance_and_privacy_safe() -> None:
         ("reset_sound", True),
     ]
 
-
-def test_render_model_supplies_bounded_human_choices_for_discrete_controls() -> None:
+    # --- scenario: render_model_supplies_bounded_human_choices_for_discrete_controls
     row = provider_instance_profile_settings_row(_settings_model(), "claude", "work")
     fields = {field.key: field for field in row.fields}
 
@@ -214,7 +213,9 @@ def test_render_model_supplies_bounded_human_choices_for_discrete_controls() -> 
     assert fields["color_override"].options == ()
 
 
-def test_render_model_exposes_no_consent_or_credential_fields() -> None:
+
+def test_render_model_exposes_no_consent_or_credential_fields__and_2_more() -> None:
+    # --- scenario: render_model_exposes_no_consent_or_credential_fields
     row = provider_instance_profile_settings_row(_settings_model(), "claude", "work")
     rendered = repr(row).casefold()
 
@@ -227,8 +228,7 @@ def test_render_model_exposes_no_consent_or_credential_fields() -> None:
         for field in row.fields
     )
 
-
-def test_render_model_rejects_policy_domains_with_different_instance_keys() -> None:
+    # --- scenario: render_model_rejects_policy_domains_with_different_instance_keys
     projection = project_instance_policies(default_provider_usage_settings())
     mismatched = ProviderInstancePolicyProjection(
         visual=projection.visual,
@@ -240,8 +240,7 @@ def test_render_model_rejects_policy_domains_with_different_instance_keys() -> N
     with pytest.raises(ValueError, match="same exact provider instances"):
         build_provider_instance_profile_settings_model(mismatched)
 
-
-def test_render_model_refuses_more_rows_than_the_settings_surface_can_bound() -> None:
+    # --- scenario: render_model_refuses_more_rows_than_the_settings_surface_can_bound
     identities = tuple(
         ("claude", f"profile-{index}")
         for index in range(MAX_PROVIDER_PROFILE_SETTINGS_ROWS + 1)
@@ -277,6 +276,7 @@ def test_render_model_refuses_more_rows_than_the_settings_surface_can_bound() ->
         build_provider_instance_profile_settings_model(projection)
 
 
+
 def _rendered_settings_target():
     target = _SettingsTarget.alloc().init()
     target._jrbar_provider_usage_settings_snapshot = (
@@ -295,7 +295,8 @@ def _rendered_settings_target():
     return target
 
 
-def test_native_usage_pane_renders_five_accessible_controls_for_one_exact_instance() -> None:
+def test_native_usage_pane_renders_five_accessible_controls_for_one_exact_instance__and_2_more() -> None:
+    # --- scenario: native_usage_pane_renders_five_accessible_controls_for_one_exact_instance
     target = _rendered_settings_target()
     controls = target._jrbar_provider_profile_settings_controls
 
@@ -329,8 +330,7 @@ def test_native_usage_pane_renders_five_accessible_controls_for_one_exact_instan
         popup = controls[("claude", "work", field_key)]
         assert popup.selectedItem().representedObject() == popup.representedObject()
 
-
-def test_native_usage_pane_bounds_profile_cards_and_every_choice_payload() -> None:
+    # --- scenario: native_usage_pane_bounds_profile_cards_and_every_choice_payload
     target = _rendered_settings_target()
     settings = target._jrbar_provider_usage_settings_snapshot
     cards = target._jrbar_provider_profile_settings_cards
@@ -366,8 +366,7 @@ def test_native_usage_pane_bounds_profile_cards_and_every_choice_payload() -> No
                 assert option_payload["source_instance_id"] == source_instance_id
                 assert option_payload["field_key"] == field_key
 
-
-def test_native_usage_pane_privacy_redacts_and_disables_name_controls() -> None:
+    # --- scenario: native_usage_pane_privacy_redacts_and_disables_name_controls
     target = _SettingsTarget.alloc().init()
     target._jrbar_provider_usage_settings_snapshot = (
         default_provider_usage_settings()
@@ -397,7 +396,9 @@ def test_native_usage_pane_privacy_redacts_and_disables_name_controls() -> None:
     assert str(provider_box.title()) == "Claude Account 2"
 
 
-def test_cached_usage_pane_redacts_then_restores_alias_when_privacy_toggles() -> None:
+
+def test_cached_usage_pane_redacts_then_restores_alias_when_privacy_toggles__and_2_more() -> None:
+    # --- scenario: cached_usage_pane_redacts_then_restores_alias_when_privacy_toggles
     target = _rendered_settings_target()
     private = target._jrbar_provider_usage_settings_snapshot.with_menu_flag(
         "privacy_mode", True
@@ -422,8 +423,7 @@ def test_cached_usage_pane_redacts_then_restores_alias_when_privacy_toggles() ->
     assert name.isEnabled() is True
     assert card.arrangedSubviews()[0].stringValue() == "Claude Work"
 
-
-def test_privacy_toggle_redacts_the_active_native_name_editor() -> None:
+    # --- scenario: privacy_toggle_redacts_the_active_native_name_editor
     NSApplication.sharedApplication()
     target = _rendered_settings_target()
     name = target._jrbar_provider_profile_settings_controls[("claude", "work", "label")]
@@ -453,8 +453,7 @@ def test_privacy_toggle_redacts_the_active_native_name_editor() -> None:
     assert name.stringValue() == "Claude Account 2"
     assert "Unsaved private alias" not in str(editor.string())
 
-
-def test_privacy_toggle_reconciles_when_aliases_equal_private_placeholders() -> None:
+    # --- scenario: privacy_toggle_reconciles_when_aliases_equal_private_placeholders
     target = _SettingsTarget.alloc().init()
     target._jrbar_provider_usage_settings_snapshot = (
         default_provider_usage_settings()
@@ -485,7 +484,9 @@ def test_privacy_toggle_reconciles_when_aliases_equal_private_placeholders() -> 
     assert name.stringValue() == "Claude Account 2"
 
 
-def test_ordinary_usage_refresh_preserves_unsaved_profile_text_drafts() -> None:
+
+def test_ordinary_usage_refresh_preserves_unsaved_profile_text_drafts__and_2_more() -> None:
+    # --- scenario: ordinary_usage_refresh_preserves_unsaved_profile_text_drafts
     target = _rendered_settings_target()
     controls = target._jrbar_provider_profile_settings_controls
     name = controls[("claude", "work", "label")]
@@ -498,8 +499,7 @@ def test_ordinary_usage_refresh_preserves_unsaved_profile_text_drafts() -> None:
     assert name.stringValue() == "Unsaved name"
     assert accent.stringValue() == "#123456"
 
-
-def test_settings_snapshot_apply_immediately_refreshes_cached_privacy_labels() -> None:
+    # --- scenario: settings_snapshot_apply_immediately_refreshes_cached_privacy_labels
     target = _rendered_settings_target()
     private = target._jrbar_provider_usage_settings_snapshot.with_menu_flag(
         "privacy_mode", True
@@ -511,8 +511,7 @@ def test_settings_snapshot_apply_immediately_refreshes_cached_privacy_labels() -
     assert name.stringValue() == "Claude Account 2"
     assert name.isEnabled() is False
 
-
-def test_profile_save_refreshes_cached_model_card_and_committed_control_payloads() -> None:
+    # --- scenario: profile_save_refreshes_cached_model_card_and_committed_control_payloads
     target = _rendered_settings_target()
     sender = target._jrbar_provider_profile_settings_controls[
         ("claude", "work", "label")
@@ -571,7 +570,9 @@ def test_profile_save_refreshes_cached_model_card_and_committed_control_payloads
         assert control.selectedItem().representedObject()["value"] == expected[field_key]
 
 
-def test_profile_text_save_failure_restores_current_committed_snapshot() -> None:
+
+def test_profile_text_save_failure_restores_current_committed_snapshot__and_1_more() -> None:
+    # --- scenario: profile_text_save_failure_restores_current_committed_snapshot
     target = _rendered_settings_target()
     committed = target._jrbar_provider_usage_settings_snapshot.with_profile(
         ProviderInstanceProfile(
@@ -603,8 +604,7 @@ def test_profile_text_save_failure_restores_current_committed_snapshot() -> None
     assert card.arrangedSubviews()[0].stringValue() == "Committed Claude"
     assert card.accessibilityLabel() == "Committed Claude provider profile, Claude"
 
-
-def test_profile_popup_save_failure_restores_current_committed_selection() -> None:
+    # --- scenario: profile_popup_save_failure_restores_current_committed_selection
     target = _rendered_settings_target()
     committed = target._jrbar_provider_usage_settings_snapshot.with_profile(
         ProviderInstanceProfile(
@@ -633,3 +633,4 @@ def test_profile_popup_save_failure_restores_current_committed_selection() -> No
     assert saved is False
     assert sender.representedObject()["value"] == 7
     assert sender.selectedItem().representedObject()["value"] == 7
+

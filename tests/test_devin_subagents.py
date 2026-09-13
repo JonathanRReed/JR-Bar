@@ -99,7 +99,8 @@ def _expected_worker_id(session_id: str, handle: str) -> str:
     return f"sub-{digest[:12]}"
 
 
-def test_run_subagent_pre_opens_worker_under_parent_session() -> None:
+def test_run_subagent_pre_opens_worker_under_parent_session__and_2_more() -> None:
+    # --- scenario: run_subagent_pre_opens_worker_under_parent_session
     record = _normalize(
         _devin_event(
             "PreToolUse",
@@ -119,8 +120,7 @@ def test_run_subagent_pre_opens_worker_under_parent_session() -> None:
     assert record.parent_work_id.value == _SESSION
     assert record.safe_label == "Explore the auth flow"
 
-
-def test_run_subagent_post_foreground_stops_the_same_worker() -> None:
+    # --- scenario: run_subagent_post_foreground_stops_the_same_worker
     start = _normalize(
         _devin_event(
             "PreToolUse",
@@ -146,8 +146,7 @@ def test_run_subagent_post_foreground_stops_the_same_worker() -> None:
     assert stop.parent_work_id is not None
     assert stop.parent_work_id.value == _SESSION
 
-
-def test_run_subagent_post_background_is_a_parent_tool_event() -> None:
+    # --- scenario: run_subagent_post_background_is_a_parent_tool_event
     record = _normalize(
         _devin_event(
             "PostToolUse",
@@ -167,7 +166,9 @@ def test_run_subagent_post_background_is_a_parent_tool_event() -> None:
     assert record.parent_work_id is None
 
 
-def test_worker_ids_are_stable_per_title_and_distinct_across_titles() -> None:
+
+def test_worker_ids_are_stable_per_title_and_distinct_across_titles__and_1_more() -> None:
+    # --- scenario: worker_ids_are_stable_per_title_and_distinct_across_titles
     first = _normalize(
         _devin_event(
             "PreToolUse",
@@ -198,8 +199,7 @@ def test_worker_ids_are_stable_per_title_and_distinct_across_titles() -> None:
     assert same.provider_work_id == first.provider_work_id
     assert other.provider_work_id != first.provider_work_id
 
-
-def test_resume_input_names_the_worker_instead_of_title() -> None:
+    # --- scenario: resume_input_names_the_worker_instead_of_title
     record = _normalize(
         _devin_event(
             "PreToolUse",
@@ -213,12 +213,14 @@ def test_resume_input_names_the_worker_instead_of_title() -> None:
     assert record.provider_work_id.value == _expected_worker_id(_SESSION, "agent-77")
 
 
+
 def _expected_sidekick_id(session_id: str) -> str:
     digest = hashlib.sha256(session_id.encode()).hexdigest()
     return f"sub-sidekick-{digest[:12]}"
 
 
-def test_sidekick_round_trip_uses_the_stable_sidekick_worker() -> None:
+def test_sidekick_round_trip_uses_the_stable_sidekick_worker__and_2_more() -> None:
+    # --- scenario: sidekick_round_trip_uses_the_stable_sidekick_worker
     start = _normalize(
         _devin_event(
             "PreToolUse",
@@ -248,8 +250,7 @@ def test_sidekick_round_trip_uses_the_stable_sidekick_worker() -> None:
     assert stop.parent_work_id == start.parent_work_id
     assert start.safe_label == "Sidekick"
 
-
-def test_sidekick_workers_are_scoped_to_their_session() -> None:
+    # --- scenario: sidekick_workers_are_scoped_to_their_session
     """Two sessions' sidekick calls must not share a WorkKey -- one
     session's PostToolUse would otherwise complete the other's worker."""
     first = _normalize(
@@ -281,8 +282,7 @@ def test_sidekick_workers_are_scoped_to_their_session() -> None:
     assert second.parent_work_id is not None
     assert second.parent_work_id.value == "session-b"
 
-
-def test_ordinary_tool_events_keep_parent_identity() -> None:
+    # --- scenario: ordinary_tool_events_keep_parent_identity
     record = _normalize(
         _devin_event(
             "PreToolUse",
@@ -296,6 +296,7 @@ def test_ordinary_tool_events_keep_parent_identity() -> None:
     assert record.provider_work_id is not None
     assert record.provider_work_id.value == _SESSION
     assert record.parent_work_id is None
+
 
 
 def test_title_label_survives_the_normalized_payload_round_trip() -> None:
@@ -349,7 +350,8 @@ def _monitor_with_worker() -> tuple[LiveAgentMonitor, float]:
     return monitor, base
 
 
-def test_worker_row_reaches_the_state_document() -> None:
+def test_worker_row_reaches_the_state_document__and_2_more() -> None:
+    # --- scenario: worker_row_reaches_the_state_document
     monitor, base = _monitor_with_worker()
     snapshot = monitor.snapshot()
 
@@ -373,8 +375,7 @@ def test_worker_row_reaches_the_state_document() -> None:
     mains = [row for row in document["sessions"] if row["kind"] == "main"]
     assert any(row["workers"] >= 1 for row in mains)
 
-
-def test_parent_stop_does_not_retire_background_workers() -> None:
+    # --- scenario: parent_stop_does_not_retire_background_workers
     """Devin's Stop fires at the end of a TURN, and a backgrounded helper
     exists precisely to outlive the turn that launched it."""
     monitor, base = _monitor_with_worker()
@@ -394,8 +395,7 @@ def test_parent_stop_does_not_retire_background_workers() -> None:
     )
     assert work.lifecycle is WorkLifecycle.ACTIVE
 
-
-def test_session_end_retires_background_workers() -> None:
+    # --- scenario: session_end_retires_background_workers
     monitor, base = _monitor_with_worker()
     worker_key = f"devin:agent:{_expected_worker_id(_SESSION, 'Background sweep')}"
 
@@ -426,7 +426,9 @@ def test_session_end_retires_background_workers() -> None:
     assert work.lifecycle is WorkLifecycle.COMPLETED
 
 
-def test_same_title_calls_share_one_worker() -> None:
+
+def test_same_title_calls_share_one_worker__and_2_more() -> None:
+    # --- scenario: same_title_calls_share_one_worker
     """Pinning the known limitation: Devin's payload has no per-call id,
     so two concurrent ``run_subagent`` calls with the same title alias
     onto one worker -- the second start is a no-op on the shared row and
@@ -478,8 +480,7 @@ def test_same_title_calls_share_one_worker() -> None:
     )
     assert worker.mode.name == "COMPLETED"
 
-
-def test_a_stop_without_the_title_keeps_the_worker_label() -> None:
+    # --- scenario: a_stop_without_the_title_keeps_the_worker_label
     """A SUBAGENT_STOP that reaches the reducer with only the fallback
     label (e.g. a replayed record whose persisted label was the default)
     must not erase the title the row already holds."""
@@ -511,8 +512,7 @@ def test_a_stop_without_the_title_keeps_the_worker_label() -> None:
     assert work.lifecycle is WorkLifecycle.COMPLETED
     assert work.safe_label == "Background sweep"
 
-
-def test_worker_label_falls_back_when_title_is_missing() -> None:
+    # --- scenario: worker_label_falls_back_when_title_is_missing
     base = time.time() - 60
     monitor = LiveAgentMonitor(stale_after_seconds=3600)
     monitor.ingest_record(_devin_event("SessionStart", epoch=base))
@@ -534,7 +534,9 @@ def test_worker_label_falls_back_when_title_is_missing() -> None:
     assert worker_rows == []
 
 
-def test_resume_call_without_title_names_the_worker_by_its_handle() -> None:
+
+def test_resume_call_without_title_names_the_worker_by_its_handle__and_2_more() -> None:
+    # --- scenario: resume_call_without_title_names_the_worker_by_its_handle
     record = _normalize(
         _devin_event(
             "PreToolUse",
@@ -548,8 +550,7 @@ def test_resume_call_without_title_names_the_worker_by_its_handle() -> None:
     assert record.provider_work_id.value == _expected_worker_id(_SESSION, "agent-77")
     assert record.safe_label == "agent-77"
 
-
-def test_session_first_prompt_names_the_session_row() -> None:
+    # --- scenario: session_first_prompt_names_the_session_row
     record = _normalize(
         _devin_event(
             "UserPromptSubmit",
@@ -563,8 +564,7 @@ def test_session_first_prompt_names_the_session_row() -> None:
     assert record.parent_work_id is None
     assert record.safe_label == "Fix the tank names so the fish read right"
 
-
-def test_session_title_field_beats_the_prompt() -> None:
+    # --- scenario: session_title_field_beats_the_prompt
     record = _normalize(
         _devin_event(
             "SessionStart",
@@ -592,7 +592,9 @@ def test_session_title_field_beats_the_prompt() -> None:
     assert titled.safe_label == "Aquarium overhaul"
 
 
-def test_session_label_survives_the_normalized_round_trip() -> None:
+
+def test_session_label_survives_the_normalized_round_trip__and_2_more() -> None:
+    # --- scenario: session_label_survives_the_normalized_round_trip
     record = _normalize(
         _devin_event(
             "UserPromptSubmit",
@@ -621,8 +623,7 @@ def test_session_label_survives_the_normalized_round_trip() -> None:
     assert type(reminimized) is NormalizedProviderRecord
     assert reminimized.safe_label == "Review the naming pipeline"
 
-
-def test_first_prompt_wins_over_later_prompts() -> None:
+    # --- scenario: first_prompt_wins_over_later_prompts
     base = time.time() - 60
     monitor = LiveAgentMonitor(stale_after_seconds=3600)
     monitor.ingest_record(
@@ -640,8 +641,7 @@ def test_first_prompt_wins_over_later_prompts() -> None:
     )
     assert work.safe_label == "First task"
 
-
-def test_session_prompt_label_reaches_the_state_document() -> None:
+    # --- scenario: session_prompt_label_reaches_the_state_document
     base = time.time() - 60
     monitor = LiveAgentMonitor(stale_after_seconds=3600)
     monitor.ingest_record(_devin_event("SessionStart", epoch=base))
@@ -662,7 +662,9 @@ def test_session_prompt_label_reaches_the_state_document() -> None:
     assert mains[0]["label"] == "Rename the fish"
 
 
-def test_slug_session_id_is_shown_whole_not_truncated() -> None:
+
+def test_slug_session_id_is_shown_whole_not_truncated__and_2_more() -> None:
+    # --- scenario: slug_session_id_is_shown_whole_not_truncated
     from jrbar.core_projection import session_label
 
     label = session_label(
@@ -685,15 +687,13 @@ def test_slug_session_id_is_shown_whole_not_truncated() -> None:
     )
     assert uuid_label == "Claude fca1eb06"
 
-
-def test_unrelated_devin_events_still_normalize() -> None:
+    # --- scenario: unrelated_devin_events_still_normalize
     record = _normalize(_devin_event("UserPromptSubmit"))
 
     assert type(record) is NormalizedProviderRecord
     assert record.event_name is ProviderEventName.USER_PROMPT_SUBMIT
 
-
-def test_compatibility_status_for_subagent_call_lands_on_parent() -> None:
+    # --- scenario: compatibility_status_for_subagent_call_lands_on_parent
     """The raw record names no agent, so the legacy status is the parent's;
     the worker only exists as a canonical work row."""
     record = _devin_event(
@@ -706,3 +706,4 @@ def test_compatibility_status_for_subagent_call_lands_on_parent() -> None:
     assert status is not None
     assert status.agent_id == f"devin:session:{_SESSION}"
     assert not status.is_subagent
+

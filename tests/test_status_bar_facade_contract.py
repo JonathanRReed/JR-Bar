@@ -14,7 +14,8 @@ def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def test_direct_module_execution_delegates_to_runtime_main() -> None:
+def test_direct_module_execution_delegates_to_runtime_main__and_2_more() -> None:
+    # --- scenario: direct_module_execution_delegates_to_runtime_main
     guards = [
         node
         for node in _tree(FACADE).body
@@ -38,8 +39,7 @@ def test_direct_module_execution_delegates_to_runtime_main() -> None:
         for call in calls
     ), "status-bar facade does not delegate direct execution to runtime main"
 
-
-def test_only_production_module_defines_a_controller_subclass() -> None:
+    # --- scenario: only_production_module_defines_a_controller_subclass
     production_tree = _tree(PRODUCTION_FACADE)
     production_controller = next(
         node
@@ -83,8 +83,7 @@ def test_only_production_module_defines_a_controller_subclass() -> None:
     ]
     assert forbidden_assignments == [], "do not mutate Cocoa methods after class creation"
 
-
-def test_facade_forwards_assignment_and_deletion() -> None:
+    # --- scenario: facade_forwards_assignment_and_deletion
     class_definition = next(
         node
         for node in _tree(FACADE).body
@@ -97,6 +96,7 @@ def test_facade_forwards_assignment_and_deletion() -> None:
     }
 
     assert {"__getattr__", "__setattr__", "__delattr__", "__dir__"} <= method_names
+
 
 
 def test_source_introspection_points_at_the_retained_runtime() -> None:

@@ -13,7 +13,8 @@ from jrbar.provider_usage_platform import (
 from jrbar.provider_usage_runtime import ProviderUsageState
 
 
-def test_usage_center_projects_dynamic_lanes_and_quality_of_life_fields():
+def test_usage_center_projects_dynamic_lanes_and_quality_of_life_fields__and_2_more() -> None:
+    # --- scenario: usage_center_projects_dynamic_lanes_and_quality_of_life_fields
     snapshot = ProviderUsageSnapshot(
         provider_id="claude",
         account_label="person@example.invalid",
@@ -61,8 +62,7 @@ def test_usage_center_projects_dynamic_lanes_and_quality_of_life_fields():
         "12 credits left",
     )
 
-
-def test_usage_center_names_source_action_and_never_says_no_reading():
+    # --- scenario: usage_center_names_source_action_and_never_says_no_reading
     snapshot = ProviderUsageSnapshot(
         provider_id="cursor",
         account_label=None,
@@ -88,8 +88,7 @@ def test_usage_center_names_source_action_and_never_says_no_reading():
     assert center.sections[0].action_label == "Enable Cursor browser access"
     assert "no reading" not in usage_center_text(center).lower()
 
-
-def test_usage_center_renders_distinct_same_provider_instance_labels():
+    # --- scenario: usage_center_renders_distinct_same_provider_instance_labels
     def make(account, instance, remaining):
         return ProviderUsageSnapshot(
             provider_id="claude",
@@ -130,7 +129,9 @@ def test_usage_center_renders_distinct_same_provider_instance_labels():
     } == {"personal", "work"}
 
 
-def test_usage_center_uses_exact_profile_label_and_color_override():
+
+def test_usage_center_uses_exact_profile_label_and_color_override__and_2_more() -> None:
+    # --- scenario: usage_center_uses_exact_profile_label_and_color_override
     snapshot = ProviderUsageSnapshot(
         provider_id="claude",
         account_label="work@example.invalid",
@@ -182,8 +183,7 @@ def test_usage_center_uses_exact_profile_label_and_color_override():
     assert section.title == "Client Claude"
     assert section.color_override == "#112233"
 
-
-def test_usage_center_falls_back_when_exact_profile_is_missing():
+    # --- scenario: usage_center_falls_back_when_exact_profile_is_missing
     snapshot = ProviderUsageSnapshot(
         provider_id="claude",
         account_label=None,
@@ -223,8 +223,7 @@ def test_usage_center_falls_back_when_exact_profile_is_missing():
     assert "personal" not in repr(section)
     assert section.color_override is None
 
-
-def test_usage_center_never_exposes_opaque_account_or_source_identity():
+    # --- scenario: usage_center_never_exposes_opaque_account_or_source_identity
     raw_account = "org-7535461b-2b9a-4371-b335-3928397be5cd"
     raw_source = "profile:work:8f14e45fceea167a5a36dedd4bea2543"
     source = ProviderUsageSnapshot(
@@ -255,6 +254,7 @@ def test_usage_center_never_exposes_opaque_account_or_source_identity():
     assert section.account is None
     assert raw_account not in repr(section)
     assert raw_source not in repr(section)
+
 
 
 def test_usage_center_privacy_mode_suppresses_email_and_alias():

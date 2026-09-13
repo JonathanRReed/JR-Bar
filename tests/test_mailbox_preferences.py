@@ -105,124 +105,101 @@ def _rows(result, kind: MailboxSectionKind) -> tuple[MailboxRow, ...]:
     return next(section.rows for section in result.projection.sections if section.kind == kind)
 
 
-@pytest.mark.parametrize(
-    ("mode", "pin_order"),
-    (
+def test_snooze_never_hides_actionable_rows__and_2_more() -> None:
+    # --- scenario: snooze_never_hides_actionable_rows
+    for mode, pin_order in (
         (MailboxPreferenceMode.DEFAULT, None),
         (MailboxPreferenceMode.WATCHED, None),
         (MailboxPreferenceMode.PINNED, 4),
-    ),
-)
-def test_snooze_never_hides_actionable_rows(
-    mode: MailboxPreferenceMode,
-    pin_order: int | None,
-) -> None:
-    ask = _row(
-        "codex:session:ask",
-        LifecycleMode.WAITING,
-        updated_at=NOW,
-        actionable=True,
-    )
-    preference = MailboxPreference(
-        agent_id=ask.agent_id,
-        mode=mode,
-        pin_order=pin_order,
-        snoozed_at=NOW,
-        snoozed_until=NOW + 3_600.0,
-    )
+    ):
+        ask = _row(
+            "codex:session:ask",
+            LifecycleMode.WAITING,
+            updated_at=NOW,
+            actionable=True,
+        )
+        preference = MailboxPreference(
+            agent_id=ask.agent_id,
+            mode=mode,
+            pin_order=pin_order,
+            snoozed_at=NOW,
+            snoozed_until=NOW + 3_600.0,
+        )
 
-    result = apply_mailbox_preferences(_projection(needs_you=(ask,)), (preference,), now=NOW)
+        result = apply_mailbox_preferences(_projection(needs_you=(ask,)), (preference,), now=NOW)
 
-    assert _rows(result, MailboxSectionKind.NEEDS_YOU) == (ask,)
-    assert result.next_wake_epoch is None
-    assert result.woke_agent_ids == (ask.agent_id,)
+        assert _rows(result, MailboxSectionKind.NEEDS_YOU) == (ask,)
+        assert result.next_wake_epoch is None
+        assert result.woke_agent_ids == (ask.agent_id,)
 
-
-@pytest.mark.parametrize(
-    ("section", "mode"),
-    (
+    # --- scenario: running_and_quiet_rows_stay_snoozed_to_exact_deadline
+    for section, mode in (
         (MailboxSectionKind.IN_PROGRESS, LifecycleMode.ACTIVE),
         (MailboxSectionKind.RECENT, LifecycleMode.IDLE),
-    ),
-)
-def test_running_and_quiet_rows_stay_snoozed_to_exact_deadline(
-    section: MailboxSectionKind,
-    mode: LifecycleMode,
-) -> None:
-    row = _row(f"claude:session:{mode.value}", mode)
-    preference = MailboxPreference(
-        agent_id=row.agent_id,
-        snoozed_at=NOW - 60.0,
-        snoozed_until=NOW + 3_600.25,
-    )
-    projection = (
-        _projection(in_progress=(row,))
-        if section == MailboxSectionKind.IN_PROGRESS
-        else _projection(recent=(row,))
-    )
+    ):
+        row = _row(f"claude:session:{mode.value}", mode)
+        preference = MailboxPreference(
+            agent_id=row.agent_id,
+            snoozed_at=NOW - 60.0,
+            snoozed_until=NOW + 3_600.25,
+        )
+        projection = (
+            _projection(in_progress=(row,))
+            if section == MailboxSectionKind.IN_PROGRESS
+            else _projection(recent=(row,))
+        )
 
-    result = apply_mailbox_preferences(projection, (preference,), now=NOW)
+        result = apply_mailbox_preferences(projection, (preference,), now=NOW)
 
-    assert _rows(result, section) == ()
-    assert result.next_wake_epoch == NOW + 3_600.25
-    assert result.woke_agent_ids == ()
+        assert _rows(result, section) == ()
+        assert result.next_wake_epoch == NOW + 3_600.25
+        assert result.woke_agent_ids == ()
 
-
-@pytest.mark.parametrize(
-    ("lifecycle_mode", "section"),
-    (
+    # --- scenario: new_failure_and_completion_after_snooze_wake_early
+    for lifecycle_mode, section in (
         (LifecycleMode.FAILED_VISIBLE, MailboxSectionKind.READY_FOR_REVIEW),
         (LifecycleMode.COMPLETED_RECENTLY, MailboxSectionKind.READY_FOR_REVIEW),
-    ),
-)
-def test_new_failure_and_completion_after_snooze_wake_early(
-    lifecycle_mode: LifecycleMode,
-    section: MailboxSectionKind,
-) -> None:
-    row = _row(
-        f"devin:session:{lifecycle_mode.value}",
-        lifecycle_mode,
-        updated_at=NOW - 30.0,
-    )
-    preference = MailboxPreference(
-        agent_id=row.agent_id,
-        snoozed_at=NOW - 60.0,
-        snoozed_until=NOW + 3_600.0,
-    )
+    ):
+        row = _row(
+            f"devin:session:{lifecycle_mode.value}",
+            lifecycle_mode,
+            updated_at=NOW - 30.0,
+        )
+        preference = MailboxPreference(
+            agent_id=row.agent_id,
+            snoozed_at=NOW - 60.0,
+            snoozed_until=NOW + 3_600.0,
+        )
 
-    result = apply_mailbox_preferences(_projection(ready=(row,)), (preference,), now=NOW)
+        result = apply_mailbox_preferences(_projection(ready=(row,)), (preference,), now=NOW)
 
-    assert _rows(result, section) == (row,)
-    assert result.next_wake_epoch is None
-    assert result.woke_agent_ids == (row.agent_id,)
+        assert _rows(result, section) == (row,)
+        assert result.next_wake_epoch is None
+        assert result.woke_agent_ids == (row.agent_id,)
 
 
-@pytest.mark.parametrize(
-    "lifecycle_mode",
-    (LifecycleMode.FAILED_VISIBLE, LifecycleMode.COMPLETED_RECENTLY),
-)
-def test_preexisting_failure_and_completion_stay_snoozed(
-    lifecycle_mode: LifecycleMode,
-) -> None:
-    row = _row(
-        f"codex:session:old-{lifecycle_mode.value}",
-        lifecycle_mode,
-        updated_at=NOW - 60.0,
-    )
-    preference = MailboxPreference(
-        agent_id=row.agent_id,
-        snoozed_at=NOW - 60.0,
-        snoozed_until=NOW + 600.0,
-    )
 
-    result = apply_mailbox_preferences(_projection(ready=(row,)), (preference,), now=NOW)
+def test_preexisting_failure_and_completion_stay_snoozed__and_2_more() -> None:
+    # --- scenario: preexisting_failure_and_completion_stay_snoozed
+    for lifecycle_mode in (LifecycleMode.FAILED_VISIBLE, LifecycleMode.COMPLETED_RECENTLY):
+        row = _row(
+            f"codex:session:old-{lifecycle_mode.value}",
+            lifecycle_mode,
+            updated_at=NOW - 60.0,
+        )
+        preference = MailboxPreference(
+            agent_id=row.agent_id,
+            snoozed_at=NOW - 60.0,
+            snoozed_until=NOW + 600.0,
+        )
 
-    assert _rows(result, MailboxSectionKind.READY_FOR_REVIEW) == ()
-    assert result.next_wake_epoch == NOW + 600.0
-    assert result.woke_agent_ids == ()
+        result = apply_mailbox_preferences(_projection(ready=(row,)), (preference,), now=NOW)
 
+        assert _rows(result, MailboxSectionKind.READY_FOR_REVIEW) == ()
+        assert result.next_wake_epoch == NOW + 600.0
+        assert result.woke_agent_ids == ()
 
-def test_new_ask_at_equal_snooze_timestamp_fails_visible() -> None:
+    # --- scenario: new_ask_at_equal_snooze_timestamp_fails_visible
     ask = _row(
         "codex:session:equal-ask",
         LifecycleMode.WAITING,
@@ -240,8 +217,7 @@ def test_new_ask_at_equal_snooze_timestamp_fails_visible() -> None:
     assert _rows(result, MailboxSectionKind.NEEDS_YOU) == (ask,)
     assert result.woke_agent_ids == (ask.agent_id,)
 
-
-def test_unchanged_working_activity_does_not_wake_early() -> None:
+    # --- scenario: unchanged_working_activity_does_not_wake_early
     working = _row("codex:session:working", LifecycleMode.ACTIVE, updated_at=NOW)
     preference = MailboxPreference(
         agent_id=working.agent_id,
@@ -260,9 +236,10 @@ def test_unchanged_working_activity_does_not_wake_early() -> None:
     assert result.woke_agent_ids == ()
 
 
-@pytest.mark.parametrize(
-    ("snoozed_at", "snoozed_until"),
-    (
+
+def test_invalid_expired_reversed_nonfinite_and_far_future_snoozes_fail_visible__and_2_more() -> None:
+    # --- scenario: invalid_expired_reversed_nonfinite_and_far_future_snoozes_fail_visible
+    for snoozed_at, snoozed_until in (
         (NOW - 60.0, NOW - 1.0),
         (NOW + 10.0, NOW + 5.0),
         (float("nan"), NOW + 60.0),
@@ -270,32 +247,26 @@ def test_unchanged_working_activity_does_not_wake_early() -> None:
         (NOW - 60.0, NOW + 366.0 * 86_400.0 + 1.0),
         (None, NOW + 60.0),
         (NOW - 60.0, None),
-    ),
-)
-def test_invalid_expired_reversed_nonfinite_and_far_future_snoozes_fail_visible(
-    snoozed_at: float | None,
-    snoozed_until: float | None,
-) -> None:
-    row = _row("codex:session:malformed", LifecycleMode.IDLE)
-    preference = MailboxPreference(
-        agent_id=row.agent_id,
-        snoozed_at=snoozed_at,
-        snoozed_until=snoozed_until,
-        last_visited_at=NOW,
-    )
+    ):
+        row = _row("codex:session:malformed", LifecycleMode.IDLE)
+        preference = MailboxPreference(
+            agent_id=row.agent_id,
+            snoozed_at=snoozed_at,
+            snoozed_until=snoozed_until,
+            last_visited_at=NOW,
+        )
 
-    result = apply_mailbox_preferences(_projection(recent=(row,)), (preference,), now=NOW)
+        result = apply_mailbox_preferences(_projection(recent=(row,)), (preference,), now=NOW)
 
-    assert _rows(result, MailboxSectionKind.RECENT) == (row,)
-    assert result.next_wake_epoch is None
-    assert result.woke_agent_ids == ()
-    assert len(result.retained_preferences) == 1
-    retained = result.retained_preferences[0]
-    assert retained.snoozed_at is None
-    assert retained.snoozed_until is None
+        assert _rows(result, MailboxSectionKind.RECENT) == (row,)
+        assert result.next_wake_epoch is None
+        assert result.woke_agent_ids == ()
+        assert len(result.retained_preferences) == 1
+        retained = result.retained_preferences[0]
+        assert retained.snoozed_at is None
+        assert retained.snoozed_until is None
 
-
-def test_wall_clock_rollback_keeps_still_valid_future_epoch_without_extending_it() -> None:
+    # --- scenario: wall_clock_rollback_keeps_still_valid_future_epoch_without_extending_it
     row = _row("codex:session:rollback", LifecycleMode.ACTIVE)
     preference = MailboxPreference(
         agent_id=row.agent_id,
@@ -312,8 +283,7 @@ def test_wall_clock_rollback_keeps_still_valid_future_epoch_without_extending_it
     assert _rows(result, MailboxSectionKind.IN_PROGRESS) == ()
     assert result.next_wake_epoch == NOW + 120.0
 
-
-def test_preferences_reorder_only_inside_authoritative_shelves() -> None:
+    # --- scenario: preferences_reorder_only_inside_authoritative_shelves
     ask = _row(
         "codex:session:ask",
         LifecycleMode.WAITING,
@@ -359,7 +329,9 @@ def test_preferences_reorder_only_inside_authoritative_shelves() -> None:
     )
 
 
-def test_duplicate_preferences_choose_newest_then_safer_visible_and_lower_pin() -> None:
+
+def test_duplicate_preferences_choose_newest_then_safer_visible_and_lower_pin__and_2_more() -> None:
+    # --- scenario: duplicate_preferences_choose_newest_then_safer_visible_and_lower_pin
     rows = tuple(
         _row(f"codex:session:{name}", LifecycleMode.IDLE, stable_order=index)
         for index, name in enumerate(("newest", "safe", "pin"))
@@ -407,8 +379,7 @@ def test_duplicate_preferences_choose_newest_then_safer_visible_and_lower_pin() 
     assert retained[rows[1].agent_id].mode == MailboxPreferenceMode.WATCHED
     assert retained[rows[2].agent_id].pin_order == 2
 
-
-def test_duplicate_projection_rows_cannot_resurrect_stale_attention_or_terminal_state() -> None:
+    # --- scenario: duplicate_projection_rows_cannot_resurrect_stale_attention_or_terminal_state
     current = _row("codex:session:reused", LifecycleMode.ACTIVE, updated_at=NOW)
     stale_ask = _row(
         current.agent_id,
@@ -436,8 +407,7 @@ def test_duplicate_projection_rows_cannot_resurrect_stale_attention_or_terminal_
     assert result.projection.needs_you_count == 0
     assert result.projection.ready_count == 0
 
-
-def test_woke_marker_survives_rebuild_until_trigger_has_been_visited() -> None:
+    # --- scenario: woke_marker_survives_rebuild_until_trigger_has_been_visited
     row = _row("claude:session:woke", LifecycleMode.IDLE)
     preference = MailboxPreference(
         agent_id=row.agent_id,
@@ -471,7 +441,9 @@ def test_woke_marker_survives_rebuild_until_trigger_has_been_visited() -> None:
     )
 
 
-def test_earliest_wake_is_taken_only_from_rows_actually_hidden() -> None:
+
+def test_earliest_wake_is_taken_only_from_rows_actually_hidden__and_2_more() -> None:
+    # --- scenario: earliest_wake_is_taken_only_from_rows_actually_hidden
     codex = _row("codex:session:hidden", LifecycleMode.ACTIVE, stable_order=0)
     claude = _row("claude:session:hidden", LifecycleMode.IDLE, stable_order=1)
     ask = _row(
@@ -494,8 +466,7 @@ def test_earliest_wake_is_taken_only_from_rows_actually_hidden() -> None:
 
     assert result.next_wake_epoch == NOW + 300.0
 
-
-def test_preferences_are_deduped_unknowns_removed_and_retention_is_capped_at_one_hundred() -> None:
+    # --- scenario: preferences_are_deduped_unknowns_removed_and_retention_is_capped_at_one_hundred
     rows = tuple(
         _row(
             f"codex:session:{index:03d}",
@@ -532,8 +503,7 @@ def test_preferences_are_deduped_unknowns_removed_and_retention_is_capped_at_one
     assert "" not in retained_ids
     assert "unknown:session:not-current" not in retained_ids
 
-
-def test_retained_preferences_follow_the_literal_priority_contract() -> None:
+    # --- scenario: retained_preferences_follow_the_literal_priority_contract
     actionable = _row(
         "codex:session:actionable",
         LifecycleMode.WAITING,
@@ -578,7 +548,9 @@ def test_retained_preferences_follow_the_literal_priority_contract() -> None:
     )
 
 
-def test_woke_ids_use_current_stable_mailbox_order() -> None:
+
+def test_woke_ids_use_current_stable_mailbox_order__and_1_more() -> None:
+    # --- scenario: woke_ids_use_current_stable_mailbox_order
     first = _row("codex:session:woke-first", LifecycleMode.IDLE, stable_order=0)
     second = _row("codex:session:woke-second", LifecycleMode.IDLE, stable_order=1)
     projection = replace(
@@ -602,8 +574,7 @@ def test_woke_ids_use_current_stable_mailbox_order() -> None:
 
     assert result.woke_agent_ids == (first.agent_id, second.agent_id)
 
-
-def test_preference_output_cannot_copy_raw_payload_or_infer_identity_from_display_text() -> None:
+    # --- scenario: preference_output_cannot_copy_raw_payload_or_infer_identity_from_display_text
     secret = "Bearer-sk-private-/Users/jonathan/Secret"
     row = _row(
         "codex:session:safe-id",
@@ -627,6 +598,7 @@ def test_preference_output_cannot_copy_raw_payload_or_infer_identity_from_displa
         "snoozed_until",
         "last_visited_at",
     )
+
 
 
 def _work_key(
@@ -699,7 +671,8 @@ def _canonical_rows(
     return next(section.rows for section in result.projection.sections if section.kind is kind)
 
 
-def test_work_key_preferences_do_not_collide_across_source_instances() -> None:
+def test_work_key_preferences_do_not_collide_across_source_instances__and_2_more() -> None:
+    # --- scenario: work_key_preferences_do_not_collide_across_source_instances
     first = _work_row(
         _work_key("same", source_instance="local:01"),
         WorkLifecycle.ACTIVE,
@@ -736,8 +709,7 @@ def test_work_key_preferences_do_not_collide_across_source_instances() -> None:
         second.work_key,
     }
 
-
-def test_empty_canonical_projection_returns_work_key_preference_projection() -> None:
+    # --- scenario: empty_canonical_projection_returns_work_key_preference_projection
     result = apply_mailbox_preferences(_work_projection(), (), now=NOW)
 
     assert type(result) is CanonicalMailboxPreferenceProjection
@@ -746,8 +718,7 @@ def test_empty_canonical_projection_returns_work_key_preference_projection() -> 
     assert result.next_wake_epoch is None
     assert result.woke_work_keys == ()
 
-
-def test_work_key_snooze_never_hides_actionable_and_wakes_exact_family() -> None:
+    # --- scenario: work_key_snooze_never_hides_actionable_and_wakes_exact_family
     row = _work_row(
         _work_key("ask"),
         WorkLifecycle.WAITING,
@@ -772,7 +743,9 @@ def test_work_key_snooze_never_hides_actionable_and_wakes_exact_family() -> None
     assert result.woke_work_keys == (row.work_key,)
 
 
-def test_work_key_snooze_hides_quiet_until_one_common_exact_deadline() -> None:
+
+def test_work_key_snooze_hides_quiet_until_one_common_exact_deadline__and_2_more() -> None:
+    # --- scenario: work_key_snooze_hides_quiet_until_one_common_exact_deadline
     first = _work_row(_work_key("first"), WorkLifecycle.ACTIVE, stable_order=0)
     second = _work_row(_work_key("second"), WorkLifecycle.IDLE, stable_order=1)
     result = apply_mailbox_preferences(
@@ -798,8 +771,7 @@ def test_work_key_snooze_hides_quiet_until_one_common_exact_deadline() -> None:
     assert result.next_wake_epoch == NOW + 300.0
     assert result.woke_work_keys == ()
 
-
-def test_work_key_terminal_edge_wakes_early_and_woke_persists_until_visit() -> None:
+    # --- scenario: work_key_terminal_edge_wakes_early_and_woke_persists_until_visit
     row = _work_row(
         _work_key("finished"),
         WorkLifecycle.COMPLETED,
@@ -843,8 +815,7 @@ def test_work_key_terminal_edge_wakes_early_and_woke_persists_until_visit() -> N
         ),
     )
 
-
-def test_work_key_preference_retention_remains_capped_at_one_hundred() -> None:
+    # --- scenario: work_key_preference_retention_remains_capped_at_one_hundred
     rows = tuple(
         _work_row(
             _work_key(f"work:{index:03d}"),
@@ -872,6 +843,7 @@ def test_work_key_preference_retention_remains_capped_at_one_hundred() -> None:
     assert isinstance(result, CanonicalMailboxPreferenceProjection)
     assert len(result.retained_preferences) == 100
     assert rows[-1].work_key in {item.work_key for item in result.retained_preferences}
+
 
 
 def test_canonical_preference_dtos_expose_only_source_scoped_fields() -> None:

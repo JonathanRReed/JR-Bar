@@ -12,7 +12,8 @@ from jrbar._led_status_legacy import (
 )
 
 
-def test_steady_state_variant_drops_only_the_approach_frame() -> None:
+def test_steady_state_variant_drops_only_the_approach_frame__and_1_more() -> None:
+    # --- scenario: steady_state_variant_drops_only_the_approach_frame
     program = (
         "brightness 18\n"
         "0:#F87C5F 160ms none; 1:#260C06 160ms none\n"
@@ -25,10 +26,10 @@ def test_steady_state_variant_drops_only_the_approach_frame() -> None:
         "repeat"
     )
 
-
-def test_steady_state_variant_keeps_short_programs_intact() -> None:
+    # --- scenario: steady_state_variant_keeps_short_programs_intact
     for program in ("off", "#00FF00 1s", "brightness 40\n#00FF00 1s\nrepeat"):
         assert _steady_state_variant(program) == program
+
 
 
 def test_reassert_write_omits_the_approach_frame(tmp_path: Path) -> None:

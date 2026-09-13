@@ -14,7 +14,8 @@ from jrbar.product_identity import PRODUCT_DISPLAY_NAME
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_product_display_name_and_bundle_identity_are_jr_bar() -> None:
+def test_product_display_name_and_bundle_identity_are_jr_bar__and_2_more() -> None:
+    # --- scenario: product_display_name_and_bundle_identity_are_jr_bar
     assert PRODUCT_DISPLAY_NAME == "JR-Bar"
     assert APP_BUNDLE_NAME == "JR-Bar.app"
     assert APP_EXECUTABLE_NAME == "JR-Bar"
@@ -23,8 +24,7 @@ def test_product_display_name_and_bundle_identity_are_jr_bar() -> None:
     assert normalize_device_label("ignored", DeviceKind.PRO) == "SidePulse Pro"
     assert normalize_device_label("ignored", DeviceKind.DOT) == "SidePulse Dot"
 
-
-def test_cli_uses_jr_bar_display_name_and_command_name() -> None:
+    # --- scenario: cli_uses_jr_bar_display_name_and_command_name
     parser = build_jrbar_parser()
 
     assert parser.prog == "jrbar"
@@ -32,8 +32,7 @@ def test_cli_uses_jr_bar_display_name_and_command_name() -> None:
     assert "SidePulse command line tools" not in parser.format_help()
     assert PRODUCT_DISPLAY_NAME in build_parser().format_help()
 
-
-def test_macos_package_uses_jr_bar_bundle_identity() -> None:
+    # --- scenario: macos_package_uses_jr_bar_bundle_identity
     script = (ROOT / "packaging" / "build_macos_pkg.sh").read_text(encoding="utf-8")
 
     assert ":CFBundleDisplayName string $PRODUCT_DISPLAY_NAME" in script
@@ -42,6 +41,7 @@ def test_macos_package_uses_jr_bar_bundle_identity() -> None:
     assert "--name jrbar-core" in script
     assert 'APP_ID="com.jonathanreed.jrbar"' in script
     assert "io.sidepulse" not in script
+
 
 
 def test_current_product_copy_has_no_retired_jr_bar_spelling() -> None:

@@ -77,17 +77,29 @@ final class MediaRemoteBridge: @unchecked Sendable {
     }
 }
 
-/// The island's Now Playing source: owns the MediaRemote bridge, listens
-/// for the now-playing notifications MediaRemote posts (plus Music's own
-/// `playerInfo` distributed note, whose payload we ignore — the refetch
-/// reads MediaRemote either way), and reduces each refresh to one
-/// `AlcoveMedia` for the toy. Started while the island is ours and
-/// visible with `mediaEnabled` on; stopped otherwise — a parked island
-/// holds no listener and asks for nothing.
+/// The island's Now Playing source, two readers under one switch:
+///
+/// * `AlcoveMediaAdapter` — `/usr/bin/perl` (an entitled platform
+///   binary) running the embedded `jrbar_mediaremote` dylib, which
+///   calls MediaRemote inside that process and streams JSON lines.
+///   The only path that works on macOS 15.4+, where `mediaremoted`
+///   refuses unentitled readers — which is this machine.
+/// * `MediaRemoteBridge` — the in-process dlopen path, kept as the
+///   fallback for releases where reads were never gated (and for the
+///   `send` transport, which mediaremoted never gated). Plus Music's
+///   own `com.apple.Music.playerInfo` payload, which Music posts to
+///   every process regardless — parsed directly when the bridge reads
+///   come back empty.
+///
+/// Started while the island is ours and visible with `mediaEnabled`
+/// on; stopped otherwise — a parked island holds no listener, no child
+/// process, and asks for nothing.
 @MainActor
 final class AlcoveMediaMonitor {
     /// MediaRemote's distributed notification names — the constants'
     /// string values are their own names, so no symbol lookup is needed.
+    /// They only fire for registered readers; on gated releases they
+    /// simply never arrive, which the fallback ordering already covers.
     static let notificationNames = [
         "kMRMediaRemoteNowPlayingInfoDidChangeNotification",
         "kMRMediaRemoteNowPlayingApplicationIsPlayingDidChangeNotification",
@@ -98,41 +110,109 @@ final class AlcoveMediaMonitor {
     /// The queue MediaRemote answers on; the hop to main is ours.
     private let answerQueue = DispatchQueue(label: "jrbar.alcove.mediaremote", qos: .utility)
     private var bridge: MediaRemoteBridge?
+    private var adapter: AlcoveMediaAdapter?
     private var observers: [NSObjectProtocol] = []
     private var refreshWork: DispatchWorkItem?
+    /// The last media Music's `playerInfo` named — held so a bridge
+    /// refresh that comes back empty (gated) can still report what the
+    /// distributed note itself announced. Stale past `musicPayloadLife`.
+    private var musicMedia: (media: AlcoveMedia, at: Date)?
+    /// A `playerInfo` payload speaks for this long; a Music that quit
+    /// mid-song stops claiming the strip once it ages out.
+    private static let musicPayloadLife: TimeInterval = 10
+    /// The bridge path only runs reads while the adapter is dead —
+    /// otherwise a gated empty read would overwrite the helper's truth.
+    private var adapterLive = false
     private(set) var running = false
 
     /// The toy's hook: the freshly reduced media (or nil when nothing
-    /// plays / MediaRemote is absent).
+    /// plays / no path produced one).
     var onChange: (@MainActor (AlcoveMedia?) -> Void)?
 
     func start() {
         guard !running else { return }
         running = true
-        guard let bridge = MediaRemoteBridge() else {
-            // No framework: the feature silently isn't there.
-            self.bridge = nil
-            onChange?(nil)
-            return
-        }
-        self.bridge = bridge
-        bridge.registerNotifications(on: .main)
+        // The bridge is built either way: `send` rides it in-process
+        // whenever the framework resolves, reads only ever run while
+        // the adapter is dead.
+        bridge = MediaRemoteBridge()
+        bridge?.registerNotifications(on: .main)
         let center = DistributedNotificationCenter.default()
         for name in Self.notificationNames {
-            observers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.scheduleRefresh() }
+            observers.append(center.addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] note in
+                // Music's payload is data in its own right — parse it in
+                // the block so only Sendable values cross to main.
+                var musicMedia: AlcoveMedia?
+                var musicStopped = false
+                if name == "com.apple.Music.playerInfo" {
+                    let payload = note.userInfo as? [String: Any] ?? [:]
+                    musicMedia = AlcoveMedia.summarize(musicPlayerInfo: payload)
+                    musicStopped = (payload["Player State"] as? String) == "Stopped"
+                }
+                MainActor.assumeIsolated {
+                    self?.noteDistributed(name: name, musicMedia: musicMedia, musicStopped: musicStopped)
+                }
             })
         }
+        startAdapter()
         refresh()
+    }
+
+    /// Spawn the entitled reader; a dead path (no perl, no dylib, an
+    /// early exit) flips `adapterLive` off and leaves the bridge's
+    /// refresh cycle in charge.
+    private func startAdapter() {
+        let adapter = AlcoveMediaAdapter()
+        adapter.onChange = { [weak self] media in self?.noteMedia(media) }
+        adapter.onFailure = { [weak self] in
+            guard let self else { return }
+            self.adapterLive = false
+            self.adapter = nil
+            self.refresh()
+        }
+        self.adapter = adapter
+        adapterLive = true
+        adapter.start()
+        // The adapter reports its own death through onFailure — but a
+        // `start` that silently couldn't run still needs the flag down.
+        if !adapter.running { adapterLive = false }
+    }
+
+    private func noteMedia(_ media: AlcoveMedia?) {
+        guard running else { return }
+        onChange?(media)
+    }
+
+    /// A distributed note landed: Music's payload is data in its own
+    /// right (and the only ungated source on 15.4+); the MediaRemote
+    /// names are refresh triggers for the bridge path.
+    private func noteDistributed(name: String, musicMedia media: AlcoveMedia?,
+                                 musicStopped: Bool = false) {
+        if name == "com.apple.Music.playerInfo" {
+            if let media {
+                musicMedia = (media, Date())
+                if !adapterLive { noteMedia(media) }
+            } else if musicStopped {
+                // "Stopped" is a fact, not a gap — drop the held track.
+                musicMedia = nil
+                if !adapterLive { noteMedia(nil) }
+            }
+            return
+        }
+        scheduleRefresh()
     }
 
     func stop() {
         running = false
         refreshWork?.cancel()
         refreshWork = nil
+        adapter?.stop()
+        adapter = nil
+        adapterLive = false
         for observer in observers { DistributedNotificationCenter.default().removeObserver(observer) }
         observers = []
         bridge = nil
+        musicMedia = nil
         onChange?(nil)
     }
 
@@ -140,6 +220,9 @@ final class AlcoveMediaMonitor {
     /// usually arrives on its own, but the re-read keeps the capsule
     /// honest on a player that never posts one.
     func send(_ command: MediaRemoteBridge.Command) {
+        if adapterLive, let adapter {
+            adapter.send(command)
+        }
         bridge?.send(command)
         scheduleRefresh(after: 0.5)
     }
@@ -147,6 +230,7 @@ final class AlcoveMediaMonitor {
     /// Notifications arrive in bursts (info + is-playing + app-change
     /// for one track change); one refresh 0.2 s out answers them all.
     private func scheduleRefresh(after delay: TimeInterval = 0.2) {
+        guard !adapterLive else { return }
         refreshWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.refresh() }
@@ -159,14 +243,31 @@ final class AlcoveMediaMonitor {
     /// by `AlcoveMedia.summarize` and handed to the toy on the main
     /// actor. The flag is fetched first so the dictionary — not Sendable
     /// — only ever arrives as a closure parameter, never a capture.
+    /// Skipped while the adapter is alive: on gated releases the read
+    /// answers empty, and empty would erase the helper's real track.
     private func refresh() {
-        guard let bridge else { onChange?(nil); return }
+        guard running, !adapterLive else { return }
+        guard let bridge else {
+            noteMedia(musicMedia.flatMap { Date().timeIntervalSince($0.at) < Self.musicPayloadLife ? $0.media : nil })
+            return
+        }
         let queue = answerQueue
         bridge.isPlaying(on: queue) { [weak self] playing in
             bridge.nowPlayingInfo(on: queue) { [weak self] info in
                 let media = AlcoveMedia.summarize(info, isPlaying: playing)
                 Task { @MainActor [weak self] in
-                    self?.onChange?(media)
+                    guard let self else { return }
+                    // The bridge's empty read on a gated release is not
+                    // "nothing playing" — Music's own note is fresher
+                    // truth when it arrived recently.
+                    if let media {
+                        self.noteMedia(media)
+                    } else if let held = self.musicMedia,
+                              Date().timeIntervalSince(held.at) < Self.musicPayloadLife {
+                        self.noteMedia(held.media)
+                    } else {
+                        self.noteMedia(nil)
+                    }
                 }
             }
         }

@@ -86,7 +86,8 @@ def coordinator(
     )
 
 
-def test_registration_rejects_binding_that_does_not_match_its_exact_source_account_or_pool() -> None:
+def test_registration_rejects_binding_that_does_not_match_its_exact_source_account_or_pool__and_1_more() -> None:
+    # --- scenario: registration_rejects_binding_that_does_not_match_its_exact_source_account_or_pool
     """Permitting a mismatched binding would let one account reuse another's refresh record."""
     refresh_key = key()
     binding = CapacityAccountBinding(
@@ -102,8 +103,7 @@ def test_registration_rejects_binding_that_does_not_match_its_exact_source_accou
     with pytest.raises(RefreshValidationError, match="binding"):
         RefreshSourceRegistration(refresh_key, enabled=True, supported=True, binding=binding)
 
-
-def test_registration_rejects_binding_that_does_not_match_its_auth_mode() -> None:
+    # --- scenario: registration_rejects_binding_that_does_not_match_its_auth_mode
     """Omitting auth mode from refresh identity would reuse another plan's result."""
     refresh_key = key(auth_mode="chatgpt-plan")
     binding = CapacityAccountBinding(
@@ -118,6 +118,7 @@ def test_registration_rejects_binding_that_does_not_match_its_auth_mode() -> Non
 
     with pytest.raises(RefreshValidationError, match="binding"):
         RefreshSourceRegistration(refresh_key, enabled=True, supported=True, binding=binding)
+
 
 
 def snapshot(
@@ -191,7 +192,8 @@ def start(
     return decision.generation
 
 
-def test_coordinator_rejects_more_than_sixteen_exact_source_records() -> None:
+def test_coordinator_rejects_more_than_sixteen_exact_source_records__and_2_more() -> None:
+    # --- scenario: coordinator_rejects_more_than_sixteen_exact_source_records
     registrations = tuple(
         RefreshSourceRegistration(
             key=key(f"provider{index}"),
@@ -204,8 +206,7 @@ def test_coordinator_rejects_more_than_sixteen_exact_source_records() -> None:
     with pytest.raises(RefreshValidationError):
         CapacityRefreshCoordinator(registrations)
 
-
-def test_sixteen_records_are_retained_in_deterministic_key_order() -> None:
+    # --- scenario: sixteen_records_are_retained_in_deterministic_key_order
     registrations = tuple(
         RefreshSourceRegistration(
             key=key(f"provider{index}"),
@@ -220,8 +221,7 @@ def test_sixteen_records_are_retained_in_deterministic_key_order() -> None:
     assert len(state.sources) == MAX_REFRESH_SOURCE_RECORDS
     assert tuple(row.key for row in state.sources) == tuple(sorted(row.key for row in registrations))
 
-
-def test_one_in_flight_generation_coalesces_duplicate_and_manual_requests() -> None:
+    # --- scenario: one_in_flight_generation_coalesces_duplicate_and_manual_requests
     refresh_key = key()
     refresh = coordinator(refresh_key)
 
@@ -240,7 +240,9 @@ def test_one_in_flight_generation_coalesces_duplicate_and_manual_requests() -> N
     assert state.queued_manual is False
 
 
-def test_independent_source_deadlines_expire_without_cross_source_mutation() -> None:
+
+def test_independent_source_deadlines_expire_without_cross_source_mutation__and_2_more() -> None:
+    # --- scenario: independent_source_deadlines_expire_without_cross_source_mutation
     codex = key("codex")
     claude = key("claude")
     refresh = coordinator(codex, claude)
@@ -258,8 +260,7 @@ def test_independent_source_deadlines_expire_without_cross_source_mutation() -> 
     assert states[claude].in_flight is True
     assert states[claude].deadline == 20.0
 
-
-def test_late_generation_cannot_overwrite_newer_success() -> None:
+    # --- scenario: late_generation_cannot_overwrite_newer_success
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation_one = start(refresh, refresh_key, now=0.0, deadline=5.0)
@@ -286,8 +287,7 @@ def test_late_generation_cannot_overwrite_newer_success() -> None:
     assert state.generation == generation_two
     assert state.last_known_good is newest
 
-
-def test_exact_source_invalidation_fences_work_and_preserves_sibling() -> None:
+    # --- scenario: exact_source_invalidation_fences_work_and_preserves_sibling
     codex = key("codex")
     claude = key("claude")
     refresh = coordinator(codex, claude)
@@ -333,7 +333,9 @@ def test_exact_source_invalidation_fences_work_and_preserves_sibling() -> None:
     assert restarted.generation == 4
 
 
-def test_manual_refresh_queues_once_and_never_bypasses_retry_after() -> None:
+
+def test_manual_refresh_queues_once_and_never_bypasses_retry_after__and_2_more() -> None:
+    # --- scenario: manual_refresh_queues_once_and_never_bypasses_retry_after
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=100.0, deadline=120.0)
@@ -368,8 +370,7 @@ def test_manual_refresh_queues_once_and_never_bypasses_retry_after() -> None:
     assert duplicate_due.kind is RefreshDecisionKind.COALESCED
     assert refresh.snapshot_state(200.0).sources[0].queued_manual is False
 
-
-def test_retry_after_is_scoped_by_source_pool_and_account_discriminator() -> None:
+    # --- scenario: retry_after_is_scoped_by_source_pool_and_account_discriminator
     blocked = key("codex", pool="shared", account_discriminator="account-a")
     other_source = key("claude", pool="shared", account_discriminator="account-a")
     other_pool = key("codex", pool="fable", account_discriminator="account-a")
@@ -394,8 +395,7 @@ def test_retry_after_is_scoped_by_source_pool_and_account_discriminator() -> Non
     assert all(item.kind is RefreshDecisionKind.START for item in sibling_decisions)
     assert tuple(item.generation for item in sibling_decisions) == (1, 1, 1)
 
-
-def test_disabled_unsupported_and_unknown_sources_never_create_timers() -> None:
+    # --- scenario: disabled_unsupported_and_unknown_sources_never_create_timers
     disabled = key("codex")
     unsupported = key("claude")
     unknown = key("gemini")
@@ -420,7 +420,9 @@ def test_disabled_unsupported_and_unknown_sources_never_create_timers() -> None:
     assert all(row.in_flight is False and row.deadline is None for row in states.values())
 
 
-def test_failure_retains_last_known_good_with_original_observation_time() -> None:
+
+def test_failure_retains_last_known_good_with_original_observation_time__and_2_more() -> None:
+    # --- scenario: failure_retains_last_known_good_with_original_observation_time
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation_one = start(refresh, refresh_key, now=100.0, deadline=120.0)
@@ -450,8 +452,7 @@ def test_failure_retains_last_known_good_with_original_observation_time() -> Non
     assert state.last_failure is RefreshFailureKind.ACCESS_DENIED
     assert state.status is RefreshStatusKind.COOLDOWN
 
-
-def test_failure_without_last_known_good_remains_explicit() -> None:
+    # --- scenario: failure_without_last_known_good_remains_explicit
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -471,8 +472,7 @@ def test_failure_without_last_known_good_remains_explicit() -> None:
     assert state.has_last_known_good is False
     assert state.last_failure is RefreshFailureKind.SOURCE_UNAVAILABLE
 
-
-def test_explicit_empty_success_clears_previous_last_known_good() -> None:
+    # --- scenario: explicit_empty_success_clears_previous_last_known_good
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation_one = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -498,39 +498,34 @@ def test_explicit_empty_success_clears_previous_last_known_good() -> None:
     assert state.status is RefreshStatusKind.HEALTHY
 
 
-@pytest.mark.parametrize(
-    ("failure_kind", "expected_status"),
-    (
+
+def test_failure_status_returns_after_cooldown_boundary__and_2_more() -> None:
+    # --- scenario: failure_status_returns_after_cooldown_boundary
+    for failure_kind, expected_status in (
         (RefreshFailureKind.FAILED, RefreshStatusKind.FAILED),
         (RefreshFailureKind.TIMED_OUT, RefreshStatusKind.TIMED_OUT),
         (RefreshFailureKind.SIGN_IN_REQUIRED, RefreshStatusKind.SIGN_IN_REQUIRED),
         (RefreshFailureKind.ACCESS_DENIED, RefreshStatusKind.ACCESS_DENIED),
         (RefreshFailureKind.SOURCE_UNAVAILABLE, RefreshStatusKind.FAILED),
-    ),
-)
-def test_failure_status_returns_after_cooldown_boundary(
-    failure_kind: RefreshFailureKind,
-    expected_status: RefreshStatusKind,
-) -> None:
-    refresh_key = key()
-    refresh = coordinator(refresh_key)
-    generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
-    refresh.register_failure(
-        refresh_key,
-        generation,
-        failure_kind,
-        completed_at=15.0,
-        retry_at=30.0,
-    )
+    ):
+        refresh_key = key()
+        refresh = coordinator(refresh_key)
+        generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
+        refresh.register_failure(
+            refresh_key,
+            generation,
+            failure_kind,
+            completed_at=15.0,
+            retry_at=30.0,
+        )
 
-    during = refresh.snapshot_state(29.999).sources[0]
-    at_boundary = refresh.snapshot_state(30.0).sources[0]
+        during = refresh.snapshot_state(29.999).sources[0]
+        at_boundary = refresh.snapshot_state(30.0).sources[0]
 
-    assert during.status is RefreshStatusKind.COOLDOWN
-    assert at_boundary.status is expected_status
+        assert during.status is RefreshStatusKind.COOLDOWN
+        assert at_boundary.status is expected_status
 
-
-def test_expire_before_deadline_is_explicit_and_non_mutating() -> None:
+    # --- scenario: expire_before_deadline_is_explicit_and_non_mutating
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -543,8 +538,7 @@ def test_expire_before_deadline_is_explicit_and_non_mutating() -> None:
     assert state.in_flight is True
     assert state.deadline == 20.0
 
-
-def test_stale_failure_and_timeout_are_refused_without_mutation() -> None:
+    # --- scenario: stale_failure_and_timeout_are_refused_without_mutation
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -567,7 +561,9 @@ def test_stale_failure_and_timeout_are_refused_without_mutation() -> None:
     assert state.last_failure is None
 
 
-def test_success_rejects_cross_source_pool_and_account_snapshots() -> None:
+
+def test_success_rejects_cross_source_pool_and_account_snapshots__and_2_more() -> None:
+    # --- scenario: success_rejects_cross_source_pool_and_account_snapshots
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -596,8 +592,7 @@ def test_success_rejects_cross_source_pool_and_account_snapshots() -> None:
 
     assert refresh.snapshot_state(15.0).sources[0].in_flight is True
 
-
-def test_register_started_requires_current_reserved_generation_and_future_deadline() -> None:
+    # --- scenario: register_started_requires_current_reserved_generation_and_future_deadline
     refresh_key = key()
     refresh = coordinator(refresh_key)
     decision = refresh.request_refresh(refresh_key, RefreshCause.AUTOMATIC, 10.0)
@@ -611,8 +606,7 @@ def test_register_started_requires_current_reserved_generation_and_future_deadli
     refresh.register_started(refresh_key, 1, 20.0)
     assert refresh.snapshot_state(10.0).sources[0].deadline == 20.0
 
-
-def test_refresh_key_rejects_display_account_text_paths_and_unbounded_pool() -> None:
+    # --- scenario: refresh_key_rejects_display_account_text_paths_and_unbounded_pool
     with pytest.raises(RefreshValidationError):
         RefreshSourceKey(source(), "shared", "person@example.com")
     with pytest.raises(RefreshValidationError):
@@ -621,7 +615,9 @@ def test_refresh_key_rejects_display_account_text_paths_and_unbounded_pool() -> 
         RefreshSourceKey(source(), "x" * 65, "account-a")
 
 
-def test_nonfinite_times_and_retry_boundaries_fail_closed() -> None:
+
+def test_nonfinite_times_and_retry_boundaries_fail_closed__and_2_more() -> None:
+    # --- scenario: nonfinite_times_and_retry_boundaries_fail_closed
     refresh_key = key()
     refresh = coordinator(refresh_key)
 
@@ -639,8 +635,7 @@ def test_nonfinite_times_and_retry_boundaries_fail_closed() -> None:
     with pytest.raises(RefreshValidationError):
         refresh.snapshot_state(float("nan"))
 
-
-def test_in_flight_coalescing_never_mislabels_deadline_as_retry_after() -> None:
+    # --- scenario: in_flight_coalescing_never_mislabels_deadline_as_retry_after
     refresh_key = key()
     refresh = coordinator(refresh_key)
     start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -651,8 +646,7 @@ def test_in_flight_coalescing_never_mislabels_deadline_as_retry_after() -> None:
     assert decision.reason is RefreshDecisionReason.IN_FLIGHT
     assert decision.retry_at is None
 
-
-def test_success_requires_a_registered_outer_deadline() -> None:
+    # --- scenario: success_requires_a_registered_outer_deadline
     refresh_key = key()
     refresh = coordinator(refresh_key)
     decision = refresh.request_refresh(refresh_key, RefreshCause.AUTOMATIC, 10.0)
@@ -669,7 +663,9 @@ def test_success_requires_a_registered_outer_deadline() -> None:
     assert refresh.snapshot_state(15.0).sources[0].in_flight is True
 
 
-def test_completion_at_outer_deadline_times_out_without_publishing_snapshot() -> None:
+
+def test_completion_at_outer_deadline_times_out_without_publishing_snapshot__and_2_more() -> None:
+    # --- scenario: completion_at_outer_deadline_times_out_without_publishing_snapshot
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -686,8 +682,7 @@ def test_completion_at_outer_deadline_times_out_without_publishing_snapshot() ->
     assert state.last_known_good is None
     assert state.last_failure is RefreshFailureKind.TIMED_OUT
 
-
-def test_attempt_completion_cannot_move_backward_in_monotonic_time() -> None:
+    # --- scenario: attempt_completion_cannot_move_backward_in_monotonic_time
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -703,8 +698,7 @@ def test_attempt_completion_cannot_move_backward_in_monotonic_time() -> None:
 
     assert refresh.snapshot_state(10.0).sources[0].in_flight is True
 
-
-def test_outer_deadline_is_bounded_to_canonical_runtime_limit() -> None:
+    # --- scenario: outer_deadline_is_bounded_to_canonical_runtime_limit
     refresh_key = key()
     refresh = coordinator(refresh_key)
     decision = refresh.request_refresh(refresh_key, RefreshCause.AUTOMATIC, 10.0)
@@ -724,7 +718,9 @@ def test_outer_deadline_is_bounded_to_canonical_runtime_limit() -> None:
     )
 
 
-def test_due_queued_manual_intent_wins_an_automatic_boundary_request() -> None:
+
+def test_due_queued_manual_intent_wins_an_automatic_boundary_request__and_2_more() -> None:
+    # --- scenario: due_queued_manual_intent_wins_an_automatic_boundary_request
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -747,15 +743,13 @@ def test_due_queued_manual_intent_wins_an_automatic_boundary_request() -> None:
     assert decision.cause is RefreshCause.MANUAL
     assert refresh.snapshot_state(30.0).sources[0].queued_manual is False
 
-
-def test_take_due_rejects_an_untyped_key_at_the_domain_boundary() -> None:
+    # --- scenario: take_due_rejects_an_untyped_key_at_the_domain_boundary
     refresh = coordinator(key())
 
     with pytest.raises(RefreshValidationError):
         refresh.take_due_queued_refresh("codex", 10.0)  # type: ignore[arg-type]
 
-
-def test_stale_cross_scope_payload_is_refused_before_payload_scope_validation() -> None:
+    # --- scenario: stale_cross_scope_payload_is_refused_before_payload_scope_validation
     refresh_key = key()
     refresh = coordinator(refresh_key)
     generation = start(refresh, refresh_key, now=10.0, deadline=20.0)
@@ -777,18 +771,14 @@ def test_stale_cross_scope_payload_is_refused_before_payload_scope_validation() 
     assert refresh.snapshot_state(16.0).sources[0].last_known_good is not None
 
 
-@pytest.mark.parametrize(
-    "account_discriminator",
-    ("token-secret", "password:account", "bearer-credential"),
-)
-def test_refresh_key_rejects_credential_like_account_discriminators(
-    account_discriminator: str,
-) -> None:
-    with pytest.raises(RefreshValidationError):
-        RefreshSourceKey(source(), "shared", account_discriminator)
 
+def test_refresh_key_rejects_credential_like_account_discriminators__and_2_more() -> None:
+    # --- scenario: refresh_key_rejects_credential_like_account_discriminators
+    for account_discriminator in ("token-secret", "password:account", "bearer-credential"):
+        with pytest.raises(RefreshValidationError):
+            RefreshSourceKey(source(), "shared", account_discriminator)
 
-def test_public_decision_rejects_contradictory_start_fields() -> None:
+    # --- scenario: public_decision_rejects_contradictory_start_fields
     with pytest.raises(RefreshValidationError):
         RefreshDecision(
             kind=RefreshDecisionKind.START,
@@ -808,8 +798,7 @@ def test_public_decision_rejects_contradictory_start_fields() -> None:
             reason=RefreshDecisionReason.DISABLED,
         )
 
-
-def test_public_commit_rejects_failure_without_typed_failure_kind() -> None:
+    # --- scenario: public_commit_rejects_failure_without_typed_failure_kind
     with pytest.raises(RefreshValidationError):
         RefreshCommit(
             kind=RefreshCommitKind.FAILURE,
@@ -822,7 +811,9 @@ def test_public_commit_rejects_failure_without_typed_failure_kind() -> None:
         )
 
 
-def test_public_source_state_rejects_contradictory_lkg_and_active_fields() -> None:
+
+def test_public_source_state_rejects_contradictory_lkg_and_active_fields__and_1_more() -> None:
+    # --- scenario: public_source_state_rejects_contradictory_lkg_and_active_fields
     state = coordinator(key()).snapshot_state(10.0).sources[0]
 
     with pytest.raises(RefreshValidationError):
@@ -830,8 +821,7 @@ def test_public_source_state_rejects_contradictory_lkg_and_active_fields() -> No
     with pytest.raises(RefreshValidationError):
         replace(state, in_flight=True, active_cause=None)
 
-
-def test_public_coordinator_snapshot_rejects_duplicate_and_unsorted_sources() -> None:
+    # --- scenario: public_coordinator_snapshot_rejects_duplicate_and_unsorted_sources
     first = coordinator(key("codex")).snapshot_state(10.0).sources[0]
     second = coordinator(key("claude")).snapshot_state(10.0).sources[0]
     ordered = tuple(sorted((first, second), key=lambda row: row.key))
@@ -840,3 +830,4 @@ def test_public_coordinator_snapshot_rejects_duplicate_and_unsorted_sources() ->
         RefreshCoordinatorSnapshot(10.0, (first, first))
     with pytest.raises(RefreshValidationError):
         RefreshCoordinatorSnapshot(10.0, tuple(reversed(ordered)))
+

@@ -26,7 +26,8 @@ def _legacy():
     return SimpleNamespace(save_settings=Mock(), set_field_value=lambda field, value: field.setStringValue_(value))
 
 
-def test_effects_page_exposes_persisted_sleep_level_and_idle_timeout_fields() -> None:
+def test_effects_page_exposes_persisted_sleep_level_and_idle_timeout_fields__and_2_more() -> None:
+    # --- scenario: effects_page_exposes_persisted_sleep_level_and_idle_timeout_fields
     target = SimpleNamespace(settings=AgentMonitorSettings())
 
     _pane, fields, _buttons = build_effects_page(target)
@@ -36,8 +37,7 @@ def test_effects_page_exposes_persisted_sleep_level_and_idle_timeout_fields() ->
     assert fields["idle_auto_off_timeout"].stringValue() == "60"
     assert fields["idle_auto_off_timeout"].action() == "applyIdleAutoOffTimeout:"
 
-
-def test_sleep_dim_percentage_persists_normalized_value_and_refreshes_light() -> None:
+    # --- scenario: sleep_dim_percentage_persists_normalized_value_and_refreshes_light
     legacy = _legacy()
     controller = SimpleNamespace(
         settings=AgentMonitorSettings(),
@@ -53,8 +53,7 @@ def test_sleep_dim_percentage_persists_normalized_value_and_refreshes_light() ->
     legacy.save_settings.assert_called_once_with(controller.settings)
     controller.refresh_.assert_called_once_with(None)
 
-
-def test_idle_auto_off_timeout_clamps_and_persists_minutes() -> None:
+    # --- scenario: idle_auto_off_timeout_clamps_and_persists_minutes
     legacy = _legacy()
     controller = SimpleNamespace(
         settings=AgentMonitorSettings(),
@@ -69,6 +68,7 @@ def test_idle_auto_off_timeout_clamps_and_persists_minutes() -> None:
     assert field.value == "5"
     legacy.save_settings.assert_called_once_with(controller.settings)
     controller.refresh_.assert_called_once_with(None)
+
 
 
 def test_invalid_lighting_number_restores_the_persisted_value() -> None:

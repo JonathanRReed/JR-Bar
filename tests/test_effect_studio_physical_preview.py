@@ -95,7 +95,8 @@ def _device(tmp_path: Path, *, name: str = "SidePulse Pro") -> legacy.StatusBarD
     )
 
 
-def test_compile_preview_honors_reduce_motion_and_the_existing_safety_compiler() -> None:
+def test_compile_preview_honors_reduce_motion_and_the_existing_safety_compiler__and_1_more() -> None:
+    # --- scenario: compile_preview_honors_reduce_motion_and_the_existing_safety_compiler
     animated = compile_effect_studio_physical_preview(
         "pulse",
         led_count=8,
@@ -119,8 +120,7 @@ def test_compile_preview_honors_reduce_motion_and_the_existing_safety_compiler()
     assert "repeat" not in reduced.program
     assert compile_presentation_program(reduced.program, led_count=8).accepted
 
-
-def test_reduce_motion_never_leaves_an_animated_fallback_on_hardware() -> None:
+    # --- scenario: reduce_motion_never_leaves_an_animated_fallback_on_hardware
     reduced_alert = compile_effect_studio_physical_preview(
         "alert",
         led_count=2,
@@ -137,9 +137,9 @@ def test_reduce_motion_never_leaves_an_animated_fallback_on_hardware() -> None:
     assert reduced_alert.state is legacy.LedDisplayState.ASK
 
 
-def test_adapter_submits_one_bounded_explicit_request_to_the_existing_writer(
-    tmp_path,
-) -> None:
+
+def test_adapter_submits_one_bounded_explicit_request_to_the_existing_writer__and_1_more(tmp_path,) -> None:
+    # --- scenario: adapter_submits_one_bounded_explicit_request_to_the_existing_writer
     owner = _Owner(_device(tmp_path))
     adapter = EffectStudioPhysicalPreviewAdapter(owner)
     option = adapter.devices()[0]
@@ -171,10 +171,7 @@ def test_adapter_submits_one_bounded_explicit_request_to_the_existing_writer(
         (receipt.session_id, MAX_PHYSICAL_PREVIEW_SECONDS)
     ]
 
-
-def test_adapter_refuses_missing_consent_unavailable_hardware_and_unsupported_dot(
-    tmp_path,
-) -> None:
+    # --- scenario: adapter_refuses_missing_consent_unavailable_hardware_and_unsupported_dot
     owner = _Owner(_device(tmp_path, name="SidePulse Dot"))
     adapter = EffectStudioPhysicalPreviewAdapter(owner)
     option = adapter.devices()[0]
@@ -214,7 +211,9 @@ def test_adapter_refuses_missing_consent_unavailable_hardware_and_unsupported_do
     assert owner._hardware_write_worker.commands == []
 
 
-def test_refused_preview_submission_retains_pending_live_hardware_work(tmp_path) -> None:
+
+def test_refused_preview_submission_retains_pending_live_hardware_work__and_2_more(tmp_path) -> None:
+    # --- scenario: refused_preview_submission_retains_pending_live_hardware_work
     owner = _Owner(_device(tmp_path))
     owner._hardware_write_worker.submit_result = SubmissionDisposition.REFUSED
     adapter = EffectStudioPhysicalPreviewAdapter(owner)
@@ -238,8 +237,7 @@ def test_refused_preview_submission_retains_pending_live_hardware_work(tmp_path)
     assert owner._hardware_write_worker.discarded == []
     assert owner.restored == []
 
-
-def test_release_cancels_the_preview_and_restores_committed_output(tmp_path) -> None:
+    # --- scenario: release_cancels_the_preview_and_restores_committed_output
     owner = _Owner(_device(tmp_path))
     adapter = EffectStudioPhysicalPreviewAdapter(owner)
     option = adapter.devices()[0]
@@ -262,8 +260,7 @@ def test_release_cancels_the_preview_and_restores_committed_output(tmp_path) -> 
     assert len(owner._hardware_write_worker.discarded) == 1
     assert owner.restored == [owner.device.device_id]
 
-
-def test_write_error_releases_and_restores_the_active_preview(tmp_path) -> None:
+    # --- scenario: write_error_releases_and_restores_the_active_preview
     owner = _Owner(_device(tmp_path))
     adapter = EffectStudioPhysicalPreviewAdapter(owner)
     option = adapter.devices()[0]
@@ -283,6 +280,7 @@ def test_write_error_releases_and_restores_the_active_preview(tmp_path) -> None:
     assert handled is True
     assert adapter.active_session is None
     assert owner.restored == [owner.device.device_id]
+
 
 
 def test_stale_write_result_cannot_release_a_newer_preview_session(tmp_path) -> None:

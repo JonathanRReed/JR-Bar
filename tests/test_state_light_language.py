@@ -193,7 +193,8 @@ CONFUSABLE_DELTA_E = 20.0
 # --- loudness --------------------------------------------------------------
 
 
-def test_ask_reads_louder_than_working() -> None:
+def test_ask_reads_louder_than_working__and_2_more() -> None:
+    # --- scenario: ask_reads_louder_than_working
     """The locked priority, in luminance. Before this it was inverted."""
     settings = ColorSettings.defaults()
     peaks = _peaks(settings)
@@ -203,8 +204,7 @@ def test_ask_reads_louder_than_working() -> None:
     assert relative_luminance(peaks[LedDisplayState.ASK]) == pytest.approx(0.2429, abs=1e-3)
     assert working == pytest.approx(0.1359, abs=1e-3)
 
-
-def test_failure_buys_its_separation_in_hue_and_contrast_not_luminance() -> None:
+    # --- scenario: failure_buys_its_separation_in_hue_and_contrast_not_luminance
     """FAILED is deliberately exempt from the loudness ladder, and this is
     the price it pays for the exemption.
 
@@ -279,8 +279,7 @@ def test_failure_buys_its_separation_in_hue_and_contrast_not_luminance() -> None
     assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_BLINK
     assert STATE_MOTION[LedDisplayState.ASK] != STATE_MOTION[LedDisplayState.FAILED]
 
-
-def test_loudness_follows_intent_rather_than_hue_accident() -> None:
+    # --- scenario: loudness_follows_intent_rather_than_hue_accident
     settings = ColorSettings.defaults()
     peaks = _peaks(settings)
     order = sorted(peaks, key=lambda state: relative_luminance(peaks[state]))
@@ -292,7 +291,9 @@ def test_loudness_follows_intent_rather_than_hue_accident() -> None:
     assert order.index(LedDisplayState.IDLE) < order.index(LedDisplayState.FAILED)
 
 
-def test_an_urgent_light_rests_where_an_ambient_one_peaks() -> None:
+
+def test_an_urgent_light_rests_where_an_ambient_one_peaks__and_2_more() -> None:
+    # --- scenario: an_urgent_light_rests_where_an_ambient_one_peaks
     """A light meaning "a human is needed" must not spend most of its cycle
     dark: the gentleness ceiling becomes the urgent state's FLOOR."""
     settings = ColorSettings.defaults()
@@ -308,8 +309,7 @@ def test_an_urgent_light_rests_where_an_ambient_one_peaks() -> None:
     _floor, ceiling = settings.fade_range(MODE_ASK)
     assert resting == scale_hex_brightness(ask, ceiling)
 
-
-def test_an_explicit_zero_floor_still_goes_all_the_way_dark() -> None:
+    # --- scenario: an_explicit_zero_floor_still_goes_all_the_way_dark
     """The lift raises a resting glow; it must not invent one the user
     switched off -- and an indexed `N:off` is a firmware parse error, so the
     zero floor has to stay the literal #000000."""
@@ -319,8 +319,7 @@ def test_an_explicit_zero_floor_still_goes_all_the_way_dark() -> None:
         == "#000000"
     )
 
-
-def test_luminance_matched_hex_moves_light_without_moving_hue() -> None:
+    # --- scenario: luminance_matched_hex_moves_light_without_moving_hue
     for source in ("#00E5FF", "#FF3A00", "#00FF66", "#A45CFF"):
         # Only targets the colour can actually reach; the rest is the clamp's
         # job and has its own test.
@@ -338,15 +337,16 @@ def test_luminance_matched_hex_moves_light_without_moving_hue() -> None:
                 assert matched_linear[index] == pytest.approx(expected, abs=0.004)
 
 
-def test_luminance_matched_hex_clamps_instead_of_clipping_a_channel() -> None:
+
+def test_luminance_matched_hex_clamps_instead_of_clipping_a_channel__and_2_more() -> None:
+    # --- scenario: luminance_matched_hex_clamps_instead_of_clipping_a_channel
     """Asking a colour for more light than it has must desaturate nothing and
     shift nothing -- it just stops at that colour's own maximum."""
     assert luminance_matched_hex("#FF3A00", 0.9) == "#FF3A00"
     assert luminance_matched_hex("#020204", 0.5) != "#FFFFFF"
     assert luminance_matched_hex("#00FF66", 0.0) == "#000000"
 
-
-def test_equalising_done_against_blocked_would_break_colourblind_safety() -> None:
+    # --- scenario: equalising_done_against_blocked_would_break_colourblind_safety
     """Why Done is NOT dimmed to match Ask, kept as an executable warning.
 
     Red and green are the pair a red/green colourblind viewer can only tell
@@ -364,11 +364,7 @@ def test_equalising_done_against_blocked_would_break_colourblind_safety() -> Non
     # the way to "the same light", bought for nothing.
     assert worst_case_separation(levelled, ask) < worst_case_separation(done, ask) * 0.7
 
-
-# --- motion ----------------------------------------------------------------
-
-
-def test_no_two_states_share_a_confusable_hue_and_the_same_motion() -> None:
+    # --- scenario: no_two_states_share_a_confusable_hue_and_the_same_motion
     """The core accessibility guarantee: hue is never the only channel."""
     settings = ColorSettings.defaults()
     peaks = _peaks(settings)
@@ -385,7 +381,9 @@ def test_no_two_states_share_a_confusable_hue_and_the_same_motion() -> None:
     assert not failures, "states separable by neither hue nor motion: " + "; ".join(failures)
 
 
-def test_every_state_owns_a_distinct_rhythm() -> None:
+
+def test_every_state_owns_a_distinct_rhythm__and_2_more() -> None:
+    # --- scenario: every_state_owns_a_distinct_rhythm
     assert len(set(STATE_MOTION.values())) == len(LedDisplayState)
     assert STATE_MOTION[LedDisplayState.ASK] == MOTION_BEAT
     assert STATE_MOTION[LedDisplayState.FAILED] == MOTION_BLINK
@@ -393,8 +391,7 @@ def test_every_state_owns_a_distinct_rhythm() -> None:
     assert STATE_MOTION[LedDisplayState.WORKING] == MOTION_CHASE
     assert STATE_MOTION[LedDisplayState.IDLE] == MOTION_BREATHE
 
-
-def test_the_rendered_segments_actually_differ_per_state() -> None:
+    # --- scenario: the_rendered_segments_actually_differ_per_state
     """Not just the table -- the DSL each state produces has to differ too.
 
     Compared with the index and colour stripped out, so this is purely about
@@ -426,8 +423,7 @@ def test_the_rendered_segments_actually_differ_per_state() -> None:
     assert "cosine" not in "".join(shapes[LedDisplayState.FAILED])
     assert "none" in shapes[LedDisplayState.FAILED][1]
 
-
-def test_the_light_language_never_flashes_faster_than_two_hertz() -> None:
+    # --- scenario: the_light_language_never_flashes_faster_than_two_hertz
     """The beat and the hard blink both need room. At the fastest cycle the
     user can dial they would run at 10Hz and 3.3Hz, so under
     MIN_FLASH_CYCLE_MS each degrades to the gentler motion it is built from.
@@ -446,10 +442,12 @@ def test_the_light_language_never_flashes_faster_than_two_hertz() -> None:
                 assert cycle_ms >= MIN_FLASH_CYCLE_MS
 
 
+
 # --- end to end ------------------------------------------------------------
 
 
-def test_a_waiting_agent_beats_while_a_working_one_chases() -> None:
+def test_a_waiting_agent_beats_while_a_working_one_chases__and_1_more() -> None:
+    # --- scenario: a_waiting_agent_beats_while_a_working_one_chases
     from datetime import datetime, timezone
 
     from jrbar.colors import program_for_snapshot
@@ -481,8 +479,7 @@ def test_a_waiting_agent_beats_while_a_working_one_chases() -> None:
     working_ms = int(working_segments[0].split()[1].removesuffix("ms"))
     assert blocked_ms < working_ms
 
-
-def test_completion_green_is_a_sweep_not_a_resting_state() -> None:
+    # --- scenario: completion_green_is_a_sweep_not_a_resting_state
     """2026-08-20 evening: 'a normal animation will happen but it is
     just all the LEDs return to green' -- every interactive turn ends in
     a Stop, and the strip painted the done color for two minutes after
@@ -530,3 +527,4 @@ def test_completion_green_is_a_sweep_not_a_resting_state() -> None:
         settled_completion_display_mode(AgentMode.WORKING, settled)
         == AgentMode.WORKING
     )
+

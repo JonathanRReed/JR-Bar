@@ -18,7 +18,8 @@ from jrbar.rainstick_idle import (
 )
 
 
-def test_rainstick_is_opt_in_and_fails_dark_by_default() -> None:
+def test_rainstick_is_opt_in_and_fails_dark_by_default__and_2_more() -> None:
+    # --- scenario: rainstick_is_opt_in_and_fails_dark_by_default
     plan = plan_rainstick_idle()
 
     assert plan.disposition is RainstickDisposition.SUPPRESS
@@ -36,8 +37,7 @@ def test_rainstick_is_opt_in_and_fails_dark_by_default() -> None:
     assert "preference is disabled" in plan.accessibility_text
     assert RAINSTICK_ACCESSIBILITY_DISCLOSURE in plan.accessibility_text
 
-
-def test_enabled_plan_moves_exactly_one_dim_pixel_at_low_frequency() -> None:
+    # --- scenario: enabled_plan_moves_exactly_one_dim_pixel_at_low_frequency
     plan = plan_rainstick_idle(
         preference_enabled=True,
         surface_pixel_count=12,
@@ -72,10 +72,8 @@ def test_enabled_plan_moves_exactly_one_dim_pixel_at_low_frequency() -> None:
     assert "alive and watching" in plan.accessibility_text
     assert RAINSTICK_ACCESSIBILITY_DISCLOSURE in plan.accessibility_text
 
-
-@pytest.mark.parametrize(
-    ("kwargs", "reason"),
-    [
+    # --- scenario: every_exclusive_surface_or_environment_policy_suppresses
+    for kwargs, reason in [
         (
             {"higher_priority_signal_active": True},
             RainstickSuppressionReason.HIGHER_PRIORITY_SIGNAL,
@@ -96,22 +94,19 @@ def test_enabled_plan_moves_exactly_one_dim_pixel_at_low_frequency() -> None:
             {"thermal": "CRITICAL"},
             RainstickSuppressionReason.THERMAL_CRITICAL,
         ),
-    ],
-)
-def test_every_exclusive_surface_or_environment_policy_suppresses(
-    kwargs,
-    reason,
-) -> None:
-    plan = plan_rainstick_idle(preference_enabled=True, **kwargs)
+    ]:
+        plan = plan_rainstick_idle(preference_enabled=True, **kwargs)
 
-    assert plan.disposition is RainstickDisposition.SUPPRESS
-    assert plan.cadence is None
-    assert plan.geometry is None
-    assert plan.suppression_reasons == (reason,)
-    assert RAINSTICK_ACCESSIBILITY_DISCLOSURE in plan.accessibility_text
+        assert plan.disposition is RainstickDisposition.SUPPRESS
+        assert plan.cadence is None
+        assert plan.geometry is None
+        assert plan.suppression_reasons == (reason,)
+        assert RAINSTICK_ACCESSIBILITY_DISCLOSURE in plan.accessibility_text
 
 
-def test_all_active_suppressions_are_reported_in_stable_priority_order() -> None:
+
+def test_all_active_suppressions_are_reported_in_stable_priority_order__and_2_more() -> None:
+    # --- scenario: all_active_suppressions_are_reported_in_stable_priority_order
     plan = plan_rainstick_idle(
         preference_enabled=False,
         higher_priority_signal_active=True,
@@ -141,8 +136,7 @@ def test_all_active_suppressions_are_reported_in_stable_priority_order() -> None
     assert plan.cadence is None
     assert plan.geometry is None
 
-
-def test_fair_thermal_state_remains_admitted_because_only_serious_pressure_blocks() -> None:
+    # --- scenario: fair_thermal_state_remains_admitted_because_only_serious_pressure_blocks
     plan = plan_rainstick_idle(
         preference_enabled=True,
         thermal=RainstickThermalState.FAIR,
@@ -151,8 +145,7 @@ def test_fair_thermal_state_remains_admitted_because_only_serious_pressure_block
     assert plan.disposition is RainstickDisposition.MOVE
     assert plan.suppression_reasons == ()
 
-
-def test_reduce_motion_substitutes_one_stationary_dim_pixel() -> None:
+    # --- scenario: reduce_motion_substitutes_one_stationary_dim_pixel
     plan = plan_rainstick_idle(
         preference_enabled=True,
         reduce_motion=True,
@@ -175,7 +168,9 @@ def test_reduce_motion_substitutes_one_stationary_dim_pixel() -> None:
     assert "Reduce Motion" in plan.accessibility_text
 
 
-def test_plan_and_nested_contracts_are_immutable() -> None:
+
+def test_plan_and_nested_contracts_are_immutable__and_2_more() -> None:
+    # --- scenario: plan_and_nested_contracts_are_immutable
     plan = plan_rainstick_idle(preference_enabled=True)
 
     with pytest.raises(FrozenInstanceError):
@@ -187,10 +182,8 @@ def test_plan_and_nested_contracts_are_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         plan.geometry.lit_pixel_count = 2  # type: ignore[misc]
 
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
+    # --- scenario: policy_flags_are_strict_booleans
+    for field, value in [
         ("preference_enabled", 1),
         ("higher_priority_signal_active", "no"),
         ("dnd_active", None),
@@ -199,20 +192,18 @@ def test_plan_and_nested_contracts_are_immutable() -> None:
         ("display_asleep", 0),
         ("low_power", None),
         ("reduce_motion", "false"),
-    ],
-)
-def test_policy_flags_are_strict_booleans(field, value) -> None:
-    with pytest.raises(RainstickIdleError, match=field):
-        plan_rainstick_idle(**{field: value})
+    ]:
+        with pytest.raises(RainstickIdleError, match=field):
+            plan_rainstick_idle(**{field: value})
+
+    # --- scenario: thermal_state_is_bounded
+    for thermal in [None, 0, "warm", ""]:
+        with pytest.raises(RainstickIdleError, match="thermal"):
+            plan_rainstick_idle(thermal=thermal)
 
 
-@pytest.mark.parametrize("thermal", [None, 0, "warm", ""])
-def test_thermal_state_is_bounded(thermal) -> None:
-    with pytest.raises(RainstickIdleError, match="thermal"):
-        plan_rainstick_idle(thermal=thermal)
 
-
-@pytest.mark.parametrize("pixel_count", [None, True, 0, 1, 1_025, 4.0, "8"])
-def test_surface_geometry_is_bounded(pixel_count) -> None:
-    with pytest.raises(RainstickIdleError, match="surface_pixel_count"):
-        plan_rainstick_idle(surface_pixel_count=pixel_count)
+def test_surface_geometry_is_bounded() -> None:
+    for pixel_count in [None, True, 0, 1, 1_025, 4.0, "8"]:
+        with pytest.raises(RainstickIdleError, match="surface_pixel_count"):
+            plan_rainstick_idle(surface_pixel_count=pixel_count)

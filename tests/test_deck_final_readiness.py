@@ -85,7 +85,8 @@ def _dispatch_target():
     return target, dispatch, calls
 
 
-def test_bank_change_revokes_explicit_actions_and_pending_automations():
+def test_bank_change_revokes_explicit_actions_and_pending_automations__and_2_more() -> None:
+    # --- scenario: bank_change_revokes_explicit_actions_and_pending_automations
     target, dispatch, calls = _dispatch_target()
     stopped, executed = [], []
     target._deck_automation_runner = SimpleNamespace(close=lambda: stopped.append(True))
@@ -94,8 +95,7 @@ def test_bank_change_revokes_explicit_actions_and_pending_automations():
     assert dispatch.deliver(calls[0], MacDeckActionExecutor(open_usage=lambda: executed.append(True))) == ()
     assert not executed and stopped == [True]
 
-
-def test_modal_confirmation_cannot_execute_after_the_context_changes():
+    # --- scenario: modal_confirmation_cannot_execute_after_the_context_changes
     target, dispatch, calls = _dispatch_target()
     token = dispatch.capture_context()
     target._deck_session_board.change_bank(1)
@@ -105,12 +105,12 @@ def test_modal_confirmation_cannot_execute_after_the_context_changes():
                                        expected_context=dispatch.capture_context())
     assert len(calls) == 1
 
-
-def test_normalized_input_is_refused_during_termination():
+    # --- scenario: normalized_input_is_refused_during_termination
     target, dispatch, calls = _dispatch_target()
     target._runtime_termination_started = True
     dispatch.receive_normalized((ControlInput(3, "press"),))
     assert not calls
+
 
 
 def test_shortcut_timeout_reaps_the_killed_child(monkeypatch):

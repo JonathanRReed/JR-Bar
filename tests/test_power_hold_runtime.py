@@ -73,9 +73,8 @@ def test_live_agent_hold_replaces_only_the_stale_caffeinate_child() -> None:
     assert controller.process is factory.processes[-1]
 
 
-def test_closed_lid_display_change_preserves_helper_and_watchdog(
-    tmp_path: Path,
-) -> None:
+def test_closed_lid_display_change_preserves_helper_and_watchdog__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: closed_lid_display_change_preserves_helper_and_watchdog
     factory = _Factory()
     system_disable_calls: list[bool] = []
     controller = ClosedLidAwakeController(
@@ -106,10 +105,7 @@ def test_closed_lid_display_change_preserves_helper_and_watchdog(
     assert controller.last_requested is True
     assert system_disable_calls == [True]
 
-
-def test_disabling_ordinary_agent_hold_does_not_disable_closed_lid_policy(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: disabling_ordinary_agent_hold_does_not_disable_closed_lid_policy
     ordinary = KeepAwakeController(
         process_factory=_Factory(),
         watch_current_process=False,
@@ -130,7 +126,9 @@ def test_disabling_ordinary_agent_hold_does_not_disable_closed_lid_policy(
     assert closed.last_policy == CLOSED_LID_AWAKE_AGENTS
 
 
-def test_battery_release_does_not_rewrite_display_choice() -> None:
+
+def test_battery_release_does_not_rewrite_display_choice__and_1_more() -> None:
+    # --- scenario: battery_release_does_not_rewrite_display_choice
     factory = _Factory()
     controller = KeepAwakeController(
         process_factory=factory,
@@ -158,8 +156,7 @@ def test_battery_release_does_not_rewrite_display_choice() -> None:
         "1800",
     )
 
-
-def test_status_controller_reads_agent_and_display_choices_each_sync() -> None:
+    # --- scenario: status_controller_reads_agent_and_display_choices_each_sync
     from jrbar import status_bar
 
     calls: list[tuple[str, object]] = []
@@ -212,3 +209,4 @@ def test_status_controller_reads_agent_and_display_choices_each_sync() -> None:
     assert ("agent", False) in calls
     assert ("display", True) in calls
     assert ("closed-display", True) in calls
+

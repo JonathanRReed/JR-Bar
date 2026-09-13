@@ -40,7 +40,8 @@ def test_owner_private_assignment_store_round_trips_typed_records(tmp_path) -> N
     assert path.stat().st_mode & 0o077 == 0
 
 
-def test_assignment_resolution_uses_most_specific_matching_scope() -> None:
+def test_assignment_resolution_uses_most_specific_matching_scope__and_2_more() -> None:
+    # --- scenario: assignment_resolution_uses_most_specific_matching_scope
     document = EffectAssignmentDocument(
         (
             _record("none", AssignmentScope.GLOBAL, None),
@@ -77,8 +78,7 @@ def test_assignment_resolution_uses_most_specific_matching_scope() -> None:
         EffectAssignmentContext(**{**base, "project_id": None}),
     ).effect_id == "notification"
 
-
-def test_urgent_semantics_keep_the_alert_safeguard() -> None:
+    # --- scenario: urgent_semantics_keep_the_alert_safeguard
     document = EffectAssignmentDocument(
         (
             _record("none", AssignmentScope.GLOBAL, None),
@@ -107,8 +107,7 @@ def test_urgent_semantics_keep_the_alert_safeguard() -> None:
     assert asking is not None and asking.effect_id == "alert"
     assert failure is None
 
-
-def test_assignment_cache_replaces_snapshots_without_disk_access() -> None:
+    # --- scenario: assignment_cache_replaces_snapshots_without_disk_access
     original = EffectAssignmentDocument(
         (_record("pulse", AssignmentScope.PROVIDER, "claude"),)
     )
@@ -123,3 +122,4 @@ def test_assignment_cache_replaces_snapshots_without_disk_access() -> None:
 
     assert cache.generation == 1
     assert cache.snapshot() == updated
+

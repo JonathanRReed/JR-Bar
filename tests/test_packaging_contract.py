@@ -57,12 +57,12 @@ def _relative_imports(path: Path) -> set[str]:
     return imported
 
 
-def test_source_tree_is_parseable() -> None:
+def test_source_tree_is_parseable__and_2_more() -> None:
+    # --- scenario: source_tree_is_parseable
     for path in sorted(SRC_ROOT.rglob("*.py")):
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
-
-def test_pyobjc_framework_imports_are_declared() -> None:
+    # --- scenario: pyobjc_framework_imports_are_declared
     declared = {
         _normalized_requirement(spec)
         for spec in _pyproject()["project"].get("dependencies", ())
@@ -89,8 +89,7 @@ def test_pyobjc_framework_imports_are_declared() -> None:
     }
     assert not missing, f"undeclared PyObjC frameworks: {missing}"
 
-
-def test_console_script_targets_exist() -> None:
+    # --- scenario: console_script_targets_exist
     modules = _source_modules()
     scripts = _pyproject()["project"].get("scripts", {})
     assert scripts
@@ -125,7 +124,9 @@ def test_console_script_targets_exist() -> None:
             assert attribute in functions, f"{script}: missing callable {target}"
 
 
-def test_version_declarations_agree() -> None:
+
+def test_version_declarations_agree__and_2_more() -> None:
+    # --- scenario: version_declarations_agree
     declared = _pyproject()["project"]["version"]
     init_path = SRC_ROOT / "jrbar" / "__init__.py"
     tree = ast.parse(init_path.read_text(encoding="utf-8"), filename=str(init_path))
@@ -140,8 +141,7 @@ def test_version_declarations_agree() -> None:
             break
     assert version == declared, f"pyproject={declared!r}, sidepulse.__version__={version!r}"
 
-
-def test_declared_package_data_exists() -> None:
+    # --- scenario: declared_package_data_exists
     package_data = (
         _pyproject()
         .get("tool", {})
@@ -154,8 +154,7 @@ def test_declared_package_data_exists() -> None:
         for name in names:
             assert (package_dir / name).is_file(), f"missing package data: {package}/{name}"
 
-
-def test_package_builder_declares_the_reviewed_focus_status_usage() -> None:
+    # --- scenario: package_builder_declares_the_reviewed_focus_status_usage
     source = (REPO_ROOT / "packaging" / "build_macos_pkg.sh").read_text(
         encoding="utf-8"
     )
@@ -173,3 +172,4 @@ def test_package_builder_declares_the_reviewed_focus_status_usage() -> None:
         'Set :NSFocusStatusUsageDescription $FOCUS_STATUS_USAGE_DESCRIPTION'
         in source
     )
+

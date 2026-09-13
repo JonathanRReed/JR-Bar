@@ -212,9 +212,8 @@ def test_device_discovery_refuses_symlinked_child_volume(
     assert device_writer.discover_devices(mount_root=mount_root) == []
 
 
-def test_predictable_preplanted_scratch_cannot_modify_external_sentinel(
-    tmp_path: Path,
-) -> None:
+def test_predictable_preplanted_scratch_cannot_modify_external_sentinel__and_2_more(tmp_path: Path,) -> None:
+    # --- scenario: predictable_preplanted_scratch_cannot_modify_external_sentinel
     sentinel = tmp_path / "external-sentinel.txt"
     sentinel.write_text("external sentinel", encoding="utf-8")
     predictable_scratch = tmp_path / f"W{os.getpid() % 10000000}.TMP"
@@ -225,10 +224,7 @@ def test_predictable_preplanted_scratch_cannot_modify_external_sentinel(
     assert sentinel.read_text(encoding="utf-8") == "external sentinel"
     assert target.read_text(encoding="utf-8") == PROGRAM_A
 
-
-def test_leaf_replacement_before_normal_publish_is_refused(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: leaf_replacement_before_normal_publish_is_refused
     target = device_writer.write_led_program(PROGRAM_A, device_path=tmp_path)
     outside = tmp_path / "outside-sentinel.txt"
     outside.write_text("external sentinel", encoding="utf-8")
@@ -255,10 +251,7 @@ def test_leaf_replacement_before_normal_publish_is_refused(
     assert replaced
     assert outside.read_text(encoding="utf-8") == "external sentinel"
 
-
-def test_parent_replacement_before_normal_publish_is_refused(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: parent_replacement_before_normal_publish_is_refused
     device = tmp_path / "device"
     device.mkdir()
     target = device_writer.write_led_program(PROGRAM_A, device_path=device)
@@ -290,6 +283,7 @@ def test_parent_replacement_before_normal_publish_is_refused(
     assert replaced
     assert (held_device / target.name).read_text(encoding="utf-8") == PROGRAM_A
     assert outside_target.read_text(encoding="utf-8") == "external sentinel"
+
 
 
 def test_leaf_replacement_that_triggers_enospc_fallback_is_refused(
@@ -436,9 +430,8 @@ def test_readback_mismatch_never_reports_success(
         device_writer.write_led_program(PROGRAM_B, device_path=tmp_path)
 
 
-def test_failed_scratch_write_preserves_prior_complete_target(
-    tmp_path: Path,
-) -> None:
+def test_failed_scratch_write_preserves_prior_complete_target__and_1_more(tmp_path: Path,) -> None:
+    # --- scenario: failed_scratch_write_preserves_prior_complete_target
     target = device_writer.write_led_program(PROGRAM_A, device_path=tmp_path)
 
     with (
@@ -453,10 +446,7 @@ def test_failed_scratch_write_preserves_prior_complete_target(
     assert target.read_text(encoding="utf-8") == PROGRAM_A
     assert sorted(path.name for path in tmp_path.iterdir()) == [target.name]
 
-
-def test_rejected_opened_scratch_is_removed_without_touching_target(
-    tmp_path: Path,
-) -> None:
+    # --- scenario: rejected_opened_scratch_is_removed_without_touching_target
     target = device_writer.write_led_program(PROGRAM_A, device_path=tmp_path)
     real_require_regular_leaf = device_writer._require_regular_leaf
 
@@ -477,3 +467,4 @@ def test_rejected_opened_scratch_is_removed_without_touching_target(
 
     assert target.read_text(encoding="utf-8") == PROGRAM_A
     assert sorted(path.name for path in tmp_path.iterdir()) == [target.name]
+

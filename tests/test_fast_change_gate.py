@@ -11,7 +11,8 @@ def _gate():
     return importlib.import_module("scripts.verify_fast")
 
 
-def test_fast_gate_has_explicit_ordered_evidence_layers() -> None:
+def test_fast_gate_has_explicit_ordered_evidence_layers__and_2_more() -> None:
+    # --- scenario: fast_gate_has_explicit_ordered_evidence_layers
     gate = _gate()
     steps = gate.build_steps(
         python="/tmp/jr-bar-python",
@@ -36,8 +37,7 @@ def test_fast_gate_has_explicit_ordered_evidence_layers() -> None:
     assert "jrbar._status_bar_production" in import_smoke[-1]
     assert "jrbar.adaptive_refresh" in import_smoke[-1]
 
-
-def test_fast_gate_never_contains_expensive_or_mutating_release_work() -> None:
+    # --- scenario: fast_gate_never_contains_expensive_or_mutating_release_work
     gate = _gate()
     steps = gate.build_steps(
         python="/tmp/jr-bar-python",
@@ -62,8 +62,7 @@ def test_fast_gate_never_contains_expensive_or_mutating_release_work() -> None:
     assert "instruments" not in joined.casefold()
     assert "publish" not in joined.casefold()
 
-
-def test_fast_gate_keeps_contract_fixture_and_focused_tests_separate() -> None:
+    # --- scenario: fast_gate_keeps_contract_fixture_and_focused_tests_separate
     gate = _gate()
     steps = gate.build_steps(
         python="/tmp/jr-bar-python",
@@ -80,13 +79,14 @@ def test_fast_gate_keeps_contract_fixture_and_focused_tests_separate() -> None:
     assert set(gate.FIXTURE_TESTS).isdisjoint(gate.FOCUSED_TESTS)
 
 
-def test_fast_gate_fixture_lane_ends_with_provider_fixture_ownership() -> None:
+
+def test_fast_gate_fixture_lane_ends_with_provider_fixture_ownership__and_2_more() -> None:
+    # --- scenario: fast_gate_fixture_lane_ends_with_provider_fixture_ownership
     gate = _gate()
 
     assert gate.FIXTURE_TESTS[-1] == "tests/test_provider_fixture_ownership.py"
 
-
-def test_fast_gate_covers_provider_architecture_boundaries() -> None:
+    # --- scenario: fast_gate_covers_provider_architecture_boundaries
     gate = _gate()
 
     assert {
@@ -101,8 +101,7 @@ def test_fast_gate_covers_provider_architecture_boundaries() -> None:
         "tests/test_provider_usage_sync.py",
     }.issubset(gate.FOCUSED_TESTS)
 
-
-def test_fast_gate_stops_on_first_failure_and_preserves_its_status() -> None:
+    # --- scenario: fast_gate_stops_on_first_failure_and_preserves_its_status
     gate = _gate()
     steps = gate.build_steps(
         python="/tmp/jr-bar-python",
@@ -118,6 +117,7 @@ def test_fast_gate_stops_on_first_failure_and_preserves_its_status() -> None:
     assert gate.run_steps(steps, root=ROOT, runner=run) == 7
     assert [call[0] for call in calls] == [steps[0].command, steps[1].command]
     assert all(call[1:] == (ROOT, False) for call in calls)
+
 
 
 def test_fix_mode_adds_only_one_leading_safe_fix_step() -> None:
@@ -163,7 +163,8 @@ def test_fast_gate_list_mode_is_read_only(capsys) -> None:
     assert "JR Bar fast gate passed" not in output
 
 
-def test_makefile_and_hygiene_docs_expose_the_real_fast_gate() -> None:
+def test_makefile_and_hygiene_docs_expose_the_real_fast_gate__and_1_more() -> None:
+    # --- scenario: makefile_and_hygiene_docs_expose_the_real_fast_gate
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     hygiene = (ROOT / "docs" / "REPOSITORY-HYGIENE.md").read_text(encoding="utf-8")
 
@@ -173,8 +174,7 @@ def test_makefile_and_hygiene_docs_expose_the_real_fast_gate() -> None:
     assert "--targeted" not in hygiene
     assert "--no-build" not in hygiene
 
-
-def test_release_source_receipt_cannot_rebuild_or_clean_the_candidate() -> None:
+    # --- scenario: release_source_receipt_cannot_rebuild_or_clean_the_candidate
     release_gate = (ROOT / "scripts" / "verify_macos_release.sh").read_text(
         encoding="utf-8"
     )
@@ -183,3 +183,4 @@ def test_release_source_receipt_cannot_rebuild_or_clean_the_candidate() -> None:
         "record_receipt source-gate \"$pkg\" ./scripts/verify.sh "
         "--no-bootstrap --skip-build --skip-clean-install"
     ) in release_gate
+

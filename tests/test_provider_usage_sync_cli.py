@@ -38,7 +38,8 @@ class Credentials:
         )()
 
 
-def test_set_device_categories_and_enable_round_trip(tmp_path: Path):
+def test_set_device_categories_and_enable_round_trip__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: set_device_categories_and_enable_round_trip
     target = tmp_path / "sync.json"
     output = io.StringIO()
     assert provider_usage_sync_cli.main(
@@ -58,8 +59,7 @@ def test_set_device_categories_and_enable_round_trip(tmp_path: Path):
     assert settings.enabled is True
     assert settings.categories == ("quota", "token_usage", "agent_activity")
 
-
-def test_add_peer_never_writes_shared_secret_into_settings(tmp_path: Path):
+    # --- scenario: add_peer_never_writes_shared_secret_into_settings
     target = tmp_path / "sync.json"
     known_hosts = tmp_path / "known_hosts"
     identity = tmp_path / "id_ed25519"
@@ -93,8 +93,7 @@ def test_add_peer_never_writes_shared_secret_into_settings(tmp_path: Path):
     assert "shared_secret" not in document
     assert "fixture-secret" not in document
 
-
-def test_export_pairing_stores_local_secret_and_import_configures_peer(tmp_path: Path):
+    # --- scenario: export_pairing_stores_local_secret_and_import_configures_peer
     source_settings = tmp_path / "source-sync.json"
     target_settings = tmp_path / "target-sync.json"
     pairing = tmp_path / "pairing.json"
@@ -161,7 +160,9 @@ def test_export_pairing_stores_local_secret_and_import_configures_peer(tmp_path:
     assert target.peers[0].peer_id == "mac-mini"
 
 
-def test_status_json_is_specific_about_disabled_and_peer_count(tmp_path: Path):
+
+def test_status_json_is_specific_about_disabled_and_peer_count__and_2_more(tmp_path: Path) -> None:
+    # --- scenario: status_json_is_specific_about_disabled_and_peer_count
     output = io.StringIO()
     code = provider_usage_sync_cli.main(
         ["status", "--json"],
@@ -175,8 +176,7 @@ def test_status_json_is_specific_about_disabled_and_peer_count(tmp_path: Path):
     assert document["peer_count"] == 0
     assert document["categories"] == ["quota", "token_usage"]
 
-
-def test_refresh_uses_background_sync_service_result(tmp_path: Path):
+    # --- scenario: refresh_uses_background_sync_service_result
     output = io.StringIO()
     usage_state = ProviderUsageState((), None, None, False)
     refresh = ProviderSyncRefresh(False, None, (), None, (), 1000)
@@ -201,8 +201,7 @@ def test_refresh_uses_background_sync_service_result(tmp_path: Path):
     assert document["enabled"] is False
     assert document["health"] == []
 
-
-def test_refresh_projects_home_specific_instance_sharing_policy(tmp_path: Path):
+    # --- scenario: refresh_projects_home_specific_instance_sharing_policy
     output = io.StringIO()
     provider_usage_sync_cli.main(
         ["set-device", "mac-mini"],
@@ -276,3 +275,4 @@ def test_refresh_projects_home_specific_instance_sharing_policy(tmp_path: Path):
     assert code == 0
     assert len(captured["packet"].quota_snapshots) == 1
     assert captured["packet"].machine_usage == ()
+

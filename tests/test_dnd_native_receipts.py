@@ -57,7 +57,8 @@ def _manifest() -> dict[str, object]:
     return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
-def test_dnd_native_receipt_matrix_and_hashes_are_complete() -> None:
+def test_dnd_native_receipt_matrix_and_hashes_are_complete__and_2_more() -> None:
+    # --- scenario: dnd_native_receipt_matrix_and_hashes_are_complete
     manifest = _manifest()
     expected_pngs = {
         f"{appearance}-{state}.png"
@@ -77,8 +78,7 @@ def test_dnd_native_receipt_matrix_and_hashes_are_complete() -> None:
     for render in renders:
         assert _sha256(MANIFEST_PATH.parent / render["png"]) == render["image_sha256"]
 
-
-def test_dnd_native_receipts_bind_policy_controls_focus_and_menu_truth() -> None:
+    # --- scenario: dnd_native_receipts_bind_policy_controls_focus_and_menu_truth
     for render in _manifest()["renders"]:
         state = render["state"]
         appearance = render["appearance"]
@@ -115,8 +115,7 @@ def test_dnd_native_receipts_bind_policy_controls_focus_and_menu_truth() -> None
             assert render["focus"]["authorization_button_enabled"] is False
         assert render["focus"]["authorization_requested"] is False
 
-
-def test_dnd_native_receipts_bind_accessibility_keyboard_and_geometry() -> None:
+    # --- scenario: dnd_native_receipts_bind_accessibility_keyboard_and_geometry
     for render in _manifest()["renders"]:
         status = render["settings_copy"]["status"]
         status_ax = render["settings_copy"]["status_ax"]
@@ -157,3 +156,4 @@ def test_dnd_native_receipts_bind_accessibility_keyboard_and_geometry() -> None:
                 continue
             assert control["ax"]["label"]
             assert control["ax"]["help"]
+

@@ -192,7 +192,8 @@ def _event_kinds(result: object) -> tuple[TransitionKind, ...]:
     return tuple(event.kind for event in result.events)  # type: ignore[attr-defined]
 
 
-def test_empty_state_and_event_classification_are_exact() -> None:
+def test_empty_state_and_event_classification_are_exact__and_2_more() -> None:
+    # --- scenario: empty_state_and_event_classification_are_exact
     """Wrong default truth or interruption classes would create phantom operator cues."""
     state = empty_operator_state()
 
@@ -212,37 +213,29 @@ def test_empty_state_and_event_classification_are_exact() -> None:
     assert classify_operator_event(TransitionKind.COMPLETED) is InterruptionClass.COURTESY
     assert classify_operator_event(TransitionKind.BECAME_ACTIVE) is InterruptionClass.AMBIENT
 
-
-@pytest.mark.parametrize(
-    ("lifecycle", "expected_kind"),
-    [
+    # --- scenario: fresh_work_lifecycle_has_one_truth_and_expected_edge
+    for lifecycle, expected_kind in [
         (WorkLifecycle.IDLE, None),
         (WorkLifecycle.ACTIVE, TransitionKind.BECAME_ACTIVE),
         (WorkLifecycle.WAITING, TransitionKind.BECAME_ACTIVE),
         (WorkLifecycle.COMPLETED, TransitionKind.COMPLETED),
         (WorkLifecycle.FAILED, TransitionKind.FAILED),
         (WorkLifecycle.UNKNOWN, None),
-    ],
-)
-def test_fresh_work_lifecycle_has_one_truth_and_expected_edge(
-    lifecycle: WorkLifecycle,
-    expected_kind: TransitionKind | None,
-) -> None:
-    """A wrong initial lifecycle branch would duplicate or misclassify one work key."""
-    fact = _work_fact(lifecycle)
-    result = reduce_operator_state(
-        empty_operator_state(),
-        _batch(work_facts=(fact,)),
-        clock=_clock(),
-    )
+    ]:
+        """A wrong initial lifecycle branch would duplicate or misclassify one work key."""
+        fact = _work_fact(lifecycle)
+        result = reduce_operator_state(
+            empty_operator_state(),
+            _batch(work_facts=(fact,)),
+            clock=_clock(),
+        )
 
-    assert len(result.state.works) == 1
-    assert result.state.works[0].key == fact.key
-    assert result.state.works[0].lifecycle is lifecycle
-    assert _event_kinds(result) == (() if expected_kind is None else (expected_kind,))
+        assert len(result.state.works) == 1
+        assert result.state.works[0].key == fact.key
+        assert result.state.works[0].lifecycle is lifecycle
+        assert _event_kinds(result) == (() if expected_kind is None else (expected_kind,))
 
-
-def test_lifecycle_transitions_emit_only_newer_provider_edges() -> None:
+    # --- scenario: lifecycle_transitions_emit_only_newer_provider_edges
     """Terminal and idle edges must follow accepted provider transitions, not refreshes."""
     key = _work_key()
     active_mark = _watermark("event:001")
@@ -295,8 +288,8 @@ def test_lifecycle_transitions_emit_only_newer_provider_edges() -> None:
     )
     assert _event_kinds(failed) == (TransitionKind.FAILED,)
 
-
-def test_request_opens_and_only_newer_explicit_provider_fact_resolves_it() -> None:
+def test_request_opens_and_only_newer_explicit_provider_fact_resolves_it__and_2_more() -> None:
+    # --- scenario: request_opens_and_only_newer_explicit_provider_fact_resolves_it
     """Absence, refresh, or local presentation state must never resolve a live ask."""
     state, initial_batch, _, request_key = _initial_active_request()
     request = state.requests[0]
@@ -342,8 +335,7 @@ def test_request_opens_and_only_newer_explicit_provider_fact_resolves_it() -> No
     )
     assert _event_kinds(resolved) == (TransitionKind.REQUEST_RESOLVED,)
 
-
-def test_resolved_fact_for_a_request_nobody_opened_materializes_nothing() -> None:
+    # --- scenario: resolved_fact_for_a_request_nobody_opened_materializes_nothing
     """Every PostToolUse carries a derived request identity so it can close
     the ask the same tool call opened; most calls never had one. Resolving
     a request that was never opened must be a no-op, not a tombstone -- a
@@ -373,8 +365,7 @@ def test_resolved_fact_for_a_request_nobody_opened_materializes_nothing() -> Non
     assert result.state.works[0].request_keys == ()
     assert TransitionKind.REQUEST_RESOLVED not in _event_kinds(result)
 
-
-def test_terminal_work_resolves_its_open_requests() -> None:
+    # --- scenario: terminal_work_resolves_its_open_requests
     """An ask whose session ended is not actionable -- nobody is home to
     answer it. A permission prompt orphaned by a swept process must not
     keep claiming 'needs you' until the day-long work retirement runs."""
@@ -402,8 +393,8 @@ def test_terminal_work_resolves_its_open_requests() -> None:
     assert TransitionKind.COMPLETED in _event_kinds(result)
     assert TransitionKind.REQUEST_RESOLVED in _event_kinds(result)
 
-
-def test_request_on_a_completed_work_never_goes_live() -> None:
+def test_request_on_a_completed_work_never_goes_live__and_2_more() -> None:
+    # --- scenario: request_on_a_completed_work_never_goes_live
     """Same rule, other order: a request fact arriving after its work
     already closed must not resurrect a 'needs you' claim."""
     work_key = _work_key()
@@ -437,8 +428,7 @@ def test_request_on_a_completed_work_never_goes_live() -> None:
     # phase is resolved, so nothing actionable follows from it.
     assert late.state.requests[0].phase is RequestPhase.RESOLVED
 
-
-def test_ask_past_the_presence_horizon_is_held_not_live() -> None:
+    # --- scenario: ask_past_the_presence_horizon_is_held_not_live
     """A silent source cannot keep 'needs you' lit forever. Past the same
     hour every row and light already stops trusting, the ask demotes to
     STALE_HOLD -- held, not resolved, so a real session re-observed gets
@@ -477,8 +467,7 @@ def test_ask_past_the_presence_horizon_is_held_not_live() -> None:
     )
     assert still_live.state.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
 
-
-def test_acknowledgement_is_reversible_presentation_state_and_never_an_edge() -> None:
+    # --- scenario: acknowledgement_is_reversible_presentation_state_and_never_an_edge
     """Treating acknowledgement as provider truth would irreversibly hide a live ask."""
     state, batch, _, request_key = _initial_active_request()
     progressed = reduce_operator_state(
@@ -511,8 +500,8 @@ def test_acknowledgement_is_reversible_presentation_state_and_never_an_edge() ->
     assert reversed_ack.state.requests[0].eligible_elapsed_seconds == 10.0
     assert reversed_ack.events == ()
 
-
-def test_duplicate_older_and_equal_losing_watermarks_do_not_change_truth_or_emit() -> None:
+def test_duplicate_older_and_equal_losing_watermarks_do_not_change_truth_or_emit__and_2_more() -> None:
+    # --- scenario: duplicate_older_and_equal_losing_watermarks_do_not_change_truth_or_emit
     """A refresh generation or older event must not overwrite current provider truth."""
     key = _work_key()
     current_mark = _watermark("event:b", epoch=1_800_000_010.0, rank=20)
@@ -544,8 +533,7 @@ def test_duplicate_older_and_equal_losing_watermarks_do_not_change_truth_or_emit
         assert losing.state.works[0].lifecycle is WorkLifecycle.ACTIVE
         assert losing.events == ()
 
-
-def test_equal_time_rank_then_event_token_selects_one_deterministic_truth() -> None:
+    # --- scenario: equal_time_rank_then_event_token_selects_one_deterministic_truth
     """Ignoring adapter rank or token ordering would make tuple arrival order semantic."""
     key = _work_key()
     low = _watermark("event:a", rank=1)
@@ -581,8 +569,7 @@ def test_equal_time_rank_then_event_token_selects_one_deterministic_truth() -> N
     )
     assert tokened.state.works[0].lifecycle is WorkLifecycle.FAILED
 
-
-def test_fresh_high_authority_truth_rejects_newer_fallback_but_accepts_later_direct() -> None:
+    # --- scenario: fresh_high_authority_truth_rejects_newer_fallback_but_accepts_later_direct
     """A newer transcript fallback must not overwrite fresh authoritative lifecycle."""
     key = _work_key()
     authoritative_mark = _watermark("event:001")
@@ -632,8 +619,8 @@ def test_fresh_high_authority_truth_rejects_newer_fallback_but_accepts_later_dir
         TransitionKind.SOURCE_RECOVERED,
     }
 
-
-def test_request_only_truth_retains_authority_against_newer_fallback_resolution() -> None:
+def test_request_only_truth_retains_authority_against_newer_fallback_resolution__and_2_more() -> None:
+    # --- scenario: request_only_truth_retains_authority_against_newer_fallback_resolution
     """Dropping request authority would let fallback evidence resolve an authoritative ask."""
     request_key = _request_key()
     live_mark = _watermark("event:001")
@@ -669,8 +656,7 @@ def test_request_only_truth_retains_authority_against_newer_fallback_resolution(
     assert fallback.state.requests[0].watermark == live_mark
     assert TransitionKind.REQUEST_RESOLVED not in _event_kinds(fallback)
 
-
-def test_sources_reduce_independently_and_outputs_are_stably_sorted() -> None:
+    # --- scenario: sources_reduce_independently_and_outputs_are_stably_sorted
     """Cross-source comparison or arrival ordering would let one provider suppress another."""
     source_b = _source("local:02", provider="claude")
     source_a = _source("local:01")
@@ -717,8 +703,7 @@ def test_sources_reduce_independently_and_outputs_are_stably_sorted() -> None:
         source_a,
     )
 
-
-def test_one_stale_source_does_not_block_a_fresh_sibling_source() -> None:
+    # --- scenario: one_stale_source_does_not_block_a_fresh_sibling_source
     """A source-scoped uncertainty lease must not stall independent provider truth."""
     source_a = _source("local:01")
     source_b = _source("local:02", provider="claude")
@@ -808,8 +793,8 @@ def _two_active_request_sources() -> tuple[
     ).state
     return state_b, source_a, request_a, source_b, request_b
 
-
-def test_staggered_source_loss_uses_independent_uncertainty_leases() -> None:
+def test_staggered_source_loss_uses_independent_uncertainty_leases__and_2_more() -> None:
+    # --- scenario: staggered_source_loss_uses_independent_uncertainty_leases
     """A later source loss must not inherit an earlier source's expiry deadline."""
     state, source_a, request_a, source_b, request_b = _two_active_request_sources()
     stale_a_mark = _watermark("event:a2", source=source_a, epoch=1_800_000_010.0)
@@ -849,8 +834,7 @@ def test_staggered_source_loss_uses_independent_uncertainty_leases() -> None:
     assert requests[request_a].phase is RequestPhase.UNKNOWN_EXPIRED
     assert requests[request_b].phase is RequestPhase.STALE_HOLD
 
-
-def test_each_uncertain_source_requires_two_current_recovery_samples() -> None:
+    # --- scenario: each_uncertain_source_requires_two_current_recovery_samples
     """Recovery confirmations from one source must not release a sibling source."""
     state, source_a, request_a, source_b, request_b = _two_active_request_sources()
     stale_a_mark = _watermark("event:a2", source=source_a, epoch=1_800_000_010.0)
@@ -910,8 +894,7 @@ def test_each_uncertain_source_requires_two_current_recovery_samples() -> None:
         request.key: request.phase for request in second_b.state.requests
     }[request_b] is RequestPhase.LIVE_UNACKNOWLEDGED
 
-
-def test_parent_cycles_are_removed_without_changing_deterministic_row_order() -> None:
+    # --- scenario: parent_cycles_are_removed_without_changing_deterministic_row_order
     """A provider parent cycle must not create recursive or order-dependent state."""
     key_a = _work_key("work:a")
     key_b = _work_key("work:b")
@@ -936,8 +919,8 @@ def test_parent_cycles_are_removed_without_changing_deterministic_row_order() ->
     assert all(work.parent_key is None for work in first.state.works)
     assert any(item.identifier.value == "parent_cycle_removed" for item in first.diagnostics)
 
-
-def test_unknown_request_is_retained_but_never_actionable_or_cued() -> None:
+def test_unknown_request_is_retained_but_never_actionable_or_cued__and_2_more() -> None:
+    # --- scenario: unknown_request_is_retained_but_never_actionable_or_cued
     """Unknown provider request semantics must not manufacture an actionable ask."""
     key = _request_key()
     mark = _watermark()
@@ -964,8 +947,7 @@ def test_unknown_request_is_retained_but_never_actionable_or_cued() -> None:
     )
     assert TransitionKind.REQUEST_OPENED not in _event_kinds(result)
 
-
-def test_restored_truth_is_stale_and_corroboration_never_replays_edges() -> None:
+    # --- scenario: restored_truth_is_stale_and_corroboration_never_replays_edges
     """Restoring an active ask must not replay lifecycle or notification cues."""
     work_key = _work_key()
     request_key = _request_key(work_key=work_key)
@@ -1009,8 +991,7 @@ def test_restored_truth_is_stale_and_corroboration_never_replays_edges() -> None
     assert TransitionKind.BECAME_ACTIVE not in _event_kinds(recovered)
     assert TransitionKind.REQUEST_OPENED not in _event_kinds(recovered)
 
-
-def test_stale_source_holds_request_freezes_elapsed_and_expires_unknown() -> None:
+    # --- scenario: stale_source_holds_request_freezes_elapsed_and_expires_unknown
     """Source loss must not keep escalating or synthesize provider resolution."""
     state, batch, _, request_key = _initial_active_request()
     progressed = reduce_operator_state(
@@ -1052,10 +1033,9 @@ def test_stale_source_holds_request_freezes_elapsed_and_expires_unknown() -> Non
     assert expired.state.source_watermarks
     assert TransitionKind.REQUEST_RESOLVED not in _event_kinds(expired)
 
-
-@pytest.mark.parametrize(
-    "discontinuous_clock",
-    [
+def test_clock_discontinuity_quarantines_truth_without_terminal_or_resolution_edges__and_2_more() -> None:
+    # --- scenario: clock_discontinuity_quarantines_truth_without_terminal_or_resolution_edges
+    for discontinuous_clock in [
         # Wall BEHIND monotonic (a wall clock stepped backwards relative
         # to the machine's own timeline). Wall AHEAD is deliberately NOT
         # here any more: macOS monotonic time pauses during sleep, so a
@@ -1064,44 +1044,39 @@ def test_stale_source_holds_request_freezes_elapsed_and_expires_unknown() -> Non
         _clock(wall=1_799_999_999.0, monotonic=101.0),
         _clock(wall=1_800_000_001.0, monotonic=99.0),
         _clock(wall=1_800_000_001.0, monotonic=1.0, boot="boot:02"),
-    ],
-)
-def test_clock_discontinuity_quarantines_truth_without_terminal_or_resolution_edges(
-    discontinuous_clock: ClockSample,
-) -> None:
-    """A wall, monotonic, or boot discontinuity must not manufacture semantic truth."""
-    state, _, work_key, request_key = _initial_active_request()
-    future_mark = _watermark("event:002", epoch=1_800_000_001.0)
-    result = reduce_operator_state(
-        state,
-        _batch(
-            watermark=future_mark,
-            work_facts=(
-                _work_fact(WorkLifecycle.COMPLETED, key=work_key, watermark=future_mark),
-            ),
-            request_facts=(
-                _request_fact(
-                    ProviderRequestState.RESOLVED,
-                    key=request_key,
-                    watermark=future_mark,
+    ]:
+        """A wall, monotonic, or boot discontinuity must not manufacture semantic truth."""
+        state, _, work_key, request_key = _initial_active_request()
+        future_mark = _watermark("event:002", epoch=1_800_000_001.0)
+        result = reduce_operator_state(
+            state,
+            _batch(
+                watermark=future_mark,
+                work_facts=(
+                    _work_fact(WorkLifecycle.COMPLETED, key=work_key, watermark=future_mark),
+                ),
+                request_facts=(
+                    _request_fact(
+                        ProviderRequestState.RESOLVED,
+                        key=request_key,
+                        watermark=future_mark,
+                    ),
                 ),
             ),
-        ),
-        clock=discontinuous_clock,
-    )
+            clock=discontinuous_clock,
+        )
 
-    assert result.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN
-    assert result.state.works[0].lifecycle is WorkLifecycle.ACTIVE
-    assert result.state.works[0].timing_uncertain is True
-    assert result.state.requests[0].phase is RequestPhase.STALE_HOLD
-    assert not {
-        TransitionKind.COMPLETED,
-        TransitionKind.FAILED,
-        TransitionKind.REQUEST_RESOLVED,
-    }.intersection(_event_kinds(result))
+        assert result.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN
+        assert result.state.works[0].lifecycle is WorkLifecycle.ACTIVE
+        assert result.state.works[0].timing_uncertain is True
+        assert result.state.requests[0].phase is RequestPhase.STALE_HOLD
+        assert not {
+            TransitionKind.COMPLETED,
+            TransitionKind.FAILED,
+            TransitionKind.REQUEST_RESOLVED,
+        }.intersection(_event_kinds(result))
 
-
-def test_consistent_sleep_length_wall_and_monotonic_advance_remains_stable() -> None:
+    # --- scenario: consistent_sleep_length_wall_and_monotonic_advance_remains_stable
     """Treating ordinary sleep-length monotonic advance as rollback would stall truth."""
     state, batch, _, _ = _initial_active_request()
     slept = reduce_operator_state(
@@ -1114,8 +1089,7 @@ def test_consistent_sleep_length_wall_and_monotonic_advance_remains_stable() -> 
     assert slept.state.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
     assert slept.state.requests[0].eligible_elapsed_seconds == 3_600.0
 
-
-def test_future_dated_fact_is_quarantined_instead_of_becoming_newest() -> None:
+    # --- scenario: future_dated_fact_is_quarantined_instead_of_becoming_newest
     """A future provider timestamp must not skip over the retained source watermark."""
     state, _, work_key, _ = _initial_active_request()
     future_mark = _watermark("event:future", epoch=1_800_010_000.0)
@@ -1139,8 +1113,8 @@ def test_future_dated_fact_is_quarantined_instead_of_becoming_newest() -> None:
         for item in quarantined.diagnostics
     )
 
-
-def test_two_current_samples_recover_clock_without_replaying_retained_event() -> None:
+def test_two_current_samples_recover_clock_without_replaying_retained_event__and_2_more() -> None:
+    # --- scenario: two_current_samples_recover_clock_without_replaying_retained_event
     """One clean sample is insufficient, while recovery must not repeat an active cue."""
     state, batch, _, _ = _initial_active_request()
     # A wall clock stepped BACKWARDS relative to monotonic -- the case
@@ -1171,8 +1145,7 @@ def test_two_current_samples_recover_clock_without_replaying_retained_event() ->
     assert TransitionKind.BECAME_ACTIVE not in _event_kinds(second)
     assert TransitionKind.REQUEST_OPENED not in _event_kinds(second)
 
-
-def test_one_rollback_preserves_the_maximum_bounded_work_set() -> None:
+    # --- scenario: one_rollback_preserves_the_maximum_bounded_work_set
     """Clock rollback must not bulk-prune all retained work as apparently future dated."""
     source = _source()
     facts = tuple(
@@ -1197,10 +1170,8 @@ def test_one_rollback_preserves_the_maximum_bounded_work_set() -> None:
     assert len(rolled_back.state.works) == MAX_CANONICAL_WORKS
     assert all(work.timing_uncertain for work in rolled_back.state.works)
 
-
-@pytest.mark.parametrize(
-    ("wall", "monotonic"),
-    [
+    # --- scenario: clock_samples_reject_nonfinite_negative_and_boolean_values
+    for wall, monotonic in [
         (nan, 1.0),
         (inf, 1.0),
         (-1.0, 1.0),
@@ -1209,28 +1180,19 @@ def test_one_rollback_preserves_the_maximum_bounded_work_set() -> None:
         (1.0, -1.0),
         (True, 1.0),
         (1.0, True),
-    ],
-)
-def test_clock_samples_reject_nonfinite_negative_and_boolean_values(
-    wall: object,
-    monotonic: object,
-) -> None:
-    """Malformed numeric samples must fail closed before continuity arithmetic."""
-    with pytest.raises(OperatorStateValidationError, match="invalid clock sample"):
-        ClockSample(wall, monotonic, BootIdentifier("boot:01"))  # type: ignore[arg-type]
+    ]:
+        """Malformed numeric samples must fail closed before continuity arithmetic."""
+        with pytest.raises(OperatorStateValidationError, match="invalid clock sample"):
+            ClockSample(wall, monotonic, BootIdentifier("boot:01"))  # type: ignore[arg-type]
 
+def test_boot_identifier_is_bounded_opaque_and_content_free__and_2_more() -> None:
+    # --- scenario: boot_identifier_is_bounded_opaque_and_content_free
+    for value in ["", "boot identity", "/private/boot", "boot\n01", "x" * 65]:
+        """Display or path text in boot identity would create persisted private linkage."""
+        with pytest.raises(OperatorStateValidationError, match="invalid boot identifier"):
+            BootIdentifier(value)
 
-@pytest.mark.parametrize(
-    "value",
-    ["", "boot identity", "/private/boot", "boot\n01", "x" * 65],
-)
-def test_boot_identifier_is_bounded_opaque_and_content_free(value: str) -> None:
-    """Display or path text in boot identity would create persisted private linkage."""
-    with pytest.raises(OperatorStateValidationError, match="invalid boot identifier"):
-        BootIdentifier(value)
-
-
-def test_clock_and_state_records_are_immutable() -> None:
+    # --- scenario: clock_and_state_records_are_immutable
     """Mutation would make equal reductions depend on object sharing and call order."""
     clock = _clock()
     state = empty_operator_state()
@@ -1239,8 +1201,7 @@ def test_clock_and_state_records_are_immutable() -> None:
     with pytest.raises(FrozenInstanceError):
         state.generation = 2  # type: ignore[misc]
 
-
-def test_semantic_event_key_codec_is_exact_content_free_and_round_trips() -> None:
+    # --- scenario: semantic_event_key_codec_is_exact_content_free_and_round_trips
     """A lossy or additive event codec would collapse delivery idempotency identities."""
     request_key = _request_key("request:x:y", work_key=_work_key("work:a:b"))
     watermark = _watermark("event:z:y")
@@ -1282,8 +1243,8 @@ class _ExplosiveDict(dict[object, object]):
     def __getitem__(self, key: object) -> object:
         raise AssertionError("mapping subclass value was read")
 
-
-def test_semantic_event_key_decoder_rejects_nonexact_and_executable_shapes() -> None:
+def test_semantic_event_key_decoder_rejects_nonexact_and_executable_shapes__and_2_more() -> None:
+    # --- scenario: semantic_event_key_decoder_rejects_nonexact_and_executable_shapes
     """Permissive event decoding could execute mappings or smuggle private fields."""
     key = SemanticEventKey(
         _work_key(),
@@ -1310,8 +1271,7 @@ def test_semantic_event_key_decoder_rejects_nonexact_and_executable_shapes() -> 
     ):
         assert semantic_event_key_from_payload(payload) is None
 
-
-def test_semantic_event_key_refuses_cross_source_subject_and_watermark() -> None:
+    # --- scenario: semantic_event_key_refuses_cross_source_subject_and_watermark
     """A cross-source edge could acknowledge or deliver for the wrong provider source."""
     with pytest.raises(OperatorStateValidationError, match="invalid semantic event key"):
         SemanticEventKey(
@@ -1320,8 +1280,7 @@ def test_semantic_event_key_refuses_cross_source_subject_and_watermark() -> None
             _watermark(source=_source("local:02")),
         )
 
-
-def test_request_and_work_outputs_remain_unique_sorted_and_bounded() -> None:
+    # --- scenario: request_and_work_outputs_remain_unique_sorted_and_bounded
     """Sequential source publications must not grow canonical output without limit."""
     source = _source()
     first_work_facts = tuple(
@@ -1380,8 +1339,8 @@ def test_request_and_work_outputs_remain_unique_sorted_and_bounded() -> None:
     assert request_keys == tuple(sorted(set(request_keys)))
     assert len(second.events) <= MAX_EVENTS_PER_REDUCTION
 
-
-def test_reducer_rejects_noncanonical_inputs_without_executing_subclasses() -> None:
+def test_reducer_rejects_noncanonical_inputs_without_executing_subclasses__and_2_more() -> None:
+    # --- scenario: reducer_rejects_noncanonical_inputs_without_executing_subclasses
     """Reducer boundaries must reject collection subclasses before iterating them."""
     state, batch, _, _ = _initial_active_request()
     with pytest.raises(OperatorStateValidationError, match="invalid acknowledged requests"):
@@ -1394,8 +1353,7 @@ def test_reducer_rejects_noncanonical_inputs_without_executing_subclasses() -> N
     with pytest.raises(OperatorStateValidationError, match="invalid operator state"):
         reduce_operator_state(object(), batch, clock=_clock())  # type: ignore[arg-type]
 
-
-def test_declared_clock_and_output_bounds_are_exact() -> None:
+    # --- scenario: declared_clock_and_output_bounds_are_exact
     """Changing safety bounds would weaken reviewed chaos and memory guarantees."""
     assert MAX_CLOCK_DELTA_DIVERGENCE_SECONDS == 5.0
     assert TIMING_UNCERTAINTY_LEASE_SECONDS == 3_600.0
@@ -1404,8 +1362,7 @@ def test_declared_clock_and_output_bounds_are_exact() -> None:
     assert MAX_CANONICAL_REQUESTS == 1_000
     assert MAX_EVENTS_PER_REDUCTION == 2_000
 
-
-def test_day_old_work_is_retired_from_the_canonical_catalog() -> None:
+    # --- scenario: day_old_work_is_retired_from_the_canonical_catalog
     """Without an age bound the catalog kept every session ever seen, and
     a days-old work with no Stop sat in the Agent Browser as "active"
     forever. A later batch from ANY source retires works whose newest
@@ -1436,8 +1393,8 @@ def test_day_old_work_is_retired_from_the_canonical_catalog() -> None:
     assert work_key not in surviving
     assert all(request.key != request_key for request in result.state.requests)
 
-
-def test_retention_fires_even_while_dead_sources_hold_timing_quarantine() -> None:
+def test_retention_fires_even_while_dead_sources_hold_timing_quarantine__and_2_more() -> None:
+    # --- scenario: retention_fires_even_while_dead_sources_hold_timing_quarantine
     """Per-source timing quarantines linger forever for sources that never
     send again, so global continuity can sit UNCERTAIN indefinitely after
     a restart. Age retirement must not be held hostage by that -- only a
@@ -1475,8 +1432,7 @@ def test_retention_fires_even_while_dead_sources_hold_timing_quarantine() -> Non
     surviving = {work.key for work in result.state.works}
     assert work_key not in surviving
 
-
-def test_quiescent_source_quarantines_expire_by_lease_on_any_reduction() -> None:
+    # --- scenario: quiescent_source_quarantines_expire_by_lease_on_any_reduction
     """A restart quarantines every known source, but a dead session's
     source never sends again -- its timing entry used to hold global
     clock continuity at UNCERTAIN forever. A full quiet lease now clears
@@ -1523,8 +1479,7 @@ def test_quiescent_source_quarantines_expire_by_lease_on_any_reduction() -> None
 
     assert current.clock_continuity.status is ClockContinuityStatus.STABLE
 
-
-def test_freshness_only_loss_releases_its_quarantine_at_the_lease() -> None:
+    # --- scenario: freshness_only_loss_releases_its_quarantine_at_the_lease
     """An inert or partially-read record is "loss" by freshness alone: it can
     never satisfy _recovery_eligible (it is never FRESH) and used to
     early-return ahead of the lease check, so a source whose whole stream
@@ -1579,8 +1534,8 @@ def test_freshness_only_loss_releases_its_quarantine_at_the_lease() -> None:
     assert source not in released.state.timing_uncertain_sources
     assert released.state.clock_continuity.status is ClockContinuityStatus.STABLE
 
-
-def test_health_loss_still_holds_its_quarantine_past_the_lease() -> None:
+def test_health_loss_still_holds_its_quarantine_past_the_lease__and_2_more() -> None:
+    # --- scenario: health_loss_still_holds_its_quarantine_past_the_lease
     """A source that is genuinely still losing (UNAVAILABLE, RATE_LIMITED, ...)
     is not a freshness-only partial: the lease deliberately cannot release
     it into live on the strength of another loss report."""
@@ -1615,8 +1570,7 @@ def test_health_loss_still_holds_its_quarantine_past_the_lease() -> None:
     assert source in still_held.state.timing_uncertain_sources
     assert still_held.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN
 
-
-def test_apply_acknowledgements_rederives_only_live_phases() -> None:
+    # --- scenario: apply_acknowledgements_rederives_only_live_phases
     """An "I'm on It" tap between batches must flip the same phase the next
     batch would -- and "Resume Escalation" must put it back."""
     from jrbar.operator_state import apply_acknowledgements
@@ -1640,8 +1594,7 @@ def test_apply_acknowledgements_rederives_only_live_phases() -> None:
         is AcknowledgementEligibility.ELIGIBLE
     )
 
-
-def test_apply_acknowledgements_is_a_noop_without_a_phase_change() -> None:
+    # --- scenario: apply_acknowledgements_is_a_noop_without_a_phase_change
     """Re-applying the same set must return the identical object so monitors
     can cheaply detect "nothing moved"."""
     from jrbar.operator_state import apply_acknowledgements
@@ -1652,8 +1605,8 @@ def test_apply_acknowledgements_is_a_noop_without_a_phase_change() -> None:
     assert apply_acknowledgements(acknowledged, frozenset({request_key})) is acknowledged
     assert apply_acknowledgements(acknowledged, frozenset()) is not acknowledged
 
-
-def test_apply_acknowledgements_never_moves_terminal_requests() -> None:
+def test_apply_acknowledgements_never_moves_terminal_requests__and_1_more() -> None:
+    # --- scenario: apply_acknowledgements_never_moves_terminal_requests
     """A resolved request stays resolved even if a stale key lingers in the
     acknowledgement set."""
     from jrbar.operator_state import apply_acknowledgements
@@ -1678,8 +1631,7 @@ def test_apply_acknowledgements_never_moves_terminal_requests() -> None:
     applied = apply_acknowledgements(resolved.state, frozenset({request_key}))
     assert applied is resolved.state
 
-
-def test_apply_acknowledgements_validates_inputs() -> None:
+    # --- scenario: apply_acknowledgements_validates_inputs
     """The helper shares the reducer's fail-closed contract: malformed sets
     refuse rather than silently acknowledging nothing."""
     from jrbar.operator_state import apply_acknowledgements
@@ -1696,3 +1648,4 @@ def test_apply_acknowledgements_validates_inputs() -> None:
     )
     with pytest.raises(OperatorStateValidationError):
         apply_acknowledgements(state, oversized)
+

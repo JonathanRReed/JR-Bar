@@ -35,7 +35,8 @@ def _status(mode: AgentMode, event_name: str, *, silent_for: float) -> AgentStat
     )
 
 
-def test_silent_working_ends_unconfirmed_not_completed() -> None:
+def test_silent_working_ends_unconfirmed_not_completed__and_2_more() -> None:
+    # --- scenario: silent_working_ends_unconfirmed_not_completed
     demoted = status_for_snapshot(
         _status(AgentMode.WORKING, "UserPromptSubmit", silent_for=WORKING_SILENCE_SECONDS + 1),
         _NOW,
@@ -43,8 +44,7 @@ def test_silent_working_ends_unconfirmed_not_completed() -> None:
     )
     assert demoted.mode is AgentMode.ENDED_UNCONFIRMED
 
-
-def test_silent_tool_running_is_no_longer_exempt() -> None:
+    # --- scenario: silent_tool_running_is_no_longer_exempt
     demoted = status_for_snapshot(
         _status(AgentMode.TOOL_RUNNING, "PreToolUse", silent_for=WORKING_SILENCE_SECONDS + 1),
         _NOW,
@@ -52,8 +52,7 @@ def test_silent_tool_running_is_no_longer_exempt() -> None:
     )
     assert demoted.mode is AgentMode.ENDED_UNCONFIRMED
 
-
-def test_a_live_turn_is_untouched() -> None:
+    # --- scenario: a_live_turn_is_untouched
     live = status_for_snapshot(
         _status(AgentMode.WORKING, "UserPromptSubmit", silent_for=30.0),
         _NOW,
@@ -62,7 +61,9 @@ def test_a_live_turn_is_untouched() -> None:
     assert live.mode is AgentMode.WORKING
 
 
-def test_liveness_beats_silence_for_a_long_quiet_tool_run() -> None:
+
+def test_liveness_beats_silence_for_a_long_quiet_tool_run__and_2_more() -> None:
+    # --- scenario: liveness_beats_silence_for_a_long_quiet_tool_run
     """A silence timer INFERS an ending; the process table OBSERVES one.
 
     A long tool run legitimately says nothing for many minutes, and
@@ -92,8 +93,7 @@ def test_liveness_beats_silence_for_a_long_quiet_tool_run() -> None:
             is AgentMode.ENDED_UNCONFIRMED
         ), answer
 
-
-def test_the_monitors_live_set_is_affirmative_and_expires() -> None:
+    # --- scenario: the_monitors_live_set_is_affirmative_and_expires
     """What the sweep proved, for as long as it is worth believing.
 
     A sweep that stopped running -- a wedged thread, an unreadable process
@@ -130,14 +130,15 @@ def test_the_monitors_live_set_is_affirmative_and_expires() -> None:
     memory.note_live_sessions([("grok", "x")], now=now - LIVE_SESSION_TRUST_SECONDS - 1.0)
     assert memory.session_is_live(quiet) is False
 
-
-def test_ended_unconfirmed_never_counts_active_and_never_signals() -> None:
+    # --- scenario: ended_unconfirmed_never_counts_active_and_never_signals
     ended = _status(AgentMode.ENDED_UNCONFIRMED, "PreToolUse", silent_for=700.0)
     assert status_counts_active(ended) is False
     assert _lifecycle_mode(ended, False) is LifecycleMode.IDLE
 
 
-def test_replayed_normalized_records_keep_their_own_time() -> None:
+
+def test_replayed_normalized_records_keep_their_own_time__and_2_more() -> None:
+    # --- scenario: replayed_normalized_records_keep_their_own_time
     """parse_log_line must read occurred_at_epoch: normalized hook records
     carry no logged_at, and the parse-time fallback re-stamped yesterday's
     events as seconds old on every replay-built refresh."""
@@ -161,8 +162,7 @@ def test_replayed_normalized_records_keep_their_own_time() -> None:
     assert record is not None
     assert abs(record.logged_at.timestamp() - epoch) < 1.0
 
-
-def test_a_silent_active_work_claims_active_nowhere() -> None:
+    # --- scenario: a_silent_active_work_claims_active_nowhere
     """ONE clock for 'working went silent', consumed by every canonical
     surface: the row layer demoted at its window while the menu-bar
     title, the mailbox count, and the LIGHTS kept reading raw lifecycle
@@ -251,8 +251,7 @@ def test_a_silent_active_work_claims_active_nowhere() -> None:
     assert not in_progress.rows
     assert active_work_went_silent(state.works[0], state.last_clock.wall_epoch)
 
-
-def test_completed_settles_to_idle_after_the_recent_window() -> None:
+    # --- scenario: completed_settles_to_idle_after_the_recent_window
     """'The completed state doesn't go away after two minutes' -- a
     COMPLETED work held the done green (and the COMPLETED aggregate,
     which also fed the keep-awake grace) until the presence horizon
@@ -351,6 +350,7 @@ def test_completed_settles_to_idle_after_the_recent_window() -> None:
     assert completed_work_no_longer_recent(
         stale.works[0], stale.last_clock.wall_epoch
     )
+
 
 
 def test_sparse_cadence_providers_get_a_longer_silence_line() -> None:

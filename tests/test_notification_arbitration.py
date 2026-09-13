@@ -44,7 +44,8 @@ def _event_keys():
     )
 
 
-def test_prune_notification_bindings_drops_expired_and_stale_generations() -> None:
+def test_prune_notification_bindings_drops_expired_and_stale_generations__and_2_more() -> None:
+    # --- scenario: prune_notification_bindings_drops_expired_and_stale_generations
     _work_key, _request_key, completed_event, attention_event = _event_keys()
     fresh_binding = ActionTokenBinding(
         token="A" * 43,
@@ -78,8 +79,7 @@ def test_prune_notification_bindings_drops_expired_and_stale_generations() -> No
 
     assert retained == {fresh_binding.token: (fresh_binding, completed_event)}
 
-
-def test_issue_notification_binding_keeps_the_newest_bounded_set() -> None:
+    # --- scenario: issue_notification_binding_keeps_the_newest_bounded_set
     _work_key, _request_key, completed_event, _attention_event = _event_keys()
     older = ActionTokenBinding(
         token="D" * 43,
@@ -113,8 +113,7 @@ def test_issue_notification_binding_keeps_the_newest_bounded_set() -> None:
     assert older.token not in bindings
     assert newer.token in bindings
 
-
-def test_plan_semantic_notification_returns_content_free_delivery_payload() -> None:
+    # --- scenario: plan_semantic_notification_returns_content_free_delivery_payload
     _work_key, request_key, _completed_event, attention_event = _event_keys()
 
     planned = plan_semantic_notification(
@@ -139,7 +138,9 @@ def test_plan_semantic_notification_returns_content_free_delivery_payload() -> N
     assert metadata["action_token"] in bindings
 
 
-def test_resolve_notification_work_key_returns_the_underlying_work_key_once() -> None:
+
+def test_resolve_notification_work_key_returns_the_underlying_work_key_once__and_2_more() -> None:
+    # --- scenario: resolve_notification_work_key_returns_the_underlying_work_key_once
     work_key, request_key, _completed_event, attention_event = _event_keys()
     planned = plan_semantic_notification(
         event_key=attention_event,
@@ -166,8 +167,7 @@ def test_resolve_notification_work_key_returns_the_underlying_work_key_once() ->
     assert resolved == work_key
     assert metadata["action_token"] not in updated
 
-
-def test_should_post_completion_notification_requires_all_gates() -> None:
+    # --- scenario: should_post_completion_notification_requires_all_gates
     assert should_post_completion_notification(
         status_present=True,
         completion_notifications_enabled=True,
@@ -190,8 +190,7 @@ def test_should_post_completion_notification_requires_all_gates() -> None:
         event_present=True,
     )
 
-
-def test_completion_notification_consumes_banner_grant_not_audio_or_webhook() -> None:
+    # --- scenario: completion_notification_consumes_banner_grant_not_audio_or_webhook
     common = {
         "status_present": True,
         "completion_notifications_enabled": True,
@@ -202,3 +201,4 @@ def test_completion_notification_consumes_banner_grant_not_audio_or_webhook() ->
 
     assert should_post_completion_notification(**common, banner_allowed=True)
     assert not should_post_completion_notification(**common, banner_allowed=False)
+

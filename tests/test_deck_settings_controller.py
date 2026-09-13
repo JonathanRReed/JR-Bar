@@ -56,7 +56,8 @@ def _run_now(target):
     return SimpleNamespace()
 
 
-def test_save_mapping_persists_candidate_against_cached_settings_off_appkit(monkeypatch) -> None:
+def test_save_mapping_persists_candidate_against_cached_settings_off_appkit__and_1_more(monkeypatch) -> None:
+    # --- scenario: save_mapping_persists_candidate_against_cached_settings_off_appkit
     previous = DeckControlSettings(enabled=True)
     pane = _Pane(DeckAction("open_usage"), key=7)
     controller = _Controller(previous, pane)
@@ -78,8 +79,8 @@ def test_save_mapping_persists_candidate_against_cached_settings_off_appkit(monk
     assert result.candidate == candidate
     assert result.generation == 1
 
-
-def test_toggle_persists_only_the_enabled_change(monkeypatch) -> None:
+    # --- scenario: toggle_persists_only_the_enabled_change
+    monkeypatch.undo()
     action = DeckAction("reveal_current_ask")
     previous = DeckControlSettings(bindings=((2, action),))
     pane = _Pane(None)
@@ -98,7 +99,9 @@ def test_toggle_persists_only_the_enabled_change(monkeypatch) -> None:
     assert saved == [(DeckControlSettings(True, ((2, action),)), previous)]
 
 
-def test_apply_success_adopts_settings_refreshes_card_and_reconfigures_runtime() -> None:
+
+def test_apply_success_adopts_settings_refreshes_card_and_reconfigures_runtime__and_1_more() -> None:
+    # --- scenario: apply_success_adopts_settings_refreshes_card_and_reconfigures_runtime
     previous = DeckControlSettings()
     candidate = DeckControlSettings(True, ((0, DeckAction("open_agent_browser")),))
     pane = _Pane(None)
@@ -115,8 +118,7 @@ def test_apply_success_adopts_settings_refreshes_card_and_reconfigures_runtime()
     assert pane.status == "Device actions saved."
     assert controller.reconfigured == [candidate]
 
-
-def test_apply_failure_preserves_cached_settings_and_reports_bounded_error() -> None:
+    # --- scenario: apply_failure_preserves_cached_settings_and_reports_bounded_error
     previous = DeckControlSettings(True)
     pane = _Pane(None)
     controller = _Controller(previous, pane)
@@ -140,6 +142,7 @@ def test_apply_failure_preserves_cached_settings_and_reports_bounded_error() -> 
     assert controller.reconfigured == []
 
 
+
 def test_duplicate_submit_is_ignored_while_save_is_in_flight(monkeypatch) -> None:
     previous = DeckControlSettings()
     pane = _Pane(DeckAction("open_usage"))
@@ -154,7 +157,8 @@ def test_duplicate_submit_is_ignored_while_save_is_in_flight(monkeypatch) -> Non
     assert pane.pending is True
 
 
-def test_stale_result_does_not_replace_newer_save_or_refresh_rebuilt_pane() -> None:
+def test_stale_result_does_not_replace_newer_save_or_refresh_rebuilt_pane__and_1_more() -> None:
+    # --- scenario: stale_result_does_not_replace_newer_save_or_refresh_rebuilt_pane
     previous = DeckControlSettings()
     current = DeckControlSettings(True)
     pane = _Pane(None)
@@ -171,8 +175,7 @@ def test_stale_result_does_not_replace_newer_save_or_refresh_rebuilt_pane() -> N
     assert pane.refreshed is None
     assert controller._deck_settings_save_in_flight is True
 
-
-def test_success_without_open_pane_updates_cache_but_termination_skips_restart() -> None:
+    # --- scenario: success_without_open_pane_updates_cache_but_termination_skips_restart
     previous = DeckControlSettings()
     candidate = DeckControlSettings(True)
     controller = _Controller(previous, None)
@@ -186,6 +189,7 @@ def test_success_without_open_pane_updates_cache_but_termination_skips_restart()
 
     assert controller._deck_control_settings == candidate
     assert controller.reconfigured == []
+
 
 
 def test_disabling_revokes_input_before_background_save(monkeypatch) -> None:

@@ -49,7 +49,8 @@ def _event(
     )
 
 
-def test_event_is_a_versioned_exact_content_free_fact() -> None:
+def test_event_is_a_versioned_exact_content_free_fact__and_2_more() -> None:
+    # --- scenario: event_is_a_versioned_exact_content_free_fact
     event = _event()
 
     assert event.version == EFFECT_EVENT_VERSION == 1
@@ -67,10 +68,8 @@ def test_event_is_a_versioned_exact_content_free_fact() -> None:
     for forbidden in ("prompt", "message", "session", "path", "url"):
         assert not hasattr(event, forbidden)
 
-
-@pytest.mark.parametrize(
-    ("outcome", "suppression_reason", "acknowledgement_source"),
-    (
+    # --- scenario: outcome_specific_metadata_cannot_be_ambiguous
+    for outcome, suppression_reason, acknowledgement_source in (
         (EffectOutcome.SHOWN, None, EffectAcknowledgementSource.SCREEN_BAR),
         (EffectOutcome.SUPPRESSED, None, None),
         (
@@ -85,24 +84,16 @@ def test_event_is_a_versioned_exact_content_free_fact() -> None:
             EffectAcknowledgementSource.AGENT_BROWSER,
         ),
         (EffectOutcome.EXPIRED, EffectSuppressionReason.EXPIRED, None),
-    ),
-)
-def test_outcome_specific_metadata_cannot_be_ambiguous(
-    outcome: EffectOutcome,
-    suppression_reason: EffectSuppressionReason | None,
-    acknowledgement_source: EffectAcknowledgementSource | None,
-) -> None:
-    with pytest.raises(EffectHistoryValidationError):
-        _event(
-            outcome=outcome,
-            suppression_reason=suppression_reason,
-            acknowledgement_source=acknowledgement_source,
-        )
+    ):
+        with pytest.raises(EffectHistoryValidationError):
+            _event(
+                outcome=outcome,
+                suppression_reason=suppression_reason,
+                acknowledgement_source=acknowledgement_source,
+            )
 
-
-@pytest.mark.parametrize(
-    "event_id",
-    (
+    # --- scenario: product_event_identity_is_opaque_and_not_a_content_carrier
+    for event_id in (
         "",
         "../effect-event:one",
         "effect/event/one",
@@ -110,30 +101,27 @@ def test_outcome_specific_metadata_cannot_be_ambiguous(
         "effect-event:one?prompt=private",
         "effect-event:one\nmessage",
         "x" * 129,
-    ),
-)
-def test_product_event_identity_is_opaque_and_not_a_content_carrier(
-    event_id: str,
-) -> None:
-    with pytest.raises(EffectHistoryValidationError):
-        EffectEvent(
-            event_id=event_id,
-            occurred_at_epoch=NOW,
-            effect_id="pulse",
-            semantic_category=EffectSemanticCategory.ATTENTION,
-            surface=EffectSurface.SCREEN_BAR,
-            outcome=EffectOutcome.SHOWN,
-        )
+    ):
+        with pytest.raises(EffectHistoryValidationError):
+            EffectEvent(
+                event_id=event_id,
+                occurred_at_epoch=NOW,
+                effect_id="pulse",
+                semantic_category=EffectSemanticCategory.ATTENTION,
+                surface=EffectSurface.SCREEN_BAR,
+                outcome=EffectOutcome.SHOWN,
+            )
 
 
-def test_exact_duplicate_is_idempotent() -> None:
+
+def test_exact_duplicate_is_idempotent__and_2_more() -> None:
+    # --- scenario: exact_duplicate_is_idempotent
     event = _event()
     history = record_effect_event(EffectHistory(), event)
 
     assert record_effect_event(history, event) is history
 
-
-def test_same_event_and_time_delivered_to_two_surfaces_is_not_collapsed() -> None:
+    # --- scenario: same_event_and_time_delivered_to_two_surfaces_is_not_collapsed
     light = _event(surface=EffectSurface.GLANCE_LIGHT)
     screen_bar = _event(surface=EffectSurface.SCREEN_BAR)
 
@@ -145,8 +133,7 @@ def test_same_event_and_time_delivered_to_two_surfaces_is_not_collapsed() -> Non
         EffectSurface.SCREEN_BAR,
     }
 
-
-def test_history_count_cap_retains_newest_events() -> None:
+    # --- scenario: history_count_cap_retains_newest_events
     history = record_effect_events(
         EffectHistory(),
         tuple(
@@ -160,7 +147,9 @@ def test_history_count_cap_retains_newest_events() -> None:
     assert history.events[-1].event_id == f"effect-event:event-{MAX_EFFECT_EVENTS - 1:03d}"
 
 
-def test_history_byte_cap_binds_independently_of_count() -> None:
+
+def test_history_byte_cap_binds_independently_of_count__and_2_more() -> None:
+    # --- scenario: history_byte_cap_binds_independently_of_count
     history = record_effect_events(
         EffectHistory(),
         tuple(
@@ -201,8 +190,7 @@ def test_history_byte_cap_binds_independently_of_count() -> None:
     )
     assert history.events[0].event_id.endswith("000")
 
-
-def test_seen_watermark_moves_only_forward_and_unseen_is_strictly_after_it() -> None:
+    # --- scenario: seen_watermark_moves_only_forward_and_unseen_is_strictly_after_it
     history = record_effect_events(
         EffectHistory(),
         (
@@ -218,8 +206,7 @@ def test_seen_watermark_moves_only_forward_and_unseen_is_strictly_after_it() -> 
     assert tuple(event.event_id for event in seen.unseen) == ("effect-event:new",)
     assert rewound is seen
 
-
-def test_browser_projection_explains_shown_suppressed_acknowledged_and_expired() -> None:
+    # --- scenario: browser_projection_explains_shown_suppressed_acknowledged_and_expired
     history = record_effect_events(
         EffectHistory(),
         (
@@ -265,3 +252,4 @@ def test_browser_projection_explains_shown_suppressed_acknowledged_and_expired()
         for row in rows
         for forbidden in ("prompt", "message", "session", "path", "url")
     )
+

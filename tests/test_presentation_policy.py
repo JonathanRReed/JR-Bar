@@ -130,18 +130,14 @@ PAIRWISE_PRIORITY_CASES = (
 )
 
 
-@pytest.mark.parametrize(("higher", "lower", "expected"), PAIRWISE_PRIORITY_CASES)
-def test_pairwise_priority_is_the_exact_seven_level_contract(
-    higher: GlanceSemantic,
-    lower: GlanceSemantic,
-    expected: GlanceSemantic,
-) -> None:
-    resolved = _resolve(_combined_inputs(higher, lower))
+def test_pairwise_priority_is_the_exact_seven_level_contract__and_2_more() -> None:
+    # --- scenario: pairwise_priority_is_the_exact_seven_level_contract
+    for higher, lower, expected in PAIRWISE_PRIORITY_CASES:
+        resolved = _resolve(_combined_inputs(higher, lower))
 
-    assert resolved.semantic is expected
+        assert resolved.semantic is expected
 
-
-def test_all_inputs_resolve_to_actionable_attention() -> None:
+    # --- scenario: all_inputs_resolve_to_actionable_attention
     resolved = _resolve(
         _combined_inputs(
             GlanceSemantic.ATTENTION,
@@ -162,54 +158,44 @@ def test_all_inputs_resolve_to_actionable_attention() -> None:
         duration_seconds=0.24,
     )
 
-
-@pytest.mark.parametrize(
-    ("reason", "semantic"),
-    (
+    # --- scenario: incomplete_or_untyped_override_cannot_outrank_attention
+    for reason, semantic in (
         (GlanceOverrideReason.FOCUS, None),
         (GlanceOverrideReason.NONE, GlanceSemantic.REST),
         ("focus", GlanceSemantic.REST),
-    ),
-)
-def test_incomplete_or_untyped_override_cannot_outrank_attention(
-    reason: GlanceOverrideReason | object,
-    semantic: GlanceSemantic | None,
-) -> None:
-    inputs = replace(
-        _combined_inputs(GlanceSemantic.ATTENTION),
-        override_reason=reason,  # type: ignore[arg-type]
-        override_semantic=semantic,
-    )
+    ):
+        inputs = replace(
+            _combined_inputs(GlanceSemantic.ATTENTION),
+            override_reason=reason,  # type: ignore[arg-type]
+            override_semantic=semantic,
+        )
 
-    resolved = _resolve(inputs)
+        resolved = _resolve(inputs)
 
-    assert resolved.semantic is GlanceSemantic.ATTENTION
-    assert resolved.override_reason is GlanceOverrideReason.NONE
+        assert resolved.semantic is GlanceSemantic.ATTENTION
+        assert resolved.override_reason is GlanceOverrideReason.NONE
 
 
-@pytest.mark.parametrize(
-    "reason",
-    tuple(reason for reason in GlanceOverrideReason if reason is not GlanceOverrideReason.NONE),
-)
-def test_complete_typed_outer_override_is_explicit(reason: GlanceOverrideReason) -> None:
-    base = _combined_inputs(GlanceSemantic.ATTENTION)
-    inputs = replace(
-        base,
-        override_reason=reason,
-        override_semantic=GlanceSemantic.REST,
-    )
 
-    resolved = _resolve(inputs)
+def test_complete_typed_outer_override_is_explicit__and_2_more() -> None:
+    # --- scenario: complete_typed_outer_override_is_explicit
+    for reason in tuple(reason for reason in GlanceOverrideReason if reason is not GlanceOverrideReason.NONE):
+        base = _combined_inputs(GlanceSemantic.ATTENTION)
+        inputs = replace(
+            base,
+            override_reason=reason,
+            override_semantic=GlanceSemantic.REST,
+        )
 
-    assert resolved.semantic is GlanceSemantic.REST
-    assert resolved.glyph is SemanticGlyph.REST
-    assert resolved.cue is None
-    assert resolved.override_reason is reason
+        resolved = _resolve(inputs)
 
+        assert resolved.semantic is GlanceSemantic.REST
+        assert resolved.glyph is SemanticGlyph.REST
+        assert resolved.cue is None
+        assert resolved.override_reason is reason
 
-@pytest.mark.parametrize(
-    "capacity",
-    (
+    # --- scenario: invalid_capacity_fails_closed_to_rest
+    for capacity in (
         CapacityGlance("", 0.5),
         CapacityGlance("x" * 129, 0.5),
         CapacityGlance("codex", -0.01),
@@ -217,43 +203,39 @@ def test_complete_typed_outer_override_is_explicit(reason: GlanceOverrideReason)
         CapacityGlance("codex", math.nan),
         CapacityGlance("codex", math.inf),
         CapacityGlance(42, 0.5),  # type: ignore[arg-type]
-    ),
-)
-def test_invalid_capacity_fails_closed_to_rest(capacity: CapacityGlance) -> None:
-    resolved = _resolve(
-        GlanceInputs(None, None, None, False, False, capacity)
-    )
-
-    assert resolved.semantic is GlanceSemantic.REST
-    assert resolved.glyph is SemanticGlyph.REST
-    assert resolved.cue is None
-    assert resolved.next_visual_change_at is None
-
-
-@pytest.mark.parametrize("event_key", ("", "x" * 129, 42))
-def test_invalid_event_key_keeps_static_fresh_failure_semantics(
-    event_key: object,
-) -> None:
-    resolved = _resolve(
-        GlanceInputs(
-            None,
-            _cue(GlanceSemantic.FRESH_FAILURE, event_key=event_key),
-            None,
-            False,
-            False,
-            None,
+    ):
+        resolved = _resolve(
+            GlanceInputs(None, None, None, False, False, capacity)
         )
-    )
 
-    assert resolved.semantic is GlanceSemantic.FRESH_FAILURE
-    assert resolved.glyph is SemanticGlyph.LEFT_ANCHOR
-    assert resolved.cue is None
-    assert resolved.next_visual_change_at is None
+        assert resolved.semantic is GlanceSemantic.REST
+        assert resolved.glyph is SemanticGlyph.REST
+        assert resolved.cue is None
+        assert resolved.next_visual_change_at is None
+
+    # --- scenario: invalid_event_key_keeps_static_fresh_failure_semantics
+    for event_key in ("", "x" * 129, 42):
+        resolved = _resolve(
+            GlanceInputs(
+                None,
+                _cue(GlanceSemantic.FRESH_FAILURE, event_key=event_key),
+                None,
+                False,
+                False,
+                None,
+            )
+        )
+
+        assert resolved.semantic is GlanceSemantic.FRESH_FAILURE
+        assert resolved.glyph is SemanticGlyph.LEFT_ANCHOR
+        assert resolved.cue is None
+        assert resolved.next_visual_change_at is None
 
 
-@pytest.mark.parametrize(
-    ("repetitions", "duration_seconds"),
-    (
+
+def test_invalid_cue_budget_keeps_a_bounded_static_semantic__and_2_more() -> None:
+    # --- scenario: invalid_cue_budget_keeps_a_bounded_static_semantic
+    for repetitions, duration_seconds in (
         (0, 0.4),
         (3, 0.4),
         (True, 0.4),
@@ -262,33 +244,27 @@ def test_invalid_event_key_keeps_static_fresh_failure_semantics(
         (2, math.nan),
         (2, math.inf),
         (2, 61.0),
-    ),
-)
-def test_invalid_cue_budget_keeps_a_bounded_static_semantic(
-    repetitions: object,
-    duration_seconds: object,
-) -> None:
-    resolved = _resolve(
-        GlanceInputs(
-            None,
-            _cue(
-                GlanceSemantic.FRESH_FAILURE,
-                repetitions=repetitions,
-                duration_seconds=duration_seconds,
-            ),
-            None,
-            False,
-            False,
-            None,
+    ):
+        resolved = _resolve(
+            GlanceInputs(
+                None,
+                _cue(
+                    GlanceSemantic.FRESH_FAILURE,
+                    repetitions=repetitions,
+                    duration_seconds=duration_seconds,
+                ),
+                None,
+                False,
+                False,
+                None,
+            )
         )
-    )
 
-    assert resolved.semantic is GlanceSemantic.FRESH_FAILURE
-    assert resolved.cue is None
-    assert resolved.next_visual_change_at is None
+        assert resolved.semantic is GlanceSemantic.FRESH_FAILURE
+        assert resolved.cue is None
+        assert resolved.next_visual_change_at is None
 
-
-def test_invalid_accessibility_preferences_fail_closed_instead_of_changing_motion() -> None:
+    # --- scenario: invalid_accessibility_preferences_fail_closed_instead_of_changing_motion
     preferences = AccessibilityDisplayPreferences(reduce_motion=1)  # type: ignore[arg-type]
 
     resolved = resolve_glance(
@@ -302,10 +278,8 @@ def test_invalid_accessibility_preferences_fail_closed_instead_of_changing_motio
     assert resolved.cue is None
     assert resolved.relay_epoch == 0.0
 
-
-@pytest.mark.parametrize(
-    ("presentation_time", "relay_epoch"),
-    (
+    # --- scenario: invalid_or_wall_clock_anchors_fail_to_a_bounded_rest_result
+    for presentation_time, relay_epoch in (
         (math.nan, 2.0),
         (math.inf, 2.0),
         (-1.0, 0.0),
@@ -313,85 +287,73 @@ def test_invalid_accessibility_preferences_fail_closed_instead_of_changing_motio
         (10.0, -1.0),
         (10.0, 11.0),
         (1_700_000_001.0, 1_700_000_000.0),
-    ),
-)
-def test_invalid_or_wall_clock_anchors_fail_to_a_bounded_rest_result(
-    presentation_time: float,
-    relay_epoch: float,
-) -> None:
-    resolved = resolve_glance(
-        _combined_inputs(GlanceSemantic.ATTENTION),
-        presentation_time=presentation_time,
-        relay_epoch=relay_epoch,
-        preferences=AccessibilityDisplayPreferences(),
-    )
+    ):
+        resolved = resolve_glance(
+            _combined_inputs(GlanceSemantic.ATTENTION),
+            presentation_time=presentation_time,
+            relay_epoch=relay_epoch,
+            preferences=AccessibilityDisplayPreferences(),
+        )
 
-    assert resolved.semantic is GlanceSemantic.REST
-    assert resolved.glyph is SemanticGlyph.REST
-    assert resolved.cue is None
-    assert resolved.override_reason is GlanceOverrideReason.NONE
-    assert resolved.relay_epoch == 0.0
-    assert resolved.next_visual_change_at is None
+        assert resolved.semantic is GlanceSemantic.REST
+        assert resolved.glyph is SemanticGlyph.REST
+        assert resolved.cue is None
+        assert resolved.override_reason is GlanceOverrideReason.NONE
+        assert resolved.relay_epoch == 0.0
+        assert resolved.next_visual_change_at is None
 
 
-@pytest.mark.parametrize(
-    "semantic",
-    (GlanceSemantic.ATTENTION, GlanceSemantic.FRESH_FAILURE, GlanceSemantic.FRESH_COMPLETION),
-)
-def test_reduce_motion_preserves_semantic_and_episode_anchor_as_static(
-    semantic: GlanceSemantic,
-) -> None:
-    resolved = _resolve(_inputs_for(semantic), reduce_motion=True)
 
-    assert resolved.semantic is semantic
-    assert resolved.relay_epoch == 2.0
-    assert resolved.cue is None
-    assert resolved.next_visual_change_at is None
+def test_reduce_motion_preserves_semantic_and_episode_anchor_as_static__and_2_more() -> None:
+    # --- scenario: reduce_motion_preserves_semantic_and_episode_anchor_as_static
+    for semantic in (GlanceSemantic.ATTENTION, GlanceSemantic.FRESH_FAILURE, GlanceSemantic.FRESH_COMPLETION):
+        resolved = _resolve(_inputs_for(semantic), reduce_motion=True)
 
+        assert resolved.semantic is semantic
+        assert resolved.relay_epoch == 2.0
+        assert resolved.cue is None
+        assert resolved.next_visual_change_at is None
 
-def test_finite_cue_deadline_uses_presentation_time_without_changing_relay_epoch() -> None:
+    # --- scenario: finite_cue_deadline_uses_presentation_time_without_changing_relay_epoch
     resolved = _resolve(_inputs_for(GlanceSemantic.FRESH_FAILURE))
 
     assert resolved.cue is not None
     assert resolved.next_visual_change_at == pytest.approx(10.8)
     assert resolved.relay_epoch == 2.0
 
+    # --- scenario: every_semantic_composes_one_bounded_surface_program
+    for led_count in (2, 8):
+        for semantic in tuple(GlanceSemantic):
+            preferences = AccessibilityDisplayPreferences()
+            resolved = resolve_glance(
+                _inputs_for(semantic),
+                presentation_time=10.0,
+                relay_epoch=2.0,
+                preferences=preferences,
+            )
 
-@pytest.mark.parametrize("led_count", (2, 8))
-@pytest.mark.parametrize("semantic", tuple(GlanceSemantic))
-def test_every_semantic_composes_one_bounded_surface_program(
-    semantic: GlanceSemantic,
-    led_count: int,
-) -> None:
-    preferences = AccessibilityDisplayPreferences()
-    resolved = resolve_glance(
-        _inputs_for(semantic),
-        presentation_time=10.0,
-        relay_epoch=2.0,
-        preferences=preferences,
-    )
+            program = compose_presentation_program(
+                resolved,
+                presentation_time=10.0,
+                led_count=led_count,
+                color="#FFFFFF",
+                preferences=preferences,
+                capacity_remaining_fraction=0.5,
+            )
 
-    program = compose_presentation_program(
-        resolved,
-        presentation_time=10.0,
-        led_count=led_count,
-        color="#FFFFFF",
-        preferences=preferences,
-        capacity_remaining_fraction=0.5,
-    )
+            assert program.semantic is semantic
+            assert program.glyph is resolved.glyph
+            assert program.static_fallback_dsl
+            assert "repeat" not in program.static_fallback_dsl
+            assert len(program.dsl.encode("utf-8")) <= 512
+            assert len(program.dsl.splitlines()) <= 20
+            if program.motion is MotionClass.STATIC:
+                assert program.temporal is None
+            else:
+                assert isinstance(program.temporal, TemporalProgram)
+                assert program.temporal.repeat_count is not None
+                assert program.temporal.repeat_count <= 2
 
-    assert program.semantic is semantic
-    assert program.glyph is resolved.glyph
-    assert program.static_fallback_dsl
-    assert "repeat" not in program.static_fallback_dsl
-    assert len(program.dsl.encode("utf-8")) <= 512
-    assert len(program.dsl.splitlines()) <= 20
-    if program.motion is MotionClass.STATIC:
-        assert program.temporal is None
-    else:
-        assert isinstance(program.temporal, TemporalProgram)
-        assert program.temporal.repeat_count is not None
-        assert program.temporal.repeat_count <= 2
 
 
 def _grayscale_vector(program: PresentationProgram) -> tuple[int, ...]:
@@ -399,79 +361,72 @@ def _grayscale_vector(program: PresentationProgram) -> tuple[int, ...]:
     return tuple(int(segment.split("#", 1)[1][:2], 16) for segment in segments)
 
 
-@pytest.mark.parametrize("differentiate_without_color", (False, True))
-@pytest.mark.parametrize("led_count", (2, 8))
-def test_semantic_glyphs_survive_equal_gray_conversion(
-    differentiate_without_color: bool,
-    led_count: int,
-) -> None:
-    preferences = AccessibilityDisplayPreferences(
-        reduce_motion=True,
-        differentiate_without_color=differentiate_without_color,
-    )
-    semantics = tuple(GlanceSemantic)
-    if led_count == 2:
-        semantics = tuple(
-            semantic for semantic in semantics if semantic is not GlanceSemantic.CAPACITY
-        )
+def test_semantic_glyphs_survive_equal_gray_conversion__and_1_more() -> None:
+    # --- scenario: semantic_glyphs_survive_equal_gray_conversion
+    for differentiate_without_color in (False, True):
+        for led_count in (2, 8):
+            preferences = AccessibilityDisplayPreferences(
+                reduce_motion=True,
+                differentiate_without_color=differentiate_without_color,
+            )
+            semantics = tuple(GlanceSemantic)
+            if led_count == 2:
+                semantics = tuple(
+                    semantic for semantic in semantics if semantic is not GlanceSemantic.CAPACITY
+                )
 
-    vectors = []
-    for semantic in semantics:
+            vectors = []
+            for semantic in semantics:
+                resolved = resolve_glance(
+                    _inputs_for(semantic),
+                    presentation_time=10.0,
+                    relay_epoch=2.0,
+                    preferences=preferences,
+                )
+                program = compose_presentation_program(
+                    resolved,
+                    presentation_time=10.0,
+                    led_count=led_count,
+                    color="#FFFFFF",
+                    preferences=preferences,
+                    capacity_remaining_fraction=0.5,
+                )
+                vectors.append(_grayscale_vector(program))
+
+            assert len(set(vectors)) == len(vectors)
+
+    # --- scenario: finite_semantic_cues_settle_after_at_most_two_repetitions
+    for semantic in (
+        GlanceSemantic.ATTENTION,
+        GlanceSemantic.FRESH_FAILURE,
+        GlanceSemantic.FRESH_COMPLETION,
+    ):
+        preferences = AccessibilityDisplayPreferences()
         resolved = resolve_glance(
             _inputs_for(semantic),
             presentation_time=10.0,
             relay_epoch=2.0,
             preferences=preferences,
         )
+
         program = compose_presentation_program(
             resolved,
             presentation_time=10.0,
-            led_count=led_count,
+            led_count=8,
             color="#FFFFFF",
             preferences=preferences,
-            capacity_remaining_fraction=0.5,
         )
-        vectors.append(_grayscale_vector(program))
 
-    assert len(set(vectors)) == len(vectors)
+        assert program.motion is MotionClass.FINITE
+        assert program.temporal is not None
+        assert program.temporal.repeat_count == 1
+        assert resolved.cue is not None
+        assert len(program.temporal.frames) == resolved.cue.repetitions * 2
+        assert len({frame.luminance for frame in program.temporal.frames}) > 1
+        assert "repeat" not in program.dsl
+        assert program.dsl.endswith(program.static_fallback_dsl)
+        assert program.next_visual_change_at == resolved.next_visual_change_at
 
-
-@pytest.mark.parametrize(
-    "semantic",
-    (
-        GlanceSemantic.ATTENTION,
-        GlanceSemantic.FRESH_FAILURE,
-        GlanceSemantic.FRESH_COMPLETION,
-    ),
-)
-def test_finite_semantic_cues_settle_after_at_most_two_repetitions(
-    semantic: GlanceSemantic,
-) -> None:
-    preferences = AccessibilityDisplayPreferences()
-    resolved = resolve_glance(
-        _inputs_for(semantic),
-        presentation_time=10.0,
-        relay_epoch=2.0,
-        preferences=preferences,
-    )
-
-    program = compose_presentation_program(
-        resolved,
-        presentation_time=10.0,
-        led_count=8,
-        color="#FFFFFF",
-        preferences=preferences,
-    )
-
-    assert program.motion is MotionClass.FINITE
-    assert program.temporal is not None
-    assert program.temporal.repeat_count == 1
-    assert resolved.cue is not None
-    assert len(program.temporal.frames) == resolved.cue.repetitions * 2
-    assert len({frame.luminance for frame in program.temporal.frames}) > 1
-    assert "repeat" not in program.dsl
-    assert program.dsl.endswith(program.static_fallback_dsl)
-    assert program.next_visual_change_at == resolved.next_visual_change_at
 
 
 def _indexed_intensities_after_each_line(
@@ -489,42 +444,36 @@ def _indexed_intensities_after_each_line(
     return tuple(frames)
 
 
-@pytest.mark.parametrize(
-    ("semantic", "anchor_indices"),
-    (
+def test_finite_motion_never_replaces_the_spatial_semantic_glyph__and_2_more() -> None:
+    # --- scenario: finite_motion_never_replaces_the_spatial_semantic_glyph
+    for semantic, anchor_indices in (
         (GlanceSemantic.FRESH_FAILURE, (0, 1)),
         (GlanceSemantic.FRESH_COMPLETION, (6, 7)),
-    ),
-)
-def test_finite_motion_never_replaces_the_spatial_semantic_glyph(
-    semantic: GlanceSemantic,
-    anchor_indices: tuple[int, int],
-) -> None:
-    preferences = AccessibilityDisplayPreferences()
-    resolved = resolve_glance(
-        _inputs_for(semantic),
-        presentation_time=10.0,
-        relay_epoch=2.0,
-        preferences=preferences,
-    )
+    ):
+        preferences = AccessibilityDisplayPreferences()
+        resolved = resolve_glance(
+            _inputs_for(semantic),
+            presentation_time=10.0,
+            relay_epoch=2.0,
+            preferences=preferences,
+        )
 
-    program = compose_presentation_program(
-        resolved,
-        presentation_time=10.0,
-        led_count=8,
-        color="#FFFFFF",
-        preferences=preferences,
-    )
+        program = compose_presentation_program(
+            resolved,
+            presentation_time=10.0,
+            led_count=8,
+            color="#FFFFFF",
+            preferences=preferences,
+        )
 
-    for frame in _indexed_intensities_after_each_line(program.dsl, led_count=8):
-        anchored = [frame[index] for index in anchor_indices]
-        remainder = [
-            value for index, value in enumerate(frame) if index not in anchor_indices
-        ]
-        assert min(anchored) > max(remainder)
+        for frame in _indexed_intensities_after_each_line(program.dsl, led_count=8):
+            anchored = [frame[index] for index in anchor_indices]
+            remainder = [
+                value for index, value in enumerate(frame) if index not in anchor_indices
+            ]
+            assert min(anchored) > max(remainder)
 
-
-def test_semantic_attention_keeps_the_existing_two_tap_deadline_contract() -> None:
+    # --- scenario: semantic_attention_keeps_the_existing_two_tap_deadline_contract
     preferences = AccessibilityDisplayPreferences()
     resolved = resolve_glance(
         _inputs_for(GlanceSemantic.ATTENTION),
@@ -547,8 +496,7 @@ def test_semantic_attention_keeps_the_existing_two_tap_deadline_contract() -> No
     assert len(program.temporal.frames) == 4
     assert program.next_visual_change_at == resolved.next_visual_change_at == 10.48
 
-
-def test_untrusted_parser_valid_studio_animation_uses_static_fallback() -> None:
+    # --- scenario: untrusted_parser_valid_studio_animation_uses_static_fallback
     fallback = "0:#FFFFFF; 1:#000000"
     studio = PresentationProgram(
         semantic=GlanceSemantic.ACTIVE,
@@ -569,7 +517,9 @@ def test_untrusted_parser_valid_studio_animation_uses_static_fallback() -> None:
     assert safe.temporal is None
 
 
-def test_noncontinuous_programs_do_not_invent_refresh_scoped_playback_anchors() -> None:
+
+def test_noncontinuous_programs_do_not_invent_refresh_scoped_playback_anchors__and_2_more() -> None:
+    # --- scenario: noncontinuous_programs_do_not_invent_refresh_scoped_playback_anchors
     preferences = AccessibilityDisplayPreferences()
     static_resolved = resolve_glance(
         GlanceInputs(None, None, None, False, False, None),
@@ -604,8 +554,7 @@ def test_noncontinuous_programs_do_not_invent_refresh_scoped_playback_anchors() 
     assert static.playback_anchor is None
     assert finite.playback_anchor is None
 
-
-def test_finite_program_cannot_hide_an_unbounded_dsl_repeat() -> None:
+    # --- scenario: finite_program_cannot_hide_an_unbounded_dsl_repeat
     fallback = "0:#FFFFFF; 1:#000000"
     candidate = PresentationProgram(
         semantic=GlanceSemantic.FRESH_COMPLETION,
@@ -628,10 +577,8 @@ def test_finite_program_cannot_hide_an_unbounded_dsl_repeat() -> None:
     assert safe.motion is MotionClass.STATIC
     assert safe.dsl == fallback
 
-
-@pytest.mark.parametrize(
-    ("surface", "calibration"),
-    (
+    # --- scenario: four_flash_surface_fixture_falls_back_even_when_calibrated
+    for surface, calibration in (
         ("screen_bar", CalibrationState()),
         ("status_item", CalibrationState()),
         ("physical_uncalibrated", CalibrationState()),
@@ -643,34 +590,30 @@ def test_finite_program_cannot_hide_an_unbounded_dsl_repeat() -> None:
             ),
         ),
         ("studio", CalibrationState()),
-    ),
-)
-def test_four_flash_surface_fixture_falls_back_even_when_calibrated(
-    surface: str,
-    calibration: CalibrationState,
-) -> None:
-    fallback = "0:#808080; 1:#000000"
-    frames = tuple(
-        TemporalFrame(float(index % 2), 0.1)
-        for index in range(9)
-    )
-    candidate = PresentationProgram(
-        semantic=GlanceSemantic.FRESH_FAILURE,
-        glyph=SemanticGlyph.LEFT_ANCHOR,
-        motion=MotionClass.FINITE,
-        dsl=f"# fixture: {surface}\n#FFFFFF 100ms\noff 100ms",
-        static_fallback_dsl=fallback,
-        temporal=TemporalProgram(
-            frames=frames,
-            repeat_count=1,
-            static_fallback=StaticSemanticFallback("fresh_failure", 0.5),
-        ),
-        trusted_period_seconds=None,
-        relay_epoch=2.0,
-        next_visual_change_at=10.9,
-    )
+    ):
+        fallback = "0:#808080; 1:#000000"
+        frames = tuple(
+            TemporalFrame(float(index % 2), 0.1)
+            for index in range(9)
+        )
+        candidate = PresentationProgram(
+            semantic=GlanceSemantic.FRESH_FAILURE,
+            glyph=SemanticGlyph.LEFT_ANCHOR,
+            motion=MotionClass.FINITE,
+            dsl=f"# fixture: {surface}\n#FFFFFF 100ms\noff 100ms",
+            static_fallback_dsl=fallback,
+            temporal=TemporalProgram(
+                frames=frames,
+                repeat_count=1,
+                static_fallback=StaticSemanticFallback("fresh_failure", 0.5),
+            ),
+            trusted_period_seconds=None,
+            relay_epoch=2.0,
+            next_visual_change_at=10.9,
+        )
 
-    safe = enforce_temporal_safety(candidate, calibration=calibration)
+        safe = enforce_temporal_safety(candidate, calibration=calibration)
 
-    assert safe.motion is MotionClass.STATIC
-    assert safe.dsl == fallback
+        assert safe.motion is MotionClass.STATIC
+        assert safe.dsl == fallback
+

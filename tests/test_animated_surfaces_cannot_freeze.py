@@ -107,7 +107,8 @@ def _apply(device, presentation, *, anchor: float) -> None:
     )
 
 
-def test_the_notch_dedupe_still_suppresses_an_unchanged_repeat(notch) -> None:
+def test_the_notch_dedupe_still_suppresses_an_unchanged_repeat__and_2_more(notch) -> None:
+    # --- scenario: the_notch_dedupe_still_suppresses_an_unchanged_repeat
     """The dedupe must keep doing its job -- this is not a licence to churn."""
     device, _clock, _module = notch
     presentation = _continuous_program()
@@ -120,8 +121,7 @@ def test_the_notch_dedupe_still_suppresses_an_unchanged_repeat(notch) -> None:
 
     assert len(device._sampler.commands) == baseline
 
-
-def test_a_dead_sampler_does_not_hold_the_notch_frozen(notch) -> None:
+    # --- scenario: a_dead_sampler_does_not_hold_the_notch_frozen
     """The gate must include whatever ADVANCES the animation.
 
     A phase-free token says nothing about whether anything is still
@@ -144,8 +144,7 @@ def test_a_dead_sampler_does_not_hold_the_notch_frozen(notch) -> None:
     assert len(device._sampler.commands) == 1
     assert device._sampler.commands[0].motion is MotionClass.CONTINUOUS
 
-
-def test_the_notch_reasserts_on_a_timer_like_the_strip_does(notch) -> None:
+    # --- scenario: the_notch_reasserts_on_a_timer_like_the_strip_does
     """The backstop, for a freeze the liveness check cannot see."""
     from jrbar.virtual_device import SCREEN_BAR_REASSERT_SECONDS
 
@@ -161,6 +160,7 @@ def test_the_notch_reasserts_on_a_timer_like_the_strip_does(notch) -> None:
     clock["now"] += 1.0
     _apply(device, presentation, anchor=1_000.0)
     assert len(device._sampler.commands) == 1
+
 
 
 def test_a_reassert_resumes_the_same_phase_rather_than_restarting_it(notch) -> None:

@@ -6,7 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "src" / "jrbar" / "status_bar.py"
 
 
-def test_status_bar_adapters_preserve_originals_on_the_runtime_module() -> None:
+def test_status_bar_adapters_preserve_originals_on_the_runtime_module__and_1_more() -> None:
+    # --- scenario: status_bar_adapters_preserve_originals_on_the_runtime_module
     source = SOURCE.read_text(encoding="utf-8")
     for marker in (
         "_jrbar_original_build_menu",
@@ -16,8 +17,7 @@ def test_status_bar_adapters_preserve_originals_on_the_runtime_module() -> None:
     ):
         assert marker in source
 
-
-def test_status_bar_reload_does_not_replace_originals_with_its_own_wrappers() -> None:
+    # --- scenario: status_bar_reload_does_not_replace_originals_with_its_own_wrappers
     source = SOURCE.read_text(encoding="utf-8")
     normalized = " ".join(source.split())
     assert (
@@ -35,3 +35,4 @@ def test_status_bar_reload_does_not_replace_originals_with_its_own_wrappers() ->
     assert "_legacy._jrbar_original_build_menu = _ORIGINAL_BUILD_MENU" in source
     assert "_legacy._jrbar_device_identity_cache = cache" in source
     assert "def install_status_bar_facade" in source
+

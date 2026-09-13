@@ -53,7 +53,8 @@ def analyze(
     )
 
 
-def test_static_and_monotonic_programs_are_safe() -> None:
+def test_static_and_monotonic_programs_are_safe__and_2_more() -> None:
+    # --- scenario: static_and_monotonic_programs_are_safe
     static = analyze((frame(0.4, 2.0),))
     monotonic = analyze(tuple(frame(index / 20.0, 0.02) for index in range(21)))
 
@@ -63,15 +64,13 @@ def test_static_and_monotonic_programs_are_safe() -> None:
     assert static.max_flashes_per_second == 0
     assert monotonic.max_flashes_per_second == 0
 
-
-def test_exactly_three_flashes_in_one_second_are_safe() -> None:
+    # --- scenario: exactly_three_flashes_in_one_second_are_safe
     result = analyze(alternating_frames(3))
 
     assert isinstance(result, SafeTemporalProgram)
     assert result.max_flashes_per_second == 3
 
-
-def test_four_uncalibrated_flashes_are_refused() -> None:
+    # --- scenario: four_uncalibrated_flashes_are_refused
     result = analyze(alternating_frames(4))
 
     assert isinstance(result, RefusedTemporalProgram)
@@ -79,7 +78,9 @@ def test_four_uncalibrated_flashes_are_refused() -> None:
     assert result.max_flashes_per_second == 4
 
 
-def test_four_calibrated_flashes_require_static_transformation() -> None:
+
+def test_four_calibrated_flashes_require_static_transformation__and_2_more() -> None:
+    # --- scenario: four_calibrated_flashes_require_static_transformation
     fallback = StaticSemanticFallback(
         semantic_key="fresh_failure",
         luminance=0.6,
@@ -99,8 +100,7 @@ def test_four_calibrated_flashes_require_static_transformation() -> None:
     assert result.max_flashes_per_second == 4
     assert result.static_fallback == fallback
 
-
-def test_partial_calibration_still_fails_closed() -> None:
+    # --- scenario: partial_calibration_still_fails_closed
     for calibration in (
         CalibrationState(physical_luminance_calibrated=True),
         CalibrationState(flash_area_calibrated=True),
@@ -110,17 +110,16 @@ def test_partial_calibration_still_fails_closed() -> None:
         assert isinstance(result, RefusedTemporalProgram)
         assert result.reason is TemporalSafetyReason.UNCALIBRATED_FLASH_RATE
 
-
-def test_sliding_window_detects_flashes_across_fixed_second_buckets() -> None:
-    # Flash completion times are 0.3, 0.6, 0.9, and 1.2 seconds. A fixed
-    # [0, 1) bucket sees only three, while the sliding [0.3, 1.3] interval sees four.
+    # --- scenario: sliding_window_detects_flashes_across_fixed_second_buckets
     result = analyze(alternating_frames(4, duration=0.15))
 
     assert isinstance(result, RefusedTemporalProgram)
     assert result.max_flashes_per_second == 4
 
 
-def test_one_second_window_endpoints_are_conservative() -> None:
+
+def test_one_second_window_endpoints_are_conservative__and_2_more() -> None:
+    # --- scenario: one_second_window_endpoints_are_conservative
     exactly_one_second = (0.05, 0.05, 0.4, 0.1, 0.3, 0.1, 0.05, 0.05, 0.1)
     just_over_one_second = (
         0.05,
@@ -146,8 +145,7 @@ def test_one_second_window_endpoints_are_conservative() -> None:
     assert isinstance(outside, SafeTemporalProgram)
     assert outside.max_flashes_per_second == 3
 
-
-def test_finite_repeat_is_analyzed_across_cycle_boundaries() -> None:
+    # --- scenario: finite_repeat_is_analyzed_across_cycle_boundaries
     result = analyze(
         (frame(0.0), frame(1.0)),
         repeat_count=6,
@@ -156,8 +154,7 @@ def test_finite_repeat_is_analyzed_across_cycle_boundaries() -> None:
     assert isinstance(result, RefusedTemporalProgram)
     assert result.max_flashes_per_second >= 4
 
-
-def test_deterministic_jittered_strobe_is_refused() -> None:
+    # --- scenario: deterministic_jittered_strobe_is_refused
     rng = random.Random(20260812)
     frames = tuple(
         frame(float(index % 2), rng.uniform(0.04, 0.06))
@@ -170,45 +167,41 @@ def test_deterministic_jittered_strobe_is_refused() -> None:
     assert result.max_flashes_per_second == 8
 
 
-@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
-@pytest.mark.parametrize("field", ["luminance", "duration"])
-def test_nonfinite_frame_values_fail_closed(field: str, value: float) -> None:
-    invalid = frame(value, 0.1) if field == "luminance" else frame(0.5, value)
 
-    result = analyze((invalid,))
+def test_nonfinite_frame_values_fail_closed__and_2_more() -> None:
+    # --- scenario: nonfinite_frame_values_fail_closed
+    for value in [math.nan, math.inf, -math.inf]:
+        for field in ["luminance", "duration"]:
+            invalid = frame(value, 0.1) if field == "luminance" else frame(0.5, value)
 
-    assert isinstance(result, RefusedTemporalProgram)
-    assert result.reason is TemporalSafetyReason.NONFINITE_FRAME
+            result = analyze((invalid,))
 
+            assert isinstance(result, RefusedTemporalProgram)
+            assert result.reason is TemporalSafetyReason.NONFINITE_FRAME
 
-@pytest.mark.parametrize(
-    ("invalid", "reason"),
-    [
+    # --- scenario: negative_out_of_range_and_zero_duration_frames_fail_closed
+    for invalid, reason in [
         (frame(-0.1), TemporalSafetyReason.INVALID_LUMINANCE),
         (frame(1.1), TemporalSafetyReason.INVALID_LUMINANCE),
         (frame(0.5, -0.1), TemporalSafetyReason.NEGATIVE_DURATION),
         (frame(0.5, 0.0), TemporalSafetyReason.ZERO_DURATION),
-    ],
-)
-def test_negative_out_of_range_and_zero_duration_frames_fail_closed(
-    invalid: TemporalFrame,
-    reason: TemporalSafetyReason,
-) -> None:
-    result = analyze((invalid,))
+    ]:
+        result = analyze((invalid,))
 
-    assert isinstance(result, RefusedTemporalProgram)
-    assert result.reason is reason
+        assert isinstance(result, RefusedTemporalProgram)
+        assert result.reason is reason
 
+    # --- scenario: non_numeric_frame_values_fail_closed
+    for value in [True, "0.5", object()]:
+        result = analyze((TemporalFrame(luminance=value, duration_seconds=0.1),))
 
-@pytest.mark.parametrize("value", [True, "0.5", object()])
-def test_non_numeric_frame_values_fail_closed(value: object) -> None:
-    result = analyze((TemporalFrame(luminance=value, duration_seconds=0.1),))
-
-    assert isinstance(result, RefusedTemporalProgram)
-    assert result.reason is TemporalSafetyReason.INVALID_FRAME
+        assert isinstance(result, RefusedTemporalProgram)
+        assert result.reason is TemporalSafetyReason.INVALID_FRAME
 
 
-def test_unbounded_frame_iterable_is_refused_without_iteration() -> None:
+
+def test_unbounded_frame_iterable_is_refused_without_iteration__and_2_more() -> None:
+    # --- scenario: unbounded_frame_iterable_is_refused_without_iteration
     def unbounded():
         raise AssertionError("the analyzer must not consume an unbounded iterable")
         yield frame(0.0)
@@ -218,57 +211,44 @@ def test_unbounded_frame_iterable_is_refused_without_iteration() -> None:
     assert isinstance(result, RefusedTemporalProgram)
     assert result.reason is TemporalSafetyReason.UNBOUNDED_INPUT
 
-
-@pytest.mark.parametrize(
-    ("repeat_count", "reason"),
-    [
+    # --- scenario: unbounded_and_invalid_repeat_counts_fail_closed
+    for repeat_count, reason in [
         (None, TemporalSafetyReason.UNBOUNDED_REPEAT),
         (0, TemporalSafetyReason.INVALID_REPEAT),
         (-1, TemporalSafetyReason.INVALID_REPEAT),
         (True, TemporalSafetyReason.INVALID_REPEAT),
         (1.5, TemporalSafetyReason.INVALID_REPEAT),
-    ],
-)
-def test_unbounded_and_invalid_repeat_counts_fail_closed(
-    repeat_count: object,
-    reason: TemporalSafetyReason,
-) -> None:
-    result = analyze((frame(0.5),), repeat_count=repeat_count)
+    ]:
+        result = analyze((frame(0.5),), repeat_count=repeat_count)
 
-    assert isinstance(result, RefusedTemporalProgram)
-    assert result.reason is reason
+        assert isinstance(result, RefusedTemporalProgram)
+        assert result.reason is reason
 
-
-@pytest.mark.parametrize(
-    ("frames", "repeat_count"),
-    [
+    # --- scenario: empty_and_oversized_programs_fail_closed
+    for frames, repeat_count in [
         ((), 1),
         ((frame(0.5, 301.0),), 1),
         (tuple(frame(0.5) for _ in range(4097)), 1),
         ((frame(0.5),), 4097),
-    ],
-)
-def test_empty_and_oversized_programs_fail_closed(
-    frames: tuple[TemporalFrame, ...],
-    repeat_count: int,
-) -> None:
-    result = analyze(frames, repeat_count=repeat_count)
+    ]:
+        result = analyze(frames, repeat_count=repeat_count)
 
-    assert isinstance(result, RefusedTemporalProgram)
-    assert result.reason in {
-        TemporalSafetyReason.EMPTY_PROGRAM,
-        TemporalSafetyReason.OVERSIZED_PROGRAM,
-    }
+        assert isinstance(result, RefusedTemporalProgram)
+        assert result.reason in {
+            TemporalSafetyReason.EMPTY_PROGRAM,
+            TemporalSafetyReason.OVERSIZED_PROGRAM,
+        }
 
 
-def test_invalid_frame_object_fails_closed() -> None:
+
+def test_invalid_frame_object_fails_closed__and_2_more() -> None:
+    # --- scenario: invalid_frame_object_fails_closed
     result = analyze((frame(0.0), object()))
 
     assert isinstance(result, RefusedTemporalProgram)
     assert result.reason is TemporalSafetyReason.INVALID_FRAME
 
-
-def test_invalid_program_object_fails_closed_with_a_static_fallback() -> None:
+    # --- scenario: invalid_program_object_fails_closed_with_a_static_fallback
     result = analyze_temporal_safety(object())
 
     assert isinstance(result, RefusedTemporalProgram)
@@ -276,54 +256,44 @@ def test_invalid_program_object_fails_closed_with_a_static_fallback() -> None:
     assert result.static_fallback.is_static is True
     assert result.static_fallback.semantic_key == "safe_static_state"
 
-
-@pytest.mark.parametrize(
-    "frames",
-    [
+    # --- scenario: every_result_exposes_a_bounded_static_semantic_fallback
+    for frames in [
         (frame(0.5),),
         alternating_frames(3),
         alternating_frames(4),
         (frame(math.nan),),
-    ],
-)
-def test_every_result_exposes_a_bounded_static_semantic_fallback(
-    frames: tuple[TemporalFrame, ...],
-) -> None:
-    fallback = StaticSemanticFallback(
-        semantic_key="completed_recently",
-        luminance=0.2,
-    )
+    ]:
+        fallback = StaticSemanticFallback(
+            semantic_key="completed_recently",
+            luminance=0.2,
+        )
 
-    result = analyze(frames, fallback=fallback)
+        result = analyze(frames, fallback=fallback)
 
-    assert result.static_fallback == fallback
-    assert result.static_fallback.is_static is True
-    assert len(result.static_fallback.semantic_key) <= 64
-    assert isinstance(result.reason, TemporalSafetyReason)
+        assert result.static_fallback == fallback
+        assert result.static_fallback.is_static is True
+        assert len(result.static_fallback.semantic_key) <= 64
+        assert isinstance(result.reason, TemporalSafetyReason)
 
 
-@pytest.mark.parametrize(
-    "fallback",
-    [
+
+def test_invalid_fallback_fails_closed_to_the_canonical_static_contract__and_1_more() -> None:
+    # --- scenario: invalid_fallback_fails_closed_to_the_canonical_static_contract
+    for fallback in [
         StaticSemanticFallback(semantic_key="", luminance=0.2),
         StaticSemanticFallback(semantic_key="x" * 65, luminance=0.2),
         StaticSemanticFallback(semantic_key="unsafe path/value", luminance=0.2),
         StaticSemanticFallback(semantic_key="safe", luminance=math.nan),
         StaticSemanticFallback(semantic_key="safe", luminance=-0.1),
-    ],
-)
-def test_invalid_fallback_fails_closed_to_the_canonical_static_contract(
-    fallback: StaticSemanticFallback,
-) -> None:
-    result = analyze((frame(0.5),), fallback=fallback)
+    ]:
+        result = analyze((frame(0.5),), fallback=fallback)
 
-    assert isinstance(result, RefusedTemporalProgram)
-    assert result.reason is TemporalSafetyReason.INVALID_STATIC_FALLBACK
-    assert result.static_fallback.semantic_key == "safe_static_state"
-    assert result.static_fallback.luminance == 0.0
+        assert isinstance(result, RefusedTemporalProgram)
+        assert result.reason is TemporalSafetyReason.INVALID_STATIC_FALLBACK
+        assert result.static_fallback.semantic_key == "safe_static_state"
+        assert result.static_fallback.luminance == 0.0
 
-
-def test_analysis_is_deterministic_and_does_not_mutate_the_program() -> None:
+    # --- scenario: analysis_is_deterministic_and_does_not_mutate_the_program
     frames = alternating_frames(4)
     program = TemporalProgram(
         frames=frames,
@@ -337,3 +307,4 @@ def test_analysis_is_deterministic_and_does_not_mutate_the_program() -> None:
     assert first == second
     assert program.frames is frames
     assert program.repeat_count == 1
+

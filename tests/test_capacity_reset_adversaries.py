@@ -76,33 +76,26 @@ def _observation(
     )
 
 
-@pytest.mark.parametrize(
-    ("state", "epoch", "forecast_eligible"),
-    (
+def test_reset_states_remain_typed_without_inventing_a_boundary__and_2_more() -> None:
+    # --- scenario: reset_states_remain_typed_without_inventing_a_boundary
+    for state, epoch, forecast_eligible in (
         (ResetState.FUTURE, 2_800.0, True),
         (ResetState.DUE, 999.0, False),
         (ResetState.UNKNOWN, None, False),
         (ResetState.UNAVAILABLE, None, False),
         (ResetState.DISPUTED, 2_800.0, False),
         (ResetState.STALE, 2_800.0, False),
-    ),
-)
-def test_reset_states_remain_typed_without_inventing_a_boundary(
-    state: ResetState,
-    epoch: float | None,
-    forecast_eligible: bool,
-) -> None:
-    observation = _observation(reset_state=state, reset_epoch=epoch)
+    ):
+        observation = _observation(reset_state=state, reset_epoch=epoch)
 
-    decision = evaluate_reset_continuity(None, observation, source_generation=1)
+        decision = evaluate_reset_continuity(None, observation, source_generation=1)
 
-    assert decision.reset.state is state
-    assert decision.reset.reset_epoch == epoch
-    assert decision.remaining == 50.0
-    assert decision.forecast_eligible is forecast_eligible
+        assert decision.reset.state is state
+        assert decision.reset.reset_epoch == epoch
+        assert decision.remaining == 50.0
+        assert decision.forecast_eligible is forecast_eligible
 
-
-def test_exact_identity_accepts_ordered_consumption_in_one_cycle() -> None:
+    # --- scenario: exact_identity_accepts_ordered_consumption_in_one_cycle
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=80.0),
@@ -119,8 +112,7 @@ def test_exact_identity_accepts_ordered_consumption_in_one_cycle() -> None:
     assert second.forecast_eligible is True
     assert second.reason_code == "reset_continuity_confirmed"
 
-
-def test_absent_account_discriminator_refuses_identity_continuity() -> None:
+    # --- scenario: absent_account_discriminator_refuses_identity_continuity
     decision = evaluate_reset_continuity(
         None,
         _observation(account=None),
@@ -133,96 +125,82 @@ def test_absent_account_discriminator_refuses_identity_continuity() -> None:
     assert decision.state.confirmed is None
 
 
-@pytest.mark.parametrize(
-    ("changed", "generation", "reason_code"),
-    (
+
+def test_identity_or_source_generation_change_starts_an_unconfirmed_scope__and_2_more() -> None:
+    # --- scenario: identity_or_source_generation_change_starts_an_unconfirmed_scope
+    for changed, generation, reason_code in (
         ({"account": "acct:opaque-2"}, 3, "reset_identity_changed"),
         ({"lane_key": OTHER_LANE}, 3, "reset_identity_changed"),
         ({}, 4, "reset_source_generation_changed"),
-    ),
-)
-def test_identity_or_source_generation_change_starts_an_unconfirmed_scope(
-    changed: dict[str, object],
-    generation: int,
-    reason_code: str,
-) -> None:
-    first = evaluate_reset_continuity(
-        None,
-        _observation(remaining=80.0),
-        source_generation=3,
-    )
+    ):
+        first = evaluate_reset_continuity(
+            None,
+            _observation(remaining=80.0),
+            source_generation=3,
+        )
 
-    changed_observation = _observation(
-        remaining=20.0,
-        observed_at=1_100.0,
-        **changed,
-    )
-    changed_decision = evaluate_reset_continuity(
-        first.state,
-        changed_observation,
-        source_generation=generation,
-    )
-
-    assert changed_decision.disposition is SampleDisposition.IDENTITY_AMBIGUOUS
-    assert changed_decision.forecast_eligible is False
-    assert changed_decision.reason_code == reason_code
-    assert changed_decision.state.confirmed is None
-    assert changed_decision.state.pending is not None
-
-    corroborated = evaluate_reset_continuity(
-        changed_decision.state,
-        replace(
-            changed_observation,
-            observed_at=1_200.0,
-            reset=replace(changed_observation.reset, observed_at=1_200.0),
-            source_health=replace(
-                changed_observation.source_health,
-                observed_at=1_200.0,
-                last_attempt_at=1_200.0,
-            ),
-        ),
-        source_generation=generation,
-    )
-    assert corroborated.disposition is SampleDisposition.ACCEPTED
-    assert corroborated.reason_code == "reset_identity_corroborated"
-
-
-@pytest.mark.parametrize(
-    ("changed", "generation", "reason_code"),
-    (
-        ({"account": "acct:opaque-2"}, 3, "reset_identity_changed"),
-        ({}, 4, "reset_source_generation_changed"),
-    ),
-)
-def test_identity_scope_change_takes_precedence_over_missing_reset_evidence(
-    changed: dict[str, object],
-    generation: int,
-    reason_code: str,
-) -> None:
-    first = evaluate_reset_continuity(
-        None,
-        _observation(remaining=80.0),
-        source_generation=3,
-    )
-
-    changed_decision = evaluate_reset_continuity(
-        first.state,
-        _observation(
+        changed_observation = _observation(
             remaining=20.0,
             observed_at=1_100.0,
-            reset_epoch=None,
-            reset_state=ResetState.UNKNOWN,
             **changed,
-        ),
-        source_generation=generation,
-    )
+        )
+        changed_decision = evaluate_reset_continuity(
+            first.state,
+            changed_observation,
+            source_generation=generation,
+        )
 
-    assert changed_decision.disposition is SampleDisposition.IDENTITY_AMBIGUOUS
-    assert changed_decision.forecast_eligible is False
-    assert changed_decision.reason_code == reason_code
+        assert changed_decision.disposition is SampleDisposition.IDENTITY_AMBIGUOUS
+        assert changed_decision.forecast_eligible is False
+        assert changed_decision.reason_code == reason_code
+        assert changed_decision.state.confirmed is None
+        assert changed_decision.state.pending is not None
 
+        corroborated = evaluate_reset_continuity(
+            changed_decision.state,
+            replace(
+                changed_observation,
+                observed_at=1_200.0,
+                reset=replace(changed_observation.reset, observed_at=1_200.0),
+                source_health=replace(
+                    changed_observation.source_health,
+                    observed_at=1_200.0,
+                    last_attempt_at=1_200.0,
+                ),
+            ),
+            source_generation=generation,
+        )
+        assert corroborated.disposition is SampleDisposition.ACCEPTED
+        assert corroborated.reason_code == "reset_identity_corroborated"
 
-def test_unknown_reset_still_anchors_exact_account_and_generation_scope() -> None:
+    # --- scenario: identity_scope_change_takes_precedence_over_missing_reset_evidence
+    for changed, generation, reason_code in (
+        ({"account": "acct:opaque-2"}, 3, "reset_identity_changed"),
+        ({}, 4, "reset_source_generation_changed"),
+    ):
+        first = evaluate_reset_continuity(
+            None,
+            _observation(remaining=80.0),
+            source_generation=3,
+        )
+
+        changed_decision = evaluate_reset_continuity(
+            first.state,
+            _observation(
+                remaining=20.0,
+                observed_at=1_100.0,
+                reset_epoch=None,
+                reset_state=ResetState.UNKNOWN,
+                **changed,
+            ),
+            source_generation=generation,
+        )
+
+        assert changed_decision.disposition is SampleDisposition.IDENTITY_AMBIGUOUS
+        assert changed_decision.forecast_eligible is False
+        assert changed_decision.reason_code == reason_code
+
+    # --- scenario: unknown_reset_still_anchors_exact_account_and_generation_scope
     unknown = evaluate_reset_continuity(
         None,
         _observation(reset_epoch=None, reset_state=ResetState.UNKNOWN),
@@ -245,7 +223,9 @@ def test_unknown_reset_still_anchors_exact_account_and_generation_scope() -> Non
     assert changed.reason_code == "reset_identity_changed"
 
 
-def test_out_of_order_observation_cannot_replace_confirmed_continuity() -> None:
+
+def test_out_of_order_observation_cannot_replace_confirmed_continuity__and_2_more() -> None:
+    # --- scenario: out_of_order_observation_cannot_replace_confirmed_continuity
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=80.0, observed_at=1_100.0),
@@ -263,49 +243,41 @@ def test_out_of_order_observation_cannot_replace_confirmed_continuity() -> None:
     assert late.remaining == 10.0
     assert late.state == first.state
 
-
-@pytest.mark.parametrize(
-    ("old_observation", "old_generation"),
-    (
+    # --- scenario: out_of_order_result_cannot_roll_identity_scope_backward
+    for old_observation, old_generation in (
         ({"account": ACCOUNT}, 3),
         ({"account": "acct:opaque-2"}, 3),
-    ),
-)
-def test_out_of_order_result_cannot_roll_identity_scope_backward(
-    old_observation: dict[str, object],
-    old_generation: int,
-) -> None:
-    first = evaluate_reset_continuity(
-        None,
-        _observation(remaining=80.0),
-        source_generation=3,
-    )
-    current = evaluate_reset_continuity(
-        first.state,
-        _observation(
-            account="acct:opaque-2",
-            remaining=30.0,
-            observed_at=1_200.0,
-        ),
-        source_generation=4,
-    )
+    ):
+        first = evaluate_reset_continuity(
+            None,
+            _observation(remaining=80.0),
+            source_generation=3,
+        )
+        current = evaluate_reset_continuity(
+            first.state,
+            _observation(
+                account="acct:opaque-2",
+                remaining=30.0,
+                observed_at=1_200.0,
+            ),
+            source_generation=4,
+        )
 
-    late = evaluate_reset_continuity(
-        current.state,
-        _observation(
-            remaining=20.0,
-            observed_at=1_100.0,
-            **old_observation,
-        ),
-        source_generation=old_generation,
-    )
+        late = evaluate_reset_continuity(
+            current.state,
+            _observation(
+                remaining=20.0,
+                observed_at=1_100.0,
+                **old_observation,
+            ),
+            source_generation=old_generation,
+        )
 
-    assert late.disposition is SampleDisposition.OUT_OF_ORDER
-    assert late.state == current.state
-    assert late.forecast_eligible is False
+        assert late.disposition is SampleDisposition.OUT_OF_ORDER
+        assert late.state == current.state
+        assert late.forecast_eligible is False
 
-
-def test_reset_epoch_moving_backward_is_quarantined() -> None:
+    # --- scenario: reset_epoch_moving_backward_is_quarantined
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=70.0, reset_epoch=2_800.0),
@@ -330,7 +302,9 @@ def test_reset_epoch_moving_backward_is_quarantined() -> None:
     assert backward.state.confirmed == first.state.confirmed
 
 
-def test_multi_window_forward_jump_with_recovery_confirms_after_sleep() -> None:
+
+def test_multi_window_forward_jump_with_recovery_confirms_after_sleep__and_2_more() -> None:
+    # --- scenario: multi_window_forward_jump_with_recovery_confirms_after_sleep
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=5.0, reset_epoch=2_800.0),
@@ -352,8 +326,7 @@ def test_multi_window_forward_jump_with_recovery_confirms_after_sleep() -> None:
     assert woke.forecast_eligible is True
     assert woke.reason_code == "reset_cycle_confirmed"
 
-
-def test_due_boundary_after_sleep_does_not_silently_advance() -> None:
+    # --- scenario: due_boundary_after_sleep_does_not_silently_advance
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=10.0, reset_epoch=2_800.0),
@@ -376,8 +349,7 @@ def test_due_boundary_after_sleep_does_not_silently_advance() -> None:
     assert due.reset.reset_epoch == 2_800.0
     assert due.forecast_eligible is False
 
-
-def test_reset_advance_without_recovery_requires_corroboration() -> None:
+    # --- scenario: reset_advance_without_recovery_requires_corroboration
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=20.0, reset_epoch=2_800.0),
@@ -413,7 +385,9 @@ def test_reset_advance_without_recovery_requires_corroboration() -> None:
     assert corroborated.reason_code == "reset_cycle_corroborated"
 
 
-def test_usage_recovery_without_reset_advance_requires_corroboration() -> None:
+
+def test_usage_recovery_without_reset_advance_requires_corroboration__and_2_more() -> None:
+    # --- scenario: usage_recovery_without_reset_advance_requires_corroboration
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=20.0, reset_epoch=2_800.0),
@@ -447,8 +421,7 @@ def test_usage_recovery_without_reset_advance_requires_corroboration() -> None:
     assert corroborated.reset.state is ResetState.FUTURE
     assert corroborated.reason_code == "reset_cycle_corroborated"
 
-
-def test_transient_remaining_spike_does_not_corroborate_a_new_cycle() -> None:
+    # --- scenario: transient_remaining_spike_does_not_corroborate_a_new_cycle
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=20.0, reset_epoch=2_800.0),
@@ -477,8 +450,7 @@ def test_transient_remaining_spike_does_not_corroborate_a_new_cycle() -> None:
     assert recovered_truth.disposition is SampleDisposition.ACCEPTED
     assert recovered_truth.reason_code == "reset_continuity_confirmed"
 
-
-def test_pending_cycle_cannot_be_corroborated_by_another_account() -> None:
+    # --- scenario: pending_cycle_cannot_be_corroborated_by_another_account
     first = evaluate_reset_continuity(
         None,
         _observation(remaining=20.0, reset_epoch=2_800.0),
@@ -508,6 +480,7 @@ def test_pending_cycle_cannot_be_corroborated_by_another_account() -> None:
     assert other_account.disposition is SampleDisposition.IDENTITY_AMBIGUOUS
     assert other_account.forecast_eligible is False
     assert other_account.reason_code == "reset_identity_changed"
+
 
 
 def test_invalid_source_generation_fails_closed_without_hiding_remaining() -> None:
