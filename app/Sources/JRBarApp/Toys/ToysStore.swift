@@ -31,11 +31,15 @@ final class ToysStore {
     private(set) var toys: [any Toy]
 
     /// Typed handles for the toys that other parts of the app drive:
-    /// the HUD hosts the buddy, the event coordinator fires confetti,
-    /// the page lists the external apps.
+    /// the HUD hosts the buddy, the event coordinator fires confetti and
+    /// feeds the island's event capsules, the page lists the external
+    /// apps. `alcove` is implicitly unwrapped for the same reason `fold`
+    /// is a lookup: `AlcoveToy` takes `store: self`, so it can only be
+    /// built after every stored property has a value.
     let notchBuddy: NotchBuddyToy
     let confetti: ConfettiToy
     let externalApps: ExternalAppsToy
+    private(set) var alcove: AlcoveToy!
 
     /// The island asks the fold whether its overlay owns the screen.
     /// Found in `toys`, not stored: `FoldToy` takes `store: self` in its
@@ -72,7 +76,9 @@ final class ToysStore {
         cards.append(notchBuddy)
         confetti.store = self
         cards.append(confetti)
-        cards.append(AlcoveToy(core: core, store: self))
+        let alcove = AlcoveToy(core: core, store: self)
+        self.alcove = alcove
+        cards.append(alcove)
         externalApps.store = self
         self.toys = cards
     }

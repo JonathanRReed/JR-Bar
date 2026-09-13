@@ -33,8 +33,35 @@ final class AlcoveToy: Toy {
     /// Whether the island panel is ordered in — the view's pulse pauses
     /// on `false` so a parked island runs no clock at all.
     private(set) var islandVisible = false
+    /// The notification capsule on screen, if any — Alcove's instant
+    /// notification: the island's third face, between idle and the card.
+    private(set) var activeCapsule: AlcoveNotice?
+    /// What Now Playing reports, nil while MediaRemote is absent, off,
+    /// or has nothing playing. The view reads it for the idle strip and
+    /// the card's transport row.
+    private(set) var islandMedia: AlcoveMedia?
+    /// The raw hover state, kept separately from `islandExpanded` so a
+    /// cursor that arrives during a capsule still lands its expand when
+    /// the capsule steps down.
+    private var hoverHeld = false
+    /// The frame last asked of the window — `reconcile` re-runs on every
+    /// sessions doc, and a no-change applyFrame would snap an in-flight
+    /// morph (the capsule slide-in dies on the doc that follows its
+    /// event). Same target, no re-apply.
+    @ObservationIgnored private var desiredFrame: NSRect?
+    /// The capsule decisions — pure, in `AlcoveCapsuleQueue`; the toy
+    /// only owns the timers that run them.
+    @ObservationIgnored private var capsuleQueue = AlcoveCapsuleQueue()
+    /// The pending capsule timer — the show-delay gap or the 2.4 s life.
+    @ObservationIgnored private var capsuleWork: DispatchWorkItem?
+    /// The Now Playing source; exists only while the island is ours,
+    /// shown, and `mediaEnabled`. A parked island holds no listener.
+    @ObservationIgnored private var mediaMonitor: AlcoveMediaMonitor?
     @ObservationIgnored private var island: AlcoveIslandWindow?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
+
+    /// The island's three faces on the same window.
+    private enum AlcoveIslandFace { case idle, notice, expanded }
 
     init(core: CoreModel, store: ToysStore) {
         self.core = core
@@ -211,23 +238,45 @@ final class AlcoveToy: Toy {
     /// The hover path: grow while the cursor is over the capsule, shrink
     /// when it leaves. "Grow on hover" off still lets the *shrink* half
     /// through — otherwise a capsule expanded when the toggle flipped
-    /// could never collapse.
+    /// could never collapse. A showing notification capsule owns the
+    /// island, so the hover is only remembered then — it lands as an
+    /// expand when the capsule steps down.
     func setHovered(_ hovering: Bool) {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled else { return }
+        hoverHeld = hovering
+        guard activeCapsule == nil else { return }
         let want = hovering && s.expandOnHover
         guard want != islandExpanded else { return }
         islandExpanded = want
-        if let frame = islandFrame(expanded: want) {
-            let animated = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            island?.applyFrame(frame, animated: animated)
-        }
+        reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
     }
 
-    /// The island's frame for its current face: centred on the notch
-    /// slot, top edge pinned to the screen's top (or floating a few
-    /// points under it on a notch-less screen).
-    private func islandFrame(expanded: Bool) -> NSRect? {
+    /// The face the window should wear right now: a capsule beats hover,
+    /// hover beats idle.
+    private var currentFace: AlcoveIslandFace {
+        if activeCapsule != nil { return .notice }
+        return islandExpanded ? .expanded : .idle
+    }
+
+    /// Resize the window to `face`'s frame — the island morphs in place;
+    /// there is never a second panel. A request already in flight is not
+    /// re-issued: the second applyFrame would snap the ease.
+    private func reframe(_ face: AlcoveIslandFace, animated: Bool) {
+        guard let frame = islandFrame(face: face) else { return }
+        guard frame != desiredFrame else { return }
+        desiredFrame = frame
+        island?.applyFrame(frame, animated: animated)
+    }
+
+    private func reframeCurrent(animated: Bool) {
+        reframe(currentFace, animated: animated)
+    }
+
+    /// The island's frame for a face: centred on the notch slot, top
+    /// edge pinned to the screen's top (or floating a few points under
+    /// it on a notch-less screen).
+    private func islandFrame(face: AlcoveIslandFace) -> NSRect? {
         _ = displayVersion
         guard let screen = ScreenBarGeometry.preferredScreen() else { return nil }
         let slot = AlcoveIslandLayout.slot(left: screen.auxiliaryTopLeftArea,
@@ -235,23 +284,37 @@ final class AlcoveToy: Toy {
         let depth = ScreenBarGeometry.notchDepth(of: screen)
         let centerX = slot?.centerX ?? screen.frame.midX
         let size: CGSize
-        if expanded {
+        switch face {
+        case .expanded:
             let summary = islandSummary
             size = CGSize(width: AlcoveIslandLayout.expandedWidth,
                           height: AlcoveIslandLayout.expandedHeight(
                               notchDepth: depth,
                               rows: min(summary.rows.count, AlcoveIsland.rowLimit),
                               meters: islandMeters.count,
-                              overflow: summary.rows.count > AlcoveIsland.rowLimit))
-        } else {
+                              overflow: summary.rows.count > AlcoveIsland.rowLimit,
+                              media: cardMedia != nil))
+        case .notice:
+            size = AlcoveIslandLayout.noticeSize(slotWidth: slot?.width ?? 0,
+                                                 notchDepth: depth)
+        case .idle:
             size = AlcoveIslandLayout.idleSize(
                 slotWidth: slot?.width ?? 0, notchDepth: depth,
-                contentWidth: AlcoveIsland.idleContentWidth(islandSummary))
+                contentWidth: AlcoveIsland.idleContentWidth(islandSummary, media: idleMedia))
         }
         return AlcoveIslandLayout.frame(
             screenFrame: screen.frame, centerX: centerX, size: size,
             topInset: slot == nil ? AlcoveIslandLayout.floatingTopInset : 0)
     }
+
+    /// The media the idle capsule draws — nil when the user switched
+    /// Now Playing off, so the strip and its width vanish together.
+    private var idleMedia: AlcoveMedia? {
+        settings.mediaEnabled ? islandMedia : nil
+    }
+
+    /// The card's transport row follows the same switch.
+    private var cardMedia: AlcoveMedia? { idleMedia }
 
     /// One place that reads the settings and makes the panel match:
     /// ordered in and framed while the island is ours, enabled and shown;
@@ -259,24 +322,188 @@ final class AlcoveToy: Toy {
     private func reconcile() {
         let s = settings
         guard s.enabled, s.provider == .jrbar, s.islandEnabled,
-              let frame = islandFrame(expanded: islandExpanded) else {
+              let frame = islandFrame(face: currentFace) else {
             parkIsland()
             return
         }
         if island == nil { island = AlcoveIslandWindow(toy: self) }
-        island?.applyFrame(frame, animated: false)
+        if desiredFrame != frame {
+            desiredFrame = frame
+            island?.applyFrame(frame, animated: false)
+        }
         if island?.isVisible != true {
             island?.orderFrontRegardless()
         }
         islandVisible = true
+        syncMediaMonitor()
     }
 
     /// Ordered out and collapsed. The window object stays — a re-show is
-    /// a frame, not a rebuild — but nothing in it ticks while hidden.
+    /// a frame, not a rebuild — but nothing in it ticks while hidden:
+    /// the capsule timers die and the media listener lets go.
     private func parkIsland() {
         islandExpanded = false
+        hoverHeld = false
+        activeCapsule = nil
+        capsuleWork?.cancel()
+        capsuleWork = nil
+        capsuleQueue.clear()
+        desiredFrame = nil
         islandVisible = false
         island?.orderOut(nil)
+        syncMediaMonitor()
+    }
+
+    // MARK: Event capsules
+
+    /// `EventCoordinator.apply` hands every daemon event here, next to
+    /// the confetti call. `AlcoveEventPolicy` decides whether it earns a
+    /// capsule; the queue's cooldown keeps a burst of asks from strobing
+    /// the notch.
+    func noteEvent(_ event: CoreEvent) {
+        let s = settings
+        guard s.enabled, s.provider == .jrbar, s.islandEnabled,
+              s.capsuleNotifications, islandVisible else { return }
+        let session = event.session.flatMap { core.state?.session(withID: $0) }
+        guard let notice = AlcoveEventPolicy.notice(for: event, session: session,
+                                                    kinds: s.capsuleKinds) else { return }
+        switch capsuleQueue.offer(notice, at: Date()) {
+        case .now: showCurrentCapsule()
+        case .after(let delay): scheduleCapsuleShow(after: delay)
+        case .queued, .suppressed: break
+        }
+    }
+
+    /// Draw `capsuleQueue.current` as the island's face and arm its life
+    /// timer. A capsule outranks the expanded card — the card folds away
+    /// first and the remembered hover decides what comes back.
+    private func showCurrentCapsule() {
+        guard capsuleQueue.current != nil, islandVisible else { return }
+        if islandExpanded { islandExpanded = false }
+        activeCapsule = capsuleQueue.current
+        reframe(.notice, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        capsuleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.finishCapsule() }
+        }
+        capsuleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + AlcoveCapsuleQueue.life,
+                                      execute: work)
+    }
+
+    /// The gap between two capsules: nothing drawn yet, `current` already
+    /// picked — this is the timer that draws it.
+    private func scheduleCapsuleShow(after delay: TimeInterval) {
+        capsuleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.showCurrentCapsule() }
+        }
+        capsuleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// The shown capsule's life ended: the queue promotes whatever was
+    /// waiting (after the minimum gap), or the island settles back to
+    /// whatever the cursor currently wants — idle, or the deferred
+    /// expand a mid-capsule hover earned.
+    private func finishCapsule() {
+        capsuleWork = nil
+        switch capsuleQueue.finish(at: Date()) {
+        case .idle:
+            activeCapsule = nil
+            settleToRest()
+        case .now:
+            showCurrentCapsule()
+        case .after(let delay, _):
+            activeCapsule = nil
+            settleToRest()
+            scheduleCapsuleShow(after: delay)
+        }
+    }
+
+    /// A swipe down on the island. "Stop" rather than "next": the shown
+    /// capsule AND anything waiting behind it are dropped. The swipe is
+    /// a dismissal — the held cursor must not pop the card right back
+    /// open where the capsule was.
+    func dismissCapsule() {
+        guard activeCapsule != nil || capsuleQueue.current != nil else { return }
+        capsuleWork?.cancel()
+        capsuleWork = nil
+        capsuleQueue.cancel(at: Date())
+        activeCapsule = nil
+        hoverHeld = false
+        settleToRest()
+    }
+
+    /// Back to the face the cursor wants: the remembered hover, shrunk
+    /// to idle when it left during the capsule.
+    private func settleToRest() {
+        let want = hoverHeld && settings.expandOnHover
+        if islandExpanded != want { islandExpanded = want }
+        reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+    }
+
+    // MARK: Now Playing
+
+    /// The monitor lives exactly as long as the island is shown with
+    /// `mediaEnabled` on; `reconcile`/`parkIsland` both land here.
+    private func syncMediaMonitor() {
+        let want = islandVisible && settings.mediaEnabled
+        if want {
+            if mediaMonitor == nil {
+                let monitor = AlcoveMediaMonitor()
+                monitor.onChange = { [weak self] media in self?.noteMedia(media) }
+                mediaMonitor = monitor
+            }
+            mediaMonitor?.start()
+        } else {
+            mediaMonitor?.stop()
+            mediaMonitor = nil
+            if islandMedia != nil {
+                islandMedia = nil
+                reframeCurrent(animated: false)
+            }
+        }
+    }
+
+    /// A now-playing refresh landed: keep the media, and reframe — the
+    /// strip changes the idle width and the card's height. Capsule faces
+    /// don't measure media, so a mid-capsule update just waits.
+    private func noteMedia(_ media: AlcoveMedia?) {
+        guard media != islandMedia else { return }
+        islandMedia = media
+        if currentFace != .notice {
+            reframeCurrent(animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        }
+    }
+
+    /// The card's transport buttons and the swipe gestures land here.
+    func mediaTogglePlayPause() { mediaMonitor?.send(.togglePlayPause) }
+    func mediaNextTrack() { mediaMonitor?.send(.nextTrack) }
+    func mediaPreviousTrack() { mediaMonitor?.send(.previousTrack) }
+
+    // MARK: Swipe
+
+    /// A two-finger swipe on the island, read off the hosting view's
+    /// scroll events. Horizontal rides the media transport — only while
+    /// the island is actually showing a track, so a stray swipe never
+    /// pokes a player we aren't displaying. Down dismisses the capsule,
+    /// or folds the open card back to the capsule.
+    func islandSwipe(_ swipe: AlcoveIslandSwipe) {
+        switch swipe {
+        case .left:
+            if islandMedia != nil { mediaNextTrack() }
+        case .right:
+            if islandMedia != nil { mediaPreviousTrack() }
+        case .down:
+            if activeCapsule != nil || capsuleQueue.current != nil {
+                dismissCapsule()
+            } else if islandExpanded {
+                hoverHeld = false
+                islandExpanded = false
+                reframe(.idle, animated: !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            }
+        }
     }
 
     /// One observation pass over every input, re-armed on each change —
@@ -372,6 +599,28 @@ private struct AlcoveControlsView: View {
             Toggle(isOn: toy.bind(\.showUsage)) {
                 SettingLabel(title: "Usage meters",
                              subtitle: "Per-provider quota bars inside the card.")
+            }
+            Toggle(isOn: toy.bind(\.capsuleNotifications)) {
+                SettingLabel(title: "Event capsules",
+                             subtitle: "The island briefly morphs into a notice when an ask opens, a run ends or a quota resets.")
+            }
+            if toy.settings.capsuleNotifications {
+                Toggle(isOn: toy.bind(\.capsuleKinds.ask)) {
+                    SettingLabel(title: "Asks", subtitle: "A session opens a question.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.completed)) {
+                    SettingLabel(title: "Completions", subtitle: "An agent finishes a run.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.failed)) {
+                    SettingLabel(title: "Failures", subtitle: "A session stops on an error.")
+                }
+                Toggle(isOn: toy.bind(\.capsuleKinds.quotaReset)) {
+                    SettingLabel(title: "Quota resets", subtitle: "A provider's usage window refills.")
+                }
+            }
+            Toggle(isOn: toy.bind(\.mediaEnabled)) {
+                SettingLabel(title: "Now Playing",
+                             subtitle: "The capsule carries the current track; the card gains transport buttons.")
             }
         case .alcove:
             if let settings = toy.store?.settings {

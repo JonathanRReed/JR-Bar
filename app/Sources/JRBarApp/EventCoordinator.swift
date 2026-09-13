@@ -93,6 +93,10 @@ final class EventCoordinator {
         // itself; the toy decides whether it is on and picks the
         // provider's colour from the same table the rest of the app uses.
         toys?.confetti.noteEvent(event)
+        // The island turns the events that matter into its transient
+        // capsules — its own policy and cooldown decide whether this one
+        // shows.
+        toys?.alcove.noteEvent(event)
     }
 
     /// The daemon went away: nothing is escalating any more.

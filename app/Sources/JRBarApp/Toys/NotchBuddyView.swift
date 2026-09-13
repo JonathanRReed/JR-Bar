@@ -27,6 +27,7 @@ struct NotchBuddyView: View {
             // One reduce per tick: the pose, the badge, the tints, the
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
+            let dress = dragDress(at: context.date)
             BuddyFigure(
                 character: toy.buddyCharacter,
                 mood: summary.mood,
@@ -44,6 +45,9 @@ struct NotchBuddyView: View {
                 crumbAge: age(of: toy.crumbAt, at: context.date)
             )
             .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
+            .scaleEffect(x: dress.squash.width, y: dress.squash.height, anchor: .bottom)
+            .rotationEffect(.degrees(dress.tilt), anchor: .center)
+            .offset(y: dress.lift)
             .help(summary.statusLine)
         }
         .frame(width: 18, height: 18)
@@ -53,8 +57,36 @@ struct NotchBuddyView: View {
         .contentShape(Rectangle())
         .onTapGesture { toy.tapped() }
         .accessibilityLabel("Notch Buddy, \(toy.buddyName)")
-        .accessibilityHint("Tap for a trick. While an ask is open, a tap opens the session asking.")
+        .accessibilityHint("Tap for a trick, drag to park it anywhere, right-click for the menu. While an ask is open, a tap opens the session asking.")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// The carry's dress: held, the buddy leans toward the travel
+    /// direction with its feet off the ground (the tilt settles on a
+    /// short time constant while the cursor parks); put down, it lands
+    /// with a small squash. Reduce Motion gets a plain reposition.
+    private func dragDress(at now: Date) -> (tilt: Double, lift: Double, squash: CGSize) {
+        guard !reduceMotion else { return (0, 0, CGSize(width: 1, height: 1)) }
+        var tilt = 0.0
+        var lift = 0.0
+        var squash = CGSize(width: 1, height: 1)
+        if toy.isDragged {
+            let settle = BuddyPlacement.tiltDecay(age: now.timeIntervalSince(toy.dragMovedAt ?? now))
+            tilt = toy.dragTilt * settle
+            lift = -1.8
+            let s = abs(tilt) / 14
+            squash = CGSize(width: 1 - 0.05 * s, height: 1 + 0.06 * s)
+        }
+        if let landedAt = toy.landedAt {
+            let age = now.timeIntervalSince(landedAt)
+            if age >= 0, age < 0.34 {
+                let s = sin(age / 0.34 * .pi)
+                squash.width *= 1 + 0.11 * s
+                squash.height *= 1 - 0.18 * s
+                lift += 0.4 * s
+            }
+        }
+        return (tilt, lift, squash)
     }
 
     /// The count pill by the buddy's feet while two or more sessions are

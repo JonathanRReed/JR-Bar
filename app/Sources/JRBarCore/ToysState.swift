@@ -135,24 +135,72 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     }
 }
 
+/// A remembered point in screen coordinates (AppKit's bottom-left
+/// origin, like `NSScreen.frame`). The floating buddy's panel centres
+/// on it. A spot is only as good as both halves: a missing, mistyped or
+/// non-finite one drops the whole thing, and the buddy docks.
+public struct BuddySpot: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+
+    public init(_ point: CGPoint) {
+        self.init(x: Double(point.x), y: Double(point.y))
+    }
+
+    public var point: CGPoint { CGPoint(x: x, y: y) }
+
+    private enum CodingKeys: String, CodingKey { case x, y }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let x = (try? c.decodeIfPresent(Double.self, forKey: .x)) ?? nil
+        let y = (try? c.decodeIfPresent(Double.self, forKey: .y)) ?? nil
+        guard let x, let y, x.isFinite, y.isFinite else {
+            throw DecodingError.dataCorruptedError(forKey: .x, in: c,
+                                                   debugDescription: "a spot needs two finite numbers")
+        }
+        self.x = x
+        self.y = y
+    }
+}
+
 /// Notch Buddy: the creature in the HUD panel. `character` is the
 /// `BuddyCharacter` raw value, stored as a plain string so a file from a
 /// newer build keeps its choice; anything unrecognised reads as `.dot`.
 /// `buddyName` is what the user calls it — blank keeps the character's
 /// own `defaultName`. `care` is the Tamagotchi-lite log: pets, treats
-/// and eaten crumbs.
+/// and eaten crumbs. `freePosition` is where a drag parked it on the
+/// screen — nil keeps it docked under the notch — `tucked` hides it
+/// until the next session event or a card re-enable, and `showCaption`
+/// is the quiet "what it's doing" line under the floating pill.
 public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var character: String
     public var buddyName: String
     public var care: BuddyCare
+    /// Where the free-floating buddy's panel centres; nil = docked.
+    public var freePosition: BuddySpot?
+    /// Hidden until the next session event or a re-enable from the card.
+    public var tucked: Bool
+    /// The caption under the floating buddy.
+    public var showCaption: Bool
 
     public init(enabled: Bool = false, character: String = "dot",
-                buddyName: String = "", care: BuddyCare = BuddyCare()) {
+                buddyName: String = "", care: BuddyCare = BuddyCare(),
+                freePosition: BuddySpot? = nil, tucked: Bool = false,
+                showCaption: Bool = true) {
         self.enabled = enabled
         self.character = character
         self.buddyName = buddyName
         self.care = care
+        self.freePosition = freePosition
+        self.tucked = tucked
+        self.showCaption = showCaption
     }
 
     /// The stored name as a `BuddyCharacter`; unknown strings (a newer
@@ -170,7 +218,7 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, character, buddyName, care
+        case enabled, character, buddyName, care, freePosition, tucked, showCaption
     }
 
     public init(from decoder: any Decoder) throws {
@@ -179,6 +227,11 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         character = (try? c.decodeIfPresent(String.self, forKey: .character)) ?? "dot"
         buddyName = (try? c.decodeIfPresent(String.self, forKey: .buddyName)) ?? ""
         care = (try? c.decodeIfPresent(BuddyCare.self, forKey: .care)) ?? BuddyCare()
+        // A spot that fails its own decode (a missing or mistyped half)
+        // reads as docked rather than stranding the pill off-screen.
+        freePosition = (try? c.decodeIfPresent(BuddySpot.self, forKey: .freePosition)) ?? nil
+        tucked = (try? c.decodeIfPresent(Bool.self, forKey: .tucked)) ?? false
+        showCaption = (try? c.decodeIfPresent(Bool.self, forKey: .showCaption)) ?? true
     }
 }
 
@@ -494,19 +547,31 @@ public struct AlcoveSettings: Codable, Equatable, Sendable {
     public var showUsage: Bool
     /// Hover grows the capsule into the card.
     public var expandOnHover: Bool
+    /// Daemon events briefly morph the island into a notification
+    /// capsule (asks, finishes, failures, quota resets).
+    public var capsuleNotifications: Bool
+    /// Now Playing in the idle capsule and the card's transport row.
+    public var mediaEnabled: Bool
+    /// Which event kinds may raise a capsule.
+    public var capsuleKinds: AlcoveCapsuleKinds
 
     public init(enabled: Bool = false, provider: AlcoveProvider = .jrbar,
                 islandEnabled: Bool = true, showUsage: Bool = true,
-                expandOnHover: Bool = true) {
+                expandOnHover: Bool = true, capsuleNotifications: Bool = true,
+                mediaEnabled: Bool = true, capsuleKinds: AlcoveCapsuleKinds = AlcoveCapsuleKinds()) {
         self.enabled = enabled
         self.provider = provider
         self.islandEnabled = islandEnabled
         self.showUsage = showUsage
         self.expandOnHover = expandOnHover
+        self.capsuleNotifications = capsuleNotifications
+        self.mediaEnabled = mediaEnabled
+        self.capsuleKinds = capsuleKinds
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, provider, islandEnabled, showUsage, expandOnHover
+        case capsuleNotifications, mediaEnabled, capsuleKinds
     }
 
     public init(from decoder: any Decoder) throws {
@@ -516,6 +581,9 @@ public struct AlcoveSettings: Codable, Equatable, Sendable {
         islandEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .islandEnabled)) ?? true
         showUsage = (try? c.decodeIfPresent(Bool.self, forKey: .showUsage)) ?? true
         expandOnHover = (try? c.decodeIfPresent(Bool.self, forKey: .expandOnHover)) ?? true
+        capsuleNotifications = (try? c.decodeIfPresent(Bool.self, forKey: .capsuleNotifications)) ?? true
+        mediaEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .mediaEnabled)) ?? true
+        capsuleKinds = (try? c.decodeIfPresent(AlcoveCapsuleKinds.self, forKey: .capsuleKinds)) ?? AlcoveCapsuleKinds()
     }
 }
 

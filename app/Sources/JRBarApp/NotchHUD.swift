@@ -8,6 +8,12 @@ final class NotchHUD {
     static let life: TimeInterval = 2.0
 
     private let panel = NotchHUDPanel()
+    /// The buddy's other home: its own pill when a drag parks it on the
+    /// screen. Toasts never touch it — they always take `panel` at the
+    /// notch, so a toast can never fight the floating buddy for a panel.
+    private let buddyPanel = BuddyPanel()
+    /// The shared press-and-carry for whichever panel the buddy is in.
+    private let buddyDrag = BuddyDragController()
     private var hide: DispatchWorkItem?
     /// Where the band sits, so the pill hangs a little below it; nil
     /// falls back to the top centre of the notched screen.
@@ -20,13 +26,19 @@ final class NotchHUD {
     var buddy: NotchBuddyToy? {
         didSet {
             buddy?.onVisibilityChange = { [weak self] in self?.syncBuddy() }
+            buddy?.dockPointProvider = { [weak self] in self?.dockPoint() ?? .zero }
             panel.buddy = buddy
+            buddyPanel.host(buddy)
+            buddyDrag.toy = buddy
             syncBuddy()
         }
     }
 
     init(anchorRect: @escaping @MainActor () -> NSRect?) {
         self.anchorRect = anchorRect
+        panel.buddyDrag = buddyDrag
+        buddyPanel.buddyDrag = buddyDrag
+        buddyDrag.dockPoint = { [weak self] in self?.dockPoint() ?? .zero }
     }
 
     func show(_ text: String, symbol: String = "cable.connector") {
@@ -38,11 +50,26 @@ final class NotchHUD {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.life, execute: work)
     }
 
+    /// Where the docked pill centres, in screen coordinates — the drop
+    /// that snaps it home and "Float free"'s starting spot.
+    private func dockPoint() -> CGPoint {
+        let band = anchorRect() ?? Self.fallbackAnchor()
+        return CGPoint(x: band.midX, y: band.minY - 24)
+    }
+
     private func syncBuddy() {
-        if buddy?.isOn == true {
-            panel.presentBuddy(under: anchorRect() ?? Self.fallbackAnchor())
-        } else {
+        guard let buddy, buddy.isOn else {
+            buddyPanel.dismiss()
             panel.dismissBuddy()
+            return
+        }
+        if let spot = buddy.freeSpot {
+            // Parked on screen: the HUD pill belongs to toasts alone.
+            panel.dismissBuddy()
+            buddyPanel.present(centeredAt: spot.point)
+        } else {
+            buddyPanel.dismiss()
+            panel.presentBuddy(under: anchorRect() ?? Self.fallbackAnchor())
         }
     }
 
@@ -56,7 +83,7 @@ final class NotchHUD {
 
 @MainActor
 final class NotchHUDPanel: NSPanel {
-    private let hosting: NSHostingView<NotchHUDView>
+    private let hosting: BuddyHostingView<NotchHUDView>
     private let backdrop: NSView
     private let model = NotchHUDModel()
     /// The band the pill last hung under, so a toast that is handing back
@@ -69,8 +96,15 @@ final class NotchHUDPanel: NSPanel {
         set { model.buddy = newValue }
     }
 
+    /// The press-and-carry the pill's mouse belongs to while the buddy
+    /// holds the panel. A toast cancels it — the toast always wins.
+    var buddyDrag: BuddyDragController? {
+        get { hosting.buddyDrag }
+        set { hosting.buddyDrag = newValue }
+    }
+
     init() {
-        hosting = NSHostingView(rootView: NotchHUDView(model: model))
+        hosting = BuddyHostingView(rootView: NotchHUDView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
         let plain = ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil
         if !plain {
@@ -118,6 +152,9 @@ final class NotchHUDPanel: NSPanel {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
     func present(text: String, symbol: String, under band: NSRect) {
+        // A toast takes the panel even out from under a carry — the
+        // buddy stays wherever the settings say it lives.
+        buddyDrag?.cancel()
         model.text = text
         model.symbol = symbol
         model.toastActive = true
@@ -150,6 +187,8 @@ final class NotchHUDPanel: NSPanel {
     /// is a pet: it takes the clicks a toast would let fall through.
     func presentBuddy(under band: NSRect) {
         guard !model.toastActive else { return }
+        // A carry owns the frame until the drop lands it.
+        guard buddyDrag?.inProgress != true else { return }
         ignoresMouseEvents = false
         lastBand = band
         hosting.rootView = NotchHUDView(model: model)
@@ -174,9 +213,11 @@ final class NotchHUDPanel: NSPanel {
     }
 
     func dismiss() {
-        // A buddy that is on keeps the panel: the toast steps away and
-        // the pill shrinks back to the creature instead of disappearing.
-        if model.buddy?.isOn == true, let band = lastBand {
+        // A docked buddy that is on keeps the panel: the toast steps
+        // away and the pill shrinks back to the creature instead of
+        // disappearing. A free buddy lives in its own panel — this one
+        // just fades.
+        if model.buddy?.isOn == true, model.buddy?.isFree == false, let band = lastBand {
             model.toastActive = false
             presentBuddy(under: band)
             return

@@ -424,7 +424,7 @@ public enum AquariumModel {
                              depth: 0.38 + unit(b, 16) * 0.16,
                              scale: 0.80 + unit(b, 32) * 0.5))
         }
-        let kelpCount = 3 + Int((counts >> 4) % 4)
+        let kelpCount = 2 + Int((counts >> 4) % 3)
         for i in 0..<kelpCount {
             let b = bits("kelp-\(i)")
             out.append(piece(.kelp, "kelp-\(i)",

@@ -183,12 +183,14 @@ public enum AlcoveIslandLayout {
     }
 
     /// The expanded card's window height: the notch clearance (the card's
-    /// content starts below the hardware) plus the rows, the meters and
-    /// the paddings — all fixed heights, so the view and the frame agree
-    /// to the point.
-    public static func expandedHeight(notchDepth: CGFloat, rows: Int, meters: Int, overflow: Bool) -> CGFloat {
+    /// content starts below the hardware) plus the media row, the session
+    /// rows, the meters and the paddings — all fixed heights, so the view
+    /// and the frame agree to the point.
+    public static func expandedHeight(notchDepth: CGFloat, rows: Int, meters: Int,
+                                      overflow: Bool, media: Bool = false) -> CGFloat {
         let inset = notchDepth > 0 ? notchDepth + expandedNotchInset : 8
         var card: CGFloat = 20                              // header line
+        if media { card += 40 }                             // Now Playing row + divider
         card += CGFloat(max(0, rows)) * 22                  // session rows
         if overflow { card += 18 }                          // "+N more"
         if meters > 0 { card += 10 + CGFloat(meters) * 18 } // divider + meters

@@ -49,7 +49,10 @@ public enum FoldStyle: String { case tilt, dusk, fog }          // perspective o
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
 public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0 }
 public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
-                                   buddyName: String = ""; care: BuddyCare }
+                                   buddyName: String = ""; care: BuddyCare;
+                                   freePosition: BuddySpot?; tucked: Bool = false;
+                                   showCaption: Bool = true }
+public struct BuddySpot { x: Double; y: Double }                    // parked screen point
 public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime,
                                      axolotl, crab, mushroom, ufo }
 public struct BuddyCare { lastInteractionAt: Date?; petCount: Int; treatsGiven: Int; crumbsEaten: Int }
@@ -65,7 +68,10 @@ public enum ConfettiPalette: String { case provider, toys, rainbow }
 public enum ConfettiShapes: String { case mixed, streamers, flecks }
 public struct AlcoveSettings { enabled: Bool = false; provider: AlcoveProvider = .jrbar;
                                islandEnabled: Bool = true; showUsage: Bool = true;
-                               expandOnHover: Bool = true }
+                               expandOnHover: Bool = true; capsuleNotifications: Bool = true;
+                               mediaEnabled: Bool = true; capsuleKinds: AlcoveCapsuleKinds }
+public struct AlcoveCapsuleKinds { ask: Bool = true; completed: Bool = true;
+                                   failed: Bool = true; quotaReset: Bool = true }
 public enum AlcoveProvider: String { case jrbar, alcove, boringNotch }  // who owns the notch
 public struct ExternalToyApp: Identifiable { id: String /* bundle id */; name: String; launchWithJRBar: Bool }
 ```
@@ -206,9 +212,11 @@ antigravity & openclaw as spotted puffers, hermes as an upright
 seahorse, opencode/kiro/t3code as flowing-finned bettas, devin as a
 tang, cursor & pi as little tetras; anything new is a minnow
 (`FishSpecies` in `AquariumModel.swift`, so the mapping is testable).
-Each fish keeps its tapered body, translucent tail that articulates,
-gill line and a proper eye, in the provider's colour with the session
-label in a small dark chip under it.
+Each fish keeps its tapered body, a translucent tail that articulates
+a beat behind the head, swept dorsal and pectoral fins, a gill line,
+a pale belly countershade and a proper eye with a catchlight, in the
+provider's colour with the session label on a small floating tag
+tethered under it.
 
 Sub-agent sessions join as fry — about half size, the school's
 species — orbiting loosely around their parent's fish, up to eight a
@@ -220,9 +228,11 @@ little, and a parent that sinks or drifts off takes its whole school
 with it.
 
 The tank is dressed like a real one: a seeded set from
-`AquariumModel.decorSet` — clusters of tapered kelp ribbons swaying
-behind the fish and two dark near-glass fronds drifting in front for
-parallax, sea-grass tufts, shaded pebble piles, a coral branch or a
+`AquariumModel.decorSet` — clusters of broad ruffled kelp blades
+swaying in a slow S behind the fish (narrow root, full translucent
+mid-blade, lit margin) and two dark near-glass fronds drifting in
+front for parallax, sea-grass tufts, shaded pebble piles, a coral
+branch or a
 grooved brain coral, scattered shells, a starfish, sometimes a sunken
 bottle, and a treasure chest with brass bands that burps the
 occasional bubble — so the layout is the same every launch. Every
@@ -234,8 +244,9 @@ multi-stop gradient from a bright green surface band to a deep indigo
 floor, five soft god rays breathing a couple of degrees, animated
 caustic bands and a bright meniscus at the waterline, plankton motes
 in two parallax layers, wobbling ambient bubbles off the chest and
-the sand, a layered dune floor with seeded grains, a corner vignette
-and a faint diagonal glass highlight.
+the sand, a dune floor of overlapping rounded humps with a
+light-catching crest, faint ripple contours down the face and seeded
+grains, a corner vignette and a faint diagonal glass highlight.
 
 Deeper lanes hold smaller, dimmer, slower fish. Fish ease into curved
 U-turns at the glass instead of mirror-flipping, and new sessions swim
@@ -316,6 +327,25 @@ crumb it "eats" with a "+1". A day without a pat droops it — the
 `BuddyCare` log in `app-state.json` is the whole mechanism; `mood(at:)`
 is the only read.
 
+And it is not nailed to the notch. Click-hold past ~4pt on the pill
+lifts it out of the slot — it dangles from the cursor, tipped toward
+the travel direction with its feet up — and a drop parks it anywhere on
+screen in its own little panel (`BuddyPanel`, a `NotchHUDPanel`
+sibling: borderless, nonactivating, status-bar-level, mouse-accepting
+so it stays draggable). The parked point persists as
+`NotchBuddySettings.freePosition` and clamps back into the visible
+frame on restore; a drop back on the notch slot, or the menu's "Dock at
+the notch", sends it home. Toasts never fight it: docked, the buddy
+still steps aside for a toast; parked, the toast keeps the notch panel
+to itself. Right-click (or a long press) opens its menu — Pet it, Give
+treat, Rename…, Change character →, Open the asking session while one
+is up, Dock/Float free, Show caption, Tuck away. Tucked is a nap: off
+the screen until the next session event or a card re-enable. Parked, it
+can wear a quiet one-line caption naming what it is watching —
+"Claude · rename-the-fish — working", or "… — waiting on you" — the
+`BuddyFocus` pick: an open ask first, then failed, then the freshest
+working session, a done row only when nothing live remains.
+
 The skeleton is a soft body, two pupils under lids, a mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
 animation. Pacing is an eased walk with a per-step bob and a pause at
@@ -333,9 +363,11 @@ the working provider's accent when one provider owns the work
 (`ProviderStyle.style(for:).accent`); ask stays amber, failed red, the
 hop green.
 
-It must never cover the HUD's toasts: when a toast shows, the buddy
-steps aside. Reduce Motion swaps the moving poses for still ones (the
-blink stays — a shut-eye frame is a pose too). Off by default.
+It must never cover the HUD's toasts: when a toast shows, a docked
+buddy steps aside (a parked one has its own panel and is already out of
+the way). Reduce Motion swaps the moving poses for still ones (the
+blink stays — a shut-eye frame is a pose too) and the drag is a plain
+carry: no dangle, no landing squash. Off by default.
 
 ## Confetti (native)
 
@@ -419,6 +451,31 @@ fact live under the Alcove provider, where they're meaningful.
 `AlcoveIsland` in JRBarCore owns the pure summary/meter/layout math;
 `AlcoveIslandTests` covers it.
 
+Three Alcove-parity behaviours ride the same window. **Event capsules**
+(`capsuleNotifications`, per-kind switches in `capsuleKinds`): an
+`ask_opened` / `completed` / `failed` / `quota_reset` event morphs the
+island into a wide notice capsule — the kind's glyph and tint (amber
+ask, green done, red failed, the provider's accent for a reset) over a
+"Claude · rename-the-fish" / "needs you" line — for ~2.4 s, then the
+island settles back. `AlcoveEventPolicy` shapes the notice and
+`AlcoveCapsuleQueue` owns the pipeline — one showing, at most one
+waiting (newest wins), a 30 s cooldown per kind+session, a 1.2 s
+minimum gap — all pure and covered by `AlcoveEventsTests`; the toy only
+runs the timers. A capsule outranks the card: an open card folds away
+for it and a hover during one lands as the expand when it steps down.
+**Now Playing** (`mediaEnabled`): while a track is up, the idle capsule
+carries the artwork, "Title — Artist" and three visualizer bars
+(animated only while actually playing — dressing, not a spectrum), and
+the card gains a transport row; the data path is the private
+MediaRemote.framework through dlopen + dlsym in `MediaRemote.swift` —
+absent framework or empty info simply means no strip, never an error.
+**Swipes**: a horizontal two-finger swipe on the capsule is
+next/previous while media shows; a downward swipe dismisses the capsule
+or folds the card — read off the hosting view's scroll phases,
+normalised for the user's scroll-direction setting so it means the same
+flick either way. Reduce Motion swaps the morph for a quiet crossfade;
+a parked island holds no listener and runs no clock.
+
 Blurb: "A notch island: who's working, up in the notch. Alcove or
 Boring Notch can draw it instead."
 
@@ -454,7 +511,12 @@ marketing words. Examples:
   decode and stay stable, unknown names resolve to Dot
   (`JRBarCoreTests/BuddyCharacterTests.swift`); the roster's pose render
   proof writes PNGs to `/tmp/buddy-proof`
-  (`JRBarAppTests/BuddyRenderProofTests.swift`).
+  (`JRBarAppTests/BuddyRenderProofTests.swift`). The roaming half is
+  pure and pinned too: `BuddyFocus` picks the watched session and
+  `BuddyPlacement` owns the drag threshold, dangle tilt, screen clamp
+  and dock-snap (`JRBarCoreTests/BuddyPresenceTests.swift`); the free
+  spot's persist, tuck/wake, menu contents and drag bookkeeping live in
+  `JRBarAppTests/BuddyRoamingTests.swift`.
 - Fold math: `deltaRadians(angle:reference:)` clamps, jitter filter
   accepts/rejects, pause predicate on each safety input (pure functions
   in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`).

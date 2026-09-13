@@ -28,6 +28,36 @@ All notable changes to JR-Bar are documented here.
   Event triggers dedup against a persisted ring so a restart can't
   re-celebrate, and document edges seed a baseline on the first state
   so nothing fires on facts older than the app.
+- Fold's residual judder is gone. Three sources, each measured: an edge
+  timestamped across a 20 ms floor could claim a 500 °/s slam (now
+  capped at a physical 240 °/s); a 1° wobble mid-close snapped the
+  velocity's sign (below 15 °/s it blends weakly instead of reversing);
+  and the first-order ease transmitted every sensor edge's slope step
+  straight to the eye — the displayed delta now rides a critically
+  damped spring that turns slope steps into acceleration and clamps at
+  the physical floor, so the close glides at the sensor's own cadence.
+- The native Alcove island does the real thing now: agent events slide
+  a notification capsule out of the notch — asks, completions, failures
+  and quota resets, each toggleable — queued newest-wins with a 30 s
+  same-source cooldown so a burst never strobes. Now Playing rides the
+  idle capsule (artwork + track line + a live visualizer) via
+  MediaRemote, with transport buttons on the card and Alcove's own
+  gesture: a two-finger swipe left/right skips tracks, a swipe down
+  dismisses the capsule or folds the card away.
+- The buddy can leave the notch. Click-and-hold carries it anywhere on
+  screen — a drop near the notch snaps it home, anywhere else it parks
+  floating on its own glass pill with a dangle-and-squash landing.
+  Right-click, control-click, or hold a press half a second and it
+  menus: pet, treat, rename, change character, open the waiting
+  session, dock/float, caption, or tuck away. The caption names what
+  it's watching — "Claude · rename-the-fish — waiting on you" — and a
+  tucked buddy wakes on the next real event.
+- The Aquarium got its polish pass: kelp is broad translucent blades
+  with lit, ruffled margins instead of ribbons; the floor is overlapping
+  dune humps with a lit crest and ripple contours; fish tails phase-lag
+  behind the head and fins read as fins (the angelfish is a diamond
+  now, not a leaf); and name tags are floating chips on a hairline
+  tether instead of boxes.
 - Notch Buddy is a pet: ten characters on one skeleton (Axolotl, Crab,
   Mushroom and UFO joined the six), a name field with per-character
   defaults, a "Give treat" button that bursts hearts, a tap on the pill
