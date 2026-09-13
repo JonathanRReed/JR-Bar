@@ -82,6 +82,19 @@ def test_decoder_rejects_malformed_reports_and_envelopes_without_retaining_fragm
     assert decoder.pending_bytes == 0
 
 
+def test_decoder_routes_a_null_id_push_as_a_notification():
+    """The live pad's unsolicited pushes carry ``"id": null`` (JSON-RPC
+    allows it); that is nobody's answer, so it must flow as a notification
+    instead of failing the stream as a malformed response."""
+    decoder = RpcStreamDecoder()
+    payload = b'{"id":null,"m":"v.oai.hid","p":{"k":"AG03","act":1}}'
+    messages = decoder.feed(bytes((6, 2, len(payload))) + payload.ljust(61, b"\0"))
+    assert messages == [{"m": "v.oai.hid", "p": {"k": "AG03", "act": 1}}]
+    with pytest.raises(ValueError, match=r"response id \(str\)"):
+        bad = b'{"id":"abc","result":{}}'
+        decoder.feed(bytes((6, 2, len(bad))) + bad.ljust(61, b"\0"))
+
+
 def test_incoming_envelopes_reject_ambiguous_or_extra_fields():
     ambiguous = {"jsonrpc": "2.0", "id": 1, "result": {}, "method": "also-a-response", "params": {}}
     extra = {"jsonrpc": "2.0", "m": "v.oai.hid", "p": {}, "extra": True}

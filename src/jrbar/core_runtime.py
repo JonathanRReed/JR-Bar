@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from . import core_deck
+from . import __version__, core_deck
 from .completion_visibility import END_EVENT_NAMES
 from .core_projection import (
     READ_ONLY_SETTINGS,
@@ -63,7 +63,7 @@ from .core_usage_samples import SAMPLES_FILE_NAME, UsageSampleBuffer
 from .hook_pending import PendingHookDrainer, pending_hook_files
 from .state_paths import default_state_dir
 
-CORE_VERSION: Final = "0.9.3"
+CORE_VERSION: Final = __version__
 HOUSEKEEPING_SECONDS: Final = 1.0
 SUPERVISION_SECONDS: Final = 2.0
 EXTRAS_TTL_SECONDS: Final = 30.0

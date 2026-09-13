@@ -149,7 +149,9 @@ class CreatorMicro2Framer:
             raise ValueError("invalid JSON-RPC 2.0 envelope")
         if "id" in value:
             if not cls._valid_id(value["id"]):
-                raise ValueError("invalid JSON-RPC response id")
+                # Name the shape so a live receipt says what the firmware
+                # actually sent instead of just that it was wrong.
+                raise ValueError(f"invalid JSON-RPC response id ({type(value['id']).__name__})")
             keys = set(value) - {"jsonrpc"}
             conventional = keys in ({"id", "result"}, {"id", "error"})
             firmware = keys in (
@@ -309,6 +311,13 @@ class RpcStreamDecoder:
                         value = json.loads(raw)
                     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
                         raise ValueError("invalid JSON-RPC payload") from exc
+                    # JSON-RPC 2.0 lets a notification carry ``"id": null``,
+                    # and the pad's firmware does on its unsolicited pushes.
+                    # A null id is nobody's answer: drop the key so the
+                    # message routes as a notification instead of failing
+                    # the whole stream as a malformed response.
+                    if isinstance(value, dict) and "id" in value and value["id"] is None:
+                        value = {key: item for key, item in value.items() if key != "id"}
                     CreatorMicro2Framer.validate_incoming(value)
                     messages.append(value)
                     consumed, self._start = index + 1, None
