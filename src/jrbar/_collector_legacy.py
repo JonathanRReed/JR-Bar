@@ -2876,20 +2876,18 @@ def _capped_detail(text: str | None) -> str | None:
     return stripped[: DETAIL_TEXT_CAP - 1] + "\u2026"
 
 
-def _devin_persisted_worker_label(record: HookEvent) -> str | None:
-    """A replayed normalized Devin record has no ``tool_input`` left; the
-    label its start event was persisted with is the sub-agent's title."""
-    if record.provider != "devin" or not record.agent_id:
+def _devin_persisted_label(record: HookEvent, work_id: str | None) -> str | None:
+    """A replayed normalized Devin record has no ``tool_input`` or
+    ``prompt`` left; the label it was persisted with is the name the row
+    earned -- a sub-agent's title, a session's first prompt."""
+    if record.provider != "devin" or not work_id:
         return None
     raw = record.raw
-    if type(raw) is not dict:
+    if type(raw) is not dict or raw.get("provider_work_id") != work_id:
         return None
-    work_id = raw.get("provider_work_id")
     label = raw.get("safe_label")
     if (
-        type(work_id) is str
-        and work_id.startswith("sub-")
-        and type(label) is str
+        type(label) is str
         and label
         and label != f"{provider_label('devin')} {work_id}"
         and label.isprintable()
@@ -2911,13 +2909,15 @@ def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None)
     if record.agent_id:
         short_id = record.agent_id[:8]
         fallback = f"{provider_label(record.provider)} agent {short_id}"
-        display_name = _devin_persisted_worker_label(record) or display_name_for_record(
+        display_name = _devin_persisted_label(record, record.agent_id) or display_name_for_record(
             record, metadata, f"agent {short_id}", fallback
         )
     elif record.session_id:
         short_id = record.session_id[:8]
         fallback = f"{provider_label(record.provider)} session {short_id}"
         display_name = display_name_for_record(record, metadata, short_id, fallback)
+        if display_name == fallback:
+            display_name = _devin_persisted_label(record, record.session_id) or fallback
     else:
         display_name = provider_label(record.provider)
 

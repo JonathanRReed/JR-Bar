@@ -41,6 +41,7 @@ def _devin_event(
     tool_name: str | None = None,
     tool_input: dict[str, object] | None = None,
     tool_response: dict[str, object] | None = None,
+    prompt: str | None = None,
 ) -> HookEvent:
     raw: dict[str, object] = {
         "hook_event_name": event_name,
@@ -53,6 +54,8 @@ def _devin_event(
         raw["tool_input"] = tool_input
     if tool_response is not None:
         raw["tool_response"] = tool_response
+    if prompt is not None:
+        raw["prompt"] = prompt
     return HookEvent(
         provider="devin",
         logged_at=datetime.fromtimestamp(epoch, UTC),
@@ -529,6 +532,158 @@ def test_worker_label_falls_back_when_title_is_missing() -> None:
         status for status in snapshot.statuses if status.is_subagent
     ]
     assert worker_rows == []
+
+
+def test_resume_call_without_title_names_the_worker_by_its_handle() -> None:
+    record = _normalize(
+        _devin_event(
+            "PreToolUse",
+            tool_name="run_subagent",
+            tool_input={"resume": "agent-77"},
+        )
+    )
+
+    assert type(record) is NormalizedProviderRecord
+    assert record.provider_work_id is not None
+    assert record.provider_work_id.value == _expected_worker_id(_SESSION, "agent-77")
+    assert record.safe_label == "agent-77"
+
+
+def test_session_first_prompt_names_the_session_row() -> None:
+    record = _normalize(
+        _devin_event(
+            "UserPromptSubmit",
+            prompt="Fix the tank names\nso the fish read right",
+        )
+    )
+
+    assert type(record) is NormalizedProviderRecord
+    assert record.provider_work_id is not None
+    assert record.provider_work_id.value == _SESSION
+    assert record.parent_work_id is None
+    assert record.safe_label == "Fix the tank names so the fish read right"
+
+
+def test_session_title_field_beats_the_prompt() -> None:
+    record = _normalize(
+        _devin_event(
+            "SessionStart",
+            prompt="ignored prompt text",
+        )
+    )
+    assert type(record) is NormalizedProviderRecord
+    assert record.safe_label == f"Devin {_SESSION}"
+
+    titled = _normalize(
+        HookEvent(
+            provider="devin",
+            logged_at=datetime.fromtimestamp(_EPOCH, UTC),
+            event_name="SessionStart",
+            raw={
+                "hook_event_name": "SessionStart",
+                "session_id": _SESSION,
+                "event_id": "event:titled",
+                "session_title": "Aquarium overhaul",
+            },
+            session_id=_SESSION,
+        )
+    )
+    assert type(titled) is NormalizedProviderRecord
+    assert titled.safe_label == "Aquarium overhaul"
+
+
+def test_session_label_survives_the_normalized_round_trip() -> None:
+    record = _normalize(
+        _devin_event(
+            "UserPromptSubmit",
+            prompt="Review the naming pipeline",
+        )
+    )
+    assert type(record) is NormalizedProviderRecord
+
+    decoded = normalized_provider_record_from_payload(
+        normalized_provider_record_to_payload(record)
+    )
+
+    assert type(decoded) is NormalizedProviderRecord
+    assert decoded.safe_label == "Review the naming pipeline"
+
+    # And a replayed record re-minimized from its persisted payload
+    # keeps the label instead of regressing to the slug.
+    replayed = HookEvent(
+        provider="devin",
+        logged_at=datetime.fromtimestamp(_EPOCH + 5, UTC),
+        event_name="Stop",
+        raw=normalized_provider_record_to_payload(decoded),
+        session_id=_SESSION,
+    )
+    reminimized = _normalize(replayed)
+    assert type(reminimized) is NormalizedProviderRecord
+    assert reminimized.safe_label == "Review the naming pipeline"
+
+
+def test_first_prompt_wins_over_later_prompts() -> None:
+    base = time.time() - 60
+    monitor = LiveAgentMonitor(stale_after_seconds=3600)
+    monitor.ingest_record(
+        _devin_event("UserPromptSubmit", epoch=base, prompt="First task")
+    )
+    monitor.ingest_record(
+        _devin_event("UserPromptSubmit", epoch=base + 10, prompt="Second task")
+    )
+
+    snapshot = monitor.snapshot()
+    work = next(
+        work
+        for work in snapshot.operator_state.works
+        if work.key.work_id.value == _SESSION
+    )
+    assert work.safe_label == "First task"
+
+
+def test_session_prompt_label_reaches_the_state_document() -> None:
+    base = time.time() - 60
+    monitor = LiveAgentMonitor(stale_after_seconds=3600)
+    monitor.ingest_record(_devin_event("SessionStart", epoch=base))
+    monitor.ingest_record(
+        _devin_event("UserPromptSubmit", epoch=base + 1, prompt="Rename the fish")
+    )
+
+    document = build_state_document(
+        now=base + 3,
+        generation=1,
+        snapshot=monitor.snapshot(),
+        ask_statuses=(),
+        unseen_completion_ids=frozenset(),
+        operator_state=monitor.snapshot().operator_state,
+    )
+
+    mains = [row for row in document["sessions"] if row["kind"] == "main"]
+    assert mains[0]["label"] == "Rename the fish"
+
+
+def test_slug_session_id_is_shown_whole_not_truncated() -> None:
+    from jrbar.core_projection import session_label
+
+    label = session_label(
+        provider="devin",
+        session_id="cubic-class",
+        agent_id="devin:session:cubic-class",
+        display_name="Devin cubic-class",
+        cwd=None,
+        extras=None,
+    )
+    assert label == "Devin cubic-class"
+    # A UUID-shaped id still shortens.
+    uuid_label = session_label(
+        provider="claude",
+        session_id="fca1eb06-1234-4abc-9def-0123456789ab",
+        agent_id="claude:session:fca1eb06-1234-4abc-9def-0123456789ab",
+        display_name="Claude fca1eb06-1234-4abc-9def-0123456789ab",
+        cwd=None,
+        extras=None,
+    )
+    assert uuid_label == "Claude fca1eb06"
 
 
 def test_unrelated_devin_events_still_normalize() -> None:

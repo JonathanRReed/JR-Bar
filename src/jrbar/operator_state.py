@@ -1597,12 +1597,22 @@ def reduce_operator_state(
                 next_actor=fact.next_actor,
                 # A later fact that only carries the fallback label (a
                 # Devin subagent stop replayed without its title) must not
-                # erase a real one the row already holds.
+                # erase a real one the row already holds. A Devin session's
+                # name is its first prompt: later prompts arrive as fresh
+                # labels on the same row and must not rename it either.
                 safe_label=(
                     existing.safe_label
                     if existing is not None
-                    and safe_label_is_default(fact.key, fact.safe_label)
                     and not safe_label_is_default(fact.key, existing.safe_label)
+                    and (
+                        safe_label_is_default(fact.key, fact.safe_label)
+                        or (
+                            fact.key.source_key.provider_id == "devin"
+                            and not fact.key.work_id.value.startswith(
+                                DEVIN_SUBAGENT_WORK_PREFIX
+                            )
+                        )
+                    )
                     else fact.safe_label
                 ),
                 parent_key=fact.parent_key,

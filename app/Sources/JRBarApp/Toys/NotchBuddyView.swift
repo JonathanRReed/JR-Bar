@@ -2,7 +2,7 @@ import AppKit
 import JRBarCore
 import SwiftUI
 
-/// The buddy itself: one of six drawn characters (`BuddyCharacter`)
+/// The buddy itself: one of ten drawn characters (`BuddyCharacter`)
 /// sharing a single skeleton. Pose and tint come from
 /// `NotchBuddyToy.mood`; `TimelineView(.animation)` drives the walk, the
 /// wave, the hop and the blink, and Reduce Motion swaps the moving poses
@@ -10,6 +10,11 @@ import SwiftUI
 /// also reports what it sees: a count pill by its feet while the work
 /// is plural, a "!" that wears the ask count, and a hover line naming
 /// who's on the clock.
+///
+/// It is a pet, not a statue: the pill takes clicks (the panel only
+/// ignores the mouse while a toast holds it) and a tap is a pet that
+/// cycles a trick — hop, spin, wave, blush — plus hearts on a treat and
+/// a "+1" crumb whenever it eats a completed session.
 struct NotchBuddyView: View {
     let toy: NotchBuddyToy
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -19,8 +24,8 @@ struct NotchBuddyView: View {
 
     var body: some View {
         TimelineView(.animation) { context in
-            // One reduce per tick: the pose, the badge, the tints and
-            // the hover line all read the same summary.
+            // One reduce per tick: the pose, the badge, the tints, the
+            // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
             BuddyFigure(
                 character: toy.buddyCharacter,
@@ -32,7 +37,11 @@ struct NotchBuddyView: View {
                 slumpAge: slumpAge(at: context.date, mood: summary.mood),
                 leans: toy.waveOrdinal % 2 == 0,
                 still: reduceMotion,
-                askCount: summary.waiting
+                askCount: summary.waiting,
+                care: summary.care,
+                trick: trick(at: context.date),
+                treatAge: age(of: toy.treatBurstAt, at: context.date),
+                crumbAge: age(of: toy.crumbAt, at: context.date)
             )
             .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
             .help(summary.statusLine)
@@ -41,7 +50,11 @@ struct NotchBuddyView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .fixedSize()
-        .accessibilityLabel("Notch Buddy")
+        .contentShape(Rectangle())
+        .onTapGesture { toy.tapped() }
+        .accessibilityLabel("Notch Buddy, \(toy.buddyName)")
+        .accessibilityHint("Tap for a trick. While an ask is open, a tap opens the session asking.")
+        .accessibilityAddTraits(.isButton)
     }
 
     /// The count pill by the buddy's feet while two or more sessions are
@@ -90,6 +103,21 @@ struct NotchBuddyView: View {
         return now.timeIntervalSince(since)
     }
 
+    /// The tap trick mid-flight, or nil. Reduce Motion gets no tricks —
+    /// the pet still counts, the pose just stays put.
+    private func trick(at now: Date) -> BuddyTrick? {
+        guard !reduceMotion, let start = toy.trickStartedAt else { return nil }
+        let age = now.timeIntervalSince(start)
+        guard age >= 0, age < BuddyTrick.duration else { return nil }
+        return BuddyTrick(kind: toy.trickKind, age: age)
+    }
+
+    /// Seconds since an optional clock last fired — the treat and crumb
+    /// bursts both read through this.
+    private func age(of date: Date?, at now: Date) -> TimeInterval? {
+        date.map { now.timeIntervalSince($0) }
+    }
+
     private func tint(for summary: NotchBuddyToy.BuddySummary) -> Color {
         switch summary.mood {
         case .asleep: return Color(nsColor: .tertiaryLabelColor)
@@ -106,14 +134,31 @@ struct NotchBuddyView: View {
     }
 }
 
+/// A tap trick: which one and how far in. Every trick is a `duration`-
+/// long one-shot layered over the mood's pose — the mood keeps running
+/// underneath, the trick borrows the body for a beat.
+struct BuddyTrick: Equatable, Sendable {
+    enum Kind: String, CaseIterable, Sendable { case hop, spin, wave, blush }
+    let kind: Kind
+    /// Seconds since the tap.
+    let age: TimeInterval
+    /// The whole beat; the view ages a trick out past it.
+    static let duration: TimeInterval = 0.65
+}
+
 /// The shared skeleton every character hangs on: the pose, the blink,
-/// the one-off effects ("!", "z"s, the hop's sparkle and check) and the
-/// ground shadow. Each mood is a pose with the craft in the motion —
-/// pacing steps and turns at the ends, a gathering bounces in place,
-/// the wave and the hop crouch first and land flat, a slump tumbles in
-/// on a roll, sleep drifts "z"s under a nightcap, and every awake mood
-/// blinks on a jittered cadence. `character` picks which body the pose
-/// wears; the renderers below only draw, they never move.
+/// the one-off effects ("!", "z"s, the hop's sparkle and check, the
+/// treat's hearts, the crumb's "+1") and the ground shadow. Each mood
+/// is a pose with the craft in the motion — pacing steps and turns at
+/// the ends, a gathering bounces in place, the wave and the hop crouch
+/// first and land flat, a slump tumbles in on a roll, sleep drifts "z"s
+/// under a nightcap, and every awake mood blinks on a jittered cadence.
+/// `character` picks which body the pose wears; the renderers below and
+/// in `NotchBuddyBodies` only draw, they never move.
+///
+/// On top of the mood sit two small layers: `care` (the Tamagotchi-lite
+/// log — `fed` blushes and smiles, `missing` droops the eyes and sags
+/// the body) and `trick` (the tap's ~0.65s one-shot).
 struct BuddyFigure: View {
     let character: BuddyCharacter
     let mood: NotchBuddyToy.Mood
@@ -133,6 +178,14 @@ struct BuddyFigure: View {
     let still: Bool
     /// Open asks — past one, the "!" wears the count.
     let askCount: Int
+    /// The friendship: content, fresh off a treat, or missing you.
+    let care: BuddyCare.Mood
+    /// The tap trick playing now, if any.
+    let trick: BuddyTrick?
+    /// Seconds since the last treat; the hearts burst while it is fresh.
+    let treatAge: TimeInterval?
+    /// Seconds since the last crumb it ate; the "+1" floats while fresh.
+    let crumbAge: TimeInterval?
 
     // MARK: Pose
 
@@ -146,16 +199,27 @@ struct BuddyFigure: View {
         var offset = CGSize.zero
         var squash = CGSize(width: 1, height: 1)
         var lean = 0.0          // degrees
+        var spin = 0.0          // trick pirouette, degrees
         var look = CGSize.zero  // pupil drift inside the eye
         var lid = 0.0           // resting lid, 0 open → 1 closed
         var air = 0.0           // 0 grounded → 1 apex; drives the shadow
         var pupil = 2.1
         var mouth = Mouth.none
         var eyesClosed = false  // asleep draws lid lines, not pupils
+        var blush = 0.0         // 0 none → 1 fully pink cheeks
     }
 
+    /// The pose, layered: the mood first, then the care feelings, then
+    /// the tap's trick on top. Reduce Motion takes the still mood pose;
+    /// care still applies (a droop is a pose), tricks do not.
     private var pose: Pose {
-        if still { return stillPose }
+        var pose = still ? stillPose : movingPose
+        applyCare(&pose)
+        if let trick, !still { applyTrick(trick, &pose) }
+        return pose
+    }
+
+    private var movingPose: Pose {
         switch mood {
         case .asleep: return asleepPose
         case .pacing: return pacingPose
@@ -163,6 +227,59 @@ struct BuddyFigure: View {
         case .waving: return wavingPose
         case .slumped: return slumpedPose
         case .celebrating: return celebratingPose
+        }
+    }
+
+    /// The pet's feelings over the mood's pose. `fed` blushes and turns
+    /// a flat mouth up; `missing` rides heavier — half-lidded, downcast,
+    /// a little deflated. Busy moods keep their own face: an ask, a
+    /// failure and a hop all outrank feelings.
+    private func applyCare(_ pose: inout Pose) {
+        switch care {
+        case .content:
+            break
+        case .fed:
+            guard mood == .pacing || mood == .gathering else { return }
+            pose.blush = max(pose.blush, 0.8)
+            if pose.mouth == .flat || pose.mouth == .none { pose.mouth = .smile }
+        case .missing:
+            guard mood == .asleep || mood == .pacing || mood == .gathering else { return }
+            pose.lid = max(pose.lid, 0.30)
+            pose.look.height += 0.4
+            pose.offset.height += 0.7
+            pose.squash.height *= 0.96
+        }
+    }
+
+    /// One tap trick, eased over `BuddyTrick.duration`. They are small
+    /// on purpose — the mood owns the silhouette, the trick just hops,
+    /// spins, sways or colours the cheeks.
+    private func applyTrick(_ trick: BuddyTrick, _ pose: inout Pose) {
+        let t = min(1, trick.age / BuddyTrick.duration)
+        switch trick.kind {
+        case .hop:
+            let h = sin(t * .pi)
+            pose.offset.height -= 5.2 * h
+            pose.air = max(pose.air, h)
+            pose.squash.width *= 1 - 0.12 * h
+            pose.squash.height *= 1 + 0.16 * h
+            pose.eyesClosed = false   // a pat wakes it for the trick
+            if pose.mouth == .flat || pose.mouth == .none { pose.mouth = .grin }
+        case .spin:
+            pose.spin += 360 * (1 - pow(1 - t, 3))
+            let h = sin(t * .pi)
+            pose.offset.height -= 1.6 * h
+            pose.air = max(pose.air, 0.3 * h)
+            pose.eyesClosed = false
+        case .wave:
+            let e = sin(t * .pi)
+            pose.lean += sin(t * .pi * 3) * 13 * e
+            if pose.mouth == .flat || pose.mouth == .none { pose.mouth = .smile }
+        case .blush:
+            let h = sin(t * .pi)
+            pose.blush = max(pose.blush, h)
+            pose.squash.width *= 1 + 0.06 * h
+            if pose.mouth == .flat || pose.mouth == .none { pose.mouth = .smile }
         }
     }
 
@@ -471,26 +588,64 @@ struct BuddyFigure: View {
             ZStack {
                 characterBody
                 if mood == .asleep { cap }
+                if pose.blush > 0.01 { cheeks }
             }
             .scaleEffect(x: pose.squash.width, y: pose.squash.height)
-            .rotationEffect(.degrees(pose.lean))
+            .rotationEffect(.degrees(pose.lean + pose.spin))
             .offset(x: pose.offset.width + hover.width,
                     y: pose.offset.height + hover.height)
             effects
         }
     }
 
-    /// Shadow lift: the pose's `air`, plus the ghost's standing hover.
+    /// Shadow lift: the pose's `air`, plus the standing hover the ghost
+    /// and the saucer never land from.
     private var air: Double {
-        min(1, pose.air + (character == .ghost ? 0.3 : 0))
+        let standing: Double = character == .ghost ? 0.3 : (character == .ufo ? 0.35 : 0)
+        return min(1, pose.air + standing)
     }
 
-    /// The ghost never touches the ground: a slow float on top of
-    /// whatever the pose is asking for.
+    /// The ghost and the saucer never touch the ground: a slow float on
+    /// top of whatever the pose is asking for — the ghost drifts, the
+    /// UFO bobs and wanders a little wider.
     private var hover: CGSize {
-        guard character == .ghost else { return .zero }
-        return CGSize(width: still ? 0 : sin(phase * 1.2) * 0.4,
-                      height: -1.5 + (still ? 0 : sin(phase * 1.9) * 0.6))
+        switch character {
+        case .ghost:
+            return CGSize(width: still ? 0 : sin(phase * 1.2) * 0.4,
+                          height: -1.5 + (still ? 0 : sin(phase * 1.9) * 0.6))
+        case .ufo:
+            return CGSize(width: still ? 0 : sin(phase * 0.9) * 0.8,
+                          height: -2.0 + (still ? 0 : sin(phase * 1.5) * 0.7))
+        default:
+            return .zero
+        }
+    }
+
+    /// Where the cheeks land for each body — faces sit differently:
+    /// the UFO's pilot is up in the dome, the mushroom's face is low on
+    /// the stalk, the crab's is on stalks over a wide shell.
+    private var blushSpot: (x: Double, y: Double) {
+        switch character {
+        case .ufo: return (1.7, -1.2)
+        case .mushroom: return (2.6, 1.9)
+        case .crab: return (4.4, 0.8)
+        case .axolotl: return (4.9, 0.7)
+        default: return (4.3, 0.9)
+        }
+    }
+
+    /// The blush: two soft pink cheeks inside the squash, so a landing
+    /// squash squashes them too.
+    private var cheeks: some View {
+        let at = blushSpot
+        return ZStack {
+            Ellipse().fill(Color(red: 0.98, green: 0.42, blue: 0.52).opacity(0.5 * pose.blush))
+                .frame(width: 2.3, height: 1.4)
+                .offset(x: -at.x, y: at.y)
+            Ellipse().fill(Color(red: 0.98, green: 0.42, blue: 0.52).opacity(0.5 * pose.blush))
+                .frame(width: 2.3, height: 1.4)
+                .offset(x: at.x, y: at.y)
+        }
     }
 
     /// The pose and effects are shared; only the body differs.
@@ -512,6 +667,18 @@ struct BuddyFigure: View {
         case .slime:
             SlimeBody(mood: mood, tint: tint, pose: pose, lid: lid,
                       phase: phase, still: still)
+        case .axolotl:
+            AxolotlBody(mood: mood, tint: tint, pose: pose, lid: lid,
+                        phase: phase, still: still)
+        case .crab:
+            CrabBody(mood: mood, tint: tint, pose: pose, lid: lid,
+                     phase: phase, still: still)
+        case .mushroom:
+            MushroomBody(mood: mood, tint: tint, pose: pose, lid: lid,
+                         phase: phase, still: still)
+        case .ufo:
+            UFOBody(mood: mood, tint: tint, pose: pose, lid: lid,
+                    phase: phase, still: still)
         }
     }
 
@@ -545,8 +712,9 @@ struct BuddyFigure: View {
     }
 
     /// The loose glyphs: "z"s overhead, the ask's "!", the hop's
-    /// sparkle and check. Drawn outside the squash so they stay honest.
-    /// The robot throws a little gear instead of the fairy sparkle.
+    /// sparkle and check, the treat's hearts, the crumb's "+1". Drawn
+    /// outside the squash so they stay honest. The robot throws a
+    /// little gear instead of the fairy sparkle.
     @ViewBuilder private var effects: some View {
         if let z = zee(0) { zView(z) }
         if let z = zee(1) { zView(z) }
@@ -562,6 +730,49 @@ struct BuddyFigure: View {
             if character == .robot { gearSparkleView(s) } else { sparkleView(s) }
         }
         if let c = check { checkView(c) }
+        if let treatAge { heartsView(age: treatAge) }
+        if let crumbAge { crumbView(age: crumbAge) }
+    }
+
+    /// Three hearts off the crown when a treat lands, staggered and
+    /// rising. Reduce Motion holds them still — a heart that doesn't
+    /// float is still a heart.
+    @ViewBuilder private func heartsView(age: TimeInterval) -> some View {
+        if age >= 0, age < 1.0 {
+            ZStack {
+                ForEach(0..<3, id: \.self) { i in
+                    let p = still ? 0.45 : min(1, max(0, (age - Double(i) * 0.11) / 0.7))
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: [4.4, 5.6, 4.0][i], weight: .bold))
+                        .foregroundStyle(Color(red: 1.0, green: 0.45, blue: 0.6))
+                        .offset(x: [-4.4, 0.6, 4.2][i] + (still ? 0 : sin(age * 5 + Double(i)) * 0.5),
+                                y: -6 - p * 6.5)
+                        .opacity(still ? 0.85 : (p <= 0 ? 0 : (p > 0.62 ? (1 - p) / 0.38 : 0.95)))
+                        .scaleEffect(0.55 + 0.55 * p)
+                }
+            }
+        }
+    }
+
+    /// Eating a completed session: the morsel drops into the mouth,
+    /// then "+1" floats off the side. Reduce Motion shows the "+1"
+    /// without the drop.
+    @ViewBuilder private func crumbView(age: TimeInterval) -> some View {
+        if age >= 0, age < 1.1 {
+            if !still, age < 0.32 {
+                let t = age / 0.32
+                Circle()
+                    .fill(Color(red: 0.85, green: 0.62, blue: 0.32))
+                    .frame(width: 1.7, height: 1.7)
+                    .offset(x: -6.5 * (1 - t), y: -8.5 + 11 * t * t)
+            }
+            let p = still ? 0 : min(1, max(0, (age - 0.2) / 0.75))
+            Text("+1")
+                .font(.system(size: 4.6, weight: .bold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .offset(x: 4.8, y: -7 - p * 5)
+                .opacity(still ? 0.8 : (p > 0.6 ? (1 - p) / 0.4 : 0.9))
+        }
     }
 
     private func zView(_ z: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
@@ -613,15 +824,16 @@ struct BuddyFigure: View {
 
 /// The colour a feature takes when it reads as a hole punched through
 /// the body to the capsule behind it — Dot's and Cat's pupils and
-/// mouths. Translucent bodies use a dark fill instead.
-private let buddyHole = Color(nsColor: .windowBackgroundColor)
+/// mouths. Translucent bodies use a dark fill instead. Shared with the
+/// extra bodies in `NotchBuddyBodies`.
+let buddyHole = Color(nsColor: .windowBackgroundColor)
 
 /// The pair of eyes most bodies wear: a pupil that drifts with
 /// `pose.look`, a catchlight glued to its top-left, and a lid in the
 /// body's own colour that slides down over it — closing reads as the
 /// body growing over the eye. `pose.eyesClosed` (asleep) draws a shut
 /// line instead. The owl draws its own, bigger.
-private struct BuddyEyes: View {
+struct BuddyEyes: View {
     let pose: BuddyFigure.Pose
     let lid: Double
     /// The open pupil's colour.
@@ -670,7 +882,7 @@ private struct BuddyEyes: View {
 /// The shared mouth set — `pose.mouth` picks the shape: `flat` patrols,
 /// `wobble` fails, `open` asks, `smile` bounces, `grin` celebrates.
 /// Cat draws its own ω and Owl a beak; everyone else shares these.
-private struct BuddyMouth: View {
+struct BuddyMouth: View {
     let mouth: BuddyFigure.Mouth
     let color: Color
     var y: Double = 2.4

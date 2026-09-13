@@ -4,6 +4,48 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.8 (unreleased)
 
+- Fold actually shows again: a captured desktop frame that arrived
+  before the overlay existed was dropped, leaving an ordered-in window
+  with no texture — invisible forever on a static screen, where
+  ScreenCaptureKit may only ever deliver one frame. The frame now
+  materializes the renderer itself, and a stream that stays frameless
+  is recycled every 5 s instead of hanging. The Fold card gained a
+  "Fold state" line that names the first missing link (waiting for a
+  frame / needs Screen Recording / paused) instead of just "On", and
+  the decision chain logs to `devin.jrbar:fold` so a real close can be
+  read back from `log show`. Parked-lid churn found by that
+  instrumentation is gone too: suppressed polls no longer re-push the
+  sensor's polling state 120×/s.
+- Alcove is a real toy now: JR-Bar draws its own notch island — a
+  capsule hugging the notch that breathes with provider dots and a live
+  count ("3 working · 1 waiting"), and grows into a card on hover with
+  the session roster and per-provider usage meters. "Render with" picks
+  who owns the notch: JR-Bar's island, or the real Alcove / Boring
+  Notch, which JR-Bar parks itself for and can install or open.
+- Confetti fires on the triggers you choose, not just the weekly
+  reset: weekly reset (default), per-provider resets you pick, a
+  session completing, Codex banking credits back, or every ask clearing.
+  Event triggers dedup against a persisted ring so a restart can't
+  re-celebrate, and document edges seed a baseline on the first state
+  so nothing fires on facts older than the app.
+- Notch Buddy is a pet: ten characters on one skeleton (Axolotl, Crab,
+  Mushroom and UFO joined the six), a name field with per-character
+  defaults, a "Give treat" button that bursts hearts, a tap on the pill
+  that cycles hop → spin → wave → blush — or opens the session when an
+  ask is up — a crumb it eats for each completed session, and droop
+  when nobody's patted it in a day.
+- The Aquarium tells the states apart: idle sessions drift at
+  third-speed and occasionally sip the surface, waiting ones float up
+  with a pulsing ring, failed ones sink and roll, and a completed
+  session corkscrews out the top-right dropping pellets the nearest
+  fish dart over to eat — a burst of finishes pops a bubble plume off
+  the chest. Hover or tap any fish (fry included) for its name tag, and
+  a four-minute day/night wash keeps the tank alive.
+- Session names make sense now: a Devin session is titled by its first
+  prompt (or explicit title) instead of `Devin cubic-cl` — the slug
+  falls through whole, so the fish reads `cubic-class`, and once a real
+  name lands, later facts can't rename the row. Sub-agent workers keep
+  their titles on replay.
 - Creator Micro 2 no longer reports "malformed report" and drops its
   RPC link when the pad pushes a notification we didn't expect: id-less
   messages only need a string `m`/`method` now (params optional, extra

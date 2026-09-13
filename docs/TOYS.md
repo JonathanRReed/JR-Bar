@@ -48,14 +48,25 @@ public struct FoldSettings { enabled: Bool = false; activationAngle: Double = 82
 public enum FoldStyle: String { case tilt, dusk, fog }          // perspective only / + darken / + blur
 public enum FoldProvider: String { case jrbar, bendy, lidPlane }  // who renders the fold
 public struct AquariumSettings { enabled: Bool = false; showLabels: Bool = true; density: Double = 1.0 }
-public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot" }
-public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime }
+public struct NotchBuddySettings { enabled: Bool = false; character: String = "dot";
+                                   buddyName: String = ""; care: BuddyCare }
+public enum BuddyCharacter: String { case dot, cat, ghost, robot, owl, slime,
+                                     axolotl, crab, mushroom, ufo }
+public struct BuddyCare { lastInteractionAt: Date?; petCount: Int; treatsGiven: Int; crumbsEaten: Int }
 public struct ConfettiSettings { enabled: Bool = false; landing: ConfettiLanding = .rest;
                                  density: Double = 1.0; duration: Double = 1.0;
-                                 palette: ConfettiPalette = .provider; shapes: ConfettiShapes = .mixed }
+                                 palette: ConfettiPalette = .provider; shapes: ConfettiShapes = .mixed;
+                                 triggers: ConfettiTriggers; firedKeys: [String] /* dedup ring, 64 deep */ }
+public struct ConfettiTriggers { sessionCompleted: Bool = false; weeklyReset: Bool = true;
+                                 perProviderReset: Set<String> /* provider ids, lowercase */;
+                                 codexBankedReset: Bool = false; allClear: Bool = false }
 public enum ConfettiLanding: String { case rest, fall, fade }   // rest on the band / rain to the bottom / dissolve mid-air
 public enum ConfettiPalette: String { case provider, toys, rainbow }
 public enum ConfettiShapes: String { case mixed, streamers, flecks }
+public struct AlcoveSettings { enabled: Bool = false; provider: AlcoveProvider = .jrbar;
+                               islandEnabled: Bool = true; showUsage: Bool = true;
+                               expandOnHover: Bool = true }
+public enum AlcoveProvider: String { case jrbar, alcove, boringNotch }  // who owns the notch
 public struct ExternalToyApp: Identifiable { id: String /* bundle id */; name: String; launchWithJRBar: Bool }
 ```
 
@@ -229,17 +240,27 @@ and a faint diagonal glass highlight.
 Deeper lanes hold smaller, dimmer, slower fish. Fish ease into curved
 U-turns at the glass instead of mirror-flipping, and new sessions swim
 in from an edge; a recently updated session's tail beats faster. An
-ask rises to the surface trailing small bubbles and bobs there with a
-bubble riding overhead; a failed session goes grey, sinks nose-down
-onto the sand and settles with a slow rocking; a completion drifts off
-the right edge. The tank is a resizable window
+idle session holds midwater on a slow drift and rises to sip the
+surface every half-minute or so. An ask rises to the glass — a little
+closer to the viewer — trailing small bubbles, bobs there with a
+bubble riding overhead, and pulses a soft glow ring off its nose like
+a tap on the pane. A failed session goes grey, sinks nose-down onto
+the sand, rolls onto its side for a beat, then fades. A completion
+corkscrews up and out the top-right, dropping two or three food
+pellets behind it: the nearest live fish dart over to eat them while a
+gold star glints at the spot. Three or more finishes inside five
+seconds pop the treasure chest in a fast bubble plume. Hovering or
+tapping a fish floats a name tag above it — fry included, which is how
+a worker's name shows. A slow day/night wash deepens the water on a
+four-minute cycle. The tank is a resizable window
 (`AquariumWindowController`), `TimelineView(.animation)` capped at 30
 fps + `Canvas`, reads `core.state.sessions` (mains AND workers), and
 stops its timeline while occluded. Controls: On/Off (opens/closes the
 window), Show labels, Density (how much plankton/bubbles/decor), "Fill
 screen" button (borderless full-screen, Esc leaves). Reduce Motion:
 rays, shimmer & kelp hold still, tails don't wag, the jellyfish &
-snail freeze — poses stay.
+snail freeze, and the sips, spirals, rings & bursts hold at a still
+pose — poses stay.
 
 ## Notch Buddy (native)
 
@@ -249,7 +270,8 @@ work, bounces in place when three or more work at once (a gathering —
 busy is exciting, not calm), waves amber when an ask is open, tumbles
 into a slump when something failed, does one hop on a completion. Drawn
 in SwiftUI shapes; `BuddyCharacter` is the roster — `dot`, `cat`,
-`ghost`, `robot`, `owl`, `slime` — and every member shares the one
+`ghost`, `robot`, `owl`, `slime`, `axolotl`, `crab`, `mushroom`, `ufo`
+— and every member shares the one
 skeleton (pose, blink, effects) and differs only in the body. The card's
 Character picker lists them by name over a live strip that paces each
 one, tap-to-pick.
@@ -268,13 +290,31 @@ prick like the cat's ears, wings that lift on the hop, a beak that parts
 for the ask, and eyes that squint into happy arcs when it sleeps. Slime
 is a gooey translucent drop whose tip wobbles on a lag after every
 landing, melts wider in the slump, sheds a droplet off its crown at the
-hop's apex, and carries a sheen up-left.
+hop's apex, and carries a sheen up-left. Axolotl fans three pink gill
+fronds off each cheek — they sway, droop in the slump and perk for
+asks — over a wide soft head that never grew up. Crab carries its eyes
+on stalks, walks its patrol sideways, and claps a pair of pincers while
+an ask is up or a hop lands. Mushroom is a spotted cap on a pale stalk,
+permanently drowsy — the lids ride heavier and the cap nods on its own
+slow clock. UFO never lands: a metal disc with rim lights chasing, a
+glass dome over a small green pilot whose almond eyes track and blink,
+and a beam that brightens while an ask is up.
 
 It's not just cute: while two or more sessions are working a pill badge
 by its feet carries the count in the busiest provider's colour, an open
 ask's "!" wears the count past one ("!2"), and hovering the buddy reads
 the state back — "3 working · 1 waiting · Codex, Claude". All of it
 comes from `core.sessions`; the daemon is never asked for more.
+
+It is also a small pet. The pill takes taps while the buddy holds it
+(toasts stay click-through): a tap counts as a pet and cycles a trick —
+hop, spin, wave, blush — and while an ask is open the tap opens the
+session doing the asking. The card can name it (blank keeps the
+character's own name) and feed it ("Give treat" → hearts off the crown,
+a hop, and a `fed` glow for a while); each completed session lands as a
+crumb it "eats" with a "+1". A day without a pat droops it — the
+`BuddyCare` log in `app-state.json` is the whole mechanism; `mood(at:)`
+is the only read.
 
 The skeleton is a soft body, two pupils under lids, a mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
@@ -327,26 +367,60 @@ tint / Rainbow, a six-colour spectrum in the app's saturation range),
 Shapes (Mixed / Streamers / Flecks), Density (0.5–2× the piece count)
 and Duration (0.7–1.5× the timeline). Motion is closed-form
 (`ConfettiPhysics`, including `fallTime` — the inverse fall — and
-`floorBounce`); piece constants are fixed at fire time. The trigger is
-the daemon's `quota_reset` event where `lane == "weekly"` or `lane` ends
-in `-weekly` (docs/CORE-PROTOCOL.md); five-hour and session resets do
-not fire. Hooks into `EventCoordinator.apply` via
-`ToysStore.confetti.fire(providerColor:)`. A "Test burst" button in the
-card fires one on demand with the current settings. Honors Reduce
+`floorBounce`); piece constants are fixed at fire time.
+
+What earns a burst is the **Triggers** section, judged by
+`ConfettiTriggerPolicy` in JRBarCore: a session completing
+(`completed` events), any provider's weekly lane resetting
+(`quota_reset` on a `weekly` / `*-weekly` lane — on by default),
+picked providers' EVERY lane resetting (the five-hour window
+included), Codex's banked-credit balance growing (a state edge the
+daemon's `credits_remaining` exposes), or the last open ask clearing.
+Event triggers dedup on `event:<id>` against the persisted `firedKeys`
+ring (64 deep — a restart can't re-celebrate); state edges are folded
+by `ConfettiEdgeTracker`, and the first document only seeds the
+baseline, so nothing fires on facts older than the app. Events arrive
+through `EventCoordinator.handle`, state documents through its
+`trackState` observation loop; the burst's colour still comes from
+`ProviderStyle` with the event's session fallback. A "Test burst"
+button fires one on demand with the current settings. Honors Reduce
 Motion (a gentle radial bloom at the notch instead, in every mode).
 Off by default. `ConfettiSettings { enabled; landing; density;
-duration; palette; shapes }` — every key decodes tolerantly to the
-shipped look (the `onCompletion`/`onMilestone` fields are dropped).
+duration; palette; shapes; triggers; firedKeys }` — every key decodes
+tolerantly to the shipped look.
 
-Blurb: "A burst in the provider's colours when your weekly limit resets."
+Blurb: "A burst in the provider's colours when the moment earns it."
 
-## Alcove (bridge)
+## Alcove (notch island)
 
-Alcove is Henrik's notch app; JR-Bar already follows its capsule. The
-card makes that visible: installed? running? (bundle
-`com.henrikruscon.Alcove`), the existing `screen_bar_follow_alcove`
-toggle, the capsule width the follower currently sees ("following: 312 pt
-wide" / "Alcove isn't running"), and Open Alcove / Get Alcove buttons.
+The notch island is JR-Bar's own Dynamic-Island-style capsule: a black
+shape flush with the notch whose lip carries the working providers'
+dots (plus amber for asks, red for failures) and a live count —
+"3 working · 1 waiting" — breathing slowly while anything works.
+Hover grows it into a card: live session rows in the panel's
+precedence, then the providers' headline usage meters when `showUsage`
+is on. The window (`AlcoveIslandWindow`) is a non-activating panel one
+level above the menu bar, `sharingType = .none` so Fold's desktop
+capture never sees it, and its frame is always exactly the drawn shape
+— nothing invisible swallows a menu-bar click; while Fold's overlay is
+up, the island lets clicks fall through it.
+
+"Render with" picks who owns the notch, Fold-style: **JR-Bar** draws
+the island itself (settings: Show the island, Grow on hover, Usage
+meters), or an external app — **Alcove** (bundle
+`com.henrikruscon.Alcove`, detected via `NSWorkspace`) or **Boring
+Notch** (no pinnable bundle id — read off the app's own Info.plist in
+/Applications or ~/Applications, the way `FoldToy.bendyURL` resolves
+Bendy). Picking an external provider parks the island and opens the
+app; the status chip tells the truth per provider — "rendering it"
+only while it actually runs, "isn't installed" / "isn't running"
+otherwise. The `screen_bar_follow_alcove` toggle and the capsule-width
+fact live under the Alcove provider, where they're meaningful.
+`AlcoveIsland` in JRBarCore owns the pure summary/meter/layout math;
+`AlcoveIslandTests` covers it.
+
+Blurb: "A notch island: who's working, up in the notch. Alcove or
+Boring Notch can draw it instead."
 
 ## External app toys
 

@@ -1,12 +1,15 @@
 import Foundation
 
 /// What a session's fish is doing in the tank (docs/TOYS.md): working
-/// swims, waiting on you comes up for air, failed goes grey and sinks,
-/// a finished run drifts off the right edge. Reduced from
-/// `SessionActivity`, so the tank can never disagree with the panel
-/// about what a session is.
+/// swims, idle holds midwater and sips the surface now and then,
+/// waiting on you comes up to the glass and pulses a ring, failed
+/// goes grey and sinks onto its side, a finished run spirals up and
+/// out the top-right. Reduced from `SessionActivity`, so the tank can
+/// never disagree with the panel about what a session is.
 public enum FishState: String, Equatable, Sendable, CaseIterable {
     case swimming
+    /// Idle: a slow midwater drift with an occasional surface sip.
+    case idling
     case surfacing
     case sinking
     case leaving
@@ -356,7 +359,8 @@ public enum AquariumModel {
     /// completion, which is not a drift off the edge.
     static func state(for session: CoreSession) -> FishState {
         switch SessionActivity.reduce(session) {
-        case .working, .idle: return .swimming
+        case .working: return .swimming
+        case .idle: return .idling
         case .waiting: return .surfacing
         case .failed, .ended: return .sinking
         case .done: return .leaving
@@ -469,6 +473,36 @@ public enum AquariumModel {
                              scale: 1.15 + unit(b, 32) * 0.35))
         }
         return out
+    }
+
+    /// A finished fish drops a meal: two or three pellet seeds, scrambled
+    /// off the fish's own seed so the same completion always scatters
+    /// the same food and a replayed frame draws it identically.
+    public static func pelletSeeds(for fish: Fish) -> [UInt64] {
+        let count = 2 + Int((fish.seed >> 11) & 1)
+        return (0..<count).map { i in
+            var h = fish.seed &+ UInt64(i &+ 61) &* 0x9E3779B97F4A7C15
+            h ^= h >> 29
+            h &*= 0xBF58476D1CE4E5B9
+            h ^= h >> 32
+            return h
+        }
+    }
+
+    /// A burst of finishes close together pops the chest: this many
+    /// fish leaving inside the window earns a bubble plume.
+    public static let milestoneCount = 3
+    public static let milestoneWindow: TimeInterval = 5
+
+    /// Whether the leavers in `fish` count as a milestone right now —
+    /// pure, so the view replays the same burst every frame. Fry don't
+    /// count: the plume celebrates mains finishing, matching the view's
+    /// burst filter.
+    public static func isMilestone(fish: [Fish], at now: Date) -> Bool {
+        fish.filter {
+            $0.state == .leaving && !$0.isFry
+                && now.timeIntervalSince($0.stateSince) < milestoneWindow
+        }.count >= milestoneCount
     }
 
     /// Depths keep clear of the surface and the floor so a surfacing or

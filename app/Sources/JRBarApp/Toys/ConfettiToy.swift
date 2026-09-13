@@ -3,12 +3,13 @@ import JRBarCore
 import Observation
 import SwiftUI
 
-/// Confetti (docs/TOYS.md): when a provider's *weekly* quota resets — a
-/// `quota_reset` event whose `lane` is `"weekly"` or ends `-weekly` — a
+/// Confetti (docs/TOYS.md): when one of the user's triggers lands, a
 /// confetti cannon pops at the notch/Screen Bar centre and rains pieces
 /// in that provider's colours down a transparent, click-through overlay,
-/// then the window closes. Off by default; Reduce Motion gets a soft
-/// radial bloom instead.
+/// then the window closes. The default trigger is the one the toy has
+/// always had — a provider's *weekly* quota reset (a `quota_reset` event
+/// whose `lane` is `"weekly"` or ends `-weekly`); the rest are opt-in.
+/// Off by default; Reduce Motion gets a soft radial bloom instead.
 @MainActor
 @Observable
 final class ConfettiToy: Toy {
@@ -16,12 +17,15 @@ final class ConfettiToy: Toy {
     weak var store: ToysStore?
     /// The burst in flight, if any. One window at a time.
     @ObservationIgnored private var window: ConfettiWindow?
+    /// The state-edge memory for the triggers no event carries (banked
+    /// credits growing, the ask set emptying).
+    @ObservationIgnored private var edges = ConfettiEdgeTracker()
 
     init() {}
 
     let id = "confetti"
     let name = "Confetti"
-    let blurb = "A burst in the provider's colours when your weekly limit resets."
+    let blurb = "A burst in the provider's colours when the moment earns it."
     let symbol = "party.popper"
 
     var isOn: Bool {
@@ -47,12 +51,43 @@ final class ConfettiToy: Toy {
         AnyView(ConfettiControlsView(toy: self))
     }
 
-    /// `EventCoordinator.apply` asks this before colouring the burst:
-    /// true for `quota_reset` on the weekly lane only — five-hour and
-    /// session resets stay quiet.
+    /// `EventCoordinator.apply` hands every daemon event here; the
+    /// trigger policy decides whether it earns a burst and the
+    /// `firedKeys` ring keeps each fact to once.
+    func noteEvent(_ event: CoreEvent) {
+        guard let decision = ConfettiTriggerPolicy.eventFire(event, settings: settings) else { return }
+        deliver(decision, event: event)
+    }
+
+    /// Each applied state document lands here too: the banked-credits
+    /// and all-clear triggers are document edges, not events. The
+    /// tracker folds every state whether the toy is on or not, so a
+    /// baseline never goes stale enough to fire on old news at enable.
+    func noteState(_ state: CoreState) {
+        for decision in edges.note(state, triggers: settings.triggers) {
+            deliver(decision, event: nil)
+        }
+    }
+
+    /// The original trigger's lane test, kept for the tests: true for
+    /// `quota_reset` on a weekly lane only — five-hour and session lanes
+    /// stay quiet. The trigger policy owns the same check now.
     nonisolated static func isWeeklyReset(_ event: CoreEvent) -> Bool {
         guard event.kind == "quota_reset", let lane = event.lane else { return false }
-        return lane == "weekly" || lane.hasSuffix("-weekly")
+        return ConfettiTriggerPolicy.isWeeklyLane(lane)
+    }
+
+    /// A decision becomes a burst: record its key, resolve the
+    /// provider's colour the way the panel does (the fact's provider,
+    /// else the event's session's), and fire — `fire` still checks the
+    /// toy is on.
+    private func deliver(_ decision: ConfettiFire, event: CoreEvent?) {
+        guard isOn, !settings.firedKeys.contains(decision.key) else { return }
+        store?.state.confetti.noteFired(decision.key)
+        let provider = decision.provider
+            ?? event?.session.flatMap { store?.core.state?.session(withID: $0) }?.provider
+        let document = store?.core.settings.map { SettingsDocument($0.document) }
+        fire(providerColor: ProviderStyle.style(for: provider ?? "", document: document).accent)
     }
 
     /// One burst, or the soft flash under Reduce Motion. A burst already
@@ -93,6 +128,42 @@ private struct ConfettiControlsView: View {
             } label: {
                 SettingLabel(title: "Try it", subtitle: "Fires a burst now, with the settings below.")
             }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            SettingLabel(title: "Triggers", subtitle: "What earns a burst. The defaults are what it has always done.")
+
+            Toggle(isOn: toy.bind(\.triggers.weeklyReset)) {
+                SettingLabel(title: "Weekly reset", subtitle: "Any provider's weekly window refills.")
+            }
+
+            Toggle(isOn: toy.bind(\.triggers.sessionCompleted)) {
+                SettingLabel(title: "Session completed", subtitle: "An agent finishes a run.")
+            }
+
+            Toggle(isOn: toy.bind(\.triggers.allClear)) {
+                SettingLabel(title: "All caught up", subtitle: "The last open ask resolves — nothing left waiting on you.")
+            }
+
+            Toggle(isOn: toy.bind(\.triggers.codexBankedReset)) {
+                SettingLabel(title: "Codex banked credits", subtitle: "The banked-credit balance grows.")
+            }
+
+            if !providerChoices.isEmpty {
+                Text("Every reset from")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                ForEach(providerChoices, id: \.self) { id in
+                    Toggle(isOn: providerBinding(id)) {
+                        SettingLabel(title: ProviderStyle.style(for: id).name,
+                                     subtitle: "Any window refill — the five-hour one included.")
+                    }
+                }
+            }
+
+            Divider()
+                .padding(.vertical, 4)
 
             Picker(selection: toy.bind(\.landing)) {
                 Text("Rest").tag(ConfettiLanding.rest)
@@ -162,6 +233,31 @@ private struct ConfettiControlsView: View {
         case .fade:
             return "Pieces dissolve mid-air — never landing, gone by three-fifths of the way down."
         }
+    }
+
+    /// The per-provider reset picker: the providers the daemon currently
+    /// reports a quota source for — the only ones that can ever emit a
+    /// `quota_reset` — plus any picked id the list no longer carries,
+    /// so a provider that went quiet keeps its checkbox.
+    private var providerChoices: [String] {
+        var ids = Set(toy.settings.triggers.perProviderReset)
+        for provider in toy.store?.core.usage ?? [] where provider.quotaSource {
+            ids.insert(provider.id)
+        }
+        return ids.sorted { ProviderStyle.style(for: $0).name < ProviderStyle.style(for: $1).name }
+    }
+
+    /// Set membership as a binding — one row's tick adds or drops the id.
+    /// Stored lowercase: `eventFire` lowercases the event's provider, so
+    /// a mixed-case id must never land in the set.
+    private func providerBinding(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { toy.settings.triggers.perProviderReset.contains(id.lowercased()) },
+            set: { on in
+                var picked = toy.store?.state.confetti.triggers.perProviderReset ?? []
+                if on { picked.insert(id.lowercased()) } else { picked.remove(id.lowercased()) }
+                toy.store?.state.confetti.triggers.perProviderReset = picked
+            })
     }
 }
 

@@ -29,7 +29,7 @@ struct AquariumModelTests {
             Self.session("f", mode: "idle_ready"),
         ], previous: [], now: now)
         #expect(fish.map(\.id) == ["a", "b", "c", "d", "e", "f"])
-        #expect(fish.map(\.state) == [.swimming, .surfacing, .sinking, .leaving, .sinking, .swimming])
+        #expect(fish.map(\.state) == [.swimming, .surfacing, .sinking, .leaving, .sinking, .idling])
         #expect(fish.allSatisfy { $0.stateSince == now })
         #expect(fish.first?.label == "run a")
         #expect(fish.first?.providerID == "claude")
@@ -172,6 +172,63 @@ struct AquariumModelTests {
         // A session that never carried one stays nil.
         let quiet = AquariumModel.reduce(sessions: [Self.session("b")], previous: [], now: t0)[0]
         #expect(quiet.lastUpdate == nil)
+    }
+
+    @Test("an idle session drifts instead of patrolling")
+    func idling() {
+        let now = Date()
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("a", mode: "idle_ready"),
+        ], previous: [], now: now)
+        #expect(fish[0].state == .idling)
+        // Idling is its own state word, not a swim.
+        #expect(fish[0].state != .swimming)
+        // And it keeps the same stable-swim machinery.
+        #expect((0...1).contains(fish[0].lane))
+    }
+
+    @Test("a finished fish drops the same meal every time")
+    func pelletSeeds() {
+        let t0 = Date()
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("a", lifecycle: "completed"),
+        ], previous: [], now: t0)[0]
+        let seeds = AquariumModel.pelletSeeds(for: fish)
+        // Two or three pellets, all distinct.
+        #expect((2...3).contains(seeds.count))
+        #expect(Set(seeds).count == seeds.count)
+        // Seeded off the fish: same fish, same meal; different fish,
+        // different meal.
+        #expect(AquariumModel.pelletSeeds(for: fish) == seeds)
+        let other = AquariumModel.reduce(sessions: [
+            Self.session("b", lifecycle: "completed"),
+        ], previous: [], now: t0)[0]
+        #expect(AquariumModel.pelletSeeds(for: other) != seeds)
+    }
+
+    @Test("three finishes inside the window pop the chest")
+    func milestone() {
+        let t0 = Date()
+        func leaver(_ id: String, at t: Date) -> Fish {
+            var fish = AquariumModel.reduce(sessions: [
+                Self.session(id),
+            ], previous: [], now: t0)[0]
+            fish = AquariumModel.reduce(sessions: [
+                Self.session(id, lifecycle: "completed"),
+            ], previous: [fish], now: t)[0]
+            return fish
+        }
+        let one = leaver("a", at: t0)
+        let two = leaver("b", at: t0 + 1)
+        let three = leaver("c", at: t0 + 2)
+        // Two recent leavers isn't a batch yet.
+        #expect(!AquariumModel.isMilestone(fish: [one, two], at: t0 + 2))
+        // Three inside the window is.
+        #expect(AquariumModel.isMilestone(fish: [one, two, three], at: t0 + 2))
+        // Once the oldest falls outside the window, it's over.
+        #expect(!AquariumModel.isMilestone(
+            fish: [one, two, three],
+            at: t0 + AquariumModel.milestoneWindow + 0.5))
     }
 
     @Test("an ask outranks work, and a failure outranks an ask")

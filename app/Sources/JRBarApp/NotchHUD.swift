@@ -121,6 +121,8 @@ final class NotchHUDPanel: NSPanel {
         model.text = text
         model.symbol = symbol
         model.toastActive = true
+        // A toast is a sign, not a button: clicks fall straight through.
+        ignoresMouseEvents = true
         lastBand = band
         hosting.rootView = NotchHUDView(model: model)
         hosting.layoutSubtreeIfNeeded()
@@ -144,9 +146,11 @@ final class NotchHUDPanel: NSPanel {
     }
 
     /// The buddy's own slot: the same pill, sized to the creature. No-op
-    /// while a toast is up — the toast always wins the panel.
+    /// while a toast is up — the toast always wins the panel. The buddy
+    /// is a pet: it takes the clicks a toast would let fall through.
     func presentBuddy(under band: NSRect) {
         guard !model.toastActive else { return }
+        ignoresMouseEvents = false
         lastBand = band
         hosting.rootView = NotchHUDView(model: model)
         hosting.layoutSubtreeIfNeeded()

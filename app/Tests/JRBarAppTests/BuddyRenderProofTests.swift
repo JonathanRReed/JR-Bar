@@ -5,9 +5,10 @@ import Testing
 import JRBarCore
 @testable import JRBarApp
 
-/// Render proof for the Notch Buddy roster: every character in the five
+/// Render proof for the Notch Buddy roster: every character in the
 /// pose-shapes that read at a glance (pacing, waving, asleep, slumped,
-/// celebrating), still poses in a dark capsule, 4×, written to
+/// celebrating — plus the care layers: the missing-you droop and a
+/// treat's hearts), still poses in a dark capsule, 4×, written to
 /// `/tmp/buddy-proof`. Manual evidence for the review, not a golden
 /// test — the skeleton's still poses are deterministic, but the proof
 /// exists so a human can look at them. It only runs when
@@ -21,12 +22,15 @@ struct BuddyRenderProofTests {
     func snapshots() throws {
         let dir = URL(fileURLWithPath: "/tmp/buddy-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let moods: [(name: String, mood: NotchBuddyToy.Mood, tint: Color)] = [
-            ("pacing", .pacing, .accentColor),
-            ("waving", .waving, .orange),
-            ("asleep", .asleep, Color(nsColor: .tertiaryLabelColor)),
-            ("slumped", .slumped, .red),
-            ("celebrating", .celebrating, .green),
+        let moods: [(name: String, mood: NotchBuddyToy.Mood, tint: Color,
+                     care: BuddyCare.Mood, treatAge: TimeInterval?, crumbAge: TimeInterval?)] = [
+            ("pacing", .pacing, .accentColor, .content, nil, nil),
+            ("waving", .waving, .orange, .content, nil, nil),
+            ("asleep", .asleep, Color(nsColor: .tertiaryLabelColor), .content, nil, nil),
+            ("slumped", .slumped, .red, .content, nil, nil),
+            ("celebrating", .celebrating, .green, .content, nil, 0.5),
+            ("missing", .pacing, .accentColor, .missing, nil, nil),
+            ("fed", .gathering, .accentColor, .fed, 0.35, nil),
         ]
         var written: [String] = []
         for character in BuddyCharacter.allCases {
@@ -40,7 +44,9 @@ struct BuddyRenderProofTests {
                                          hopProgress: nil,
                                          waveAge: entry.mood == .waving ? 1.1 : nil,
                                          slumpAge: entry.mood == .slumped ? 1.5 : nil,
-                                         leans: false, still: true, askCount: 2)
+                                         leans: false, still: true, askCount: 2,
+                                         care: entry.care, trick: nil,
+                                         treatAge: entry.treatAge, crumbAge: entry.crumbAge)
                 let staged = figure
                     .frame(width: 30, height: 26)
                     .background(RoundedRectangle(cornerRadius: 10, style: .continuous)

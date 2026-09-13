@@ -14,7 +14,7 @@ final class EventCoordinator {
 
     var onStatusPulse: ((Bool) -> Void)?
     private(set) var isPulsing = false
-    /// The Toys page's store: confetti fires on a weekly quota reset.
+    /// The Toys page's store: confetti fires on the user's triggers.
     /// Weak — the delegate owns it.
     weak var toys: ToysStore?
 
@@ -25,6 +25,27 @@ final class EventCoordinator {
         notifications.onLog = { [weak core] line in core?.appendLocalLog(line) }
         notifications.onOpenSession = { [weak core] session in core?.openSession(session) }
         notifications.onAnswerAsk = { [weak core] session, approve in core?.answerAsk(session: session, approve: approve) }
+        trackState()
+    }
+
+    /// Re-arms an observation of the applied state after every document
+    /// and hands it to the confetti toy: the banked-credits and
+    /// all-clear triggers are document edges, not events — no `event`
+    /// frame ever carries them.
+    private func trackState() {
+        withObservationTracking {
+            _ = core.state
+        } onChange: { [weak self] in
+            // onChange fires from the property's willSet — read the new
+            // document after a hop, like every other observe loop does.
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let state = self.core.state {
+                    self.toys?.confetti.noteState(state)
+                }
+                self.trackState()
+            }
+        }
     }
 
     func handle(_ event: CoreEvent) {
@@ -68,15 +89,10 @@ final class EventCoordinator {
         case .stop: sounds.stopChime()
         case .unchanged: break
         }
-        // Confetti rides the weekly quota reset only: five-hour and
-        // session lanes stay quiet. The toy itself decides whether it is
-        // on; the provider's colour comes from the same table the rest
-        // of the app uses.
-        if let confetti = toys?.confetti, ConfettiToy.isWeeklyReset(event) {
-            let provider = event.provider ?? event.session.flatMap { core.state?.session(withID: $0) }?.provider
-            let style = ProviderStyle.style(for: provider ?? "", document: core.settings.map { SettingsDocument($0.document) })
-            confetti.fire(providerColor: style.accent)
-        }
+        // Confetti judges every event against the user's triggers
+        // itself; the toy decides whether it is on and picks the
+        // provider's colour from the same table the rest of the app uses.
+        toys?.confetti.noteEvent(event)
     }
 
     /// The daemon went away: nothing is escalating any more.

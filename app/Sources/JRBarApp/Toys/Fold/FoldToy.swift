@@ -63,6 +63,10 @@ final class FoldToy: Toy {
     /// samples, ticked on every vsync.
     @ObservationIgnored private var tracker = LidTracker()
     @ObservationIgnored private var overlay: FoldOverlayWindow?
+
+    /// True while the fold plane is on screen — overlay guests like the
+    /// island use it to let clicks fall through glass they can't see.
+    var overlayOnScreen: Bool { overlay?.isVisible == true }
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// The smoothed delta the renderer is showing — sensor readings

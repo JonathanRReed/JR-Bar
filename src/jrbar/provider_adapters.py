@@ -722,13 +722,21 @@ def _safe_label(source_key: SourceKey, work_id: WorkIdentifier | None) -> str:
     return f"{provider_label} {work_id.value}"
 
 
+def _devin_clean_label(text: str) -> str | None:
+    """Collapse a free-text name to the bound the canonical work applies:
+    printable, whitespace-folded, capped."""
+    clean = "".join(char for char in " ".join(text.split()) if char.isprintable())
+    clean = clean[:_DEVIN_WORKER_LABEL_CAP].rstrip()
+    return clean or None
+
+
 def _devin_worker_label(record: HookEvent) -> str | None:
-    """The one bounded piece of content a Devin worker row carries.
+    """The bounded piece of content a Devin worker row carries.
 
     ``sidekick`` has no title of its own; ``run_subagent``'s title is the
-    name the user gave the sub-agent. It is sanitized to the same bound
-    the canonical work applies -- printable, capped -- and an empty or
-    missing title falls back to the opaque ``Devin <work id>`` label.
+    name the user gave the sub-agent, and a resumed call's ``resume``
+    handle is the name of the agent it resumes. An empty or missing
+    handle falls back to the opaque ``Devin <work id>`` label.
     """
     tool = _devin_tool_name(record)
     if tool == "sidekick":
@@ -736,12 +744,42 @@ def _devin_worker_label(record: HookEvent) -> str | None:
     if tool != "run_subagent":
         return None
     tool_input = _devin_tool_input(record)
-    title = tool_input.get("title") if tool_input is not None else None
-    if type(title) is not str:
+    if tool_input is None:
         return None
-    text = "".join(char for char in " ".join(title.split()) if char.isprintable())
-    text = text[:_DEVIN_WORKER_LABEL_CAP].rstrip()
-    return text or None
+    # ``resume`` first: when it names an agent, that handle is the
+    # worker's identity (the id is keyed on it); a fresh call's ``title``
+    # names the task it was given.
+    for field in ("resume", "title"):
+        value = tool_input.get(field)
+        if type(value) is str and value.strip():
+            # A field that cleans to nothing must not hide the next one.
+            clean = _devin_clean_label(value)
+            if clean:
+                return clean
+    return None
+
+
+def _devin_session_label(record: HookEvent) -> str | None:
+    """The one name a Devin session earns: its own title field when the
+    payload carries one, else the prompt it was opened with -- the work
+    id is a generated slug ("cubic-class"), which is nobody's label."""
+    if type(record.raw) is not dict:
+        return None
+    # Only the session's own start event carries a trustworthy title:
+    # a stray ``title`` on a Notification or tool payload would pin the
+    # name for good -- the first real label wins and never unwins.
+    if record.event_name == "SessionStart":
+        for field in ("title", "session_title", "sessionTitle"):
+            value = record.raw.get(field)
+            if type(value) is str and value.strip():
+                clean = _devin_clean_label(value)
+                if clean:
+                    return clean
+    if record.event_name == "UserPromptSubmit":
+        prompt = record.raw.get("prompt")
+        if type(prompt) is str and prompt.strip():
+            return _devin_clean_label(prompt)
+    return None
 
 
 def _devin_persisted_label(record: HookEvent, fallback: str) -> str | None:
@@ -1344,16 +1382,21 @@ def minimize_hook_event(
         if notification_present and notification_kind is None:
             return _inert(source_key, occurred_at, "unknown_notification_kind")
     safe_label = _safe_label(source_key, work_id)
-    if (
-        source_key.provider_id == "devin"
-        and work_id is not None
-        and work_id.value.startswith(DEVIN_SUBAGENT_WORK_PREFIX)
-    ):
-        safe_label = (
-            _devin_worker_label(record)
-            or _devin_persisted_label(record, safe_label)
-            or safe_label
-        )
+    if source_key.provider_id == "devin" and work_id is not None:
+        if work_id.value.startswith(DEVIN_SUBAGENT_WORK_PREFIX):
+            safe_label = (
+                _devin_worker_label(record)
+                or _devin_persisted_label(record, safe_label)
+                or safe_label
+            )
+        elif agent_id is None:
+            # The session's own row: a slug like "cubic-class" is a
+            # fallback, not a name -- its title or first prompt is.
+            safe_label = (
+                _devin_session_label(record)
+                or _devin_persisted_label(record, safe_label)
+                or safe_label
+            )
     return NormalizedProviderRecord(
         source_key=source_key,
         event_name=rule.event_name,

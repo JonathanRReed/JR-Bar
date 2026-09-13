@@ -37,6 +37,11 @@ final class ToysStore {
     let confetti: ConfettiToy
     let externalApps: ExternalAppsToy
 
+    /// The island asks the fold whether its overlay owns the screen.
+    /// Found in `toys`, not stored: `FoldToy` takes `store: self` in its
+    /// init, so it can't sit in a stored property.
+    var fold: FoldToy? { toys.lazy.compactMap { $0 as? FoldToy }.first }
+
     /// Drops `state` into the delegate's `AppState` and writes the file.
     var onPersist: (@MainActor (ToysState) -> Void)?
 

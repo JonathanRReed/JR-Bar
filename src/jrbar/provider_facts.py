@@ -423,9 +423,11 @@ def _expected_safe_label(key: WorkKey) -> str:
 
 # Devin CLI has no subagent lifecycle events: a sub-agent only exists as a
 # ``run_subagent``/``sidekick`` tool call on the parent session, so the
-# adapter gives each one a synthetic ``sub-*`` work id. That worker's label
-# is the one place this pipeline carries free text -- the sub-agent's own
-# title is the only human handle Devin gives it.
+# adapter gives each one a synthetic ``sub-*`` work id. Devin's rows are
+# the one place this pipeline carries free text -- a worker's title is
+# the only human handle its tool call gives it, and a session's own title
+# or first prompt is the only name its slug of a work id ("cubic-class")
+# has. Both are held to the same bound the canonical work applies.
 DEVIN_SUBAGENT_WORK_PREFIX: Final = "sub-"
 MAX_SAFE_LABEL_LENGTH: Final = 128
 
@@ -436,8 +438,9 @@ def safe_label_is_valid(
     label: object,
 ) -> bool:
     """``Provider <work id>`` for every work, plus one narrow exception:
-    a Devin ``sub-*`` worker may carry its sub-agent's title instead, held
-    to the same bound the canonical work applies (printable, <= 128)."""
+    a Devin row -- session or ``sub-*`` worker -- may carry its name
+    instead, held to the same bound the canonical work applies
+    (printable, <= 128)."""
     if type(label) is not str:
         return False
     provider_label = _PRODUCT_PROVIDER_LABELS.get(source_key.provider_id, "Provider")
@@ -447,7 +450,6 @@ def safe_label_is_valid(
     return (
         source_key.provider_id == "devin"
         and type(work_id) is WorkIdentifier
-        and work_id.value.startswith(DEVIN_SUBAGENT_WORK_PREFIX)
         and 1 <= len(label) <= MAX_SAFE_LABEL_LENGTH
         and label.isprintable()
     )

@@ -377,6 +377,28 @@ def _looks_like_safe_label(text: str, provider: str) -> bool:
     return len(token) >= 8 and all(char.isalnum() or char == "-" for char in token)
 
 
+def _slug_session_id(session_id: str | None) -> str | None:
+    """A session id that already IS a name: Devin's ``cubic-class`` or
+    ``jrbar-install-probe`` reads fine whole -- truncating it to eight
+    characters produced "cubic-cl". Anything that isn't slug-shaped --
+    a UUID, a hex run, a ULID, an underscore id -- earns the short form
+    instead of leaking an opaque id."""
+    if not isinstance(session_id, str):
+        return None
+    text = session_id.strip()
+    if not 2 <= len(text) <= 40 or not text.isprintable() or " " in text:
+        return None
+    if re.fullmatch(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+        r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        text,
+    ):
+        return None
+    if not re.fullmatch(r"[a-zA-Z0-9]+(-[a-zA-Z0-9]+)+", text):
+        return None
+    return text
+
+
 def session_label(
     *,
     provider: str,
@@ -390,7 +412,8 @@ def session_label(
 ) -> str:
     """A human label: the provider's own session title, else the display
     name the collector derived (project/prompt), else the working
-    directory's last path component, else provider plus short id."""
+    directory's last path component, else provider plus the session's
+    slug or short id."""
     short = short_session_id(agent_id if is_worker else session_id, agent_id) or "?"
     provider_label = PROVIDER_LABELS.get(provider, provider.title() if provider else "Agent")
     if is_worker:
@@ -413,7 +436,7 @@ def session_label(
             tail = candidate.rstrip("/").rsplit("/", 1)[-1]
             if tail:
                 return tail
-    return f"{provider_label} {short}"
+    return f"{provider_label} {_slug_session_id(session_id) or short}"
 
 
 def usage_window_name(lane_id: str | None, label: str | None, model: str | None = None) -> str:

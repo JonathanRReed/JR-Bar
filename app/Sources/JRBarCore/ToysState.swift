@@ -12,21 +12,23 @@ public struct ToysState: Codable, Equatable, Sendable {
     public var aquarium: AquariumSettings
     public var notchBuddy: NotchBuddySettings
     public var confetti: ConfettiSettings
+    public var alcove: AlcoveSettings
     /// Apps the user asked JR-Bar to sit next to, by bundle id.
     public var externalApps: [ExternalToyApp]
 
     public init(fold: FoldSettings = FoldSettings(), aquarium: AquariumSettings = AquariumSettings(),
                 notchBuddy: NotchBuddySettings = NotchBuddySettings(), confetti: ConfettiSettings = ConfettiSettings(),
-                externalApps: [ExternalToyApp] = []) {
+                alcove: AlcoveSettings = AlcoveSettings(), externalApps: [ExternalToyApp] = []) {
         self.fold = fold
         self.aquarium = aquarium
         self.notchBuddy = notchBuddy
         self.confetti = confetti
+        self.alcove = alcove
         self.externalApps = externalApps
     }
 
     private enum CodingKeys: String, CodingKey {
-        case fold, aquarium, notchBuddy, confetti, externalApps
+        case fold, aquarium, notchBuddy, confetti, alcove, externalApps
     }
 
     public init(from decoder: any Decoder) throws {
@@ -35,6 +37,7 @@ public struct ToysState: Codable, Equatable, Sendable {
         aquarium = (try? c.decodeIfPresent(AquariumSettings.self, forKey: .aquarium)) ?? AquariumSettings()
         notchBuddy = (try? c.decodeIfPresent(NotchBuddySettings.self, forKey: .notchBuddy)) ?? NotchBuddySettings()
         confetti = (try? c.decodeIfPresent(ConfettiSettings.self, forKey: .confetti)) ?? ConfettiSettings()
+        alcove = (try? c.decodeIfPresent(AlcoveSettings.self, forKey: .alcove)) ?? AlcoveSettings()
         // An app with no bundle id can never be launched or found again;
         // it is dropped rather than carried as a dead row.
         externalApps = ((try? c.decodeIfPresent([ExternalToyApp].self, forKey: .externalApps)) ?? [])
@@ -135,13 +138,21 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
 /// Notch Buddy: the creature in the HUD panel. `character` is the
 /// `BuddyCharacter` raw value, stored as a plain string so a file from a
 /// newer build keeps its choice; anything unrecognised reads as `.dot`.
+/// `buddyName` is what the user calls it — blank keeps the character's
+/// own `defaultName`. `care` is the Tamagotchi-lite log: pets, treats
+/// and eaten crumbs.
 public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var character: String
+    public var buddyName: String
+    public var care: BuddyCare
 
-    public init(enabled: Bool = false, character: String = "dot") {
+    public init(enabled: Bool = false, character: String = "dot",
+                buddyName: String = "", care: BuddyCare = BuddyCare()) {
         self.enabled = enabled
         self.character = character
+        self.buddyName = buddyName
+        self.care = care
     }
 
     /// The stored name as a `BuddyCharacter`; unknown strings (a newer
@@ -151,18 +162,117 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         BuddyCharacter(rawValue: character) ?? .dot
     }
 
+    /// Who the status line names: the stored name, or the character's
+    /// own when the field is blank or all spaces.
+    public var resolvedName: String {
+        let trimmed = buddyName.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? resolvedCharacter.defaultName : trimmed
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case enabled, character
+        case enabled, character, buddyName, care
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         character = (try? c.decodeIfPresent(String.self, forKey: .character)) ?? "dot"
+        buddyName = (try? c.decodeIfPresent(String.self, forKey: .buddyName)) ?? ""
+        care = (try? c.decodeIfPresent(BuddyCare.self, forKey: .care)) ?? BuddyCare()
     }
 }
 
-/// The Notch Buddy roster. All six share one skeleton — the same pose,
+/// The buddy's Tamagotchi-lite memory: pets, treats and the crumbs it
+/// gets for completed sessions. It is a log, not a simulation — the only
+/// read is `mood(at:)`, which decays attention: a treat reads as `fed`
+/// for `fedWindow`, and once it has been petted at all it starts
+/// `missing` you after `lonelyAfter`. All zeros is a buddy nobody has
+/// met — it stays `content`, because it cannot miss what it never had.
+public struct BuddyCare: Codable, Equatable, Sendable {
+    /// Epoch seconds of the last pet or treat; 0 = never touched.
+    public var lastInteractionAt: Double
+    /// Epoch seconds of the last treat; 0 = never fed.
+    public var lastTreatAt: Double
+    /// Epoch seconds of the last crumb; 0 = never ate.
+    public var lastCrumbAt: Double
+    /// Lifetime pets — taps on the buddy and treats both count.
+    public var petCount: Int
+    /// Treats served from the card.
+    public var treatsGiven: Int
+    /// Completed sessions it has "eaten".
+    public var crumbsEaten: Int
+
+    public init(lastInteractionAt: Double = 0, lastTreatAt: Double = 0, lastCrumbAt: Double = 0,
+                petCount: Int = 0, treatsGiven: Int = 0, crumbsEaten: Int = 0) {
+        self.lastInteractionAt = lastInteractionAt
+        self.lastTreatAt = lastTreatAt
+        self.lastCrumbAt = lastCrumbAt
+        self.petCount = petCount
+        self.treatsGiven = treatsGiven
+        self.crumbsEaten = crumbsEaten
+    }
+
+    /// How long a treat keeps it blissed out.
+    public static let fedWindow: TimeInterval = 20 * 60
+    /// The quiet that turns into missing you.
+    public static let lonelyAfter: TimeInterval = 24 * 60 * 60
+
+    /// What the care log adds up to. `fed` is checked first — a treat
+    /// also freshens `lastInteractionAt`, so a fed buddy can never be
+    /// missing you anyway; the order just makes that obvious.
+    public enum Mood: String, Codable, Sendable, CaseIterable {
+        /// Nothing owed either way.
+        case content
+        /// Inside `fedWindow` after a treat.
+        case fed
+        /// Petted before, untouched for `lonelyAfter`.
+        case missing
+    }
+
+    public func mood(at now: Date = Date()) -> Mood {
+        let t = now.timeIntervalSince1970
+        if lastTreatAt > 0, t - lastTreatAt < Self.fedWindow { return .fed }
+        if lastInteractionAt > 0, t - lastInteractionAt > Self.lonelyAfter { return .missing }
+        return .content
+    }
+
+    /// A tap on the buddy or a scratch behind the ear.
+    public mutating func pet(at now: Date = Date()) {
+        petCount += 1
+        lastInteractionAt = now.timeIntervalSince1970
+    }
+
+    /// A treat counts as a pet and starts the `fed` window.
+    public mutating func feed(at now: Date = Date()) {
+        pet(at: now)
+        treatsGiven += 1
+        lastTreatAt = now.timeIntervalSince1970
+    }
+
+    /// A completed session is a crumb. Eating is ambient, not affection
+    /// — it deliberately does not touch `lastInteractionAt`, so a buddy
+    /// whose human never says hi still misses them.
+    public mutating func eat(at now: Date = Date(), count: Int = 1) {
+        crumbsEaten += count
+        lastCrumbAt = now.timeIntervalSince1970
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case lastInteractionAt, lastTreatAt, lastCrumbAt, petCount, treatsGiven, crumbsEaten
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        lastInteractionAt = (try? c.decodeIfPresent(Double.self, forKey: .lastInteractionAt)) ?? 0
+        lastTreatAt = (try? c.decodeIfPresent(Double.self, forKey: .lastTreatAt)) ?? 0
+        lastCrumbAt = (try? c.decodeIfPresent(Double.self, forKey: .lastCrumbAt)) ?? 0
+        petCount = (try? c.decodeIfPresent(Int.self, forKey: .petCount)) ?? 0
+        treatsGiven = (try? c.decodeIfPresent(Int.self, forKey: .treatsGiven)) ?? 0
+        crumbsEaten = (try? c.decodeIfPresent(Int.self, forKey: .crumbsEaten)) ?? 0
+    }
+}
+
+/// The Notch Buddy roster. All ten share one skeleton — the same pose,
 /// blink and effects — and differ only in how the body is drawn. The
 /// raw value is what `NotchBuddySettings.character` stores.
 public enum BuddyCharacter: String, Codable, CaseIterable, Sendable {
@@ -178,6 +288,14 @@ public enum BuddyCharacter: String, Codable, CaseIterable, Sendable {
     case owl
     /// A gooey drop: jiggles, melts in the slump, sheds a droplet.
     case slime
+    /// A frilly-gilled smiler that never grew up.
+    case axolotl
+    /// Eyes on stalks, pincers that clap for asks.
+    case crab
+    /// A spotted cap on a pale stalk, permanently drowsy.
+    case mushroom
+    /// A saucer that never lands: glass dome, small pilot, a beam.
+    case ufo
 
     /// The picker's label.
     public var displayName: String {
@@ -188,6 +306,26 @@ public enum BuddyCharacter: String, Codable, CaseIterable, Sendable {
         case .robot: return "Robot"
         case .owl: return "Owl"
         case .slime: return "Slime"
+        case .axolotl: return "Axolotl"
+        case .crab: return "Crab"
+        case .mushroom: return "Mushroom"
+        case .ufo: return "UFO"
+        }
+    }
+
+    /// What it answers to when the user has not picked a name.
+    public var defaultName: String {
+        switch self {
+        case .dot: return "Dot"
+        case .cat: return "Pixel"
+        case .ghost: return "Boo"
+        case .robot: return "Clank"
+        case .owl: return "Hoot"
+        case .slime: return "Gloop"
+        case .axolotl: return "Axel"
+        case .crab: return "Pinch"
+        case .mushroom: return "Morel"
+        case .ufo: return "Orbit"
         }
     }
 
@@ -200,14 +338,20 @@ public enum BuddyCharacter: String, Codable, CaseIterable, Sendable {
         case .robot: return "Antenna up, LEDs on."
         case .owl: return "Sees everything. Especially asks."
         case .slime: return "Mostly holds its shape."
+        case .axolotl: return "Frills out. Still smiling."
+        case .crab: return "Claws up. Walks sideways."
+        case .mushroom: return "Half asleep under its cap."
+        case .ufo: return "Hovering. Probably harmless."
         }
     }
 }
 
-/// Confetti: the weekly-quota-reset burst. The `onCompletion`/`onMilestone`
+/// Confetti: the celebratory burst. The `onCompletion`/`onMilestone`
 /// fields an earlier contract carried are gone — unknown keys are ignored.
 /// Every setting's default is the shipped look, so a file from before
-/// they existed decodes to today's burst.
+/// they existed decodes to today's burst — and `ConfettiTriggers`' are
+/// the behaviour it has always had, so the file's owner sees nothing new
+/// until they opt in.
 public struct ConfettiSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     /// Where the pieces end up.
@@ -220,20 +364,42 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
     public var palette: ConfettiPalette
     /// What the pieces are.
     public var shapes: ConfettiShapes
+    /// Which facts may fire the burst.
+    public var triggers: ConfettiTriggers
+    /// The dedup ring: keys of recent fires, so a repeated event id or a
+    /// re-folded state can never burst twice. Bookkeeping the toy
+    /// maintains, not a control.
+    public var firedKeys: [String]
+
+    /// The ring's depth: an old key falls off long after the fact it
+    /// guarded is history.
+    public static let firedKeyLimit = 64
 
     public init(enabled: Bool = false, landing: ConfettiLanding = .rest, density: Double = 1.0,
                 duration: Double = 1.0, palette: ConfettiPalette = .provider,
-                shapes: ConfettiShapes = .mixed) {
+                shapes: ConfettiShapes = .mixed, triggers: ConfettiTriggers = ConfettiTriggers(),
+                firedKeys: [String] = []) {
         self.enabled = enabled
         self.landing = landing
         self.density = density
         self.duration = duration
         self.palette = palette
         self.shapes = shapes
+        self.triggers = triggers
+        self.firedKeys = firedKeys
+    }
+
+    /// Record one fire's dedup key, oldest out past the limit.
+    public mutating func noteFired(_ key: String) {
+        guard !key.isEmpty else { return }
+        firedKeys.append(key)
+        if firedKeys.count > Self.firedKeyLimit {
+            firedKeys.removeFirst(firedKeys.count - Self.firedKeyLimit)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, landing, density, duration, palette, shapes
+        case enabled, landing, density, duration, palette, shapes, triggers, firedKeys
     }
 
     public init(from decoder: any Decoder) throws {
@@ -244,6 +410,52 @@ public struct ConfettiSettings: Codable, Equatable, Sendable {
         duration = (try? c.decodeIfPresent(Double.self, forKey: .duration)) ?? 1.0
         palette = (try? c.decodeIfPresent(ConfettiPalette.self, forKey: .palette)) ?? .provider
         shapes = (try? c.decodeIfPresent(ConfettiShapes.self, forKey: .shapes)) ?? .mixed
+        triggers = (try? c.decodeIfPresent(ConfettiTriggers.self, forKey: .triggers)) ?? ConfettiTriggers()
+        let keys = (try? c.decodeIfPresent([String].self, forKey: .firedKeys)) ?? []
+        firedKeys = Array(keys.filter { !$0.isEmpty }.suffix(Self.firedKeyLimit))
+    }
+}
+
+/// What may fire the burst. The defaults are exactly what the toy has
+/// always done — a weekly refill and nothing else — so a file from
+/// before these keys decodes to the same behaviour and every new
+/// trigger is opt-in.
+public struct ConfettiTriggers: Codable, Equatable, Sendable {
+    /// An agent finished a run (`completed` events).
+    public var sessionCompleted: Bool
+    /// Any provider's weekly quota window refilled (`quota_reset` on a
+    /// `weekly` / `*-weekly` lane).
+    public var weeklyReset: Bool
+    /// Providers whose EVERY lane reset fires it — the five-hour window
+    /// and product-scoped lanes included, not only the weekly one.
+    public var perProviderReset: Set<String>
+    /// Codex's banked-credit balance (`credits_remaining`) grew.
+    public var codexBankedReset: Bool
+    /// The last open ask resolved — nothing left waiting on you.
+    public var allClear: Bool
+
+    public init(sessionCompleted: Bool = false, weeklyReset: Bool = true,
+                perProviderReset: Set<String> = [], codexBankedReset: Bool = false,
+                allClear: Bool = false) {
+        self.sessionCompleted = sessionCompleted
+        self.weeklyReset = weeklyReset
+        self.perProviderReset = perProviderReset
+        self.codexBankedReset = codexBankedReset
+        self.allClear = allClear
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionCompleted, weeklyReset, perProviderReset, codexBankedReset, allClear
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionCompleted = (try? c.decodeIfPresent(Bool.self, forKey: .sessionCompleted)) ?? false
+        weeklyReset = (try? c.decodeIfPresent(Bool.self, forKey: .weeklyReset)) ?? true
+        perProviderReset = Set(((try? c.decodeIfPresent(Set<String>.self, forKey: .perProviderReset)) ?? [])
+            .map { $0.lowercased() })
+        codexBankedReset = (try? c.decodeIfPresent(Bool.self, forKey: .codexBankedReset)) ?? false
+        allClear = (try? c.decodeIfPresent(Bool.self, forKey: .allClear)) ?? false
     }
 }
 
@@ -263,6 +475,53 @@ public enum ConfettiPalette: String, Codable, CaseIterable, Sendable {
 /// only.
 public enum ConfettiShapes: String, Codable, CaseIterable, Sendable {
     case mixed, streamers, flecks
+}
+
+/// Alcove: the notch island — a capsule hugging the notch that shows who
+/// is working and grows into a session card on hover. `provider` picks
+/// who draws it, Fold-style: JR-Bar's own island, or the capsule owned
+/// by Alcove / boring.notch, which JR-Bar then leaves alone. The other
+/// fields are our island's knobs and mean nothing while an external app
+/// owns the notch.
+public struct AlcoveSettings: Codable, Equatable, Sendable {
+    public var enabled: Bool
+    /// Who renders the island.
+    public var provider: AlcoveProvider
+    /// The capsule itself. Off parks the island without touching the
+    /// provider pick.
+    public var islandEnabled: Bool
+    /// Per-provider quota meters in the expanded card.
+    public var showUsage: Bool
+    /// Hover grows the capsule into the card.
+    public var expandOnHover: Bool
+
+    public init(enabled: Bool = false, provider: AlcoveProvider = .jrbar,
+                islandEnabled: Bool = true, showUsage: Bool = true,
+                expandOnHover: Bool = true) {
+        self.enabled = enabled
+        self.provider = provider
+        self.islandEnabled = islandEnabled
+        self.showUsage = showUsage
+        self.expandOnHover = expandOnHover
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, provider, islandEnabled, showUsage, expandOnHover
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        provider = (try? c.decodeIfPresent(AlcoveProvider.self, forKey: .provider)) ?? .jrbar
+        islandEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .islandEnabled)) ?? true
+        showUsage = (try? c.decodeIfPresent(Bool.self, forKey: .showUsage)) ?? true
+        expandOnHover = (try? c.decodeIfPresent(Bool.self, forKey: .expandOnHover)) ?? true
+    }
+}
+
+/// Who renders the island: ours, Henrik's Alcove, or boring.notch.
+public enum AlcoveProvider: String, Codable, CaseIterable, Sendable {
+    case jrbar, alcove, boringNotch
 }
 
 /// One app on the Toys page's external list. Identity is the bundle id:
