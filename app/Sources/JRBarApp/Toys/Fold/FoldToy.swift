@@ -2,8 +2,19 @@ import AppKit
 import CoreVideo
 import JRBarCore
 import Observation
+import OSLog
 import QuartzCore
 import SwiftUI
+
+/// Fold's decision chain lands in unified logging under
+/// `devin.jrbar / fold` — `log stream --predicate 'subsystem ==
+/// "devin.jrbar" && category == "fold"'` shows live state during a real
+/// lid close: sensor edge → gate → armed/busy → delta → frame → texture
+/// → visible. Every emission is a state transition, not a per-poll or
+/// per-frame line, so the log stays quiet at rest.
+enum FoldLog {
+    static let log = Logger(subsystem: "devin.jrbar", category: "fold")
+}
 
 /// Fold (docs/TOYS.md): the desktop tilts, dims and blurs as the lid
 /// comes down, like it is holding its angle in the room. The pieces stay
@@ -83,6 +94,9 @@ final class FoldToy: Toy {
     @ObservationIgnored private var paused = false
     /// The half-second "all clear" before a paused fold resumes.
     @ObservationIgnored private var resumeWork: DispatchWorkItem?
+    /// The last diagnostic line logged — the log only speaks when the
+    /// machine's state actually changes, so a parked fold stays silent.
+    @ObservationIgnored private var lastDiag = ""
 
     init(core: CoreModel, store: ToysStore) {
         self.core = core
@@ -250,6 +264,7 @@ final class FoldToy: Toy {
         sensor.setPolling(true)
         guard !rendererFailed, FoldCapturePermission.granted else {
             standDown()
+            noteDiag(stage: "armed-gate")
             return
         }
         if pauseReason != nil {
@@ -259,6 +274,7 @@ final class FoldToy: Toy {
             resumeWork = nil
             displayedDelta = 0
             standDown()
+            noteDiag(stage: "paused")
             return
         }
         if paused {
@@ -283,6 +299,26 @@ final class FoldToy: Toy {
             overlay?.reframe()
             reframedVersion = displayVersion
         }
+        noteDiag(stage: "reconcile")
+    }
+
+    /// The whole decision chain on one line, logged only on change —
+    /// `armed/busy` are the link's terms, `raw/render` the angles, then
+    /// the delta chain, then frame/texture/overlay. A lid close should
+    /// read armed→busy→delta growing→frame→tex→vis.
+    private func noteDiag(stage: String) {
+        let raw = gateAngle.map { String(format: "%.0f", $0) } ?? "nil"
+        let render = renderAngle.map { String(format: "%.1f", $0) } ?? "nil"
+        let line = "\(stage) en=\(settings.enabled) prv=\(settings.provider.rawValue) "
+            + "paused=\(paused) pause=\(pauseReason ?? "-") "
+            + "raw=\(raw) render=\(render) target=\(String(format: "%.3f", targetDelta)) "
+            + "disp=\(String(format: "%.3f", displayedDelta)) "
+            + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
+            + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
+            + "link=\(tickLink != nil)"
+        guard line != lastDiag else { return }
+        lastDiag = line
+        FoldLog.log.notice("\(line, privacy: .public)")
     }
 
     /// The delta the fold wants right now, from the freshest truth — 0
@@ -344,6 +380,7 @@ final class FoldToy: Toy {
         displayedDelta = FoldMath.smoothed(current: displayedDelta, target: targetDelta, dt: dt)
         let wantVisible = FoldMath.showsOverlay(
             delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
+        noteDiag(stage: "tick")
         guard wantVisible else {
             overlay?.setVisible(false)
             // The link's only job is motion; fully at rest — gate shut
@@ -425,12 +462,23 @@ final class FoldToy: Toy {
                 self.tickFrame()
             }
         }
+        capture.onError = { [weak self] message in
+            // The stream died mid-run: drop it so the next reconcile
+            // builds a fresh one rather than trusting a dead hasFrame.
+            guard let self, let capture = self.capture else { return }
+            self.capture = nil
+            self.core.appendLocalLog(level: "error", "Fold capture stopped: \(message)")
+            Task { await capture.stop() }
+            self.noteDiag(stage: "capture-error")
+        }
+        FoldLog.log.notice("capture: starting stream")
         Task { [weak self, weak capture] in
             do {
                 try await capture?.start()
             } catch {
                 guard let self, self.capture === capture else { return }
                 self.capture = nil
+                FoldLog.log.error("capture: start failed: \(error.localizedDescription, privacy: .public)")
                 self.core.appendLocalLog(level: "error", "Fold capture failed: \(error.localizedDescription)")
             }
         }
@@ -454,7 +502,7 @@ final class FoldToy: Toy {
         rawAngle = sample.angle
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
         guard let angle = sample.angle, simulatedAngle == nil,
-              jitter.accept(angle) else { return }
+              jitter.accept(angle, at: sample.at) else { return }
         tracker.feed(angle, at: sample.at)
         reconcile()
     }

@@ -1,5 +1,6 @@
 import AppKit
 import MetalKit
+import OSLog
 
 /// The fold's stage: a borderless, click-through panel hung over the
 /// built-in screen at screen-saver level. `sharingType = .none` keeps it
@@ -54,11 +55,17 @@ final class FoldOverlayWindow: NSPanel {
     /// nothing changed.
     func setVisible(_ visible: Bool) {
         if visible {
-            if !isVisible { orderFrontRegardless() }
+            if !isVisible {
+                FoldLog.log.notice("overlay: ordered in")
+                orderFrontRegardless()
+            }
             metalView.isPaused = false
         } else {
             metalView.isPaused = true
-            if isVisible { orderOut(nil) }
+            if isVisible {
+                FoldLog.log.notice("overlay: ordered out")
+                orderOut(nil)
+            }
         }
     }
 

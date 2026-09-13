@@ -1,6 +1,7 @@
 import AppKit
 import CoreMedia
 import CoreVideo
+import OSLog
 import ScreenCaptureKit
 
 /// Screen Recording permission facts. Preflight never prompts; Request
@@ -42,15 +43,31 @@ final class FoldCapture {
     private var stopRequested = false
     /// Called once per accepted frame so the overlay can push + redraw.
     var onFrame: (@MainActor (CVPixelBuffer) -> Void)?
+    /// Called when the stream dies on its own — SCK reports a stopped
+    /// stream through its delegate, and without one a dead capture is
+    /// silent: frames simply stop arriving with `hasFrame` left true.
+    var onError: (@MainActor (String) -> Void)?
     /// True once at least one complete frame has been delivered.
     private(set) var hasFrame = false
+    /// The last stream-death reason, for the card's diagnostic line.
+    private(set) var lastError: String?
 
     init() {
         sink.onFrame = { [weak self] buffer in
             let box = FrameBox(buffer)
             Task { @MainActor [weak self] in
+                if self?.hasFrame == false {
+                    FoldLog.log.notice("capture: first frame delivered")
+                }
                 self?.hasFrame = true
                 self?.onFrame?(box.buffer)
+            }
+        }
+        sink.onError = { [weak self] message in
+            Task { @MainActor [weak self] in
+                FoldLog.log.error("capture: stream stopped: \(message, privacy: .public)")
+                self?.lastError = message
+                self?.onError?(message)
             }
         }
     }
@@ -61,6 +78,7 @@ final class FoldCapture {
     func start() async throws {
         guard stream == nil else { return }
         stopRequested = false
+        lastError = nil
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: false)
         guard !stopRequested else { return }
@@ -79,10 +97,11 @@ final class FoldCapture {
         config.capturesAudio = false
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.colorSpaceName = CGColorSpace.sRGB
-        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+        let stream = SCStream(filter: filter, configuration: config, delegate: sink)
         try stream.addStreamOutput(sink, type: .screen,
                                  sampleHandlerQueue: DispatchQueue(label: "jrbar.fold.capture"))
         try await stream.startCapture()
+        FoldLog.log.notice("capture: stream started")
         if stopRequested {
             // A stop landed while start was suspended: close what just
             // opened instead of storing it where nobody can reach it.
@@ -110,9 +129,12 @@ private struct FrameBox: @unchecked Sendable {
 }
 
 /// Receives frames on the stream's own queue and keeps only the newest
-/// complete one; a partial frame would tear under the projection.
-private final class Sink: NSObject, SCStreamOutput, @unchecked Sendable {
+/// complete one; a partial frame would tear under the projection. It is
+/// also the stream's delegate, because the only place SCK reports a dead
+/// stream is `didStopWithError` — a nil delegate makes a silent capture.
+private final class Sink: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     var onFrame: (@Sendable (CVPixelBuffer) -> Void)?
+    var onError: (@Sendable (String) -> Void)?
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                 of type: SCStreamOutputType) {
@@ -123,5 +145,9 @@ private final class Sink: NSObject, SCStreamOutput, @unchecked Sendable {
               status == SCFrameStatus.complete.rawValue,
               let image = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         onFrame?(image)
+    }
+
+    func stream(_ stream: SCStream, didStopWithError error: any Error) {
+        onError?(error.localizedDescription)
     }
 }

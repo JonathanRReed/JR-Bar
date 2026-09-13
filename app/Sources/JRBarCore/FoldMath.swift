@@ -135,31 +135,58 @@ public struct LidTracker: Sendable {
 
 /// The hinge sensor wobbles a degree or two while the lid sits still, and
 /// every accepted reading redraws a full-screen Metal pass. The filter
-/// lets a reading through only once it has moved `tolerance` degrees from
-/// the last one it accepted, so a resting lid costs nothing. A tolerance
-/// of 0 (or less) accepts everything; the first reading always passes.
+/// holds a deadband around the resting angle: readings inside it are
+/// noise and never reach the tracker. Once the lid genuinely moves —
+/// `tolerance` degrees from the anchor — the filter opens and streams
+/// every reading until the lid rests again, because re-anchoring on each
+/// accepted sample is what turned a 5° deadband into 5° stair-steps down
+/// the whole close. A tolerance of 0 (or less) accepts everything; the
+/// first reading always passes.
 public struct JitterFilter: Sendable {
     public var tolerance: Double
-    private var lastAccepted: Double?
+    /// Quiet time that re-arms the deadband once motion started. One
+    /// sensor period is ~100 ms; a lid that has not moved for a third of
+    /// a second is parked.
+    public static let restAfter: TimeInterval = 0.3
+    private var anchor: Double?
+    private var streaming = false
+    private var lastAt: TimeInterval = 0
 
     public init(tolerance: Double) {
         self.tolerance = tolerance
     }
 
-    /// True when `angle` should be used.
-    public mutating func accept(_ angle: Double) -> Bool {
-        guard let last = lastAccepted, tolerance > 0 else {
-            lastAccepted = angle
+    /// True when `angle` should be used. `at` is the sample's host
+    /// seconds (CACurrentMediaTime) so the rest detection shares the
+    /// tracker's clock.
+    public mutating func accept(_ angle: Double, at: TimeInterval) -> Bool {
+        guard let anchor, tolerance > 0, at.isFinite else {
+            self.anchor = angle
+            lastAt = at
             return true
         }
-        guard abs(angle - last) >= tolerance else { return false }
-        lastAccepted = angle
+        if !streaming {
+            guard abs(angle - anchor) >= tolerance else { return false }
+            // Left the deadband: from here to rest, every edge is real
+            // lid travel — no more re-anchoring to step over.
+            streaming = true
+            lastAt = at
+            return true
+        }
+        if at - lastAt > Self.restAfter {
+            // Parked again: re-anchor on the reading it settled at.
+            streaming = false
+            self.anchor = angle
+        }
+        lastAt = at
         return true
     }
 
     /// Forgets the baseline so the next reading passes.
     public mutating func reset() {
-        lastAccepted = nil
+        anchor = nil
+        streaming = false
+        lastAt = 0
     }
 }
 

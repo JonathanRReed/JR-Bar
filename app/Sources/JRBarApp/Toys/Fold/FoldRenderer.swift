@@ -1,6 +1,7 @@
 import AppKit
 import CoreVideo
 import MetalKit
+import OSLog
 
 /// A frame held alive across the GPU fence: CoreVideo buffers are
 /// reference-counted and safe to retain from the completion queue.
@@ -25,6 +26,17 @@ enum FoldRendererError: LocalizedError {
         case .noDevice: return "no Metal device"
         }
     }
+}
+
+/// A hot-path log that cannot flood: each distinct message repeats at
+/// most once a second. Frames arrive at 30 Hz — a real failure would
+/// otherwise bury the log that is supposed to explain it.
+private nonisolated(unsafe) var foldThrottle: [String: TimeInterval] = [:]
+private func foldLogThrottled(_ message: String) {
+    let now = ProcessInfo.processInfo.systemUptime
+    if now - (foldThrottle[message] ?? 0) < 1 { return }
+    foldThrottle[message] = now
+    FoldLog.log.warning("\(message, privacy: .public)")
 }
 
 /// One Metal pipeline that draws the fold as the physical gesture it
@@ -70,6 +82,11 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
     /// the main actor after the blit commits, generation-guarded so an
     /// older overlapping upload can never overwrite a newer one.
     private var desktopTexture: MTLTexture?
+    /// True once a captured frame has landed as a drawable texture —
+    /// `hasFrame` upstream says a frame arrived; this says the GPU can
+    /// sample it. The overlay can be ordered while this is still false,
+    /// and a textureless draw paints clear — invisible, not black.
+    private(set) var hasTexture = false
     private var textureGeneration: UInt64 = 0
     /// Frames in flight past two drop instead of piling up GPU work.
     private let inFlight = DispatchSemaphore(value: 2)
@@ -108,7 +125,10 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
     /// main actor so a draw can never observe a half-swapped frame.
     @discardableResult
     func setDesktopFrame(_ pixelBuffer: CVPixelBuffer) -> Bool {
-        guard let textureCache else { return false }
+        guard let textureCache else {
+            foldLogThrottled("setDesktopFrame: no texture cache")
+            return false
+        }
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
         var wrapped: CVMetalTexture?
@@ -116,7 +136,10 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
             kCFAllocatorDefault, textureCache, pixelBuffer, nil, .bgra8Unorm,
             width, height, 0, &wrapped)
         guard status == kCVReturnSuccess, let wrapped,
-              let source = CVMetalTextureGetTexture(wrapped) else { return false }
+              let source = CVMetalTextureGetTexture(wrapped) else {
+            foldLogThrottled("setDesktopFrame: cache wrap failed status=\(status)")
+            return false
+        }
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: true)
         desc.mipmapLevelCount = 3
@@ -124,7 +147,10 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
         desc.storageMode = .private
         guard let texture = device.makeTexture(descriptor: desc),
               let command = queue.makeCommandBuffer(),
-              let blit = command.makeBlitCommandEncoder() else { return false }
+              let blit = command.makeBlitCommandEncoder() else {
+            foldLogThrottled("setDesktopFrame: texture/command/blit alloc failed")
+            return false
+        }
         blit.copy(from: source, sourceSlice: 0, sourceLevel: 0,
                   sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
                   sourceSize: MTLSize(width: width, height: height, depth: 1),
@@ -140,7 +166,11 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
             let keepAlive = retained
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.textureGeneration == generation else { return }
+                if self.desktopTexture == nil {
+                    FoldLog.log.notice("renderer: first texture published \(width)x\(height)")
+                }
                 self.desktopTexture = ready.value
+                self.hasTexture = true
                 self.params.imageSize = .init(Float(width), Float(height))
                 self.params.texAspect = Float(width) / Float(max(1, height))
             }
@@ -309,6 +339,9 @@ extension FoldRenderer: MTKViewDelegate {
                   let command = queue.makeCommandBuffer(),
                   let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
                 inFlight.signal()
+                if desktopTexture == nil {
+                    foldLogThrottled("draw: no desktop texture — overlay would paint clear")
+                }
                 return
             }
             encodeFold(into: encoder, source: source,

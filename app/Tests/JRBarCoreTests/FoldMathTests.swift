@@ -191,7 +191,7 @@ struct FoldMathTests {
     @Test("the first reading always passes the jitter filter")
     func jitterFirstReading() {
         var filter = JitterFilter(tolerance: 2)
-        let first = filter.accept(100)
+        let first = filter.accept(100, at: 0)
         #expect(first)
     }
 
@@ -199,47 +199,84 @@ struct FoldMathTests {
     func jitterTolerance() {
         var filter = JitterFilter(tolerance: 2)
         var answers: [Bool] = []
-        answers.append(filter.accept(100))
-        answers.append(filter.accept(101))
-        answers.append(filter.accept(98.5))
-        answers.append(filter.accept(102))
-        answers.append(filter.accept(100))
+        answers.append(filter.accept(100, at: 0))
+        answers.append(filter.accept(101, at: 0.1))
+        answers.append(filter.accept(98.5, at: 0.2))
+        answers.append(filter.accept(102, at: 0.3))
+        answers.append(filter.accept(100, at: 0.4))
         #expect(answers[0])
         #expect(!answers[1], "one degree of wobble is not a move")
         #expect(!answers[2])
         #expect(answers[3], "exactly the tolerance counts")
-        #expect(answers[4], "two degrees from the new baseline")
+        #expect(answers[4], "mid-move every reading streams")
     }
 
-    @Test("rejected readings do not move the baseline")
+    @Test("rejected readings do not move the anchor")
     func jitterBaseline() {
         var filter = JitterFilter(tolerance: 2)
         var answers: [Bool] = []
-        answers.append(filter.accept(100))
-        answers.append(filter.accept(101))
-        answers.append(filter.accept(101.5))
-        answers.append(filter.accept(102))
+        answers.append(filter.accept(100, at: 0))
+        answers.append(filter.accept(101, at: 0.1))
+        answers.append(filter.accept(101.5, at: 0.2))
+        answers.append(filter.accept(102, at: 0.3))
         #expect(answers == [true, false, false, true],
                 "still measured against 100, not 101")
+    }
+
+    @Test("once moving, every degree streams until the lid rests")
+    func jitterStreamsDuringMotion() {
+        var filter = JitterFilter(tolerance: 5)
+        var t = 0.0
+        var answers: [Bool] = []
+        // A real close on the probed sensor: whole degrees at ~10 Hz.
+        for angle in stride(from: 91, through: 57, by: -1) {
+            answers.append(filter.accept(Double(angle), at: t))
+            t += 0.1
+        }
+        // First sample anchors; 90–87 sit inside the 5° deadband; 86
+        // leaves it — and then EVERY step streams: no 5° stair-steps.
+        #expect(answers[0])
+        #expect(answers[1...4].allSatisfy { !$0 })
+        #expect(answers[5...].allSatisfy { $0 },
+                "after the deadband breaks, the close streams every edge")
+    }
+
+    @Test("the deadband re-arms after the lid rests")
+    func jitterReArmsAtRest() {
+        var filter = JitterFilter(tolerance: 5)
+        var t = 0.0
+        for angle in stride(from: 91, through: 60, by: -1) {
+            _ = filter.accept(Double(angle), at: t)
+            t += 0.1
+        }
+        // Lid parks at 60 for a beat; the settle reading lands (it is
+        // the true rest angle) and the wobble after is noise again.
+        t += 0.5
+        let settle = filter.accept(61, at: t)
+        let wobbleA = filter.accept(61.4, at: t + 0.1)
+        let wobbleB = filter.accept(60.7, at: t + 0.2)
+        #expect(settle, "the settle reading is real")
+        #expect(!wobbleA, "re-anchored: sub-tolerance is noise")
+        #expect(!wobbleB)
     }
 
     @Test("a zero tolerance accepts every reading")
     func jitterZero() {
         var filter = JitterFilter(tolerance: 0)
         var answers: [Bool] = []
-        answers.append(filter.accept(100))
-        answers.append(filter.accept(100))
-        answers.append(filter.accept(100.001))
-        answers.append(filter.accept(99.999))
+        answers.append(filter.accept(100, at: 0))
+        answers.append(filter.accept(100, at: 0.1))
+        answers.append(filter.accept(100.001, at: 0.2))
+        answers.append(filter.accept(99.999, at: 0.3))
         #expect(answers == [true, true, true, true])
     }
 
     @Test("reset makes the next reading a fresh baseline")
     func jitterReset() {
         var filter = JitterFilter(tolerance: 5)
-        let first = filter.accept(100)
+        let first = filter.accept(100, at: 0)
         filter.reset()
-        let afterReset = filter.accept(100.5)
+        let afterReset = filter.accept(100.5, at: 0.1)
         #expect(first)
         #expect(afterReset, "after reset the first reading passes")
     }
