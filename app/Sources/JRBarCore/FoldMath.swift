@@ -40,6 +40,51 @@ public enum FoldMath {
     }
 }
 
+/// The display glide, second order. A first-order ease transmits a
+/// slope step straight to the eye — the tracker's dead reckoning
+/// changes slope at every sensor edge (~10 Hz), which reads as a fine
+/// judder riding the close. A critically damped spring carries its own
+/// velocity, so an edge's slope step becomes an acceleration change and
+/// the judder disappears without adding lag; ω≈14 rad/s keeps the
+/// responsiveness of the old 80 ms ease.
+public struct DeltaSpring: Sendable {
+    public private(set) var value = 0.0
+    public private(set) var velocity = 0.0
+
+    /// ≈14 rad/s ≈ the old 80 ms exponential's half-response.
+    public static let omega = 14.0
+
+    public init() {}
+
+    /// Snaps to rest — a parked fold holds exactly this.
+    public mutating func reset(to value: Double = 0) {
+        self.value = value
+        velocity = 0
+    }
+
+    /// Semi-implicit Euler — stable at any render cadence. The fold
+    /// delta is physical: it can never go below aligned, so the spring
+    /// clamps at 0 rather than ringing through it.
+    @discardableResult
+    public mutating func tick(target: Double, dt: Double) -> Double {
+        guard value.isFinite, target.isFinite, velocity.isFinite,
+              dt.isFinite, dt > 0 else {
+            value = target
+            velocity = 0
+            return target
+        }
+        let w = Self.omega
+        velocity += (-w * w * (value - target) - 2 * w * velocity) * dt
+        value += velocity * dt
+        if value < 0 { value = 0; velocity = max(0, velocity) }
+        return value
+    }
+
+    /// Rest means both halves quiet — a spring still coasting through
+    /// the floor would otherwise park mid-settle.
+    public var atRest: Bool { value <= 0.002 && abs(velocity) < 0.05 }
+}
+
 /// The piece that makes the fold feel attached to your finger instead
 /// of dragged behind it: dead reckoning off the sensor's own edges.
 ///
@@ -85,6 +130,14 @@ public struct LidTracker: Sendable {
     public static let restAfter: TimeInterval = 0.3
     /// How much each edge's velocity estimate moves the blended one.
     public static let velocityBlend: Double = 0.6
+    /// A lid cannot move faster than a slam; an edge-rate beyond this is
+    /// the timestamp's noise, not the hinge's truth — unbounded it
+    /// would lurch the extrapolation to the lead cap and snap back.
+    public static let maxLidSpeed: Double = 240
+    /// A counter-directional edge slower than this is sensor wobble, not
+    /// intent: it pulls the estimate gently instead of snapping the
+    /// direction (which is what made a parked-at-an-edge wobble zigzag).
+    public static let reversalFloor: Double = 15
 
     public init() {}
 
@@ -106,13 +159,20 @@ public struct LidTracker: Sendable {
         }
         guard raw != lastRaw else { return }
         let dt = max(0.02, at - edgeAt)
-        let vNew = (raw - edgeAngle) / dt
-        velocity = velocity == 0 ? vNew : velocity + (vNew - velocity) * Self.velocityBlend
+        let vNew = max(-Self.maxLidSpeed, min(Self.maxLidSpeed, (raw - edgeAngle) / dt))
         if vNew * velocity < 0 {
-            // A reversal: the blended estimate would ride the old
-            // direction through the turn and overshoot exactly where
-            // the eye catches it — take the new direction whole.
-            velocity = vNew
+            if abs(vNew) >= Self.reversalFloor {
+                // A real reversal: the blended estimate would ride the
+                // old direction through the turn and overshoot exactly
+                // where the eye catches it — take the new one whole.
+                velocity = vNew
+            } else {
+                // Wobble against the travel: a weak pull only, so the
+                // estimate keeps pointing where the lid is going.
+                velocity += (vNew - velocity) * Self.velocityBlend * 0.4
+            }
+        } else {
+            velocity = velocity == 0 ? vNew : velocity + (vNew - velocity) * Self.velocityBlend
         }
         edgeAngle = raw
         edgeAt = at

@@ -69,10 +69,11 @@ final class FoldToy: Toy {
     var overlayOnScreen: Bool { overlay?.isVisible == true }
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    /// The smoothed delta the renderer is showing — sensor readings
-    /// step, the fold glides at the display's own rate because the
-    /// display link, not the sensor, carries the easing between samples.
-    @ObservationIgnored private var displayedDelta = 0.0
+    /// The delta the renderer is showing, sprung: the tracker's dead
+    /// reckoning changes slope at every sensor edge, and a first-order
+    /// ease transmitted that as a fine judder. The spring carries its
+    /// own velocity, so an edge becomes an acceleration change instead.
+    @ObservationIgnored private var deltaSpring = DeltaSpring()
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
     /// Safety facts, cached instead of queried per frame: the clamshell
     /// truth rides in on the sensor's 1 Hz beat, and display topology
@@ -258,7 +259,7 @@ final class FoldToy: Toy {
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
-            displayedDelta = 0
+            deltaSpring.reset()
             tracker.reset()
             standDown()
             sensor.setPolling(false)
@@ -282,7 +283,7 @@ final class FoldToy: Toy {
             paused = true
             resumeWork?.cancel()
             resumeWork = nil
-            displayedDelta = 0
+            deltaSpring.reset()
             standDown()
             noteDiag(stage: "paused")
             return
@@ -325,7 +326,7 @@ final class FoldToy: Toy {
         let state = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
             + "paused=\(paused) pause=\(pauseReason ?? "-") "
             + "raw=\(raw) render=\(render) target=\(String(format: "%.3f", targetDelta)) "
-            + "disp=\(String(format: "%.3f", displayedDelta)) "
+            + "disp=\(String(format: "%.3f", deltaSpring.value)) "
             + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
             + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
             + "link=\(tickLink != nil)"
@@ -360,7 +361,7 @@ final class FoldToy: Toy {
         // shut and the ease finished — runs no timer at all. Without
         // this check the link was born and killed on every parked
         // sensor sample.
-        let busy = targetDelta > 0 || displayedDelta > 0.002
+        let busy = targetDelta > 0 || deltaSpring.value > 0.002
         if armed && busy {
             if tickLink == nil {
                 // On macOS the link comes from the screen it drives.
@@ -374,7 +375,7 @@ final class FoldToy: Toy {
         } else if let link = tickLink {
             link.invalidate()
             tickLink = nil
-            displayedDelta = 0
+            deltaSpring.reset()
             overlay?.setVisible(false)
         }
     }
@@ -390,9 +391,9 @@ final class FoldToy: Toy {
         lastDeltaTick = now
         tracker.tick(dt: dt, at: now)
         refreshDisplayFactsIfStale()
-        displayedDelta = FoldMath.smoothed(current: displayedDelta, target: targetDelta, dt: dt)
+        deltaSpring.tick(target: targetDelta, dt: dt)
         let wantVisible = FoldMath.showsOverlay(
-            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
+            delta: deltaSpring.value, hasFrame: capture?.hasFrame ?? false)
         noteDiag(stage: "tick")
         guard wantVisible else {
             overlay?.setVisible(false)
@@ -409,9 +410,9 @@ final class FoldToy: Toy {
                 ensureCaptureRunning()
             }
             // The link's only job is motion; fully at rest — gate shut
-            // and the ease finished — it stands down until the next
+            // and the spring settled — it stands down until the next
             // reconcile arms it again.
-            if targetDelta == 0 && displayedDelta <= 0.002, let link = tickLink {
+            if targetDelta == 0 && deltaSpring.atRest, let link = tickLink {
                 link.invalidate()
                 tickLink = nil
             }
@@ -435,9 +436,9 @@ final class FoldToy: Toy {
             // Adaptive disc density, keyed on the shader's own peak
             // radius (the disc is widest at the far edge): sparse while
             // the matte is thin, dense when it is wide.
-            let peakRadius = (blur * 65 + boost) * Float(sin(displayedDelta))
+            let peakRadius = (blur * 65 + boost) * Float(sin(deltaSpring.value))
             let samples: Float = peakRadius <= 6 ? 12 : peakRadius <= 20 ? 20 : 32
-            overlay.renderer.params.delta = Float(displayedDelta)
+            overlay.renderer.params.delta = Float(deltaSpring.value)
             overlay.renderer.params.blurStrength = blur
             overlay.renderer.params.motionBoost = boost
             overlay.renderer.params.dimStrength = settings.style == .tilt ? 0
@@ -604,7 +605,7 @@ final class FoldToy: Toy {
         guard FoldCapturePermission.granted else { return "Waiting for Screen Recording" }
         if rendererFailed { return "Renderer failed to start" }
         if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
-        let tilted = displayedDelta * 180 / .pi
+        let tilted = deltaSpring.value * 180 / .pi
         guard tilted > 0.1 else {
             return "Parked — close the lid past \(Int(settings.activationAngle.rounded()))°"
         }

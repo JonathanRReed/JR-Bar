@@ -186,6 +186,93 @@ struct FoldMathTests {
         #expect(tracker.velocity.isFinite)
     }
 
+    @Test("an edge measured across a tiny dt cannot claim a slam")
+    func trackerEdgeRateCap() {
+        var tracker = LidTracker()
+        tracker.feed(90, at: 0)
+        // Two report values 30 ms apart: a real edge would carry ~2° of
+        // travel, 11° is the timestamp's noise — the cap, not the
+        // arithmetic, sets the velocity.
+        tracker.feed(79, at: 0.03)
+        #expect(abs(tracker.velocity) <= LidTracker.maxLidSpeed + 1e-9)
+    }
+
+    @Test("a wobble edge against the travel cannot flip the velocity's sign")
+    func trackerWobbleReversal() {
+        var tracker = LidTracker()
+        let poll = 1.0 / 120
+        let truth: (Double) -> Double = { 90 - 60 * $0 }
+        for i in 0...60 {
+            let t = Double(i) * poll
+            tracker.feed(sensor(t, truth: truth), at: t)
+            tracker.tick(dt: poll, at: t)
+        }
+        #expect(tracker.velocity < -LidTracker.reversalFloor,
+                "a real close is moving at \(tracker.velocity)°/s")
+        // A 1° upward wobble mid-close: slow enough to be noise.
+        tracker.feed(sensor(0.5, truth: truth) + 1, at: 0.51)
+        #expect(tracker.velocity < 0,
+                "wobble does not reverse the estimate: \(tracker.velocity)")
+        // A fast counter-edge is a real reversal — 60°/s the other way.
+        tracker.feed(sensor(0.5, truth: truth) + 3, at: 0.56)
+        #expect(tracker.velocity > 0, "a genuine lift reverses: \(tracker.velocity)")
+    }
+
+    // MARK: DeltaSpring
+
+    @Test("the spring lands on the target and stays through it")
+    func springSettles() {
+        var spring = DeltaSpring()
+        let dt = 1.0 / 120
+        for _ in 0...240 { spring.tick(target: 0.8, dt: dt) }
+        #expect(abs(spring.value - 0.8) < 0.01)
+        #expect(abs(spring.velocity) < 0.01)
+    }
+
+    @Test("the spring never reports a negative delta")
+    func springNoRingBelowZero() {
+        var spring = DeltaSpring()
+        let dt = 1.0 / 120
+        for _ in 0...30 { spring.tick(target: 0.8, dt: dt) }
+        // Gate shuts: the spring decays to zero and must not ring
+        // through it — a negative delta would flick the overlay off
+        // mid-exit.
+        for _ in 0...240 {
+            spring.tick(target: 0, dt: dt)
+            #expect(spring.value >= 0, "delta went negative")
+        }
+        #expect(spring.atRest)
+    }
+
+    @Test("a slope step becomes acceleration, not a jump")
+    func springAbsorbsEdgeStep() {
+        var spring = DeltaSpring()
+        let dt = 1.0 / 120
+        // Ride a steadily rising target, then stop it dead — the
+        // tracker's edge cadence, abstracted. The first-order ease
+        // would lurch; the spring's largest single-frame move stays
+        // under the rate a 60°/s close already shows.
+        for _ in 0...60 { spring.tick(target: 0, dt: dt) }
+        var t = 0.5
+        var maxStep = 0.0
+        var previous = spring.value
+        for _ in 0...120 {
+            t += dt
+            spring.tick(target: t, dt: dt)
+            maxStep = max(maxStep, abs(spring.value - previous))
+            previous = spring.value
+        }
+        spring.tick(target: t, dt: dt)
+        for _ in 0...60 {
+            spring.tick(target: t, dt: dt)
+            maxStep = max(maxStep, abs(spring.value - previous))
+            previous = spring.value
+        }
+        #expect(maxStep < dt * 3,
+                "no frame jumps after the target stalls: \(maxStep)")
+        #expect(abs(spring.value - t) < 0.05, "and it catches up")
+    }
+
     // MARK: Jitter
 
     @Test("the first reading always passes the jitter filter")
