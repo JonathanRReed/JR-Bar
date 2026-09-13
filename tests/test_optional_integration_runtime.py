@@ -175,8 +175,11 @@ def test_creator_semantic_mapping_is_explicit(mode, signal, want):
     assert creator_semantic_state(mode, signal=signal).value == want
 
 
-def test_output_service_negotiates_before_writes_and_stops_on_conflict():
+def test_output_service_negotiates_before_writes_and_retries_a_conflict():
+    """A conflict used to end the worker for the daemon's life. Now the
+    receipt stays visible and the adapter's own retry is asked to reconnect."""
     calls, receipts = [], []
+    conflicted = threading.Event()
 
     class Adapter:
         conflict = SimpleNamespace(active=False)
@@ -195,7 +198,16 @@ def test_output_service_negotiates_before_writes_and_stops_on_conflict():
         def apply(self, state):
             calls.append(state.value)
             self.conflict.active = True
+            conflicted.set()
             return SimpleNamespace(code="device_conflict", detail="foreign response")
+
+        def poll_inputs(self):
+            return []
+
+        def recover_conflict(self):
+            calls.append("recover")
+            # Still inside the retry delay: the accusation stands.
+            return SimpleNamespace(code="device_conflict", detail="")
 
         def close(self):
             calls.append("close")
@@ -203,11 +215,19 @@ def test_output_service_negotiates_before_writes_and_stops_on_conflict():
     service = CreatorMicroOutputService(adapter_factory=Adapter, callback=receipts.append)
     service.start()
     service.submit(AgentMode.WORKING)
+    assert conflicted.wait(1)
     assert service.wait_until_idle(1)
     service.submit(AgentMode.IDLE_READY)
+    assert service.wait_until_idle(1)
+    # The worker did not stop on the accusation; it keeps asking to retry.
+    deadline = threading.Event()
+    assert service._thread is not None and service._thread.is_alive()
+    waited = deadline.wait(0.6)
+    assert not waited
     service.close()
 
-    assert calls == ["connect", "negotiate", "active", "close"]
+    assert calls[:3] == ["connect", "negotiate", "active"]
+    assert "recover" in calls and "idle" in calls and calls[-1] == "close"
     assert receipts[-1].reason == "device_conflict"
 
 

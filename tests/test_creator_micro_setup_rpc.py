@@ -34,7 +34,12 @@ def adapter(response, **kwargs):
     result = CreatorMicro2Adapter(transport, {
         "vendor_id": 0x303A, "product_id": 0x8297, "usage_page": 0xFF00, "usage": 1,
     }, **kwargs)
+    # A reply queued before connect is stale input: the adapter drains and
+    # discards it. Deliver the response afterwards, as the live pad would.
+    queued = list(transport.reads)
+    transport.reads.clear()
     assert result.connect().code == "connected"
+    transport.reads.extend(queued)
     return result, transport
 
 

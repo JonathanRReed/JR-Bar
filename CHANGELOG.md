@@ -9,7 +9,12 @@ All notable changes to JR-Bar are documented here.
   messages only need a string `m`/`method` now (params optional, extra
   fields kept under `extra`), an unreadable push is skipped and logged
   once instead of disconnecting, and the receipt names the offending
-  keys when one does fail.
+  keys when one does fail. A daemon restart no longer accuses the pad of
+  a "foreign response id" either: stale replies to the previous process
+  are drained on connect and ignored for a 3 s grace, an out-of-order
+  reply to our own id is retired instead of read as a second controller,
+  and a real conflict retries the connection after 60 s rather than
+  parking the pad for good.
 - Devin sub-agent tracking hardened from review: the Sidekick worker is
   scoped per session (two sessions' sidekicks no longer share one row),
   background helpers are retired on SessionEnd rather than the turn's

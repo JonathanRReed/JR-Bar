@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from collections import deque
 
 import pytest
@@ -27,12 +29,14 @@ class FakeTransport:
     def __init__(self, reads=(), open_error=None):
         self.reads, self.open_error, self.writes = deque(reads), open_error, []
         self.opened = self.closed = False
+        self.opens = self.closes = 0
 
     def open(self, *, nonexclusive=True):
         assert nonexclusive
         if self.open_error:
             raise self.open_error
         self.opened = True
+        self.opens += 1
 
     def write(self, report):
         self.writes.append(report)
@@ -43,6 +47,7 @@ class FakeTransport:
 
     def close(self):
         self.closed = True
+        self.closes += 1
 
 
 def test_frames_every_fragment_and_reassembles_split_and_concatenated_messages():
@@ -138,11 +143,12 @@ def test_notification_with_conflicting_method_keys_is_rejected_with_keys_named()
 def test_bad_notification_in_the_same_report_as_a_response_neither_disconnects_nor_loses_it():
     payload = b'{"m":5,"p":{}}' + b'{"id":1,"result":{"ok":1}}'
     fragments = [payload[index:index + 61] for index in range(0, len(payload), 61)]
-    transport = FakeTransport([
-        bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in fragments
-    ])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     adapter.connect()
+    transport.reads.extend(
+        bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in fragments
+    )
 
     receipt, response = adapter._call("device.status", None)
 
@@ -172,12 +178,13 @@ def test_vendor_envelopes_without_a_jsonrpc_field_deliver_responses_and_key_pres
     def report(payload):
         return bytes((6, 2, len(payload))) + payload.ljust(61, b"\0")
 
-    transport = FakeTransport([
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]))
+    adapter.connect()
+    transport.reads.extend([
         report(b'{"m":"v.oai.hid","p":{"k":"AG03","act":1}}'),
         report(b'{"id":1,"method":"v.oai.thstatus","params":{"ok":1}}'),
     ])
-    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]))
-    adapter.connect()
     assert adapter.apply(SemanticState.ACTIVE).code == "applied"
     assert adapter.poll_inputs() == [{"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}}]
 
@@ -190,11 +197,12 @@ def test_device_status_result_with_echoed_method_is_accepted():
         b'{"version":"v0.6.1","layer_index":1,"profile_index":0}}'
     )
     parts = [payload[index:index + 61] for index in range(0, len(payload), 61)]
-    transport = FakeTransport([
-        bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in parts
-    ])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     assert adapter.connect().code == "connected"
+    transport.reads.extend(
+        bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in parts
+    )
 
     receipt, response = adapter._call("device.status", None)
 
@@ -206,11 +214,10 @@ def test_device_status_result_with_echoed_method_is_accepted():
 
 def test_echoed_result_for_another_method_is_refused_and_disconnects():
     payload = b'{"id":1,"method":"fs.read","result":{}}'
-    transport = FakeTransport([
-        bytes((6, 2, len(payload))) + payload.ljust(61, b"\0")
-    ])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     adapter.connect()
+    transport.reads.append(bytes((6, 2, len(payload))) + payload.ljust(61, b"\0"))
 
     receipt, response = adapter._call("device.status", None)
 
@@ -231,9 +238,10 @@ def test_key_notification_after_a_response_in_the_same_report_is_not_lost():
     payload = b'{"id":1,"result":"' + b"x" * 50 + b'"}'
     payload += b'{"m":"v.oai.hid","p":{"k":"AG03","act":1}}'
     fragments = [payload[index:index + 61] for index in range(0, len(payload), 61)]
-    transport = FakeTransport([bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in fragments])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]))
     adapter.connect()
+    transport.reads.extend(bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in fragments)
     assert adapter.apply(SemanticState.ACTIVE).code == "applied"
     assert adapter.poll_inputs() == [{"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}}]
 
@@ -256,9 +264,10 @@ def test_connect_returns_explicit_no_device_permission_and_unavailable_receipts(
 
 
 def test_apply_writes_all_fragments_and_correlates_response():
-    transport = FakeTransport([rpc_result(1)])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]))
     assert adapter.connect().code == "connected"
+    transport.reads.append(rpc_result(1))
     params = [{"id": i, "c": 0x123456, "b": 1, "e": 1, "s": 0.5} for i in range(13)]
     assert adapter.apply(SemanticState.INPUT_REQUIRED, params).code == "applied"
     assert len(transport.writes) > 1
@@ -269,11 +278,12 @@ def test_apply_writes_all_fragments_and_correlates_response():
 
 @pytest.mark.parametrize("state", list(SemanticState))
 def test_default_state_output_sets_explicit_lighting_instead_of_only_an_id(state):
-    transport = FakeTransport([rpc_result(1)])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(
         transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"])
     )
     adapter.connect()
+    transport.reads.append(rpc_result(1))
     assert adapter.apply(state).code == "applied"
     decoder = RpcStreamDecoder()
     request = next(message for report in transport.writes for message in decoder.feed(report))
@@ -289,9 +299,10 @@ def test_default_state_output_sets_explicit_lighting_instead_of_only_an_id(state
 
 def test_notifications_survive_fragmentation_while_waiting_for_response():
     note = {"jsonrpc": "2.0", "m": "v.oai.hid", "p": {"k": "AG01", "act": 1}}
-    transport = FakeTransport([*CreatorMicro2Framer.encode_message(note), rpc_result(1)])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]))
     adapter.connect()
+    transport.reads.extend([*CreatorMicro2Framer.encode_message(note), rpc_result(1)])
     assert adapter.apply(SemanticState.ACTIVE, [{"id": 1}]).code == "applied"
     assert adapter.poll_inputs() == [{"method": "v.oai.hid", "params": {"k": "AG01", "act": 1}}]
 
@@ -299,9 +310,10 @@ def test_notifications_survive_fragmentation_while_waiting_for_response():
 def test_input_poll_has_a_report_budget_and_preserves_remaining_input():
     note = {"jsonrpc": "2.0", "m": "v.oai.hid", "p": {"k": "AG01", "act": 1}}
     reports = CreatorMicro2Framer.encode_message(note)
-    transport = FakeTransport(reports * 200)
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     adapter.connect()
+    transport.reads.extend(reports * 200)
     first = adapter.poll_inputs()
     assert 0 < len(first) < 200
     assert transport.reads
@@ -313,9 +325,12 @@ def test_input_poll_has_a_report_budget_and_preserves_remaining_input():
 
 def test_input_conflict_discards_notifications_from_the_contested_batch():
     note = {"jsonrpc": "2.0", "m": "v.oai.hid", "p": {"k": "AG01", "act": 1}}
-    transport = FakeTransport([*CreatorMicro2Framer.encode_message(note), rpc_result(999)])
-    adapter = CreatorMicro2Adapter(transport, INFO)
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(transport, INFO, clock=lambda: now[0])
     adapter.connect()
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.reads.extend([*CreatorMicro2Framer.encode_message(note), rpc_result(999)])
     assert adapter.poll_inputs() == []
     assert adapter.conflict.active
 
@@ -332,9 +347,15 @@ def test_disconnect_discards_queued_input_instead_of_replaying_it_on_reconnect()
 
 
 def test_foreign_response_activates_single_writer_stop_and_closes_safely():
-    transport = FakeTransport([rpc_result(999), rpc_result(1)])
-    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]))
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods(["v.oai.thstatus"]),
+        clock=lambda: now[0],
+    )
     adapter.connect()
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.reads.extend([rpc_result(999), rpc_result(1)])
     assert adapter.apply(SemanticState.ACTIVE, [{"id": 1}]).code == "device_conflict"
     before = len(transport.writes)
     assert adapter.apply(SemanticState.IDLE).code == "device_conflict"
@@ -364,9 +385,10 @@ def test_timeout_disconnects_and_next_connect_honours_backoff():
 
 def test_capability_probe_is_opt_in_and_falls_back_honestly_on_method_not_found():
     error = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "Method not found"}}
-    transport = FakeTransport([*CreatorMicro2Framer.encode_message(error), rpc_result(2)])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     adapter.connect()
+    transport.reads.extend([*CreatorMicro2Framer.encode_message(error), rpc_result(2)])
     assert transport.writes == []
     assert adapter.negotiate_capabilities().code == "capabilities_negotiated"
     assert adapter.capabilities().methods == frozenset({"lights.preview"})
@@ -505,9 +527,10 @@ def test_our_own_answer_arriving_twice_is_not_another_controller():
     """Observed on the real pad over Bluetooth: a completed request is
     answered again, and the old rule read that echo as a second controller
     and stopped output for good on a pad nobody else was touching."""
-    transport = FakeTransport([rpc_result(1), rpc_result(1), rpc_result(2)])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}))
     assert adapter.connect().code == "connected"
+    transport.reads.extend([rpc_result(1), rpc_result(1), rpc_result(2)])
     assert adapter.apply(SemanticState.ACTIVE).code == "applied"
     # The echo of id 1 is skipped; the answer to id 2 still lands.
     assert adapter.apply(SemanticState.IDLE).code == "applied"
@@ -515,13 +538,21 @@ def test_our_own_answer_arriving_twice_is_not_another_controller():
 
 
 def test_an_id_we_never_issued_is_still_a_conflict():
-    """The only evidence of a second owner there is must keep working."""
-    transport = FakeTransport([rpc_result(742)])
-    adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}))
+    """The only evidence of a second owner there is must keep working — once
+    the startup grace has elapsed a genuinely foreign id still stops output."""
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}),
+        clock=lambda: now[0],
+    )
     adapter.connect()
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.reads.append(rpc_result(742))
     receipt = adapter.apply(SemanticState.ACTIVE)
     assert receipt.code == "device_conflict" and receipt.recoverable is False
     assert adapter.conflict.active is True
+    assert adapter.conflict.since == now[0]
 
 
 def test_a_reconnect_forgets_the_ids_of_the_previous_connection():
@@ -539,10 +570,179 @@ def test_a_reconnect_forgets_the_ids_of_the_previous_connection():
 
 
 def test_polling_ignores_our_own_echo_instead_of_dropping_the_connection():
-    transport = FakeTransport([rpc_result(1)])
+    transport = FakeTransport()
     adapter = CreatorMicro2Adapter(transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}))
     adapter.connect()
+    transport.reads.append(rpc_result(1))
     assert adapter.apply(SemanticState.ACTIVE).code == "applied"
     transport.reads.extend([rpc_result(1)])
     assert adapter.poll_inputs() == []
     assert adapter.conflict.active is False and adapter.connected is True
+
+
+def test_a_reply_queued_before_connect_is_drained_not_accused():
+    """The previous daemon process can leave a request in flight whose late
+    reply lands after the restart carrying an id this process never issued.
+    It must be discarded at connect rather than read as a second controller."""
+    transport = FakeTransport([rpc_result(742)])
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"})
+    )
+    assert adapter.connect().code == "connected"
+    assert adapter.conflict.active is False
+    assert adapter.stale_replies_drained == 1
+    transport.reads.append(rpc_result(1))
+    assert adapter.apply(SemanticState.ACTIVE).code == "applied"
+    assert adapter.conflict.active is False
+
+
+def test_the_connect_drain_keeps_notifications_but_drops_id_bearing_replies():
+    note = {"jsonrpc": "2.0", "m": "v.oai.hid", "p": {"k": "AG01", "act": 1}}
+    transport = FakeTransport([*CreatorMicro2Framer.encode_message(note), rpc_result(999)])
+    adapter = CreatorMicro2Adapter(transport, INFO)
+    assert adapter.connect().code == "connected"
+    assert adapter.stale_replies_drained == 1
+    assert adapter.poll_inputs() == [{"method": "v.oai.hid", "params": {"k": "AG01", "act": 1}}]
+    assert adapter.conflict.active is False
+
+
+def test_a_foreign_id_inside_the_startup_grace_is_a_stale_reply_not_a_conflict():
+    """Right after connect a foreign id can still be a stale answer to the
+    previous process's request; the call keeps waiting and a later valid
+    response applies."""
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}),
+        clock=lambda: now[0],
+    )
+    adapter.connect()
+    transport.reads.extend([rpc_result(742), rpc_result(1)])
+    assert adapter.apply(SemanticState.ACTIVE).code == "applied"
+    assert adapter.conflict.active is False
+    assert adapter.stale_replies_ignored == 1
+
+
+def test_a_conflict_retries_the_connection_after_its_delay():
+    """The accusation is not a lifetime sentence: once the retry delay
+    measured from when the conflict began elapses, the adapter closes and
+    reconnects, which resets the conflict."""
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}),
+        clock=lambda: now[0],
+    )
+    adapter.connect()
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.reads.append(rpc_result(742))
+    assert adapter.apply(SemanticState.ACTIVE).code == "device_conflict"
+    # Before the delay the accusation stays and nothing is reopened.
+    now[0] += adapter.CONFLICT_RETRY_SECONDS - 1
+    assert adapter.recover_conflict().code == "device_conflict"
+    assert transport.opens == 1 and adapter.conflict.active
+    now[0] += 1
+    assert adapter.recover_conflict().code == "connected"
+    assert transport.opens == 2 and adapter.conflict.active is False
+    transport.reads.append(rpc_result(2))
+    assert adapter.apply(SemanticState.ACTIVE).code == "applied"
+
+
+def test_a_conflict_retriggering_three_times_backs_off_to_the_long_delay():
+    now = [10.0]
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"}),
+        clock=lambda: now[0],
+    )
+    adapter.connect()
+    for _ in range(2):
+        now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+        transport.reads.append(rpc_result(742))
+        assert adapter.apply(SemanticState.ACTIVE).code == "device_conflict"
+        now[0] += adapter.CONFLICT_RETRY_SECONDS
+        assert adapter.recover_conflict().code == "connected"
+    # The third consecutive conflict backs off to the long delay.
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.reads.append(rpc_result(742))
+    assert adapter.apply(SemanticState.ACTIVE).code == "device_conflict"
+    now[0] += adapter.CONFLICT_RETRY_SECONDS
+    assert adapter.recover_conflict().code == "device_conflict"
+    now[0] += adapter.CONFLICT_RETRY_BACKOFF_SECONDS - adapter.CONFLICT_RETRY_SECONDS
+    assert adapter.recover_conflict().code == "connected"
+
+
+def test_a_late_answer_to_an_earlier_request_of_ours_is_not_a_conflict():
+    """Over Bluetooth the pad can answer out of order: a reply to an id we
+    issued for an earlier call is retired and the call keeps waiting for its
+    own answer instead of accusing a second controller."""
+    transport = FakeTransport()
+    adapter = CreatorMicro2Adapter(
+        transport, INFO, capabilities=DeviceCapability.from_methods({"v.oai.thstatus"})
+    )
+    adapter.connect()
+    adapter.conflict.issued_ids.add(9)  # an earlier request still in flight
+    transport.reads.extend([rpc_result(9), rpc_result(1)])
+    assert adapter.apply(SemanticState.ACTIVE).code == "applied"
+    assert adapter.conflict.active is False
+    assert 9 in adapter.conflict.completed_ids
+
+
+def test_the_output_service_retries_a_conflict_instead_of_stopping_for_good():
+    """The worker used to publish ``device_conflict`` and exit for the
+    daemon's life. Now the receipt stays visible while the adapter waits out
+    its retry delay, then the same pad is reconnected and output resumes."""
+    from jrbar.optional_integration_runtime import CreatorMicroOutputService
+
+    now = [10.0]
+
+    class Loopback:
+        def __init__(self):
+            self.reads = deque()
+            self.decoder = RpcStreamDecoder()
+            self.opens = 0
+
+        def open(self, **_kwargs):
+            self.opens += 1
+
+        def write(self, report):
+            for message in self.decoder.feed(report):
+                self.reads.extend(CreatorMicro2Framer.encode_message(
+                    {"jsonrpc": "2.0", "id": message["id"], "result": {"ok": 1}}
+                ))
+
+        def read(self, *, timeout_ms=0):
+            return self.reads.popleft() if self.reads else None
+
+        def close(self):
+            pass
+
+    transport = Loopback()
+    adapter = CreatorMicro2Adapter(transport, INFO, clock=lambda: now[0])
+    receipts, published = [], threading.Event()
+
+    def record(receipt):
+        receipts.append(receipt.reason)
+        published.set()
+
+    def wait_for(reason, count=1, timeout=4.0):
+        deadline = time.monotonic() + timeout
+        while receipts.count(reason) < count and time.monotonic() < deadline:
+            published.wait(0.05)
+        assert receipts.count(reason) >= count, receipts
+
+    service = CreatorMicroOutputService(adapter_factory=lambda: adapter, callback=record)
+    try:
+        service.start()
+        wait_for("ready")
+        now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+        transport.reads.append(rpc_result(999))
+        wait_for("device_conflict")
+        # The worker is still alive and holding the conflict receipt.
+        assert service._thread is not None and service._thread.is_alive()
+        now[0] += adapter.CONFLICT_RETRY_SECONDS
+        wait_for("ready", count=2)
+        assert transport.opens == 2
+        assert adapter.conflict.active is False
+    finally:
+        service.close()

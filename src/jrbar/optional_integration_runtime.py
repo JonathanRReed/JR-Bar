@@ -183,6 +183,7 @@ class CreatorMicroOutputService:
         retry_at = 0.0
         next_status_poll = 0.0
         last_status = None
+        conflict_published = False
         try:
             while True:
                 with self._condition:
@@ -270,7 +271,9 @@ class CreatorMicroOutputService:
                             self._publish(result.code == "applied",
                                           "aggregate_preview" if preview and result.code == "applied" else result.code,
                                           result.detail)
-                            if result.code not in {"applied", "timeout", "transport_unavailable", "backoff"}:
+                            if result.code != "device_conflict" and result.code not in {
+                                "applied", "timeout", "transport_unavailable", "backoff",
+                            }:
                                 return
                             failed = result.code != "applied"
                             if not failed:
@@ -278,27 +281,50 @@ class CreatorMicroOutputService:
                     # Poll even with actions disabled: this detects competing owners
                     # and disconnects. Never replay notifications after reconnect.
                     inputs = adapter.poll_inputs() if not failed else []
-                    if adapter.conflict.active:
-                        self._publish(False, "device_conflict")
-                        return
-                    failed = failed or not adapter.connected
-                    if not failed and inputs and self._input_callback is not None:
-                        self._input_callback(inputs)
-                    now = time.monotonic()
-                    if inputs:
-                        # A key press may itself have switched the layer.
-                        next_status_poll = now
-                    if not failed and now >= next_status_poll:
-                        last_status = self._poll_status(adapter, last_status)
-                        next_status_poll = now + self._status_poll_seconds
-                        if adapter.conflict.active:
-                            self._publish(False, "device_conflict")
-                            return
+                    conflicted = adapter.conflict.active
+                    if not conflicted:
                         failed = failed or not adapter.connected
+                        if not failed and inputs and self._input_callback is not None:
+                            self._input_callback(inputs)
+                        now = time.monotonic()
+                        if inputs:
+                            # A key press may itself have switched the layer.
+                            next_status_poll = now
+                        if not failed and now >= next_status_poll:
+                            last_status = self._poll_status(adapter, last_status)
+                            next_status_poll = now + self._status_poll_seconds
+                            conflicted = adapter.conflict.active
+                            failed = failed or not adapter.connected
+                    if conflicted:
+                        # A stale or doubled reply can raise the accusation on
+                        # a pad nobody else is driving, so it is not terminal:
+                        # keep the receipt visible and let the adapter retry
+                        # the connection once its conflict delay has elapsed.
+                        if not conflict_published:
+                            self._publish(False, "device_conflict")
+                            conflict_published = True
+                        recovery = adapter.recover_conflict()
+                        if recovery.code == "connected":
+                            conflict_published = False
+                            last_output = None
+                            if self._input_reset_callback is not None:
+                                self._input_reset_callback()
+                            self._publish(True, "ready")
+                            next_status_poll = 0.0
+                        elif not adapter.conflict.active:
+                            # The retry fired but the reconnect itself failed;
+                            # hand the pad to the ordinary reconnect path.
+                            adapter.close()
+                            adapter = None
+                            conflict_published = False
+                            if self._input_reset_callback is not None:
+                                self._input_reset_callback()
+                            self._publish(False, "reconnecting", recovery.detail or recovery.code)
+                            retry_at = time.monotonic() + retry_delay
                     with self._condition:
                         self._busy = False
                         self._condition.notify_all()
-                    if failed:
+                    if failed and not conflicted and adapter is not None:
                         adapter.close()
                         adapter = None
                         if self._input_reset_callback is not None:

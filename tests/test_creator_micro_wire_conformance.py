@@ -104,9 +104,11 @@ class ScriptedTransport:
 
 def test_adapter_reports_firmware_error_instead_of_malformed_wire():
     response = {"id": 1, "method": "device.status", "error": {"code": 404, "message": "not found"}}
-    transport = ScriptedTransport(raw_reports(response))
+    transport = ScriptedTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     assert adapter.connect().code == "connected"
+    # Replies queued before connect are drained as stale; deliver this one live.
+    transport.replies.extend(raw_reports(response))
     receipt, actual = adapter._call("device.status", None)
     assert receipt.code == "rpc_error"
     assert actual == response
@@ -115,9 +117,10 @@ def test_adapter_reports_firmware_error_instead_of_malformed_wire():
 
 def test_method_mismatch_still_disconnects():
     response = {"id": 1, "method": "fs.read", "error": {"code": 404}}
-    transport = ScriptedTransport(raw_reports(response))
+    transport = ScriptedTransport()
     adapter = CreatorMicro2Adapter(transport, INFO)
     adapter.connect()
+    transport.replies.extend(raw_reports(response))
     receipt, actual = adapter._call("device.status", None)
     assert receipt.code == "malformed_report" and actual is None
     assert not adapter.connected and transport.closed
@@ -125,9 +128,13 @@ def test_method_mismatch_still_disconnects():
 
 def test_foreign_response_still_revokes_input():
     response = {"id": 999, "method": "device.status", "error": {"code": 404}}
-    transport = ScriptedTransport(raw_reports(response))
-    adapter = CreatorMicro2Adapter(transport, INFO)
+    now = [10.0]
+    transport = ScriptedTransport()
+    adapter = CreatorMicro2Adapter(transport, INFO, clock=lambda: now[0])
     adapter.connect()
+    # A foreign id is an accusation only once the startup grace has elapsed.
+    now[0] += adapter.STARTUP_GRACE_SECONDS + 1
+    transport.replies.extend(raw_reports(response))
     receipt, _ = adapter._call("device.status", None)
     assert receipt.code == "device_conflict"
     assert adapter.conflict.active and adapter.poll_inputs() == []
@@ -242,7 +249,7 @@ def test_failed_write_propagates_to_adapter_and_disconnects(monkeypatch):
     receipt, response = adapter._call("device.status", None)
     assert receipt.code == "transport_unavailable" and response is None
     assert not adapter.connected and device.closed
-    assert device.read_args == []
+    assert device.read_args == [(64, 0)]  # the connect-time stale-input drain
 
 
 def test_approved_device_identity_is_still_required():

@@ -29,11 +29,17 @@ and only records a method when the firmware does not return JSON-RPC error
 honest unsupported fallback, not a firmware-version guess.
 
 Output is opt-in at the transport boundary. Call `enable_writes()` on
-`HidApiTransport` before negotiation or output. An apply writes every fragment,
-waits up to eight seconds for the exact response ID, retains interleaved input
-notifications, and stops all later output after any foreign response ID. A
-timeout or I/O loss closes the handle and applies a bounded reconnect delay.
-`close()` is safe to call more than once.
+`HidApiTransport` before negotiation or output. On connect the adapter drains
+whatever the pad already queued: notifications are kept, but id-bearing replies
+cannot belong to this process — request IDs restart per process — so they are
+counted and discarded rather than accused. An apply writes every fragment,
+waits up to eight seconds for the exact response ID, and retains interleaved
+input notifications. Inside a 3-second startup grace a foreign response ID is
+recorded as a stale reply and ignored; afterwards it still stops output, but
+only until the worker retries the connection after 60 seconds — ten minutes
+once a conflict has re-triggered three times in a row without a healthy answer
+in between. A timeout or I/O loss closes the handle and applies a bounded
+reconnect delay. `close()` is safe to call more than once.
 
 On macOS, the transport uses `hid_darwin_set_open_exclusive(0)` and confirms
 the policy through the getter exported by the pinned hidapi extension. It
@@ -56,7 +62,9 @@ HID writes away from AppKit. It maps input-needed, failure, active, completion,
 idle, quota warning, quota exhaustion, and reset signals to the adapter's
 semantic states. If firmware does not prove `v.oai.thstatus` support, the worker
 reports `unsupported_firmware` and sends no state output. A foreign response ID
-reports `device_conflict`, closes the adapter, and stops later output.
+reports `device_conflict` and pauses output while the adapter waits out its
+conflict retry delay, then reconnects; the receipt stays visible the whole
+time.
 
 The same worker now polls input while lighting is idle. Each poll has a report
 budget. Disconnects and foreign response IDs discard queued input. The decoder
@@ -144,6 +152,16 @@ re-answering a completed request was indistinguishable from a foreign
 controller — and that verdict is not recoverable, so one duplicate frame
 stopped output for good. Completed ids are now remembered for the
 connection's recent history and our own echo is skipped.
+
+**The pad also answers late, across process restarts.** After a new build
+restarted the daemon, the pad's reply to the previous process's in-flight
+request arrived with an id the new process had never issued — ids restart at
+1 per process — and the false `device_conflict` stopped all output until the
+next restart. Connect now drains queued input before the first request, a
+3-second startup grace treats foreign ids as stale replies, an out-of-order
+answer to an earlier id of ours is retired instead of accused, and even a
+genuine conflict retries the connection after a bounded delay rather than
+staying silent forever.
 
 **The device outranks the journal.** The pad's active layer was already
 `KV_OAI_AG00..AG12` from the September keymap trial, while

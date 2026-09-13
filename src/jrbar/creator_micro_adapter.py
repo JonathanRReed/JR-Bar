@@ -99,29 +99,39 @@ class DeviceConflict:
     Bluetooth the pad can answer twice or late, and reading our own echo as
     a second controller stops output for good on a pad nobody else is
     touching. Completed ids are remembered for the rest of the connection's
-    recent history so that echo is recognised rather than accused.
+    recent history so that echo is recognised rather than accused. ``since``
+    records when the accusation began so a caller can retry the connection
+    after a bounded delay instead of stopping output for the process's life.
     """
 
     issued_ids: set[int] = field(default_factory=set)
     completed_ids: deque[int] = field(default_factory=lambda: deque(maxlen=64))
     active: bool = False
+    since: float | None = None
+    clock: Callable[[], float] = time.monotonic
 
     def observe(self, response_id: object) -> str | None:
         if type(response_id) is not int:
-            self.active = True
-            return "foreign_response_id"
+            return self._accuse()
         if response_id in self.issued_ids:
             self.issued_ids.remove(response_id)
             self.completed_ids.append(response_id)
             return None
         if response_id in self.completed_ids:
             return "duplicate_response_id"
-        self.active = True
+        return self._accuse()
+
+    def _accuse(self) -> str:
+        if not self.active:
+            self.active = True
+            self.since = self.clock()
         return "foreign_response_id"
 
     def reset(self) -> None:
         self.issued_ids.clear()
         self.completed_ids.clear()
+        self.active = False
+        self.since = None
 
 
 class CreatorMicro2Framer:
@@ -379,6 +389,17 @@ class RpcStreamDecoder:
 
 class CreatorMicro2Adapter:
     PROBE_METHODS = ("v.oai.thstatus", "lights.preview")
+    # A reply predating this process (or a late Bluetooth echo) can surface
+    # just after connect with an id this process never issued. For this long
+    # it is stale input, not evidence of a second controller.
+    STARTUP_GRACE_SECONDS = 3.0
+    # Reports consumed and discarded at connect before the first request.
+    STALE_DRAIN_MAX_REPORTS = 64
+    # A conflict is retried after this delay; three consecutive re-triggers
+    # without a healthy answer in between back off to the longer delay.
+    CONFLICT_RETRY_SECONDS = 60.0
+    CONFLICT_RETRY_BACKOFF_SECONDS = 600.0
+    CONFLICT_RETRY_STREAK = 3
 
     def __init__(
         self,
@@ -404,9 +425,13 @@ class CreatorMicro2Adapter:
         self._notifications: deque[tuple[float, dict[str, Any]]] = deque(maxlen=128)
         self.last_malformed_notification: str | None = None
         self._status_retry_at = 0.0
-        self.conflict = DeviceConflict()
+        self.conflict = DeviceConflict(clock=clock)
         self.connected = False
         self.connection_generation = 0
+        self._connected_at = 0.0
+        self._conflict_streak = 0
+        self.stale_replies_drained = 0
+        self.stale_replies_ignored = 0
 
     def discover(self) -> bool:
         return CreatorMicro2Framer.discover(self.info)
@@ -437,7 +462,71 @@ class CreatorMicro2Adapter:
         self.conflict.reset()
         self._status_retry_at = 0.0
         self._decoder = RpcStreamDecoder(max_bytes=self._rpc_max_bytes)
+        self._connected_at = self._clock()
+        self._drain_stale_reports()
         return Receipt("connected")
+
+    def _drain_stale_reports(self) -> None:
+        """Consume whatever the pad queued before this connection's first request.
+
+        A previous daemon process can leave a request in flight whose late
+        reply lands here carrying an id this process never issued, and over
+        Bluetooth the pad can answer twice. None of those ids can be ours
+        yet, so id-bearing messages are counted and discarded rather than
+        fed to the conflict tracker, which would read them as a second
+        controller and stop output on a pad nobody else is driving.
+        Notifications still queue normally.
+        """
+        discarded = 0
+        for _ in range(self.STALE_DRAIN_MAX_REPORTS):
+            try:
+                report = self.transport.read(timeout_ms=0)
+            except OSError:
+                self._disconnect_for_retry()
+                break
+            if not report:
+                break
+            try:
+                messages = self._decoder.feed(report)
+            except ValueError:
+                continue
+            self._record_skipped_notifications()
+            for message in messages:
+                if "id" in message:
+                    discarded += 1
+                else:
+                    self._queue_notification(message)
+        self.stale_replies_drained += discarded
+        if discarded:
+            _log.info("Creator Micro 2: discarded %d stale response(s) queued before connect", discarded)
+
+    def recover_conflict(self) -> Receipt:
+        """Retry the connection after a conflict instead of stopping for good.
+
+        A late or doubled reply from the pad itself can raise the foreign-id
+        accusation, so it is not a lifetime sentence. Until the retry delay
+        measured from ``conflict.since`` has elapsed the conflict stays
+        active and the receipt keeps saying so; once due, ``close`` and
+        ``connect`` reopen the pad and reset the accusation. A conflict that
+        keeps re-triggering without a healthy answer in between backs off to
+        the longer delay.
+        """
+        if not self.conflict.active:
+            return Receipt("connected") if self.connected else Receipt("not_connected")
+        if self.conflict.since is None:
+            self.conflict.since = self._clock()
+        delay = (
+            self.CONFLICT_RETRY_BACKOFF_SECONDS
+            if self._conflict_streak >= self.CONFLICT_RETRY_STREAK
+            else self.CONFLICT_RETRY_SECONDS
+        )
+        if self._clock() - self.conflict.since < delay:
+            return Receipt("device_conflict", "another client controls the device", recoverable=False)
+        self.close()
+        # The conflict delay already waited far longer than the ordinary
+        # reconnect backoff; do not wait a second delay on top of it.
+        self._reconnect_at = 0.0
+        return self.connect()
 
     def capabilities(self) -> DeviceCapability:
         return self._capabilities
@@ -532,17 +621,24 @@ class CreatorMicro2Adapter:
                 if "id" not in message:
                     self._queue_notification(message)
                     continue
-                outcome = self.conflict.observe(message["id"])
+                outcome = self._observe_response_id(message["id"])
                 if outcome == "foreign_response_id":
                     return Receipt("device_conflict", "foreign response id", recoverable=False), message
-                if outcome == "duplicate_response_id":
-                    # Our own answer arriving twice. Keep waiting for this
-                    # call's id rather than accusing a second controller.
+                if outcome in {"duplicate_response_id", "stale_response_id"}:
+                    # Our own answer arriving twice, or a reply that predates
+                    # this connection: neither is a second controller. Keep
+                    # waiting for this call's id.
                     continue
                 if message["id"] != ident:
-                    return Receipt("device_conflict", "response id race", recoverable=False), message
+                    # A late answer to an earlier request of ours: observe()
+                    # already retired that id. Keep waiting for this call's
+                    # answer rather than accusing a second controller.
+                    continue
                 response = message
             if response is not None:
+                # A correlated answer proves we are driving the pad, so any
+                # run of consecutive conflicts is over.
+                self._conflict_streak = 0
                 if "method" in response and response["method"] != method:
                     self._disconnect_for_retry()
                     return Receipt("malformed_report", "response method does not match request"), None
@@ -552,6 +648,32 @@ class CreatorMicro2Adapter:
         self.conflict.issued_ids.discard(ident)
         self._disconnect_for_retry()
         return Receipt("timeout", f"timeout waiting for {method}"), None
+
+    def _observe_response_id(self, response_id: object) -> str | None:
+        """Conflict-track one id-bearing message.
+
+        Inside the startup grace a foreign id is a stale reply left by the
+        previous process's in-flight request or a late Bluetooth answer: it
+        is counted and dropped, not treated as proof of a second controller.
+        Past the grace a foreign id remains the only evidence of another
+        owner and stays an accusation. Each new accusation lengthens the
+        consecutive-conflict streak that backs off ``recover_conflict``.
+        """
+        was_active = self.conflict.active
+        outcome = self.conflict.observe(response_id)
+        if outcome != "foreign_response_id":
+            return outcome
+        if self._clock() - self._connected_at < self.STARTUP_GRACE_SECONDS:
+            if not was_active:
+                self.conflict.active = False
+                self.conflict.since = None
+            self.stale_replies_ignored += 1
+            if self.stale_replies_ignored == 1:
+                _log.info("Creator Micro 2: ignoring a stale response id received within the startup grace")
+            return "stale_response_id"
+        if not was_active:
+            self._conflict_streak += 1
+        return outcome
 
     def _record_skipped_notifications(self) -> None:
         for detail in self._decoder.drain_skipped():
@@ -595,7 +717,7 @@ class CreatorMicro2Adapter:
                 self._record_skipped_notifications()
                 for message in messages:
                     if "id" in message:
-                        self.conflict.observe(message["id"])
+                        self._observe_response_id(message["id"])
                     else:
                         self._queue_notification(message)
                 if self.conflict.active:
