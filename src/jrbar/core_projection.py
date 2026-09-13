@@ -1222,6 +1222,73 @@ def device_document(device: DeviceFacts) -> dict[str, Any]:
     return document
 
 
+def project_session_rows(
+    snapshot: object,
+    *,
+    ask_statuses: Iterable[object] = (),
+    operator_state: object = None,
+    extras_by_id: dict[str, SessionExtras] | None = None,
+    snoozed_until_by_id: dict[str, float] | None = None,
+    answer_contracts: object = None,
+    has_answer_handler: object = None,
+) -> tuple[list[dict[str, Any]], frozenset[str]]:
+    """Every session the snapshot knows, projected — before panel visibility.
+
+    This is the roster's source: ``state.sessions`` applies
+    ``filter_visible_sessions`` to what this returns, and ``list_roster``
+    publishes it whole. Same dedupe (provider-namespaced ``agent_id``,
+    install probes excluded), same worker counts and parent labels, same
+    ``session_document`` per row — the panel's filter is a view on top of
+    these rows, never a different set of facts. ``ask_ids`` is the set of
+    session ids carrying a live ask (the pin ``session_visibility``
+    honours).
+    """
+    extras_by_id = extras_by_id or {}
+    statuses: list[object] = []
+    seen: set[str] = set()
+    for status in list(getattr(snapshot, "statuses", ()) or ()) + list(
+        getattr(snapshot, "stale_statuses", ()) or ()
+    ):
+        agent_id = str(getattr(status, "agent_id", ""))
+        if not agent_id or agent_id in seen:
+            continue
+        if str(getattr(status, "session_id", "") or agent_id).endswith("-install-probe"):
+            # The installer's self-test hits the live daemon; it is not a session.
+            continue
+        seen.add(agent_id)
+        statuses.append(status)
+    ask_ids = frozenset(str(getattr(status, "agent_id", "")) for status in ask_statuses)
+    workers_by_parent: dict[str, int] = {}
+    for status in statuses:
+        if getattr(status, "is_subagent", False) and not getattr(status, "stale", False):
+            mode = getattr(status, "mode", None)
+            if mode in _WORKING_MODES or mode is AgentMode.WAITING_FOR_INPUT:
+                parent = getattr(status, "parent_agent_id", None)
+                if parent:
+                    workers_by_parent[parent] = workers_by_parent.get(parent, 0) + 1
+    labels_by_id: dict[str, str] = {}
+    ordered = sorted(statuses, key=lambda status: bool(getattr(status, "is_subagent", False)))
+    documents_by_id: dict[str, dict[str, Any]] = {}
+    for status in ordered:
+        agent_id = str(getattr(status, "agent_id", ""))
+        parent = getattr(status, "parent_agent_id", None) if getattr(status, "is_subagent", False) else None
+        document = session_document(
+            status,
+            operator_state=operator_state,
+            ask_ids=ask_ids,
+            extras=extras_by_id.get(agent_id),
+            workers=workers_by_parent.get(agent_id, 0),
+            parent_label=labels_by_id.get(str(parent)) if parent else None,
+            snoozed_until=(snoozed_until_by_id or {}).get(agent_id),
+            answer_contracts=answer_contracts,
+            has_answer_handler=has_answer_handler,
+        )
+        labels_by_id[agent_id] = document["label"]
+        documents_by_id[agent_id] = document
+    rows = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
+    return rows, ask_ids
+
+
 def build_state_document(
     *,
     now: float,
@@ -1260,50 +1327,16 @@ def build_state_document(
     sessions, plus finished ones nobody has acknowledged yet. Everything
     older is in ``list_history``, and ``hidden_count`` says how many main
     sessions that is (see ``completion_visibility``)."""
+    projected, ask_ids = project_session_rows(
+        snapshot,
+        ask_statuses=ask_statuses,
+        operator_state=operator_state,
+        extras_by_id=extras_by_id,
+        snoozed_until_by_id=snoozed_until_by_id,
+        answer_contracts=answer_contracts,
+        has_answer_handler=has_answer_handler,
+    )
     extras_by_id = extras_by_id or {}
-    statuses: list[object] = []
-    seen: set[str] = set()
-    for status in list(getattr(snapshot, "statuses", ()) or ()) + list(
-        getattr(snapshot, "stale_statuses", ()) or ()
-    ):
-        agent_id = str(getattr(status, "agent_id", ""))
-        if not agent_id or agent_id in seen:
-            continue
-        if str(getattr(status, "session_id", "") or agent_id).endswith("-install-probe"):
-            # The installer's self-test hits the live daemon; it is not a session.
-            continue
-        seen.add(agent_id)
-        statuses.append(status)
-    ask_ids = frozenset(str(getattr(status, "agent_id", "")) for status in ask_statuses)
-    workers_by_parent: dict[str, int] = {}
-    for status in statuses:
-        if getattr(status, "is_subagent", False) and not getattr(status, "stale", False):
-            mode = getattr(status, "mode", None)
-            if mode in _WORKING_MODES or mode is AgentMode.WAITING_FOR_INPUT:
-                parent = getattr(status, "parent_agent_id", None)
-                if parent:
-                    workers_by_parent[parent] = workers_by_parent.get(parent, 0) + 1
-    sessions: list[dict[str, Any]] = []
-    labels_by_id: dict[str, str] = {}
-    ordered = sorted(statuses, key=lambda status: bool(getattr(status, "is_subagent", False)))
-    documents_by_id: dict[str, dict[str, Any]] = {}
-    for status in ordered:
-        agent_id = str(getattr(status, "agent_id", ""))
-        parent = getattr(status, "parent_agent_id", None) if getattr(status, "is_subagent", False) else None
-        document = session_document(
-            status,
-            operator_state=operator_state,
-            ask_ids=ask_ids,
-            extras=extras_by_id.get(agent_id),
-            workers=workers_by_parent.get(agent_id, 0),
-            parent_label=labels_by_id.get(str(parent)) if parent else None,
-            snoozed_until=(snoozed_until_by_id or {}).get(agent_id),
-            answer_contracts=answer_contracts,
-            has_answer_handler=has_answer_handler,
-        )
-        labels_by_id[agent_id] = document["label"]
-        documents_by_id[agent_id] = document
-    projected = [documents_by_id[str(getattr(status, "agent_id", ""))] for status in statuses]
     # An ask is the loudest thing the panel can show, so visibility never
     # gets to evict the row that carries one: a session with a live ask
     # stays listed however stale or acknowledged it is. Without this the
@@ -1534,6 +1567,7 @@ __all__ = [
     "escalation_stage_name",
     "focus_document",
     "history_rows",
+    "project_session_rows",
     "hook_health",
     "lifecycle_for_mode",
     "light_why",

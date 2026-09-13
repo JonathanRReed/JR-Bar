@@ -1991,6 +1991,89 @@ def _cmd_list_history(self, args):
     return {"rows": rows, "total": len(ledger.entries), "last_seen": ledger.last_seen_epoch}
 
 
+@command("list_roster")
+def _cmd_list_roster(self, args):
+    """Every session the collector retains, panel visibility aside.
+
+    ``state.sessions`` is a view; this is the record set under it —
+    workers, the quiet-stale, the acknowledged, the aged-out — each row
+    the same ``session_document`` shape the panel reads, plus the
+    separated axes and the visibility verdict the panel would give.
+    """
+    from .agent_roster import ROSTER_SCOPES, build_roster_document, roster_rows
+    from .completion_visibility import acknowledged_epoch_by_session
+    from .core_projection import project_session_rows
+
+    scope = str(args.get("scope") or "all")
+    if scope not in ROSTER_SCOPES:
+        raise CommandError(
+            "invalid_value", f"scope must be one of {', '.join(ROSTER_SCOPES)}"
+        )
+    provider = args.get("provider")
+    parent = args.get("parent")
+    since = args.get("since")
+    try:
+        limit = int(args.get("limit") or 0) or None
+    except (TypeError, ValueError):
+        limit = None
+    snapshot = getattr(self, "last_snapshot", None)
+    statuses = (
+        [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())]
+        if snapshot is not None
+        else []
+    )
+    ask_statuses = self._core_ask_statuses()
+    extras: dict[str, SessionExtras] = {}
+    extras_cache = getattr(self, "_core_extras", None)
+    if statuses and isinstance(extras_cache, dict):
+        now_mono = time.monotonic()
+        ordered = [status.agent_id for status in statuses if not status.stale]
+        ordered += [status.agent_id for status in statuses if status.stale]
+        planned = set(
+            plan_extra_lookups(
+                ordered,
+                extras_cache,
+                now=now_mono,
+                ttl=EXTRAS_TTL_SECONDS,
+                budget=MAX_EXTRA_LOOKUPS_PER_BUILD,
+            )
+        )
+        for status in statuses:
+            cached = extras_cache.get(status.agent_id)
+            if status.agent_id in planned:
+                extras[status.agent_id] = self._core_extras_for(status)
+            elif cached is not None:
+                extras[status.agent_id] = cached[1]
+    projected, ask_ids = project_session_rows(
+        snapshot,
+        ask_statuses=ask_statuses,
+        operator_state=getattr(self, "current_operator_state", None),
+        extras_by_id=extras,
+        snoozed_until_by_id=self._core_snoozed_untils(statuses),
+        answer_contracts=getattr(self, "_answer_contracts_by_source", None),
+        has_answer_handler=getattr(
+            getattr(self, "answer_handler_registry", None), "has_handler", None
+        ),
+    )
+    rows = roster_rows(
+        projected,
+        ask_ids=ask_ids,
+        acknowledged_at_by_id=acknowledged_epoch_by_session(self._core_acknowledged_keys()),
+        now=time.time(),
+    )
+    document = build_roster_document(
+        rows,
+        now=time.time(),
+        scope=scope,
+        provider=str(provider) if provider else None,
+        parent=str(parent) if parent else None,
+        since=float(since) if isinstance(since, (int, float)) else None,
+        limit=limit if limit is not None else 500,
+    )
+    document["generation"] = self._core_state_generation
+    return document
+
+
 @command("mark_history_seen")
 def _cmd_mark_history_seen(self, args):
     """The user just looked at History: advance the ledger's ``last_seen``.
