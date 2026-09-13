@@ -38,9 +38,17 @@ final class LidAngleSensor {
     /// The bottom of the arming band: readings at or below it mean the
     /// fold is showing or about to, so the poll steps up to 120 Hz. The
     /// toy sets it to `activation + margin`; above it idles at 10 Hz.
+    /// Reconcile sets it every pass — the queue hop only happens on a
+    /// real change, not 120 times a second.
     var armingAngle: Double = -.infinity {
-        didSet { pump.setArmingAngle(armingAngle) }
+        didSet {
+            if armingAngle != oldValue { pump.setArmingAngle(armingAngle) }
+        }
     }
+
+    /// The last polling state actually pushed to the pump — same
+    /// dedup reason as `armingAngle`.
+    @ObservationIgnored private var pollingPushed = false
 
     @ObservationIgnored private let pump = SensorPump()
 
@@ -56,7 +64,11 @@ final class LidAngleSensor {
 
     /// Starts or stops the poll. A no-op when nothing changed, so the
     /// toy can call it on every reconcile.
-    func setPolling(_ on: Bool) { pump.setPolling(on) }
+    func setPolling(_ on: Bool) {
+        guard on != pollingPushed else { return }
+        pollingPushed = on
+        pump.setPolling(on)
+    }
 }
 
 /// The queue-side half of the sensor: every HID read, the poll timer,

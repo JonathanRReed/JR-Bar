@@ -315,16 +315,19 @@ final class FoldToy: Toy {
     private func noteDiag(stage: String) {
         let raw = gateAngle.map { String(format: "%.0f", $0) } ?? "nil"
         let render = renderAngle.map { String(format: "%.1f", $0) } ?? "nil"
-        let line = "\(stage) en=\(settings.enabled) prv=\(settings.provider.rawValue) "
+        // Dedup on the state only — the stage prefix differs between the
+        // reconcile and tick passes, and comparing it would print both
+        // sides of every unchanged frame.
+        let state = "en=\(settings.enabled) prv=\(settings.provider.rawValue) "
             + "paused=\(paused) pause=\(pauseReason ?? "-") "
             + "raw=\(raw) render=\(render) target=\(String(format: "%.3f", targetDelta)) "
             + "disp=\(String(format: "%.3f", displayedDelta)) "
             + "cap=\(capture == nil ? "nil" : capture!.hasFrame ? "frame" : "wait") "
             + "tex=\(overlay?.renderer.hasTexture ?? false) vis=\(overlay?.isVisible ?? false) "
             + "link=\(tickLink != nil)"
-        guard line != lastDiag else { return }
-        lastDiag = line
-        FoldLog.log.notice("\(line, privacy: .public)")
+        guard state != lastDiag else { return }
+        lastDiag = state
+        FoldLog.log.notice("\(stage, privacy: .public) \(state, privacy: .public)")
     }
 
     /// The delta the fold wants right now, from the freshest truth — 0
@@ -535,7 +538,11 @@ final class FoldToy: Toy {
         withObservationTracking {
             _ = store?.state.fold
             _ = sensor.available
-            _ = rawAngle
+            // rawAngle is deliberately NOT tracked: every suppressed poll
+            // rewrites it, and a reconcile per 120 Hz sample is churn the
+            // machine does not need — accepted samples call reconcile
+            // themselves, and the card's own view observes rawAngle for
+            // the live reading.
             _ = simulatedAngle
             _ = screenAsleep
             _ = displayVersion
