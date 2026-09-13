@@ -4,11 +4,13 @@ import Observation
 import SwiftUI
 
 /// Aquarium (docs/TOYS.md): every live session is a fish in a resizable
-/// window — provider colour, label in a chip under it, swims its lane
-/// at its own pace & turns at the glass. An ask rises to bob with a
-/// bubble, a failed run sinks grey & settles on the sand, a completion
-/// drifts off the edge. Reads `core.sessions` only; the timeline pauses
-/// while the window is covered. Off by default.
+/// window — the provider picks the species & colour, a main session's
+/// label rides in a chip under it, and its sub-agents join as fry
+/// schooling around it. An ask rises to bob with a bubble, a failed
+/// run sinks grey & settles on the sand, a completion drifts off the
+/// edge — school and all. Reads `core.state.sessions` (mains AND
+/// workers); the timeline pauses while the window is covered. Off by
+/// default.
 @MainActor
 @Observable
 final class AquariumToy: Toy {
@@ -86,14 +88,19 @@ final class AquariumToy: Toy {
         )
     }
 
-    /// "4 fish · 1 at the surface" / "Nothing swimming yet" — a fact,
-    /// like the status chip.
+    /// "4 fish · a school of 6 · 1 at the surface" / "Nothing swimming
+    /// yet" — a fact, like the status chip.
     private var fact: String {
         let now = Date()
         let live = fish.filter { !$0.isRetired(at: now) }
         guard !live.isEmpty else { return "Nothing swimming yet" }
-        var parts = ["\(live.count) fish"]
-        let surface = live.filter { $0.state == .surfacing }.count
+        var parts: [String] = []
+        let adults = live.filter { !$0.isFry }
+        if !adults.isEmpty { parts.append("\(adults.count) fish") }
+        let fryCount = live.count - adults.count
+        if fryCount == 1 { parts.append("1 fry") }
+        if fryCount > 1 { parts.append("a school of \(fryCount)") }
+        let surface = adults.filter { $0.state == .surfacing }.count
         if surface > 0 { parts.append("\(surface) at the surface") }
         return parts.joined(separator: " · ")
     }
@@ -134,14 +141,16 @@ final class AquariumToy: Toy {
     // MARK: Fish
 
     private func refreshFish() {
-        fish = AquariumModel.reduce(sessions: core.sessions, previous: fish, now: Date())
+        // The tank takes every listed session: `core.sessions` is mains
+        // only, and a sub-agent is somebody's fry.
+        fish = AquariumModel.reduce(sessions: core.state?.sessions ?? [], previous: fish, now: Date())
     }
 
     /// Watches the session list like `NotchBuddyToy`: one observation
     /// per change, coalesced into a main-queue turn.
     private func observeSessions() {
         withObservationTracking {
-            _ = core.sessions
+            _ = core.state?.sessions
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

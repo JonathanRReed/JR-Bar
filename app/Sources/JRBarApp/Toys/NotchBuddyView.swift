@@ -23,6 +23,8 @@ struct NotchBuddyView: View {
                 phase: context.date.timeIntervalSince1970,
                 hopProgress: hopProgress(at: context.date),
                 waveAge: waveAge(at: context.date, mood: mood),
+                slumpAge: slumpAge(at: context.date, mood: mood),
+                leans: toy.waveOrdinal % 2 == 0,
                 still: reduceMotion
             )
         }
@@ -48,10 +50,17 @@ struct NotchBuddyView: View {
         return now.timeIntervalSince(since)
     }
 
+    /// Seconds into the slump; nil unless the mood is slumped. The
+    /// tumble-in plays once from here.
+    private func slumpAge(at now: Date, mood: NotchBuddyToy.Mood) -> TimeInterval? {
+        guard mood == .slumped, let since = toy.slumpedSince else { return nil }
+        return now.timeIntervalSince(since)
+    }
+
     private func tint(for mood: NotchBuddyToy.Mood) -> Color {
         switch mood {
         case .asleep: return Color(nsColor: .tertiaryLabelColor)
-        case .pacing:
+        case .pacing, .gathering:
             // One provider working → the buddy wears its colour.
             if let provider = toy.workingProvider {
                 return ProviderStyle.style(for: provider).accent
@@ -66,9 +75,10 @@ struct NotchBuddyView: View {
 
 /// The "dot" character: a soft blob body, two pupils under lids, a small
 /// mouth and a ground shadow. Each mood is a pose with the craft in the
-/// motion — pacing steps and turns at the ends, the wave and the hop
-/// crouch first and land flat, sleep drifts "z"s, and every awake mood
-/// blinks on a jittered cadence.
+/// motion — pacing steps and turns at the ends, a gathering bounces in
+/// place, the wave and the hop crouch first and land flat, a slump
+/// tumbles in on a roll, sleep drifts "z"s under a nightcap, and every
+/// awake mood blinks on a jittered cadence.
 private struct DotBuddy: View {
     let mood: NotchBuddyToy.Mood
     let tint: Color
@@ -78,6 +88,11 @@ private struct DotBuddy: View {
     let hopProgress: Double?
     /// Seconds since the wave began, else nil.
     let waveAge: TimeInterval?
+    /// Seconds since the slump began, else nil.
+    let slumpAge: TimeInterval?
+    /// The quiet ask: every other ask the buddy leans in holding eye
+    /// contact instead of waving with a "!".
+    let leans: Bool
     /// Reduce Motion: poses stay, motion goes.
     let still: Bool
 
@@ -106,6 +121,7 @@ private struct DotBuddy: View {
         switch mood {
         case .asleep: return asleepPose
         case .pacing: return pacingPose
+        case .gathering: return gatheringPose
         case .waving: return wavingPose
         case .slumped: return slumpedPose
         case .celebrating: return celebratingPose
@@ -122,10 +138,22 @@ private struct DotBuddy: View {
         case .pacing:
             pose.look = CGSize(width: 0.9, height: -0.2)
             pose.mouth = .flat
+        case .gathering:
+            pose.pupil = 2.3
+            pose.offset.height = -0.8
+            pose.look.height = -0.25
+            pose.mouth = .smile
         case .waving:
-            pose.lean = 10
-            pose.pupil = 2.4
-            pose.look.height = -0.5
+            if leans {
+                pose.squash = CGSize(width: 1.03, height: 1.07)
+                pose.lean = 8
+                pose.pupil = 2.6
+                pose.look.height = -0.2
+            } else {
+                pose.lean = 10
+                pose.pupil = 2.4
+                pose.look.height = -0.5
+            }
             pose.mouth = .open
         case .slumped:
             pose.offset.height = 2.2
@@ -182,10 +210,28 @@ private struct DotBuddy: View {
         return pose
     }
 
-    /// The ask: a crouch, a jump, a landing — once — then a fast wave.
+    /// Three or more sessions working at once: busy is exciting — quick
+    /// happy micro-hops in place instead of the patrol.
+    private var gatheringPose: Pose {
+        var pose = Pose()
+        pose.pupil = 2.3
+        pose.mouth = .smile
+        let b = abs(sin(phase * 7.2))
+        pose.offset.height = -2.0 * b
+        pose.air = 0.35 * b
+        pose.squash = CGSize(width: 1 + 0.10 * (1 - b) - 0.04 * b,
+                             height: 1 - 0.09 * (1 - b) + 0.07 * b)
+        pose.lean = sin(phase * 3.6) * 4
+        pose.look = CGSize(width: sin(phase * 1.8) * 0.7, height: -0.25)
+        return pose
+    }
+
+    /// The ask: a crouch, a jump, a landing — once — then either a fast
+    /// wave or, every other ask (`leans`), a quiet lean-in that just
+    /// holds your eye. The "!" only pops for the wave asks.
     private var wavingPose: Pose {
         var pose = Pose()
-        pose.pupil = 2.4
+        pose.pupil = leans ? 2.6 : 2.4
         pose.mouth = .open
         let age = waveAge ?? .infinity
         if age < 0.14 {
@@ -194,29 +240,40 @@ private struct DotBuddy: View {
             pose.squash = CGSize(width: 1 + 0.16 * t, height: 1 - 0.2 * t)
             pose.offset.height = 1.4 * t
         } else if age < 0.55 {
-            // The jump up, easing out.
+            // The jump up, easing out — half-height on the quiet asks.
             let t = (age - 0.14) / 0.41
             let e = 1 - (1 - t) * (1 - t)
-            pose.offset.height = 1.4 - 6.9 * e
-            pose.air = e
+            let hop = leans ? 3.4 : 6.9
+            pose.offset.height = 1.4 - hop * e
+            pose.air = e * (leans ? 0.5 : 1)
             pose.squash = CGSize(width: 1 - 0.14 * e, height: 1 + 0.2 * e)
             pose.lean = 6 * e
         } else if age < 0.9 {
             // Falling, then a flat land-squash that releases.
             let t = (age - 0.55) / 0.35
-            pose.offset.height = -5.5 * (1 - t * t)
-            pose.air = 1 - t * t
+            let depth = leans ? 2.0 : 5.5
+            pose.offset.height = -depth * (1 - t * t)
+            pose.air = (1 - t * t) * (leans ? 0.5 : 1)
             let impact = sin(min(t / 0.45, 1) * .pi)
             pose.squash = CGSize(width: 1 + 0.22 * impact, height: 1 - 0.24 * impact)
             pose.lean = 6 * (1 - t)
+        } else if leans {
+            // The quiet ask: leaning in, pupils wide, holding eye
+            // contact. `settle` ramps the pose in so the landing hands
+            // off without a snap.
+            let settle = Self.smooth(min(1, (age - 0.9) / 0.3))
+            pose.lean = (11 + sin(phase * 1.7) * 2) * settle
+            pose.squash = CGSize(width: 1 + 0.03 * settle, height: 1 + 0.07 * settle)
+            pose.offset.height = (-0.6 + sin(phase * 3.4) * 0.4) * settle
         } else {
             // The wave proper: quick lean with a little bounce and sway.
             pose.lean = sin(phase * 7) * 13
             pose.offset.height = -abs(sin(phase * 7)) * 0.9
             pose.offset.width = sin(phase * 3.5) * 0.7
         }
-        // Eyes on the "!" while it is up, then on you.
-        pose.look.height = age < 1.3 ? -0.5 : 0
+        // Eyes on the "!" while it is up, then on you — the lean-in never
+        // looks away.
+        pose.look.height = leans ? -0.2 : (age < 1.3 ? -0.5 : 0)
         return pose
     }
 
@@ -254,6 +311,8 @@ private struct DotBuddy: View {
     }
 
     /// Down and sagging: half-lidded, downcast, still slowly deflating.
+    /// The first half second is the tumble — the blob rolls back to its
+    /// feet with a little overshoot, then the sag takes over.
     private var slumpedPose: Pose {
         var pose = Pose()
         let sag = sin(phase * 0.5) * 0.5 + 0.5
@@ -262,6 +321,17 @@ private struct DotBuddy: View {
         pose.lid = 0.38
         pose.look.height = 0.6
         pose.mouth = .flat
+        let age = slumpAge ?? .infinity
+        if age < 0.6 {
+            // Tipped on its side, rolling upright; `backOut` overshoots
+            // so it catches its balance, and `k` hands off to the slump.
+            let k = 1 - Self.backOut(min(1, age / 0.55))
+            pose.lean = -95 * k
+            pose.offset.width = -3 * k
+            pose.offset.height += 1.2 * k
+            pose.squash.width -= 0.23 * k
+            pose.squash.height += 0.17 * k
+        }
         return pose
     }
 
@@ -282,9 +352,10 @@ private struct DotBuddy: View {
 
     // MARK: One-off effects
 
-    /// The "!" pops once per ask: springs in, holds a beat, fades.
+    /// The "!" pops once per waving ask: springs in, holds a beat,
+    /// fades. The lean-in asks keep it in their pocket.
     private var bang: (scale: Double, opacity: Double) {
-        guard mood == .waving, let waveAge else { return (0, 0) }
+        guard mood == .waving, let waveAge, !leans else { return (0, 0) }
         if still { return (1, 1) }
         if waveAge < 0.25 { return (Self.backOut(waveAge / 0.25), 1) }
         if waveAge < 1.0 { return (1, 1) }
@@ -303,17 +374,29 @@ private struct DotBuddy: View {
                 opacity: fade * 0.85, scale: 0.7 + 0.5 * p)
     }
 
-    /// Two sparkles thrown near the hop's apex, the second late.
-    private func sparkle(_ i: Int) -> (x: Double, y: Double, opacity: Double, scale: Double)? {
+    /// One sparkle thrown near the hop's apex; the green check pops on
+    /// the other side.
+    private var sparkle: (x: Double, y: Double, opacity: Double, scale: Double)? {
         guard mood == .celebrating else { return nil }
-        if still { return i == 0 ? (-5.4, -4.5, 0.7, 1) : nil }
+        if still { return (-5.4, -4.5, 0.7, 1) }
         guard let hopProgress else { return nil }
-        let t = (hopProgress - (i == 0 ? 0.32 : 0.5)) / 0.45
+        let t = (hopProgress - 0.32) / 0.45
         guard t > 0, t < 1 else { return nil }
         let a = sin(t * .pi)
-        return i == 0
-            ? (x: -5.4, y: -4.5, opacity: a, scale: 0.6 + 0.6 * a)
-            : (x: 5.6, y: -6.0, opacity: a, scale: 0.5 + 0.6 * a)
+        return (x: -5.4, y: -4.5, opacity: a, scale: 0.6 + 0.6 * a)
+    }
+
+    /// A small green check pops once beside the hop's apex and fades as
+    /// the buddy lands — the done checkmark, borrowed for the burst.
+    private var check: (x: Double, y: Double, opacity: Double, scale: Double)? {
+        guard mood == .celebrating else { return nil }
+        if still { return (5.8, -6.4, 0.85, 1) }
+        guard let hopProgress else { return nil }
+        let t = (hopProgress - 0.40) / 0.14
+        guard t > 0 else { return nil }
+        let fade = hopProgress < 0.85 ? 1 : max(0, 1 - (hopProgress - 0.85) / 0.15)
+        guard fade > 0.01 else { return nil }
+        return (x: 5.8, y: -6.4, opacity: fade, scale: Self.backOut(min(t, 1)))
     }
 
     // MARK: Easing
@@ -349,6 +432,7 @@ private struct DotBuddy: View {
             ZStack {
                 blob
                 face
+                if mood == .asleep { cap }
             }
             .scaleEffect(x: pose.squash.width, y: pose.squash.height)
             .rotationEffect(.degrees(pose.lean))
@@ -367,6 +451,35 @@ private struct DotBuddy: View {
             .overlay(shape.strokeBorder(.white.opacity(0.16), lineWidth: 0.6))
             .frame(width: 12.5, height: 11)
             .offset(y: 0.5)
+    }
+
+    /// The nightcap: a soft cone flopped over the head with a folded
+    /// brim and a pom, drooping a lag behind the breath so it reads as
+    /// fabric. It's part of the asleep pose — Reduce Motion keeps it.
+    /// Drawn in a 10×6 box whose base sits on the blob's crown.
+    private var cap: some View {
+        let droop = still ? 6.0 : 6 + 5 * sin(phase * 1.1 - 0.7)
+        return ZStack {
+            Path { p in
+                p.move(to: CGPoint(x: 1.0, y: 5.2))
+                p.addQuadCurve(to: CGPoint(x: 4.4, y: 0.8), control: CGPoint(x: 1.8, y: 1.6))
+                p.addQuadCurve(to: CGPoint(x: 9.2, y: 3.8), control: CGPoint(x: 7.6, y: 0.4))
+                p.addQuadCurve(to: CGPoint(x: 1.0, y: 5.2), control: CGPoint(x: 5.4, y: 4.6))
+            }
+            .fill(Color(red: 0.55, green: 0.62, blue: 0.90))
+            .frame(width: 10, height: 6)
+            Circle()
+                .fill(.white.opacity(0.85))
+                .frame(width: 1.7, height: 1.7)
+                .offset(x: 4.2, y: 0.8)          // the pom on the tip
+            Capsule()
+                .fill(.white.opacity(0.5))
+                .frame(width: 7.4, height: 1.2)
+                .offset(x: -1.0, y: 2.0)         // the folded brim
+        }
+        .frame(width: 10, height: 6)
+        .rotationEffect(.degrees(droop), anchor: UnitPoint(x: 0.15, y: 0.85))
+        .offset(y: -6.7)
     }
 
     private var face: some View {
@@ -423,7 +536,7 @@ private struct DotBuddy: View {
     }
 
     /// The loose glyphs: "z"s overhead, the ask's "!", the hop's
-    /// sparkles. Drawn outside the squash so they stay honest.
+    /// sparkle and check. Drawn outside the squash so they stay honest.
     @ViewBuilder private var effects: some View {
         if let z = zee(0) { zView(z) }
         if let z = zee(1) { zView(z) }
@@ -435,8 +548,8 @@ private struct DotBuddy: View {
                 .offset(y: -8)
                 .opacity(bang.opacity)
         }
-        if let s = sparkle(0) { sparkleView(s) }
-        if let s = sparkle(1) { sparkleView(s) }
+        if let s = sparkle { sparkleView(s) }
+        if let c = check { checkView(c) }
     }
 
     private func zView(_ z: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
@@ -455,5 +568,19 @@ private struct DotBuddy: View {
             .scaleEffect(s.scale)
             .offset(x: s.x, y: s.y)
             .opacity(s.opacity)
+    }
+
+    private func checkView(_ c: (x: Double, y: Double, opacity: Double, scale: Double)) -> some View {
+        Path { p in
+            p.move(to: CGPoint(x: 0.3, y: 1.6))
+            p.addLine(to: CGPoint(x: 1.5, y: 2.8))
+            p.addLine(to: CGPoint(x: 3.9, y: 0.2))
+        }
+        .stroke(Color(red: 0.35, green: 0.9, blue: 0.45),
+                style: StrokeStyle(lineWidth: 1.1, lineCap: .round, lineJoin: .round))
+        .frame(width: 4.2, height: 3)
+        .scaleEffect(c.scale)
+        .offset(x: c.x, y: c.y)
+        .opacity(c.opacity)
     }
 }

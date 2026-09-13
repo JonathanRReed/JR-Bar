@@ -2,69 +2,139 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-/// FoldMath is the pure half of the Fold toy (docs/TOYS.md): the radians
-/// the lid has swung past its anchor, which sensor readings are worth a
+/// FoldMath is the pure half of the Fold toy (docs/TOYS.md): the
+/// normalized turn the lid's gesture maps to, the α–β predictor that
+/// makes the fold lead the finger, which sensor readings are worth a
 /// redraw, and which safety input names the pause. `#expect` cannot hold
-/// a mutating call, so the filter's answers are collected first.
+/// a mutating call, so the predictor's answers are collected first.
 @Suite("Fold math")
 struct FoldMathTests {
-    @Test("at the anchor the delta is zero — the overlay is pixel-identical")
+    @Test("at the activation angle the turn is zero — the overlay is pixel-identical")
     func atAnchor() {
-        #expect(FoldMath.deltaRadians(angle: 110, activation: 110) == 0)
-        #expect(FoldMath.foldAmount(angle: 110, activation: 110) == 0)
+        #expect(FoldMath.normalizedTurn(angle: 82, start: 82) == 0)
+        #expect(FoldMath.normalizedTurn(angle: 100, start: 82) == 0,
+                "above the start there is no fold at all")
     }
 
-    @Test("delta is positive past the anchor and grows with the swing")
-    func deltaGrows() {
-        let ten = FoldMath.deltaRadians(angle: 100, activation: 110)
-        let forty = FoldMath.deltaRadians(angle: 70, activation: 110)
-        #expect(abs(ten - 10 * .pi / 180) < 1e-9)
-        #expect(abs(forty - 40 * .pi / 180) < 1e-9)
-        #expect(FoldMath.foldAmount(angle: 100, activation: 110) > 0)
-        #expect(FoldMath.foldAmount(angle: 70, activation: 110)
-                > FoldMath.foldAmount(angle: 100, activation: 110))
+    @Test("turn grows linearly across the range and completes at the end")
+    func turnRange() {
+        let half = FoldMath.normalizedTurn(angle: 45, start: 82, end: 8)
+        #expect(abs(half - 0.5) < 1e-9)
+        #expect(FoldMath.normalizedTurn(angle: 8, start: 82, end: 8) == 1)
+        #expect(FoldMath.normalizedTurn(angle: 0, start: 82, end: 8) == 1,
+                "fully closed is fully folded")
+        #expect(FoldMath.normalizedTurn(angle: 20, start: 82, end: 8)
+                > FoldMath.normalizedTurn(angle: 60, start: 82, end: 8))
     }
 
-    @Test("the delta saturates past the range and negative swings are allowed a little")
-    func deltaClamps() {
-        #expect(FoldMath.deltaRadians(angle: 0, activation: 110) == 1.25)
-        #expect(FoldMath.deltaRadians(angle: 160, activation: 110) == -0.65)
-        #expect(FoldMath.deltaRadians(angle: 115, activation: 110) < 0)
-    }
-
-    @Test("a nonsense angle gives a zero delta rather than exploding")
+    @Test("a nonsense angle or inverted range gives a zero turn rather than exploding")
     func nonFinite() {
-        #expect(FoldMath.deltaRadians(angle: .nan, activation: 110) == 0)
-        #expect(FoldMath.deltaRadians(angle: .infinity, activation: 110) == 0)
-        #expect(FoldMath.foldAmount(angle: .nan, activation: 110) == 0)
+        #expect(FoldMath.normalizedTurn(angle: .nan, start: 82) == 0)
+        #expect(FoldMath.normalizedTurn(angle: .infinity, start: 82) == 0)
+        #expect(FoldMath.normalizedTurn(angle: 50, start: 8, end: 82) == 0)
     }
 
     @Test("the activation gate reads the raw angle, at or below the limit")
     func activationGate() {
-        #expect(FoldMath.allows(rawAngle: 110, activation: 110))
-        #expect(FoldMath.allows(rawAngle: 60, activation: 110))
-        #expect(!FoldMath.allows(rawAngle: 110.5, activation: 110))
-        #expect(!FoldMath.allows(rawAngle: .nan, activation: 110))
+        #expect(FoldMath.allows(rawAngle: 82, activation: 82))
+        #expect(FoldMath.allows(rawAngle: 60, activation: 82))
+        #expect(!FoldMath.allows(rawAngle: 82.5, activation: 82))
+        #expect(!FoldMath.allows(rawAngle: .nan, activation: 82))
     }
 
-    @Test("the overlay only shows with a frame and a visible tilt")
+    @Test("the overlay only shows with a frame and a visible turn")
     func overlayGate() {
-        #expect(FoldMath.showsOverlay(delta: 0.01, hasFrame: true))
-        #expect(!FoldMath.showsOverlay(delta: 0.001, hasFrame: true),
+        #expect(FoldMath.showsOverlay(turn: 0.01, hasFrame: true))
+        #expect(!FoldMath.showsOverlay(turn: 0.001, hasFrame: true),
                 "aligned paints nothing")
-        #expect(!FoldMath.showsOverlay(delta: 0.5, hasFrame: false),
+        #expect(!FoldMath.showsOverlay(turn: 0.5, hasFrame: false),
                 "no captured frame, no overlay")
     }
 
-    @Test("the eased delta approaches its target and snaps on bad input")
+    @Test("the eased turn approaches its target and snaps on bad input")
     func smoothing() {
         let stepped = FoldMath.smoothed(current: 0, target: 1, dt: 0.033)
-        #expect(stepped > 0 && stepped < 1, "one 30 Hz tick moves partway")
+        #expect(stepped > 0 && stepped < 1, "one tick moves partway")
         let more = FoldMath.smoothed(current: stepped, target: 1, dt: 0.5)
         #expect(abs(more - 1) < 0.01, "half a second lands on the target")
         #expect(FoldMath.smoothed(current: .nan, target: 1, dt: 0.1) == 1)
         #expect(FoldMath.smoothed(current: 0, target: 1, dt: 0) == 1)
     }
+
+    // MARK: AlphaBeta
+
+    @Test("the first sample primes the predictor at the measurement")
+    func predictorPrime() {
+        var p = AlphaBeta()
+        p.feed(100, at: 10)
+        #expect(p.renderAngle == 100)
+        #expect(p.velocity == 0)
+    }
+
+    @Test("while the lid swings the render angle leads the measurement, bounded")
+    func predictorLeads() {
+        var p = AlphaBeta()
+        p.feed(100, at: 0)
+        // Steady closing at ~60°/s, 60 Hz samples.
+        for i in 1...20 { p.feed(100 - Double(i), at: Double(i) / 60) }
+        #expect(p.renderAngle < 80, "closing leads downward")
+        #expect(80 - p.renderAngle <= AlphaBeta.leadLimit + 1e-9,
+                "the lead is clamped")
+        #expect(p.velocity < -30, "the velocity estimate tracks the swing")
+    }
+
+    @Test("a parked lid renders the measurement exactly — no drift, no lead")
+    func predictorParks() {
+        var p = AlphaBeta()
+        p.feed(100, at: 0)
+        for i in 1...10 { p.feed(100 - Double(i) * 0.5, at: Double(i) / 60) }
+        // The lid stops; stillness confirmed after stillConfirm.
+        let stopAt = 10.0 / 60
+        for i in 1...30 { p.feed(95, at: stopAt + Double(i) / 60) }
+        #expect(p.renderAngle == 95, "stillness freezes the prediction")
+        #expect(abs(p.velocity) < 1, "the velocity estimate settles to rest")
+    }
+
+    @Test("a reversal kills the lead instead of overshooting through it")
+    func predictorReversal() {
+        var p = AlphaBeta()
+        p.feed(100, at: 0)
+        for i in 1...20 { p.feed(100 - Double(i), at: Double(i) / 60) }
+        // The lid turns around and opens — the render angle stays inside
+        // the clamp the whole way, then rebuilds its lead in the new
+        // direction instead of overshooting backward through the turn.
+        for i in 1...10 {
+            let raw = 80.0 + Double(i)
+            p.feed(raw, at: (20 + Double(i)) / 60)
+            #expect(abs(p.renderAngle - raw) <= AlphaBeta.leadLimit + 1e-9)
+        }
+        #expect(p.renderAngle > 90, "leading the new direction once it settles")
+    }
+
+    @Test("a stale feed decays the lead and the blur boost")
+    func predictorStale() {
+        var p = AlphaBeta()
+        p.feed(100, at: 0)
+        for i in 1...15 { p.feed(100 - Double(i), at: Double(i) / 60) }
+        // The sensor goes quiet — two seconds of ticks must settle the
+        // velocity estimate to rest.
+        let quiet = 15.0 / 60
+        for i in 1...120 { p.tick(dt: 1.0 / 60, at: quiet + Double(i) / 60) }
+        #expect(abs(p.velocity) < 1, "the boost source dies with the feed")
+    }
+
+    @Test("a non-finite sample cannot corrupt the predictor")
+    func predictorGarbage() {
+        var p = AlphaBeta()
+        p.feed(100, at: 0)
+        p.feed(.nan, at: 1.0 / 60)
+        p.feed(.infinity, at: 2.0 / 60)
+        p.feed(98, at: 3.0 / 60)
+        #expect(p.renderAngle.isFinite)
+        #expect(p.velocity.isFinite)
+    }
+
+    // MARK: Jitter
 
     @Test("the first reading always passes the jitter filter")
     func jitterFirstReading() {
@@ -121,6 +191,8 @@ struct FoldMathTests {
         #expect(first)
         #expect(afterReset, "after reset the first reading passes")
     }
+
+    // MARK: Pause
 
     @Test("a clear machine gives no reason")
     func pauseNone() {

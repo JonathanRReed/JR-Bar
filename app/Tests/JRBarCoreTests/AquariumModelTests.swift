@@ -8,8 +8,11 @@ import Testing
 @Suite("Aquarium model")
 struct AquariumModelTests {
     static func session(_ id: String, lifecycle: String? = "active", mode: String? = "working",
-                        ask: Bool = false, updatedAt: Double? = nil) -> CoreSession {
-        CoreSession(id: id, provider: "claude", label: "run \(id)", mode: mode, lifecycle: lifecycle,
+                        ask: Bool = false, updatedAt: Double? = nil,
+                        provider: String = "claude", kind: String = "main",
+                        parent: String? = nil) -> CoreSession {
+        CoreSession(id: id, provider: provider, kind: kind, parent: parent,
+                    label: "run \(id)", mode: mode, lifecycle: lifecycle,
                     updatedAt: updatedAt,
                     ask: ask ? CoreAsk(session: id, kind: "permission", openedAt: 1) : nil)
     }
@@ -158,5 +161,178 @@ struct AquariumModelTests {
         let failed = AquariumModel.reduce(sessions: [Self.session("a", lifecycle: "failed", ask: true)],
                                           previous: [], now: now)[0]
         #expect(failed.state == .sinking)
+    }
+
+    @Test("each known provider gets its species; anything else is a minnow")
+    func species() {
+        let table: [String: FishSpecies] = [
+            "claude": .clownfish,
+            "codex": .shark,
+            "grok": .shark,
+            "gemini": .angelfish,
+            "antigravity": .puffer,
+            "openclaw": .puffer,
+            "hermes": .seahorse,
+            "opencode": .betta,
+            "kiro": .betta,
+            "t3code": .betta,
+            "devin": .tang,
+            "cursor": .tetra,
+            "pi": .tetra,
+        ]
+        for (provider, species) in table {
+            #expect(FishSpecies.forProvider(provider) == species, "\(provider)")
+        }
+        // Case-insensitive, and the unknowns & empties are minnows.
+        #expect(FishSpecies.forProvider("Claude") == .clownfish)
+        #expect(FishSpecies.forProvider("some-new-agent") == .minnow)
+        #expect(FishSpecies.forProvider("") == .minnow)
+        // Reduce stamps the species on the fish.
+        let fish = AquariumModel.reduce(sessions: [Self.session("a", provider: "gemini")],
+                                        previous: [], now: Date())[0]
+        #expect(fish.species == .angelfish)
+        #expect(!fish.isFry)
+        #expect(fish.anchorID == nil)
+    }
+
+    @Test("a sub-agent is a fry schooling around its parent's fish")
+    func fry() {
+        let now = Date()
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("w1", kind: "worker", parent: "a"),
+            Self.session("a"),
+            Self.session("w2", kind: "worker", parent: "a"),
+        ], previous: [], now: now)
+        // Session order is kept: worker, main, worker.
+        #expect(fish.map(\.id) == ["w1", "a", "w2"])
+        let parent = fish[1]
+        for fry in [fish[0], fish[2]] {
+            #expect(fry.isFry)
+            #expect(fry.anchorID == "a")
+            // The school wears its parent's species.
+            #expect(fry.species == parent.species)
+            // And gets the same stable swim machinery as any fish.
+            #expect((0...1).contains(fry.lane))
+            #expect(fry.state == .swimming)
+        }
+        // A fry keeps its place across reduces.
+        let again = AquariumModel.reduce(sessions: [
+            Self.session("w1", kind: "worker", parent: "a"),
+            Self.session("a"),
+            Self.session("w2", kind: "worker", parent: "a"),
+        ], previous: fish, now: now + 3)
+        #expect(again[0].isFry)
+        #expect(again[0].anchorID == "a")
+        #expect(again[0].enteredAt == now)
+    }
+
+    @Test("a fry whose parent isn't listed schools near the largest same-provider fish")
+    func looseSchool() {
+        let now = Date()
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("codex-1", provider: "codex"),
+            Self.session("codex-2", provider: "codex"),
+            Self.session("claude-1", provider: "claude"),
+            Self.session("w", provider: "codex", kind: "worker", parent: "ghost"),
+        ], previous: [], now: now)
+        let fry = fish[3]
+        #expect(fry.isFry)
+        // The ghost parent resolves to a same-provider fish — the one
+        // that will draw largest.
+        let codex = [fish[0], fish[1]]
+        let biggest = codex.max { $0.bodySize < $1.bodySize }!
+        #expect(fry.anchorID == biggest.id)
+        #expect(fry.species == .shark)
+    }
+
+    @Test("a fry with no same-provider fish free-swims")
+    func freeFry() {
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("a", provider: "claude"),
+            Self.session("w", provider: "codex", kind: "worker", parent: "ghost"),
+        ], previous: [], now: Date())
+        #expect(fish[1].isFry)
+        #expect(fish[1].anchorID == nil)
+        // It keeps its own provider's species when it has no school.
+        #expect(fish[1].species == .shark)
+    }
+
+    @Test("a school caps at eight fry; extras merge away")
+    func fryCap() {
+        let sessions = [Self.session("a")]
+            + (0..<12).map { Self.session("w\($0)", kind: "worker", parent: "a") }
+        let fish = AquariumModel.reduce(sessions: sessions, previous: [], now: Date())
+        let fry = fish.filter(\.isFry)
+        #expect(fry.count == AquariumModel.maxFryPerSchool)
+        #expect(fry.allSatisfy { $0.anchorID == "a" })
+        // The first eight workers, in list order.
+        #expect(fry.map(\.id) == (0..<8).map { "w\($0)" })
+    }
+
+    @Test("a parent's completion takes its school with it")
+    func schoolLeaves() {
+        let t0 = Date()
+        var fish = AquariumModel.reduce(sessions: [
+            Self.session("a"),
+            Self.session("w", kind: "worker", parent: "a"),
+        ], previous: [], now: t0)
+        fish = AquariumModel.reduce(sessions: [
+            Self.session("a", lifecycle: "completed"),
+            Self.session("w", kind: "worker", parent: "a"),
+        ], previous: fish, now: t0 + 1)
+        #expect(fish[0].state == .leaving)
+        #expect(fish[1].state == .leaving)
+        // On the same clock, so the school retires with the parent.
+        #expect(fish[1].stateSince == fish[0].stateSince)
+        #expect(fish[1].isRetired(at: t0 + 8) == fish[0].isRetired(at: t0 + 8))
+    }
+
+    @Test("a parent's failure sinks its school")
+    func schoolSinks() {
+        let t0 = Date()
+        var fish = AquariumModel.reduce(sessions: [
+            Self.session("a"),
+            Self.session("w", kind: "worker", parent: "a"),
+        ], previous: [], now: t0)
+        fish = AquariumModel.reduce(sessions: [
+            Self.session("a", lifecycle: "failed"),
+            Self.session("w", kind: "worker", parent: "a"),
+        ], previous: fish, now: t0 + 1)
+        #expect(fish[0].state == .sinking)
+        #expect(fish[1].state == .sinking)
+        #expect(fish[1].stateSince == fish[0].stateSince)
+    }
+
+    @Test("a worker's own failure still sinks just the fry")
+    func fryFailsAlone() {
+        let fish = AquariumModel.reduce(sessions: [
+            Self.session("a"),
+            Self.session("w", lifecycle: "failed", kind: "worker", parent: "a"),
+        ], previous: [], now: Date())
+        #expect(fish[0].state == .swimming)
+        #expect(fish[1].state == .sinking)
+    }
+
+    @Test("the decor set is seeded: same seed, same layout")
+    func decor() {
+        let a = AquariumModel.decorSet()
+        let b = AquariumModel.decorSet()
+        #expect(a == b)
+        #expect(AquariumModel.decorSet(seed: "tank") == a)
+        #expect(AquariumModel.decorSet(seed: "other") != a)
+        // Every piece sits in the tank.
+        for piece in a {
+            #expect((0...1).contains(piece.x))
+            #expect((0...1).contains(piece.depth))
+            #expect(piece.scale > 0)
+        }
+        // The signature pieces are always there, first in the set so
+        // a sparse density keeps them.
+        let kinds = a.map(\.kind)
+        #expect(kinds.first == .chest)
+        #expect(kinds.contains(.starfish))
+        #expect(kinds.contains(.coral))
+        #expect(kinds.filter { $0 == .kelp }.count >= 3)
+        #expect(kinds.filter { $0 == .rock }.count >= 2)
     }
 }

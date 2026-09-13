@@ -18,12 +18,14 @@ final class FoldOverlayWindow: NSPanel {
         super.init(contentRect: screen.frame,
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         metalView.colorPixelFormat = .bgra8Unorm
+        // Render-target-only drawable: the TBDR path never reads it back.
+        metalView.framebufferOnly = true
         // While the overlay is up the view free-runs at the display's
         // refresh — the fold's glide lives on the vsync, not on sensor
         // cadence. Ordered out it pauses: nothing to draw, nothing drawn.
         metalView.isPaused = true
         metalView.enableSetNeedsDisplay = false
-        metalView.preferredFramesPerSecond = Int(screen.maximumFramesPerSecond)
+        metalView.preferredFramesPerSecond = min(120, Int(screen.maximumFramesPerSecond))
         metalView.delegate = renderer
         metalView.autoresizingMask = [.width, .height]
         contentView = metalView

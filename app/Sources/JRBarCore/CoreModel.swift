@@ -281,18 +281,6 @@ public final class CoreModel {
         post("end_calibration_preview", args: ["device": .string(device)])
     }
 
-    /// `screensaver_peek {seconds}`: the Screensaver card's "Play it
-    /// now" — the daemon stages the configured idle-screensaver effect on
-    /// the strip & bar for a few seconds, then reverts. The reply's
-    /// `state` is the daemon's own word: "peeking" when it actually took
-    /// the surfaces.
-    @discardableResult
-    public func screensaverPeek(seconds: Double? = nil) async throws -> CoreReply {
-        var args: [String: JSONValue] = [:]
-        if let seconds { args["seconds"] = .number(seconds) }
-        return try await send("screensaver_peek", args: args)
-    }
-
     public func doctor() async throws -> CoreReply { try await send("doctor") }
 
     /// `mark_history_seen`: the user just looked at History — the daemon

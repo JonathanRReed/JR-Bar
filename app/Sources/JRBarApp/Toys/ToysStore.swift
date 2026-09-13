@@ -18,8 +18,7 @@ import SwiftUI
 final class ToysStore {
     let core: CoreModel
     /// The daemon-document store: Alcove's follow toggle is a real
-    /// setting (`screen_bar_follow_alcove`) and the screensaver card
-    /// writes its keys through it.
+    /// setting (`screen_bar_follow_alcove`) written through it.
     let settings: SettingsStore
 
     /// Everything the toys persist; mirrors `AppState.toys`.
@@ -28,8 +27,7 @@ final class ToysStore {
     }
 
     /// The cards, in contract order: Fold, Aquarium, Notch Buddy,
-    /// Confetti, Screen Bar Screensaver, Alcove. The page renders
-    /// whatever is here.
+    /// Confetti, Alcove. The page renders whatever is here.
     private(set) var toys: [any Toy]
 
     /// Typed handles for the toys that other parts of the app drive:
@@ -69,7 +67,6 @@ final class ToysStore {
         cards.append(notchBuddy)
         confetti.store = self
         cards.append(confetti)
-        cards.append(ScreensaverToy(settings: settings))
         cards.append(AlcoveToy(core: core, store: self))
         externalApps.store = self
         self.toys = cards

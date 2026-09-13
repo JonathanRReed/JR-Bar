@@ -940,9 +940,6 @@ def default_settings_document() -> dict:
         "idle_dim_after_minutes": 10.0,
         "idle_dim_enabled": True,
         "idle_dim_fraction": 0.3,
-        "idle_screensaver_after_minutes": 20,
-        "idle_screensaver_effect": None,
-        "idle_screensaver_enabled": False,
         "keep_awake_on_battery": True,
         "keep_display_awake": False,
         "led_display": "agent",
@@ -1244,9 +1241,6 @@ class World:
         # moment `set_mode` hears it speak again -- the daemon's receipt
         # semantics without the persistence.
         self.dismissed: dict[str, float] = {}
-        # The mock's stand-in for the daemon's idle clock: the epoch the
-        # aggregate first read "idle". Drives `state.ambient.screensaver`.
-        self._screensaver_idle_since: float | None = None
         # `usage_history` scans: the first ask per (provider, range) is
         # answered partially and finished by an event, like the daemon's.
         self.history_scanned: set[tuple[str, str]] = set()
@@ -1404,53 +1398,10 @@ class World:
             "catalog_generation": self.effects_generation,
             "settings_generation": self.settings_generation,
             "hidden_count": self.hidden_count,
-            "ambient": self.ambient_facts(now),
             "deck": self.deck_state(),
             # Forward-compatibility bait: the app must ignore this.
             "x_mock_extra": {"note": "unknown keys are fine"},
         }
-
-    def ambient_facts(self, now: float) -> dict:
-        """`state.ambient`: the idle screensaver's fact, the daemon's shape.
-
-        The mock's idle clock is the aggregate: when the mode reads
-        "idle" the bar is treated as unattended. Enabled with a picked
-        effect plays once idle passes the delay; an unknown id fails
-        closed to "off", like the daemon.
-        """
-        doc = self.document
-        enabled = bool(doc.get("idle_screensaver_enabled"))
-        effect = doc.get("idle_screensaver_effect")
-        raw_after = doc.get("idle_screensaver_after_minutes")
-        after_seconds = (
-            int(max(5.0, min(1440.0, float(raw_after))) * 60)
-            if isinstance(raw_after, (int, float)) and not isinstance(raw_after, bool)
-            else 20 * 60
-        )
-        if self.aggregate()["mode"] == "idle":
-            if self._screensaver_idle_since is None:
-                self._screensaver_idle_since = now
-        else:
-            self._screensaver_idle_since = None
-        idle_seconds = (
-            max(0.0, now - self._screensaver_idle_since)
-            if self._screensaver_idle_since is not None
-            else 0.0
-        )
-        known_ids = {row["id"] for row in registry_effects()} | {
-            f"pack:{pack['id']}:{entry['id']}"
-            for pack in self.effect_packs.values()
-            for entry in pack.get("effects", [])
-        }
-        known = isinstance(effect, str) and effect in known_ids
-        if not enabled or not known:
-            word = "off"
-        elif idle_seconds >= after_seconds:
-            word = "playing"
-        else:
-            word = "waiting"
-        return {"screensaver": {"state": word, "idle_seconds": round(idle_seconds, 1),
-                                "after_seconds": after_seconds}}
 
     # -- deck ------------------------------------------------------------------
 

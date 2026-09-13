@@ -2,6 +2,46 @@
 
 All notable changes to JR-Bar are documented here.
 
+## 0.9.7 (unreleased)
+
+- Fold learned the last of the gesture. The fold is now a bounded 0…1
+  arc from your activation angle down to the shut line instead of an
+  ever-steeper tilt — the iPhone-Duo shape: invisible at activation,
+  composed through the swing, and finishing to near-black in the last
+  degrees so a full close reads as the display switching off. An α–β
+  predictor leads the measurement by ~60 ms of lid travel (clamped to
+  ±8°, dead while parked, killed on reversal), which is what hides the
+  sensor→capture→display latency — the fold follows your finger instead
+  of trailing it. HID reads moved off the main runloop onto a serial
+  queue, the poll adapts (10 Hz idle / 60 Hz armed / 120 Hz while the
+  lid swings), and clamshell & display topology are cached facts instead
+  of IOKit/CoreGraphics queries at vsync rate — the jitter the old
+  engine could never ease away. The matte is a golden-angle Vogel disc
+  over real mip levels (each frame blits into a private mipmapped
+  texture, no CPU decode) whose radius grows toward the far edge and
+  with lid speed; a sheen band, hinge seam and edge feather finish the
+  glass. Tilt = projection only; Dusk = dim + light matte; Fog = dim +
+  deep matte.
+- Aquarium grew into a real tank. Every provider is its own species now —
+  clownfish, shark, angelfish, puffer, seahorse, betta, tang, tetra —
+  and sub-agent sessions swim as fry, ~0.45× and capped at eight,
+  schooling loosely around their parent fish and sharing its fate (a
+  completion spirals the whole school off the edge). The floor is
+  furnished: seeded kelp strands, pebble beds, coral, a starfish and a
+  treasure chest that burps bubbles; a jellyfish drifts through every
+  so often and a snail inches along the sand. Reduce Motion stills the
+  sway; occlusion still pauses the tank.
+- Notch Buddy got busier and cuter: a gathering bounce when three or
+  more sessions work at once, a nightcap while asleep, a tumble-in on
+  failure, and asks now alternate between the full wave + "!" and a
+  quiet lean-in that just holds eye contact. Confetti bursts carry
+  provider-coloured glyph flecks, streamers bounce once on the floor
+  and rest as ribbons, and the pop cone throws a few spark streaks.
+- Screen Bar Screensaver is gone, end to end — the card, the
+  `screensaver_peek` command, the `ambient.screensaver` fact, the
+  `idle_screensaver_*` settings and their tests. The ambient runtime's
+  other seams (semantic cues, DND, night) are untouched.
+
 ## 0.9.6 (unreleased)
 
 - Toys. A new Settings page for the things that are fun first & don't

@@ -27,11 +27,10 @@ final class FoldToy: Toy {
     /// works on a Mac with no lid sensor at all.
     private(set) var simulatedAngle: Double?
     /// The newest raw sensor reading, jitter unfiltered — the activation
-    /// gate checks this so a filtered straggler can never hold the
-    /// overlay open above the limit.
+    /// gate checks this so a predicted lead can never open the overlay
+    /// early, and a filtered straggler can never hold it open above the
+    /// limit.
     private(set) var rawAngle: Double?
-    /// The last sensor reading the jitter filter let through.
-    private(set) var filteredAngle: Double?
     /// Once Metal or the shader fails we stop trying: the chip keeps
     /// saying why instead of retrying a compile every frame.
     private(set) var rendererFailed = false
@@ -46,15 +45,29 @@ final class FoldToy: Toy {
     private(set) var permissionVersion = 0
 
     @ObservationIgnored private var jitter = JitterFilter(tolerance: 0)
+    /// The α–β predictor: turns stepped hinge readings into a render
+    /// angle that leads the finger by ~60 ms while the lid moves and
+    /// equals the measurement while it parks. Fed on accepted samples,
+    /// decayed on every vsync tick.
+    @ObservationIgnored private var predictor = AlphaBeta()
     @ObservationIgnored private var overlay: FoldOverlayWindow?
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    /// The smoothed radians past the anchor the renderer is showing —
-    /// sensor readings step at 30 Hz, the fold glides at the display's
-    /// own rate because the display link, not the sensor, carries the
-    /// easing between samples.
-    @ObservationIgnored private var displayedDelta = 0.0
+    /// The smoothed turn the renderer is showing — sensor readings step,
+    /// the fold glides at the display's own rate because the display
+    /// link, not the sensor, carries the easing between samples.
+    @ObservationIgnored private var displayedTurn = 0.0
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
+    /// Safety facts, cached instead of queried per frame: the clamshell
+    /// truth rides in on the sensor's 1 Hz beat, and display topology
+    /// only re-reads when the screen-parameters notification bumps
+    /// `displayVersion` (plus a 2 s staleness backstop while armed).
+    /// IOKit and CoreGraphics queries at vsync rate were the jitter.
+    @ObservationIgnored private var cachedClamshell: Bool?
+    @ObservationIgnored private var cachedBuiltinPresent = true
+    @ObservationIgnored private var cachedMirrored = false
+    @ObservationIgnored private var cachedFactsVersion = -1
+    @ObservationIgnored private var cachedFactsAt: TimeInterval = 0
     /// The vsync heartbeat while the fold is armed. CADisplayLink needs
     /// an NSObject target, so the box holds the closure.
     @ObservationIgnored private var tickLink: CADisplayLink?
@@ -164,29 +177,44 @@ final class FoldToy: Toy {
 
     /// Why the fold is parked right now, per the safety contract: closed
     /// lid (sensor ≤ 5° or real clamshell state), no built-in display,
-    /// a mirrored one, or a sleeping screen.
+    /// a mirrored one, or a sleeping screen. Every input is a cached
+    /// fact — IOKit and CoreGraphics queries on the per-frame path were
+    /// the jitter the old engine could never ease away.
     private var pauseReason: String? {
-        _ = displayVersion
+        refreshDisplayFactsIfStale()
         return FoldPause.reason(
-            angle: effectiveAngle,
-            // The registry's own answer — the daemon's `closed_lid.holding`
-            // is the keep-awake assertion instead, which stays armed
-            // whenever agents are working and would park the fold on an
-            // open lid.
-            closedLid: ClamshellState.read() == true,
-            builtInPresent: FoldOverlayWindow.builtinDisplayID() != nil,
-            mirrored: FoldOverlayWindow.builtinIsMirrored(),
+            angle: gateAngle,
+            closedLid: cachedClamshell == true,
+            builtInPresent: cachedBuiltinPresent,
+            mirrored: cachedMirrored,
             screenAsleep: screenAsleep)
     }
 
+    /// Re-reads the display-topology facts when the screen-parameters
+    /// notification bumped `displayVersion`, or when the cache is more
+    /// than two seconds old while something still wants it — a cheap
+    /// query a few times a minute, never once a frame.
+    private func refreshDisplayFactsIfStale() {
+        let now = CACurrentMediaTime()
+        guard displayVersion != cachedFactsVersion || now - cachedFactsAt > 2 else { return }
+        cachedBuiltinPresent = FoldOverlayWindow.builtinDisplayID() != nil
+        cachedMirrored = FoldOverlayWindow.builtinIsMirrored()
+        cachedFactsVersion = displayVersion
+        cachedFactsAt = now
+    }
+
     /// The freshest truth for the activation gate: the simulation while
-    /// held, else the raw sensor reading — never the filtered one, so a
-    /// suppressed sample cannot hold the overlay open above the limit.
+    /// held, else the raw sensor reading — never the predicted one, so a
+    /// lead cannot open the overlay a hair early.
     private var gateAngle: Double? { simulatedAngle ?? rawAngle }
 
-    /// What drives the fold amount: the simulation while held, else the
-    /// jitter-filtered reading.
-    private var effectiveAngle: Double? { simulatedAngle ?? filteredAngle }
+    /// What the fold amount reads: the simulation while held, else the
+    /// predictor's render angle — the measurement plus its bounded lead.
+    private var renderAngle: Double? { simulatedAngle ?? predictor.renderAngle }
+
+    /// The number the "Lid angle" row prints — the measured truth, not
+    /// the lead. A lead of a few degrees belongs to the glass, not the UI.
+    private var measuredAngle: Double? { simulatedAngle ?? rawAngle }
 
     // MARK: Engine
 
@@ -205,11 +233,16 @@ final class FoldToy: Toy {
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
-            displayedDelta = 0
+            displayedTurn = 0
+            predictor.reset()
             standDown()
             sensor.setPolling(false)
             return
         }
+        // Inside this band the sensor polls at 60 Hz (120 while the lid
+        // swings); above it the poll idles at 10 Hz — dense where the
+        // fold lives, quiet where it doesn't.
+        sensor.armingAngle = settings.activationAngle + 12
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
         sensor.setPolling(true)
@@ -222,7 +255,7 @@ final class FoldToy: Toy {
             paused = true
             resumeWork?.cancel()
             resumeWork = nil
-            displayedDelta = 0
+            displayedTurn = 0
             standDown()
             return
         }
@@ -250,14 +283,16 @@ final class FoldToy: Toy {
         }
     }
 
-    /// Radians the fold wants right now, from the freshest truth — 0 when
-    /// the gate is closed, so easing home is also how the overlay leaves.
-    private var targetDelta: Double {
+    /// The turn the fold wants right now, from the freshest truth — 0
+    /// when the gate is closed, so easing home is also how the overlay
+    /// leaves. The gate reads the raw angle (a lead can never activate
+    /// early); the turn itself rides the predictor's render angle.
+    private var targetTurn: Double {
         guard let gate = gateAngle,
               FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),
               pauseReason == nil else { return 0 }
-        return FoldMath.deltaRadians(
-            angle: effectiveAngle ?? gate, activation: settings.activationAngle)
+        return FoldMath.normalizedTurn(
+            angle: renderAngle ?? gate, start: settings.activationAngle)
     }
 
     /// Starts or stops the vsync heartbeat to match the machine: armed
@@ -281,28 +316,30 @@ final class FoldToy: Toy {
         } else if let link = tickLink {
             link.invalidate()
             tickLink = nil
-            displayedDelta = 0
+            displayedTurn = 0
             overlay?.setVisible(false)
         }
     }
 
-    /// One heartbeat: ease the delta toward its target, push the
-    /// uniforms, and show or hide the overlay to match. Runs at the
-    /// display's refresh while armed, so the fold's motion is the
-    /// screen's own cadence — the 30 Hz sensor only moves the target.
+    /// One heartbeat: decay the predictor, ease the turn toward its
+    /// target, push the uniforms, and show or hide the overlay to match.
+    /// Runs at the display's refresh while armed, so the fold's motion is
+    /// the screen's own cadence — the sensor only moves the target.
     private func tickFrame() {
         let now = CACurrentMediaTime()
-        displayedDelta = FoldMath.smoothed(
-            current: displayedDelta, target: targetDelta, dt: now - lastDeltaTick)
+        let dt = now - lastDeltaTick
         lastDeltaTick = now
+        predictor.tick(dt: dt, at: now)
+        refreshDisplayFactsIfStale()
+        displayedTurn = FoldMath.smoothed(current: displayedTurn, target: targetTurn, dt: dt)
         let wantVisible = FoldMath.showsOverlay(
-            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
+            turn: displayedTurn, hasFrame: capture?.hasFrame ?? false)
         guard wantVisible else {
             overlay?.setVisible(false)
             // The link's only job is motion; fully at rest — gate shut
             // and the ease finished — it stands down until the next
             // reconcile arms it again.
-            if targetDelta == 0 && abs(displayedDelta) <= 0.002, let link = tickLink {
+            if targetTurn == 0 && displayedTurn <= 0.002, let link = tickLink {
                 link.invalidate()
                 tickLink = nil
             }
@@ -310,20 +347,40 @@ final class FoldToy: Toy {
         }
         let settings = settings
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let fold = Float(abs(sin(displayedDelta)))
         if overlay == nil {
             guard now - lastOverlayAttempt > 0.5 else { return }
             lastOverlayAttempt = now
             guard ensureOverlay() != nil else { return }
         }
         if let overlay {
-            overlay.renderer.params = FoldRenderer.Params(
-                delta: Float(displayedDelta),
-                blur: settings.style == .fog && !reduceMotion ? Float(settings.blur) : 0,
-                persp: Float(settings.perspective),
-                dim: settings.style == .tilt ? 0 : fold * Float(settings.shade))
+            // Adaptive disc density: sparse early where the radius is
+            // small, dense deep in the gesture where the matte is wide.
+            let samples: Float = displayedTurn < 0.2 ? 12 : displayedTurn < 0.6 ? 20 : 32
+            let styleBlur: Double = switch settings.style {
+            case .tilt: 0
+            case .dusk: settings.blur * 0.45   // Dusk keeps a light matte
+            case .fog: settings.blur
+            }
+            overlay.renderer.params.turn = Float(displayedTurn)
+            overlay.renderer.params.blurStrength = reduceMotion ? 0 : Float(styleBlur)
+            overlay.renderer.params.motionBoost = reduceMotion ? 0
+                : FoldToy.velocityBlurBoost(predictor.velocity)
+            overlay.renderer.params.dimStrength = settings.style == .tilt ? 0
+                : Float(settings.shade)
+            overlay.renderer.params.persp = Float(settings.perspective)
+            overlay.renderer.params.reflection = 1
+            overlay.renderer.params.samples = samples
             overlay.setVisible(true)
         }
+    }
+
+    /// Velocity-aware blur, in radius units: dead-zoned under 30°/s so
+    /// hinge noise at rest adds nothing, and clamped so even a slammed
+    /// lid smears instead of washing out.
+    static func velocityBlurBoost(_ velocity: Double) -> Float {
+        let speed = abs(velocity)
+        guard speed > 30 else { return 0 }
+        return Float(min((speed - 30) * 0.02, 12))
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {
@@ -377,17 +434,22 @@ final class FoldToy: Toy {
     }
 
     /// The raw reading always lands — the gate re-checks every sample so
-    /// a jitter-suppressed reading above the limit still hides the
-    /// overlay — and the filter decides whether it moves the fold.
-    private func noteSensorSample(_ angle: Double?) {
-        rawAngle = angle
+    /// a suppressed or predicted reading above the limit still hides the
+    /// overlay — then the filter and predictor decide what the fold does
+    /// with it.
+    private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
+        rawAngle = sample.angle
+        if let clamshell = sample.clamshell { cachedClamshell = clamshell }
         if simulatedAngle == nil,
-           !(angle.map { FoldMath.allows(rawAngle: $0, activation: settings.activationAngle) } ?? true) {
-            displayedDelta = 0
+           !(sample.angle.map {
+               FoldMath.allows(rawAngle: $0, activation: settings.activationAngle)
+           } ?? true) {
+            displayedTurn = 0
             overlay?.setVisible(false)
         }
-        guard let angle, jitter.accept(angle) else { return }
-        filteredAngle = angle
+        guard let angle = sample.angle, simulatedAngle == nil,
+              jitter.accept(angle) else { return }
+        predictor.feed(angle, at: sample.at)
         reconcile()
     }
 
@@ -397,7 +459,7 @@ final class FoldToy: Toy {
         withObservationTracking {
             _ = store?.state.fold
             _ = sensor.available
-            _ = filteredAngle
+            _ = rawAngle
             _ = simulatedAngle
             _ = screenAsleep
             _ = displayVersion
@@ -420,12 +482,18 @@ final class FoldToy: Toy {
     /// hands the fold back to the sensor.
     var simulateBinding: Binding<Double> {
         Binding(
-            get: { self.simulatedAngle ?? self.effectiveAngle ?? 90 },
+            get: { self.simulatedAngle ?? self.measuredAngle ?? 90 },
             set: { self.simulatedAngle = $0 })
     }
 
     func endSimulate() {
         simulatedAngle = nil
+        // The predictor's lead belongs to the real lid — a drag that
+        // just jumped the angle 40° must not carry it.
+        predictor.reset()
+        if let raw = rawAngle {
+            predictor.feed(raw, at: CACurrentMediaTime())
+        }
         reconcile()
     }
 
@@ -433,7 +501,7 @@ final class FoldToy: Toy {
     /// without the hinge, "—" for a sensor that has not read yet (the
     /// poll only runs while the toy is on).
     var angleText: String {
-        if let angle = effectiveAngle { return "\(Int(angle.rounded()))°" }
+        if let angle = measuredAngle { return "\(Int(angle.rounded()))°" }
         return sensor.available ? "—" : "no sensor"
     }
 

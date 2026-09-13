@@ -4,10 +4,11 @@ import Observation
 import SwiftUI
 
 /// Notch Buddy (docs/TOYS.md): a tiny creature in the `NotchHUD` panel
-/// that lives by the agent state — asleep when nothing runs, pacing while
-/// sessions work, waving amber while an ask is open, slumped on a
-/// failure, one hop on a completion. Reads `core.sessions` only; off by
-/// default.
+/// that lives by the agent state — asleep under a nightcap when nothing
+/// runs, pacing while sessions work (bouncing in place when three or
+/// more work at once), waving amber while an ask is open, tumbling into
+/// a slump on a failure, one hop on a completion. Reads `core.sessions`
+/// only; off by default.
 @MainActor
 @Observable
 final class NotchBuddyToy: Toy {
@@ -23,6 +24,13 @@ final class NotchBuddyToy: Toy {
     /// once from here. `mood(at:)` maintains it because the view is the
     /// only clock that ticks the mood.
     private(set) var wavingSince: Date?
+    /// When the current slump began — the tumble-in rolls once from
+    /// here. Same deal as `wavingSince`: `mood(at:)` maintains it.
+    private(set) var slumpedSince: Date?
+    /// How many asks have opened. They alternate deterministically: odd
+    /// asks wave with the "!" overhead, even asks just lean in and hold
+    /// your eye.
+    private(set) var waveOrdinal = 0
     @ObservationIgnored private var lastDoneCount = 0
 
     init(core: CoreModel) {
@@ -68,17 +76,23 @@ final class NotchBuddyToy: Toy {
 
     /// What the buddy is doing, in `SessionActivity`'s precedence: a live
     /// ask outranks a failure, a failure outranks work, work outranks
-    /// sleep. A completion hops once and then the mood falls back.
+    /// sleep. Three or more working sessions is a `gathering`, not a
+    /// patrol. A completion hops once and then the mood falls back.
     enum Mood: String, Sendable {
-        case asleep, pacing, waving, slumped, celebrating
+        case asleep, pacing, gathering, waving, slumped, celebrating
     }
 
     func mood(at now: Date = Date()) -> Mood {
         let mood = reducedMood(at: now)
         if mood == .waving {
-            if wavingSince == nil { wavingSince = now }
+            if wavingSince == nil { wavingSince = now; waveOrdinal += 1 }
         } else if wavingSince != nil {
             wavingSince = nil
+        }
+        if mood == .slumped {
+            if slumpedSince == nil { slumpedSince = now }
+        } else if slumpedSince != nil {
+            slumpedSince = nil
         }
         return mood
     }
@@ -102,14 +116,19 @@ final class NotchBuddyToy: Toy {
     private func reducedMood(at now: Date) -> Mood {
         if let hopUntil, now < hopUntil { return .celebrating }
         var mood = Mood.asleep
+        var working = 0
         for session in core.sessions {
             switch SessionActivity.reduce(session) {
             case .waiting: return .waving
             case .failed: mood = .slumped
-            case .working: if mood == .asleep { mood = .pacing }
+            case .working:
+                working += 1
+                if mood == .asleep { mood = .pacing }
             case .done, .ended, .idle: break
             }
         }
+        // Three or more working at once: busy is exciting, not calm.
+        if mood == .pacing, working >= 3 { return .gathering }
         return mood
     }
 

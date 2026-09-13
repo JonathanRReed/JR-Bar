@@ -1,13 +1,20 @@
 import AppKit
 import CoreVideo
 import MetalKit
-import MetalPerformanceShaders
 
 /// A frame held alive across the GPU fence: CoreVideo buffers are
 /// reference-counted and safe to retain from the completion queue.
 private struct RetainedFrame: @unchecked Sendable {
     let buffer: CVPixelBuffer?
     let texture: CVMetalTexture?
+}
+
+/// A Metal object crossing a `@Sendable` completion handler. Metal
+/// textures are thread-safe for encoding and sampling; the wrapper just
+/// tells Swift that.
+private struct SendBox<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
 }
 
 enum FoldRendererError: LocalizedError {
@@ -20,37 +27,51 @@ enum FoldRendererError: LocalizedError {
     }
 }
 
-/// One Metal pipeline that projects the captured desktop onto the plane
-/// it was captured on — the screen's content holds its angle in the room
-/// while the lid swings under it. The shader source is a string, not a
-/// `.metal` file: the Command Line Tools toolchain ships no `metal`
-/// compiler, so the library is built at runtime and cached in the
-/// pipeline. A compile failure throws from `init`, which the toy reports
-/// once as "Fold can't start its renderer".
-final class FoldRenderer: NSObject {
-    /// Per-draw uniforms. `delta` is radians the lid has swung past the
-    /// anchor; `persp` blends the parallel projection toward a finite-eye
-    /// perspective (keystone taper); `blur` and `dim` scale the Fog and
-    /// Dusk terms and arrive pre-multiplied by the fold amount.
+/// One Metal pipeline that draws the fold as the iPhone-Duo gesture it
+/// is modeled on: the captured desktop is a rigid plane still standing
+/// at its captured angle while the physical lid swings under it, on a
+/// bounded 0…1 `turn` arc that ends in a designed fade to void rather
+/// than an ever-steeper tilt.
+///
+/// Frames arrive as IOSurface-backed buffers and land in a private,
+/// mipmapped texture via a GPU blit — the matte blur reads real mip
+/// levels, so its disc stays velvet at any radius instead of speckling
+/// like a sparse-tap fake. The shader source is a string, not a `.metal`
+/// file: the Command Line Tools toolchain ships no `metal` compiler, so
+/// the library is built at runtime and cached in the pipeline. A compile
+/// failure throws from `init`, which the toy reports once as "Fold can't
+/// start its renderer".
+final class FoldRenderer: NSObject, @unchecked Sendable {
+    /// Per-draw uniforms. `turn` is the normalized fold gesture (0 at
+    /// the activation angle, 1 fully closed). `blurStrength`/`dimStrength`
+    /// carry the style, `persp` blends orthographic hold into finite-eye
+    /// keystone, `samples` adapts the blur disc to the gesture, and
+    /// `motionBoost` (in blur-radius units) is the velocity term that
+    /// keeps fast slams silky instead of stepping.
     struct Params {
-        var delta: Float = 0
+        var cover: SIMD2<Float> = .init(1, 1)
+        var imageSize: SIMD2<Float> = .init(1, 1)
+        var turn: Float = 0
         var aspect: Float = 1.6
-        var blur: Float = 0
-        var persp: Float = 0
-        var dim: Float = 0
+        var texAspect: Float = 1.6
+        var blurStrength: Float = 0
+        var dimStrength: Float = 0
+        var reflection: Float = 1
+        var persp: Float = 1
+        var samples: Float = 20
+        var motionBoost: Float = 0
     }
 
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let pipeline: MTLRenderPipelineState
+    private let sampler: MTLSamplerState
     private var textureCache: CVMetalTextureCache?
-    /// Four Gaussian levels of the newest frame, baked once per frame —
-    /// not per draw — so a draw is one triangle and five texture reads.
-    private var blurLevels: [MTLTexture] = []
-    private var blurFilters: [MPSImageGaussianBlur] = []
-    private var blurDirty = true
-    private var desktopTexture: CVMetalTexture?
-    private var desktopBuffer: CVPixelBuffer?
+    /// The newest capture as a private mipmapped texture. Published on
+    /// the main actor after the blit commits, generation-guarded so an
+    /// older overlapping upload can never overwrite a newer one.
+    private var desktopTexture: MTLTexture?
+    private var textureGeneration: UInt64 = 0
     /// Frames in flight past two drop instead of piling up GPU work.
     private let inFlight = DispatchSemaphore(value: 2)
     var params = Params()
@@ -66,81 +87,101 @@ final class FoldRenderer: NSObject {
         pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         guard let queue = device.makeCommandQueue() else { throw FoldRendererError.noDevice }
         self.queue = queue
+        let samplerDesc = MTLSamplerDescriptor()
+        samplerDesc.minFilter = .linear
+        samplerDesc.magFilter = .linear
+        samplerDesc.mipFilter = .linear
+        samplerDesc.sAddressMode = .clampToEdge
+        samplerDesc.tAddressMode = .clampToEdge
+        guard let sampler = device.makeSamplerState(descriptor: samplerDesc) else {
+            throw FoldRendererError.noDevice
+        }
+        self.sampler = sampler
         var cache: CVMetalTextureCache?
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
         textureCache = cache
         super.init()
     }
 
-    /// The newest captured frame, pushed once per delivery. Wrapping it
-    /// in a Metal texture here — not per draw — is the difference between
-    /// one texture conversion per frame and one per redraw.
+    /// The newest captured frame, pushed once per delivery. The IOSurface
+    /// texture blits into a private mipmapped copy on the GPU — no CPU
+    /// decode, no staging — and the finished texture publishes on the
+    /// main actor so a draw can never observe a half-swapped frame.
     @discardableResult
     func setDesktopFrame(_ pixelBuffer: CVPixelBuffer) -> Bool {
         guard let textureCache else { return false }
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
         var wrapped: CVMetalTexture?
         let status = CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault, textureCache, pixelBuffer, nil, .bgra8Unorm,
-            CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer), 0, &wrapped)
-        guard status == kCVReturnSuccess, let wrapped else { return false }
-        desktopTexture = wrapped
-        desktopBuffer = pixelBuffer
-        blurDirty = true
+            width, height, 0, &wrapped)
+        guard status == kCVReturnSuccess, let wrapped,
+              let source = CVMetalTextureGetTexture(wrapped) else { return false }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: true)
+        desc.mipmapLevelCount = 3
+        desc.usage = .shaderRead
+        desc.storageMode = .private
+        guard let texture = device.makeTexture(descriptor: desc),
+              let command = queue.makeCommandBuffer(),
+              let blit = command.makeBlitCommandEncoder() else { return false }
+        blit.copy(from: source, sourceSlice: 0, sourceLevel: 0,
+                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                  sourceSize: MTLSize(width: width, height: height, depth: 1),
+                  to: texture, destinationSlice: 0, destinationLevel: 0,
+                  destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+        blit.generateMipmaps(for: texture)
+        blit.endEncoding()
+        textureGeneration &+= 1
+        let generation = textureGeneration
+        let retained = RetainedFrame(buffer: pixelBuffer, texture: wrapped)
+        let ready = SendBox(texture)
+        command.addCompletedHandler { [weak self] _ in
+            let keepAlive = retained
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.textureGeneration == generation else { return }
+                self.desktopTexture = ready.value
+                self.params.imageSize = .init(Float(width), Float(height))
+                self.params.texAspect = Float(width) / Float(max(1, height))
+            }
+            withExtendedLifetime(keepAlive) {}
+        }
+        command.commit()
         return true
     }
 
-    private var source: MTLTexture? { desktopTexture.flatMap(CVMetalTextureGetTexture) }
-
-    /// Bakes the blur pyramid for the current frame. The pyramid is
-    /// rebuilt only when a new frame lands or the capture size changes;
-    /// a draw with a dirty flag and no new frame would just re-blur the
-    /// same pixels.
-    private func prepareBlur(_ command: MTLCommandBuffer, source: MTLTexture) {
-        if blurLevels.first?.width != source.width || blurLevels.first?.height != source.height {
-            let desc = MTLTextureDescriptor.texture2DDescriptor(
-                pixelFormat: .rgba16Float, width: source.width, height: source.height, mipmapped: false)
-            desc.usage = [.shaderRead, .shaderWrite]
-            desc.storageMode = .private
-            blurLevels = (0..<4).compactMap { _ in device.makeTexture(descriptor: desc) }
-            // Sigmas scale with the frame height so the same radii read
-            // the same on any panel; four fixed levels beat a live blur
-            // for cost and stay free of sparse-tap speckle.
-            blurFilters = [Float(2), 6, 16, 40].map { sigma in
-                let filter = MPSImageGaussianBlur(device: device, sigma: sigma * Float(source.height) / 1000)
-                filter.edgeMode = .clamp
-                return filter
-            }
-            blurDirty = true
-        }
-        guard blurDirty, blurLevels.count == 4 else { return }
-        for (filter, destination) in zip(blurFilters, blurLevels) {
-            filter.encode(commandBuffer: command, sourceTexture: source, destinationTexture: destination)
-        }
-        blurDirty = false
-    }
-
-    /// The fold shader: a fullscreen triangle plus a fragment that treats
-    /// the captured desktop as a rigid plane still standing at the angle
-    /// it was captured at, and the physical lid as having swung `delta`
-    /// radians since. Each pixel is projected back onto the held plane
-    /// and sampled there — at delta 0 the projection is the identity, so
-    /// activating costs nothing and shows nothing.
+    /// The fold shader: a fullscreen triangle plus a fragment that
+    /// treats the captured desktop as a rigid plane holding its angle.
+    /// At `turn == 0` it early-outs to a plain sample — activating is
+    /// pixel-identical, so there is nothing to perceive. The projection
+    /// is bounded by construction (the denominator can never reach the
+    /// eye), so every point of the gesture is numerically stable.
     private static let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
 
 struct FoldParams {
-    float delta;
+    float2 cover;
+    float2 imageSize;
+    float turn;
     float aspect;
-    float blur;
+    float texAspect;
+    float blurStrength;
+    float dimStrength;
+    float reflection;
     float persp;
-    float dim;
+    float samples;
+    float motionBoost;
 };
 
 struct FoldOut {
     float4 position [[position]];
     float2 uv;
 };
+
+constant float FOLD_TAU = 6.28318530718;
+constant float FOLD_GOLDEN = 2.39996322973;
 
 vertex FoldOut foldVertex(uint vid [[vertex_id]]) {
     float2 pos = float2(float((vid << 1) & 2), float(vid & 2)) * 2.0 - 1.0;
@@ -152,56 +193,81 @@ vertex FoldOut foldVertex(uint vid [[vertex_id]]) {
 
 fragment float4 foldFragment(FoldOut in [[stage_in]],
                              texture2d<float> frame [[texture(0)]],
-                             texture2d<float> b1 [[texture(1)]],
-                             texture2d<float> b2 [[texture(2)]],
-                             texture2d<float> b3 [[texture(3)]],
-                             texture2d<float> b4 [[texture(4)]],
-                             constant FoldParams &p [[buffer(0)]]) {
-    constexpr sampler sampl(filter::linear, address::clamp_to_edge, coord::normalized);
+                             constant FoldParams &p [[buffer(0)]],
+                             sampler sampl [[sampler(0)]]) {
+    float turn = clamp(p.turn, 0.0, 1.0);
+    if (turn < 0.0005) { return frame.sample(sampl, in.uv); }
     float h = 1.0 - in.uv.y;   // 0 at the hinge (bottom), 1 at the far edge
-    float a = clamp(p.delta, -0.65, 1.25);
 
-    // The held plane: still standing at the anchor, so its pixels sit at
-    // height*cos(a) up and height*sin(a) back from the hinge axis.
-    float3 held = float3((in.uv.x - 0.5) * p.aspect, h * cos(a), h * sin(a));
+    // The held plane: bend grows with the gesture but is capped near
+    // 48° — the Duo arc stays composed instead of keeling over.
+    float bend = pow(turn, 1.18) * 0.84;
+    float invAspect = 1.0 / p.aspect;
+    float eye = 3.2 * invAspect;
+    float depth = h * 0.8 * invAspect * sin(bend);
+    float proj = eye / max(eye - depth, 1e-3);
+    // persp 0 is the orthographic hold (cos compression, no taper);
+    // persp 1 is the full finite-eye keystone.
+    float taper = mix(1.0, proj, p.persp);
+    float vmap = mix(cos(bend), 1.0 / proj, p.persp);
+    float2 uv = float2(0.5 + (in.uv.x - 0.5) / taper, 1.0 - h * vmap);
+    uv = (uv - 0.5) * p.cover + 0.5;
 
-    // Parallel projection is the base; `persp` blends in a finite-eye ray
-    // (seated viewer, eye slightly above the screen centre) so the far
-    // edge tapers the way a real tilted plane does. t = 1 is parallel.
-    float3 eye = float3(0.0, 0.65, 1.6);
-    float t = 1.0 + p.persp * (eye.z / max(0.25, eye.z - held.z) - 1.0);
-    float3 hit = eye + t * (held - eye);
-    float2 uv = float2(hit.x / p.aspect + 0.5, 1.0 - hit.y);
-
-    // Defocus grows toward the far edge and with how far the lid has
-    // swung — the four Gaussian levels blend by a spatially-varying
-    // radius instead of tapping a sparse disc every pixel.
-    float radius = p.blur * smoothstep(0.08, 1.0, h) * abs(sin(a)) * 65.0;
+    // The matte disc: radius grows toward the far edge and with the
+    // gesture, plus a velocity term so fast closes smear the way real
+    // glass does. Vogel rings — golden-angle spiral, area-uniform —
+    // sample real mip levels as they widen, so the blur is continuous
+    // instead of a stack of discrete strengths.
+    float matte = smoothstep(0.06, 1.0, h) * smoothstep(0.0, 0.30, turn);
+    float radPx = (p.blurStrength * 34.0 + p.motionBoost) * pow(turn, 0.72) * matte;
     float3 color;
-    if (radius < 2.0) {
-        color = mix(frame.sample(sampl, uv).rgb, b1.sample(sampl, uv).rgb, radius / 2.0);
-    } else if (radius < 6.0) {
-        color = mix(b1.sample(sampl, uv).rgb, b2.sample(sampl, uv).rgb, (radius - 2.0) / 4.0);
-    } else if (radius < 16.0) {
-        color = mix(b2.sample(sampl, uv).rgb, b3.sample(sampl, uv).rgb, (radius - 6.0) / 10.0);
+    if (radPx < 0.5) {
+        color = frame.sample(sampl, uv).rgb;
     } else {
-        color = mix(b3.sample(sampl, uv).rgb, b4.sample(sampl, uv).rgb,
-                    clamp((radius - 16.0) / 24.0, 0.0, 1.0));
+        float uvRadius = radPx / p.imageSize.y;
+        float lodCap = min(1.9, radPx * 0.055);
+        int taps = int(clamp(p.samples, 8.0, 40.0));
+        // A per-pixel phase kills ring banding without animating the disc.
+        float phase = fract(sin(dot(in.position.xy, float2(12.9898, 78.233)))
+                            * 43758.5453) * FOLD_TAU;
+        float3 sum = float3(0.0);
+        float weight = 0.0;
+        for (int i = 0; i < taps; ++i) {
+            float r = sqrt((float(i) + 0.5) / float(taps));
+            float ang = phase + float(i) * FOLD_GOLDEN;
+            float2 ring = float2(cos(ang) * r / p.texAspect, sin(ang) * r) * uvRadius;
+            float w = exp(-r * r * 2.4);
+            sum += frame.sample(sampl, uv + ring, level(lodCap * r)).rgb * w;
+            weight += w;
+        }
+        color = sum / weight;
     }
 
-    // The folded screen sits in its own shadow toward the top.
-    color *= 1.0 - clamp(p.dim * h, 0.0, 0.85);
+    // Glass: a tilted glossy panel dims as it turns, catches a sheen
+    // band above the hinge, and seams bright right at the fold line.
+    color *= 1.0 - pow(turn, 1.2) * pow(h, 1.5) * 0.22;
+    float sheen = exp(-pow((h - 0.62) * 2.6, 2.0)) * pow(turn, 1.4) * 0.09 * p.reflection;
+    color += sheen;
+    float seam = (1.0 - smoothstep(0.0, 0.045, h)) * smoothstep(0.02, 0.2, turn);
+    color += seam * 0.07 * p.reflection;
 
-    // The image boundary feathers out over the same blur radius instead
-    // of clipping the already-blurred content to a razor edge; three
-    // sigma approximates the Gaussian falloff into the dark surround.
-    float2 srcSize = float2(frame.get_width(), frame.get_height());
-    float sigmaPx = radius * srcSize.y / 1000.0;
-    float2 feather = max(3.0 * sigmaPx / srcSize, fwidth(uv));
-    float2 coverage = smoothstep(-feather, feather, uv)
-                    * (1.0 - smoothstep(1.0 - feather, 1.0 + feather, uv));
-    float mask = coverage.x * coverage.y;
-    return float4(mix(float3(0.02, 0.035, 0.05), color, mask), 1.0);
+    // The void beyond the held plane, then the gesture's final close —
+    // the last tenth of the arc finishes to near-black, so a full close
+    // reads as the display switching off, not the image vanishing.
+    float3 voidColor = float3(0.018, 0.028, 0.045);
+    float voidStart = 0.55 - 0.08 * turn;
+    float voidFade = smoothstep(voidStart, 1.0, h) * pow(turn, 1.1) * p.dimStrength;
+    color = mix(color, voidColor, clamp(voidFade, 0.0, 1.0));
+    float closeFade = smoothstep(0.88, 1.0, turn);
+    color = mix(color, float3(0.004, 0.005, 0.008), closeFade);
+
+    // Where the projection leaves the captured image there is only
+    // void — feathered over a few pixels, never a razor clip.
+    float edge = smoothstep(-0.006, 0.006, uv.x)
+               * (1.0 - smoothstep(1.0 - 0.006, 1.0 + 0.006, uv.x))
+               * smoothstep(-0.009, 0.009, uv.y)
+               * (1.0 - smoothstep(1.0 - 0.009, 1.0 + 0.009, uv.y));
+    return float4(mix(voidColor, color, edge), 1.0);
 }
 """
 }
@@ -212,39 +278,27 @@ extension FoldRenderer: MTKViewDelegate {
     func draw(in view: MTKView) {
         guard inFlight.wait(timeout: .now()) == .success else { return }
         autoreleasepool {
-            guard let source,
+            guard let source = desktopTexture,
                   let pass = view.currentRenderPassDescriptor,
                   let drawable = view.currentDrawable,
-                  let command = queue.makeCommandBuffer() else {
+                  let command = queue.makeCommandBuffer(),
+                  let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
                 inFlight.signal()
                 return
             }
-            // The pyramid only rebakes when a new frame made it dirty and
-            // the style actually blurs; aligned draws never pay for it.
-            // It must encode before the render encoder opens — a command
-            // buffer holds one live encoder at a time.
-            if params.blur > 1e-4 && abs(params.delta) > 0.003 { prepareBlur(command, source: source) }
-            guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else {
-                inFlight.signal()
-                return
-            }
-            let retained = RetainedFrame(buffer: desktopBuffer, texture: desktopTexture)
             var p = params
             p.aspect = Float(view.drawableSize.width / max(1, view.drawableSize.height))
+            let cx = max(1, p.aspect / p.texAspect)
+            let cy = max(1, p.texAspect / p.aspect)
+            p.cover = .init(cx, cy)
             encoder.setRenderPipelineState(pipeline)
             encoder.setFragmentTexture(source, index: 0)
-            for index in 0..<4 {
-                encoder.setFragmentTexture(blurLevels.indices.contains(index) ? blurLevels[index] : source,
-                                           index: index + 1)
-            }
+            encoder.setFragmentSamplerState(sampler, index: 0)
             encoder.setFragmentBytes(&p, length: MemoryLayout<Params>.stride, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
             encoder.endEncoding()
             command.present(drawable)
-            // The capture surfaces must stay alive until the GPU is done
-            // reading them — the completion handler owns the release.
             command.addCompletedHandler { [inFlight] _ in
-                withExtendedLifetime(retained) {}
                 inFlight.signal()
             }
             command.commit()

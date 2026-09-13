@@ -18,19 +18,32 @@ struct AquariumView: View {
         let density = max(0.1, toy.store?.state.aquarium.density ?? 1)
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: toy.windowOccluded)) { context in
             let t = context.date.timeIntervalSince1970
+            let mains = mainsByID(fish)
             // Deep lanes draw first: the near fish swim over them.
-            let ordered = fish.sorted { $0.lane > $1.lane }
+            let ordered = fish.sorted { depth(of: $0, mains: mains) > depth(of: $1, mains: mains) }
             Canvas { canvas, size in
                 drawWater(canvas: &canvas, size: size)
                 drawGodRays(canvas: &canvas, size: size, t: t)
                 drawCaustics(canvas: &canvas, size: size, t: t)
                 drawSand(canvas: &canvas, size: size)
+                drawDecor(canvas: &canvas, size: size, t: t, density: density, front: false)
+                drawJellyfish(canvas: &canvas, size: size, t: t)
                 drawPlankton(canvas: &canvas, size: size, t: t, density: density, front: false)
                 drawBubbles(canvas: &canvas, size: size, t: t, density: density)
-                for aFish in ordered where !aFish.isRetired(at: context.date) {
-                    drawFish(canvas: &canvas, size: size, t: t, now: context.date,
-                             fish: aFish, showLabels: showLabels)
+                // Mains lay out first so fry can orbit their parents.
+                var layouts: [String: Layout] = [:]
+                for aFish in ordered where !aFish.isFry && !aFish.isRetired(at: context.date) {
+                    layouts[aFish.id] = layout(of: aFish, in: size, at: t, now: context.date)
                 }
+                for aFish in ordered where !aFish.isRetired(at: context.date) {
+                    let parent = parentContext(of: aFish, mains: mains, layouts: layouts)
+                    let l = layouts[aFish.id]
+                        ?? layout(of: aFish, in: size, at: t, now: context.date, parent: parent)
+                    drawFish(canvas: &canvas, size: size, t: t, now: context.date,
+                             fish: aFish, layout: l, parent: parent, showLabels: showLabels)
+                }
+                drawSnail(canvas: &canvas, size: size, t: t)
+                drawDecor(canvas: &canvas, size: size, t: t, density: density, front: true)
                 drawPlankton(canvas: &canvas, size: size, t: t, density: density, front: true)
                 drawVignette(canvas: &canvas, size: size)
                 if fish.isEmpty || fish.allSatisfy({ $0.isRetired(at: context.date) }) {
@@ -40,6 +53,27 @@ struct AquariumView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.02, green: 0.10, blue: 0.24))
+    }
+
+    /// The tank's adult fish by id — fry anchor to these.
+    private func mainsByID(_ fish: [Fish]) -> [String: Fish] {
+        Dictionary(fish.filter { !$0.isFry }.map { ($0.id, $0) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Draw order: a fry rides at its school's depth, not its own lane.
+    private func depth(of fish: Fish, mains: [String: Fish]) -> Double {
+        if fish.isFry, let anchor = fish.anchorID.flatMap({ mains[$0] }) {
+            return anchor.lane * 0.85
+        }
+        return fish.lane
+    }
+
+    /// The fish a fry schools around, with its already-computed layout.
+    private func parentContext(of fish: Fish, mains: [String: Fish],
+                               layouts: [String: Layout]) -> (fish: Fish, layout: Layout)? {
+        guard let id = fish.anchorID, let parent = mains[id], let l = layouts[id] else { return nil }
+        return (parent, l)
     }
 
     // MARK: Water
@@ -223,6 +257,256 @@ struct AquariumView: View {
         }
     }
 
+    // MARK: Decor
+
+    /// The seeded dressing (docs/TOYS.md): kelp, rocks, corals, a
+    /// starfish & a treasure chest, laid out by `AquariumModel.decorSet`
+    /// so the tank looks the same every launch. `density` decides how
+    /// much of the set shows — the signature pieces come first, so a
+    /// sparse tank keeps them. `front` splits the set at depth 0.6:
+    /// near kelp draws over the fish for a touch of foreground.
+    private func drawDecor(canvas: inout GraphicsContext, size: CGSize, t: Double,
+                           density: Double, front: Bool) {
+        let decor = AquariumModel.decorSet()
+        let shown = Int((Double(decor.count) * min(1, density)).rounded(.up))
+        for piece in decor.prefix(shown) where (piece.depth > 0.6) == front {
+            switch piece.kind {
+            case .kelp: drawKelp(canvas: &canvas, size: size, t: t, piece: piece)
+            case .rock: drawRocks(canvas: &canvas, size: size, piece: piece)
+            case .coral: drawCoral(canvas: &canvas, size: size, piece: piece)
+            case .starfish: drawStarfish(canvas: &canvas, size: size, piece: piece)
+            case .chest: drawChest(canvas: &canvas, size: size, t: t, piece: piece)
+            }
+        }
+    }
+
+    /// One kelp strand: a ribbon rooted in the sand, leaning &
+    /// swaying on a slow sine. Deep strands melt toward the water
+    /// colour; Reduce Motion freezes the sway.
+    private func drawKelp(canvas: inout GraphicsContext, size: CGSize, t: Double, piece: TankDecor) {
+        let b = piece.bits
+        let phase = Double(b & 0xFF) / 0xFF * .pi * 2
+        let hgt = size.height * (0.26 + Double((b >> 8) & 0xFF) / 0xFF * 0.30) * piece.scale
+        let baseX = piece.x * size.width
+        let baseY = size.height - 6
+        let lean = (Double((b >> 16) & 0xFF) / 0xFF - 0.5) * 46
+        let sway = reduceMotion ? 0
+            : sin(t * (0.30 + Double((b >> 24) & 0xFF) / 0xFF * 0.25) + phase) * 10
+        let w = (5 + Double((b >> 32) & 0xF)) * piece.scale
+
+        let top = baseY - hgt
+        let tipX = baseX + lean + sway
+        var blade = Path()
+        blade.move(to: CGPoint(x: baseX - w / 2, y: baseY))
+        blade.addCurve(to: CGPoint(x: tipX - w * 0.15, y: top),
+                       control1: CGPoint(x: baseX - w / 2 + sway * 0.25, y: baseY - hgt * 0.4),
+                       control2: CGPoint(x: tipX - sway * 0.5, y: top + hgt * 0.35))
+        blade.addQuadCurve(to: CGPoint(x: tipX + w * 0.15, y: top),
+                           control: CGPoint(x: tipX, y: top - 5))
+        blade.addCurve(to: CGPoint(x: baseX + w / 2, y: baseY),
+                       control1: CGPoint(x: tipX + sway * 0.6, y: top + hgt * 0.4),
+                       control2: CGPoint(x: baseX + w / 2 + sway * 0.3, y: baseY - hgt * 0.45))
+        blade.closeSubpath()
+
+        let wash = 1 - piece.depth
+        let kelp = Self.waterNS.blended(withFraction: 1 - wash * 0.55,
+                                      of: NSColor(srgbRed: 0.12, green: 0.42, blue: 0.24, alpha: 1))
+            ?? Self.waterNS
+        canvas.fill(blade, with: .color(Color(nsColor: kelp).opacity(0.85 - wash * 0.35)))
+        // A few leaflets stepping up the stalk, alternating sides.
+        for k in 1...3 {
+            let f = Double(k) / 3.6
+            let lw = w * (1.2 - f * 0.5)
+            let lx = baseX + (tipX - baseX) * f + (k % 2 == 0 ? 1 : -1) * w * 1.1
+            let ly = baseY - hgt * f
+            canvas.fill(Path(ellipseIn: CGRect(x: lx - lw * 0.5, y: ly - lw,
+                                               width: lw, height: lw * 1.7)),
+                        with: .color(Color(nsColor: kelp).opacity(0.7 - wash * 0.3)))
+        }
+    }
+
+    /// A little cluster of pebbles sitting on the dune line.
+    private func drawRocks(canvas: inout GraphicsContext, size: CGSize, piece: TankDecor) {
+        let b = piece.bits
+        let baseX = piece.x * size.width
+        let baseY = size.height - 4
+        let rock = Color(red: 0.34, green: 0.32, blue: 0.29)
+        for r in 0..<3 {
+            let rw = (10 + Double((b >> UInt64(r * 8)) & 0xFF) / 0xFF * 16) * piece.scale
+            let rh = rw * (0.45 + Double((b >> UInt64(r * 8 + 20)) & 0xFF) / 0xFF * 0.25)
+            let rx = baseX + (Double(r) - 1) * rw * 0.55 + (Double((b >> UInt64(r * 4 + 40)) & 0xF) - 7)
+            // The middle pebble rides up on the other two.
+            let ry = baseY - rh / 2 - (r == 1 ? rh * 0.35 : 0)
+            canvas.fill(Path(ellipseIn: CGRect(x: rx - rw / 2, y: ry - rh / 2,
+                                               width: rw, height: rh)),
+                        with: .color(rock.opacity(0.85)))
+        }
+    }
+
+    /// A small coral branch: a trunk that forks twice, drawn as round
+    /// strokes so the tips read soft.
+    private func drawCoral(canvas: inout GraphicsContext, size: CGSize, piece: TankDecor) {
+        let b = piece.bits
+        let baseX = piece.x * size.width
+        let baseY = size.height - 8
+        let hgt = (30 + Double(b & 0xFF) / 0xFF * 26) * piece.scale
+        var coral = Path()
+        func branch(_ from: CGPoint, _ angle: Double, _ len: Double, _ forks: Int) {
+            let to = CGPoint(x: from.x + cos(angle) * len, y: from.y + sin(angle) * len)
+            coral.move(to: from)
+            coral.addQuadCurve(to: to, control: CGPoint(x: (from.x + to.x) / 2 + 3,
+                                                        y: (from.y + to.y) / 2))
+            guard forks > 0 else { return }
+            let spread = 0.5 + Double((b >> UInt64(forks * 7 + 12)) & 0xFF) / 0xFF * 0.4
+            branch(to, angle - spread, len * 0.62, forks - 1)
+            branch(to, angle + spread * 0.8, len * 0.62, forks - 1)
+        }
+        branch(CGPoint(x: baseX, y: baseY),
+               -.pi / 2 + (Double((b >> 8) & 0xFF) / 0xFF - 0.5) * 0.4,
+               hgt * 0.55, 2)
+        canvas.stroke(coral,
+                      with: .color(Color(red: 0.85, green: 0.45, blue: 0.45).opacity(0.75)),
+                      style: StrokeStyle(lineWidth: 2.6 * piece.scale, lineCap: .round))
+    }
+
+    /// A five-pointed star resting on the sand.
+    private static let starPath: Path = {
+        var p = Path()
+        for i in 0..<10 {
+            let a = Double(i) * .pi / 5 - .pi / 2
+            let r = i % 2 == 0 ? 0.5 : 0.22
+            let pt = CGPoint(x: cos(a) * r, y: sin(a) * r)
+            if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+        }
+        p.closeSubpath()
+        return p
+    }()
+
+    private func drawStarfish(canvas: inout GraphicsContext, size: CGSize, piece: TankDecor) {
+        var s = canvas
+        s.translateBy(x: piece.x * size.width, y: size.height - 10)
+        s.rotate(by: .radians(Double(piece.bits & 0xFF) / 0xFF * .pi * 2))
+        s.scaleBy(x: 16 * piece.scale, y: 16 * piece.scale)
+        s.fill(Self.starPath,
+               with: .color(Color(red: 0.90, green: 0.55, blue: 0.35).opacity(0.85)))
+        s.fill(Path(ellipseIn: CGRect(x: -0.10, y: -0.10, width: 0.20, height: 0.20)),
+               with: .color(.white.opacity(0.35)))
+    }
+
+    /// The treasure chest on the dune floor. Every few seconds it
+    /// burps a single bubble — the tank's smallest joke.
+    private func drawChest(canvas: inout GraphicsContext, size: CGSize, t: Double, piece: TankDecor) {
+        let w = 36 * piece.scale
+        let h = 24 * piece.scale
+        let x = piece.x * size.width
+        let y = size.height - 6
+        let body = CGRect(x: x - w / 2, y: y - h * 0.62, width: w, height: h * 0.62)
+        let lid = CGRect(x: x - w / 2 - 2, y: y - h, width: w + 4, height: h * 0.45)
+        canvas.fill(Path(roundedRect: body, cornerRadius: 3),
+                    with: .color(Color(red: 0.32, green: 0.22, blue: 0.12).opacity(0.9)))
+        canvas.fill(Path(roundedRect: lid, cornerRadius: 6),
+                    with: .color(Color(red: 0.40, green: 0.28, blue: 0.15).opacity(0.9)))
+        canvas.stroke(Path(roundedRect: lid, cornerRadius: 6),
+                      with: .color(.black.opacity(0.3)), lineWidth: 1)
+        // The band & latch.
+        canvas.fill(Path(CGRect(x: x - 2, y: y - h, width: 4, height: h)),
+                    with: .color(Color(red: 0.75, green: 0.60, blue: 0.30).opacity(0.7)))
+        guard !reduceMotion else { return }
+        let period = 6 + Double(piece.bits & 0xFF) / 0xFF * 5
+        let rise = frac(t / period + Double((piece.bits >> 8) & 0xFF) / 0xFF)
+        guard rise < 0.6 else { return }
+        let br = 1.5 + rise * 2
+        let by = y - h - rise * size.height * 0.35
+        canvas.stroke(Path(ellipseIn: CGRect(x: x - br, y: by - br, width: br * 2, height: br * 2)),
+                      with: .color(.white.opacity(0.5 * (1 - rise / 0.6))), lineWidth: 0.8)
+    }
+
+    // MARK: Ambient life
+
+    /// A jellyfish drifts through the mid-water every ~40 s: a
+    /// translucent bell pulsing over four trailing tentacles. Reduce
+    /// Motion parks it mid-tank, unpulsed.
+    private func drawJellyfish(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let progress: Double
+        let pulse: Double
+        let alpha: Double
+        if reduceMotion {
+            progress = 0.45
+            pulse = 0
+            alpha = 0.35
+        } else {
+            let life = frac(t / 40 + 0.31) * 40
+            guard life < 15 else { return }
+            progress = life / 15
+            pulse = sin(t * 1.9) * 0.10
+            alpha = 0.45 * smooth(clamp01(min(progress / 0.18, (1 - progress) / 0.12)))
+        }
+        let x = size.width * (1.08 - 1.24 * progress)
+        let y = size.height * (0.30 + 0.10 * sin(progress * .pi * 2 + 1))
+        var j = canvas
+        j.opacity = alpha
+        j.translateBy(x: x, y: y)
+        j.scaleBy(x: 34 * (1 + pulse), y: 30 * (1 - pulse))
+        var bell = Path()
+        bell.move(to: CGPoint(x: -0.5, y: 0.12))
+        bell.addCurve(to: CGPoint(x: 0.5, y: 0.12),
+                      control1: CGPoint(x: -0.52, y: -0.52),
+                      control2: CGPoint(x: 0.52, y: -0.52))
+        bell.addQuadCurve(to: CGPoint(x: -0.5, y: 0.12), control: CGPoint(x: 0, y: 0.30))
+        bell.closeSubpath()
+        j.fill(bell, with: .linearGradient(
+            Gradient(colors: [Color(red: 0.95, green: 0.80, blue: 0.90).opacity(0.9), .clear]),
+            startPoint: CGPoint(x: 0, y: -0.5), endPoint: CGPoint(x: 0, y: 0.3)))
+        for k in 0..<4 {
+            let tx = -0.30 + Double(k) * 0.20
+            var tent = Path()
+            tent.move(to: CGPoint(x: tx, y: 0.12))
+            tent.addCurve(to: CGPoint(x: tx + sin(t * 1.3 + Double(k) * 1.7) * 0.08, y: 0.85),
+                          control1: CGPoint(x: tx - 0.06, y: 0.35),
+                          control2: CGPoint(x: tx + 0.06, y: 0.60))
+            j.stroke(tent, with: .color(Color(red: 0.9, green: 0.75, blue: 0.85).opacity(0.6)),
+                     lineWidth: 0.05)
+        }
+        j.fill(Path(ellipseIn: CGRect(x: -0.16, y: -0.30, width: 0.32, height: 0.30)),
+               with: .color(.white.opacity(0.5)))
+    }
+
+    /// A snail inches along the sand — about four minutes a crossing.
+    /// Reduce Motion sits it mid-tank.
+    private func drawSnail(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let crawl = reduceMotion ? 0.42 : frac(t * 0.0042 + 0.6)
+        let x = size.width * (0.06 + crawl * 0.88)
+        let y = size.height - 7
+        var s = canvas
+        s.opacity = 0.85
+        s.translateBy(x: x, y: y)
+        s.scaleBy(x: 13, y: 10)
+        let flesh = Color(red: 0.55, green: 0.45, blue: 0.34)
+        var body = Path()
+        body.move(to: CGPoint(x: -0.5, y: 0.05))
+        body.addQuadCurve(to: CGPoint(x: 0.62, y: 0.02), control: CGPoint(x: 0.1, y: 0.16))
+        body.addQuadCurve(to: CGPoint(x: 0.55, y: -0.18), control: CGPoint(x: 0.66, y: -0.08))
+        body.addQuadCurve(to: CGPoint(x: -0.1, y: -0.14), control: CGPoint(x: 0.2, y: -0.26))
+        body.addQuadCurve(to: CGPoint(x: -0.5, y: 0.05), control: CGPoint(x: -0.36, y: -0.08))
+        body.closeSubpath()
+        s.fill(body, with: .color(flesh))
+        // The shell, with a hint of spiral.
+        s.fill(Path(ellipseIn: CGRect(x: -0.42, y: -0.62, width: 0.58, height: 0.58)),
+               with: .color(Color(red: 0.62, green: 0.40, blue: 0.24)))
+        s.stroke(Path(ellipseIn: CGRect(x: -0.30, y: -0.50, width: 0.34, height: 0.34)),
+                 with: .color(Color(red: 0.40, green: 0.25, blue: 0.14).opacity(0.8)),
+                 lineWidth: 0.06)
+        // Two eyestalks, because it is a screensaver.
+        for dx in [0.42, 0.55] {
+            var stalk = Path()
+            stalk.move(to: CGPoint(x: dx - 0.1, y: -0.14))
+            stalk.addQuadCurve(to: CGPoint(x: dx, y: -0.42), control: CGPoint(x: dx - 0.05, y: -0.30))
+            s.stroke(stalk, with: .color(flesh), lineWidth: 0.05)
+            s.fill(Path(ellipseIn: CGRect(x: dx - 0.045, y: -0.47, width: 0.09, height: 0.09)),
+                   with: .color(.white.opacity(0.9)))
+        }
+    }
+
     // MARK: Fish
 
     /// Where a fish is right now: position, which way it faces, how far
@@ -271,7 +555,11 @@ struct AquariumView: View {
         return (x, u, turn)
     }
 
-    private func layout(of fish: Fish, in size: CGSize, at t: Double, now: Date) -> Layout {
+    private func layout(of fish: Fish, in size: CGSize, at t: Double, now: Date,
+                        parent: (fish: Fish, layout: Layout)? = nil) -> Layout {
+        if fish.isFry, let parent {
+            return fryLayout(of: fish, at: t, now: now, parent: parent)
+        }
         let h = AquariumModel.stableHash(fish.id)
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
         // Half the fish loop up over the top, half dive under.
@@ -332,7 +620,9 @@ struct AquariumView: View {
             l.y = min(laneY + (size.height - 26 - laneY) * eased, size.height - 26) + rock * 4
             l.facing = frozen.u >= 0 ? 1 : -1
             l.pitch = 0.55 * eased + (0.16 - 0.55 * eased) * settle + rock
-            l.opacity = 1 - 0.15 * drop
+            // A failed fry doesn't get the full rock-on-sand: it just
+            // drops & fades.
+            l.opacity = fish.isFry ? 1 - 0.7 * drop : 1 - 0.15 * drop
             l.wag = 1 - drop
         case .leaving:
             // From wherever it was, easing off the right edge, rising
@@ -368,12 +658,85 @@ struct AquariumView: View {
         return l
     }
 
+    /// A fry's place in its school (docs/TOYS.md): a loose orbit
+    /// around the parent fish — per-fry radius, direction & phase
+    /// from its id's hash — riding a touch higher, because fry sit up
+    /// in the water. The orbit follows the parent's layout, so an
+    /// ask-rise, a sink or a drift off the edge carries the school.
+    private func fryLayout(of fish: Fish, at t: Double, now: Date,
+                           parent: (fish: Fish, layout: Layout)) -> Layout {
+        let h = AquariumModel.stableHash(fish.id)
+        let phase = Double(h & 0xFF) / 0xFF * .pi * 2
+        let orbitR = 30 + Double((h >> 8) & 0xFF) / 0xFF * 26
+        let omega = (0.45 + Double((h >> 16) & 0xFF) / 0xFF * 0.45)
+            * ((h >> 24) & 1 == 0 ? 1.0 : -1.0)
+        let angle = phase + (reduceMotion ? 0 : omega * t)
+        let pl = parent.layout
+
+        var l = Layout()
+        l.scale = pl.scale * 1.08
+        l.riseFrom = pl.riseFrom
+        l.opacity = pl.opacity
+        // Little tails beat faster.
+        l.wag = pl.wag * 1.4
+
+        switch fish.state {
+        case .swimming, .surfacing:
+            l.x = pl.x + cos(angle) * orbitR
+            l.y = pl.y + sin(angle) * orbitR * 0.5 - 12
+            // Face along the orbit's travel.
+            l.facing = -sin(angle) * omega >= 0 ? 1 : -1
+            l.pitch = pl.pitch * 0.5 + (reduceMotion ? 0 : sin(t * 1.7 + phase) * 0.12)
+        case .sinking:
+            // A failed worker just fades & drops a little.
+            let age = now.timeIntervalSince(fish.stateSince)
+            let drop = smooth(clamp01(age / 1.6))
+            l.x = pl.x + cos(angle) * orbitR * 0.7
+            l.y = pl.y + sin(angle) * orbitR * 0.5 - 12 + drop * 44
+            l.facing = pl.facing
+            l.pitch = 0.5 * drop
+            l.opacity = pl.opacity * (1 - 0.72 * drop)
+            l.wag = pl.wag * (1 - drop)
+        case .leaving:
+            // The school spirals in as it follows its parent off.
+            let progress = fish.leaveProgress(at: now)
+            let shrink = orbitR * (1 - 0.55 * progress)
+            l.x = pl.x + cos(angle) * shrink
+            l.y = pl.y + sin(angle) * shrink * 0.5 - 12
+            l.facing = 1
+            l.pitch = pl.pitch
+        }
+        return l
+    }
+
     // MARK: Fish shape
 
-    /// The body silhouette in unit space: nose at +0.5, tail peduncle
-    /// at −0.40, back to −0.44, belly to +0.33. The draw scales it out
-    /// to the fish's length & height, so this is built once.
-    private static let bodyPath: Path = {
+    /// The silhouette kit for one species (docs/TOYS.md): unit-space
+    /// paths built once — nose at +0.5, tail root near −0.4 — plus
+    /// closures for the fins that animate (tail wag, pectoral flap).
+    /// `FishSpecies` picks the kit; the provider picks the colour.
+    private struct SpeciesArt {
+        var body: Path
+        var dorsal: Path?
+        var anal: Path?
+        /// Trailing fins & spikes drawn under the body silhouette.
+        var extras: [Path]
+        var gill: Path?
+        var stripe: Path?
+        var stripeWidth: Double
+        var eye: CGPoint
+        var eyeR: Double
+        var tail: ((Double) -> Path)?
+        var pectoral: ((Double) -> Path)?
+    }
+
+    /// The water colour fish & kelp wash toward with depth.
+    private static let waterNS = NSColor(srgbRed: 0.05, green: 0.18, blue: 0.33, alpha: 1)
+
+    /// The minnow's body silhouette in unit space: nose at +0.5, tail
+    /// peduncle at −0.40, back to −0.44, belly to +0.33. Several
+    /// species reuse it under a different pattern.
+    private static let minnowBody: Path = {
         var p = Path()
         p.move(to: CGPoint(x: 0.50, y: -0.02))
         p.addCurve(to: CGPoint(x: 0.10, y: -0.40),
@@ -394,9 +757,9 @@ struct AquariumView: View {
         return p
     }()
 
-    /// A swept dorsal fin along the back, drawn under the body so its
-    /// base disappears into the silhouette.
-    private static let dorsalPath: Path = {
+    /// The minnow's swept dorsal fin along the back, drawn under the
+    /// body so its base disappears into the silhouette.
+    private static let minnowDorsal: Path = {
         var p = Path()
         p.move(to: CGPoint(x: 0.18, y: -0.32))
         p.addQuadCurve(to: CGPoint(x: -0.02, y: -0.58), control: CGPoint(x: 0.12, y: -0.52))
@@ -405,8 +768,8 @@ struct AquariumView: View {
         return p
     }()
 
-    /// A small anal fin under the rear belly.
-    private static let analPath: Path = {
+    /// The minnow's small anal fin under the rear belly.
+    private static let minnowAnal: Path = {
         var p = Path()
         p.move(to: CGPoint(x: -0.14, y: 0.22))
         p.addQuadCurve(to: CGPoint(x: -0.30, y: 0.34), control: CGPoint(x: -0.22, y: 0.36))
@@ -415,16 +778,16 @@ struct AquariumView: View {
         return p
     }()
 
-    /// The gill line behind the head.
-    private static let gillPath: Path = {
+    /// The minnow's gill line behind the head.
+    private static let minnowGill: Path = {
         var p = Path()
         p.move(to: CGPoint(x: 0.27, y: -0.20))
         p.addQuadCurve(to: CGPoint(x: 0.22, y: 0.14), control: CGPoint(x: 0.17, y: -0.02))
         return p
     }()
 
-    /// The lateral-line highlight stripe.
-    private static let stripePath: Path = {
+    /// The minnow's lateral-line highlight stripe.
+    private static let minnowStripe: Path = {
         var p = Path()
         p.move(to: CGPoint(x: 0.38, y: -0.09))
         p.addCurve(to: CGPoint(x: -0.38, y: -0.03),
@@ -433,27 +796,47 @@ struct AquariumView: View {
         return p
     }()
 
-    /// The tail fin, rebuilt per frame because `wag` sweeps the tips:
-    /// a fan from the peduncle to a notched trailing edge.
-    private func tailPath(wag: Double) -> Path {
+    /// A fan tail: peduncle at −0.36 to a notched trailing edge at
+    /// −`reach`, half-height `span`. Rebuilt per frame because `wag`
+    /// sweeps the tips; most species ride the same fan at their own
+    /// span & reach.
+    private static func fanTail(wag: Double, span: Double = 0.32, reach: Double = 0.72) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: -0.36, y: -0.08))
-        p.addCurve(to: CGPoint(x: -0.72, y: -0.32 + wag),
+        p.addCurve(to: CGPoint(x: -reach, y: -span + wag),
                    control1: CGPoint(x: -0.54, y: -0.24 + wag * 0.45),
-                   control2: CGPoint(x: -0.66, y: -0.32 + wag * 0.8))
+                   control2: CGPoint(x: -0.66, y: -span + wag * 0.8))
         p.addQuadCurve(to: CGPoint(x: -0.58, y: wag * 0.55),
                        control: CGPoint(x: -0.70, y: -0.02 + wag * 0.85))
-        p.addCurve(to: CGPoint(x: -0.72, y: 0.32 + wag),
+        p.addCurve(to: CGPoint(x: -reach, y: span + wag),
                    control1: CGPoint(x: -0.52, y: 0.12 + wag * 0.7),
-                   control2: CGPoint(x: -0.66, y: 0.32 + wag * 0.8))
+                   control2: CGPoint(x: -0.66, y: span + wag * 0.8))
         p.addQuadCurve(to: CGPoint(x: -0.36, y: 0.08),
                        control: CGPoint(x: -0.54, y: 0.24 + wag * 0.45))
         p.closeSubpath()
         return p
     }
 
+    /// The shark's crescent tail: a long upper lobe, a short lower one.
+    private static func lunateTail(wag: Double) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: -0.38, y: -0.05))
+        p.addCurve(to: CGPoint(x: -0.85, y: -0.48 + wag),
+                   control1: CGPoint(x: -0.55, y: -0.18 + wag * 0.3),
+                   control2: CGPoint(x: -0.75, y: -0.40 + wag * 0.8))
+        p.addQuadCurve(to: CGPoint(x: -0.62, y: wag * 0.4),
+                       control: CGPoint(x: -0.78, y: -0.05 + wag * 0.7))
+        p.addCurve(to: CGPoint(x: -0.72, y: 0.30 + wag),
+                   control1: CGPoint(x: -0.52, y: 0.08 + wag * 0.6),
+                   control2: CGPoint(x: -0.66, y: 0.26 + wag * 0.8))
+        p.addQuadCurve(to: CGPoint(x: -0.38, y: 0.05),
+                       control: CGPoint(x: -0.52, y: 0.16 + wag * 0.4))
+        p.closeSubpath()
+        return p
+    }
+
     /// The pectoral fin on the near flank; `flap` trails the tail wag.
-    private func pectoralPath(flap: Double) -> Path {
+    private static func pectoralFin(flap: Double) -> Path {
         var p = Path()
         p.move(to: CGPoint(x: 0.16, y: 0.04))
         p.addQuadCurve(to: CGPoint(x: -0.04, y: 0.20 + flap),
@@ -464,20 +847,303 @@ struct AquariumView: View {
         return p
     }
 
+    /// The clownfish's deeper, rounder body.
+    private static let clownfishBody: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.48, y: -0.04))
+        p.addCurve(to: CGPoint(x: 0.08, y: -0.46),
+                   control1: CGPoint(x: 0.42, y: -0.32),
+                   control2: CGPoint(x: 0.26, y: -0.48))
+        p.addCurve(to: CGPoint(x: -0.36, y: -0.14),
+                   control1: CGPoint(x: -0.14, y: -0.44),
+                   control2: CGPoint(x: -0.30, y: -0.22))
+        p.addQuadCurve(to: CGPoint(x: -0.36, y: 0.14),
+                       control: CGPoint(x: -0.42, y: 0))
+        p.addCurve(to: CGPoint(x: 0.10, y: 0.32),
+                   control1: CGPoint(x: -0.22, y: 0.28),
+                   control2: CGPoint(x: -0.04, y: 0.40))
+        p.addCurve(to: CGPoint(x: 0.48, y: -0.04),
+                   control1: CGPoint(x: 0.28, y: 0.26),
+                   control2: CGPoint(x: 0.44, y: 0.10))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The shark's blade: pointed snout, flat belly.
+    private static let sharkBody: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.56, y: -0.02))
+        p.addQuadCurve(to: CGPoint(x: 0.05, y: -0.26), control: CGPoint(x: 0.42, y: -0.24))
+        p.addQuadCurve(to: CGPoint(x: -0.44, y: -0.06), control: CGPoint(x: -0.22, y: -0.20))
+        p.addQuadCurve(to: CGPoint(x: -0.44, y: 0.06), control: CGPoint(x: -0.47, y: 0))
+        p.addQuadCurve(to: CGPoint(x: 0.10, y: 0.18), control: CGPoint(x: -0.12, y: 0.16))
+        p.addQuadCurve(to: CGPoint(x: 0.56, y: -0.02), control: CGPoint(x: 0.40, y: 0.12))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The shark's tall dorsal triangle.
+    private static let sharkDorsal: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.08, y: -0.24))
+        p.addLine(to: CGPoint(x: -0.06, y: -0.62))
+        p.addQuadCurve(to: CGPoint(x: -0.22, y: -0.22), control: CGPoint(x: -0.14, y: -0.55))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The angelfish's tall disc.
+    private static let angelfishBody: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.44, y: -0.02))
+        p.addQuadCurve(to: CGPoint(x: 0.05, y: -0.55), control: CGPoint(x: 0.34, y: -0.50))
+        p.addQuadCurve(to: CGPoint(x: -0.32, y: -0.08), control: CGPoint(x: -0.14, y: -0.52))
+        p.addQuadCurve(to: CGPoint(x: -0.32, y: 0.08), control: CGPoint(x: -0.36, y: 0))
+        p.addQuadCurve(to: CGPoint(x: 0.05, y: 0.55), control: CGPoint(x: -0.14, y: 0.52))
+        p.addQuadCurve(to: CGPoint(x: 0.44, y: -0.02), control: CGPoint(x: 0.34, y: 0.46))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The angelfish's long swept fins, top & bottom.
+    private static let angelfishDorsal: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.18, y: -0.40))
+        p.addQuadCurve(to: CGPoint(x: -0.05, y: -0.88), control: CGPoint(x: 0.10, y: -0.72))
+        p.addQuadCurve(to: CGPoint(x: -0.18, y: -0.30), control: CGPoint(x: -0.14, y: -0.70))
+        p.closeSubpath()
+        return p
+    }()
+
+    private static let angelfishAnal: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.18, y: 0.40))
+        p.addQuadCurve(to: CGPoint(x: -0.05, y: 0.88), control: CGPoint(x: 0.10, y: 0.72))
+        p.addQuadCurve(to: CGPoint(x: -0.18, y: 0.30), control: CGPoint(x: -0.14, y: 0.70))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The angelfish's two thin ventral streamers.
+    private static let angelfishStreamers: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.08, y: 0.50))
+        p.addQuadCurve(to: CGPoint(x: -0.02, y: 0.95), control: CGPoint(x: 0.04, y: 0.76))
+        p.addQuadCurve(to: CGPoint(x: 0.02, y: 0.48), control: CGPoint(x: 0.02, y: 0.80))
+        p.closeSubpath()
+        p.move(to: CGPoint(x: 0.16, y: 0.46))
+        p.addQuadCurve(to: CGPoint(x: 0.08, y: 0.90), control: CGPoint(x: 0.14, y: 0.72))
+        p.addQuadCurve(to: CGPoint(x: 0.10, y: 0.44), control: CGPoint(x: 0.12, y: 0.76))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The puffer: nearly a circle.
+    private static let pufferBody: Path = {
+        var p = Path()
+        p.addEllipse(in: CGRect(x: -0.42, y: -0.46, width: 0.90, height: 0.92))
+        return p
+    }()
+
+    /// The puffer's little dorsal nub.
+    private static let pufferDorsal: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.05, y: -0.42))
+        p.addQuadCurve(to: CGPoint(x: -0.05, y: -0.58), control: CGPoint(x: 0.04, y: -0.55))
+        p.addQuadCurve(to: CGPoint(x: -0.12, y: -0.40), control: CGPoint(x: -0.10, y: -0.52))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The puffer's spikes: triangles ringing the body, clear of the
+    /// tail root.
+    private static let pufferSpikes: Path = {
+        var p = Path()
+        for i in 0..<12 {
+            let a = Double(i) / 12 * .pi * 2
+            let ex = cos(a) * 0.44, ey = sin(a) * 0.45
+            guard ex > -0.28 || abs(ey) > 0.2 else { continue }
+            let px = -sin(a), py = cos(a)
+            p.move(to: CGPoint(x: ex + px * 0.035, y: ey + py * 0.035))
+            p.addLine(to: CGPoint(x: ex + cos(a) * 0.10, y: ey + sin(a) * 0.11))
+            p.addLine(to: CGPoint(x: ex - px * 0.035, y: ey - py * 0.035))
+            p.closeSubpath()
+        }
+        return p
+    }()
+
+    /// The betta's flowing ventral veil.
+    private static let bettaVeil: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.0, y: 0.20))
+        p.addCurve(to: CGPoint(x: -0.62, y: 0.60),
+                   control1: CGPoint(x: -0.20, y: 0.34),
+                   control2: CGPoint(x: -0.50, y: 0.58))
+        p.addQuadCurve(to: CGPoint(x: -0.34, y: 0.18), control: CGPoint(x: -0.58, y: 0.40))
+        p.addQuadCurve(to: CGPoint(x: 0.0, y: 0.20), control: CGPoint(x: -0.20, y: 0.24))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The seahorse stands upright: snout at the top right, a crown,
+    /// a belly, and the tail curling under.
+    private static let seahorseBody: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: 0.46, y: -0.36))
+        p.addQuadCurve(to: CGPoint(x: 0.30, y: -0.30), control: CGPoint(x: 0.40, y: -0.28))
+        p.addQuadCurve(to: CGPoint(x: 0.16, y: -0.46), control: CGPoint(x: 0.20, y: -0.42))
+        p.addCurve(to: CGPoint(x: -0.02, y: 0.10),
+                   control1: CGPoint(x: 0.10, y: -0.38),
+                   control2: CGPoint(x: -0.06, y: -0.10))
+        p.addCurve(to: CGPoint(x: 0.26, y: 0.34),
+                   control1: CGPoint(x: -0.10, y: 0.24),
+                   control2: CGPoint(x: 0.10, y: 0.38))
+        p.addQuadCurve(to: CGPoint(x: 0.34, y: 0.22), control: CGPoint(x: 0.34, y: 0.32))
+        p.addQuadCurve(to: CGPoint(x: 0.22, y: 0.26), control: CGPoint(x: 0.30, y: 0.18))
+        p.addCurve(to: CGPoint(x: 0.16, y: -0.02),
+                   control1: CGPoint(x: 0.12, y: 0.18),
+                   control2: CGPoint(x: 0.22, y: 0.08))
+        p.addQuadCurve(to: CGPoint(x: 0.30, y: -0.24), control: CGPoint(x: 0.10, y: -0.14))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// The seahorse's fluttering back fin.
+    private static let seahorseFin: Path = {
+        var p = Path()
+        p.move(to: CGPoint(x: -0.02, y: -0.14))
+        p.addQuadCurve(to: CGPoint(x: -0.24, y: -0.02), control: CGPoint(x: -0.16, y: -0.16))
+        p.addQuadCurve(to: CGPoint(x: -0.02, y: 0.06), control: CGPoint(x: -0.18, y: 0.04))
+        p.closeSubpath()
+        return p
+    }()
+
+    /// Every species' kit, built once.
+    private static let arts: [FishSpecies: SpeciesArt] = {
+        let fin: (Double) -> Path = { pectoralFin(flap: $0) }
+        var arts: [FishSpecies: SpeciesArt] = [:]
+        arts[.minnow] = SpeciesArt(
+            body: minnowBody, dorsal: minnowDorsal, anal: minnowAnal,
+            extras: [], gill: minnowGill, stripe: minnowStripe, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.30, y: -0.11), eyeR: 0.052,
+            tail: { fanTail(wag: $0) }, pectoral: fin)
+        arts[.tetra] = SpeciesArt(
+            body: minnowBody, dorsal: minnowDorsal, anal: minnowAnal,
+            extras: [], gill: minnowGill, stripe: minnowStripe, stripeWidth: 0.10,
+            eye: CGPoint(x: 0.30, y: -0.10), eyeR: 0.060,
+            tail: { fanTail(wag: $0, span: 0.26, reach: 0.62) }, pectoral: fin)
+        arts[.tang] = SpeciesArt(
+            body: minnowBody, dorsal: minnowDorsal, anal: minnowAnal,
+            extras: [], gill: minnowGill, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.30, y: -0.11), eyeR: 0.052,
+            tail: { fanTail(wag: $0, span: 0.30, reach: 0.66) }, pectoral: fin)
+        arts[.clownfish] = SpeciesArt(
+            body: clownfishBody, dorsal: minnowDorsal, anal: minnowAnal,
+            extras: [], gill: minnowGill, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.32, y: -0.14), eyeR: 0.055,
+            tail: { fanTail(wag: $0, span: 0.28, reach: 0.62) }, pectoral: fin)
+        arts[.betta] = SpeciesArt(
+            body: minnowBody, dorsal: minnowDorsal, anal: nil,
+            extras: [bettaVeil], gill: minnowGill, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.30, y: -0.10), eyeR: 0.052,
+            tail: { fanTail(wag: $0, span: 0.48, reach: 0.88) }, pectoral: fin)
+        arts[.shark] = SpeciesArt(
+            body: sharkBody, dorsal: sharkDorsal, anal: nil,
+            extras: [], gill: nil, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.38, y: -0.06), eyeR: 0.045,
+            tail: { lunateTail(wag: $0) }, pectoral: fin)
+        arts[.angelfish] = SpeciesArt(
+            body: angelfishBody, dorsal: angelfishDorsal, anal: angelfishAnal,
+            extras: [angelfishStreamers], gill: nil, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.28, y: -0.16), eyeR: 0.050,
+            tail: { fanTail(wag: $0, span: 0.20, reach: 0.58) }, pectoral: fin)
+        arts[.puffer] = SpeciesArt(
+            body: pufferBody, dorsal: pufferDorsal, anal: nil,
+            extras: [pufferSpikes], gill: nil, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.28, y: -0.16), eyeR: 0.075,
+            tail: { fanTail(wag: $0, span: 0.18, reach: 0.58) }, pectoral: fin)
+        arts[.seahorse] = SpeciesArt(
+            body: seahorseBody, dorsal: nil, anal: nil,
+            extras: [seahorseFin], gill: nil, stripe: nil, stripeWidth: 0.05,
+            eye: CGPoint(x: 0.30, y: -0.36), eyeR: 0.050,
+            tail: nil, pectoral: nil)
+        return arts
+    }()
+
+    private static func art(for species: FishSpecies) -> SpeciesArt {
+        // Every case is in the table; the minnow is the safety net.
+        arts[species] ?? arts[.minnow]!
+    }
+
+    /// The species' marking, clipped to the body silhouette.
+    private func drawPattern(_ pattern: FishSpecies.Pattern, over body: Path,
+                             light: Color, dark: Color, into f: inout GraphicsContext) {
+        switch pattern {
+        case .plain:
+            break
+        case .bars:
+            // Three white bars, thin-edged, clownfish-style.
+            var b = f
+            b.clip(to: body)
+            for bx in [0.30, 0.02, -0.26] {
+                let bar = CGRect(x: bx - 0.055, y: -0.6, width: 0.11, height: 1.2)
+                let pill = Path(roundedRect: bar, cornerRadius: 0.05)
+                b.fill(pill, with: .color(.white.opacity(0.85)))
+                b.stroke(pill, with: .color(dark.opacity(0.5)), lineWidth: 0.02)
+            }
+        case .spots:
+            var b = f
+            b.clip(to: body)
+            let spots: [(x: Double, y: Double, r: Double)] = [
+                (0.30, -0.18, 0.045), (0.10, -0.30, 0.050), (0.16, 0.08, 0.040),
+                (-0.06, -0.14, 0.055), (-0.10, 0.16, 0.045), (-0.26, 0.00, 0.050),
+                (0.34, 0.10, 0.035),
+            ]
+            for spot in spots {
+                b.fill(Path(ellipseIn: CGRect(x: spot.x - spot.r, y: spot.y - spot.r,
+                                              width: spot.r * 2, height: spot.r * 2)),
+                       with: .color(dark.opacity(0.40)))
+            }
+        case .band:
+            // A bold dark sweep over the rear third & a pale flash at
+            // the tail root.
+            var b = f
+            b.clip(to: body)
+            var band = Path()
+            band.move(to: CGPoint(x: -0.08, y: -0.6))
+            band.addQuadCurve(to: CGPoint(x: -0.16, y: 0.6), control: CGPoint(x: -0.30, y: 0))
+            band.addLine(to: CGPoint(x: -0.50, y: 0.6))
+            band.addLine(to: CGPoint(x: -0.50, y: -0.6))
+            band.closeSubpath()
+            b.fill(band, with: .color(dark.opacity(0.45)))
+            var flash = Path()
+            flash.move(to: CGPoint(x: -0.34, y: -0.6))
+            flash.addLine(to: CGPoint(x: -0.50, y: -0.6))
+            flash.addLine(to: CGPoint(x: -0.50, y: 0.6))
+            flash.addLine(to: CGPoint(x: -0.36, y: 0.6))
+            flash.addQuadCurve(to: CGPoint(x: -0.34, y: -0.6), control: CGPoint(x: -0.44, y: 0))
+            flash.closeSubpath()
+            b.fill(flash, with: .color(light.opacity(0.5)))
+        }
+    }
+
     private func drawFish(canvas: inout GraphicsContext, size: CGSize, t: Double, now: Date,
-                          fish: Fish, showLabels: Bool) {
-        let l = layout(of: fish, in: size, at: t, now: now)
+                          fish: Fish, layout l: Layout,
+                          parent: (fish: Fish, layout: Layout)?, showLabels: Bool) {
+        let art = Self.art(for: fish.species)
         let h = AquariumModel.stableHash(fish.id)
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
-        let length = 46.0 * l.scale
-        let height = 24.0 * l.scale
+        // Fry ride at their school's depth, a little shallower.
+        let lane = fish.isFry ? (parent?.fish.lane ?? fish.lane) * 0.85 : fish.lane
+        let length = 46.0 * l.scale * fish.species.sizeScale
+            * (fish.isFry ? AquariumModel.fryScale : 1)
+        let height = length * fish.species.aspect
 
         // Depth: deeper lanes dim & wash toward the water colour.
         let base: NSColor = fish.state == .sinking
             ? .secondaryLabelColor
             : ProviderStyle.style(for: fish.providerID).nsAccent
-        let water = NSColor(srgbRed: 0.05, green: 0.18, blue: 0.33, alpha: 1)
-        let bodyColor = Color(nsColor: base.blended(withFraction: fish.lane * 0.42, of: water) ?? base)
+        let bodyColor = Color(nsColor: base.blended(withFraction: lane * 0.42, of: Self.waterNS) ?? base)
         let lightColor = Color(nsColor: base.blended(withFraction: 0.55, of: .white) ?? base)
         let darkColor = Color(nsColor: base.blended(withFraction: 0.38, of: .black) ?? base)
 
@@ -491,7 +1157,7 @@ struct AquariumView: View {
         let sway = reduceMotion ? 0 : sin(beat - 0.8) * 0.045 * l.wag
 
         var f = canvas
-        f.opacity = l.opacity * (1 - fish.lane * 0.28)
+        f.opacity = l.opacity * (1 - lane * 0.28)
         f.translateBy(x: l.x, y: l.y)
         // Rotate before the body scale so the pitch is rigid (no shear)
         // and `pitch * facing` keeps "nose down" the same for both
@@ -500,20 +1166,37 @@ struct AquariumView: View {
         f.scaleBy(x: l.facing * l.thin * length, y: height)
 
         // Fins & tail go down first, behind the body silhouette.
-        f.fill(tailPath(wag: wag), with: .color(bodyColor.opacity(0.7)))
-        f.fill(Self.dorsalPath, with: .color(bodyColor.opacity(0.85)))
-        f.fill(Self.analPath, with: .color(bodyColor.opacity(0.8)))
-        f.fill(Self.bodyPath, with: .color(bodyColor))
+        if let tail = art.tail {
+            f.fill(tail(wag), with: .color(bodyColor.opacity(0.7)))
+        }
+        for extra in art.extras {
+            f.fill(extra, with: .color(darkColor.opacity(0.45)))
+        }
+        if let dorsal = art.dorsal {
+            f.fill(dorsal, with: .color(bodyColor.opacity(0.85)))
+        }
+        if let anal = art.anal {
+            f.fill(anal, with: .color(bodyColor.opacity(0.8)))
+        }
+        f.fill(art.body, with: .color(bodyColor))
+        drawPattern(fish.species.pattern, over: art.body,
+                    light: lightColor, dark: darkColor, into: &f)
         // Volume: light from above, shade along the belly.
-        f.fill(Self.bodyPath, with: .linearGradient(
+        f.fill(art.body, with: .linearGradient(
             Gradient(colors: [.white.opacity(0.30), .clear]),
             startPoint: CGPoint(x: 0, y: -0.5), endPoint: CGPoint(x: 0, y: 0.05)))
-        f.fill(Self.bodyPath, with: .linearGradient(
+        f.fill(art.body, with: .linearGradient(
             Gradient(colors: [.clear, .black.opacity(0.20)]),
             startPoint: CGPoint(x: 0, y: 0.05), endPoint: CGPoint(x: 0, y: 0.42)))
-        f.fill(pectoralPath(flap: wag * 0.45), with: .color(lightColor.opacity(0.5)))
-        f.stroke(Self.stripePath, with: .color(lightColor.opacity(0.55)), lineWidth: 0.05)
-        f.stroke(Self.gillPath, with: .color(darkColor.opacity(0.6)), lineWidth: 0.04)
+        if let pectoral = art.pectoral {
+            f.fill(pectoral(wag * 0.45), with: .color(lightColor.opacity(0.5)))
+        }
+        if let stripe = art.stripe {
+            f.stroke(stripe, with: .color(lightColor.opacity(0.55)), lineWidth: art.stripeWidth)
+        }
+        if let gill = art.gill {
+            f.stroke(gill, with: .color(darkColor.opacity(0.6)), lineWidth: 0.04)
+        }
 
         // The eye stays round by compensating the body's aspect.
         let aspect = length / height
@@ -522,15 +1205,19 @@ struct AquariumView: View {
                                    width: r * 2, height: r * 2 * aspect))
         }
         let dead = fish.state == .sinking
-        f.fill(eyeCircle(0.30, -0.11, 0.052), with: .color(.white.opacity(dead ? 0.5 : 0.95)))
-        f.fill(eyeCircle(0.315, -0.11, 0.030), with: .color(.black.opacity(0.8)))
+        f.fill(eyeCircle(art.eye.x, art.eye.y, art.eyeR),
+               with: .color(.white.opacity(dead ? 0.5 : 0.95)))
+        f.fill(eyeCircle(art.eye.x + art.eyeR * 0.29, art.eye.y, art.eyeR * 0.58),
+               with: .color(.black.opacity(0.8)))
         if !dead {
-            f.fill(eyeCircle(0.325, -0.135, 0.012), with: .color(.white.opacity(0.9)))
+            f.fill(eyeCircle(art.eye.x + art.eyeR * 0.48, art.eye.y - art.eyeR * 0.48, art.eyeR * 0.23),
+                   with: .color(.white.opacity(0.9)))
         }
 
         // An ask comes up for air: a small trail climbs from where the
         // rise began, and a bubble rides overhead growing till it pops.
-        if fish.state == .surfacing {
+        // Fry don't get one — a worker's ask surfaces on its parent.
+        if fish.state == .surfacing, !fish.isFry {
             let since = now.timeIntervalSince(fish.stateSince)
             for k in 0..<3 {
                 let birth = 0.15 + Double(k) * 0.42
@@ -557,7 +1244,7 @@ struct AquariumView: View {
                      with: .color(.white), lineWidth: 0.9)
         }
 
-        if showLabels {
+        if showLabels, !fish.isFry {
             var lc = canvas
             lc.opacity = l.opacity * (fish.state == .sinking ? 0.5 : 0.9)
             let resolved = lc.resolve(
@@ -577,17 +1264,22 @@ struct AquariumView: View {
         }
     }
 
-    /// The empty tank: a dimmed silhouette drifting in place, so the
-    /// water reads alive even with nothing swimming.
+    /// The empty tank still gets the full water & decor; a dimmed
+    /// minnow silhouette drifts in place over it.
     private func drawEmpty(canvas: inout GraphicsContext, size: CGSize, t: Double) {
+        let art = Self.art(for: .minnow)
         var ec = canvas
         let drift = reduceMotion ? 0 : sin(t * 0.55) * 3
         ec.translateBy(x: size.width / 2, y: size.height / 2 - 12 + drift)
         ec.scaleBy(x: 60, y: 26)
         ec.opacity = 0.07
-        ec.fill(tailPath(wag: reduceMotion ? 0 : sin(t * 0.55 + 1) * 0.1), with: .color(.white))
-        ec.fill(Self.dorsalPath, with: .color(.white))
-        ec.fill(Self.bodyPath, with: .color(.white))
+        if let tail = art.tail {
+            ec.fill(tail(reduceMotion ? 0 : sin(t * 0.55 + 1) * 0.1), with: .color(.white))
+        }
+        if let dorsal = art.dorsal {
+            ec.fill(dorsal, with: .color(.white))
+        }
+        ec.fill(art.body, with: .color(.white))
         // The eye reads as a hole in the silhouette.
         ec.opacity = 0.35
         ec.fill(Path(ellipseIn: CGRect(x: 0.30 - 0.05, y: -0.11 - 0.115,

@@ -366,25 +366,6 @@ field is one the Control Center and the Rail decode.
   are all off, with layers 1 and 2 mapped to `codex` and `claude` on a
   fresh install).
 
-#### Ambient owner facts (`state.ambient`)
-
-Live facts from the daemon's ambient owners, published by
-`ambient_effect_runtime` each observation batch. Absent (not empty) until
-the runtime has observed one, and additive by contract: a new owner is a
-new member, never a reshape.
-
-```json
-"ambient":{"screensaver":{"state":"waiting","idle_seconds":182.0,"after_seconds":1200}}
-```
-
-- `screensaver.state` is `"playing"` (the chosen effect owns the strip),
-  `"peeking"` (a `screensaver_peek` preview is what owns it — "playing"
-  the owner asked for), `"waiting"` (armed but below the delay), or
-  `"off"` (disabled, no or unknown effect picked, or held off by a
-  signal, DND, or night consent). `idle_seconds` is the idle clock the
-  decision ran on; `after_seconds` is the configured threshold
-  (`idle_screensaver_after_minutes` x 60, clamped 300-86400).
-
 ### lights
 The presentation program for each surface, exactly the LEDS DSL text the
 hardware receives, plus the anchor the app needs to phase-lock the Screen
@@ -613,15 +594,7 @@ Keys the app catalogued first and the daemon serves since 2026-09-10:
   `milestone_odometer_steps` (positive ints, sorted, deduplicated, at
   most 16, default `[10, 25, 50, 100]`). All default off/empty-consented;
   an enabled odometer with no valid step stays dark.
-- `idle_screensaver_enabled`, `idle_screensaver_effect`,
-  `idle_screensaver_after_minutes`: the Screen Bar Screensaver
-  (docs/TOYS.md). Once the strip has sat idle past the delay the daemon
-  plays the chosen library effect as the ambient owner; any real signal
-  preempts it, and `idle_auto_off` still wins when it fires.
-  `_effect` is an effect id from `list_effects` or `null` (none picked);
-  an id the registry does not know fails closed and nothing plays.
-  `_after_minutes` is an int clamped to 5-1440 (default 20). Off by
-  default.
+
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```
@@ -723,7 +696,6 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `preview_program` | surface (`screen_bar`, `hardware`, `dot` or a device id), program, seconds (0.2…30) | Writes the program to the matching strip(s) now and marks the surface `why: preview` in `lights`; after `seconds` the daemon refreshes and the live program returns. Refused with `busy` while a held `preview_calibration` owns the surface or any target device -- a 3 s flash cannot be allowed to paint over a 10-minute calibration hold. |
 | `preview_calibration` | device, gains {red, green, blue} (0.3…1.5, clamped), resting_glow? (0…0.35), brightness? (0…255, default the device's stored brightness), patch? (`white`/`red`/`green`/`blue`/`grey` or `#RRGGBB`, default `white`), companion? (default false) | Shows the nominal patch through the GIVEN values -- resting glow, channel gains and brightness applied once through the device's own write boundary, never the stored profile on top. Held daemon-side for 600 s (re-armed on every call) so the sheet can sit open while the eye decides; live writes for the held device(s) are suppressed meanwhile. For `virtual:status-bar` the transform is the Screen Bar's code-domain one and the hold lands on the `screen_bar` surface. `companion: true` on a Dot also lights the followed strip with the same patch through the strip's STORED profile, so the Dot can be matched to it by eye; the reply's `companion` names that strip (or null). `{device, surface, until, program, companion}`; `not_found`/`invalid_args` on errors. |
 | `end_calibration_preview` | device | Drops the held preview(s) that device owns -- its own and a companion strip's -- clears the dedupe identity the preview bytes left, and re-arms the live program. Idempotent: `{device, ended}`. |
-| `screensaver_peek` | seconds? (2…15, default 9) | The Screensaver card's "Play it now": stages the configured `idle_screensaver_effect` on the strip and Screen Bar through the ambient runtime's own IDLE-candidate seam, for `seconds`, then the first batch after the window retires it and the strip returns to whatever it was doing. The enable toggle and the idle delay do not gate an explicit peek, but the admission gates still do — a live semantic, DND, night-without-consent or a sleeping display wins, in which case the daemon simply never stages it. Replies `{effect_id, seconds, state}` where `state` is the fresh `state.ambient.screensaver.state` word (`"peeking"` when the effect took the surfaces; absent on a daemon mid-startup). `invalid_args` when nothing is picked or `seconds` is not a number, `not_found` for an effect id the registry does not know. |
 | `apply_effect` | effect, scope, target, parameters? | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null or `"none"` removes it. Protocol-1 alias of `set_assignment`/`clear_assignment`: answers the same fuller assignment document, parameters sidecar included. |
 | `refresh_usage` | providers[] | Forces a provider usage refresh; the next `state` carries the result. |
 | `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |

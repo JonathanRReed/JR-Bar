@@ -180,14 +180,47 @@ enum ConfettiPhysics {
         let beta = gravity / (vt * vt)
         return (v0 < 0 ? -1 : 1) * (1 / beta) * log(1 + beta * abs(v0) * t)
     }
+
+    /// Seconds after the apex at which a piece has fallen `d` points —
+    /// `fall` inverted (`acosh` on e^(d·g/vt²)). Times the streamer
+    /// floor bounce; nothing integrates.
+    static func fallTime(vt: Double, d: Double) -> Double {
+        guard d > 0 else { return 0 }
+        let e = d * gravity / (vt * vt)
+        // Past e ≈ 300, acosh(e^e) is e + ln 2 to every bit Double keeps.
+        if e > 300 { return d / vt + vt * log(2) / gravity }
+        let x = exp(e)
+        return (vt / gravity) * log(x + sqrt(x * x - 1))
+    }
+
+    /// One squash-bounce on the floor, `t` seconds after touching down:
+    /// a single parabolic hop `height` pt tall over `duration` s, then
+    /// rest. `squashY` dips hard at impact and softer at the second
+    /// touchdown, `squashX` widens to match — a ribbon hitting ground.
+    static func floorBounce(t: Double, height: Double, duration: Double)
+        -> (lift: Double, squashX: Double, squashY: Double) {
+        guard t >= 0 else { return (0, 1, 1) }
+        var dip = 0.45 * exp(-t / 0.05)
+        var lift = 0.0
+        var stretch = 0.0
+        if t < duration {
+            let u = t / duration
+            lift = height * 4 * u * (1 - u)
+            stretch = 0.07 * sin(.pi * u)
+        } else {
+            dip = max(dip, 0.28 * exp(-(t - duration) / 0.06))
+        }
+        return (lift, 1 + 0.5 * dip - 0.4 * stretch, 1 - dip + stretch)
+    }
 }
 
 /// What the burst is: a cannon pop at the notch — pieces launch in an
 /// up-and-out cone with a few fired sideways, drag & gravity take over,
-/// and the survivors tumble & flutter down the band, easing out near the
-/// bottom edge — or one soft bloom when Reduce Motion is on. Every
-/// piece's constants are fixed at fire time; a frame only evaluates
-/// `ConfettiPhysics` and rotates the context.
+/// and the survivors tumble & flutter down the band. Streamers that
+/// reach the floor bounce once and rest there; cards & dots still ease
+/// out at the bottom edge — or one soft bloom when Reduce Motion is on.
+/// Every piece's constants are fixed at fire time; a frame only
+/// evaluates `ConfettiPhysics` and rotates the context.
 private struct ConfettiView: View {
     let color: Color
     /// Reduce Motion: a bloom, not a burst.
@@ -200,7 +233,7 @@ private struct ConfettiView: View {
     /// up-cone reads on screen before pieces leave it.
     private static let muzzleY: Double = 30
 
-    private enum Shape { case rect, dot, streamer }
+    private enum Shape { case rect, dot, streamer, diamond, pacDot }
 
     /// One particle's constants; motion is evaluated, never stored.
     private struct Piece {
@@ -219,6 +252,7 @@ private struct ConfettiView: View {
         var twirl: Double    // vertical-axis card spin (the twinkle), rad/s
         var sway: Double     // falling drift amplitude, pt
         var swayRate: Double
+        var trail: Bool      // drags a faint streak for its first 0.3 s
     }
 
     init(color: Color, flash: Bool) {
@@ -230,6 +264,7 @@ private struct ConfettiView: View {
             color.mix(with: .black, by: 0.25),
             .white,
             Color(red: 0.96, green: 0.76, blue: 0.28),  // warm gold fleck
+            color.mix(with: .white, by: 0.62),          // pale provider — glyph flecks
         ]
     }
 
@@ -248,26 +283,78 @@ private struct ConfettiView: View {
                     let age = elapsed - piece.delay
                     guard age > 0 else { continue }
                     // Rise to the apex, then fall from it at vt's mercy.
-                    let y = Self.muzzleY - (age <= piece.apexT
-                        ? ConfettiPhysics.rise(v0: piece.vy, vt: piece.vt, t: age)
-                        : piece.apexH - ConfettiPhysics.fall(vt: piece.vt, t: age - piece.apexT))
-                    guard y < size.height + 20 else { continue }
+                    let falling = age > piece.apexT
+                    var y = Self.muzzleY - (falling
+                        ? piece.apexH - ConfettiPhysics.fall(vt: piece.vt, t: age - piece.apexT)
+                        : ConfettiPhysics.rise(v0: piece.vy, vt: piece.vt, t: age))
+
+                    // A streamer that reaches the floor bounces once and
+                    // rests there — the only pieces that ever land. The
+                    // remap happens before the off-band cull, or landed
+                    // ribbons would vanish a few frames after touchdown.
+                    let floorY = size.height - 7
+                    var impact = age   // horizontal motion freezes here
+                    var settle: Double?
+                    if piece.shape == .streamer, falling, y >= floorY {
+                        let hit = piece.apexT + ConfettiPhysics.fallTime(
+                            vt: piece.vt, d: piece.apexH + floorY - Self.muzzleY)
+                        if age >= hit { impact = hit; settle = age - hit }
+                    }
+                    guard settle != nil || y < size.height + 20 else { continue }
+
                     // Quadratic-drag spray plus a flutter that ramps in
-                    // once the piece is falling.
+                    // once the piece is falling; a landed streamer skids
+                    // to a stop.
                     let x = piece.x * size.width
-                        + ConfettiPhysics.travel(v0: piece.vx, vt: piece.vt, t: age)
-                        + piece.sway * sin(piece.swayRate * age + piece.phase) * min(1, age / 0.5)
-                    // Ease out at the band's bottom edge, not a hard cut.
-                    let fade = endFade * min(1, max(0, (size.height - y) / 56))
-                    guard fade > 0.01 else { continue }
-                    let tumble = piece.phase + piece.spin * age
+                        + ConfettiPhysics.travel(v0: piece.vx, vt: piece.vt, t: impact)
+                        + piece.sway * sin(piece.swayRate * impact + piece.phase)
+                            * min(1, impact / 0.5)
+                            * (settle.map { max(0, 1 - $0 / 0.12) } ?? 1)
+
+                    var bounce = (sx: 1.0, sy: 1.0)
+                    var tumble = piece.phase + piece.spin * age
                         + (piece.shape == .streamer ? 0.85 * sin(6.2 * age + piece.phase) : 0)
+                    var osc = abs(cos(piece.twirl * age + piece.phase))
+                    // Ease out at the band's bottom edge, not a hard cut.
+                    var fade = endFade * min(1, max(0, (size.height - y) / 56))
+                    if let settle {
+                        let b = ConfettiPhysics.floorBounce(t: settle, height: 7, duration: 0.3)
+                        y = floorY - b.lift
+                        bounce = (b.squashX, b.squashY)
+                        // Level out flat and let the twirl die as it lands.
+                        let t0 = piece.phase + piece.spin * impact
+                            + 0.85 * sin(6.2 * impact + piece.phase)
+                        tumble = t0 + ((t0 / .pi).rounded() * .pi - t0)
+                            * Self.smooth(min(1, settle / 0.22))
+                        let osc0 = abs(cos(piece.twirl * impact + piece.phase))
+                        osc = osc0 + (0.85 - osc0) * min(1, settle / 0.2)
+                        fade = endFade   // resting ribbons keep their colour
+                    }
+                    guard fade > 0.01 else { continue }
+
                     // A card spinning about its vertical axis reads as a
                     // scaleX oscillation — the classic confetti twinkle.
-                    // A streamer twists about its long axis instead.
-                    let osc = abs(cos(piece.twirl * age + piece.phase))
-                    let scaleX = piece.shape == .streamer ? 1 : max(0.16, osc)
-                    let scaleY = piece.shape == .streamer ? max(0.25, osc) : 1
+                    // A streamer twists about its long axis instead; the
+                    // glyph flecks spin in-plane on their tumble alone.
+                    let twirls = piece.shape == .rect || piece.shape == .dot
+                    let scaleX = (twirls ? max(0.16, osc) : 1) * bounce.sx
+                    let scaleY = (piece.shape == .streamer ? max(0.25, osc) : 1) * bounce.sy
+
+                    // A few streamers drag a faint streak of colour for
+                    // their first 0.3 s.
+                    if piece.trail, age < 0.3 {
+                        let f = 1 - age / 0.3
+                        let d = max(1, hypot(piece.vx, piece.vy))
+                        let len = 14 * f
+                        var streak = Path()
+                        streak.move(to: CGPoint(x: x - piece.vx / d * len,
+                                                y: y + piece.vy / d * len))
+                        streak.addLine(to: CGPoint(x: x, y: y))
+                        canvas.stroke(streak,
+                                      with: .color(palette[piece.shade].opacity(0.4 * f * endFade)),
+                                      style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+                    }
+
                     var c = canvas
                     c.translateBy(x: x, y: y)
                     c.rotate(by: .radians(tumble))
@@ -292,7 +379,25 @@ private struct ConfettiView: View {
         case .streamer:
             return Path(roundedRect: CGRect(x: -s * 2.4, y: -s * 0.14, width: s * 4.8, height: s * 0.28),
                         cornerRadius: s * 0.14)
+        case .diamond:
+            // A rounded square; the in-plane spin does the diamond.
+            return Path(roundedRect: CGRect(x: -s / 2, y: -s / 2, width: s, height: s),
+                        cornerRadius: s * 0.22)
+        case .pacDot:
+            // A circle with a wedge bite — the cheapest glyph there is.
+            var p = Path()
+            p.move(to: .zero)
+            p.addArc(center: .zero, radius: s * 0.55,
+                     startAngle: .degrees(40), endAngle: .degrees(320), clockwise: false)
+            p.closeSubpath()
+            return p
         }
+    }
+
+    /// Smoothstep, clamped — eases a landed streamer flat.
+    private static func smooth(_ t: Double) -> Double {
+        let t = min(max(t, 0), 1)
+        return t * t * (3 - 2 * t)
     }
 
     /// The pop: a flash & shockwave at the muzzle, plus one beat of
@@ -314,6 +419,19 @@ private struct ConfettiView: View {
             rays.addLine(to: CGPoint(x: muzzle.x + r1 * cos(a), y: muzzle.y + r1 * sin(a)))
         }
         canvas.stroke(rays, with: .color(.white.opacity(0.8 * (1 - p))), lineWidth: 1.4)
+        // Sparks: three hot white streaks inside the cone, gone in 0.15 s.
+        if age < 0.15 {
+            let sp = age / 0.15
+            let ease2 = 1 - (1 - sp) * (1 - sp)
+            var sparks = Path()
+            for i in 0..<3 {
+                let a = -.pi / 2 + [-0.55, 0.08, 0.62][i]
+                let r0 = 7 + 26 * ease2, r1 = r0 + 7 * (1 - sp)
+                sparks.move(to: CGPoint(x: muzzle.x + r0 * cos(a), y: muzzle.y + r0 * sin(a)))
+                sparks.addLine(to: CGPoint(x: muzzle.x + r1 * cos(a), y: muzzle.y + r1 * sin(a)))
+            }
+            canvas.stroke(sparks, with: .color(.white.opacity(0.85 * (1 - sp))), lineWidth: 1.2)
+        }
     }
 
     /// Reduce Motion: a gentle radial bloom of the provider colour at the
@@ -335,9 +453,12 @@ private struct ConfettiView: View {
 
     private static func makePieces() -> [Piece] {
         var rng = SystemRandomNumberGenerator()
+        var streamerOrdinal = 0
         return (0..<140).map { _ in
             let roll = Double.random(in: 0...1, using: &rng)
-            let shape: Shape = roll < 0.55 ? .rect : roll < 0.82 ? .dot : .streamer
+            // ~8% are glyph flecks: tiny provider marks that spin in-plane.
+            let shape: Shape = roll < 0.50 ? .rect : roll < 0.76 ? .dot
+                : roll < 0.92 ? .streamer : roll < 0.96 ? .diamond : .pacDot
             // The cone: most pieces go up & out, a few are sideways spray.
             let spray = Double.random(in: 0...1, using: &rng) < 0.2
             let speed = Double.random(in: 240...640, using: &rng)
@@ -360,13 +481,24 @@ private struct ConfettiView: View {
                 vt = Double.random(in: 105...160, using: &rng)
                 size = Double.random(in: 5.5...8, using: &rng)
                 sway = Double.random(in: 8...20, using: &rng)
+            case .diamond, .pacDot:
+                vt = Double.random(in: 165...235, using: &rng)
+                size = Double.random(in: 3...4.5, using: &rng)
+                sway = Double.random(in: 1.5...5, using: &rng)
             }
-            // Provider colour in steps, white, & a few gold flecks.
+            // Provider colour in steps, white, & a few gold flecks; the
+            // glyph flecks wear the provider colour or its pale step.
             let s = Double.random(in: 0...1, using: &rng)
-            let shade = s < 0.45 ? 0 : s < 0.65 ? 1 : s < 0.8 ? 2 : s < 0.95 ? 3 : 4
+            let shade: Int
+            switch shape {
+            case .diamond, .pacDot:
+                shade = s < 0.6 ? 0 : 5
+            case .rect, .dot, .streamer:
+                shade = s < 0.45 ? 0 : s < 0.65 ? 1 : s < 0.8 ? 2 : s < 0.95 ? 3 : 4
+            }
             let sign = Bool.random(using: &rng) ? 1.0 : -1.0
             let vy = speed * cos(theta)
-            let piece = Piece(
+            var piece = Piece(
                 shape: shape,
                 x: 0.5 + Double.random(in: -0.035...0.035, using: &rng),
                 delay: Double.random(in: 0...0.09, using: &rng),
@@ -380,11 +512,20 @@ private struct ConfettiView: View {
                 phase: Double.random(in: 0...(.pi * 2), using: &rng),
                 spin: sign * (shape == .streamer
                     ? Double.random(in: 0.6...1.6, using: &rng)
-                    : Double.random(in: 1.2...3.6, using: &rng)),
-                twirl: shape == .dot ? 0 : Double.random(in: 4...10, using: &rng),
+                    : (shape == .diamond || shape == .pacDot)
+                        ? Double.random(in: 2.5...6, using: &rng)
+                        : Double.random(in: 1.2...3.6, using: &rng)),
+                twirl: (shape == .rect || shape == .streamer)
+                    ? Double.random(in: 4...10, using: &rng) : 0,
                 sway: sway,
-                swayRate: Double.random(in: 2...4.4, using: &rng)
+                swayRate: Double.random(in: 2...4.4, using: &rng),
+                trail: false
             )
+            // A couple of streamers drag a faint streak off the launch.
+            if shape == .streamer {
+                piece.trail = streamerOrdinal % 8 == 0
+                streamerOrdinal += 1
+            }
             return piece
         }
     }

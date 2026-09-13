@@ -17,8 +17,8 @@ before the code; the code follows it.
   asset: the letters "JR" set tight in the page tint's rounded square, 44pt)
   beside a one-line intro in Jonathan's voice. No paragraphs of preamble.
 - Below the header, one `ToyCard` per toy, in this order: Fold, Aquarium,
-  Notch Buddy, Confetti, Screen Bar Screensaver, Alcove, then the external
-  app rows, then an "Add an app…" button.
+  Notch Buddy, Confetti, Alcove, then the external app rows, then an
+  "Add an app…" button.
 
 ## Persistence
 
@@ -52,9 +52,6 @@ public struct NotchBuddySettings { enabled: Bool = false; character: String = "d
 public struct ConfettiSettings { enabled: Bool = false }
 public struct ExternalToyApp: Identifiable { id: String /* bundle id */; name: String; launchWithJRBar: Bool }
 ```
-
-Daemon-side toys (Screen Bar Screensaver) persist in the daemon's settings
-document like every other setting, through `set_setting`.
 
 ## The `Toy` shape
 
@@ -93,10 +90,36 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
 - **Sensor** `LidAngleSensor` (`JRBarApp/Toys/Fold/LidAngleSensor.swift`):
   IOKit HID, match usage page `0x20` (Sensor), usage `0x8A` (Orientation),
   vendor `0x05AC`, product `0x8104`. Read feature report ID 1; bytes 1–2
-  little-endian UInt16 are degrees. Poll at 30 Hz only while Fold is on
-  and the display is eligible; otherwise no timer. Missing device →
-  `status = .unavailable("No lid-angle sensor on this Mac")` and the
-  Simulate slider still works.
+  little-endian UInt16 are degrees. Every HID touch runs on a serial
+  queue (`SensorPump`) — a feature report is a kernel call and a hung
+  one must never stall the main runloop — and the poll rate adapts:
+  10 Hz above the arming band (`activation + 12°`), 60 Hz inside it,
+  120 Hz while the lid is actually swinging (instantaneous velocity
+  < −6°/s kicks it within a beat or two). The same queue re-reads
+  `AppleClamshellState` once a second and rides it out on each
+  `Sample{angle, at, clamshell}` so no per-frame path ever touches IOKit.
+  Missing device → `status = .unavailable("No lid-angle sensor on this Mac")`
+  and the Simulate slider still works.
+- **Motion** `AlphaBeta` (`JRBarCore/FoldMath.swift`): an α–β predictor
+  fed on accepted samples. While the lid moves, `renderAngle` leads the
+  measurement by ~60 ms of predicted travel, clamped to ±8° — that lead
+  is what hides the sensor→capture→display latency, the difference
+  between the fold following your finger and trailing it. Residuals are
+  dt-normalized so a poll-rate change can't mistune the gain, a
+  > 1200°/s miss snaps instead of chasing, a reversal zeroes the lead,
+  and 0.2 s of confirmed stillness freezes it: parked, the render angle
+  IS the measurement, so a resting fold never drifts. `velocity` (deg/s,
+  smoothed) feeds the motion blur and decays to rest if the feed goes
+  stale. The eased `displayedTurn` chases the target on a
+  `CADisplayLink` at the screen's own refresh with follow ≈ 16 (~62 ms
+  time constant).
+- **Gesture** `FoldMath.normalizedTurn`: the fold is a bounded 0…1 arc
+  from `activationAngle` down to `foldEndAngle` (8°, just above the
+  5° closed-lid pause), not an unbounded tilt. At 0 the shader is the
+  identity — activating is invisible; at 1 the arc completes as the lid
+  shuts. The activation gate reads the raw angle so a predicted lead
+  can never open the overlay early, and a jitter-suppressed sample can
+  never hold it open.
 - **Capture** `FoldCapture`: ScreenCaptureKit on the built-in display
   (`CGDisplayIsBuiltin`), `SCContentFilter(display:excludingApplications:)`
   excluding JR-Bar itself; 30 fps; BGRA sRGB; no audio, no cursor;
@@ -110,32 +133,36 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   runs.
 - **Render** `FoldOverlayWindow` + `FoldRenderer`: borderless `NSWindow`,
   `.screenSaver` level, `ignoresMouseEvents = true`,
-  `sharingType = .none`, covers the built-in screen only, `MTKView` with
-  one Metal pipeline. The fragment shader treats the captured desktop as
-  a rigid plane still standing at the anchor angle: each pixel projects
-  back onto that plane — parallel projection, blended toward a finite-eye
-  perspective by `perspective` — so at delta 0 the render is
-  pixel-identical and activating is invisible. `delta` is radians past
-  the anchor (`(activation − angle)·π/180`, clamped −0.65…1.25), eased
-  with an ~80 ms exponential filter on a `CADisplayLink` at the screen's
-  own refresh — the 30 Hz sensor moves the target, the vsync moves the
-  fold. While the overlay is up the `MTKView` free-runs at
-  `preferredFramesPerSecond`; ordered out, it is paused. Blur is a
-  4-level MPS Gaussian pyramid baked once per frame, mixed by a radius
-  that grows toward the far edge (`smoothstep(0.08,1,h)·|sin δ|·65`,
-  scaled by `blur`); the image boundary feathers out over the blur radius
-  into a dark surround; `shade` dims toward the top (Dusk, Fog). Tilt =
-  projection only. The overlay is ordered out whenever `|delta| ≤ 0.002`
-  or no frame has landed, so at rest nothing runs.
+  `sharingType = .none`, covers the built-in screen only, `MTKView`
+  (`framebufferOnly`, capped at `min(120, screen.maximumFramesPerSecond)`)
+  with one Metal pipeline. Each frame blits into a private mipmapped
+  texture (3 levels, `generateMipmaps` on the GPU — no CPU decode), so
+  the matte blur reads real LODs. The fragment shader treats the
+  captured desktop as a rigid plane still standing at its angle: a
+  bounded projection (`bend = turn^1.18 · 48°`) blends an orthographic
+  hold into a finite-eye keystone by `perspective`. The matte is a
+  Vogel-disc (golden-angle spiral, area-uniform rings, per-pixel phase
+  jitter) whose radius grows toward the far edge and with the gesture,
+  plus a velocity boost (`|v| > 30°/s`, ≤ 12) so fast closes smear like
+  real glass; the disc adapts 12/20/32 taps by turn. A glass term dims
+  the tilted panel, a sheen band and a hinge seam catch the light, the
+  void fades in beyond the far edge (Dusk, Fog), and the last tenth of
+  the arc finishes to near-black — a full close reads as the display
+  switching off, not the image vanishing. Where the projection leaves
+  the image there is only void, feathered over a few pixels. Tilt =
+  projection only; Dusk = dim + a light matte; Fog = dim + the deep
+  matte. The overlay is ordered out whenever `turn ≤ 0.002` or no frame
+  has landed, so at rest nothing runs.
 - **Safety**: pause (hide overlay, stop capture, keep sensor) when the
   lid reads ≤ 5°, when `AppleClamshellState` on `IOPMrootDomain` says
   closed — the daemon's `closed_lid.holding` is the keep-awake
-  assertion, NOT lid state — when the built-in display is missing or
-  mirrored, on screen sleep; resume 0.5 s after all clear. The
-  activation gate reads the raw angle so a jitter-suppressed sample can
-  never hold the overlay open. Never pick an external display. Reduce
-  Motion: the fold still follows the lid (it's a function of angle, not
-  an animation) but the blur pass is skipped.
+  assertion, NOT lid state, and it arrives cached on the sensor's 1 Hz
+  beat — when the built-in display is missing or mirrored (cached,
+  refreshed on the screen-parameters notification plus a 2 s backstop),
+  or on screen sleep; resume 0.5 s after all clear. Never pick an
+  external display. Reduce Motion: the fold still follows the lid (it's
+  a function of angle, not an animation) but the blur disc and the
+  velocity boost are skipped.
 - **Swap**: `FoldProvider.bendy` / `.lidPlane`: detect via
   `NSWorkspace.shared.urlForApplication(withBundleIdentifier:)` (Lid Plane's
   bundle id is in its repo `Info.plist`; Bendy's is read from
@@ -151,13 +178,36 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
 
 ## Aquarium (native)
 
-Every live session is a fish — a real one: tapered body, dorsal &
-pectoral fins, a translucent tail that articulates, a gill line, a
-lateral highlight and a proper eye, in the provider's colour with the
-session label in a small dark chip under it. The tank has depth: a lit
+Every live session is a fish — and the provider picks the species.
+Claude swims as a clownfish (bold white bars, rounded fins), codex &
+grok as sleek sharks, gemini as a tall angelfish with trailing fins,
+antigravity & openclaw as spotted puffers, hermes as an upright
+seahorse, opencode/kiro/t3code as flowing-finned bettas, devin as a
+tang, cursor & pi as little tetras; anything new is a minnow
+(`FishSpecies` in `AquariumModel.swift`, so the mapping is testable).
+Each fish keeps its tapered body, translucent tail that articulates,
+gill line and a proper eye, in the provider's colour with the session
+label in a small dark chip under it.
+
+Sub-agent sessions join as fry — about half size, the school's
+species — orbiting loosely around their parent's fish, up to eight a
+school (extra workers merge visually rather than crowding the tank).
+A worker whose parent isn't listed drifts to the largest
+same-provider fish, or free-swims when there isn't one. Fry carry no
+labels or status bubbles; a failed worker just fades & sinks a
+little, and a parent that sinks or drifts off takes its whole school
+with it.
+
+The tank is dressed like a real one: a seeded set from
+`AquariumModel.decorSet` — swaying kelp strands in front of & behind
+the fish, pebble clusters, a coral branch or two, a starfish, and a
+treasure chest that burps the occasional bubble — so the layout is
+the same every launch. A jellyfish pulses through the mid-water every
+~40 s and a snail inches along the sand. Behind it all: a lit
 gradient warming toward the surface, three slow god rays, a caustic
 shimmer band under the surface line, plankton in two parallax layers,
 ambient bubbles, a dune floor and a soft bottom-corner vignette.
+
 Deeper lanes hold smaller, dimmer, slower fish. Fish ease into curved
 U-turns at the glass instead of mirror-flipping, and new sessions swim
 in from an edge; a recently updated session's tail beats faster. An
@@ -166,31 +216,39 @@ bubble riding overhead; a failed session goes grey, sinks nose-down
 onto the sand and settles with a slow rocking; a completion drifts off
 the right edge. The tank is a resizable window
 (`AquariumWindowController`), `TimelineView(.animation)` capped at 30
-fps + `Canvas`, reads `core.sessions` only, and stops its timeline
-while occluded. Controls: On/Off (opens/closes the window), Show
-labels, Density (how much plankton/bubbles), "Fill screen" button
-(borderless full-screen, Esc leaves). Reduce Motion: rays & shimmer
-hold still, tails don't wag, fish glide — poses stay.
+fps + `Canvas`, reads `core.state.sessions` (mains AND workers), and
+stops its timeline while occluded. Controls: On/Off (opens/closes the
+window), Show labels, Density (how much plankton/bubbles/decor), "Fill
+screen" button (borderless full-screen, Esc leaves). Reduce Motion:
+rays, shimmer & kelp hold still, tails don't wag, the jellyfish &
+snail freeze — poses stay.
 
 ## Notch Buddy (native)
 
 A tiny creature in the `NotchHUD` panel that lives by the agent state:
-asleep when nothing runs, paces while sessions work, waves (and turns
-amber) when an ask is open, slumps when something failed, does one hop on
-a completion. Drawn in SwiftUI shapes, one character to start ("dot"),
-with the enum left open.
+asleep under a flopped nightcap when nothing runs, paces while sessions
+work, bounces in place when three or more work at once (a gathering —
+busy is exciting, not calm), waves amber when an ask is open, tumbles
+into a slump when something failed, does one hop on a completion. Drawn
+in SwiftUI shapes, one character to start ("dot"), with the enum left
+open.
 
 It's a soft blob body, two pupils under lids, a small mouth and a ground
 shadow — at 18pt the silhouette does the work, so the craft lives in the
 animation. Pacing is an eased walk with a per-step bob and a pause at
-each end where the eyes turn before the body follows. The wave and the
-hop both crouch first, stretch on the way up and land flat; the ask pops
-a "!" once and the hop throws two sparkles near its apex. Sleeping
-breathes and drifts "z"s; slumping droops half-lidded and keeps slowly
-deflating. Every awake mood blinks on a jittered ~2.5–6s cadence. While
-it paces it wears the working provider's accent when one provider owns
-the work (`ProviderStyle.style(for:).accent`); ask stays amber, failed
-red, the hop green.
+each end where the eyes turn before the body follows; the gathering
+trades the walk for quick happy micro-hops in place. The wave and the
+hop both crouch first, stretch on the way up and land flat. Asks
+alternate deterministically: odd asks wave with a popped "!", even asks
+just lean in holding eye contact — wide pupils, a slight loom, no bang.
+The hop throws a sparkle on one side and pops a small green check on the
+other. Sleeping breathes, droops the nightcap's tip on a lag, and drifts
+"z"s; a failure rolls in on its side, catches its balance, and settles
+into the half-lidded slump that keeps slowly deflating. Every awake mood
+blinks on a jittered ~2.5–6s cadence. While it paces or gathers it wears
+the working provider's accent when one provider owns the work
+(`ProviderStyle.style(for:).accent`); ask stays amber, failed red, the
+hop green.
 
 It must never cover the HUD's toasts: when a toast shows, the buddy
 steps aside. Reduce Motion swaps the moving poses for still ones (the
@@ -199,56 +257,31 @@ blink stays — a shut-eye frame is a pose too). Off by default.
 ## Confetti (native)
 
 When a provider's **weekly** quota resets, a confetti cannon pops at the
-notch/Screen Bar centre: a flash & starburst at the muzzle, then ~140
-pieces in that provider's colours burst up & out in a cone (a few fired
-sideways, like spray), arc under gravity & quadratic air drag, and
-tumble down the band — cards twinkle (a scaleX oscillation standing in
-for a spin about the vertical axis), streamers corkscrew — easing out
-near the bottom edge over ~2.6 s in a transparent, click-through overlay
-window, then the window closes. Pieces are rects, dots & long thin
-streamers; the palette is the provider colour in light & dark steps plus
-white & a few gold flecks. Motion is closed-form (`ConfettiPhysics`);
-piece constants are fixed at fire time. The trigger is the daemon's
-`quota_reset` event where `lane == "weekly"` or `lane` ends in `-weekly`
-(docs/CORE-PROTOCOL.md); five-hour and session resets do not fire. Hooks
-into `EventCoordinator.apply` via `ToysStore.confetti.fire(providerColor:)`.
-A "Test burst" button in the card fires one on demand. Honors Reduce
-Motion (a gentle radial bloom of the provider colour at the notch
-instead). Off by default. `ConfettiSettings { enabled: Bool = false }`
-(the `onCompletion`/`onMilestone` fields are dropped).
+notch/Screen Bar centre: a flash & starburst at the muzzle with three
+hot spark streaks inside the cone's first 0.15 s, then ~140 pieces in
+that provider's colours burst up & out in a cone (a few fired sideways,
+like spray), arc under gravity & quadratic air drag, and tumble down the
+band — cards twinkle (a scaleX oscillation standing in for a spin about
+the vertical axis), streamers corkscrew, ~8% are tiny provider glyph
+flecks (rounded diamonds & pac-dots, 3–4pt, spinning on their axis in
+the provider colour or a pale step of it). A couple of streamers drag a
+faint colour streak for their first 0.3 s. Streamers that reach the
+bottom of the band get one small squash-bounce and rest there as litter
+until the window fades; cards & dots still ease out near the bottom
+edge. It all plays over ~2.6 s in a transparent, click-through overlay
+window, then the window closes. Motion is closed-form
+(`ConfettiPhysics`, including `fallTime` — the inverse fall — and
+`floorBounce`); piece constants are fixed at fire time. The trigger is
+the daemon's `quota_reset` event where `lane == "weekly"` or `lane` ends
+in `-weekly` (docs/CORE-PROTOCOL.md); five-hour and session resets do
+not fire. Hooks into `EventCoordinator.apply` via
+`ToysStore.confetti.fire(providerColor:)`. A "Test burst" button in the
+card fires one on demand. Honors Reduce Motion (a gentle radial bloom of
+the provider colour at the notch instead). Off by default.
+`ConfettiSettings { enabled: Bool = false }` (the
+`onCompletion`/`onMilestone` fields are dropped).
 
 Blurb: "A burst in the provider's colours when your weekly limit resets."
-
-## Screen Bar Screensaver (daemon)
-
-Instead of only going dark after a long idle, the strip and Screen Bar can
-play a chosen effect from the library. Settings keys (schema-visible,
-`set_setting`, tolerant decode, Swift `SettingsKey` rows in `.lighting`):
-
-- `idle_screensaver_enabled: bool = false`
-- `idle_screensaver_effect: str | None = None` (an effect id from the
-  registry; unknown id → fail closed, nothing plays)
-- `idle_screensaver_after_minutes: int = 20` (5–1440)
-
-Runtime: in `ambient_effect_runtime`, when idle exceeds the threshold,
-no ask/working/failed signal owns the strip, DND admits it, and the toy is
-enabled with a valid effect, plan that effect as an ambient owner; any
-real signal preempts it immediately; it never runs inside the night scene
-unless `rainstick_night_enabled` is on (same consent as rainstick). The
-existing `idle_auto_off` still wins when it fires later. The card shows a
-picker of effects (from `list_effects`), the picked effect playing live
-in a `LEDStripPreview` band (the catalog's own `preview.program`, so the
-band is what the bar will play; no program in the catalog → no row, the
-picker still stands), the delay slider, a "Play it now" peek button, and
-the live "playing / peeking / waiting (idle 3m of 20m) / off" fact.
-
-The peek is the `screensaver_peek` core command (docs/CORE-PROTOCOL.md):
-the daemon arms a ~9 s window during which each observation batch stages
-the picked effect through the same IDLE-candidate seam — the toggle and
-the delay do not gate an explicit preview, but admission, Reduce Motion
-and every live semantic still do — and the batch after the window retires
-it. While a peek owns the surfaces the fact reads `"peeking"`; the button
-disables as "Playing…" while `state` is `peeking` or `playing`.
 
 ## Alcove (bridge)
 
@@ -280,8 +313,6 @@ marketing words. Examples:
   agents are doing."
 - Confetti blurb: "A burst in the provider's colours when your weekly
   limit resets."
-- Screensaver blurb: "When you've been gone a while, the bar plays
-  something instead of just going dark."
 - Alcove blurb: "JR-Bar already follows Alcove's capsule. This is where
   you can see it doing that."
 
@@ -294,6 +325,3 @@ marketing words. Examples:
   in `JRBarCore/FoldMath.swift`, tests in `FoldMathTests.swift`).
 - Aquarium: session → fish state reducer (`AquariumModel.swift` in
   JRBarCore, pure), tests for ask/failed/completed transitions.
-- Screensaver: Python tests for the settings keys, the ambient runtime
-  admission (idle threshold, preemption, night consent, unknown effect
-  fails closed), and the mock-core document.
