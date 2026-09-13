@@ -87,6 +87,12 @@ final class FoldToy: Toy {
     /// A missing built-in screen makes `ensureOverlay` fail; retrying
     /// every vsync would spin, so attempts are half a second apart.
     @ObservationIgnored private var lastOverlayAttempt: TimeInterval = 0
+    /// When the current capture was asked to start — a stream that stays
+    /// frameless for seconds is dead on arrival (a hung
+    /// SCShareableContent fetch never throws), so it gets recycled.
+    @ObservationIgnored private var captureBeganAt: TimeInterval = 0
+    /// Last frameless-capture recycle; retries stay seconds apart.
+    @ObservationIgnored private var lastCaptureRecycle: TimeInterval = 0
     /// The displayParameters version the overlay was last framed for.
     @ObservationIgnored private var reframedVersion = -1
     /// Set when a safety input parked us; only a resume from here waits
@@ -383,6 +389,18 @@ final class FoldToy: Toy {
         noteDiag(stage: "tick")
         guard wantVisible else {
             overlay?.setVisible(false)
+            // A capture that stays frameless for seconds is dead on
+            // arrival — a hung SCShareableContent fetch never throws, it
+            // just never delivers. Recycle it, seconds apart, instead of
+            // waiting on a stream that is not coming back.
+            if let capture, !capture.hasFrame,
+               now - captureBeganAt > 5, now - lastCaptureRecycle > 5 {
+                lastCaptureRecycle = now
+                self.capture = nil
+                FoldLog.log.warning("capture: no frame in 5s — restarting stream")
+                Task { await capture.stop() }
+                ensureCaptureRunning()
+            }
             // The link's only job is motion; fully at rest — gate shut
             // and the ease finished — it stands down until the next
             // reconcile arms it again.
@@ -453,12 +471,16 @@ final class FoldToy: Toy {
         guard capture == nil else { return }
         let capture = FoldCapture()
         self.capture = capture
+        captureBeganAt = CACurrentMediaTime()
         capture.onFrame = { [weak self] buffer in
             guard let self else { return }
             // Push once per delivered frame; a draw then costs one
-            // triangle, not a texture conversion. The first frame is
-            // also what can make the overlay showable.
-            if self.overlay?.renderer.setDesktopFrame(buffer) ?? false {
+            // triangle, not a texture conversion. The overlay is made
+            // here, not at show time: on a static screen SCK may deliver
+            // a single frame ever, and dropping it on a nil renderer is
+            // how the overlay ordered in with no texture — painted clear,
+            // invisible, for the whole fold.
+            if self.ensureOverlay()?.renderer.setDesktopFrame(buffer) ?? false {
                 self.tickFrame()
             }
         }
@@ -557,6 +579,27 @@ final class FoldToy: Toy {
     var angleText: String {
         if let angle = measuredAngle { return "\(Int(angle.rounded()))°" }
         return sensor.available ? "—" : "no sensor"
+    }
+
+    /// What the fold is doing right now, or the first link in the chain
+    /// that is missing — the card's truth row for "nothing is
+    /// happening". Reads unobserved engine state; the card refreshes on
+    /// the sensor cadence, which is plenty.
+    var foldDetail: String {
+        _ = workspaceVersion
+        _ = permissionVersion
+        guard settings.provider == .jrbar else { return "Handed off" }
+        if let reason = pauseReason { return "Paused — \(reason)" }
+        guard FoldCapturePermission.granted else { return "Waiting for Screen Recording" }
+        if rendererFailed { return "Renderer failed to start" }
+        if let lastError = capture?.lastError { return "Capture stopped — \(lastError)" }
+        let tilted = displayedDelta * 180 / .pi
+        guard tilted > 0.1 else {
+            return "Parked — close the lid past \(Int(settings.activationAngle.rounded()))°"
+        }
+        if capture?.hasFrame != true { return "Tilted \(Int(tilted))° — waiting for a screen frame" }
+        if overlay?.renderer.hasTexture != true { return "Tilted \(Int(tilted))° — frames not reaching the GPU" }
+        return overlay?.isVisible == true ? "Holding \(Int(tilted))° of tilt" : "Tilted \(Int(tilted))° — overlay hidden"
     }
 
     // MARK: External providers
@@ -716,6 +759,14 @@ private struct FoldControlsView: View {
                     .foregroundStyle(.secondary)
             } label: {
                 SettingLabel(title: "Lid angle", subtitle: "Live, from the hinge sensor.")
+            }
+
+            LabeledContent {
+                Text(toy.foldDetail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } label: {
+                SettingLabel(title: "Fold state", subtitle: "What the fold is doing right now.")
             }
 
             Picker(selection: toy.providerBinding) {
