@@ -53,8 +53,8 @@ from .operator_state import (
     ClockSample,
     RequestPhase,
     SemanticEventKey,
-    empty_operator_state,
     apply_acknowledgements,
+    empty_operator_state,
     reduce_operator_state,
     semantic_event_key_from_payload,
     semantic_event_key_to_payload,
@@ -86,6 +86,7 @@ from .provider_facts import (
     compare_watermarks,
     request_key_from_payload,
     request_key_to_payload,
+    safe_label_is_valid,
     work_key_from_payload,
     work_key_to_payload,
 )
@@ -801,6 +802,15 @@ class AgentMonitor(LiveSessionMemory):
             if status is not None and keep_status:
                 transcript_source = record.raw.get("source") in TRANSCRIPT_PROVIDERS
                 for fact in batch.work_facts:
+                    # Same rule as ingest_record: a compat status only
+                    # overlays the work fact it actually names.
+                    fact_agent_id = (
+                        f"{fact.key.source_key.provider_id}:"
+                        f"{'agent' if fact.parent_key is not None else 'session'}:"
+                        f"{fact.key.work_id.value}"
+                    )
+                    if status.agent_id != fact_agent_id:
+                        continue
                     status_overlays[fact.key] = CanonicalStatusOverlay(
                         watermark=fact.watermark,
                         status=status,
@@ -1231,6 +1241,19 @@ class LiveAgentMonitor(LiveSessionMemory):
                         )
                 if batch is not None and keep_status:
                     for fact in batch.work_facts:
+                        # The overlay must describe the work it lands on.
+                        # A Devin run_subagent/sidekick record carries a
+                        # worker fact while its compat status is the
+                        # parent's (the raw payload names no agent), so a
+                        # mismatched key would paint the parent's mode
+                        # over the worker's own truth.
+                        fact_agent_id = (
+                            f"{fact.key.source_key.provider_id}:"
+                            f"{'agent' if fact.parent_key is not None else 'session'}:"
+                            f"{fact.key.work_id.value}"
+                        )
+                        if status.agent_id != fact_agent_id:
+                            continue
                         self._status_overlays_by_work_key[fact.key] = CanonicalStatusOverlay(
                             watermark=fact.watermark,
                             status=status,
@@ -1837,8 +1860,7 @@ def _work_from_payload(payload: object) -> CanonicalWorkTruth:
         or type(payload["source_health"]) is not str
         or type(payload["source_freshness"]) is not str
         or type(payload["next_actor"]) is not str
-        or type(payload["safe_label"]) is not str
-        or payload["safe_label"] != _safe_label_for_key(key)
+        or not safe_label_is_valid(key.source_key, key.work_id, payload["safe_label"])
         or type(payload["timing_uncertain"]) is not bool
     ):
         raise ValueError("invalid work restore row")
@@ -2853,6 +2875,27 @@ def _capped_detail(text: str | None) -> str | None:
     return stripped[: DETAIL_TEXT_CAP - 1] + "\u2026"
 
 
+def _devin_persisted_worker_label(record: HookEvent) -> str | None:
+    """A replayed normalized Devin record has no ``tool_input`` left; the
+    label its start event was persisted with is the sub-agent's title."""
+    if record.provider != "devin" or not record.agent_id:
+        return None
+    raw = record.raw
+    if type(raw) is not dict:
+        return None
+    work_id = raw.get("provider_work_id")
+    label = raw.get("safe_label")
+    if (
+        type(work_id) is str
+        and work_id.startswith("sub-")
+        and type(label) is str
+        and label
+        and label != f"{provider_label('devin')} {work_id}"
+    ):
+        return label
+    return None
+
+
 def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None) -> AgentStatus | None:
     mode = mode_for_event(record)
     if mode is None:
@@ -2865,7 +2908,9 @@ def status_from_event(record: HookEvent, metadata: StatusMetadata | None = None)
     if record.agent_id:
         short_id = record.agent_id[:8]
         fallback = f"{provider_label(record.provider)} agent {short_id}"
-        display_name = display_name_for_record(record, metadata, f"agent {short_id}", fallback)
+        display_name = _devin_persisted_worker_label(record) or display_name_for_record(
+            record, metadata, f"agent {short_id}", fallback
+        )
     elif record.session_id:
         short_id = record.session_id[:8]
         fallback = f"{provider_label(record.provider)} session {short_id}"

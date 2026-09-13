@@ -19,6 +19,7 @@ from typing import Final
 from .capacity_types import SourceKey
 from .provider_contracts import DiagnosticIdentifier
 from .provider_facts import (
+    DEVIN_SUBAGENT_WORK_PREFIX,
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -68,6 +69,10 @@ ACTIVE_SILENCE_SECONDS: Final = 240.0
 PROVIDER_ACTIVE_SILENCE_SECONDS: Final = {
     "hermes": 900.0,
 }
+
+_TERMINAL_WORK_LIFECYCLES: Final = frozenset(
+    {WorkLifecycle.COMPLETED, WorkLifecycle.FAILED}
+)
 
 
 def active_silence_seconds_for(provider_id: str | None) -> float:
@@ -1602,6 +1607,42 @@ def reduce_operator_state(
                     fact.watermark,
                     batch.source_freshness,
                 )
+            if fact.lifecycle in _TERMINAL_WORK_LIFECYCLES and (
+                fact.key.source_key.provider_id == "devin"
+            ):
+                # Devin CLI reports no subagent lifecycle: a synthetic
+                # ``sub-*`` worker's only stop signal is the foreground
+                # tool call's PostToolUse, and a backgrounded sub-agent
+                # never gets one. The parent's own end (Stop/SessionEnd)
+                # is where its workers retire -- they cannot outlive the
+                # session that spawned them.
+                for child_key, child in tuple(works.items()):
+                    if (
+                        child.parent_key == fact.key
+                        and child_key.work_id.value.startswith(
+                            DEVIN_SUBAGENT_WORK_PREFIX
+                        )
+                        and child.lifecycle not in _TERMINAL_WORK_LIFECYCLES
+                    ):
+                        child_transition = _work_transition(
+                            child, WorkLifecycle.COMPLETED
+                        )
+                        works[child_key] = replace(
+                            child,
+                            lifecycle=WorkLifecycle.COMPLETED,
+                            watermark=fact.watermark,
+                            source_health=batch.source_health,
+                            source_freshness=batch.source_freshness,
+                            next_actor=NextActor.NONE,
+                            observation_authority=batch.observation_authority,
+                        )
+                        if child_transition is not None and not restored_batch:
+                            work_events[child_key] = _event(
+                                child_key,
+                                child_transition,
+                                fact.watermark,
+                                batch.source_freshness,
+                            )
 
     request_events: dict[RequestKey, CanonicalOperatorEvent] = {}
     if semantic_allowed:

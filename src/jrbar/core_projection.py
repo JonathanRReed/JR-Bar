@@ -395,6 +395,13 @@ def session_label(
     provider_label = PROVIDER_LABELS.get(provider, provider.title() if provider else "Agent")
     if is_worker:
         base = parent_label or provider_label
+        if provider == "devin" and ":agent:sub-" in agent_id:
+            # Devin's synthetic sub-* workers carry the sub-agent's own
+            # task title as their safe label -- that name is the point of
+            # the row.
+            stripped = strip_session_short_id(display_name or "", session_id)
+            if stripped:
+                return stripped
         return f"{base} worker {short}"
     if extras is not None and isinstance(extras.name, str) and extras.name.strip():
         return extras.name.strip()

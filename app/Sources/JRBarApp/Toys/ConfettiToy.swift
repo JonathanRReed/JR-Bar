@@ -31,16 +31,20 @@ final class ConfettiToy: Toy {
 
     var status: ToyStatus { isOn ? .on : .off }
 
+    /// The card's read of the stored settings; the defaults stand in
+    /// when there's no store (previews, tests).
+    var settings: ConfettiSettings { store?.state.confetti ?? ConfettiSettings() }
+
+    /// A binding into `store.state.confetti`; the store's `didSet`
+    /// debounces the write, so a dragged slider doesn't stream saves.
+    func bind<T>(_ keyPath: WritableKeyPath<ConfettiSettings, T>) -> Binding<T> {
+        Binding(
+            get: { self.store?.state.confetti[keyPath: keyPath] ?? ConfettiSettings()[keyPath: keyPath] },
+            set: { self.store?.state.confetti[keyPath: keyPath] = $0 })
+    }
+
     var controls: AnyView {
-        AnyView(
-            LabeledContent {
-                Button("Test burst") { [weak self] in
-                    self?.testBurst(providerColor: Color(red: 0.93, green: 0.30, blue: 0.62))
-                }
-            } label: {
-                SettingLabel(title: "Try it", subtitle: "Fires a burst now, in the Toys tint.")
-            }
-        )
+        AnyView(ConfettiControlsView(toy: self))
     }
 
     /// `EventCoordinator.apply` asks this before colouring the burst:
@@ -67,7 +71,7 @@ final class ConfettiToy: Toy {
     private func present(_ color: Color) {
         window?.close()
         window = nil
-        let overlay = ConfettiWindow(color: color)
+        let overlay = ConfettiWindow(color: color, settings: settings)
         self.window = overlay
         overlay.burst { [weak self] in
             MainActor.assumeIsolated { self?.window = nil }
@@ -75,31 +79,123 @@ final class ConfettiToy: Toy {
     }
 }
 
+/// The card's disclosure body. Every row writes `store.state.confetti`
+/// (which persists itself); "Test burst" fires with whatever is set.
+private struct ConfettiControlsView: View {
+    let toy: ConfettiToy
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent {
+                Button("Test burst") { [weak toy] in
+                    toy?.testBurst(providerColor: ConfettiView.toysTint)
+                }
+            } label: {
+                SettingLabel(title: "Try it", subtitle: "Fires a burst now, with the settings below.")
+            }
+
+            Picker(selection: toy.bind(\.landing)) {
+                Text("Rest").tag(ConfettiLanding.rest)
+                Text("Fall").tag(ConfettiLanding.fall)
+                Text("Fade").tag(ConfettiLanding.fade)
+            } label: {
+                SettingLabel(title: "Landing", subtitle: "Where the pieces end up.")
+            }
+            .pickerStyle(.segmented)
+
+            Text(landingNote)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Picker(selection: toy.bind(\.palette)) {
+                Text("Provider").tag(ConfettiPalette.provider)
+                Text("Toys tint").tag(ConfettiPalette.toys)
+                Text("Rainbow").tag(ConfettiPalette.rainbow)
+            } label: {
+                SettingLabel(title: "Palette", subtitle: "Whose colours the burst wears.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+
+            Picker(selection: toy.bind(\.shapes)) {
+                Text("Mixed").tag(ConfettiShapes.mixed)
+                Text("Streamers").tag(ConfettiShapes.streamers)
+                Text("Flecks").tag(ConfettiShapes.flecks)
+            } label: {
+                SettingLabel(title: "Shapes", subtitle: "The full mix, or one note played loud.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: toy.bind(\.density), in: 0.5...2, step: 0.1)
+                        .frame(width: 180)
+                    ValueText(text: String(format: "%.1f×", toy.settings.density))
+                }
+            } label: {
+                SettingLabel(title: "Density", subtitle: "How many pieces the cannon throws.")
+            }
+
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: toy.bind(\.duration), in: 0.7...1.5)
+                        .frame(width: 180)
+                    ValueText(text: String(format: "%.1f×", toy.settings.duration))
+                }
+            } label: {
+                SettingLabel(title: "Duration", subtitle: "Stretches the whole burst — longer lingers.")
+            }
+        }
+    }
+
+    /// The line under the segmented picker, describing the mode that's
+    /// on — it swaps with the selection, like the Fold card's provider
+    /// note.
+    private var landingNote: String {
+        switch toy.settings.landing {
+        case .rest:
+            return "Streamers settle on the strip and rest there as litter until the burst fades."
+        case .fall:
+            return "The overlay spans the screen; pieces rain to the bottom edge and fade out."
+        case .fade:
+            return "Pieces dissolve mid-air — never landing, gone by three-fifths of the way down."
+        }
+    }
+}
+
 /// The burst's overlay: a borderless, transparent, click-through window
-/// hung across the top of the notched screen at `.screenSaver` level,
-/// closed by its own timer. Shares nothing with screen capture
-/// (`sharingType = .none`), like the Fold overlay.
+/// hung from the top of the notched screen at `.screenSaver` level,
+/// closed by its own timer. How tall it is and how long it lives are the
+/// landing mode's business, both measured off the screen — Rest rains in
+/// the top band, Fall spans the screen, Fade needs only the top ~70%.
+/// Shares nothing with screen capture (`sharingType = .none`), like the
+/// Fold overlay.
 @MainActor
 private final class ConfettiWindow: NSPanel {
     private let hosting: NSHostingView<ConfettiView>
     private var closer: DispatchWorkItem?
+    /// How long this burst runs: the slowest piece's travel in the
+    /// chosen landing mode on this screen, plus a 0.4 s tail — derived,
+    /// never a constant, so a slow streamer can never be vanished
+    /// mid-air the way the hardcoded 2.6 s once did.
+    private let life: TimeInterval
 
-    /// How long a burst runs before the window closes: long enough for
-    /// the last fluttering streamer to reach the band's fade-out — the
-    /// slowest streamer needs ~3.1 s of runway, so 2.6 s used to
-    /// vanish pieces still visibly falling.
-    static let life: TimeInterval = 3.4
     /// The Reduce Motion bloom is shorter — it is one fade, not a burst.
     static let flashLife: TimeInterval = 0.9
 
-    init(color: Color) {
+    init(color: Color, settings: ConfettiSettings) {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        hosting = NSHostingView(rootView: ConfettiView(color: color, flash: reduceMotion))
         let screen = ScreenBarGeometry.preferredScreen() ?? NSScreen.main
         let frame = screen?.frame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        // The top band of the screen: deep enough to fall through, narrow
-        // enough that the window is never a screen-sized shadow.
-        let height = min(frame.height * 0.45, 380)
+        let height = ConfettiView.viewHeight(for: settings.landing, screenHeight: frame.height)
+        let bandBottom = (screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0) + 12
+        let view = ConfettiView(color: color, flash: reduceMotion, settings: settings,
+                                viewHeight: height, screenHeight: frame.height,
+                                bandBottom: bandBottom)
+        life = view.life
+        hosting = NSHostingView(rootView: view)
         super.init(contentRect: NSRect(x: frame.minX, y: frame.maxY - height, width: frame.width, height: height),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         contentView = hosting
@@ -124,7 +220,7 @@ private final class ConfettiWindow: NSPanel {
 
     func burst(then done: @escaping @MainActor () -> Void) {
         orderFrontRegardless()
-        let life = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? Self.flashLife : Self.life
+        let span = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? Self.flashLife : life
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated {
                 self?.orderOut(nil)
@@ -133,7 +229,7 @@ private final class ConfettiWindow: NSPanel {
             }
         }
         closer = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + life + 0.1, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + span + 0.1, execute: work)
     }
 
     override func close() {
@@ -218,27 +314,51 @@ enum ConfettiPhysics {
 
 /// What the burst is: a cannon pop at the notch — pieces launch in an
 /// up-and-out cone with a few fired sideways, drag & gravity take over,
-/// and the survivors tumble & flutter down the band. Streamers that
-/// reach the floor bounce once and rest there; cards & dots still ease
-/// out at the bottom edge — or one soft bloom when Reduce Motion is on.
-/// Every piece's constants are fixed at fire time; a frame only
-/// evaluates `ConfettiPhysics` and rotates the context.
-private struct ConfettiView: View {
+/// and the survivors tumble & flutter down. Where they end up is the
+/// landing mode's business: Rest lets streamers squash-bounce onto the
+/// band floor and lie there as ribbons, Fall rains to the screen's
+/// bottom edge, Fade dissolves everything mid-air — or one soft bloom
+/// when Reduce Motion is on, whichever the mode. Every piece's constants
+/// are fixed at fire time; a frame only evaluates `ConfettiPhysics` and
+/// rotates the context.
+struct ConfettiView: View {
     let color: Color
     /// Reduce Motion: a bloom, not a burst.
     let flash: Bool
-    /// Provider colour in light & dark steps, plus white & a gold fleck.
-    private let palette: [Color]
-    private let pieces = ConfettiView.makePieces()
+    /// Where the pieces end up.
+    let landing: ConfettiLanding
+    /// Timeline stretch from `settings.duration`: `elapsed / timeScale`
+    /// is burst time, so the whole animation — pop, delays, flutter —
+    /// slows or quickens as one piece.
+    let timeScale: Double
+    /// The window's height; the pieces' world.
+    let viewHeight: Double
+    /// The host screen's height — Fade's dissolve band is a fraction of it.
+    let screenHeight: Double
+    /// The bottom of the top strip (notch + bar). In Rest a piece casts
+    /// its soft shadow only while it passes over it.
+    let bandBottom: Double
+    /// The palette choice, kept for the pop & bloom's colour.
+    let paletteChoice: ConfettiPalette
+    /// The resolved colours — `Piece.shade` indexes in.
+    let palette: [Color]
+    let pieces: [Piece]
+    /// Real seconds the burst needs: the slowest piece's travel in this
+    /// mode on this geometry, stretched by `timeScale`, plus a 0.4 s tail.
+    let life: TimeInterval
+    /// Render proofs & tests freeze the burst at this many seconds.
+    var frozen: TimeInterval? = nil
 
     /// The cannon's muzzle: notch centre, just under the top edge so the
     /// up-cone reads on screen before pieces leave it.
-    private static let muzzleY: Double = 30
+    static let muzzleY: Double = 30
+    /// The Toys page tint — the `toys` palette's base and the test burst's colour.
+    static let toysTint = Color(red: 0.93, green: 0.30, blue: 0.62)
 
-    private enum Shape { case rect, dot, streamer, diamond, pacDot }
+    enum Shape { case rect, dot, streamer, diamond, pacDot }
 
     /// One particle's constants; motion is evaluated, never stored.
-    private struct Piece {
+    struct Piece {
         var shape: Shape
         var x: Double        // launch x, as a fraction of the width
         var delay: Double    // stagger inside the pop, seconds
@@ -257,115 +377,284 @@ private struct ConfettiView: View {
         var trail: Bool      // drags a faint streak for its first 0.3 s
     }
 
-    init(color: Color, flash: Bool) {
+    init(color: Color, flash: Bool, settings: ConfettiSettings = ConfettiSettings(),
+         viewHeight: Double = 360, screenHeight: Double = 900, bandBottom: Double = 44) {
         self.color = color
         self.flash = flash
-        self.palette = [
-            color,
-            color.mix(with: .white, by: 0.4),
-            color.mix(with: .black, by: 0.25),
-            .white,
-            Color(red: 0.96, green: 0.76, blue: 0.28),  // warm gold fleck
-            color.mix(with: .white, by: 0.62),          // pale provider — glyph flecks
-        ]
+        self.landing = settings.landing
+        self.timeScale = min(1.5, max(0.7, settings.duration))
+        self.viewHeight = viewHeight
+        self.screenHeight = screenHeight
+        self.bandBottom = bandBottom
+        self.paletteChoice = settings.palette
+        self.palette = Self.paletteColors(settings.palette, provider: color)
+        self.pieces = Self.makePieces(density: min(2.0, max(0.5, settings.density)),
+                                      shapes: settings.shapes)
+        self.life = Self.travelTime(pieces: pieces, mode: settings.landing,
+                                    viewHeight: viewHeight, screenHeight: screenHeight)
+            * timeScale + 0.4
+    }
+
+    /// The window's height for a landing mode, measured off the screen
+    /// it hangs on: Rest rains inside the top band (deep enough to fall
+    /// through, narrow enough to never be a screen-sized shadow), Fall
+    /// needs the whole screen, Fade only the top ~70% — its dissolve
+    /// ends at 60%.
+    static func viewHeight(for mode: ConfettiLanding, screenHeight: Double) -> Double {
+        switch mode {
+        case .rest: return min(screenHeight * 0.45, 380)
+        case .fall: return screenHeight
+        case .fade: return screenHeight * 0.72
+        }
+    }
+
+    /// The floor streamers rest on in Rest, measured from the top.
+    static func floorY(viewHeight: Double) -> Double { viewHeight - 7 }
+
+    /// Six colour slots for a palette choice. Provider & Toys tint build
+    /// the same steps around a base — light, dark, white, a gold fleck, a
+    /// pale step for the glyph flecks; Rainbow is a six-colour spectrum
+    /// kept inside the app's saturation range.
+    static func paletteColors(_ choice: ConfettiPalette, provider color: Color) -> [Color] {
+        switch choice {
+        case .provider: return steps(around: color)
+        case .toys: return steps(around: toysTint)
+        case .rainbow:
+            return [0.0, 0.08, 0.15, 0.36, 0.56, 0.76].map {
+                Color(hue: $0, saturation: 0.62, brightness: 0.96)
+            }
+        }
+    }
+
+    private static func steps(around color: Color) -> [Color] {
+        [color,
+         color.mix(with: .white, by: 0.4),
+         color.mix(with: .black, by: 0.25),
+         .white,
+         Color(red: 0.96, green: 0.76, blue: 0.28),  // warm gold fleck
+         color.mix(with: .white, by: 0.62)]         // pale — glyph flecks
+    }
+
+    /// The colour the pop & the Reduce Motion bloom wear.
+    var themeColor: Color {
+        switch paletteChoice {
+        case .provider: return color
+        case .toys: return Self.toysTint
+        case .rainbow: return .white
+        }
+    }
+
+    /// Position-based alpha — how visible a piece at `y` is, per mode:
+    /// Rest eases out at the band's bottom edge, Fall fades over the
+    /// last ~8% of the drop, Fade dissolves between 40% & 60% of the
+    /// screen's height. 1 while a piece is in open air.
+    static func heightFade(mode: ConfettiLanding, y: Double,
+                           viewHeight: Double, screenHeight: Double) -> Double {
+        switch mode {
+        case .rest:
+            return min(1, max(0, (viewHeight - y) / 56))
+        case .fall:
+            return min(1, max(0, (viewHeight - y) / max(1, viewHeight * 0.08)))
+        case .fade:
+            let start = screenHeight * 0.4, end = screenHeight * 0.6
+            return 1 - smooth((y - start) / max(1, end - start))
+        }
+    }
+
+    /// Fade's little size shrink rides the same progress as its
+    /// dissolve; the other modes keep their size.
+    static func fadeShrink(mode: ConfettiLanding, heightFade: Double) -> Double {
+        mode == .fade ? 1 - 0.35 * (1 - heightFade) : 1
+    }
+
+    /// Burst-time seconds until the last piece reaches its end state:
+    /// in Rest a streamer's floor touchdown (plus its one bounce), every
+    /// other shape's fall to the bottom edge; in Fall the bottom edge
+    /// itself; in Fade the bottom of the dissolve band. The window's
+    /// life is this × `timeScale` + 0.4 s — derived, never a constant,
+    /// so a slow streamer can never be vanished mid-air the way the
+    /// hardcoded 2.6 s once did.
+    static func travelTime(pieces: [Piece], mode: ConfettiLanding,
+                           viewHeight: Double, screenHeight: Double) -> Double {
+        var latest = 0.0
+        for piece in pieces {
+            let endY: Double
+            var extra = 0.0
+            switch mode {
+            case .rest:
+                if piece.shape == .streamer {
+                    endY = floorY(viewHeight: viewHeight)
+                    extra = 0.3   // the squash-bounce
+                } else {
+                    endY = viewHeight
+                }
+            case .fall:
+                endY = viewHeight
+            case .fade:
+                endY = min(viewHeight, screenHeight * 0.6)
+            }
+            let travel = piece.delay + piece.apexT
+                + ConfettiPhysics.fallTime(vt: piece.vt,
+                                           d: max(0, piece.apexH + endY - muzzleY))
+                + extra
+            latest = max(latest, travel)
+        }
+        return latest
     }
 
     var body: some View {
-        TimelineView(.animation) { context in
-            let elapsed = context.date.timeIntervalSince(origin)
-            Canvas { canvas, size in
-                if flash {
-                    drawBloom(&canvas, size: size, p: min(1, elapsed / ConfettiWindow.flashLife))
-                    return
-                }
-                drawPop(&canvas, size: size, age: elapsed)
-                let endFade = min(1, max(0, (ConfettiWindow.life - elapsed) / 0.4))
-                guard endFade > 0 else { return }
-                for piece in pieces {
-                    let age = elapsed - piece.delay
-                    guard age > 0 else { continue }
-                    // Rise to the apex, then fall from it at vt's mercy.
-                    let falling = age > piece.apexT
-                    var y = Self.muzzleY - (falling
-                        ? piece.apexH - ConfettiPhysics.fall(vt: piece.vt, t: age - piece.apexT)
-                        : ConfettiPhysics.rise(v0: piece.vy, vt: piece.vt, t: age))
-
-                    // A streamer that reaches the floor bounces once and
-                    // rests there — the only pieces that ever land. The
-                    // remap happens before the off-band cull, or landed
-                    // ribbons would vanish a few frames after touchdown.
-                    let floorY = size.height - 7
-                    var impact = age   // horizontal motion freezes here
-                    var settle: Double?
-                    if piece.shape == .streamer, falling, y >= floorY {
-                        let hit = piece.apexT + ConfettiPhysics.fallTime(
-                            vt: piece.vt, d: piece.apexH + floorY - Self.muzzleY)
-                        if age >= hit { impact = hit; settle = age - hit }
-                    }
-                    guard settle != nil || y < size.height + 20 else { continue }
-
-                    // Quadratic-drag spray plus a flutter that ramps in
-                    // once the piece is falling; a landed streamer skids
-                    // to a stop.
-                    let x = piece.x * size.width
-                        + ConfettiPhysics.travel(v0: piece.vx, vt: piece.vt, t: impact)
-                        + piece.sway * sin(piece.swayRate * impact + piece.phase)
-                            * min(1, impact / 0.5)
-                            * (settle.map { max(0, 1 - $0 / 0.12) } ?? 1)
-
-                    var bounce = (sx: 1.0, sy: 1.0)
-                    var tumble = piece.phase + piece.spin * age
-                        + (piece.shape == .streamer ? 0.85 * sin(6.2 * age + piece.phase) : 0)
-                    var osc = abs(cos(piece.twirl * age + piece.phase))
-                    // Ease out at the band's bottom edge, not a hard cut.
-                    var fade = endFade * min(1, max(0, (size.height - y) / 56))
-                    if let settle {
-                        let b = ConfettiPhysics.floorBounce(t: settle, height: 7, duration: 0.3)
-                        y = floorY - b.lift
-                        bounce = (b.squashX, b.squashY)
-                        // Level out flat and let the twirl die as it lands.
-                        let t0 = piece.phase + piece.spin * impact
-                            + 0.85 * sin(6.2 * impact + piece.phase)
-                        tumble = t0 + ((t0 / .pi).rounded() * .pi - t0)
-                            * Self.smooth(min(1, settle / 0.22))
-                        let osc0 = abs(cos(piece.twirl * impact + piece.phase))
-                        osc = osc0 + (0.85 - osc0) * min(1, settle / 0.2)
-                        fade = endFade   // resting ribbons keep their colour
-                    }
-                    guard fade > 0.01 else { continue }
-
-                    // A card spinning about its vertical axis reads as a
-                    // scaleX oscillation — the classic confetti twinkle.
-                    // A streamer twists about its long axis instead; the
-                    // glyph flecks spin in-plane on their tumble alone.
-                    let twirls = piece.shape == .rect || piece.shape == .dot
-                    let scaleX = (twirls ? max(0.16, osc) : 1) * bounce.sx
-                    let scaleY = (piece.shape == .streamer ? max(0.25, osc) : 1) * bounce.sy
-
-                    // A few streamers drag a faint streak of colour for
-                    // their first 0.3 s.
-                    if piece.trail, age < 0.3 {
-                        let f = 1 - age / 0.3
-                        let d = max(1, hypot(piece.vx, piece.vy))
-                        let len = 14 * f
-                        var streak = Path()
-                        streak.move(to: CGPoint(x: x - piece.vx / d * len,
-                                                y: y + piece.vy / d * len))
-                        streak.addLine(to: CGPoint(x: x, y: y))
-                        canvas.stroke(streak,
-                                      with: .color(palette[piece.shade].opacity(0.4 * f * endFade)),
-                                      style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-                    }
-
-                    var c = canvas
-                    c.translateBy(x: x, y: y)
-                    c.rotate(by: .radians(tumble))
-                    c.scaleBy(x: scaleX, y: scaleY)
-                    c.fill(path(for: piece), with: .color(palette[piece.shade].opacity(0.95 * fade)))
+        if let frozen {
+            Canvas { canvas, size in draw(&canvas, size: size, elapsed: frozen) }
+        } else {
+            TimelineView(.animation) { context in
+                Canvas { canvas, size in
+                    draw(&canvas, size: size, elapsed: context.date.timeIntervalSince(origin))
                 }
             }
+            .onAppear { origin = Date() }
         }
-        .onAppear { origin = Date() }
+    }
+
+    /// One frame of the burst (or the Reduce Motion bloom), `elapsed`
+    /// real seconds after the pop.
+    private func draw(_ canvas: inout GraphicsContext, size: CGSize, elapsed: Double) {
+        if flash {
+            drawBloom(&canvas, size: size, p: min(1, elapsed / ConfettiWindow.flashLife))
+            return
+        }
+        // `duration` stretches the whole timeline: physics & delays are
+        // evaluated in burst time, the window's life in real time.
+        let t = elapsed / timeScale
+        drawPop(&canvas, size: size, age: t)
+        let endFade = min(1, max(0, (life - elapsed) / 0.4))
+        guard endFade > 0 else { return }
+        let floorY = Self.floorY(viewHeight: size.height)
+        for piece in pieces {
+            let age = t - piece.delay
+            guard age > 0 else { continue }
+            // Rise to the apex, then fall from it at vt's mercy.
+            let falling = age > piece.apexT
+            var y = Self.muzzleY - (falling
+                ? piece.apexH - ConfettiPhysics.fall(vt: piece.vt, t: age - piece.apexT)
+                : ConfettiPhysics.rise(v0: piece.vy, vt: piece.vt, t: age))
+
+            // Rest only: a streamer that reaches the floor bounces once
+            // and rests there — the only pieces that ever land. The
+            // remap happens before the off-band cull, or landed ribbons
+            // would vanish a few frames after touchdown. Fall & Fade
+            // never land.
+            var impact = age   // horizontal motion freezes here
+            var settle: Double?
+            if landing == .rest, piece.shape == .streamer, falling, y >= floorY {
+                let hit = piece.apexT + ConfettiPhysics.fallTime(
+                    vt: piece.vt, d: piece.apexH + floorY - Self.muzzleY)
+                if age >= hit { impact = hit; settle = age - hit }
+            }
+            guard settle != nil || y < size.height + 20 else { continue }
+
+            // Quadratic-drag spray plus a flutter that ramps in once the
+            // piece is falling; a landed streamer skids to a stop.
+            let x = piece.x * size.width
+                + ConfettiPhysics.travel(v0: piece.vx, vt: piece.vt, t: impact)
+                + piece.sway * sin(piece.swayRate * impact + piece.phase)
+                    * min(1, impact / 0.5)
+                    * (settle.map { max(0, 1 - $0 / 0.12) } ?? 1)
+
+            var bounce = (sx: 1.0, sy: 1.0)
+            var tumble = piece.phase + piece.spin * age
+                + (piece.shape == .streamer ? 0.85 * sin(6.2 * age + piece.phase) : 0)
+            let twirlAngle = piece.twirl * age + piece.phase
+            var osc = abs(cos(twirlAngle))
+            var posFade = Self.heightFade(mode: landing, y: y,
+                                          viewHeight: size.height, screenHeight: screenHeight)
+            var fade = endFade * posFade
+            if let settle {
+                let b = ConfettiPhysics.floorBounce(t: settle, height: 7, duration: 0.3)
+                y = floorY - b.lift
+                bounce = (b.squashX, b.squashY)
+                // Level out flat and let the twirl die as it lands.
+                let t0 = piece.phase + piece.spin * impact
+                    + 0.85 * sin(6.2 * impact + piece.phase)
+                tumble = t0 + ((t0 / .pi).rounded() * .pi - t0)
+                    * Self.smooth(min(1, settle / 0.22))
+                let osc0 = abs(cos(piece.twirl * impact + piece.phase))
+                osc = osc0 + (0.85 - osc0) * min(1, settle / 0.2)
+                fade = endFade   // resting ribbons keep their colour
+                posFade = 1
+            }
+            guard fade > 0.01 else { continue }
+
+            // A card spinning about its vertical axis reads as a
+            // scaleX oscillation — the classic confetti twinkle.
+            // A streamer twists about its long axis instead; the
+            // glyph flecks spin in-plane on their tumble alone.
+            let twirls = piece.shape == .rect || piece.shape == .dot
+            let shrink = Self.fadeShrink(mode: landing, heightFade: posFade)
+            let scaleX = (twirls ? max(0.16, osc) : 1) * bounce.sx * shrink
+            let scaleY = (piece.shape == .streamer ? max(0.25, osc) : 1) * bounce.sy * shrink
+
+            // The piece's speed now — the motion stretch's input. Drag
+            // bleeds vx; vy rides the tan rise / tanh fall curves.
+            let beta = ConfettiPhysics.gravity / (piece.vt * piece.vt)
+            let vxNow = piece.vx / (1 + beta * abs(piece.vx) * age)
+            let vyNow: Double = falling
+                ? -piece.vt * tanh(ConfettiPhysics.gravity * (age - piece.apexT) / piece.vt)
+                : piece.vt * tan(atan(piece.vy / piece.vt) - ConfettiPhysics.gravity * age / piece.vt)
+            let speed = settle == nil ? hypot(vxNow, vyNow) : 0
+
+            // A few streamers drag a faint streak of colour for
+            // their first 0.3 s.
+            if piece.trail, age < 0.3 {
+                let f = 1 - age / 0.3
+                let d = max(1, hypot(piece.vx, piece.vy))
+                let len = 14 * f
+                var streak = Path()
+                streak.move(to: CGPoint(x: x - piece.vx / d * len,
+                                        y: y + piece.vy / d * len))
+                streak.addLine(to: CGPoint(x: x, y: y))
+                canvas.stroke(streak,
+                              with: .color(palette[piece.shade].opacity(0.4 * f * endFade)),
+                              style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
+            }
+
+            // Paper reads two-tone: a light face up front, a darker back
+            // when the twirl flips it. Pieces with no twirl (dots, glyph
+            // flecks) always show their face.
+            let base = palette[piece.shade]
+            let flipped = piece.twirl != 0 && cos(twirlAngle) < 0
+            let face = flipped ? base.mix(with: .black, by: 0.30) : base.mix(with: .white, by: 0.14)
+
+            // Over the top strip a Rest piece casts a whisper of a
+            // shadow on the band — feathered out a few points below it,
+            // and never in the other modes.
+            if landing == .rest, y < bandBottom + 10 {
+                let near = min(1, max(0, (bandBottom + 10 - y) / 10))
+                var s = canvas
+                s.translateBy(x: x, y: y + 1.2)
+                s.rotate(by: .radians(tumble))
+                s.scaleBy(x: scaleX, y: scaleY)
+                s.fill(path(for: piece), with: .color(.black.opacity(0.16 * near * fade)))
+            }
+
+            var c = canvas
+            c.translateBy(x: x, y: y)
+            c.rotate(by: .radians(tumble))
+            // Fast pieces stretch along their travel — the suggestion of
+            // motion blur, gone once they flutter down at vt.
+            if speed > 430 {
+                let stretch = min(0.5, (speed - 430) / 1400)
+                let dir = atan2(vyNow, vxNow) - tumble
+                c.rotate(by: .radians(dir))
+                c.scaleBy(x: 1 + stretch, y: 1 - stretch * 0.4)
+                c.rotate(by: .radians(-dir))
+            }
+            c.scaleBy(x: scaleX, y: scaleY)
+            let shape = path(for: piece)
+            c.fill(shape, with: .color(face.opacity(0.95 * fade)))
+            // A thin lighter rim — the paper's edge catching light.
+            c.stroke(shape, with: .color(base.mix(with: .white, by: 0.55).opacity(0.45 * fade)),
+                     lineWidth: 0.6)
+        }
     }
 
     /// When the burst started; set on appear so `t = 0` is the pop.
@@ -410,9 +699,9 @@ private struct ConfettiView: View {
         let ease = 1 - (1 - p) * (1 - p)
         let muzzle = CGPoint(x: size.width / 2, y: Self.muzzleY)
         canvas.fill(Path(ellipseIn: circle(muzzle, 9 + 26 * ease)),
-                    with: .color(color.opacity(0.55 * (1 - p))))
+                    with: .color(themeColor.opacity(0.55 * (1 - p))))
         canvas.stroke(Path(ellipseIn: circle(muzzle, 5 + 52 * ease)),
-                      with: .color(color.opacity(0.5 * (1 - p))), lineWidth: 1.6)
+                      with: .color(themeColor.opacity(0.5 * (1 - p))), lineWidth: 1.6)
         var rays = Path()
         for i in 0..<10 {
             let a = Double(i) * (.pi * 2 / 10) + 0.3
@@ -445,7 +734,7 @@ private struct ConfettiView: View {
         for i in (0..<3).reversed() {
             let r = 14 + Double(i) * 18 + 110 * ease
             canvas.fill(Path(ellipseIn: circle(centre, r)),
-                        with: .color(color.opacity((1 - p) * (0.26 - Double(i) * 0.07))))
+                        with: .color(themeColor.opacity((1 - p) * (0.26 - Double(i) * 0.07))))
         }
     }
 
@@ -453,14 +742,25 @@ private struct ConfettiView: View {
         CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
     }
 
-    private static func makePieces() -> [Piece] {
+    static func makePieces(density: Double = 1, shapes: ConfettiShapes = .mixed) -> [Piece] {
         var rng = SystemRandomNumberGenerator()
         var streamerOrdinal = 0
-        return (0..<140).map { _ in
+        let count = max(1, Int((140 * density).rounded()))
+        return (0..<count).map { _ in
             let roll = Double.random(in: 0...1, using: &rng)
-            // ~8% are glyph flecks: tiny provider marks that spin in-plane.
-            let shape: Shape = roll < 0.50 ? .rect : roll < 0.76 ? .dot
-                : roll < 0.92 ? .streamer : roll < 0.96 ? .diamond : .pacDot
+            // In the full mix ~8% are glyph flecks: tiny provider marks
+            // that spin in-plane. The shapes setting can make the burst
+            // all one note.
+            let shape: Shape
+            switch shapes {
+            case .mixed:
+                shape = roll < 0.50 ? .rect : roll < 0.76 ? .dot
+                    : roll < 0.92 ? .streamer : roll < 0.96 ? .diamond : .pacDot
+            case .streamers:
+                shape = .streamer
+            case .flecks:
+                shape = roll < 0.5 ? .diamond : .pacDot
+            }
             // The cone: most pieces go up & out, a few are sideways spray.
             let spray = Double.random(in: 0...1, using: &rng) < 0.2
             let speed = Double.random(in: 240...640, using: &rng)

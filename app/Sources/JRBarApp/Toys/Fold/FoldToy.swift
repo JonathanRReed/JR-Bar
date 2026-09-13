@@ -53,10 +53,10 @@ final class FoldToy: Toy {
     @ObservationIgnored private var overlay: FoldOverlayWindow?
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
-    /// The smoothed turn the renderer is showing — sensor readings step,
-    /// the fold glides at the display's own rate because the display
-    /// link, not the sensor, carries the easing between samples.
-    @ObservationIgnored private var displayedTurn = 0.0
+    /// The smoothed delta the renderer is showing — sensor readings
+    /// step, the fold glides at the display's own rate because the
+    /// display link, not the sensor, carries the easing between samples.
+    @ObservationIgnored private var displayedDelta = 0.0
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
     /// Safety facts, cached instead of queried per frame: the clamshell
     /// truth rides in on the sensor's 1 Hz beat, and display topology
@@ -233,7 +233,7 @@ final class FoldToy: Toy {
             paused = false
             resumeWork?.cancel()
             resumeWork = nil
-            displayedTurn = 0
+            displayedDelta = 0
             predictor.reset()
             standDown()
             sensor.setPolling(false)
@@ -255,7 +255,7 @@ final class FoldToy: Toy {
             paused = true
             resumeWork?.cancel()
             resumeWork = nil
-            displayedTurn = 0
+            displayedDelta = 0
             standDown()
             return
         }
@@ -283,16 +283,18 @@ final class FoldToy: Toy {
         }
     }
 
-    /// The turn the fold wants right now, from the freshest truth — 0
+    /// The delta the fold wants right now, from the freshest truth — 0
     /// when the gate is closed, so easing home is also how the overlay
     /// leaves. The gate reads the raw angle (a lead can never activate
-    /// early); the turn itself rides the predictor's render angle.
-    private var targetTurn: Double {
+    /// early); the delta itself rides the predictor's render angle and
+    /// is the REAL lid travel, so the held plane counter-rotates by the
+    /// hinge's own arc.
+    private var targetDelta: Double {
         guard let gate = gateAngle,
               FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),
               pauseReason == nil else { return 0 }
-        return FoldMath.normalizedTurn(
-            angle: renderAngle ?? gate, start: settings.activationAngle)
+        return FoldMath.deltaRadians(
+            angle: renderAngle ?? gate, reference: settings.activationAngle)
     }
 
     /// Starts or stops the vsync heartbeat to match the machine: armed
@@ -307,7 +309,7 @@ final class FoldToy: Toy {
         // shut and the ease finished — runs no timer at all. Without
         // this check the link was born and killed on every parked
         // sensor sample.
-        let busy = targetTurn > 0 || displayedTurn > 0.002
+        let busy = targetDelta > 0 || displayedDelta > 0.002
         if armed && busy {
             if tickLink == nil {
                 // On macOS the link comes from the screen it drives.
@@ -321,12 +323,12 @@ final class FoldToy: Toy {
         } else if let link = tickLink {
             link.invalidate()
             tickLink = nil
-            displayedTurn = 0
+            displayedDelta = 0
             overlay?.setVisible(false)
         }
     }
 
-    /// One heartbeat: decay the predictor, ease the turn toward its
+    /// One heartbeat: decay the predictor, ease the delta toward its
     /// target, push the uniforms, and show or hide the overlay to match.
     /// Runs at the display's refresh while armed, so the fold's motion is
     /// the screen's own cadence — the sensor only moves the target.
@@ -336,15 +338,15 @@ final class FoldToy: Toy {
         lastDeltaTick = now
         predictor.tick(dt: dt, at: now)
         refreshDisplayFactsIfStale()
-        displayedTurn = FoldMath.smoothed(current: displayedTurn, target: targetTurn, dt: dt)
+        displayedDelta = FoldMath.smoothed(current: displayedDelta, target: targetDelta, dt: dt)
         let wantVisible = FoldMath.showsOverlay(
-            turn: displayedTurn, hasFrame: capture?.hasFrame ?? false)
+            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
         guard wantVisible else {
             overlay?.setVisible(false)
             // The link's only job is motion; fully at rest — gate shut
             // and the ease finished — it stands down until the next
             // reconcile arms it again.
-            if targetTurn == 0 && displayedTurn <= 0.002, let link = tickLink {
+            if targetDelta == 0 && displayedDelta <= 0.002, let link = tickLink {
                 link.invalidate()
                 tickLink = nil
             }
@@ -358,22 +360,24 @@ final class FoldToy: Toy {
             guard ensureOverlay() != nil else { return }
         }
         if let overlay {
-            // Adaptive disc density: sparse early where the radius is
-            // small, dense deep in the gesture where the matte is wide.
-            let samples: Float = displayedTurn < 0.2 ? 12 : displayedTurn < 0.6 ? 20 : 32
             let styleBlur: Double = switch settings.style {
             case .tilt: 0
             case .dusk: settings.blur * 0.45   // Dusk keeps a light matte
             case .fog: settings.blur
             }
-            overlay.renderer.params.turn = Float(displayedTurn)
-            overlay.renderer.params.blurStrength = reduceMotion ? 0 : Float(styleBlur)
-            overlay.renderer.params.motionBoost = reduceMotion ? 0
-                : FoldToy.velocityBlurBoost(predictor.velocity)
+            let blur = reduceMotion ? Float(0) : Float(styleBlur)
+            let boost = reduceMotion ? Float(0) : FoldToy.velocityBlurBoost(predictor.velocity)
+            // Adaptive disc density, keyed on the shader's own peak
+            // radius (the disc is widest at the far edge): sparse while
+            // the matte is thin, dense when it is wide.
+            let peakRadius = (blur * 65 + boost) * Float(sin(displayedDelta))
+            let samples: Float = peakRadius <= 6 ? 12 : peakRadius <= 20 ? 20 : 32
+            overlay.renderer.params.delta = Float(displayedDelta)
+            overlay.renderer.params.blurStrength = blur
+            overlay.renderer.params.motionBoost = boost
             overlay.renderer.params.dimStrength = settings.style == .tilt ? 0
                 : Float(settings.shade)
             overlay.renderer.params.persp = Float(settings.perspective)
-            overlay.renderer.params.reflection = 1
             overlay.renderer.params.samples = samples
             overlay.setVisible(true)
         }
@@ -438,9 +442,9 @@ final class FoldToy: Toy {
         Task { await capture.stop() }
     }
 
-    /// The raw reading always lands — `targetTurn` gates on it every
+    /// The raw reading always lands — `targetDelta` gates on it every
     /// tick, so a suppressed or predicted reading above the limit still
-    /// drives the turn to zero and the overlay eases home on the same
+    /// drives the delta to zero and the overlay eases home on the same
     /// glide the simulate slider gets — then the filter and predictor
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {

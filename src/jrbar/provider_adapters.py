@@ -32,6 +32,7 @@ from .provider_contracts import (
     SourceInstanceIdentifier,
 )
 from .provider_facts import (
+    DEVIN_SUBAGENT_WORK_PREFIX,
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -52,6 +53,7 @@ from .provider_facts import (
     WorkIdentifier,
     WorkKey,
     WorkLifecycle,
+    safe_label_is_valid,
 )
 
 MAX_PROVIDER_SEQUENCE: Final = (1 << 63) - 1
@@ -127,6 +129,14 @@ _CREDENTIAL_SHAPED_IDENTITY: Final = re.compile(
 # existing ledgers stay continuous across the JR-Bar migration.
 _CURSOR_CONVERSATION_HASH_DOMAIN: Final = b"sidepulse.cursor.conversation.v1\0"
 _ANTIGRAVITY_ENVELOPE_KEY: Final = "antigravity"
+# Devin CLI sub-agents only appear as `run_subagent`/`sidekick` tool calls on
+# the parent session -- there is no SubagentStart/SubagentStop hook. The
+# synthetic work id is stateless by construction: the same tool call's
+# PostToolUse must hash to the same worker without any shared ledger.
+_DEVIN_SIDEKICK_AGENT_ID: Final = "sub-sidekick"
+_DEVIN_SUBAGENT_DIGEST_LENGTH: Final = 12
+_DEVIN_WORKER_LABEL_CAP: Final = 96
+_MAX_SAFE_LABEL_BOUND: Final = 128
 
 
 class ProviderAdapterValidationError(ValueError):
@@ -189,8 +199,11 @@ class NormalizedProviderRecord:
             and _optional_exact(self.provider_work_id, WorkIdentifier)
             and _optional_exact(self.provider_request_id, RequestIdentifier)
             and _optional_exact(self.parent_work_id, WorkIdentifier)
-            and type(self.safe_label) is str
-            and self.safe_label == _safe_label(self.source_key, self.provider_work_id)
+            and safe_label_is_valid(
+                self.source_key,
+                self.provider_work_id,
+                self.safe_label,
+            )
             and _optional_exact(self.notification_kind, NotificationKind)
             and sequence_valid
             and type(self.terminal_cause) is ProviderTerminalCause
@@ -452,6 +465,11 @@ _PROVIDER_EVENT_RULES: Final[dict[str, dict[str, _EventRule]]] = {
         "PermissionRequest": _PERMISSION_REQUEST,
         "PostCompaction": _POST_COMPACT,
         "PostCompact": _POST_COMPACT,
+        # Devin CLI emits no subagent events of its own -- the canonical
+        # names are what a replayed normalized record arrives as, so the
+        # table must still name them for it to reduce again.
+        "SubagentStart": _SUBAGENT_START,
+        "SubagentStop": _SUBAGENT_STOP,
         "Stop": _STOP,
         "SessionEnd": _SESSION_END,
     },
@@ -704,6 +722,41 @@ def _safe_label(source_key: SourceKey, work_id: WorkIdentifier | None) -> str:
     return f"{provider_label} {work_id.value}"
 
 
+def _devin_worker_label(record: HookEvent) -> str | None:
+    """The one bounded piece of content a Devin worker row carries.
+
+    ``sidekick`` has no title of its own; ``run_subagent``'s title is the
+    name the user gave the sub-agent. It is sanitized to the same bound
+    the canonical work applies -- printable, capped -- and an empty or
+    missing title falls back to the opaque ``Devin <work id>`` label.
+    """
+    tool = _devin_tool_name(record)
+    if tool == "sidekick":
+        return "Sidekick"
+    if tool != "run_subagent":
+        return None
+    tool_input = _devin_tool_input(record)
+    title = tool_input.get("title") if tool_input is not None else None
+    if type(title) is not str:
+        return None
+    text = "".join(char for char in " ".join(title.split()) if char.isprintable())
+    text = text[:_DEVIN_WORKER_LABEL_CAP].rstrip()
+    return text or None
+
+
+def _devin_persisted_label(record: HookEvent, fallback: str) -> str | None:
+    """A replayed normalized record no longer carries ``tool_input``; the
+    safe label it was persisted with is the title the start event chose."""
+    if type(record.raw) is not dict:
+        return None
+    stored = record.raw.get("safe_label")
+    if type(stored) is not str or not stored or stored == fallback:
+        return None
+    if not stored.isprintable() or len(stored) > _MAX_SAFE_LABEL_BOUND:
+        return None
+    return stored
+
+
 def _diagnostic(identifier: str) -> ProviderFactDiagnostic:
     return ProviderFactDiagnostic(DiagnosticIdentifier(identifier), 1)
 
@@ -817,6 +870,21 @@ def _antigravity_work_identity(record: HookEvent) -> tuple[bool, WorkIdentifier 
     return True, _work_identifier(envelope["conversationId"])
 
 
+def _devin_effective_agent_id(record: HookEvent) -> str | None:
+    return (
+        record.agent_id
+        if record.agent_id is not None
+        else _devin_subagent_agent_id(record)
+    )
+
+
+def _devin_work_identity(record: HookEvent) -> tuple[bool, WorkIdentifier | None]:
+    work_value = _devin_effective_agent_id(record)
+    if work_value is None:
+        work_value = record.session_id
+    return True, _work_identifier(work_value)
+
+
 def _provider_work_identity(
     provider: str,
     record: HookEvent,
@@ -827,6 +895,8 @@ def _provider_work_identity(
         return _hermes_work_identity(record)
     if provider == "antigravity":
         return _antigravity_work_identity(record)
+    if provider == "devin":
+        return _devin_work_identity(record)
     work_value = record.agent_id if record.agent_id is not None else record.session_id
     return True, _work_identifier(work_value)
 
@@ -1110,6 +1180,76 @@ def _antigravity_event_rule(record: HookEvent) -> tuple[_EventRule | None, str |
     return _STOP_INCOMPLETE, None
 
 
+def _devin_tool_name(record: HookEvent) -> str | None:
+    name = record.tool_name
+    if type(name) is str:
+        return name
+    if type(record.raw) is dict:
+        raw_name = record.raw.get("tool_name")
+        return raw_name if type(raw_name) is str else None
+    return None
+
+
+def _devin_tool_input(record: HookEvent) -> dict[object, object] | None:
+    if type(record.raw) is not dict:
+        return None
+    value = record.raw.get("tool_input")
+    return value if type(value) is dict else None
+
+
+def _devin_subagent_agent_id(record: HookEvent) -> str | None:
+    """The synthetic work id a Devin sub-agent tool call stands for.
+
+    A foreground ``run_subagent`` call is the worker's whole lifespan:
+    PreToolUse opens it, the matching PostToolUse closes it. A backgrounded
+    call's PostToolUse is only the PARENT finishing its launch -- the
+    worker runs on until the session ends -- so that record keeps the
+    parent identity. ``resume`` names an existing agent, so it outranks
+    the title as the hash input (a resumed call maps back onto the worker
+    it continues). A call with neither handle cannot produce an id that a
+    later record could ever reproduce, so it stays a plain parent event.
+    """
+    if record.provider != "devin":
+        return None
+    if record.event_name not in {"PreToolUse", "PostToolUse"}:
+        return None
+    tool = _devin_tool_name(record)
+    if tool == "sidekick":
+        return _DEVIN_SIDEKICK_AGENT_ID
+    if tool != "run_subagent":
+        return None
+    tool_input = _devin_tool_input(record)
+    if (
+        record.event_name == "PostToolUse"
+        and tool_input is not None
+        and tool_input.get("is_background")
+    ):
+        return None
+    handle = None
+    if tool_input is not None:
+        resume = tool_input.get("resume")
+        if type(resume) is str and resume:
+            handle = resume
+        else:
+            title = tool_input.get("title")
+            if type(title) is str and title:
+                handle = title
+    if handle is None or type(record.session_id) is not str or not record.session_id:
+        return None
+    digest = hashlib.sha256(f"{record.session_id}:{handle}".encode()).hexdigest()
+    return f"{DEVIN_SUBAGENT_WORK_PREFIX}{digest[:_DEVIN_SUBAGENT_DIGEST_LENGTH]}"
+
+
+def _devin_event_rule(record: HookEvent) -> tuple[_EventRule | None, str | None]:
+    rules = _PROVIDER_EVENT_RULES["devin"]
+    rule = rules.get(record.event_name)
+    if _devin_subagent_agent_id(record) is None:
+        return rule, None
+    if record.event_name == "PreToolUse":
+        return _SUBAGENT_START, None
+    return _SUBAGENT_STOP, None
+
+
 def _provider_event_rule(record: HookEvent) -> tuple[_EventRule | None, str | None]:
     if record.provider == "cursor":
         return _cursor_event_rule(record)
@@ -1117,6 +1257,8 @@ def _provider_event_rule(record: HookEvent) -> tuple[_EventRule | None, str | No
         return _hermes_event_rule(record)
     if record.provider == "antigravity":
         return _antigravity_event_rule(record)
+    if record.provider == "devin":
+        return _devin_event_rule(record)
     return _PROVIDER_EVENT_RULES.get(record.provider, {}).get(record.event_name), None
 
 
@@ -1157,7 +1299,12 @@ def minimize_hook_event(
     if not identity_valid:
         return _inert(source_key, occurred_at, "invalid_provider_identity")
     parent_id = None
-    if record.agent_id is not None:
+    agent_id = record.agent_id
+    if agent_id is None and source_key.provider_id == "devin":
+        # The synthetic worker id doubles as the signal that this record
+        # belongs under the session that spawned it.
+        agent_id = _devin_subagent_agent_id(record)
+    if agent_id is not None:
         candidate_parent = _work_identifier(record.session_id)
         if candidate_parent != work_id:
             parent_id = candidate_parent
@@ -1183,6 +1330,17 @@ def minimize_hook_event(
         )
         if notification_present and notification_kind is None:
             return _inert(source_key, occurred_at, "unknown_notification_kind")
+    safe_label = _safe_label(source_key, work_id)
+    if (
+        source_key.provider_id == "devin"
+        and work_id is not None
+        and work_id.value.startswith(DEVIN_SUBAGENT_WORK_PREFIX)
+    ):
+        safe_label = (
+            _devin_worker_label(record)
+            or _devin_persisted_label(record, safe_label)
+            or safe_label
+        )
     return NormalizedProviderRecord(
         source_key=source_key,
         event_name=rule.event_name,
@@ -1191,7 +1349,7 @@ def minimize_hook_event(
         provider_work_id=work_id,
         provider_request_id=request_id,
         parent_work_id=parent_id,
-        safe_label=_safe_label(source_key, work_id),
+        safe_label=safe_label,
         notification_kind=notification_kind,
         sequence=sequence,
         terminal_cause=(

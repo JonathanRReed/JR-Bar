@@ -54,22 +54,21 @@ final class NotchBuddyToy: Toy {
 
     var status: ToyStatus { isOn ? .on : .off }
 
-    /// "dot" is the only character so far; the enum is left open.
     var controls: AnyView {
-        AnyView(
-            Picker(selection: character) {
-                Text("Dot").tag("dot")
-            } label: {
-                SettingLabel(title: "Character", subtitle: "The one resident for now.")
-            }
-            .pickerStyle(.menu)
-            .fixedSize()
-        )
+        AnyView(BuddyControlsView(toy: self))
     }
 
-    private var character: Binding<String> {
-        Binding(get: { self.store?.state.notchBuddy.character ?? "dot" },
-                set: { self.store?.state.notchBuddy.character = $0 })
+    /// The roster pick, resolved through the settings' fallback — a file
+    /// from a newer build keeps its string and reads as Dot here.
+    var buddyCharacter: BuddyCharacter {
+        store?.state.notchBuddy.resolvedCharacter ?? .dot
+    }
+
+    /// A binding into `store.state.notchBuddy.character` as the enum;
+    /// the file keeps the raw string.
+    var characterBinding: Binding<BuddyCharacter> {
+        Binding(get: { self.buddyCharacter },
+                set: { self.store?.state.notchBuddy.character = $0.rawValue })
     }
 
     // MARK: Mood
@@ -108,6 +107,58 @@ final class NotchBuddyToy: Toy {
             provider = session.provider
         }
         return provider
+    }
+
+    /// Live counts, reduced exactly the way the mood is — the badge and
+    /// the "!" read these, so they can never disagree with the pose.
+    private var activityCounts: (working: Int, waiting: Int, failed: Int) {
+        var working = 0, waiting = 0, failed = 0
+        for session in core.sessions {
+            switch SessionActivity.reduce(session) {
+            case .working: working += 1
+            case .waiting: waiting += 1
+            case .failed: failed += 1
+            case .done, .ended, .idle: break
+            }
+        }
+        return (working, waiting, failed)
+    }
+
+    /// Sessions doing work — the feet badge's number once it's plural.
+    var workingCount: Int { activityCounts.working }
+    /// Asks open right now — the "!" wears the count past one.
+    var waitingCount: Int { activityCounts.waiting }
+
+    /// The provider running the most working sessions — the badge's
+    /// tint. Unlike `workingProvider` a split house still answers.
+    var dominantProvider: String? {
+        var tally: [String: Int] = [:]
+        for session in core.sessions where SessionActivity.reduce(session) == .working {
+            tally[session.provider, default: 0] += 1
+        }
+        return tally.max(by: { $0.value < $1.value })?.key
+    }
+
+    /// The hover line: "3 working · 1 waiting · Codex, Claude" — the
+    /// counts first, then who's on the clock. Reads `core.sessions`
+    /// only; the daemon is never asked for anything extra.
+    var statusLine: String {
+        let counts = activityCounts
+        var parts: [String] = []
+        if counts.working > 0 { parts.append("\(counts.working) working") }
+        if counts.waiting > 0 { parts.append("\(counts.waiting) waiting") }
+        if counts.failed > 0 { parts.append("\(counts.failed) failed") }
+        var names: [String] = []
+        for session in core.sessions {
+            switch SessionActivity.reduce(session) {
+            case .working, .waiting, .failed:
+                let name = ProviderStyle.style(for: session.provider).name
+                if !names.contains(name) { names.append(name) }
+            case .done, .ended, .idle: break
+            }
+        }
+        if !names.isEmpty { parts.append(names.joined(separator: ", ")) }
+        return parts.isEmpty ? "Nobody's running — it's asleep." : parts.joined(separator: " · ")
     }
 
     /// What the buddy is doing, in `SessionActivity`'s precedence: a live
@@ -151,5 +202,60 @@ final class NotchBuddyToy: Toy {
                 self.observeSessions()
             }
         }
+    }
+}
+
+/// The card's disclosure body: the roster picker (a menu, like the Fold
+/// card's "Render with") plus a live strip — every buddy pacing in
+/// place, the picked one lit, tap to choose.
+private struct BuddyControlsView: View {
+    let toy: NotchBuddyToy
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker(selection: toy.characterBinding) {
+                ForEach(BuddyCharacter.allCases, id: \.self) { c in
+                    Text(c.displayName).tag(c)
+                }
+            } label: {
+                SettingLabel(title: "Character", subtitle: "Who lives in your notch.")
+            }
+            .pickerStyle(.menu)
+            .fixedSize()
+
+            roster
+        }
+    }
+
+    /// One cell per character, all on the same clock, all in the idle
+    /// patrol pose. Reduce Motion stills the strip — pose stays.
+    private var roster: some View {
+        TimelineView(.animation) { context in
+            HStack(spacing: 5) {
+                ForEach(BuddyCharacter.allCases, id: \.self) { c in
+                    cell(c, at: context.date)
+                }
+            }
+        }
+    }
+
+    private func cell(_ c: BuddyCharacter, at now: Date) -> some View {
+        let selected = toy.characterBinding.wrappedValue == c
+        return BuddyFigure(character: c, mood: .pacing, tint: .accentColor,
+                           phase: now.timeIntervalSince1970, hopProgress: nil,
+                           waveAge: nil, slumpAge: nil, leans: false,
+                           still: reduceMotion, askCount: 0)
+            .frame(width: 18, height: 18)
+            .padding(4)
+            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(selected ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(selected ? Color.accentColor.opacity(0.7) : .clear, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .onTapGesture { toy.characterBinding.wrappedValue = c }
+            .help("\(c.displayName) — \(c.blurb)")
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("\(c.displayName)\(selected ? ", selected" : "")")
     }
 }

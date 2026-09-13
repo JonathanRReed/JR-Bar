@@ -2,36 +2,38 @@ import Foundation
 import Testing
 @testable import JRBarCore
 
-/// FoldMath is the pure half of the Fold toy (docs/TOYS.md): the
-/// normalized turn the lid's gesture maps to, the α–β predictor that
+/// FoldMath is the pure half of the Fold toy (docs/TOYS.md): the real
+/// lid delta the held plane counter-rotates by, the α–β predictor that
 /// makes the fold lead the finger, which sensor readings are worth a
 /// redraw, and which safety input names the pause. `#expect` cannot hold
 /// a mutating call, so the predictor's answers are collected first.
 @Suite("Fold math")
 struct FoldMathTests {
-    @Test("at the activation angle the turn is zero — the overlay is pixel-identical")
+    @Test("at the reference angle the delta is zero — the overlay is pixel-identical")
     func atAnchor() {
-        #expect(FoldMath.normalizedTurn(angle: 82, start: 82) == 0)
-        #expect(FoldMath.normalizedTurn(angle: 100, start: 82) == 0,
-                "above the start there is no fold at all")
+        #expect(FoldMath.deltaRadians(angle: 82, reference: 82) == 0)
+        #expect(FoldMath.deltaRadians(angle: 100, reference: 82) == 0,
+                "above the reference there is no fold at all")
     }
 
-    @Test("turn grows linearly across the range and completes at the end")
-    func turnRange() {
-        let half = FoldMath.normalizedTurn(angle: 45, start: 82, end: 8)
-        #expect(abs(half - 0.5) < 1e-9)
-        #expect(FoldMath.normalizedTurn(angle: 8, start: 82, end: 8) == 1)
-        #expect(FoldMath.normalizedTurn(angle: 0, start: 82, end: 8) == 1,
-                "fully closed is fully folded")
-        #expect(FoldMath.normalizedTurn(angle: 20, start: 82, end: 8)
-                > FoldMath.normalizedTurn(angle: 60, start: 82, end: 8))
+    @Test("the delta is the real lid travel in radians, clamped at the stable arc")
+    func deltaRange() {
+        let ten = FoldMath.deltaRadians(angle: 72, reference: 82)
+        #expect(abs(ten - 10 * .pi / 180) < 1e-9, "10° of travel is 10° of delta")
+        #expect(abs(FoldMath.deltaRadians(angle: 60, reference: 82)
+                    - 22 * .pi / 180) < 1e-9)
+        // The clamp lands past ~71.6° of travel — 82° worth is over it.
+        #expect(FoldMath.deltaRadians(angle: 0, reference: 82) == 1.25)
+        #expect(FoldMath.deltaRadians(angle: 5, reference: 82) == 1.25)
+        #expect(FoldMath.deltaRadians(angle: 20, reference: 82)
+                > FoldMath.deltaRadians(angle: 70, reference: 82))
     }
 
-    @Test("a nonsense angle or inverted range gives a zero turn rather than exploding")
+    @Test("a nonsense angle or reference gives a zero delta rather than exploding")
     func nonFinite() {
-        #expect(FoldMath.normalizedTurn(angle: .nan, start: 82) == 0)
-        #expect(FoldMath.normalizedTurn(angle: .infinity, start: 82) == 0)
-        #expect(FoldMath.normalizedTurn(angle: 50, start: 8, end: 82) == 0)
+        #expect(FoldMath.deltaRadians(angle: .nan, reference: 82) == 0)
+        #expect(FoldMath.deltaRadians(angle: .infinity, reference: 82) == 0)
+        #expect(FoldMath.deltaRadians(angle: 50, reference: .nan) == 0)
     }
 
     @Test("the activation gate reads the raw angle, at or below the limit")
@@ -42,17 +44,21 @@ struct FoldMathTests {
         #expect(!FoldMath.allows(rawAngle: .nan, activation: 82))
     }
 
-    @Test("the overlay only shows with a frame and a visible turn")
+    @Test("the overlay only shows with a frame and a visible delta")
     func overlayGate() {
-        #expect(FoldMath.showsOverlay(turn: 0.01, hasFrame: true))
-        #expect(!FoldMath.showsOverlay(turn: 0.001, hasFrame: true),
+        #expect(FoldMath.showsOverlay(delta: 0.01, hasFrame: true))
+        #expect(!FoldMath.showsOverlay(delta: 0.001, hasFrame: true),
                 "aligned paints nothing")
-        #expect(!FoldMath.showsOverlay(turn: 0.5, hasFrame: false),
+        #expect(!FoldMath.showsOverlay(delta: 0.5, hasFrame: false),
                 "no captured frame, no overlay")
     }
 
-    @Test("the eased turn approaches its target and snaps on bad input")
+    @Test("the eased delta closes ~63% of the gap per 80 ms and snaps on bad input")
     func smoothing() {
+        // The 80 ms time constant is the reference cadence: one τ in,
+        // 1 − 1/e of the way there.
+        let oneTau = FoldMath.smoothed(current: 0, target: 1, dt: 0.08)
+        #expect(abs(oneTau - (1 - exp(-1))) < 1e-9)
         let stepped = FoldMath.smoothed(current: 0, target: 1, dt: 0.033)
         #expect(stepped > 0 && stepped < 1, "one tick moves partway")
         let more = FoldMath.smoothed(current: stepped, target: 1, dt: 0.5)

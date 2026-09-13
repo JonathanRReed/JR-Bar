@@ -4,6 +4,36 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.8 (unreleased)
 
+- Devin sub-agents are tracked. Devin CLI fires no subagent hooks, so
+  the daemon now derives workers from the parent's `run_subagent` and
+  `sidekick` tool calls: PreToolUse opens a worker under the session
+  (labelled with the sub-agent's title, or "Sidekick"), the matching
+  foreground PostToolUse closes it, and the parent's Stop/SessionEnd
+  retires any background workers still running. One Devin session with
+  three helpers now reads as one main plus three workers — in the panel,
+  the light, and as a school of fry in the Aquarium.
+- Notch Buddy grew a roster: Dot (redrawn — gradient-lit, catchlight
+  eyes, a mouth that changes with mood), Cat, Ghost, Robot, Owl and
+  Slime, all sharing one skeleton; a picker with a live preview strip;
+  and an info layer — a count pill at the buddy's feet while 2+ sessions
+  work, "!2" when more than one ask is open, and a hover line
+  ("3 working · 1 waiting · Codex, Claude").
+- Aquarium looks like water now: layered gradient with a caustic surface
+  band and meniscus, soft swaying god rays, vignette and glass highlight;
+  a dune sand bed with speckle and back-wall depth; kelp ribbons, sea
+  grass, two coral types, shaded rocks, a proper chest, shells, a sunken
+  bottle; scattered two-depth plankton; countershaded fish with eye
+  catchlights, translucent fins and a sand shadow; a resident jellyfish
+  and a quiet caption instead of "Nothing swimming yet".
+- Confetti: the weekly-reset burst is tunable — Landing (rest on the
+  strip / rain to the bottom edge / dissolve mid-air), Palette
+  (provider / Toys tint / rainbow), Shapes, Density and Duration; the
+  overlay's height and lifetime now follow the mode and the slowest
+  piece's own travel.
+- Fold: back to the physical plane-hold model — the held desktop
+  counter-rotates by the real lid delta again (the v3 bounded-arc
+  shader with its sheen/seam/void/close-fade decorations is gone);
+  blur and shading follow sin(tilt)·height; 80 ms easing.
 - Four new provider animations ported from the upstream SidePulse
   animation catalog: **Ember** (a centre-hot idle swell — the upstream
   idle-pulse gradient), **Bloom** (a centre-out spread — the lid-open

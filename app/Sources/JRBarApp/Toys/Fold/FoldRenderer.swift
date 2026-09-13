@@ -27,11 +27,11 @@ enum FoldRendererError: LocalizedError {
     }
 }
 
-/// One Metal pipeline that draws the fold as the iPhone-Duo gesture it
-/// is modeled on: the captured desktop is a rigid plane still standing
-/// at its captured angle while the physical lid swings under it, on a
-/// bounded 0…1 `turn` arc that ends in a designed fade to void rather
-/// than an ever-steeper tilt.
+/// One Metal pipeline that draws the fold as the physical gesture it
+/// is: the captured desktop is a rigid plane still standing at the
+/// activation angle while the physical lid swings under it. `delta` is
+/// the real lid travel in radians, so the held plane counter-rotates by
+/// exactly what the hinge moved — that identity is the whole illusion.
 ///
 /// Frames arrive as IOSurface-backed buffers and land in a private,
 /// mipmapped texture via a GPU blit — the matte blur reads real mip
@@ -42,21 +42,20 @@ enum FoldRendererError: LocalizedError {
 /// failure throws from `init`, which the toy reports once as "Fold can't
 /// start its renderer".
 final class FoldRenderer: NSObject, @unchecked Sendable {
-    /// Per-draw uniforms. `turn` is the normalized fold gesture (0 at
-    /// the activation angle, 1 fully closed). `blurStrength`/`dimStrength`
-    /// carry the style, `persp` blends orthographic hold into finite-eye
-    /// keystone, `samples` adapts the blur disc to the gesture, and
-    /// `motionBoost` (in blur-radius units) is the velocity term that
-    /// keeps fast slams silky instead of stepping.
+    /// Per-draw uniforms. `delta` is the lid's travel past the reference
+    /// angle, in radians (0 at activation, clamped at 1.25).
+    /// `blurStrength`/`dimStrength` carry the style, `persp` blends the
+    /// parallel hold into finite-eye keystone, `samples` adapts the blur
+    /// disc to the radius, and `motionBoost` (in blur-radius units) is
+    /// the velocity term that keeps fast slams silky instead of stepping.
     struct Params {
         var cover: SIMD2<Float> = .init(1, 1)
         var imageSize: SIMD2<Float> = .init(1, 1)
-        var turn: Float = 0
+        var delta: Float = 0
         var aspect: Float = 1.6
         var texAspect: Float = 1.6
         var blurStrength: Float = 0
         var dimStrength: Float = 0
-        var reflection: Float = 1
         var persp: Float = 1
         var samples: Float = 20
         var motionBoost: Float = 0
@@ -152,11 +151,12 @@ final class FoldRenderer: NSObject, @unchecked Sendable {
     }
 
     /// The fold shader: a fullscreen triangle plus a fragment that
-    /// treats the captured desktop as a rigid plane holding its angle.
-    /// At `turn == 0` it early-outs to a plain sample — activating is
-    /// pixel-identical, so there is nothing to perceive. The projection
-    /// is bounded by construction (the denominator can never reach the
-    /// eye), so every point of the gesture is numerically stable.
+    /// treats the captured desktop as a rigid plane holding the
+    /// activation angle while the lid tilts `delta` radians under it.
+    /// At `delta == 0` it early-outs to a plain sample — activating is
+    /// pixel-identical, so there is nothing to perceive. The finite eye
+    /// is clamped away from the plane (`max(0.25, …)`), so every point
+    /// of the gesture is numerically stable.
     private static let shaderSource = """
 #include <metal_stdlib>
 using namespace metal;
@@ -164,12 +164,11 @@ using namespace metal;
 struct FoldParams {
     float2 cover;
     float2 imageSize;
-    float turn;
+    float delta;
     float aspect;
     float texAspect;
     float blurStrength;
     float dimStrength;
-    float reflection;
     float persp;
     float samples;
     float motionBoost;
@@ -195,31 +194,31 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
                              texture2d<float> frame [[texture(0)]],
                              constant FoldParams &p [[buffer(0)]],
                              sampler sampl [[sampler(0)]]) {
-    float turn = clamp(p.turn, 0.0, 1.0);
-    if (turn < 0.0005) { return frame.sample(sampl, in.uv); }
+    float a = clamp(p.delta, 0.0, 1.25);
+    if (a < 0.0005) { return frame.sample(sampl, in.uv); }
     float h = 1.0 - in.uv.y;   // 0 at the hinge (bottom), 1 at the far edge
 
-    // The held plane: bend grows with the gesture but is capped near
-    // 48° — the Duo arc stays composed instead of keeling over.
-    float bend = pow(turn, 1.18) * 0.84;
-    float invAspect = 1.0 / p.aspect;
-    float eye = 3.2 * invAspect;
-    float depth = h * 0.8 * invAspect * sin(bend);
-    float proj = eye / max(eye - depth, 1e-3);
-    // persp 0 is the orthographic hold (cos compression, no taper);
-    // persp 1 is the full finite-eye keystone.
-    float taper = mix(1.0, proj, p.persp);
-    float vmap = mix(cos(bend), 1.0 / proj, p.persp);
-    float2 uv = float2(0.5 + (in.uv.x - 0.5) / taper, 1.0 - h * vmap);
+    // The held plane, in screen heights with the hinge at y = 0: the
+    // desktop as it stood at activation, counter-rotated by the real
+    // lid delta so it stays put in space. persp 0 is the parallel hold
+    // (t = 1: pure cos compression, no taper); persp 1 is the full
+    // finite-eye keystone from (0, 0.65, 1.6).
+    float3 physical = float3((in.uv.x - 0.5) * p.aspect, h * cos(a), h * sin(a));
+    float3 eye = float3(0.0, 0.65, 1.6);
+    float tPersp = eye.z / max(0.25, eye.z - physical.z);
+    float t = mix(1.0, tPersp, p.persp);
+    float3 hit = eye + t * (physical - eye);
+    float2 uv = float2(hit.x / p.aspect + 0.5, 1.0 - hit.y);
     uv = (uv - 0.5) * p.cover + 0.5;
 
     // The matte disc: radius grows toward the far edge and with the
-    // gesture, plus a velocity term so fast closes smear the way real
-    // glass does. Vogel rings — golden-angle spiral, area-uniform —
-    // sample real mip levels as they widen, so the blur is continuous
-    // instead of a stack of discrete strengths.
-    float matte = smoothstep(0.06, 1.0, h) * smoothstep(0.0, 0.30, turn);
-    float radPx = (p.blurStrength * 34.0 + p.motionBoost) * pow(turn, 0.72) * matte;
+    // real tilt — physical defocus, not a gesture curve — plus a
+    // velocity term so fast closes smear the way real glass does.
+    // Vogel rings (golden-angle spiral, area-uniform) sample real mip
+    // levels as they widen, so the blur is continuous instead of a
+    // stack of discrete strengths.
+    float radPx = (p.blurStrength * 65.0 + p.motionBoost)
+                * smoothstep(0.08, 1.0, h) * sin(a);
     float3 color;
     if (radPx < 0.5) {
         color = frame.sample(sampl, uv).rgb;
@@ -243,33 +242,59 @@ fragment float4 foldFragment(FoldOut in [[stage_in]],
         color = sum / weight;
     }
 
-    // Glass: a tilted glossy panel dims as it turns, catches a sheen
-    // band above the hinge, and seams bright right at the fold line.
-    color *= 1.0 - pow(turn, 1.2) * pow(h, 1.5) * 0.22;
-    float sheen = exp(-pow((h - 0.62) * 2.6, 2.0)) * pow(turn, 1.4) * 0.09 * p.reflection;
-    color += sheen;
-    float seam = (1.0 - smoothstep(0.0, 0.045, h)) * smoothstep(0.02, 0.2, turn);
-    color += seam * 0.07 * p.reflection;
-
-    // The void beyond the held plane, then the gesture's final close —
-    // the last tenth of the arc finishes to near-black, so a full close
-    // reads as the display switching off, not the image vanishing.
-    float3 voidColor = float3(0.018, 0.028, 0.045);
-    float voidStart = 0.55 - 0.08 * turn;
-    float voidFade = smoothstep(voidStart, 1.0, h) * pow(turn, 1.1) * p.dimStrength;
-    color = mix(color, voidColor, clamp(voidFade, 0.0, 1.0));
-    float closeFade = smoothstep(0.88, 1.0, turn);
-    color = mix(color, float3(0.004, 0.005, 0.008), closeFade);
+    // A tilted plane catches less light toward its far edge: gentle
+    // shading that scales with the real tilt, nothing else painted.
+    color *= 1.0 - p.dimStrength * smoothstep(0.0, 1.0, h) * sin(a) * 0.5;
 
     // Where the projection leaves the captured image there is only
-    // void — feathered over a few pixels, never a razor clip.
-    float edge = smoothstep(-0.006, 0.006, uv.x)
-               * (1.0 - smoothstep(1.0 - 0.006, 1.0 + 0.006, uv.x))
-               * smoothstep(-0.009, 0.009, uv.y)
-               * (1.0 - smoothstep(1.0 - 0.009, 1.0 + 0.009, uv.y));
-    return float4(mix(voidColor, color, edge), 1.0);
+    // void — feathered over the blur's own sigma, never a razor clip.
+    float2 feather = max(3.0 * radPx / p.imageSize, fwidth(uv));
+    float2 coverage = smoothstep(-feather, feather, uv)
+                    * (1.0 - smoothstep(1.0 - feather, 1.0 + feather, uv));
+    float mask = coverage.x * coverage.y;
+    return float4(mix(float3(0.02, 0.035, 0.05), color, mask), 1.0);
 }
 """
+
+    /// The one encode both draw paths share: uniforms from `params`,
+    /// aspect/cover fitted to the drawable, one fullscreen triangle.
+    private func encodeFold(into encoder: MTLRenderCommandEncoder,
+                            source: MTLTexture, aspect: CGFloat) {
+        var p = params
+        p.aspect = Float(aspect)
+        let cx = max(1, p.aspect / p.texAspect)
+        let cy = max(1, p.texAspect / p.aspect)
+        p.cover = .init(cx, cy)
+        encoder.setRenderPipelineState(pipeline)
+        encoder.setFragmentTexture(source, index: 0)
+        encoder.setFragmentSamplerState(sampler, index: 0)
+        encoder.setFragmentBytes(&p, length: MemoryLayout<Params>.stride, index: 0)
+        encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+    }
+
+    /// Renders the held plane into an offscreen texture — the proof
+    /// harness and tests draw without an MTKView. Synchronous: waits
+    /// for the GPU before returning, and returns false on any failure.
+    @discardableResult
+    func render(to target: MTLTexture, size: CGSize) -> Bool {
+        guard let source = desktopTexture,
+              let command = queue.makeCommandBuffer() else { return false }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        // The shader only paints where the held plane covers; the clear
+        // colour is the same void the fragment mixes in at the edge.
+        pass.colorAttachments[0].clearColor =
+            MTLClearColor(red: 0.02, green: 0.035, blue: 0.05, alpha: 1)
+        guard let encoder = command.makeRenderCommandEncoder(descriptor: pass) else { return false }
+        encodeFold(into: encoder, source: source,
+                   aspect: size.width / max(1, size.height))
+        encoder.endEncoding()
+        command.commit()
+        command.waitUntilCompleted()
+        return command.status == .completed
+    }
 }
 
 extension FoldRenderer: MTKViewDelegate {
@@ -286,16 +311,8 @@ extension FoldRenderer: MTKViewDelegate {
                 inFlight.signal()
                 return
             }
-            var p = params
-            p.aspect = Float(view.drawableSize.width / max(1, view.drawableSize.height))
-            let cx = max(1, p.aspect / p.texAspect)
-            let cy = max(1, p.texAspect / p.aspect)
-            p.cover = .init(cx, cy)
-            encoder.setRenderPipelineState(pipeline)
-            encoder.setFragmentTexture(source, index: 0)
-            encoder.setFragmentSamplerState(sampler, index: 0)
-            encoder.setFragmentBytes(&p, length: MemoryLayout<Params>.stride, index: 0)
-            encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            encodeFold(into: encoder, source: source,
+                       aspect: view.drawableSize.width / max(1, view.drawableSize.height))
             encoder.endEncoding()
             command.present(drawable)
             command.addCompletedHandler { [inFlight] _ in

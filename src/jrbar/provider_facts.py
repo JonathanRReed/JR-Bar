@@ -421,6 +421,38 @@ def _expected_safe_label(key: WorkKey) -> str:
     return f"{provider_label} {key.work_id.value}"
 
 
+# Devin CLI has no subagent lifecycle events: a sub-agent only exists as a
+# ``run_subagent``/``sidekick`` tool call on the parent session, so the
+# adapter gives each one a synthetic ``sub-*`` work id. That worker's label
+# is the one place this pipeline carries free text -- the sub-agent's own
+# title is the only human handle Devin gives it.
+DEVIN_SUBAGENT_WORK_PREFIX: Final = "sub-"
+_MAX_SAFE_LABEL_LENGTH: Final = 128
+
+
+def safe_label_is_valid(
+    source_key: SourceKey,
+    work_id: WorkIdentifier | None,
+    label: object,
+) -> bool:
+    """``Provider <work id>`` for every work, plus one narrow exception:
+    a Devin ``sub-*`` worker may carry its sub-agent's title instead, held
+    to the same bound the canonical work applies (printable, <= 128)."""
+    if type(label) is not str:
+        return False
+    provider_label = _PRODUCT_PROVIDER_LABELS.get(source_key.provider_id, "Provider")
+    expected = provider_label if work_id is None else f"{provider_label} {work_id.value}"
+    if label == expected:
+        return True
+    return (
+        source_key.provider_id == "devin"
+        and type(work_id) is WorkIdentifier
+        and work_id.value.startswith(DEVIN_SUBAGENT_WORK_PREFIX)
+        and 1 <= len(label) <= _MAX_SAFE_LABEL_LENGTH
+        and label.isprintable()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderWorkFact:
     key: WorkKey
@@ -441,7 +473,7 @@ class ProviderWorkFact:
             and type(self.terminal_cause) is ProviderTerminalCause
         ):
             raise ProviderFactValidationError("invalid work fact")
-        if type(self.safe_label) is not str or self.safe_label != _expected_safe_label(self.key):
+        if not safe_label_is_valid(self.key.source_key, self.key.work_id, self.safe_label):
             raise ProviderFactValidationError("invalid safe label")
         if self.parent_key is not None and (
             type(self.parent_key) is not WorkKey

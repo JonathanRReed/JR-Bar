@@ -193,6 +193,12 @@ public struct TankDecor: Equatable, Sendable, Identifiable {
         case coral
         case kelp
         case rock
+        /// A tuft of thin sea-grass blades.
+        case grass
+        /// A small scallop or spiral shell on the sand.
+        case shell
+        /// A bottle sunk to its shoulder.
+        case bottle
     }
 
     public var id: Int
@@ -363,7 +369,17 @@ public enum AquariumModel {
     /// between launches. The signature pieces come first, so a sparse
     /// `density` (the view draws a prefix) keeps them.
     public static func decorSet(seed: String = "tank") -> [TankDecor] {
-        func bits(_ tag: String) -> UInt64 { stableHash("\(seed).\(tag)") }
+        // FNV-1a's low bits barely change between tags that differ only
+        // in the last byte ("kelp-0"…"kelp-4"), which parked every
+        // strand on the same spot — run each tag's hash through a
+        // murmur-style finalizer so the pieces spread across the tank.
+        func bits(_ tag: String) -> UInt64 {
+            var h = stableHash("\(seed).\(tag)")
+            h ^= h >> 33
+            h &*= 0xff51afd7ed558ccd
+            h ^= h >> 33
+            return h
+        }
         func unit(_ b: UInt64, _ shift: UInt64) -> Double {
             Double((b >> shift) & 0xFFFF) / 0xFFFF
         }
@@ -375,8 +391,10 @@ public enum AquariumModel {
         }
 
         let chest = bits("chest")
+        // The chest starts past the empty-tank caption's capsule,
+        // which sits in the left ~30% of the bed.
         out.append(piece(.chest, "chest",
-                         x: 0.10 + unit(chest, 0) * 0.80,
+                         x: 0.34 + unit(chest, 0) * 0.58,
                          depth: 0.42,
                          scale: 0.85 + unit(chest, 16) * 0.4))
         let star = bits("starfish")
@@ -409,6 +427,38 @@ public enum AquariumModel {
                              x: 0.05 + unit(b, 0) * 0.90,
                              depth: 0.44 + unit(b, 16) * 0.12,
                              scale: 0.75 + unit(b, 32) * 0.5))
+        }
+        let grass = 2 + Int((counts >> 12) & 1)
+        for i in 0..<grass {
+            let b = bits("grass-\(i)")
+            out.append(piece(.grass, "grass-\(i)",
+                             x: 0.04 + unit(b, 0) * 0.92,
+                             depth: 0.42 + unit(b, 16) * 0.45,
+                             scale: 0.70 + unit(b, 32) * 0.6))
+        }
+        let shells = 2 + Int((counts >> 14) & 1)
+        for i in 0..<shells {
+            let b = bits("shell-\(i)")
+            out.append(piece(.shell, "shell-\(i)",
+                             x: 0.05 + unit(b, 0) * 0.90,
+                             depth: 0.50 + unit(b, 16) * 0.25,
+                             scale: 0.60 + unit(b, 32) * 0.5))
+        }
+        if (counts >> 20) & 1 == 1 {
+            let b = bits("bottle")
+            out.append(piece(.bottle, "bottle",
+                             x: 0.08 + unit(b, 0) * 0.84,
+                             depth: 0.38 + unit(b, 16) * 0.18,
+                             scale: 0.80 + unit(b, 32) * 0.4))
+        }
+        // Two tall near-glass plants so the tank always has a
+        // foreground; they draw over the fish as dark silhouettes.
+        for i in 0..<2 {
+            let b = bits("kelp-front-\(i)")
+            out.append(piece(.kelp, "kelp-front-\(i)",
+                             x: 0.08 + unit(b, 0) * 0.84,
+                             depth: 0.78 + unit(b, 16) * 0.18,
+                             scale: 1.15 + unit(b, 32) * 0.35))
         }
         return out
     }

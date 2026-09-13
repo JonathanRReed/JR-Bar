@@ -132,8 +132,9 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     }
 }
 
-/// Notch Buddy: the creature in the HUD panel. `character` names which
-/// one is drawn; "dot" is the only one so far and the enum is left open.
+/// Notch Buddy: the creature in the HUD panel. `character` is the
+/// `BuddyCharacter` raw value, stored as a plain string so a file from a
+/// newer build keeps its choice; anything unrecognised reads as `.dot`.
 public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var character: String
@@ -141,6 +142,13 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public init(enabled: Bool = false, character: String = "dot") {
         self.enabled = enabled
         self.character = character
+    }
+
+    /// The stored name as a `BuddyCharacter`; unknown strings (a newer
+    /// build's roster, a hand edit) fall back to `.dot` while the raw
+    /// value stays in the file.
+    public var resolvedCharacter: BuddyCharacter {
+        BuddyCharacter(rawValue: character) ?? .dot
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -154,23 +162,107 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     }
 }
 
+/// The Notch Buddy roster. All six share one skeleton — the same pose,
+/// blink and effects — and differ only in how the body is drawn. The
+/// raw value is what `NotchBuddySettings.character` stores.
+public enum BuddyCharacter: String, Codable, CaseIterable, Sendable {
+    /// The original soft blob.
+    case dot
+    /// Ears, whiskers and a tail with opinions.
+    case cat
+    /// A translucent hoverer with a wavy hem.
+    case ghost
+    /// A little machine: visor, LED mouth, an antenna that glows.
+    case robot
+    /// All eyes: they track the "!", tufts and wings that lift.
+    case owl
+    /// A gooey drop: jiggles, melts in the slump, sheds a droplet.
+    case slime
+
+    /// The picker's label.
+    public var displayName: String {
+        switch self {
+        case .dot: return "Dot"
+        case .cat: return "Cat"
+        case .ghost: return "Ghost"
+        case .robot: return "Robot"
+        case .owl: return "Owl"
+        case .slime: return "Slime"
+        }
+    }
+
+    /// One line for the preview cell's tooltip.
+    public var blurb: String {
+        switch self {
+        case .dot: return "The original blob."
+        case .cat: return "Ears, whiskers & a tail with opinions."
+        case .ghost: return "Floats. Mostly harmless."
+        case .robot: return "Antenna up, LEDs on."
+        case .owl: return "Sees everything. Especially asks."
+        case .slime: return "Mostly holds its shape."
+        }
+    }
+}
+
 /// Confetti: the weekly-quota-reset burst. The `onCompletion`/`onMilestone`
 /// fields an earlier contract carried are gone — unknown keys are ignored.
+/// Every setting's default is the shipped look, so a file from before
+/// they existed decodes to today's burst.
 public struct ConfettiSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
+    /// Where the pieces end up.
+    public var landing: ConfettiLanding
+    /// Piece-count multiplier, 0.5…2.
+    public var density: Double
+    /// Burst-length multiplier, 0.7…1.5 — stretches the whole timeline.
+    public var duration: Double
+    /// Whose colours the burst wears.
+    public var palette: ConfettiPalette
+    /// What the pieces are.
+    public var shapes: ConfettiShapes
 
-    public init(enabled: Bool = false) {
+    public init(enabled: Bool = false, landing: ConfettiLanding = .rest, density: Double = 1.0,
+                duration: Double = 1.0, palette: ConfettiPalette = .provider,
+                shapes: ConfettiShapes = .mixed) {
         self.enabled = enabled
+        self.landing = landing
+        self.density = density
+        self.duration = duration
+        self.palette = palette
+        self.shapes = shapes
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled
+        case enabled, landing, density, duration, palette, shapes
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        landing = (try? c.decodeIfPresent(ConfettiLanding.self, forKey: .landing)) ?? .rest
+        density = (try? c.decodeIfPresent(Double.self, forKey: .density)) ?? 1.0
+        duration = (try? c.decodeIfPresent(Double.self, forKey: .duration)) ?? 1.0
+        palette = (try? c.decodeIfPresent(ConfettiPalette.self, forKey: .palette)) ?? .provider
+        shapes = (try? c.decodeIfPresent(ConfettiShapes.self, forKey: .shapes)) ?? .mixed
     }
+}
+
+/// Where confetti ends up: resting as litter on the band floor, raining
+/// to the bottom edge of the screen, or dissolving mid-air.
+public enum ConfettiLanding: String, Codable, CaseIterable, Sendable {
+    case rest, fall, fade
+}
+
+/// Whose colours the burst wears: the resetting provider's, the Toys
+/// page tint, or a six-colour spectrum.
+public enum ConfettiPalette: String, Codable, CaseIterable, Sendable {
+    case provider, toys, rainbow
+}
+
+/// What the pieces are: the full mix, streamers only, or glyph flecks
+/// only.
+public enum ConfettiShapes: String, Codable, CaseIterable, Sendable {
+    case mixed, streamers, flecks
 }
 
 /// One app on the Toys page's external list. Identity is the bundle id:

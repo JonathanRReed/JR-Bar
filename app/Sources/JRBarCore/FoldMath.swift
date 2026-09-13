@@ -5,23 +5,16 @@ import Foundation
 /// pieces (`FoldToy`, `LidAngleSensor`, the overlay) only feed values in
 /// and act on what comes back.
 public enum FoldMath {
-    /// The fold gesture is a bounded arc, not an unbounded tilt: a
-    /// normalized 0…1 "turn" from the activation angle down to the
-    /// fully-folded angle. At 0 the projected image is the identity, so
-    /// activating is invisible; at 1 the arc completes as the lid shuts.
-    /// The sensor bottoms out a few degrees above a true zero — the end
-    /// sits just above the closed-lid pause (5°) so the arc finishes
-    /// right before the overlay parks.
-    public static let foldEndAngle: Double = 8
-
-    /// Turn 0…1 across the closing range. Linear in angle — the easing
-    /// lives on the displayed value, not the measurement.
-    public static func normalizedTurn(angle: Double, start: Double,
-                                      end: Double = foldEndAngle) -> Double {
-        guard angle.isFinite, start > end else { return 0 }
-        if angle >= start { return 0 }
-        if angle <= end { return 1 }
-        return (start - angle) / (start - end)
+    /// The fold is a physical delta, not a normalized gesture: how far
+    /// the lid has swung past the reference (activation) angle, in
+    /// radians. The held plane counter-rotates by exactly this, so the
+    /// desktop appears to stay where it was — a synthetic arc is what
+    /// made the v3 shader lose the illusion. Clamped at 1.25 rad (~72°),
+    /// the arc the shader's geometry is stable over; the closed-lid
+    /// pause (5°) parks the overlay before a deeper delta could matter.
+    public static func deltaRadians(angle: Double, reference: Double) -> Double {
+        guard angle.isFinite, reference.isFinite, angle < reference else { return 0 }
+        return min(1.25, (reference - angle) * .pi / 180)
     }
 
     /// The activation gate, checked on the raw angle before any jitter
@@ -31,20 +24,19 @@ public enum FoldMath {
         rawAngle.isFinite && rawAngle <= activation
     }
 
-    /// True when a turn is worth an overlay: aligned is invisible, so a
-    /// hair of fold still paints nothing. `hasFrame` keeps the hidden
+    /// True when a delta is worth an overlay: aligned is invisible, so a
+    /// hair of tilt still paints nothing. `hasFrame` keeps the hidden
     /// overlay honest while capture spins up.
-    public static func showsOverlay(turn: Double, hasFrame: Bool) -> Bool {
-        hasFrame && turn > 0.002
+    public static func showsOverlay(delta: Double, hasFrame: Bool) -> Bool {
+        hasFrame && delta > 0.002
     }
 
     /// The easing the hinge needs: raw sensor readings step, the fold
-    /// should glide. Exponential approach with follow = 16 (an ~62 ms
-    /// time constant) — the cadence the reference implementations land
-    /// on; snappier than the old 80 ms without losing the glide.
+    /// should glide. Exponential approach with an 80 ms time constant —
+    /// the cadence the reference implementation lands on.
     public static func smoothed(current: Double, target: Double, dt: Double) -> Double {
         guard current.isFinite, target.isFinite, dt.isFinite, dt > 0 else { return target }
-        return current + (target - current) * (1 - exp(-dt * 16.0))
+        return current + (target - current) * (1 - exp(-dt / 0.08))
     }
 }
 
