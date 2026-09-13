@@ -302,10 +302,42 @@ final class DeckStore {
         run("deck_set_settings") { try await self.core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled) }
     }
 
+    /// The four calibrated analog sectors (AG20–AG23), while
+    /// `analog_enabled` is on. A daemon's `aux` array stops at AG19, so a
+    /// sector's mapping comes from the explicit `settings.bindings`; a
+    /// binding row — even an unbound one — is the daemon's own word.
+    nonisolated static func analogControls(in deck: DeckState?) -> [DeckAuxControl] {
+        guard let deck, deck.settings.analogEnabled else { return [] }
+        let bindings = deck.settings.bindings ?? []
+        var byIndex: [Int: DeckAuxControl] = [:]
+        for control in deck.aux where DeckControls.analogIndices.contains(control.index) {
+            byIndex[control.index] = control
+        }
+        return DeckControls.analogIndices.map { index in
+            if let binding = bindings.first(where: { $0.index == index }) {
+                return DeckAuxControl(index: index, label: DeckControls.label(for: index), mapping: binding.action)
+            }
+            return byIndex[index] ?? DeckAuxControl(index: index, label: DeckControls.label(for: index))
+        }
+    }
+
+    /// The analog sectors, or none while `analog_enabled` is off.
+    var analogControls: [DeckAuxControl] { Self.analogControls(in: deck) }
+
+    /// The full `bindings` payload for `deck_set_settings`: every
+    /// auxiliary control's mapping, and the analog sectors' while they
+    /// are enabled — the daemon replaces the whole set, so omitting a
+    /// bound index would unbind it.
+    nonisolated static func auxBindings(controls: [DeckAuxControl], analog: [DeckAuxControl],
+                                        changing index: Int, to action: String?) -> [(index: Int, action: String?)] {
+        (controls + analog).map { (index: $0.index, action: $0.index == index ? action : $0.mapping) }
+    }
+
     /// Rebind an auxiliary control: `deck_set_settings` replaces the whole
-    /// aux set, so the other controls' current mappings go along.
+    /// aux set, so the other controls' current mappings go along — the
+    /// analog sectors' too, while `analog_enabled` is on.
     func setAuxBinding(index: Int, action: String?) {
-        let bindings = auxControls.map { (index: $0.index, action: $0.index == index ? action : $0.mapping) }
+        let bindings = Self.auxBindings(controls: auxControls, analog: analogControls, changing: index, to: action)
         run("deck_set_settings") { try await self.core.deckSetSettings(bindings: bindings) }
     }
 
@@ -313,9 +345,16 @@ final class DeckStore {
 
     /// The hardware layers the Apply sheet writes, on the selected profile.
     var applyTargets: [DeckKeymapLayer] {
-        let profile = applyLayer?.profile ?? device?.profile ?? 0
-        let rows = keymap.layers.filter { $0.profile == profile }
-        return rows.isEmpty ? [DeckKeymapLayer(profile: profile, layer: applyLayer?.layer ?? 0)] : rows
+        Self.applyTargets(layers: keymap.layers, selected: applyLayer, deviceProfile: device?.profile)
+    }
+
+    /// Every keymap layer on the selected profile, or the selected layer
+    /// alone on a daemon that reports none.
+    nonisolated static func applyTargets(layers: [DeckKeymapLayer], selected: DeckKeymapLayer?,
+                                         deviceProfile: Int?) -> [DeckKeymapLayer] {
+        let profile = selected?.profile ?? deviceProfile ?? 0
+        let rows = layers.filter { $0.profile == profile }
+        return rows.isEmpty ? [DeckKeymapLayer(profile: profile, layer: selected?.layer ?? 0)] : rows
     }
 
     func openApplySheet() {
@@ -332,7 +371,13 @@ final class DeckStore {
     }
 
     /// The scope a layer row is written for in the sheet.
-    func applyScope(for row: DeckKeymapLayer) -> String { applyScopes[row.id] ?? row.boardScope }
+    func applyScope(for row: DeckKeymapLayer) -> String { Self.applyScope(applyScopes, for: row) }
+
+    /// The sheet's choice for a layer row, else the scope its layer map
+    /// already assigns it.
+    nonisolated static func applyScope(_ scopes: [String: String], for row: DeckKeymapLayer) -> String {
+        scopes[row.id] ?? row.boardScope
+    }
 
     func setApplyScope(_ scope: String, for row: DeckKeymapLayer) {
         applyScopes[row.id] = scope

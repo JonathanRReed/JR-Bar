@@ -100,6 +100,8 @@ public struct CoreOrigin: Codable, Hashable, Sendable {
 public struct CoreTerminal: Codable, Hashable, Sendable {
     public var app: String?
     public var bundleId: String?
+    /// Decoded for forward headroom; nothing displays the tty — the row's
+    /// "Open in …" action names `app` only.
     public var tty: String?
 
     enum CodingKeys: String, CodingKey {
@@ -156,10 +158,18 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     /// when the label is missing or is itself a UUID.
     public var shortId: String?
     public var cwd: String?
+    /// Decoded for `SessionActivity.reduce` and the light explainer; the
+    /// raw word is never displayed.
     public var mode: String?
+    /// Decoded for `SessionActivity.reduce` and the light explainer; the
+    /// raw word is never displayed.
     public var lifecycle: String?
+    /// Decoded for `SessionActivity.reduce` (`user` counts as waiting);
+    /// never displayed verbatim.
     public var nextActor: String?
     public var since: Double?
+    /// Decoded for the light explainer's ordering and "… ago" phrasing;
+    /// not itself displayed.
     public var updatedAt: Double?
     public var stale: Bool
     public var pid: Int?
@@ -257,6 +267,8 @@ public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     /// fraction (0.79). `brightnessFraction` normalises.
     public var brightness: Double?
     public var linked: Bool?
+    /// Decoded for forward headroom; nothing displays the device's last
+    /// write time.
     public var lastWrite: Double?
     public var error: String?
 
@@ -635,6 +647,61 @@ public struct CorePeer: Codable, Hashable, Sendable, Identifiable {
     }
 }
 
+/// `state.ambient.screensaver`: the idle screensaver's live fact
+/// (docs/TOYS.md "Screen Bar Screensaver"). `state` is the daemon's own
+/// word — "playing", "waiting" or "off" — kept as a string so a daemon
+/// that adds a fourth never breaks the decode.
+public struct CoreScreensaverStatus: Codable, Hashable, Sendable {
+    public var state: String?
+    public var idleSeconds: Double
+    public var afterSeconds: Int
+
+    public init(state: String? = nil, idleSeconds: Double = 0, afterSeconds: Int = 0) {
+        self.state = state
+        self.idleSeconds = idleSeconds
+        self.afterSeconds = afterSeconds
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case idleSeconds = "idle_seconds"
+        case afterSeconds = "after_seconds"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = try c.decodeIfPresent(String.self, forKey: .state)
+        idleSeconds = (try? c.decodeIfPresent(Double.self, forKey: .idleSeconds)) ?? 0
+        if let seconds = try? c.decodeIfPresent(Int.self, forKey: .afterSeconds) {
+            afterSeconds = max(0, seconds)
+        } else if let seconds = try? c.decodeIfPresent(Double.self, forKey: .afterSeconds), seconds.isFinite {
+            afterSeconds = max(0, Int(seconds))
+        } else {
+            afterSeconds = 0
+        }
+    }
+}
+
+/// `state.ambient`: live facts from the daemon's ambient owners — absent
+/// on daemons that predate the field, and additive: a new owner is a new
+/// member, never a reshape.
+public struct CoreAmbient: Codable, Hashable, Sendable {
+    public var screensaver: CoreScreensaverStatus?
+
+    public init(screensaver: CoreScreensaverStatus? = nil) {
+        self.screensaver = screensaver
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case screensaver
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        screensaver = try? c.decodeIfPresent(CoreScreensaverStatus.self, forKey: .screensaver)
+    }
+}
+
 public struct CoreState: Codable, Hashable, Sendable {
     public var generation: Int
     public var now: Double?
@@ -664,12 +731,17 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// `peers`: the remote-peers fleet as of the last refresh — absent
     /// while the feature is off, one row per discovered peer otherwise.
     public var peers: [CorePeer]?
+    /// `ambient`: live facts from the daemon's ambient owners — today the
+    /// idle screensaver's playing/waiting/off. Absent until the daemon
+    /// has observed a batch; nil on daemons that predate the field.
+    public var ambient: CoreAmbient?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
-                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil) {
+                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil,
+                ambient: CoreAmbient? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -687,6 +759,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.catalogGeneration = catalogGeneration
         self.unseenCompletions = unseenCompletions
         self.peers = peers
+        self.ambient = ambient
     }
 
     enum CodingKeys: String, CodingKey {
@@ -696,6 +769,7 @@ public struct CoreState: Codable, Hashable, Sendable {
         case catalogGeneration = "catalog_generation"
         case unseenCompletions = "unseen_completions"
         case peers
+        case ambient
     }
 
     public init(from decoder: Decoder) throws {
@@ -733,6 +807,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         catalogGeneration = try? c.decodeIfPresent(Int.self, forKey: .catalogGeneration)
         unseenCompletions = (try? c.decodeIfPresent([String].self, forKey: .unseenCompletions)) ?? []
         peers = tolerantRows(CorePeer.self, try c.decodeIfPresent([JSONValue].self, forKey: .peers))
+        // A malformed ambient block must not take the whole state down.
+        ambient = try? c.decodeIfPresent(CoreAmbient.self, forKey: .ambient)
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -1034,6 +1110,10 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// a daemon that never sends it costs nothing.
     public static let usageHistoryReadyKind = "usage_history_ready"
 
+    /// `quota_reset`'s lane (`"weekly"`, `"5h-weekly"`, …): the quota
+    /// window that reset. Confetti fires only on the weekly ones.
+    public var lane: String?
+
     /// `list_history` rows: seconds the session ran when the daemon knows
     /// both ends of it. nil for events without a measured span.
     public var duration: Double?
@@ -1041,7 +1121,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
-                duration: Double? = nil) {
+                lane: String? = nil, duration: Double? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -1056,10 +1136,11 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.code = code
         self.message = message
         self.range = range
+        self.lane = lane
         self.duration = duration
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, duration }
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1083,6 +1164,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         code = try? c.decodeIfPresent(String.self, forKey: .code)
         message = try? c.decodeIfPresent(String.self, forKey: .message)
         range = try? c.decodeIfPresent(String.self, forKey: .range)
+        lane = try? c.decodeIfPresent(String.self, forKey: .lane)
         duration = try? c.decodeIfPresent(Double.self, forKey: .duration)
     }
 

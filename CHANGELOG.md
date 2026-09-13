@@ -4,6 +4,39 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.5 (unreleased)
 
+- Toys. A new Settings page for the things that are fun first & don't
+  touch agents or usage (docs/TOYS.md). Six to start: Fold, your desktop
+  tilting, dimming & blurring as the lid comes down, rendered by JR-Bar
+  from the hinge sensor, or handed to Bendy or Lid Plane if you'd rather
+  (Tilt / Dusk / Fog, activation angle, a simulate slider, pauses on a
+  closed lid, mirroring & sleep, never touches an external display);
+  Aquarium, every session a fish in its provider's colour, asks come up
+  for air, failures sink, completions drift off; Notch Buddy, a small
+  creature in the notch who sleeps, paces, waves & hops with what your
+  agents are doing; Confetti, a burst in the provider's colours when a
+  weekly limit resets (the `quota_reset` event now names the lane);
+  Screen Bar Screensaver, the strip & bar play an effect from your
+  library after a long idle instead of just going dark, preempted the
+  moment anything real happens; and an Alcove card that shows the
+  capsule JR-Bar is already following. Any .app on the Mac can join the
+  shelf too: launch, quit, launch with JR-Bar, remove. Everything is off
+  by default & remembered in the app's own state file.
+- Every control does what it says. An audit found eight settings that
+  wrote keys nothing read or described things the app couldn't do:
+  Show in full screen, Gap width and Wing length now shape the Screen
+  Bar for real; the Bracket style picker is gone because the app never
+  drew one; menu-bar wrap follows its setting; a strip's resting glow
+  survives a settings round trip (the daemon dropped it from the
+  document); analog joystick sectors can carry mappings, editable in
+  the Control Center, which is also where the pad's help text now
+  points; and the session-key help no longer implies matrix keys take
+  explicit mappings. `uninstall_hooks` and the legacy-only settings are
+  documented.
+- The app target has tests now. `JRBarAppTests` covers the panel row
+  helpers, the menu-bar item's spec/label/width reconciliation, Screen
+  Bar program acceptance and the deck apply-sheet planning; the Screen
+  Bar geometry moved to JRBarUI with its own tests.
+
 - The Creator Micro 2's hardware layers now mean something. The daemon
   polls the pad's live layer over `device.status` and scopes the session
   board to it: layer 1 stays Automatic (every session, asks first),

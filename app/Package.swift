@@ -97,5 +97,13 @@ let package = Package(
             swiftSettings: testSwiftSettings,
             linkerSettings: testLinkerSettings
         ),
+        // The executable's pure helpers, `@testable`-imported; the test
+        // runner's entry point wins the link, so `main.swift` never runs.
+        .testTarget(
+            name: "JRBarAppTests",
+            dependencies: ["JRBarApp", "JRBarCore", "JRBarUI"],
+            swiftSettings: testSwiftSettings,
+            linkerSettings: testLinkerSettings
+        ),
     ]
 )

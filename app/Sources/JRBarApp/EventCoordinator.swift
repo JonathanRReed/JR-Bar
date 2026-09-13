@@ -14,6 +14,9 @@ final class EventCoordinator {
 
     var onStatusPulse: ((Bool) -> Void)?
     private(set) var isPulsing = false
+    /// The Toys page's store: confetti fires on a weekly quota reset.
+    /// Weak — the delegate owns it.
+    weak var toys: ToysStore?
 
     init(core: CoreModel, hudAnchor: @escaping @MainActor () -> NSRect?) {
         self.core = core
@@ -64,6 +67,15 @@ final class EventCoordinator {
         case .start: sounds.startChime(EventPolicy.chimeSound, interval: EventPolicy.chimeInterval)
         case .stop: sounds.stopChime()
         case .unchanged: break
+        }
+        // Confetti rides the weekly quota reset only: five-hour and
+        // session lanes stay quiet. The toy itself decides whether it is
+        // on; the provider's colour comes from the same table the rest
+        // of the app uses.
+        if let confetti = toys?.confetti, ConfettiToy.isWeeklyReset(event) {
+            let provider = event.provider ?? event.session.flatMap { core.state?.session(withID: $0) }?.provider
+            let style = ProviderStyle.style(for: provider ?? "", document: core.settings.map { SettingsDocument($0.document) })
+            confetti.fire(providerColor: style.accent)
         }
     }
 

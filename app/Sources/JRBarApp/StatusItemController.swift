@@ -3,6 +3,21 @@ import JRBarCore
 import JRBarUI
 import QuartzCore
 
+/// `redraw`'s decision, computed pure so the reconciliation rules are
+/// testable: the spec the renderer draws, the label the button carries
+/// (only the glyph-and-label style has one), and the width a strip
+/// claims for `statusItem.length`. A nil width means the item keeps the
+/// square size — or the label's variable length.
+struct StatusItemPlan: Equatable {
+    var spec: StatusIconSpec
+    var label: String?
+    /// The strip's width when the style is a strip (meters or session
+    /// dots), nil for the square styles and the label style.
+    var stripWidth: CGFloat?
+    /// Whether the style owns the item's length.
+    var isStrip: Bool { stripWidth != nil }
+}
+
 /// The menu-bar item: the `menu_bar_icon_style` look — a dot per live
 /// session (the default), a meter per provider, or the glyph alone, in a
 /// usage ring, or beside a label. Left click opens the panel; right click
@@ -178,28 +193,49 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// "JR-Bar · Working · 2 working · 1 needs you", the tooltip's first half.
     private var stateSummary = "JR-Bar"
 
+    /// The redraw decision for a state, without the button: which spec the
+    /// renderer draws, which label the button shows, whether a strip owns
+    /// the item's width. The same rules `redraw` applies — a failure keeps
+    /// its red through the escalation pulse, a strip carries no whole-item
+    /// tint, the label style alone shows a title.
+    nonisolated static func plan(style: StatusIconStyle, ringFraction: Double? = nil, tint: NSColor? = nil,
+                     isPulsing: Bool = false, meters: [StatusMeter] = [], meterOverflow: Int = 0,
+                     dotState: StatusDotState = .idle, sessionDots: [SessionDot] = [],
+                     labelText: String? = nil, phase: Double = 0) -> StatusItemPlan {
+        let spec = StatusIconSpec(style: style,
+                                  ringFraction: style == .glyphRing ? ringFraction : nil,
+                                  tintHex: tint?.statusHex,
+                                  meters: style.isMeters ? meters : [],
+                                  overflow: style.isMeters ? meterOverflow : 0,
+                                  // A failure keeps its red even while the
+                                  // stage-2 escalation is pulsing: repainting
+                                  // a dead session's dot amber made it read
+                                  // as a live ask.
+                                  dot: style.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
+                                  sessions: style == .agents ? sessionDots : [],
+                                  phase: phase)
+        let strip = style.isMeters || style == .agents
+        return StatusItemPlan(spec: spec,
+                              label: style == .glyphLabel ? labelText : nil,
+                              // The meter strip and the session strip size
+                              // themselves -- agents included while empty,
+                              // or the last session ending never shrank the
+                              // item back (size(for:) already answers the
+                              // square for that spec).
+                              stripWidth: strip ? StatusIconRenderer.size(for: spec).width : nil)
+    }
+
     /// Redraws only when the spec or the label actually changed; the
     /// renderer hands back the cached image for a repeated spec.
     private func redraw() {
         guard let button = statusItem.button else { return }
         let tint: NSColor? = isPulsing ? .systemOrange : aggregateTint
-        let spec = StatusIconSpec(style: iconStyle,
-                                  ringFraction: iconStyle == .glyphRing ? ringFraction : nil,
-                                  tintHex: tint?.statusHex,
-                                  meters: iconStyle.isMeters ? meters : [],
-                                  overflow: iconStyle.isMeters ? meterOverflow : 0,
-                                  // A failure keeps its red even while the
-                                  // stage-2 escalation is pulsing: repainting
-                                  // a dead session's dot amber made it read
-                                  // as a live ask.
-                                  dot: iconStyle.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
-                                  sessions: iconStyle == .agents ? sessionDots : [],
-                                  phase: phase)
-        // The meter strip and the session strip size themselves -- agents
-        // included while empty, or the last session ending never shrank the
-        // item back (size(for:) already answers the square for that spec).
-        let strip = iconStyle.isMeters || iconStyle == .agents
-        let label = iconStyle == .glyphLabel ? labelText : nil
+        let plan = Self.plan(style: iconStyle, ringFraction: ringFraction, tint: tint, isPulsing: isPulsing,
+                             meters: meters, meterOverflow: meterOverflow, dotState: dotState,
+                             sessionDots: sessionDots, labelText: labelText, phase: phase)
+        let spec = plan.spec
+        let strip = plan.isStrip
+        let label = plan.label
         if spec != currentSpec {
             currentSpec = spec
             let image = renderer.image(for: spec)
@@ -208,8 +244,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             // one carries its own. A strip is never tinted whole:
             // its dots and meters carry the only colour that means anything.
             button.contentTintColor = image.isTemplate && !strip ? tint : nil
-            if strip {
-                let width = StatusIconRenderer.size(for: spec).width
+            if let width = plan.stripWidth {
                 if width != currentWidth {
                     currentWidth = width
                     statusItem.length = width
@@ -219,7 +254,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 currentWidth = 0
             }
         }
-        if iconStyle.isMeters || iconStyle == .agents {
+        if strip {
             button.toolTip = StatusIconRenderer.tooltip(spec, headline: stateSummary,
                                                         sessionLines: iconStyle == .agents ? sessionLines : [])
             button.setAccessibilityLabel(StatusIconRenderer.accessibilityLabel(spec))

@@ -319,7 +319,7 @@ def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.Mon
     assert (empty.value.code, empty.value.message) == ("not_found", "No session assigned.")
     with pytest.raises(CommandError) as aux:
         controller._core_dispatch("deck_press", {"index": 14})
-    assert (aux.value.code, aux.value.message) == ("not_found", "Configure this auxiliary control in Settings > Devices.")
+    assert (aux.value.code, aux.value.message) == ("not_found", "Configure this control in the Control Center (⌘K).")
 
     # A working session: reveal.
     reply = controller._core_dispatch("deck_press", {"index": work_key})
@@ -676,6 +676,41 @@ def test_approve_device_and_set_settings_persist_and_reconfigure(deck_live, monk
     assert controller._deck_control_settings == saved
     assert controller._core_build_state()["deck"]["settings"] == reply
     assert controller._core_dispatch("deck_set_settings", {"analog_enabled": True})["analog_enabled"] is True
+
+
+def test_deck_set_settings_binds_analog_sectors_and_state_exposes_them(deck_live) -> None:
+    """Aux bindings span the analog sectors 20..23; the matrix keys 0..12
+    stay sessions and are still refused, and the sector rows only join
+    ``state.deck.aux`` while analog mode is on."""
+    from jrbar.deck_control_settings import load_deck_controls
+
+    controller = deck_live
+
+    for bad_index in (0, 12, 24):
+        with pytest.raises(CommandError) as refused:
+            controller._core_dispatch(
+                "deck_set_settings", {"bindings": [{"index": bad_index, "action": "open_usage"}]}
+            )
+        assert refused.value.code == "invalid_args"
+
+    reply = controller._core_dispatch(
+        "deck_set_settings",
+        {"bindings": [{"index": 21, "action": "open_usage"}, {"index": 23, "action": None}]},
+    )
+    # The reply echoes the stored bindings -- a null action unbinds, so
+    # only index 21 survives.
+    assert reply["bindings"] == [{"index": 21, "action": "open_usage"}]
+    assert [index for index, _action in load_deck_controls().bindings] == [21]
+
+    # Analog off: the binding is stored but no sector row is published.
+    aux = controller._core_build_state()["deck"]["aux"]
+    assert [row["index"] for row in aux] == list(range(13, 20))
+
+    controller._core_dispatch("deck_set_settings", {"analog_enabled": True})
+    aux = {row["index"]: row for row in controller._core_build_state()["deck"]["aux"]}
+    assert sorted(aux) == list(range(13, 24))
+    assert aux[21] == {"index": 21, "label": "Joystick sector 2 (analog)", "mapping": "open_usage"}
+    assert aux[23]["label"] == "Joystick sector 4 (analog)" and aux[23]["mapping"] is None
 
 
 def test_device_access_receipts_say_what_to_do_whichever_operation_hit_them():

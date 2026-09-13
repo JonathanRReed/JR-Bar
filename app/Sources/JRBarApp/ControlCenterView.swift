@@ -708,15 +708,23 @@ struct AuxBindingsEditor: View {
                     cell(store.auxControls[safe: row + 4])
                 }
             }
+            if store.settings.analogEnabled {
+                ForEach(0..<2, id: \.self) { row in
+                    GridRow {
+                        cell(store.analogControls[safe: row], label: "Joystick sector \(row + 1) (analog)")
+                        cell(store.analogControls[safe: row + 2], label: "Joystick sector \(row + 3) (analog)")
+                    }
+                }
+            }
         }
         .padding(.top, 10)
         .disabled(!store.isLive)
     }
 
     @ViewBuilder
-    private func cell(_ control: DeckAuxControl?) -> some View {
+    private func cell(_ control: DeckAuxControl?, label: String? = nil) -> some View {
         if let control {
-            LabeledContent(control.label) {
+            LabeledContent(label ?? control.label) {
                 Picker("", selection: Binding(
                     get: { control.mapping ?? "" },
                     set: { store.setAuxBinding(index: control.index, action: $0.isEmpty ? nil : $0) })) {

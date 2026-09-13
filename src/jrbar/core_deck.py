@@ -29,6 +29,15 @@ AUX_LABELS: Final = {
     18: "Joystick sector 3",
     19: "Joystick sector 4",
 }
+#: The calibrated analog joystick sectors join ``aux[]`` only while
+#: ``analog_enabled`` is on -- the same stick's directions, named apart
+#: from the digital AG16..AG19 sectors.
+ANALOG_AUX_LABELS: Final = {
+    20: "Joystick sector 1 (analog)",
+    21: "Joystick sector 2 (analog)",
+    22: "Joystick sector 3 (analog)",
+    23: "Joystick sector 4 (analog)",
+}
 ANALOG_FIRST_INDEX: Final = 20
 CONTROL_COUNT: Final = 24
 # Per-key lighting: the solid colour the lighting layer writes, the dark
@@ -92,7 +101,7 @@ ACTION_RECEIPT_MESSAGES: Final = {
 INPUT_CHECK_MESSAGE: Final = "Input check is on: device actions are paused."
 NO_SESSION_MESSAGE: Final = "No session assigned."
 RESERVED_MESSAGE: Final = "Reserved: session not observed."
-AUXILIARY_MESSAGE: Final = "Configure this auxiliary control in Settings > Devices."
+AUXILIARY_MESSAGE: Final = "Configure this control in the Control Center (⌘K)."
 NO_DEVICE_MESSAGE: Final = "No Creator Micro 2 is connected."
 
 
@@ -324,11 +333,25 @@ def slot_document(slot: DeckSlotFacts, *, colors: object = None, brightness: flo
     }
 
 
-def aux_documents(bindings: dict[int, str] | None = None, labels: dict[int, str] | None = None) -> list[dict[str, Any]]:
+def aux_documents(
+    bindings: dict[int, str] | None = None,
+    labels: dict[int, str] | None = None,
+    *,
+    analog_enabled: bool = False,
+) -> list[dict[str, Any]]:
     bindings = bindings or {}
+    names = dict(AUX_LABELS)
+    if analog_enabled:
+        names.update(ANALOG_AUX_LABELS)
     return [
-        {"index": index, "label": control_label(index, labels), "mapping": bindings.get(index)}
-        for index in sorted(AUX_LABELS)
+        {
+            "index": index,
+            # The inspected keymap's own label still wins when it names
+            # this control; the analog sectors have none of their own.
+            "label": str(labels[index]) if labels and index in labels else names[index],
+            "mapping": bindings.get(index),
+        }
+        for index in sorted(names)
     ]
 
 
@@ -360,7 +383,11 @@ def build_deck_document(
         "scope": scope if type(scope) is str and scope else "automatic",
         "scopes": [scope_name for scope_name in scopes if type(scope_name) is str and scope_name],
         "slots": [slot_document(slot, colors=colors, brightness=brightness, driven=driven) for slot in slots],
-        "aux": aux_documents(bindings, control_labels),
+        "aux": aux_documents(
+            bindings,
+            control_labels,
+            analog_enabled=bool(settings.get("analog_enabled", False)),
+        ),
         "banks": {"index": int(bank), "count": max(1, int(bank_count))},
         "rail": {"edge": rail_edge if rail_edge in RAIL_EDGES else "off"},
         "keymap": {
@@ -416,6 +443,7 @@ def device_document(
 
 __all__ = [
     "ACTION_RECEIPT_MESSAGES",
+    "ANALOG_AUX_LABELS",
     "AUXILIARY_MESSAGE",
     "AUX_LABELS",
     "CONTROL_COUNT",

@@ -648,7 +648,7 @@ struct CreatorMicroCard: View {
             Toggle(isOn: Binding(get: { settings.sessionMode }, set: { set(sessionMode: $0) })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Session keys")
-                    Text("The thirteen keys follow the session board: a key lights with its session's state and reveals it when pressed. Explicit mappings still win.")
+                    Text("The thirteen keys always follow the session board: a key lights with its session's state and reveals it when pressed. Only the dial, joystick and analog sectors take explicit mappings.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -656,7 +656,7 @@ struct CreatorMicroCard: View {
             Toggle(isOn: Binding(get: { settings.analogEnabled }, set: { set(analogEnabled: $0) })) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Analog joystick sectors")
-                    Text("Calibrated sectors 1–4 (AG20–AG23) count as inputs and can carry mappings.")
+                    Text("Calibrated sectors 1–4 (AG20–AG23) count as inputs and can carry their own mappings in the Control Center.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
             }
@@ -716,16 +716,13 @@ struct ScreenBarCard: View {
     var body: some View {
         SettingToggle(store, "Show the Screen Bar", subtitle: "The light band under the notch.", path: "virtual_status_device_enabled", default: true)
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
-        SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen")
+        SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
         SettingToggle(store, "Mirror the hardware strip", subtitle: "The Screen Bar plays the strip's own program on the strip's clock. Off, it renders its own display. Independent of Dot follows the strip above.", path: "link_screen_bar_to_hardware", default: true)
         SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
                       path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
             .disabled(!(store.document.bool("link_screen_bar_to_hardware") ?? true))
         NullableSlider(store: store, title: "Gap width", path: "screen_bar_gap_width", range: 120...400, fallback: 180)
         NullableSlider(store: store, title: "Wing length", path: "screen_bar_wing_length", range: 0...80, fallback: 14)
-        SettingPicker(store, "Bracket style", subtitle: "How the Alcove bracket colours itself.", path: "screen_bar_bracket_style", options: [
-            ("auto", "Automatic"), ("spatial", "Mirror the LEDs"), ("identity", "One hue"),
-        ], default: "auto")
         SettingSlider(store, "Minimum glow", subtitle: "The band's dim floor. Zero is pitch black: only the moving signal shows.",
                       path: "screen_bar_min_glow", in: 0...1, default: 0.25, format: SettingsStore.percent)
         LabeledContent {

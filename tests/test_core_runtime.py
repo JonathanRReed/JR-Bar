@@ -427,6 +427,23 @@ def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_p
     assert controller.settings.alert_burst == status_bar.AgentMonitorSettings().alert_burst
 
 
+def test_reset_settings_reaches_per_device_leaves(headless) -> None:
+    """The defaults document has no device rows, so a devices.N.<field>
+    reset reads the leaf default off a stock DeviceDisplaySetting --
+    identity fields (id, name, path) are not preferences and refuse."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    controller.settings = controller.settings.with_device_resting_glow("strip-a", 0.3)
+    assert controller.settings.resting_glow_for_device("strip-a") == 0.3
+
+    reply = controller._core_dispatch("reset_settings", {"paths": ["devices.0.resting_glow"]})
+    assert reply["reset"] == ["devices.0.resting_glow"]
+    assert controller.settings.resting_glow_for_device("strip-a") == 0.0
+
+    reply = controller._core_dispatch("reset_settings", {"paths": ["devices.0.name", "devices.9.resting_glow"]})
+    assert reply["reset"] == []
+
+
 def test_app_introduced_settings_are_served_and_the_token_path_is_read_only(headless) -> None:
     """The three keys the app catalogued as "Not provided by core":
     ``menu_bar_icon_style`` and ``quota_alert_thresholds`` are real,

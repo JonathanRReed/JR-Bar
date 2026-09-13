@@ -13,6 +13,18 @@ final class NotchHUD {
     /// falls back to the top centre of the notched screen.
     var anchorRect: @MainActor () -> NSRect?
 
+    /// The Notch Buddy that lives in the panel between toasts. A showing
+    /// toast always wins — the buddy steps aside and comes back when the
+    /// toast is done — so `syncBuddy` is only allowed to touch the panel
+    /// while no toast is up.
+    var buddy: NotchBuddyToy? {
+        didSet {
+            buddy?.onVisibilityChange = { [weak self] in self?.syncBuddy() }
+            panel.buddy = buddy
+            syncBuddy()
+        }
+    }
+
     init(anchorRect: @escaping @MainActor () -> NSRect?) {
         self.anchorRect = anchorRect
     }
@@ -24,6 +36,14 @@ final class NotchHUD {
         let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.panel.dismiss() } }
         hide = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.life, execute: work)
+    }
+
+    private func syncBuddy() {
+        if buddy?.isOn == true {
+            panel.presentBuddy(under: anchorRect() ?? Self.fallbackAnchor())
+        } else {
+            panel.dismissBuddy()
+        }
     }
 
     static func fallbackAnchor() -> NSRect {
@@ -39,6 +59,15 @@ final class NotchHUDPanel: NSPanel {
     private let hosting: NSHostingView<NotchHUDView>
     private let backdrop: NSView
     private let model = NotchHUDModel()
+    /// The band the pill last hung under, so a toast that is handing back
+    /// to the buddy can re-centre without asking again.
+    private var lastBand: NSRect?
+
+    /// The buddy the panel hosts between toasts.
+    var buddy: NotchBuddyToy? {
+        get { model.buddy }
+        set { model.buddy = newValue }
+    }
 
     init() {
         hosting = NSHostingView(rootView: NotchHUDView(model: model))
@@ -91,6 +120,8 @@ final class NotchHUDPanel: NSPanel {
     func present(text: String, symbol: String, under band: NSRect) {
         model.text = text
         model.symbol = symbol
+        model.toastActive = true
+        lastBand = band
         hosting.rootView = NotchHUDView(model: model)
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
@@ -112,7 +143,41 @@ final class NotchHUDPanel: NSPanel {
         }
     }
 
+    /// The buddy's own slot: the same pill, sized to the creature. No-op
+    /// while a toast is up — the toast always wins the panel.
+    func presentBuddy(under band: NSRect) {
+        guard !model.toastActive else { return }
+        lastBand = band
+        hosting.rootView = NotchHUDView(model: model)
+        hosting.layoutSubtreeIfNeeded()
+        let size = hosting.fittingSize
+        let height = max(26, size.height)
+        let width = max(30, size.width)
+        (backdrop as? NSGlassEffectView)?.cornerRadius = height / 2
+        backdrop.layer?.cornerRadius = height / 2
+        let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
+        setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
+        orderFrontRegardless()
+        animator().alphaValue = 1
+    }
+
+    /// The buddy was switched off while it held the panel. A toast in
+    /// flight is left alone; it hands back (or out) in `dismiss`.
+    func dismissBuddy() {
+        guard !model.toastActive else { return }
+        alphaValue = 0
+        orderOut(nil)
+    }
+
     func dismiss() {
+        // A buddy that is on keeps the panel: the toast steps away and
+        // the pill shrinks back to the creature instead of disappearing.
+        if model.buddy?.isOn == true, let band = lastBand {
+            model.toastActive = false
+            presentBuddy(under: band)
+            return
+        }
+        model.toastActive = false
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = reduced ? 0.08 : 0.2
@@ -132,22 +197,30 @@ final class NotchHUDPanel: NSPanel {
 final class NotchHUDModel {
     var text = ""
     var symbol = "cable.connector"
+    /// A toast is occupying the pill; the buddy steps aside until it ends.
+    var toastActive = false
+    /// The Notch Buddy the panel hosts while no toast is up.
+    var buddy: NotchBuddyToy?
 }
 
 struct NotchHUDView: View {
     @Bindable var model: NotchHUDModel
 
     var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: model.symbol)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            Text(model.text)
-                .font(.system(size: 12, weight: .medium))
-                .lineLimit(1)
+        if model.toastActive {
+            HStack(spacing: 7) {
+                Image(systemName: model.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(model.text)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .fixedSize()
+        } else if let buddy = model.buddy, buddy.isOn {
+            NotchBuddyView(toy: buddy)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .fixedSize()
     }
 }

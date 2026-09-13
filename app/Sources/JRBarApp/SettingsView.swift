@@ -115,6 +115,7 @@ struct SettingsPageContainer: View {
             case .usage: UsagePage(store: store)
             case .devices: DevicesPage(store: store)
             case .lighting: LightingPage(store: store)
+            case .toys: ToysPage(store: store)
             case .notifications: NotificationsPage(store: store)
             case .remote: RemotePage(store: store)
             case .advanced: AdvancedPage(store: store)

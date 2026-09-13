@@ -798,7 +798,9 @@ struct AdvancedPage: View {
         }
 
         Section {
-            ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced }) { page in
+            // `catalogue == nil` pages (Toys) hold no daemon settings and
+            // have nothing to reset.
+            ForEach(SettingsStore.Page.allCases.filter { $0 != .advanced && $0.catalogue != nil }) { page in
                 LabeledContent(page.title) {
                     Button("Reset…") { store.resetTarget = page }
                         .controlSize(.small)

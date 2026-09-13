@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var controlCenterWindow: ControlCenterWindowController?
     private var rail: DeckRailController?
     private var events: EventCoordinator?
+    private var toysStore: ToysStore?
     private var supervisor: CoreSupervisor?
     private var socketWatcher: FileWatcher?
     private var updater: SparkleUpdater?
@@ -111,6 +112,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self.persistAppState()
             self.refreshIconStyle()
         }
+        // Toys: the fun-first page. Its state lives in `app-state.json`
+        // like the rest of the app's remembered facts, so the delegate
+        // stays the file's only writer and the store just hands back
+        // the blob.
+        let toysStore = ToysStore(core: core, settings: settingsStore, state: appState.toys)
+        toysStore.onPersist = { [weak self] state in
+            guard let self else { return }
+            self.appState.toys = state
+            self.persistAppState()
+        }
+        self.toysStore = toysStore
+        settingsStore.toys = toysStore
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater
@@ -161,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let alcove = AlcoveFollower()
         alcove.onChange = { [weak self, weak screenBar] capsule in
             screenBar?.capsule = capsule
+            self?.toysStore?.noteAlcoveCapsule(capsule)
             self?.lastLightsSource = nil
             self?.refreshLights()
         }
@@ -210,6 +224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Events → the Mac: sounds, banners, the HUD, the amber pulse, the chime.
         let events = EventCoordinator(core: core, hudAnchor: { [weak screenBar] in screenBar?.bandScreenRect })
         self.events = events
+        events.toys = toysStore
+        // The HUD panel is the Notch Buddy's home: it lives there between
+        // toasts and steps aside while one is up.
+        events.hud.buddy = toysStore.notchBuddy
         events.onStatusPulse = { [weak statusItem] on in statusItem?.setEscalationPulse(on) }
         // Approve/Deny on a banner are awaited, so a refused answer is
         // heard: the bridge turns it into a follow-up banner that opens
@@ -271,12 +289,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         feed.start()
         monitor.start()
         core.start()
+        toysStore.launchExternalAppsAtStartup()
 
         // Developer switches: `JRBAR_OPEN_PANEL=1` opens the panel shortly
         // after launch (screenshots, design passes) without a click;
         // `JRBAR_OPEN_SETTINGS=<page>` opens the Settings window on that page
-        // (general, agents, usage, devices, lighting, notifications, remote,
-        // advanced, or effects); `JRBAR_SCREEN_BAR=on|off` flips the Screen
+        // (general, agents, usage, devices, lighting, toys, notifications,
+        // remote, advanced, or effects); `JRBAR_SCREEN_BAR=on|off` flips the Screen
         // Bar the way the status item's toggle does (screenshots without the
         // band, and a persistence check for the remembered value).
         let environment = ProcessInfo.processInfo.environment
@@ -773,6 +792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         refreshLights()
         refreshAlcoveFollowing()
         refreshScreenBarGlow()
+        refreshScreenBarGeometry()
         reconcileScreenBarSetting()
     }
 
@@ -791,6 +811,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if let glow = document?.double("screen_bar_min_glow") {
             screenBar?.minGlow = CGFloat(glow)
         }
+    }
+
+    /// The settings the panel itself honours, live from the document.
+    /// Every one defaults to today's behaviour while the key is absent:
+    /// `screen_bar_show_in_full_screen` (the `.fullScreenAuxiliary`
+    /// membership), `virtual_status_device_wraps_menu_bar` (the wings),
+    /// and `screen_bar_gap_width` / `screen_bar_wing_length` (manual
+    /// geometry — JSON null is Automatic, so `double` reads it as nil).
+    private func refreshScreenBarGeometry() {
+        guard let screenBar else { return }
+        let document = core?.settings.map { SettingsDocument($0.document) }
+        screenBar.showsInFullScreen = document?.bool("screen_bar_show_in_full_screen") ?? true
+        screenBar.wrapMenuBar = document?.bool("virtual_status_device_wraps_menu_bar") ?? true
+        screenBar.gapWidth = document?.double("screen_bar_gap_width").map { CGFloat($0) }
+        screenBar.wingLength = document?.double("screen_bar_wing_length").map { CGFloat($0) }
     }
 
     private func refreshAggregate() {

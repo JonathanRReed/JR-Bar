@@ -28,6 +28,19 @@ final class ScreenBarPanel: NSPanel {
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
 
+    /// `screen_bar_show_in_full_screen` (default on, matching how the
+    /// panel is created): `.fullScreenAuxiliary` keeps the band over
+    /// full-screen spaces and videos; off, it stays on ordinary ones.
+    var showsInFullScreen = true {
+        didSet {
+            if showsInFullScreen {
+                collectionBehavior.insert(.fullScreenAuxiliary)
+            } else {
+                collectionBehavior.remove(.fullScreenAuxiliary)
+            }
+        }
+    }
+
     /// AppKit keeps ordinary windows below the menu bar; this one lives in it.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect

@@ -14,7 +14,31 @@ import QuartzCore
 /// the program has gone still, the bar is hidden, or the display is asleep.
 @MainActor
 final class ScreenBarController {
-    static let wrapMenuBar = true
+    /// The document value's default when the daemon has not sent
+    /// `virtual_status_device_wraps_menu_bar`: wrap, as it always was.
+    static let defaultWrapMenuBar = true
+
+    /// `virtual_status_device_wraps_menu_bar`, live from the settings
+    /// document: the wings along the menu bar. Off means a plain band
+    /// exactly the notch gap wide.
+    var wrapMenuBar = ScreenBarController.defaultWrapMenuBar {
+        didSet { if wrapMenuBar != oldValue { reposition() } }
+    }
+    /// `screen_bar_show_in_full_screen` (absent = show, as it always was):
+    /// whether the panel keeps its `.fullScreenAuxiliary` membership.
+    var showsInFullScreen = true {
+        didSet { panel.showsInFullScreen = showsInFullScreen }
+    }
+    /// `screen_bar_gap_width`, live from the settings document: the manual
+    /// width of the notch gap the band is centred on. nil is Automatic.
+    var gapWidth: CGFloat? {
+        didSet { if gapWidth != oldValue { reposition() } }
+    }
+    /// `screen_bar_wing_length`, live from the settings document: manual
+    /// points of wing per side. nil is Automatic (measured).
+    var wingLength: CGFloat? {
+        didSet { if wingLength != oldValue { reposition() } }
+    }
     /// `JRBAR_LOG_MOTION=1` logs which path each program takes.
     private static let logsMotion = ProcessInfo.processInfo.environment["JRBAR_LOG_MOTION"] != nil
 
@@ -54,7 +78,10 @@ final class ScreenBarController {
 
     init() {
         let screen = ScreenBarGeometry.preferredScreen()
-        let frame = screen.map { ScreenBarGeometry.windowFrame(for: $0, wrapMenuBar: Self.wrapMenuBar, capsule: nil) }
+        // The settings-document geometry lands through the properties
+        // above on the first `coreDidChange`; the first frame uses the
+        // defaults (`wrap`, no manual gap or wing).
+        let frame = screen.map { ScreenBarGeometry.windowFrame(for: $0, wrapMenuBar: Self.defaultWrapMenuBar, capsule: nil) }
             ?? NSRect(x: 0, y: 0, width: ScreenBarDesign.windowWidth, height: ScreenBarGeometry.windowHeight(notchDepth: 0))
         panel = ScreenBarPanel(frame: frame)
         view = ScreenBarView(frame: NSRect(origin: .zero, size: frame.size))
@@ -161,7 +188,8 @@ final class ScreenBarController {
 
     private func reposition() {
         guard let screen = ScreenBarGeometry.preferredScreen() else { return }
-        let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: Self.wrapMenuBar, capsule: capsule)
+        let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
+                                                  gapWidth: gapWidth, wingLength: wingLength, capsule: capsule)
         if panel.frame != frame {
             panel.setFrame(frame, display: false)
             view.frame = NSRect(origin: .zero, size: frame.size)
@@ -199,25 +227,10 @@ final class ScreenBarController {
             return
         }
         lastRawText = text
-        let compiled = LEDSPresentationCompiler.compile(text, ledCount: ScreenBarGeometry.ledCount, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
-        guard compiled.accepted else {
-            let reason: String
-            do {
-                _ = try LEDSProgram.parse(text, ledCount: ScreenBarGeometry.ledCount)
-                reason = compiled.reasons.joined(separator: ", ")
-            } catch {
-                reason = error.description
-            }
-            lastRejection = reason
-            NSLog("JR-Bar: refusing LEDS program (%@); keeping the previous one", reason)
-            return
-        }
-        lastRejection = nil
-        let program: LEDSProgram
-        do {
-            program = try LEDSProgram.parse(compiled.program, ledCount: ScreenBarGeometry.ledCount)
-        } catch {
-            lastRejection = error.description
+        let decision = Self.programDecision(text, fallback: programText.isEmpty ? LEDSPresentationCompiler.safeFallbackProgram : programText)
+        lastRejection = decision.rejection
+        guard let program = decision.program, let compiledText = decision.programText else {
+            NSLog("JR-Bar: refusing LEDS program (%@); keeping the previous one", decision.rejection ?? "?")
             return
         }
         // The firmware starts a new program from the colours currently showing.
@@ -225,7 +238,7 @@ final class ScreenBarController {
         if let sampler {
             lastRaw = sampler.rawCodes(atMilliseconds: milliseconds(now))
         }
-        programText = compiled.program
+        programText = compiledText
         let sampler = LEDSSampler(program: program, ledCount: ScreenBarGeometry.ledCount, initialCodes: lastRaw)
         self.sampler = sampler
         plan = LEDSKeyframePlan.render(sampler: sampler)
@@ -239,6 +252,32 @@ final class ScreenBarController {
         }
         lastCodes = []
         present()
+    }
+
+    /// The compile-and-parse verdict `apply` reaches before anything moves:
+    /// the program to install and its canonical text, or the refusal reason
+    /// (the firmware would strobe red). Pure — no panel, no clock — so the
+    /// acceptance rules are testable. On refusal nothing is installed and
+    /// `lastRejection` carries the reason; the previous program stays.
+    nonisolated static func programDecision(_ text: String, fallback: String) -> (program: LEDSProgram?, programText: String?, rejection: String?) {
+        let compiled = LEDSPresentationCompiler.compile(text, ledCount: ScreenBarGeometry.ledCount, fallback: fallback)
+        guard compiled.accepted else {
+            // The compiler's own reasons when the raw text parses; the
+            // parse error itself when it does not — the more specific
+            // sentence is the one worth logging.
+            do {
+                _ = try LEDSProgram.parse(text, ledCount: ScreenBarGeometry.ledCount)
+                return (nil, nil, compiled.reasons.joined(separator: ", "))
+            } catch {
+                return (nil, nil, error.description)
+            }
+        }
+        do {
+            let program = try LEDSProgram.parse(compiled.program, ledCount: ScreenBarGeometry.ledCount)
+            return (program, compiled.program, nil)
+        } catch {
+            return (nil, nil, error.description)
+        }
     }
 
     /// Converts a Unix timestamp into the display link's `CACurrentMediaTime` clock.

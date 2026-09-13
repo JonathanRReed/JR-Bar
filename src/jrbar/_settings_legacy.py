@@ -96,6 +96,12 @@ BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
 #: non-empty ladder and the runtime still fails closed on an empty one.
 DEFAULT_MILESTONE_ODOMETER_STEPS = (10, 25, 50, 100)
 MAX_MILESTONE_ODOMETER_STEP_COUNT = 16
+#: The Screen Bar Screensaver's idle clock (docs/TOYS.md): how long the
+#: strip sits with no signal before the chosen effect may play. Same
+#: 5-1440 minute window idle_auto_off already uses.
+DEFAULT_IDLE_SCREENSAVER_AFTER_MINUTES = 20
+MIN_IDLE_SCREENSAVER_AFTER_MINUTES = 5
+MAX_IDLE_SCREENSAVER_AFTER_MINUTES = 1440
 
 WEBHOOK_EVENT_KEYS = ("completion", "ask_opened", "failed", "quota_crossed")
 CLOSED_LID_AWAKE_NEVER = "never"
@@ -236,6 +242,11 @@ class DeviceDisplaySetting:
             "red_gain": self.red_gain,
             "green_gain": self.green_gain,
             "blue_gain": self.blue_gain,
+            # Written by apply_calibration (with_device_resting_glow) and
+            # read back by the app's CalibrationSheet as
+            # devices.N.resting_glow; omitting it dropped an applied glow
+            # on save and kept reset_settings from reaching it.
+            "resting_glow": self.resting_glow,
             "blend_mode": self.blend_mode,
             "provider_pin": self.provider_pin,
             "signal_policy": self.signal_policy,
@@ -505,6 +516,13 @@ class AgentMonitorSettings:
     # deduplicated, bounded (the pure planner accepts at most 16). The
     # default ladder makes the toggle meaningful on its own.
     milestone_odometer_steps: tuple[int, ...] = DEFAULT_MILESTONE_ODOMETER_STEPS
+    # The Screen Bar Screensaver (docs/TOYS.md): once the strip has sat
+    # idle this long, the daemon may play one library effect instead of
+    # only going dark. Off by default, and None means no effect chosen --
+    # an id the registry does not know fails closed the same way.
+    idle_screensaver_enabled: bool = False
+    idle_screensaver_effect: str | None = None
+    idle_screensaver_after_minutes: int = DEFAULT_IDLE_SCREENSAVER_AFTER_MINUTES
     # Capacity retention is a separate, explicit consent boundary. Existing
     # transcript and broad usage settings never enable either history stream.
     capacity_history_enabled: bool = False
@@ -1248,6 +1266,22 @@ class AgentMonitorSettings:
     def with_milestone_odometer_steps(self, steps: object) -> AgentMonitorSettings:
         return replace(self, milestone_odometer_steps=_milestone_steps_setting(steps))
 
+    def with_idle_screensaver_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, idle_screensaver_enabled=bool(enabled))
+
+    def with_idle_screensaver_effect(self, effect: object) -> AgentMonitorSettings:
+        return replace(
+            self, idle_screensaver_effect=_idle_screensaver_effect_setting(effect)
+        )
+
+    def with_idle_screensaver_after_minutes(self, minutes: object) -> AgentMonitorSettings:
+        return replace(
+            self,
+            idle_screensaver_after_minutes=_idle_screensaver_after_minutes_setting(
+                minutes
+            ),
+        )
+
     def effective_scene_policy(
         self,
         accessibility_preferences: object | None = None,
@@ -1723,6 +1757,15 @@ class AgentMonitorSettings:
             "milestone_odometer_steps": list(
                 _milestone_steps_setting(self.milestone_odometer_steps)
             ),
+            "idle_screensaver_enabled": self.idle_screensaver_enabled,
+            "idle_screensaver_effect": _idle_screensaver_effect_setting(
+                self.idle_screensaver_effect
+            ),
+            "idle_screensaver_after_minutes": (
+                _idle_screensaver_after_minutes_setting(
+                    self.idle_screensaver_after_minutes
+                )
+            ),
             "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
@@ -1866,6 +1909,35 @@ def _milestone_steps_setting(raw: object) -> tuple[int, ...]:
         sorted({step for step in raw if type(step) is int and step > 0})
     )[:MAX_MILESTONE_ODOMETER_STEP_COUNT]
     return steps if steps else DEFAULT_MILESTONE_ODOMETER_STEPS
+
+
+def _idle_screensaver_effect_setting(raw: object) -> str | None:
+    """The chosen effect id, or None when nothing usable was stored.
+
+    A mistyped or blank value reads as "no effect picked" rather than as
+    an error: the runtime treats None as fail-closed and never plays.
+    """
+    if type(raw) is not str:
+        return None
+    effect = raw.strip()
+    if not effect or len(effect) > 128:
+        return None
+    return effect
+
+
+def _idle_screensaver_after_minutes_setting(raw: object) -> int:
+    """Whole minutes inside the 5-1440 window; anything else is the default."""
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return DEFAULT_IDLE_SCREENSAVER_AFTER_MINUTES
+    minutes = float(raw)
+    if minutes != minutes or minutes in (float("inf"), float("-inf")):
+        return DEFAULT_IDLE_SCREENSAVER_AFTER_MINUTES
+    return int(
+        max(
+            MIN_IDLE_SCREENSAVER_AFTER_MINUTES,
+            min(MAX_IDLE_SCREENSAVER_AFTER_MINUTES, round(minutes)),
+        )
+    )
 
 
 def _preserve_corrupt_settings(target: Path) -> None:
@@ -2123,6 +2195,15 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         ),
         milestone_odometer_steps=_milestone_steps_setting(
             data.get("milestone_odometer_steps")
+        ),
+        idle_screensaver_enabled=_bool_setting(
+            data.get("idle_screensaver_enabled"), False
+        ),
+        idle_screensaver_effect=_idle_screensaver_effect_setting(
+            data.get("idle_screensaver_effect")
+        ),
+        idle_screensaver_after_minutes=_idle_screensaver_after_minutes_setting(
+            data.get("idle_screensaver_after_minutes")
         ),
         capacity_history_enabled=_bool_setting(
             data.get("capacity_history_enabled"), False

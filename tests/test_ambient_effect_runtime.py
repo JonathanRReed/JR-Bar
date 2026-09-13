@@ -539,6 +539,9 @@ def _cue_settings(**overrides):
         "rainstick_night_enabled": False,
         "milestone_odometer_enabled": False,
         "milestone_odometer_steps": (10, 25, 50, 100),
+        "idle_screensaver_enabled": False,
+        "idle_screensaver_effect": None,
+        "idle_screensaver_after_minutes": 20,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -651,3 +654,237 @@ def test_the_active_scene_pack_overrides_the_policy_the_runtime_resolves(
     plan = controller._rainstick_idle_plan
     assert plan.disposition.value == "suppress"
     assert {reason.value for reason in plan.suppression_reasons} == {"dnd"}
+
+
+def _screensaver_output(dispatch):
+    return next(
+        (
+            output
+            for output in dispatch.outputs
+            if output.family is AmbientEffectFamily.SEMANTIC_SELECTION
+            and output.semantic is not None
+            and output.semantic.value == "idle"
+        ),
+        None,
+    )
+
+
+def test_idle_screensaver_waits_for_the_delay_then_plays_the_chosen_effect(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    clock = [10_000.0]
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic",
+        lambda: clock[0],
+    )
+
+    controller = controller_type()
+    controller.settings = _cue_settings(
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="rainbow",
+        idle_screensaver_after_minutes=20,
+    )
+
+    # One minute gone of twenty: armed but waiting, nothing on the strip.
+    controller.idle_since_monotonic = clock[0] - 60.0
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(controller._ambient_effect_dispatch) is None
+    fact = controller._idle_screensaver_fact["screensaver"]
+    assert fact["state"] == "waiting"
+    assert fact["after_seconds"] == 1200
+
+    # Past the delay: the chosen library effect owns the ambient surfaces.
+    controller.idle_since_monotonic = clock[0] - 1_300.0
+    controller.observe_operator_history_events((), empty_operator_state())
+    output = _screensaver_output(controller._ambient_effect_dispatch)
+    assert output is not None
+    assert output.effect_identity == "rainbow"
+    assert controller._ambient_effect_dispatch.for_surface(
+        AmbientEffectSurface.SCREEN_BAR
+    ).effect_identity == "rainbow"
+    fact = controller._idle_screensaver_fact["screensaver"]
+    assert fact["state"] == "playing"
+    assert fact["idle_seconds"] >= 1_300.0
+
+    # The next batch re-stages the same output instead of restarting it.
+    clock[0] += 2.0
+    controller.observe_operator_history_events((), empty_operator_state())
+    retained = controller._ambient_effect_dispatch.for_surface(
+        AmbientEffectSurface.SCREEN_BAR
+    )
+    assert retained is not None and retained.effect_identity == "rainbow"
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "playing"
+
+
+def test_idle_screensaver_yields_the_moment_a_real_signal_exists(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    clock = [10_000.0]
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic",
+        lambda: clock[0],
+    )
+
+    controller = controller_type()
+    controller.settings = _cue_settings(
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="rainbow",
+        idle_screensaver_after_minutes=20,
+    )
+    controller.idle_since_monotonic = clock[0] - 1_300.0
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(controller._ambient_effect_dispatch) is not None
+
+    # A working session appears: the screensaver retires inside the same
+    # batch instead of lingering on its unexpired output.
+    state, work_key, _request_key, watermark = _canonical_state(
+        lifecycle=WorkLifecycle.ACTIVE,
+    )
+    event = _operator_event(work_key, TransitionKind.BECAME_ACTIVE, watermark)
+    controller.observe_operator_history_events((event,), state)
+    assert _screensaver_output(controller._ambient_effect_dispatch) is None
+    # Held off by a live signal reads "off", not "waiting".
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "off"
+
+    # And an ask that arrived by delivery keeps its staged selection: the
+    # screensaver never clobbers a pending winner.
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(controller._ambient_effect_dispatch) is not None
+    ask_state, _work_key, request_key, ask_watermark = _canonical_state(
+        lifecycle=WorkLifecycle.WAITING,
+        request_open=True,
+    )
+    event_key = SemanticEventKey(
+        request_key,
+        TransitionKind.REQUEST_OPENED,
+        ask_watermark,
+    )
+    assert controller._deliver_semantic_notification(
+        event_key,
+        InterruptionClass.ACTION_REQUIRED,
+        prefix="attention",
+    )
+    controller.observe_operator_history_events((), ask_state)
+    screen = controller._ambient_effect_dispatch.for_surface(
+        AmbientEffectSurface.SCREEN_BAR
+    )
+    assert screen is not None
+    assert screen.semantic.value == "ask"
+    assert _screensaver_output(controller._ambient_effect_dispatch) is None
+
+
+def test_idle_screensaver_fails_closed_on_unknown_or_missing_effect(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    clock = [10_000.0]
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic",
+        lambda: clock[0],
+    )
+
+    # Enabled but nothing picked: "off", never waiting, never playing.
+    controller = controller_type()
+    controller.settings = _cue_settings(
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect=None,
+    )
+    controller.idle_since_monotonic = clock[0] - 9_999.0
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(controller._ambient_effect_dispatch) is None
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "off"
+
+    # An id the registry does not know fails the same closed way.
+    unknown = controller_type()
+    unknown.settings = _cue_settings(
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="not-a-real-effect",
+    )
+    unknown.idle_since_monotonic = clock[0] - 9_999.0
+    unknown.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(unknown._ambient_effect_dispatch) is None
+    assert unknown._idle_screensaver_fact["screensaver"]["state"] == "off"
+
+
+def test_idle_screensaver_respects_night_consent_and_dnd_admission(
+    monkeypatch,
+) -> None:
+    from jrbar.dnd_policy import DisplayAdmission
+    from jrbar.scenes import SCENE_POLICIES, Scene
+
+    class _PackStore:
+        def __init__(self, root=None):
+            pass
+
+        def policy_overrides(self, pack_id):
+            assert pack_id == "quiet-work"
+            return {
+                Scene.CALM: replace(
+                    SCENE_POLICIES[Scene.CALM],
+                    display_admission=DisplayAdmission.NONE,
+                )
+            }
+
+    monkeypatch.setattr(
+        "jrbar.scene_pack_store.ScenePackStore", _PackStore
+    )
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    clock = [10_000.0]
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic",
+        lambda: clock[0],
+    )
+
+    # Night scene without the shared night consent: armed but held off.
+    night = controller_type()
+    night.settings = _cue_settings(
+        active_scene="night",
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="rainbow",
+    )
+    night.idle_since_monotonic = clock[0] - 9_999.0
+    night.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(night._ambient_effect_dispatch) is None
+    assert night._idle_screensaver_fact["screensaver"]["state"] == "off"
+
+    # Consented, the same night scene plays.
+    consented = controller_type()
+    consented.settings = _cue_settings(
+        active_scene="night",
+        rainstick_night_enabled=True,
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="rainbow",
+    )
+    consented.idle_since_monotonic = clock[0] - 9_999.0
+    consented.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(consented._ambient_effect_dispatch) is not None
+
+    # A pack that tightens admission to NONE holds the screensaver off too.
+    packed = controller_type()
+    packed.settings = _cue_settings(
+        active_scene_pack="quiet-work",
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="rainbow",
+    )
+    packed.idle_since_monotonic = clock[0] - 9_999.0
+    packed.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(packed._ambient_effect_dispatch) is None
+    assert packed._idle_screensaver_fact["screensaver"]["state"] == "off"

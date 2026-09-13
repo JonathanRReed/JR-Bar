@@ -497,6 +497,7 @@ else:
                                 provider=event.provider_id,
                                 instance=event.source_instance_id,
                                 label=event.label,
+                                lane=event.lane_id,
                             )
                         except Exception:
                             pass

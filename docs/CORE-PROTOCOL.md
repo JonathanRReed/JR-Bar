@@ -335,9 +335,11 @@ field is one the Control Center and the Rail decode.
   `quota_warning` the ask one -- a key you can answer and a key you cannot
   are never the same colour.
 - `aux[]` are AG13..AG19 (one encoder, three inputs; four joystick
-  sectors) with the explicit `deck-controls.json` mapping kind bound to
-  each (`next_bank`, `next_scope`, `open_usage`, …) or null; labels come
-  from the inspected keymap when there is one.
+  sectors) and, only while `settings.analog_enabled` is on, the four
+  calibrated analog joystick sectors AG20..AG23 (labeled `Joystick
+  sector N (analog)`), with the explicit `deck-controls.json` mapping
+  kind bound to each (`next_bank`, `next_scope`, `open_usage`, …) or
+  null; labels come from the inspected keymap when there is one.
 - `scope` is the board's provider scope: `automatic` admits every
   session, a provider id admits only live sessions reporting that
   provider. The output service's `device.status` polls resolve it through
@@ -363,6 +365,24 @@ field is one the Control Center and the Rail decode.
   hardware layer to board scope, and extra `scopes`; the Python defaults
   are all off, with layers 1 and 2 mapped to `codex` and `claude` on a
   fresh install).
+
+#### Ambient owner facts (`state.ambient`)
+
+Live facts from the daemon's ambient owners, published by
+`ambient_effect_runtime` each observation batch. Absent (not empty) until
+the runtime has observed one, and additive by contract: a new owner is a
+new member, never a reshape.
+
+```json
+"ambient":{"screensaver":{"state":"waiting","idle_seconds":182.0,"after_seconds":1200}}
+```
+
+- `screensaver.state` is `"playing"` (the chosen effect owns the strip),
+  `"waiting"` (armed but below the delay), or `"off"` (disabled, no or
+  unknown effect picked, or held off by a signal, DND, or night consent).
+  `idle_seconds` is the idle clock the decision ran on; `after_seconds`
+  is the configured threshold (`idle_screensaver_after_minutes` x 60,
+  clamped 300-86400).
 
 ### lights
 The presentation program for each surface, exactly the LEDS DSL text the
@@ -532,8 +552,14 @@ change of the output service's reason, `ready`, `reconnecting`,
 sits on `state.deck.device.receipt`) and `usage_history_ready` (`provider`,
 `range`, `records`, `scanned_at`; `label` is the provider, `detail` the
 range: a `usage_history` reply that went out `pending` or `stale` now has
-a fresh document behind it, ask again). Reserved, not emitted yet:
-`quota_reset`, `peer_arrived`, `peer_departed`.
+a fresh document behind it, ask again); `quota_reset` (`provider`,
+`instance`, `label` such as "Weekly reset", `lane`: the usage lane that
+refilled, `weekly` / `five-hour` / a product-scoped id ending in
+`-weekly`; published on every detected reset regardless of the
+celebration preferences, so the Usage Center can pulse the card and the
+Confetti toy can fire on the weekly one); `peer_arrived` / `peer_departed`
+(`label` is the machine name; the reachable-set diff after the first
+applied refresh, never on daemon start).
 
 ### settings
 Full settings document, sent on connect and after every change from any
@@ -586,9 +612,61 @@ Keys the app catalogued first and the daemon serves since 2026-09-10:
   `milestone_odometer_steps` (positive ints, sorted, deduplicated, at
   most 16, default `[10, 25, 50, 100]`). All default off/empty-consented;
   an enabled odometer with no valid step stays dark.
+- `idle_screensaver_enabled`, `idle_screensaver_effect`,
+  `idle_screensaver_after_minutes`: the Screen Bar Screensaver
+  (docs/TOYS.md). Once the strip has sat idle past the delay the daemon
+  plays the chosen library effect as the ambient owner; any real signal
+  preempts it, and `idle_auto_off` still wins when it fires.
+  `_effect` is an effect id from `list_effects` or `null` (none picked);
+  an id the registry does not know fails closed and nothing plays.
+  `_after_minutes` is an int clamped to 5-1440 (default 20). Off by
+  default.
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```
+
+Legacy-only settings: the daemon still loads, normalises and re-emits
+each of these, but only the deprecated Python settings window ever
+wrote them -- the app has no control for any of them, so a value there
+today keeps working exactly as configured:
+
+- `calendar_alerts_enabled`: the calm purple glow before a calendar
+  event runs (enabling it is what presented the system Calendars
+  prompt).
+- `calendar_lead_minutes`: how many minutes ahead of the event the
+  calendar glow starts (clamped 1–60).
+- `reminder_alerts_enabled`: the amber glow when a Reminder comes due
+  (the system Reminders prompt).
+- `tips_enabled`: the legacy tip tour may run (default on).
+- `dismissed_tips`: the tip texts already dismissed.
+- `codex_percent_enabled`: Codex quota leads with a percentage.
+- `lid_closed_animation`, `lid_open_animation`,
+  `lid_closed_active_animation`, `lid_open_active_animation`: the LED
+  programs the daemon plays on lid close/open, idle and
+  agents-running variants (`lid_animation_for`).
+- `colors.color_by_project`: session identity colours follow the
+  session's project.
+- `colors.session_colors`: per-agent colour overrides.
+- `colors.mode_animation`: the animation style each mode renders with.
+- `colors.speed_overrides`: per-blend-mode cycle-speed overrides.
+- `colors.round_robin_urgency_alert`: an urgency alert rotates across
+  the strips instead of painting all of them.
+- `signal_styles`: per-signal look overrides (Signal Engine
+  `SignalStyle` rows; absent keys are the built-in defaults).
+- `focus_signal_policy`: which signals a Focus may pass through.
+- `focus_profile_rules`: Focus id → calibration profile slot applied
+  when that Focus activates.
+- `global_action_shortcuts`: persisted chords for the global actions.
+- `studio_program`: the hand-written Studio LED program, kept verbatim.
+- `studio_library`: the named Studio programs shelf.
+- `notification_policy_version`: which notification-policy migration
+  has already run.
+- `screen_bar_gauges_enabled`: the Screen Bar's wing-tip micro-gauges.
+- `screen_bar_bracket_style`: how the Alcove bracket colours itself
+  (`auto`/`spatial`/`identity`).
+- `virtual_status_device_wraps_menu_bar`: extends the Screen Bar's glow
+  past the notch toward the menu bar's edges -- the app reads it, no
+  control yet.
 
 ### reply
 Answer to a command.
@@ -646,7 +724,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `end_calibration_preview` | device | Drops the held preview(s) that device owns -- its own and a companion strip's -- clears the dedupe identity the preview bytes left, and re-arms the live program. Idempotent: `{device, ended}`. |
 | `apply_effect` | effect, scope, target, parameters? | Effect Studio assignment (`EffectAssignmentRecord.create`); `effect` null or `"none"` removes it. Protocol-1 alias of `set_assignment`/`clear_assignment`: answers the same fuller assignment document, parameters sidecar included. |
 | `refresh_usage` | providers[] | Forces a provider usage refresh; the next `state` carries the result. |
-| `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider (with the compiled shim when available and the Codex trust hash recomputed). `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success. |
+| `install_hooks` / `uninstall_hooks` | providers[] | `install.py` per provider: install registers the hook command (with the compiled shim when available and the Codex trust hash recomputed); uninstall removes the managed hook blocks the installer wrote. `{providers, results{provider: {ok, detected, changed, config_path, codex_trust, warning}}}` — `detected` is the installed-agent inventory's finding for that provider, and an install for a provider whose CLI was never found is a per-provider `{ok: false, detected: false, error}` row, not a silently claimed success (uninstall has no such gate: it removes what is there). |
 | `set_closed_lid_policy` | policy | `never`, `agents`, `always`. |
 | `quiet` | mode (`dnd`/`pause`, `dim`, `mute`, `dark`, `asks_only`), seconds | A DND override for that long (0 ends the override). `{until, mode}`. |
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
@@ -667,7 +745,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
 | `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
-| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this auxiliary control in Settings > Devices."; `input_check` while input check is on. |
+| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this control in the Control Center (⌘K)."; `input_check` while input check is on. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
 | `deck_bank` | delta | Steps the bank, wrapping. `{index, count}`. |
 | `deck_scope` | delta | Steps the board scope through `automatic` plus the configured provider scopes, wrapping (what the `next_scope` / `previous_scope` aux actions run). `{scope, scopes}`. |
@@ -678,7 +756,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `deck_restore_keymap` | | `CreatorMicroSetup.restore` from the first private backup: `{code: keymap_restored\|already_restored, message, state, backup_at, generation}`, same refusals (`backup_invalid` with no backup, `keymap_changed` for later device edits). |
 | `deck_approve_device` | | The Devices pane's Enable, for a pad that is here: the daemon probes HID once more and refuses with `no_device` ("No Creator Micro 2 is connected.") when it sees none, so a remembered serial is never enabled blindly; otherwise the sole stable serial becomes `creator_micro_device_serial` with `creator_micro_enabled` and the output service is reconfigured. `{serial, approved}`; `ambiguous_device_identity`, `device_identity_unavailable`. |
 | `deck_check_input` | enabled | Input check on or off (queued input is revoked). `{enabled}`. |
-| `deck_set_settings` | enabled?, session_mode?, analog_enabled?, bindings?, layer_map?, scopes? | Writes `deck-controls.json`, reconfigures the deck runtime. `bindings` replaces the whole auxiliary set (`{index, action|null}` rows for controls 13…19; a null unbinds; matrix-key bindings survive). `layer_map` (`{layer, scope}` rows) maps hardware layers to board scopes and `scopes` adds provider ids past the mapped ones; both are validated (no duplicates, `automatic` only inside `layer_map`). The three bools; `invalid_args` for anything else. |
+| `deck_set_settings` | enabled?, session_mode?, analog_enabled?, bindings?, layer_map?, scopes? | Writes `deck-controls.json`, reconfigures the deck runtime. `bindings` replaces the whole auxiliary set (`{index, action|null}` rows for controls 13…23 — 20…23 are the analog joystick sectors; a null unbinds; matrix-key bindings survive). `layer_map` (`{layer, scope}` rows) maps hardware layers to board scopes and `scopes` adds provider ids past the mapped ones; both are validated (no duplicates, `automatic` only inside `layer_map`). The three bools; `invalid_args` for anything else. |
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
 

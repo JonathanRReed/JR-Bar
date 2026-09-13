@@ -175,7 +175,6 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
         var keys: [SettingsKey] = [
             // General
             SettingsKey(.general, "menu_bar_icon_style", .string),
-            SettingsKey(.general, "menu_bar_label_enabled", .bool),
             SettingsKey(.general, "global_brightness_scale", .number),
             // Agents
             SettingsKey(.agents, "subagent_asks_alert", .bool),
@@ -211,7 +210,6 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.devices, "screen_bar_phase_offset_ms", .number),
             SettingsKey(.devices, "screen_bar_gap_width", .nullableNumber),
             SettingsKey(.devices, "screen_bar_wing_length", .nullableNumber),
-            SettingsKey(.devices, "screen_bar_bracket_style", .string),
             SettingsKey(.devices, "screen_bar_min_glow", .number),
             // Lighting
             SettingsKey(.lighting, "colors.blend_mode", .string),
@@ -233,6 +231,12 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             // else owns the strip, and a finite cue when the exact
             // completion count crosses a milestone.
             SettingsKey(.lighting, "rainstick_idle_enabled", .bool),
+            // The Screen Bar Screensaver (docs/TOYS.md): the toy card's
+            // toggle, the picked effect (null = none picked), and the
+            // idle delay in minutes.
+            SettingsKey(.lighting, "idle_screensaver_enabled", .bool),
+            SettingsKey(.lighting, "idle_screensaver_effect", .nullableString),
+            SettingsKey(.lighting, "idle_screensaver_after_minutes", .number),
             SettingsKey(.lighting, "milestone_odometer_enabled", .bool),
             SettingsKey(.lighting, "auto_dim.mode", .string),
             SettingsKey(.lighting, "auto_dim.schedule.start_minutes", .number),

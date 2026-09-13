@@ -122,6 +122,10 @@ DECK_SLOTS = 13
 DECK_ROWS = (2, 4, 4, 3)
 DECK_AUX_LABELS = {13: "Encoder 1 input 1", 14: "Encoder 1 input 2", 15: "Encoder 1 input 3",
                    16: "Joystick sector 1", 17: "Joystick sector 2", 18: "Joystick sector 3", 19: "Joystick sector 4"}
+# The calibrated analog joystick sectors join `aux[]` (and accept
+# bindings) only while analog_enabled is on -- core_deck.ANALOG_AUX_LABELS.
+DECK_ANALOG_AUX_LABELS = {20: "Joystick sector 1 (analog)", 21: "Joystick sector 2 (analog)",
+                          22: "Joystick sector 3 (analog)", 23: "Joystick sector 4 (analog)"}
 DECK_ANALOG = 4
 DECK_RAIL_EDGES = ("off", "left", "right", "top", "bottom")
 # The bounded action vocabulary of src/jrbar/deck_actions.py.
@@ -936,6 +940,9 @@ def default_settings_document() -> dict:
         "idle_dim_after_minutes": 10.0,
         "idle_dim_enabled": True,
         "idle_dim_fraction": 0.3,
+        "idle_screensaver_after_minutes": 20,
+        "idle_screensaver_effect": None,
+        "idle_screensaver_enabled": False,
         "keep_awake_on_battery": True,
         "keep_display_awake": False,
         "led_display": "agent",
@@ -1237,6 +1244,9 @@ class World:
         # moment `set_mode` hears it speak again -- the daemon's receipt
         # semantics without the persistence.
         self.dismissed: dict[str, float] = {}
+        # The mock's stand-in for the daemon's idle clock: the epoch the
+        # aggregate first read "idle". Drives `state.ambient.screensaver`.
+        self._screensaver_idle_since: float | None = None
         # `usage_history` scans: the first ask per (provider, range) is
         # answered partially and finished by an event, like the daemon's.
         self.history_scanned: set[tuple[str, str]] = set()
@@ -1394,10 +1404,53 @@ class World:
             "catalog_generation": self.effects_generation,
             "settings_generation": self.settings_generation,
             "hidden_count": self.hidden_count,
+            "ambient": self.ambient_facts(now),
             "deck": self.deck_state(),
             # Forward-compatibility bait: the app must ignore this.
             "x_mock_extra": {"note": "unknown keys are fine"},
         }
+
+    def ambient_facts(self, now: float) -> dict:
+        """`state.ambient`: the idle screensaver's fact, the daemon's shape.
+
+        The mock's idle clock is the aggregate: when the mode reads
+        "idle" the bar is treated as unattended. Enabled with a picked
+        effect plays once idle passes the delay; an unknown id fails
+        closed to "off", like the daemon.
+        """
+        doc = self.document
+        enabled = bool(doc.get("idle_screensaver_enabled"))
+        effect = doc.get("idle_screensaver_effect")
+        raw_after = doc.get("idle_screensaver_after_minutes")
+        after_seconds = (
+            int(max(5.0, min(1440.0, float(raw_after))) * 60)
+            if isinstance(raw_after, (int, float)) and not isinstance(raw_after, bool)
+            else 20 * 60
+        )
+        if self.aggregate()["mode"] == "idle":
+            if self._screensaver_idle_since is None:
+                self._screensaver_idle_since = now
+        else:
+            self._screensaver_idle_since = None
+        idle_seconds = (
+            max(0.0, now - self._screensaver_idle_since)
+            if self._screensaver_idle_since is not None
+            else 0.0
+        )
+        known_ids = {row["id"] for row in registry_effects()} | {
+            f"pack:{pack['id']}:{entry['id']}"
+            for pack in self.effect_packs.values()
+            for entry in pack.get("effects", [])
+        }
+        known = isinstance(effect, str) and effect in known_ids
+        if not enabled or not known:
+            word = "off"
+        elif idle_seconds >= after_seconds:
+            word = "playing"
+        else:
+            word = "waiting"
+        return {"screensaver": {"state": word, "idle_seconds": round(idle_seconds, 1),
+                                "after_seconds": after_seconds}}
 
     # -- deck ------------------------------------------------------------------
 
@@ -1505,8 +1558,11 @@ class World:
         return slots
 
     def deck_aux(self) -> list[dict]:
+        labels = dict(DECK_AUX_LABELS)
+        if self.deck_settings.get("analog_enabled"):
+            labels.update(DECK_ANALOG_AUX_LABELS)
         return [{"index": index, "label": label, "mapping": self.deck_aux_mappings.get(index)}
-                for index, label in DECK_AUX_LABELS.items()]
+                for index, label in sorted(labels.items())]
 
     def deck_layer_rows(self) -> list[dict]:
         return [{"profile": layer["profile"], "layer": layer["layer"],
@@ -1702,7 +1758,8 @@ class World:
             if row["session"] is None:
                 return None, row["identity"], None
             return "reveal_session", row["identity"], row["session"]
-        mapping = self.deck_aux_mappings.get(index) if index < DECK_SLOTS + len(DECK_AUX_LABELS) else None
+        mapping = (self.deck_aux_mappings.get(index)
+                   if index < DECK_SLOTS + len(DECK_AUX_LABELS) + DECK_ANALOG else None)
         return mapping, None, None
 
     def auto_dim(self) -> dict:
@@ -2779,7 +2836,7 @@ class World:
             if action is None:
                 if index < DECK_SLOTS:
                     return self.deck_error(cid, "not_found", "Reserved: session not observed." if identity else "No session assigned.")
-                return self.deck_error(cid, "not_found", "Configure this auxiliary control in Settings > Devices.")
+                return self.deck_error(cid, "not_found", "Configure this control in the Control Center (⌘K).")
             result = {"index": index, "action": action, "identity": identity, "session": sid}
             if action == "reveal_session":
                 s = self.sessions.get(sid) or {"label": "session", "terminal": {}}
@@ -2929,15 +2986,15 @@ class World:
                 return self.deck_error(cid, "invalid_args", "enabled, session_mode and analog_enabled must be bools")
             if "bindings" in args:
                 rows = args["bindings"]
-                if type(rows) is not list or len(rows) > 7:
+                if type(rows) is not list or len(rows) > 11:
                     return self.deck_error(cid, "invalid_args", "bindings must be a list of auxiliary control mappings")
                 aux = {}
                 for entry in rows:
                     if type(entry) is not dict or set(entry) != {"index", "action"}:
                         return self.deck_error(cid, "invalid_args", "binding rows must be {index, action}")
                     index, action = entry["index"], entry["action"]
-                    if type(index) is not int or index not in DECK_AUX_LABELS or index in aux:
-                        return self.deck_error(cid, "invalid_args", "binding index must name an auxiliary control (13-19)")
+                    if type(index) is not int or not 13 <= index < 24 or index in aux:
+                        return self.deck_error(cid, "invalid_args", "binding index must name an auxiliary control (13-23)")
                     if action is not None and (type(action) is not str or action not in DECK_ACTIONS):
                         return self.deck_error(cid, "invalid_args", "binding action must be a deck action kind or null")
                     aux[index] = action
@@ -2973,8 +3030,10 @@ class World:
                 self.deck_settings.update({key: value for key, value in updates.items()
                                            if key in ("enabled", "session_mode", "analog_enabled")})
                 if "bindings" in updates:
-                    # Explicit aux bindings replace the whole auxiliary set.
-                    self.deck_aux_mappings = {index: updates["bindings"].get(index) for index in DECK_AUX_LABELS}
+                    # Explicit aux bindings replace the whole auxiliary set,
+                    # analog sectors included.
+                    self.deck_aux_mappings = {index: updates["bindings"].get(index)
+                                              for index in (*DECK_AUX_LABELS, *DECK_ANALOG_AUX_LABELS)}
                     self.deck_bindings = {index: action for index, action in updates["bindings"].items()
                                           if action is not None}
                 if "layer_map" in updates:

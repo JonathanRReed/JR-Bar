@@ -14,7 +14,7 @@ import UserNotifications
 @Observable
 final class SettingsStore {
     enum Page: String, CaseIterable, Identifiable, Hashable {
-        case general, agents, usage, devices, lighting, notifications, remote, advanced
+        case general, agents, usage, devices, lighting, toys, notifications, remote, advanced
 
         var id: String { rawValue }
 
@@ -25,6 +25,7 @@ final class SettingsStore {
             case .usage: return "Usage"
             case .devices: return "Devices & Screen Bar"
             case .lighting: return "Lighting"
+            case .toys: return "Toys"
             case .notifications: return "Notifications & Focus"
             case .remote: return "Remote"
             case .advanced: return "Advanced"
@@ -38,6 +39,7 @@ final class SettingsStore {
             case .usage: return "chart.bar.fill"
             case .devices: return "light.beacon.max.fill"
             case .lighting: return "paintpalette.fill"
+            case .toys: return "party.popper.fill"
             case .notifications: return "bell.badge.fill"
             case .remote: return "antenna.radiowaves.left.and.right"
             case .advanced: return "wrench.and.screwdriver.fill"
@@ -52,17 +54,25 @@ final class SettingsStore {
             case .usage: return Color(nsColor: .systemGreen)
             case .devices: return Color(nsColor: .systemOrange)
             case .lighting: return Color(nsColor: .systemPink)
+            // The Toys tint is a warm magenta from the contract, not the
+            // palette's pink — Lighting already owns that one.
+            case .toys: return Color(red: 0.93, green: 0.30, blue: 0.62)
             case .notifications: return Color(nsColor: .systemRed)
             case .remote: return Color(nsColor: .systemTeal)
             case .advanced: return Color(nsColor: .systemGray)
             }
         }
 
-        var catalogue: SettingsKey.Page { SettingsKey.Page(rawValue: rawValue)! }
+        /// The daemon-document page this page resets; nil for pages with
+        /// no daemon keys (Toys keeps its state in `app-state.json`).
+        var catalogue: SettingsKey.Page? { SettingsKey.Page(rawValue: rawValue) }
     }
 
     let core: CoreModel
     var page: Page = .general
+    /// The Toys page's store, created beside this one in the delegate.
+    /// Weak: the delegate owns it.
+    weak var toys: ToysStore?
     /// Lighting › Effects… opens the Effect Studio window.
     var onOpenEffects: (@MainActor () -> Void)?
     /// Devices › Creator Micro 2 › Open Control Center…
@@ -562,7 +572,8 @@ final class SettingsStore {
     }
 
     func resetPage(_ page: Page) {
-        let paths = SettingsKey.resetPaths(on: page.catalogue, in: SettingsDocument(core.settings?.document ?? .object([:])))
+        guard let catalogue = page.catalogue else { return }
+        let paths = SettingsKey.resetPaths(on: catalogue, in: SettingsDocument(core.settings?.document ?? .object([:])))
         guard !paths.isEmpty else { return }
         Task { [weak self] in
             guard let self else { return }

@@ -870,14 +870,32 @@ def _cmd_set_setting(self, args):
 
 @command("reset_settings")
 def _cmd_reset_settings(self, args):
-    from ._settings_legacy import AgentMonitorSettings
+    from ._settings_legacy import AgentMonitorSettings, DeviceDisplaySetting
 
     paths = [str(path) for path in (args.get("paths") or []) if isinstance(path, str)]
     defaults = AgentMonitorSettings().to_dict()
+    # A defaults document carries no remembered devices, so a
+    # ``devices.N.<field>`` reset has no row to read -- the leaf default
+    # on a stock DeviceDisplaySetting is the answer instead. Identity
+    # fields (id, name, path) are not preferences and never reset.
+    device_defaults = {
+        key: value
+        for key, value in DeviceDisplaySetting(device_id="", name="", path="").to_dict().items()
+        if key not in ("id", "name", "path")
+    }
     document = self.settings.to_dict()
     reset: list[str] = []
     for path in paths:
         value, found = get_path(defaults, path)
+        if not found:
+            parts = split_path(path)
+            if (
+                len(parts) == 3
+                and parts[0] == "devices"
+                and isinstance(parts[1], int)
+                and parts[2] in device_defaults
+            ):
+                value, found = device_defaults[parts[2]], True
         if found and set_path(document, path, json.loads(json.dumps(value))):
             reset.append(path)
     generation = _apply_settings_document(self, document, touched=reset) if reset else self._core_settings_generation
@@ -2296,19 +2314,20 @@ def _cmd_deck_check_input(self, args):
 
 def _deck_bindings_update(value, previous) -> tuple:
     """The ``bindings`` argument: a full replacement list of auxiliary
-    (13..19) mappings, {"index": int, "action": kind | null}. Matrix-key
-    bindings are managed by the Devices pane and survive."""
+    (13..19) and analog-sector (20..23) mappings, {"index": int,
+    "action": kind | null}. Matrix-key bindings are managed by the
+    Devices pane and survive."""
     from .deck_actions import DeckAction
 
-    if type(value) is not list or len(value) > 7:
+    if type(value) is not list or len(value) > 11:
         raise CommandError("invalid_args", "bindings must be a list of auxiliary control mappings")
     aux = []
     for row in value:
         if type(row) is not dict or set(row) != {"index", "action"}:
             raise CommandError("invalid_args", "binding rows must be {index, action}")
         index, action = row["index"], row["action"]
-        if type(index) is not int or not 13 <= index < 20:
-            raise CommandError("invalid_args", "binding index must name an auxiliary control (13-19)")
+        if type(index) is not int or not 13 <= index < 24:
+            raise CommandError("invalid_args", "binding index must name an auxiliary control (13-23)")
         if action is not None:
             if type(action) is not str:
                 raise CommandError("invalid_args", "binding action must be a deck action kind or null")
@@ -2318,7 +2337,7 @@ def _deck_bindings_update(value, previous) -> tuple:
                 raise CommandError("invalid_args", "binding action must be a deck action kind or null") from error
     if len({index for index, _action in aux}) != len(aux):
         raise CommandError("invalid_args", "duplicate auxiliary binding")
-    kept = tuple(entry for entry in previous.bindings if not 13 <= entry[0] < 20)
+    kept = tuple(entry for entry in previous.bindings if not 13 <= entry[0] < 24)
     return tuple(sorted((*kept, *aux)))
 
 
@@ -4672,6 +4691,16 @@ def build_headless_controller_class() -> type:
                         ]
             except Exception:
                 legacy.log_status_bar(f"core: peers projection failed: {traceback.format_exc(limit=6)}")
+            try:
+                # The idle screensaver's live fact (docs/TOYS.md "Screen
+                # Bar Screensaver"): {"screensaver": {"state", "idle_seconds",
+                # "after_seconds"}}. Absent until the ambient runtime has
+                # observed a batch; a malformed fact simply stays absent.
+                ambient = getattr(self, "_idle_screensaver_fact", None)
+                if isinstance(ambient, dict) and ambient:
+                    document["ambient"] = ambient
+            except Exception:
+                legacy.log_status_bar(f"core: ambient projection failed: {traceback.format_exc(limit=6)}")
             return document
 
         def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:

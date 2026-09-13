@@ -23,17 +23,21 @@ public struct AppState: Codable, Equatable, Sendable {
     /// for the moments before the first frame. nil means the app's
     /// default.
     public var menuBarIconStyle: String?
+    /// The Toys page's state (docs/TOYS.md): everything it persists lives
+    /// here because the daemon's document is not the toys' to write in.
+    public var toys: ToysState
 
     public init(bundledHooksInstalledFor: String? = nil, loginItemRegistered: Bool = false, showScreenBar: Bool = true,
-                menuBarIconStyle: String? = nil) {
+                menuBarIconStyle: String? = nil, toys: ToysState = ToysState()) {
         self.bundledHooksInstalledFor = bundledHooksInstalledFor
         self.loginItemRegistered = loginItemRegistered
         self.showScreenBar = showScreenBar
         self.menuBarIconStyle = menuBarIconStyle
+        self.toys = toys
     }
 
     private enum CodingKeys: String, CodingKey {
-        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle
+        case bundledHooksInstalledFor, loginItemRegistered, showScreenBar, menuBarIconStyle, toys
     }
 
     /// Missing or wrongly typed keys read as the defaults; unknown keys are
@@ -44,6 +48,7 @@ public struct AppState: Codable, Equatable, Sendable {
         loginItemRegistered = (try? container.decodeIfPresent(Bool.self, forKey: .loginItemRegistered)) ?? false
         showScreenBar = (try? container.decodeIfPresent(Bool.self, forKey: .showScreenBar)) ?? true
         menuBarIconStyle = (try? container.decodeIfPresent(String.self, forKey: .menuBarIconStyle)) ?? nil
+        toys = (try? container.decodeIfPresent(ToysState.self, forKey: .toys)) ?? ToysState()
     }
 }
 

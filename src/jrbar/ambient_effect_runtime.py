@@ -9,6 +9,7 @@ changes whether a notification is delivered.
 from __future__ import annotations
 
 import hashlib
+import math
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
@@ -1603,6 +1604,231 @@ def _observe_dot_and_rainstick(
     )
 
 
+# --- Screen Bar Screensaver (docs/TOYS.md) ------------------------------------
+#
+# A sibling ambient owner next to Rainstick Idle: once the strip has sat
+# idle for `idle_screensaver_after_minutes`, the daemon may play the owner's
+# chosen library effect instead of only going dark. It stages through the
+# same semantic-selection seam a delivered notification uses -- an IDLE
+# candidate mapped onto the chosen effect -- so it inherits the router's
+# admission, Reduce-Motion and registry checks, and the dispatcher's
+# per-surface arbitration. Every real semantic outbids IDLE, so any staged
+# signal preempts it the moment one is planned.
+
+_IDLE_SCREENSAVER_CANDIDATE_KEY = "idle_screensaver"
+_IDLE_SCREENSAVER_DEFAULT_AFTER_SECONDS = 20 * 60
+_IDLE_SCREENSAVER_MIN_AFTER_SECONDS = 5 * 60
+_IDLE_SCREENSAVER_MAX_AFTER_SECONDS = 1440 * 60
+
+
+def _idle_screensaver_after_seconds(settings: object) -> int:
+    """The persisted minutes as seconds; a hand-forged value clamps, never raises."""
+    raw = getattr(settings, "idle_screensaver_after_minutes", None)
+    try:
+        minutes = float(raw)
+    except (TypeError, ValueError):
+        minutes = 20.0
+    if type(raw) is bool or not math.isfinite(minutes):
+        minutes = 20.0
+    return int(
+        max(
+            _IDLE_SCREENSAVER_MIN_AFTER_SECONDS,
+            min(_IDLE_SCREENSAVER_MAX_AFTER_SECONDS, round(minutes * 60.0)),
+        )
+    )
+
+
+def _idle_screensaver_registry(controller: object) -> EffectRegistry:
+    """The assignment cache's pack-aware registry, else the built-ins."""
+    cache = getattr(controller, "_effect_assignment_cache", None)
+    if isinstance(cache, EffectAssignmentCache):
+        try:
+            registry = cache.registry()
+        except Exception:
+            registry = None
+        if isinstance(registry, EffectRegistry):
+            return registry
+    return EFFECT_REGISTRY
+
+
+def _idle_screensaver_program(
+    controller: object,
+    registry: EffectRegistry,
+    effect_id: str,
+) -> str | None:
+    """The chosen effect's LEDS source, parameters at their defaults.
+
+    ``None`` lets the dispatcher fall back to the generic idle swell --
+    a render hiccup must never cost the observation batch.
+    """
+    effect = registry.get(effect_id)
+    if effect is None:
+        return None
+    try:
+        from . import core_effects
+
+        try:
+            parameters = registry.normalize_parameters(effect_id, {})
+        except Exception:
+            parameters = {}
+        program = core_effects.render_effect_source(effect, parameters)
+    except Exception:
+        return None
+    return program if type(program) is str and program else None
+
+
+def _retire_idle_screensaver(controller: object, *, now: float) -> None:
+    """Age out a still-live staged screensaver output so the merge drops it.
+
+    The dispatch merge keeps an unexpired output whose family is not
+    re-staged -- right for a finite cue finishing its phrase, wrong for a
+    screensaver that must yield the moment a work session appears. Marking
+    the staged surface's start time as long past lets the ordinary merge
+    retire it without touching the dispatcher.
+    """
+    staged_id = getattr(controller, "_idle_screensaver_staged_effect", None)
+    if type(staged_id) is not str or not staged_id:
+        return
+    dispatch = getattr(controller, "_ambient_effect_dispatch", None)
+    started = getattr(
+        controller,
+        "_ambient_effect_dispatch_started_at_by_surface",
+        None,
+    )
+    if type(dispatch) is AmbientEffectDispatch and isinstance(started, dict):
+        for surface in AmbientEffectSurface:
+            output = dispatch.for_surface(surface)
+            if (
+                output is not None
+                and output.family is AmbientEffectFamily.SEMANTIC_SELECTION
+                and output.semantic is SemanticEventKind.IDLE
+                and output.effect_identity == staged_id
+            ):
+                # Older than any output's expiry bound (60 s).
+                started[surface] = now - 61.0
+    setattr(controller, "_idle_screensaver_staged_effect", None)
+
+
+def _observe_idle_screensaver(
+    controller: object,
+    state: CanonicalOperatorState,
+    events: tuple[CanonicalOperatorEvent, ...],
+    *,
+    reduce_motion: bool,
+) -> None:
+    """Plan the owner's chosen effect while the strip sits idle, fail-closed.
+
+    Gates mirror Rainstick Idle's admission: the setting must be on, the
+    effect id must resolve in the (pack-aware) registry, the idle clock
+    must be past the threshold, no higher-priority semantic may be live,
+    DND/pack admission must be ALL, and the night scene needs the same
+    `rainstick_night_enabled` consent. `idle_auto_off` still wins when it
+    fires -- that dimming is applied downstream of this plan. Every batch
+    also publishes the live fact (`state.ambient.screensaver`) the app's
+    toy card reads: playing / waiting / off plus the idle clock.
+    """
+    settings = getattr(controller, "settings", None)
+    enabled = bool(getattr(settings, "idle_screensaver_enabled", False))
+    raw_effect = getattr(settings, "idle_screensaver_effect", None)
+    effect_id = (
+        raw_effect.strip()
+        if type(raw_effect) is str and raw_effect.strip()
+        else None
+    )
+    after_seconds = _idle_screensaver_after_seconds(settings)
+    idle_since = getattr(controller, "idle_since_monotonic", None)
+    now = time.monotonic()
+    idle_seconds = (
+        max(0.0, now - float(idle_since))
+        if type(idle_since) in {int, float}
+        else 0.0
+    )
+    scene = scene_from_value(getattr(settings, "active_scene", None)) or DEFAULT_SCENE
+    admission, _environment_plan = _scene_pack_environment(controller, settings, scene)
+    registry = _idle_screensaver_registry(controller)
+    # An id the registry does not know is "no effect": nothing plays, and
+    # the observation path never sees an exception for it.
+    armed = enabled and effect_id is not None and registry.get(effect_id) is not None
+    semantics = _active_semantics(state, events)
+    surface_visible = any(
+        getattr(controller, attribute, None) is not None
+        for attribute in ("status_item", "virtual_status_device")
+    )
+    pending = _typed_plan(
+        getattr(controller, "_semantic_effect_selection", None),
+        SemanticEffectSelection,
+    )
+    blocked = (
+        any(semantic is not SemanticEventKind.IDLE for semantic in semantics)
+        or admission is not DisplayAdmission.ALL
+        or (
+            scene.value == "night"
+            and not bool(getattr(settings, "rainstick_night_enabled", False))
+        )
+        or bool(getattr(controller, "display_asleep", False))
+        or bool(getattr(controller, "_ambient_low_power", False))
+        or bool(getattr(controller, "_ambient_serious_thermal", False))
+        or not surface_visible
+        # A delivered signal staged this batch keeps the seam.
+        or (pending is not None and pending.winner is not None)
+    )
+    playing = False
+    if armed and not blocked and idle_seconds >= float(after_seconds):
+        effect_map = SemanticEffectMap(
+            tuple(
+                SemanticEffectAssignment(
+                    item.semantic,
+                    effect_id
+                    if item.semantic is SemanticEventKind.IDLE
+                    else item.effect_identifier,
+                )
+                for item in DEFAULT_SEMANTIC_EFFECT_MAP.assignments
+            )
+        )
+        try:
+            selection = route_semantic_effects(
+                (SemanticEffectCandidate(
+                    _IDLE_SCREENSAVER_CANDIDATE_KEY,
+                    SemanticEventKind.IDLE,
+                ),),
+                scene=scene,
+                display_admission=admission,
+                effect_map=effect_map,
+                reduce_motion=reduce_motion,
+                registry=registry,
+            )
+        except (TypeError, ValueError):
+            selection = None
+        if selection is not None and selection.winner is not None:
+            setattr(controller, "_semantic_effect_selection", selection)
+            setattr(
+                controller,
+                "_semantic_effect_program",
+                _idle_screensaver_program(controller, registry, effect_id),
+            )
+            setattr(controller, "_idle_screensaver_staged_effect", effect_id)
+            playing = True
+    if not playing:
+        _retire_idle_screensaver(controller, now=now)
+    setattr(
+        controller,
+        "_idle_screensaver_fact",
+        {
+            "screensaver": {
+                # "waiting" means armed and merely short of the delay; a
+                # held-off or unarmed card reads "off", never "waiting".
+                "state": (
+                    "playing"
+                    if playing
+                    else ("waiting" if armed and not blocked else "off")
+                ),
+                "idle_seconds": round(idle_seconds, 3),
+                "after_seconds": int(after_seconds),
+            }
+        },
+    )
+
+
 def _observe_remote_fleet(controller: object, *, reduce_motion: bool) -> None:
     refresh = getattr(controller, "_remote_refresh", None)
     health_rows = tuple(getattr(refresh, "health", ()))
@@ -1719,6 +1945,12 @@ def _observe_operator_events(
         controller,
         canonical_events,
         state,
+        reduce_motion=preferences.reduce_motion,
+    )
+    _observe_idle_screensaver(
+        controller,
+        state,
+        canonical_events,
         reduce_motion=preferences.reduce_motion,
     )
     _compile_runtime_dispatch(controller)

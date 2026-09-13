@@ -62,3 +62,20 @@ def test_close_revokes_already_scheduled_actions():
     dispatch.close()
     assert dispatch.deliver(target.calls[0], MacDeckActionExecutor(open_usage=lambda: opened.append(1))) == ()
     assert not opened
+
+
+def test_analog_sector_input_runs_its_bound_action():
+    """An axis_sector input on 20..23 dispatches the action bound there:
+    the router emits index 20 + sector once analog mode is on, and
+    DeckControlSettings already holds bindings that far."""
+    target, opened = Target(), []
+    controls = DeckControlSettings(
+        enabled=True, analog_enabled=True, bindings=((21, DeckAction("open_usage")),)
+    )
+    dispatch = DeckInputDispatch(target, controls)
+    dispatch.receive([{"method": "v.oai.rad", "params": {"a": 0.25, "d": 0.8}}])
+    assert len(target.calls) == 1
+    executor = MacDeckActionExecutor(open_usage=lambda: opened.append("usage"))
+    receipts = dispatch.deliver(target.calls[0], executor)
+    assert opened == ["usage"]
+    assert receipts[0].success
