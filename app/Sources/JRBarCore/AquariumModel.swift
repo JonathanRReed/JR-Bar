@@ -138,11 +138,17 @@ public struct Fish: Equatable, Sendable, Identifiable {
     /// The session's `updated_at`; a recently active session's tail
     /// beats faster. Kept from the last reduce that carried one.
     public var lastUpdate: Date?
+    /// `stableHash(id)`, taken once when the fish is created — the
+    /// view's patrol phase, fry orbit and tail-beat all key off it, so
+    /// like the swim it rides through `previous` untouched instead of
+    /// being re-hashed per fish per frame.
+    public var seed: UInt64
 
     public init(id: String, label: String, providerID: String, state: FishState,
                 lane: Double, speed: Double, direction: Double, stateSince: Date,
                 enteredAt: Date = .distantPast, lastUpdate: Date? = nil,
-                species: FishSpecies = .minnow, isFry: Bool = false, anchorID: String? = nil) {
+                species: FishSpecies = .minnow, isFry: Bool = false, anchorID: String? = nil,
+                seed: UInt64? = nil) {
         self.id = id
         self.label = label
         self.providerID = providerID
@@ -156,6 +162,7 @@ public struct Fish: Equatable, Sendable, Identifiable {
         self.stateSince = stateSince
         self.enteredAt = enteredAt
         self.lastUpdate = lastUpdate
+        self.seed = seed ?? AquariumModel.stableHash(id)
     }
 
     /// Drawn-size proxy: species scale times the lane's depth scale.
@@ -340,7 +347,8 @@ public enum AquariumModel {
             stateSince: now,
             enteredAt: now,
             lastUpdate: session.updatedAt.map { Date(timeIntervalSince1970: $0) },
-            species: FishSpecies.forProvider(session.provider))
+            species: FishSpecies.forProvider(session.provider),
+            seed: stableHash(session.id))
     }
 
     /// The tank's reading of a session, in `SessionActivity`'s words.

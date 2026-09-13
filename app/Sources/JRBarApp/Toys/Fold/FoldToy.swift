@@ -45,11 +45,12 @@ final class FoldToy: Toy {
     private(set) var permissionVersion = 0
 
     @ObservationIgnored private var jitter = JitterFilter(tolerance: 0)
-    /// The α–β predictor: turns stepped hinge readings into a render
-    /// angle that leads the finger by ~60 ms while the lid moves and
-    /// equals the measurement while it parks. Fed on accepted samples,
-    /// decayed on every vsync tick.
-    @ObservationIgnored private var predictor = AlphaBeta()
+    /// The edge tracker: the hinge sensor only changes every ~100 ms,
+    /// so instead of smoothing a high-rate stream it dead-reckons each
+    /// sensor edge — `renderAngle` is the edge plus a bounded velocity
+    /// extrapolation, `velocity` feeds the motion blur. Fed on accepted
+    /// samples, ticked on every vsync.
+    @ObservationIgnored private var tracker = LidTracker()
     @ObservationIgnored private var overlay: FoldOverlayWindow?
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -209,8 +210,8 @@ final class FoldToy: Toy {
     private var gateAngle: Double? { simulatedAngle ?? rawAngle }
 
     /// What the fold amount reads: the simulation while held, else the
-    /// predictor's render angle — the measurement plus its bounded lead.
-    private var renderAngle: Double? { simulatedAngle ?? predictor.renderAngle }
+    /// tracker's render angle — the edge plus its bounded extrapolation.
+    private var renderAngle: Double? { simulatedAngle ?? tracker.renderAngle }
 
     /// The number the "Lid angle" row prints — the measured truth, not
     /// the lead. A lead of a few degrees belongs to the glass, not the UI.
@@ -234,14 +235,15 @@ final class FoldToy: Toy {
             resumeWork?.cancel()
             resumeWork = nil
             displayedDelta = 0
-            predictor.reset()
+            tracker.reset()
             standDown()
             sensor.setPolling(false)
             return
         }
-        // Inside this band the sensor polls at 60 Hz (120 while the lid
-        // swings); above it the poll idles at 10 Hz — dense where the
-        // fold lives, quiet where it doesn't.
+        // Inside this band the sensor polls at 120 Hz so a 10 Hz sensor
+        // edge is timestamped to ±8 ms; above it the poll idles at the
+        // sensor's own 10 Hz — dense where the fold lives, quiet where
+        // it doesn't.
         sensor.armingAngle = settings.activationAngle + 12
         // The sensor keeps polling while paused — its next reading is the
         // thing that tells us the lid reopened.
@@ -285,10 +287,10 @@ final class FoldToy: Toy {
 
     /// The delta the fold wants right now, from the freshest truth — 0
     /// when the gate is closed, so easing home is also how the overlay
-    /// leaves. The gate reads the raw angle (a lead can never activate
-    /// early); the delta itself rides the predictor's render angle and
-    /// is the REAL lid travel, so the held plane counter-rotates by the
-    /// hinge's own arc.
+    /// leaves. The gate reads the raw angle (an extrapolated lead can
+    /// never activate early); the delta itself rides the tracker's
+    /// render angle and is the REAL lid travel, so the held plane
+    /// counter-rotates by the hinge's own arc.
     private var targetDelta: Double {
         guard let gate = gateAngle,
               FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),
@@ -328,15 +330,16 @@ final class FoldToy: Toy {
         }
     }
 
-    /// One heartbeat: decay the predictor, ease the delta toward its
-    /// target, push the uniforms, and show or hide the overlay to match.
-    /// Runs at the display's refresh while armed, so the fold's motion is
-    /// the screen's own cadence — the sensor only moves the target.
+    /// One heartbeat: advance the tracker's dead reckoning, ease the
+    /// delta toward its target, push the uniforms, and show or hide the
+    /// overlay to match. Runs at the display's refresh while armed, so
+    /// the fold's motion is the screen's own cadence — the sensor only
+    /// moves the target.
     private func tickFrame() {
         let now = CACurrentMediaTime()
         let dt = now - lastDeltaTick
         lastDeltaTick = now
-        predictor.tick(dt: dt, at: now)
+        tracker.tick(dt: dt, at: now)
         refreshDisplayFactsIfStale()
         displayedDelta = FoldMath.smoothed(current: displayedDelta, target: targetDelta, dt: dt)
         let wantVisible = FoldMath.showsOverlay(
@@ -366,7 +369,7 @@ final class FoldToy: Toy {
             case .fog: settings.blur
             }
             let blur = reduceMotion ? Float(0) : Float(styleBlur)
-            let boost = reduceMotion ? Float(0) : FoldToy.velocityBlurBoost(predictor.velocity)
+            let boost = reduceMotion ? Float(0) : FoldToy.velocityBlurBoost(tracker.velocity)
             // Adaptive disc density, keyed on the shader's own peak
             // radius (the disc is widest at the far edge): sparse while
             // the matte is thin, dense when it is wide.
@@ -443,16 +446,16 @@ final class FoldToy: Toy {
     }
 
     /// The raw reading always lands — `targetDelta` gates on it every
-    /// tick, so a suppressed or predicted reading above the limit still
-    /// drives the delta to zero and the overlay eases home on the same
-    /// glide the simulate slider gets — then the filter and predictor
+    /// tick, so a suppressed or extrapolated reading above the limit
+    /// still drives the delta to zero and the overlay eases home on the
+    /// same glide the simulate slider gets — then the filter and tracker
     /// decide what the fold does with it.
     private func noteSensorSample(_ sample: LidAngleSensor.Sample) {
         rawAngle = sample.angle
         if let clamshell = sample.clamshell { cachedClamshell = clamshell }
         guard let angle = sample.angle, simulatedAngle == nil,
               jitter.accept(angle) else { return }
-        predictor.feed(angle, at: sample.at)
+        tracker.feed(angle, at: sample.at)
         reconcile()
     }
 
@@ -491,11 +494,11 @@ final class FoldToy: Toy {
 
     func endSimulate() {
         simulatedAngle = nil
-        // The predictor's lead belongs to the real lid — a drag that
-        // just jumped the angle 40° must not carry it.
-        predictor.reset()
+        // The tracker's extrapolation belongs to the real lid — a drag
+        // that just jumped the angle 40° must not carry it.
+        tracker.reset()
         if let raw = rawAngle {
-            predictor.feed(raw, at: CACurrentMediaTime())
+            tracker.feed(raw, at: CACurrentMediaTime())
         }
         reconcile()
     }

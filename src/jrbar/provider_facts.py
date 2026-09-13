@@ -427,7 +427,7 @@ def _expected_safe_label(key: WorkKey) -> str:
 # is the one place this pipeline carries free text -- the sub-agent's own
 # title is the only human handle Devin gives it.
 DEVIN_SUBAGENT_WORK_PREFIX: Final = "sub-"
-_MAX_SAFE_LABEL_LENGTH: Final = 128
+MAX_SAFE_LABEL_LENGTH: Final = 128
 
 
 def safe_label_is_valid(
@@ -448,9 +448,16 @@ def safe_label_is_valid(
         source_key.provider_id == "devin"
         and type(work_id) is WorkIdentifier
         and work_id.value.startswith(DEVIN_SUBAGENT_WORK_PREFIX)
-        and 1 <= len(label) <= _MAX_SAFE_LABEL_LENGTH
+        and 1 <= len(label) <= MAX_SAFE_LABEL_LENGTH
         and label.isprintable()
     )
+
+
+def safe_label_is_default(key: WorkKey, label: object) -> bool:
+    """True when `label` is the content-free ``Provider <work id>``
+    fallback for this work -- the check the reducer uses to keep a real
+    title instead of degrading it."""
+    return label == _expected_safe_label(key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,6 +469,12 @@ class ProviderWorkFact:
     parent_key: WorkKey | None
     next_actor: NextActor
     terminal_cause: ProviderTerminalCause = ProviderTerminalCause.NONE
+    # The canonical event name that produced a terminal fact ("stop",
+    # "session_end", ...), kept because the lifecycle alone cannot tell
+    # a finished turn from a finished session. ``ProviderEventName``
+    # lives in provider_adapters, which imports this module -- the field
+    # carries the enum's string value instead.
+    terminal_event: str | None = None
 
     def __post_init__(self) -> None:
         if not (
@@ -471,6 +484,7 @@ class ProviderWorkFact:
             and self.watermark.source_key == self.key.source_key
             and type(self.next_actor) is NextActor
             and type(self.terminal_cause) is ProviderTerminalCause
+            and (self.terminal_event is None or type(self.terminal_event) is str)
         ):
             raise ProviderFactValidationError("invalid work fact")
         if not safe_label_is_valid(self.key.source_key, self.key.work_id, self.safe_label):

@@ -210,6 +210,11 @@ def test_resume_input_names_the_worker_instead_of_title() -> None:
     assert record.provider_work_id.value == _expected_worker_id(_SESSION, "agent-77")
 
 
+def _expected_sidekick_id(session_id: str) -> str:
+    digest = hashlib.sha256(session_id.encode()).hexdigest()
+    return f"sub-sidekick-{digest[:12]}"
+
+
 def test_sidekick_round_trip_uses_the_stable_sidekick_worker() -> None:
     start = _normalize(
         _devin_event(
@@ -233,12 +238,45 @@ def test_sidekick_round_trip_uses_the_stable_sidekick_worker() -> None:
     assert start.event_name is ProviderEventName.SUBAGENT_START
     assert stop.event_name is ProviderEventName.SUBAGENT_STOP
     assert start.provider_work_id is not None
-    assert start.provider_work_id.value == "sub-sidekick"
+    assert start.provider_work_id.value == _expected_sidekick_id(_SESSION)
     assert stop.provider_work_id == start.provider_work_id
     assert start.parent_work_id is not None
     assert start.parent_work_id.value == _SESSION
     assert stop.parent_work_id == start.parent_work_id
     assert start.safe_label == "Sidekick"
+
+
+def test_sidekick_workers_are_scoped_to_their_session() -> None:
+    """Two sessions' sidekick calls must not share a WorkKey -- one
+    session's PostToolUse would otherwise complete the other's worker."""
+    first = _normalize(
+        _devin_event(
+            "PreToolUse",
+            session_id="session-a",
+            tool_name="sidekick",
+            tool_input={"message": "hi"},
+        )
+    )
+    second = _normalize(
+        _devin_event(
+            "PreToolUse",
+            session_id="session-b",
+            tool_name="sidekick",
+            tool_input={"message": "hi"},
+        )
+    )
+
+    assert type(first) is NormalizedProviderRecord
+    assert type(second) is NormalizedProviderRecord
+    assert first.provider_work_id != second.provider_work_id
+    assert first.provider_work_id is not None
+    assert first.provider_work_id.value == _expected_sidekick_id("session-a")
+    assert second.provider_work_id is not None
+    assert second.provider_work_id.value == _expected_sidekick_id("session-b")
+    assert first.parent_work_id is not None
+    assert first.parent_work_id.value == "session-a"
+    assert second.parent_work_id is not None
+    assert second.parent_work_id.value == "session-b"
 
 
 def test_ordinary_tool_events_keep_parent_identity() -> None:
@@ -333,7 +371,28 @@ def test_worker_row_reaches_the_state_document() -> None:
     assert any(row["workers"] >= 1 for row in mains)
 
 
-def test_parent_stop_retires_background_workers() -> None:
+def test_parent_stop_does_not_retire_background_workers() -> None:
+    """Devin's Stop fires at the end of a TURN, and a backgrounded helper
+    exists precisely to outlive the turn that launched it."""
+    monitor, base = _monitor_with_worker()
+    worker_key = f"devin:agent:{_expected_worker_id(_SESSION, 'Background sweep')}"
+
+    monitor.ingest_record(_devin_event("Stop", epoch=base + 10))
+    after = monitor.snapshot()
+
+    worker = next(
+        status for status in after.statuses if status.agent_id == worker_key
+    )
+    assert worker.mode.name != "COMPLETED"
+    work = next(
+        work
+        for work in after.operator_state.works
+        if work.key.work_id.value.startswith("sub-")
+    )
+    assert work.lifecycle is WorkLifecycle.ACTIVE
+
+
+def test_session_end_retires_background_workers() -> None:
     monitor, base = _monitor_with_worker()
     worker_key = f"devin:agent:{_expected_worker_id(_SESSION, 'Background sweep')}"
 
@@ -343,7 +402,7 @@ def test_parent_stop_retires_background_workers() -> None:
     )
     assert live_worker.mode.name in {"WORKING", "TOOL_RUNNING"}
 
-    monitor.ingest_record(_devin_event("Stop", epoch=base + 10))
+    monitor.ingest_record(_devin_event("SessionEnd", epoch=base + 10))
     after = monitor.snapshot()
 
     worker = next(
@@ -362,6 +421,92 @@ def test_parent_stop_retires_background_workers() -> None:
         if work.key.work_id.value.startswith("sub-")
     )
     assert work.lifecycle is WorkLifecycle.COMPLETED
+
+
+def test_same_title_calls_share_one_worker() -> None:
+    """Pinning the known limitation: Devin's payload has no per-call id,
+    so two concurrent ``run_subagent`` calls with the same title alias
+    onto one worker -- the second start is a no-op on the shared row and
+    the first PostToolUse completes it."""
+    base = time.time() - 60
+    monitor = LiveAgentMonitor(stale_after_seconds=3600)
+    monitor.ingest_record(_devin_event("SessionStart", epoch=base))
+    same_input = {"title": "Shared sweep"}
+    monitor.ingest_record(
+        _devin_event(
+            "PreToolUse",
+            epoch=base + 1,
+            tool_name="run_subagent",
+            tool_input=same_input,
+        )
+    )
+    monitor.ingest_record(
+        _devin_event(
+            "PreToolUse",
+            epoch=base + 2,
+            tool_name="run_subagent",
+            tool_input=same_input,
+        )
+    )
+    snapshot = monitor.snapshot()
+    workers = [status for status in snapshot.statuses if status.is_subagent]
+    assert len(workers) == 1
+    work = next(
+        work
+        for work in snapshot.operator_state.works
+        if work.key.work_id.value.startswith("sub-")
+    )
+    assert work.lifecycle is WorkLifecycle.ACTIVE
+
+    monitor.ingest_record(
+        _devin_event(
+            "PostToolUse",
+            epoch=base + 3,
+            tool_name="run_subagent",
+            tool_input=same_input,
+            tool_response={"success": True},
+        )
+    )
+    after = monitor.snapshot()
+    worker = next(
+        status
+        for status in (*after.statuses, *after.stale_statuses)
+        if status.is_subagent
+    )
+    assert worker.mode.name == "COMPLETED"
+
+
+def test_a_stop_without_the_title_keeps_the_worker_label() -> None:
+    """A SUBAGENT_STOP that reaches the reducer with only the fallback
+    label (e.g. a replayed record whose persisted label was the default)
+    must not erase the title the row already holds."""
+    monitor, base = _monitor_with_worker()
+    worker_id = _expected_worker_id(_SESSION, "Background sweep")
+    monitor.ingest_record(
+        HookEvent(
+            provider="devin",
+            logged_at=datetime.fromtimestamp(base + 5, UTC),
+            event_name="SubagentStop",
+            raw={
+                "hook_event_name": "SubagentStop",
+                "session_id": _SESSION,
+                "provider_work_id": worker_id,
+                "parent_work_id": _SESSION,
+                "safe_label": f"Devin {worker_id}",
+            },
+            session_id=_SESSION,
+            agent_id=worker_id,
+        )
+    )
+
+    snapshot = monitor.snapshot()
+    work = next(
+        work
+        for work in snapshot.operator_state.works
+        if work.key.work_id.value == worker_id
+    )
+    assert work.lifecycle is WorkLifecycle.COMPLETED
+    assert work.safe_label == "Background sweep"
 
 
 def test_worker_label_falls_back_when_title_is_missing() -> None:

@@ -21,11 +21,11 @@ final class NotchBuddyToy: Toy {
     /// While non-nil and in the future the buddy hops once.
     private(set) var hopUntil: Date?
     /// When the current wave began — the ask entrance and the "!" pop
-    /// once from here. `mood(at:)` maintains it because the view is the
-    /// only clock that ticks the mood.
+    /// once from here. `summary(at:)` maintains it because the view is
+    /// the only clock that ticks the mood.
     private(set) var wavingSince: Date?
     /// When the current slump began — the tumble-in rolls once from
-    /// here. Same deal as `wavingSince`: `mood(at:)` maintains it.
+    /// here. Same deal as `wavingSince`: `summary(at:)` maintains it.
     private(set) var slumpedSince: Date?
     /// How many asks have opened. They alternate deterministically: odd
     /// asks wave with the "!" overhead, even asks just lean in and hold
@@ -81,106 +81,94 @@ final class NotchBuddyToy: Toy {
         case asleep, pacing, gathering, waving, slumped, celebrating
     }
 
-    func mood(at now: Date = Date()) -> Mood {
-        let mood = reducedMood(at: now)
-        if mood == .waving {
+    /// Everything the HUD reads off the session list in one tick — the
+    /// pose, the badge counts, the tints and the hover line — so a tick
+    /// pays for a single pass over `core.sessions` and the pieces can
+    /// never disagree with each other.
+    struct BuddySummary {
+        /// The pose: a live ask outranks a failure, a failure outranks
+        /// work, work outranks sleep; three or more working is a
+        /// `gathering`, and a completion's hop overrides it all.
+        var mood = Mood.asleep
+        /// Sessions doing work — the feet badge's number once it's plural.
+        var working = 0
+        /// Asks open right now — the "!" wears the count past one.
+        var waiting = 0
+        /// Failed runs in the list — the slump and the "failed" count.
+        var failed = 0
+        /// The provider running the most working sessions — the badge's
+        /// tint. A split house still answers, and the tie breaks on the
+        /// provider id so the pick can't flicker between ticks.
+        var dominantProvider: String?
+        /// The one provider running all the work, nil when two or more
+        /// share it — the pacing tint falls back to the accent there.
+        /// Ask, failed and hop keep their own colours regardless.
+        var workingProvider: String?
+        /// The provider display names on the clock, in session order —
+        /// the hover line's tail.
+        var providers: [String] = []
+        /// The hover line: "3 working · 1 waiting · Codex, Claude" —
+        /// the counts first, then who's on the clock.
+        var statusLine = "Nobody's running — it's asleep."
+    }
+
+    /// One pass over `core.sessions`: the mood, the counts, the tints
+    /// and the hover line all fall out of the same
+    /// `SessionActivity.reduce` calls. Also maintains the wave & slump
+    /// clocks the one-off effects play from — the view's tick is the
+    /// only clock that drives them.
+    func summary(at now: Date = Date()) -> BuddySummary {
+        var s = BuddySummary()
+        var tally: [String: Int] = [:]
+        var soleProvider: String?
+        var splitWork = false
+        for session in core.sessions {
+            let activity = SessionActivity.reduce(session)
+            switch activity {
+            case .working:
+                s.working += 1
+                tally[session.provider, default: 0] += 1
+                if let soleProvider, soleProvider != session.provider {
+                    splitWork = true
+                } else if soleProvider == nil {
+                    soleProvider = session.provider
+                }
+            case .waiting: s.waiting += 1
+            case .failed: s.failed += 1
+            case .done, .ended, .idle: break
+            }
+            switch activity {
+            case .working, .waiting, .failed:
+                let name = ProviderStyle.style(for: session.provider).name
+                if !s.providers.contains(name) { s.providers.append(name) }
+            case .done, .ended, .idle: break
+            }
+        }
+        s.dominantProvider = tally.max { ($0.value, $0.key) < ($1.value, $1.key) }?.key
+        s.workingProvider = splitWork ? nil : soleProvider
+        if s.waiting > 0 { s.mood = .waving }
+        else if s.failed > 0 { s.mood = .slumped }
+        // Three or more working at once: busy is exciting, not calm.
+        else if s.working >= 3 { s.mood = .gathering }
+        else if s.working > 0 { s.mood = .pacing }
+        if let hopUntil, now < hopUntil { s.mood = .celebrating }
+        if s.mood == .waving {
             if wavingSince == nil { wavingSince = now; waveOrdinal += 1 }
         } else if wavingSince != nil {
             wavingSince = nil
         }
-        if mood == .slumped {
+        if s.mood == .slumped {
             if slumpedSince == nil { slumpedSince = now }
         } else if slumpedSince != nil {
             slumpedSince = nil
         }
-        return mood
-    }
-
-    /// The provider the buddy wears while it paces: the one running the
-    /// work when a single provider owns it, else nil — split work falls
-    /// back to the plain accent. Ask, failed and hop keep their own
-    /// colours regardless.
-    var workingProvider: String? {
-        var provider: String?
-        for session in core.sessions where SessionActivity.reduce(session) == .working {
-            if let provider, provider != session.provider { return nil }
-            provider = session.provider
-        }
-        return provider
-    }
-
-    /// Live counts, reduced exactly the way the mood is — the badge and
-    /// the "!" read these, so they can never disagree with the pose.
-    private var activityCounts: (working: Int, waiting: Int, failed: Int) {
-        var working = 0, waiting = 0, failed = 0
-        for session in core.sessions {
-            switch SessionActivity.reduce(session) {
-            case .working: working += 1
-            case .waiting: waiting += 1
-            case .failed: failed += 1
-            case .done, .ended, .idle: break
-            }
-        }
-        return (working, waiting, failed)
-    }
-
-    /// Sessions doing work — the feet badge's number once it's plural.
-    var workingCount: Int { activityCounts.working }
-    /// Asks open right now — the "!" wears the count past one.
-    var waitingCount: Int { activityCounts.waiting }
-
-    /// The provider running the most working sessions — the badge's
-    /// tint. Unlike `workingProvider` a split house still answers.
-    var dominantProvider: String? {
-        var tally: [String: Int] = [:]
-        for session in core.sessions where SessionActivity.reduce(session) == .working {
-            tally[session.provider, default: 0] += 1
-        }
-        return tally.max(by: { $0.value < $1.value })?.key
-    }
-
-    /// The hover line: "3 working · 1 waiting · Codex, Claude" — the
-    /// counts first, then who's on the clock. Reads `core.sessions`
-    /// only; the daemon is never asked for anything extra.
-    var statusLine: String {
-        let counts = activityCounts
         var parts: [String] = []
-        if counts.working > 0 { parts.append("\(counts.working) working") }
-        if counts.waiting > 0 { parts.append("\(counts.waiting) waiting") }
-        if counts.failed > 0 { parts.append("\(counts.failed) failed") }
-        var names: [String] = []
-        for session in core.sessions {
-            switch SessionActivity.reduce(session) {
-            case .working, .waiting, .failed:
-                let name = ProviderStyle.style(for: session.provider).name
-                if !names.contains(name) { names.append(name) }
-            case .done, .ended, .idle: break
-            }
-        }
-        if !names.isEmpty { parts.append(names.joined(separator: ", ")) }
-        return parts.isEmpty ? "Nobody's running — it's asleep." : parts.joined(separator: " · ")
-    }
-
-    /// What the buddy is doing, in `SessionActivity`'s precedence: a live
-    /// ask outranks a failure, a failure outranks work, work outranks
-    /// sleep. A completion hops once and then the mood falls back.
-    private func reducedMood(at now: Date) -> Mood {
-        if let hopUntil, now < hopUntil { return .celebrating }
-        var mood = Mood.asleep
-        var working = 0
-        for session in core.sessions {
-            switch SessionActivity.reduce(session) {
-            case .waiting: return .waving
-            case .failed: mood = .slumped
-            case .working:
-                working += 1
-                if mood == .asleep { mood = .pacing }
-            case .done, .ended, .idle: break
-            }
-        }
-        // Three or more working at once: busy is exciting, not calm.
-        if mood == .pacing, working >= 3 { return .gathering }
-        return mood
+        if s.working > 0 { parts.append("\(s.working) working") }
+        if s.waiting > 0 { parts.append("\(s.waiting) waiting") }
+        if s.failed > 0 { parts.append("\(s.failed) failed") }
+        if !s.providers.isEmpty { parts.append(s.providers.joined(separator: ", ")) }
+        if !parts.isEmpty { s.statusLine = parts.joined(separator: " · ") }
+        return s
     }
 
     private static func doneCount(in sessions: [CoreSession]) -> Int {
@@ -229,9 +217,11 @@ private struct BuddyControlsView: View {
     }
 
     /// One cell per character, all on the same clock, all in the idle
-    /// patrol pose. Reduce Motion stills the strip — pose stays.
+    /// patrol pose. Reduce Motion stills the strip — pose stays — and
+    /// the paused schedule keeps a stilled strip from ticking at all.
     private var roster: some View {
-        TimelineView(.animation) { context in
+        TimelineView(.animation(paused: reduceMotion
+                                || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)) { context in
             HStack(spacing: 5) {
                 ForEach(BuddyCharacter.allCases, id: \.self) { c in
                     cell(c, at: context.date)

@@ -98,34 +98,39 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   vendor `0x05AC`, product `0x8104`. Read feature report ID 1; bytes 1–2
   little-endian UInt16 are degrees. Every HID touch runs on a serial
   queue (`SensorPump`) — a feature report is a kernel call and a hung
-  one must never stall the main runloop — and the poll rate adapts:
-  10 Hz above the arming band (`activation + 12°`), 60 Hz inside it,
-  120 Hz while the lid is actually swinging (instantaneous velocity
-  < −6°/s kicks it within a beat or two). The same queue re-reads
+  one must never stall the main runloop. Measured at 240 Hz, the report
+  is a 10 Hz sensor: it changes value only every ~100 ms (integer
+  degrees — 9–13° per update on a moderate close, dead steady at rest),
+  and each read costs ~0.5 ms. So the poll runs at just two rates:
+  10 Hz — the sensor's own cadence — above the arming band
+  (`activation + 12°`), and 120 Hz inside it, where a dense poll
+  timestamps each sensor edge to ±8 ms. The same queue re-reads
   `AppleClamshellState` once a second and rides it out on each
   `Sample{angle, at, clamshell}` so no per-frame path ever touches IOKit.
   Missing device → `status = .unavailable("No lid-angle sensor on this Mac")`
   and the Simulate slider still works.
-- **Motion** `AlphaBeta` (`JRBarCore/FoldMath.swift`): an α–β predictor
-  fed on accepted samples. While the lid moves, `renderAngle` leads the
-  measurement by ~60 ms of predicted travel, clamped to ±8° — that lead
-  is what hides the sensor→capture→display latency, the difference
-  between the fold following your finger and trailing it. Residuals are
-  dt-normalized so a poll-rate change can't mistune the gain, a
-  > 1200°/s miss snaps instead of chasing, a reversal zeroes the lead,
-  and 0.2 s of confirmed stillness freezes it: parked, the render angle
-  IS the measurement, so a resting fold never drifts. `velocity` (deg/s,
-  smoothed) feeds the motion blur and decays to rest if the feed goes
-  stale. The eased `displayedDelta` chases the target on a
-  `CADisplayLink` at the screen's own refresh with an 80 ms time
-  constant (`1 − exp(−dt/0.08)`).
+- **Motion** `LidTracker` (`JRBarCore/FoldMath.swift`): edge dead
+  reckoning, not a predictor — a 10 Hz stepping sensor has no
+  poll-to-poll signal worth filtering. Only a changed reading is an
+  edge: each edge re-anchors the position and updates a blended
+  velocity (a reversal takes the new direction whole). `tick`, once per
+  render frame, sets `renderAngle` to the edge plus that velocity
+  extrapolated for at most 150 ms and clamped to ±8° — enough to cover
+  the sensor's ~100 ms latency, bounded so a wrong estimate can't run
+  away; after 0.3 s without an edge the lid is parked, velocity is zero
+  and the render angle IS the measurement. The tracker itself smooths
+  nothing — the eased `displayedDelta` is the one smoothing stage,
+  chasing the target on a `CADisplayLink` at the screen's own refresh
+  with an 80 ms time constant (`1 − exp(−dt/0.08)`), so at each edge the
+  dead-reckoned position is already near the new value and the ease only
+  absorbs the residual. `velocity` (deg/s) feeds the motion blur.
 - **Gesture** `FoldMath.deltaRadians`: the fold is the real lid travel —
   `(activationAngle − angle)` in radians, clamped at 1.25 rad (~72°),
   the arc the projection is stable over. It is not a normalized
   gesture: the held plane counter-rotates by exactly what the hinge
   moved, which is what makes the desktop appear to stay put. At 0 the
   shader is the identity — activating is invisible. The activation gate
-  reads the raw angle so a predicted lead can never open the overlay
+  reads the raw angle so an extrapolated lead can never open the overlay
   early, and a jitter-suppressed sample can never hold it open.
 - **Capture** `FoldCapture`: ScreenCaptureKit on the built-in display
   (`CGDisplayIsBuiltin`), `SCContentFilter(display:excludingApplications:)`

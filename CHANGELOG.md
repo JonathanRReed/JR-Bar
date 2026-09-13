@@ -4,6 +4,17 @@ All notable changes to JR-Bar are documented here.
 
 ## 0.9.8 (unreleased)
 
+- Creator Micro 2 no longer reports "malformed report" and drops its
+  RPC link when the pad pushes a notification we didn't expect: id-less
+  messages only need a string `m`/`method` now (params optional, extra
+  fields kept under `extra`), an unreadable push is skipped and logged
+  once instead of disconnecting, and the receipt names the offending
+  keys when one does fail.
+- Devin sub-agent tracking hardened from review: the Sidekick worker is
+  scoped per session (two sessions' sidekicks no longer share one row),
+  background helpers are retired on SessionEnd rather than the turn's
+  Stop, a completion without the title can't erase a worker's name, and
+  replayed labels are bounded/printable.
 - Devin sub-agents are tracked. Devin CLI fires no subagent hooks, so
   the daemon now derives workers from the parent's `run_subagent` and
   `sidekick` tool calls: PreToolUse opens a worker under the session
@@ -34,6 +45,16 @@ All notable changes to JR-Bar are documented here.
   counter-rotates by the real lid delta again (the v3 bounded-arc
   shader with its sheen/seam/void/close-fade decorations is gone);
   blur and shading follow sin(tilt)·height; 80 ms easing.
+- Fold's lid tracking was rebuilt around the measured sensor cadence:
+  the hinge report is a 10 Hz sensor that steps every ~100 ms and sits
+  dead steady at rest (probed at 240 Hz), so the old α–β predictor read
+  a phantom slam at each step then zero velocity until the next — a
+  10 Hz sawtooth the poll-rate kick only made worse. `LidTracker` now
+  dead-reckons from each sensor edge instead: a blended velocity per
+  edge, extrapolated at most 150 ms and clamped to ±8°, zeroed after
+  0.3 s of quiet — and the pump polls at the sensor's own 10 Hz above
+  the arming band, 120 Hz inside it so each edge is timestamped to
+  ±8 ms. The 80 ms ease remains the only smoothing.
 - Four new provider animations ported from the upstream SidePulse
   animation catalog: **Ember** (a centre-hot idle swell — the upstream
   idle-pulse gradient), **Bloom** (a centre-out spread — the lid-open

@@ -41,124 +41,95 @@ public enum FoldMath {
 }
 
 /// The piece that makes the fold feel attached to your finger instead
-/// of dragged behind it: an α–β predictor. Sensor → capture → display
-/// costs 60–80 ms, so while the lid is moving the render angle leads
-/// the measurement by ~60 ms of predicted travel, clamped to ±8° so a
-/// wrong guess can never shoot past the glass. While the lid is parked
-/// the prediction is off entirely — the render angle IS the measurement,
-/// so a resting fold never drifts.
+/// of dragged behind it: dead reckoning off the sensor's own edges.
 ///
-/// Feed it each accepted hinge sample; tick it on every render frame so
-/// a stale feed decays instead of holding a lead. All times are host
-/// seconds (CACurrentMediaTime).
-public struct AlphaBeta: Sendable {
-    /// What the renderer should draw: the clamped lead while moving,
-    /// the raw measurement while parked.
+/// The hinge report is a 10 Hz sensor — probed at 240 Hz it only
+/// changes value every ~100 ms, stepping 9–13° on a moderate close and
+/// sitting perfectly steady at rest. A predictor that reads poll-to-poll
+/// deltas sees a sawtooth (a 10° step at the poll that first catches it,
+/// then zero velocity until the next edge); this tracker treats only a
+/// value CHANGE as information. Each edge updates a blended velocity
+/// estimate and resets the anchor; `tick` extrapolates that velocity
+/// from the edge for at most `maxExtrapolation`, clamped to ±`leadLimit`.
+/// The ~100 ms of sensor latency is covered by the extrapolation, and
+/// at each edge the dead-reckoned position is already near the new
+/// value, so the toy's one easing stage only absorbs the residual —
+/// there is deliberately no smoothing in here, two stages would add lag.
+///
+/// Feed it every accepted hinge sample (unchanged polls return early);
+/// tick it on every render frame. All times are host seconds
+/// (CACurrentMediaTime).
+public struct LidTracker: Sendable {
+    /// What the renderer should draw: the last edge plus its bounded
+    /// extrapolation — the measurement itself while parked.
     public private(set) var renderAngle = 0.0
-    /// Lid velocity, deg/s — dt-normalized and smoothed. Negative is
-    /// closing. Feeds the motion-aware blur.
+    /// Lid velocity in deg/s, estimated at each edge and blended.
+    /// Negative is closing. Feeds the motion-aware blur.
     public private(set) var velocity = 0.0
 
-    private var predicted = 0.0
-    private var leadVelocity = 0.0
-    private var previousRaw: Double?
-    private var lastSampleAt: TimeInterval?
-    private var lastMotionAt: TimeInterval?
-    private var lastFeedAt: TimeInterval?
+    private var edgeAngle = 0.0
+    private var edgeAt: TimeInterval = 0
+    private var lastRaw: Double = 0
     private var primed = false
 
-    /// How far ahead the lead aims, in seconds of predicted travel.
-    public static let leadSeconds: TimeInterval = 0.06
-    /// The lead can never run further than this from the measurement.
+    /// The measured sensor cadence: the HID report only changes every
+    /// ~100 ms, so polls between edges carry no information.
+    public static let samplePeriod: TimeInterval = 0.1
+    /// How far past an edge the velocity may be trusted — a little more
+    /// than one sensor period covers the report's own latency.
+    public static let maxExtrapolation: TimeInterval = 0.15
+    /// The extrapolation can never run further than this from the edge.
     public static let leadLimit: Double = 8
-    /// A residual this violent is a discontinuity (sensor hop), not a
-    /// trend — snap to it instead of chasing it.
-    static let residualSnap: Double = 1200
-    /// β gain on the velocity correction.
-    static let betaGain: Double = 0.08
-    /// Below this instantaneous velocity the lid reads as still.
-    static let motionFloor: Double = 0.8
-    /// Stillness must hold this long before the prediction freezes.
-    static let stillConfirm: TimeInterval = 0.2
-    /// No fresh sample for this long and the lead decays to zero.
-    static let staleAfter: TimeInterval = 0.25
+    /// No new edge for this long and the lid counts as parked — one
+    /// extra edge after a pause is just the lid moving again.
+    public static let restAfter: TimeInterval = 0.3
+    /// How much each edge's velocity estimate moves the blended one.
+    public static let velocityBlend: Double = 0.6
 
     public init() {}
 
-    public mutating func reset() { self = AlphaBeta() }
+    public mutating func reset() { self = LidTracker() }
 
-    /// Feed an accepted, in-range hinge sample.
-    public mutating func feed(_ rawAngle: Double, at: TimeInterval) {
-        guard rawAngle.isFinite, at.isFinite else { return }
-        guard primed, let previous = previousRaw, let tPrev = lastSampleAt else {
+    /// Feed an accepted hinge sample. Only a value change is an edge —
+    /// an unchanged poll at 120 Hz is the sensor between updates, not
+    /// a stopped lid.
+    public mutating func feed(_ raw: Double, at: TimeInterval) {
+        guard raw.isFinite, at.isFinite else { return }
+        guard primed else {
             primed = true
-            previousRaw = rawAngle
-            lastSampleAt = at
-            lastFeedAt = at
-            renderAngle = rawAngle
-            predicted = rawAngle
-            leadVelocity = 0
+            edgeAngle = raw
+            edgeAt = at
+            lastRaw = raw
+            renderAngle = raw
             velocity = 0
-            lastMotionAt = nil
             return
         }
-        let dt = max(1e-4, at - tPrev)
-        let instant = (rawAngle - previous) / dt
-        previousRaw = rawAngle
-        lastSampleAt = at
-        lastFeedAt = at
-
-        if abs(instant) >= Self.motionFloor {
-            lastMotionAt = at
-            // A real reversal can't ride the old lead through the turn —
-            // it would overshoot exactly where the eye catches it.
-            if instant * leadVelocity < 0 { leadVelocity = 0 }
+        guard raw != lastRaw else { return }
+        let dt = max(0.02, at - edgeAt)
+        let vNew = (raw - edgeAngle) / dt
+        velocity = velocity == 0 ? vNew : velocity + (vNew - velocity) * Self.velocityBlend
+        if vNew * velocity < 0 {
+            // A reversal: the blended estimate would ride the old
+            // direction through the turn and overshoot exactly where
+            // the eye catches it — take the new direction whole.
+            velocity = vNew
         }
-        let still = lastMotionAt.map { at - $0 > Self.stillConfirm } ?? false
-        if still {
-            leadVelocity = 0
-            predicted = rawAngle
-            renderAngle = rawAngle
-        } else {
-            // How wrong the last lead was, in deg/s, dt-normalized so a
-            // poll-rate change can't mistune the gain.
-            var residual = (rawAngle - predicted) / dt
-            residual = min(Self.residualSnap, max(-Self.residualSnap, residual))
-            leadVelocity += Self.betaGain * residual
-            let candidate = predicted + leadVelocity * Self.leadSeconds
-            predicted = min(rawAngle + Self.leadLimit,
-                            max(rawAngle - Self.leadLimit, candidate))
-            renderAngle = predicted
-        }
-        velocity += (instant - velocity) * 0.25
+        edgeAngle = raw
+        edgeAt = at
+        lastRaw = raw
     }
 
-    /// Per-render-frame decay: a feed that goes quiet can't leave a lead
-    /// or a blur boost standing on a parked lid — and it can't leave the
-    /// *angle* standing either. Jitter-rejected samples never reach
-    /// `feed`, so a settling lid can starve the feed while `predicted`
-    /// still holds a lead; once stillness is confirmed the measurement
-    /// is the truth and the render angle rejoins it.
+    /// Per-render-frame dead reckoning: the render angle is the last
+    /// edge plus its velocity for up to `maxExtrapolation` — long enough
+    /// to cover the sensor's ~100 ms latency, short enough that a wrong
+    /// estimate can't run away. Parked (`restAfter` quiet) the velocity
+    /// is zero and the render angle IS the last edge.
     public mutating func tick(dt: Double, at: TimeInterval) {
-        guard dt.isFinite, dt > 0 else { return }
-        if let last = lastFeedAt, at - last > Self.staleAfter {
-            leadVelocity = 0
-            velocity *= exp(-dt / 0.3)
-            if abs(velocity) < 0.5 { velocity = 0 }
-            // Ease what is left of the lead home rather than freezing
-            // it mid-gesture — the stillness snap below lands it.
-            if let raw = previousRaw {
-                predicted += (raw - predicted) * (1 - exp(-dt / 0.2))
-                renderAngle = predicted
-            }
-        }
-        if let motion = lastMotionAt, at - motion > Self.stillConfirm {
-            leadVelocity = 0
-            if let raw = previousRaw {
-                predicted = raw
-                renderAngle = raw
-            }
-        }
+        guard at.isFinite, primed else { return }
+        let since = at - edgeAt
+        if since > Self.restAfter { velocity = 0 }
+        let extrap = velocity * min(since, Self.maxExtrapolation)
+        renderAngle = edgeAngle + min(Self.leadLimit, max(-Self.leadLimit, extrap))
     }
 }
 

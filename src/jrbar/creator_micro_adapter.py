@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import deque
 from collections.abc import Callable
@@ -48,6 +49,9 @@ class Receipt:
     recoverable: bool = True
 
 
+_log = logging.getLogger(__name__)
+
+
 class DeviceTransport(Protocol):
     def open(self, *, nonexclusive: bool = True) -> None: ...
     def write(self, report: bytes) -> None: ...
@@ -57,6 +61,15 @@ class DeviceTransport(Protocol):
 
 class NoDeviceError(OSError):
     """The optional backend is available, but no matching collection exists."""
+
+
+class MalformedNotification(ValueError):
+    """An id-less push that failed envelope validation.
+
+    A notification is nobody's answer, so unlike a malformed response or an
+    undecodable frame it must not tear down the transport: the decoder records
+    what arrived, drops the object, and keeps reading.
+    """
 
 
 @dataclass(frozen=True)
@@ -144,10 +157,26 @@ class CreatorMicro2Framer:
             raise ValueError("invalid JSON-RPC 2.0 request")
 
     @classmethod
+    def _notification_error(cls, value: dict[str, Any], reason: str | None = None) -> MalformedNotification:
+        # Name the key set and show a bounded slice of the payload so a live
+        # receipt records what the firmware actually sent, not just that the
+        # shape was unexpected.
+        detail = "invalid JSON-RPC notification"
+        if reason:
+            detail += f": {reason}"
+        detail += f" (keys: {sorted(map(str, value))})"
+        snippet = repr(value)
+        if len(snippet) > 120:
+            snippet = snippet[:117] + "..."
+        return MalformedNotification(f"{detail} {snippet}")
+
+    @classmethod
     def validate_incoming(cls, value: Any) -> None:
-        if not isinstance(value, dict) or value.get("jsonrpc", "2.0") != "2.0":
+        if not isinstance(value, dict):
             raise ValueError("invalid JSON-RPC 2.0 envelope")
         if "id" in value:
+            if value.get("jsonrpc", "2.0") != "2.0":
+                raise ValueError("invalid JSON-RPC 2.0 envelope")
             if not cls._valid_id(value["id"]):
                 # Name the shape so a live receipt says what the firmware
                 # actually sent instead of just that it was wrong.
@@ -164,11 +193,16 @@ class CreatorMicro2Framer:
             if "error" in value and not isinstance(value["error"], dict):
                 raise ValueError("invalid JSON-RPC error")
             return
-        keys = set(value) - {"jsonrpc"}
-        abbreviated = keys == {"m", "p"} and isinstance(value.get("m"), str)
-        standard = keys == {"method", "params"} and isinstance(value.get("method"), str)
-        if not (abbreviated or standard):
-            raise ValueError("invalid JSON-RPC notification")
+        # An id-less message is a notification: the method is the only field
+        # that must check out, because the firmware attaches whatever else it
+        # likes. Params are optional and extra keys are allowed through.
+        if value.get("jsonrpc", "2.0") != "2.0":
+            raise cls._notification_error(value, "invalid JSON-RPC 2.0 envelope")
+        if "m" in value and "method" in value and value["m"] != value["method"]:
+            raise cls._notification_error(value, "conflicting m/method")
+        method = value["m"] if "m" in value else value.get("method")
+        if not isinstance(method, str) or not method:
+            raise cls._notification_error(value)
 
     @classmethod
     def _encode(
@@ -232,6 +266,13 @@ class RpcStreamDecoder:
         self.max_bytes = CreatorMicro2Framer.bounded_budget(max_bytes)
         self._buffer = bytearray()
         self._reset_scan()
+        self.skipped: deque[str] = deque(maxlen=16)
+
+    def drain_skipped(self) -> list[str]:
+        """Details of malformed notifications dropped since the last drain."""
+        skipped = list(self.skipped)
+        self.skipped.clear()
+        return skipped
 
     def _reset_scan(self) -> None:
         self._scan = 0
@@ -318,8 +359,15 @@ class RpcStreamDecoder:
                     # the whole stream as a malformed response.
                     if isinstance(value, dict) and "id" in value and value["id"] is None:
                         value = {key: item for key, item in value.items() if key != "id"}
-                    CreatorMicro2Framer.validate_incoming(value)
-                    messages.append(value)
+                    try:
+                        CreatorMicro2Framer.validate_incoming(value)
+                    except MalformedNotification as exc:
+                        # An id-less push we cannot read is nobody's answer:
+                        # record what arrived, drop the object, and keep the
+                        # stream (and the transport) alive.
+                        self.skipped.append(str(exc))
+                    else:
+                        messages.append(value)
                     consumed, self._start = index + 1, None
         self._scan = len(self._buffer) - consumed
         if consumed:
@@ -354,6 +402,7 @@ class CreatorMicro2Adapter:
         self._rpc_max_bytes = CreatorMicro2Framer.bounded_budget(rpc_max_bytes)
         self._decoder = RpcStreamDecoder(max_bytes=self._rpc_max_bytes)
         self._notifications: deque[tuple[float, dict[str, Any]]] = deque(maxlen=128)
+        self.last_malformed_notification: str | None = None
         self._status_retry_at = 0.0
         self.conflict = DeviceConflict()
         self.connected = False
@@ -477,6 +526,7 @@ class CreatorMicro2Adapter:
                 self.conflict.issued_ids.discard(ident)
                 self._disconnect_for_retry()
                 return Receipt("malformed_report", str(exc)), None
+            self._record_skipped_notifications()
             response = None
             for message in messages:
                 if "id" not in message:
@@ -503,10 +553,27 @@ class CreatorMicro2Adapter:
         self._disconnect_for_retry()
         return Receipt("timeout", f"timeout waiting for {method}"), None
 
+    def _record_skipped_notifications(self) -> None:
+        for detail in self._decoder.drain_skipped():
+            # The detail reads like a malformed_report receipt but is harmless:
+            # an unsolicited push we could not read is nobody's answer. Repeat
+            # pushes are recorded but only logged when the shape changes.
+            if detail != self.last_malformed_notification:
+                _log.warning("Creator Micro 2: %s", detail)
+            self.last_malformed_notification = detail
+
     def _queue_notification(self, message: dict[str, Any]) -> None:
-        method = message.get("m", message.get("method"))
-        params = message.get("p", message.get("params"))
-        self._notifications.append((self._clock(), {"method": method, "params": params}))
+        method = message["m"] if "m" in message else message.get("method")
+        params = message["p"] if "p" in message else message.get("params")
+        note: dict[str, Any] = {"method": method, "params": params}
+        extra = {
+            key: item
+            for key, item in message.items()
+            if key not in {"jsonrpc", "id", "m", "method", "p", "params"}
+        }
+        if extra:
+            note["extra"] = extra
+        self._notifications.append((self._clock(), note))
 
     def poll_inputs(self) -> list[dict[str, Any]]:
         if not self.connected or self.conflict.active:
@@ -525,6 +592,7 @@ class CreatorMicro2Adapter:
                     messages = self._decoder.feed(report)
                 except ValueError:
                     continue
+                self._record_skipped_notifications()
                 for message in messages:
                     if "id" in message:
                         self.conflict.observe(message["id"])

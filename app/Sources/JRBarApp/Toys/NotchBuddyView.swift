@@ -19,26 +19,28 @@ struct NotchBuddyView: View {
 
     var body: some View {
         TimelineView(.animation) { context in
-            let mood = toy.mood(at: context.date)
+            // One reduce per tick: the pose, the badge, the tints and
+            // the hover line all read the same summary.
+            let summary = toy.summary(at: context.date)
             BuddyFigure(
                 character: toy.buddyCharacter,
-                mood: mood,
-                tint: tint(for: mood),
+                mood: summary.mood,
+                tint: tint(for: summary),
                 phase: context.date.timeIntervalSince1970,
                 hopProgress: hopProgress(at: context.date),
-                waveAge: waveAge(at: context.date, mood: mood),
-                slumpAge: slumpAge(at: context.date, mood: mood),
+                waveAge: waveAge(at: context.date, mood: summary.mood),
+                slumpAge: slumpAge(at: context.date, mood: summary.mood),
                 leans: toy.waveOrdinal % 2 == 0,
                 still: reduceMotion,
-                askCount: toy.waitingCount
+                askCount: summary.waiting
             )
-            .overlay(alignment: .bottomTrailing) { workingBadge }
+            .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
+            .help(summary.statusLine)
         }
         .frame(width: 18, height: 18)
         .padding(.horizontal, 9)
         .padding(.vertical, 6)
         .fixedSize()
-        .help(toy.statusLine)
         .accessibilityLabel("Notch Buddy")
     }
 
@@ -46,23 +48,23 @@ struct NotchBuddyView: View {
     /// working — one worker is already the tint, the badge answers "how
     /// many". It wears the busiest provider's colour and sits where the
     /// "!" can't reach it. Static, so Reduce Motion needs nothing.
-    @ViewBuilder private var workingBadge: some View {
-        if toy.workingCount >= 2 {
-            Text("\(toy.workingCount)")
+    @ViewBuilder private func workingBadge(for summary: NotchBuddyToy.BuddySummary) -> some View {
+        if summary.working >= 2 {
+            Text("\(summary.working)")
                 .font(.system(size: 5.4, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .foregroundStyle(.white)
                 .padding(.horizontal, 2.4)
                 .padding(.vertical, 0.8)
-                .background(Capsule().fill(badgeTint))
+                .background(Capsule().fill(badgeTint(for: summary)))
                 .overlay(Capsule().strokeBorder(.white.opacity(0.4), lineWidth: 0.4))
                 .offset(x: 3, y: 6)
                 .accessibilityHidden(true)
         }
     }
 
-    private var badgeTint: Color {
-        guard let provider = toy.dominantProvider else { return .accentColor }
+    private func badgeTint(for summary: NotchBuddyToy.BuddySummary) -> Color {
+        guard let provider = summary.dominantProvider else { return .accentColor }
         return ProviderStyle.style(for: provider).accent
     }
 
@@ -88,12 +90,12 @@ struct NotchBuddyView: View {
         return now.timeIntervalSince(since)
     }
 
-    private func tint(for mood: NotchBuddyToy.Mood) -> Color {
-        switch mood {
+    private func tint(for summary: NotchBuddyToy.BuddySummary) -> Color {
+        switch summary.mood {
         case .asleep: return Color(nsColor: .tertiaryLabelColor)
         case .pacing, .gathering:
             // One provider working → the buddy wears its colour.
-            if let provider = toy.workingProvider {
+            if let provider = summary.workingProvider {
                 return ProviderStyle.style(for: provider).accent
             }
             return .accentColor

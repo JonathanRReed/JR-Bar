@@ -97,11 +97,75 @@ def test_decoder_routes_a_null_id_push_as_a_notification():
 
 def test_incoming_envelopes_reject_ambiguous_or_extra_fields():
     ambiguous = {"jsonrpc": "2.0", "id": 1, "result": {}, "method": "also-a-response", "params": {}}
-    extra = {"jsonrpc": "2.0", "m": "v.oai.hid", "p": {}, "extra": True}
     wrong_version = {"jsonrpc": "1.0", "m": "v.oai.hid", "p": {}}
-    for message in (ambiguous, extra, wrong_version):
+    for message in (ambiguous, wrong_version):
         with pytest.raises(ValueError):
             CreatorMicro2Framer.validate_incoming(message)
+    # A notification carries whatever the firmware attaches: extra keys pass.
+    CreatorMicro2Framer.validate_incoming({"jsonrpc": "2.0", "m": "v.oai.hid", "p": {}, "extra": True})
+    # A response with extra fields is still refused: correlation stays strict.
+    with pytest.raises(ValueError):
+        CreatorMicro2Framer.validate_incoming({"jsonrpc": "2.0", "id": 1, "result": {}, "extra": True})
+
+
+def test_notification_without_params_is_accepted():
+    CreatorMicro2Framer.validate_incoming({"m": "v.oai.hid"})
+    CreatorMicro2Framer.validate_incoming({"jsonrpc": "2.0", "method": "v.oai.hid"})
+    CreatorMicro2Framer.validate_incoming({"m": "v.oai.hid", "params": {"k": "AG03"}})
+
+
+def test_notification_with_extra_keys_is_queued_under_extra():
+    payload = b'{"m":"v.oai.hid","p":{"k":"AG03","act":1},"fw":7,"seq":2}'
+    report = bytes((6, 2, len(payload))) + payload.ljust(61, b"\0")
+    transport = FakeTransport([report])
+    adapter = CreatorMicro2Adapter(transport, INFO)
+    adapter.connect()
+    assert adapter.poll_inputs() == [
+        {"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}, "extra": {"fw": 7, "seq": 2}}
+    ]
+
+
+def test_notification_with_conflicting_method_keys_is_rejected_with_keys_named():
+    message = {"m": "v.oai.hid", "method": "v.oai.other", "p": {}}
+    with pytest.raises(ValueError) as excinfo:
+        CreatorMicro2Framer.validate_incoming(message)
+    detail = str(excinfo.value)
+    assert "conflicting" in detail and "'m'" in detail and "'method'" in detail
+    # The recorded detail also carries a bounded slice of what the pad sent.
+    assert "v.oai.hid" in detail
+
+
+def test_bad_notification_in_the_same_report_as_a_response_neither_disconnects_nor_loses_it():
+    payload = b'{"m":5,"p":{}}' + b'{"id":1,"result":{"ok":1}}'
+    fragments = [payload[index:index + 61] for index in range(0, len(payload), 61)]
+    transport = FakeTransport([
+        bytes((6, 2, len(part))) + part.ljust(61, b"\0") for part in fragments
+    ])
+    adapter = CreatorMicro2Adapter(transport, INFO)
+    adapter.connect()
+
+    receipt, response = adapter._call("device.status", None)
+
+    assert receipt.code == "applied"
+    assert response == {"id": 1, "result": {"ok": 1}}
+    assert adapter.connected and not transport.closed
+    assert adapter.last_malformed_notification
+    assert "keys:" in adapter.last_malformed_notification
+
+
+def test_poll_inputs_skips_a_malformed_notification_and_keeps_the_transport():
+    def report(payload):
+        return bytes((6, 2, len(payload))) + payload.ljust(61, b"\0")
+
+    transport = FakeTransport([
+        report(b'{"m":5,"p":{}}'),
+        report(b'{"m":"v.oai.hid","p":{"k":"AG03","act":1}}'),
+    ])
+    adapter = CreatorMicro2Adapter(transport, INFO)
+    adapter.connect()
+    assert adapter.poll_inputs() == [{"method": "v.oai.hid", "params": {"k": "AG03", "act": 1}}]
+    assert adapter.connected and not transport.closed
+    assert adapter.last_malformed_notification
 
 
 def test_vendor_envelopes_without_a_jsonrpc_field_deliver_responses_and_key_presses():

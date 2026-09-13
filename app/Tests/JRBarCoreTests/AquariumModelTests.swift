@@ -73,6 +73,29 @@ struct AquariumModelTests {
         }
     }
 
+    @Test("a fish's seed is a stable hash of its id and survives every reduce")
+    func seed() {
+        let t0 = Date()
+        var fish = AquariumModel.reduce(sessions: [Self.session("a")], previous: [], now: t0)[0]
+        #expect(fish.seed == AquariumModel.stableHash("a"))
+        // State changes & asks don't touch it — the view's patrol
+        // phase, fry orbit and tail-beat all key off `seed`.
+        fish = AquariumModel.reduce(sessions: [Self.session("a", ask: true)],
+                                    previous: [fish], now: t0 + 1)[0]
+        #expect(fish.seed == AquariumModel.stableHash("a"))
+        fish = AquariumModel.reduce(sessions: [Self.session("a", lifecycle: "completed")],
+                                    previous: [fish], now: t0 + 2)[0]
+        #expect(fish.seed == AquariumModel.stableHash("a"))
+        // The same id built from scratch lands on the same seed, and a
+        // different id lands on a different one.
+        let rebuilt = AquariumModel.reduce(sessions: [Self.session("a")],
+                                           previous: [], now: t0 + 3)[0]
+        #expect(rebuilt.seed == fish.seed)
+        let other = AquariumModel.reduce(sessions: [Self.session("b")],
+                                         previous: [], now: t0 + 3)[0]
+        #expect(other.seed != fish.seed)
+    }
+
     @Test("a completion drifts off and retires; it never respawns while the session is listed")
     func leaving() {
         let t0 = Date()

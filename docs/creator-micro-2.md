@@ -8,7 +8,7 @@ collection. The wire facts come from the public
 - usage page `0xFF00`, usage `1`
 - 64-byte reports with report ID `0x06`, channel `2`, and up to 61 bytes of UTF-8
 - request IDs from `0` through `999`
-- responses correlated by `id`; notifications use `m` and `p`
+- responses correlated by `id`; notifications carry their method as `m` or `method` with optional `p`/`params`, and may attach extra fields the adapter preserves under `extra`
 - fragments have no sequence number or terminator, so complete top-level JSON objects are found by brace balancing that ignores quoted braces
 
 Discovery only matches metadata. It does not open the device, send probes, or

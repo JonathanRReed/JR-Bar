@@ -3,10 +3,10 @@ import Testing
 @testable import JRBarCore
 
 /// FoldMath is the pure half of the Fold toy (docs/TOYS.md): the real
-/// lid delta the held plane counter-rotates by, the α–β predictor that
-/// makes the fold lead the finger, which sensor readings are worth a
-/// redraw, and which safety input names the pause. `#expect` cannot hold
-/// a mutating call, so the predictor's answers are collected first.
+/// lid delta the held plane counter-rotates by, the edge tracker that
+/// dead-reckons the 10 Hz hinge sensor, which sensor readings are worth
+/// a redraw, and which safety input names the pause. `#expect` cannot
+/// hold a mutating call, so the tracker's answers are collected first.
 @Suite("Fold math")
 struct FoldMathTests {
     @Test("at the reference angle the delta is zero — the overlay is pixel-identical")
@@ -67,91 +67,123 @@ struct FoldMathTests {
         #expect(FoldMath.smoothed(current: 0, target: 1, dt: 0) == 1)
     }
 
-    // MARK: AlphaBeta
+    // MARK: LidTracker
 
-    @Test("the first sample primes the predictor at the measurement")
-    func predictorPrime() {
-        var p = AlphaBeta()
-        p.feed(100, at: 10)
-        #expect(p.renderAngle == 100)
-        #expect(p.velocity == 0)
+    /// The measured HID truth, synthetic: the lid-angle report is a
+    /// 10 Hz integer-degree sensor — its value steps every ~100 ms and
+    /// holds dead steady between steps. `truth` is where the lid really
+    /// is; `sensor` is what the report says at poll time t. The sensor's
+    /// refresh runs at its own 3 ms phase — a real report's cadence is
+    /// never aligned to the poll timer.
+    private func sensor(_ t: Double, truth: (Double) -> Double) -> Double {
+        let phase = 0.003
+        let tick = ((t - phase) / LidTracker.samplePeriod).rounded(.down)
+        return truth(max(0, phase + tick * LidTracker.samplePeriod)).rounded()
     }
 
-    @Test("while the lid swings the render angle leads the measurement, bounded")
-    func predictorLeads() {
-        var p = AlphaBeta()
-        p.feed(100, at: 0)
-        // Steady closing at ~60°/s, 60 Hz samples.
-        for i in 1...20 { p.feed(100 - Double(i), at: Double(i) / 60) }
-        #expect(p.renderAngle < 80, "closing leads downward")
-        #expect(80 - p.renderAngle <= AlphaBeta.leadLimit + 1e-9,
-                "the lead is clamped")
-        #expect(p.velocity < -30, "the velocity estimate tracks the swing")
+    @Test("the first sample primes the tracker at the measurement")
+    func trackerPrime() {
+        var tracker = LidTracker()
+        tracker.feed(100, at: 10)
+        #expect(tracker.renderAngle == 100)
+        #expect(tracker.velocity == 0)
     }
 
-    @Test("a parked lid renders the measurement exactly — no drift, no lead")
-    func predictorParks() {
-        var p = AlphaBeta()
-        p.feed(100, at: 0)
-        for i in 1...10 { p.feed(100 - Double(i) * 0.5, at: Double(i) / 60) }
-        // The lid stops; stillness confirmed after stillConfirm.
-        let stopAt = 10.0 / 60
-        for i in 1...30 { p.feed(95, at: stopAt + Double(i) / 60) }
-        #expect(p.renderAngle == 95, "stillness freezes the prediction")
-        #expect(abs(p.velocity) < 1, "the velocity estimate settles to rest")
-    }
-
-    @Test("a reversal kills the lead instead of overshooting through it")
-    func predictorReversal() {
-        var p = AlphaBeta()
-        p.feed(100, at: 0)
-        for i in 1...20 { p.feed(100 - Double(i), at: Double(i) / 60) }
-        // The lid turns around and opens — the render angle stays inside
-        // the clamp the whole way, then rebuilds its lead in the new
-        // direction instead of overshooting backward through the turn.
-        for i in 1...10 {
-            let raw = 80.0 + Double(i)
-            p.feed(raw, at: (20 + Double(i)) / 60)
-            #expect(abs(p.renderAngle - raw) <= AlphaBeta.leadLimit + 1e-9)
+    @Test("a 10 Hz staircase of a steady 60°/s close is tracked within 3°, without sawtooth")
+    func tracksStaircase() {
+        var tracker = LidTracker()
+        let poll = 1.0 / 120
+        let truth: (Double) -> Double = { 90 - 60 * $0 }
+        var previous = Double.nan
+        var maxStep = 0.0
+        for i in 0...240 {
+            let t = Double(i) * poll
+            tracker.feed(sensor(t, truth: truth), at: t)
+            tracker.tick(dt: poll, at: t)
+            guard t > 0.3 else { previous = tracker.renderAngle; continue }
+            #expect(abs(tracker.renderAngle - truth(t)) < 3,
+                    "off the lid at t=\(t): \(tracker.renderAngle) vs \(truth(t))")
+            if previous.isFinite {
+                maxStep = max(maxStep, abs(tracker.renderAngle - previous))
+            }
+            previous = tracker.renderAngle
         }
-        #expect(p.renderAngle > 90, "leading the new direction once it settles")
+        // 60°/s at a 120 Hz render cadence is 0.5° a frame; slack covers
+        // the residual the ease would absorb at each edge.
+        #expect(maxStep < 1.2, "no frame ever jumps \(maxStep)°")
     }
 
-    @Test("a stale feed decays the lead and the blur boost")
-    func predictorStale() {
-        var p = AlphaBeta()
-        p.feed(100, at: 0)
-        for i in 1...15 { p.feed(100 - Double(i), at: Double(i) / 60) }
-        // The sensor goes quiet — two seconds of ticks must settle the
-        // velocity estimate to rest.
-        let quiet = 15.0 / 60
-        for i in 1...120 { p.tick(dt: 1.0 / 60, at: quiet + Double(i) / 60) }
-        #expect(abs(p.velocity) < 1, "the boost source dies with the feed")
+    @Test("0.3 s after the last edge the lid reads parked: velocity zero, render is the last raw")
+    func trackerParks() {
+        var tracker = LidTracker()
+        let poll = 1.0 / 120
+        let truth: (Double) -> Double = { 90 - 60 * $0 }
+        for i in 0...60 {
+            let t = Double(i) * poll
+            tracker.feed(sensor(t, truth: truth), at: t)
+            tracker.tick(dt: poll, at: t)
+        }
+        // The lid stops moving; the report holds at the last step and
+        // every poll carries it unchanged for another 0.4 s.
+        let parked = sensor(0.5, truth: truth)
+        for i in 1...48 {
+            let t = 0.5 + Double(i) * poll
+            tracker.feed(parked, at: t)
+            tracker.tick(dt: poll, at: t)
+        }
+        #expect(tracker.velocity == 0)
+        #expect(tracker.renderAngle == parked, "parked renders the measurement exactly")
     }
 
-    @Test("a starved feed cannot leave the render angle led")
-    func predictorStaleAngle() {
-        var p = AlphaBeta()
-        p.feed(100, at: 0)
-        for i in 1...15 { p.feed(100 - Double(i), at: Double(i) / 60) }
-        // The lid settles; the jitter filter now rejects every sample,
-        // so `feed` never fires again. Ticks alone must walk the render
-        // angle back to the last measurement (85°) — before the fix a
-        // standing lead held forever, so a parked lid rendered ajar.
-        let quiet = 15.0 / 60
-        for i in 1...120 { p.tick(dt: 1.0 / 60, at: quiet + Double(i) / 60) }
-        #expect(p.renderAngle == 85)
+    @Test("a reversal never leads past the clamp and follows the new direction")
+    func trackerReversal() {
+        var tracker = LidTracker()
+        let poll = 1.0 / 120
+        // Close at 60°/s for a second, then open at 60°/s.
+        let truth: (Double) -> Double = { $0 <= 1 ? 90 - 60 * $0 : 30 + 60 * ($0 - 1) }
+        var lastRaw = 90.0
+        for i in 0...240 {
+            let t = Double(i) * poll
+            let raw = sensor(t, truth: truth)
+            tracker.feed(raw, at: t)
+            tracker.tick(dt: poll, at: t)
+            lastRaw = raw
+            #expect(abs(tracker.renderAngle - lastRaw) <= LidTracker.leadLimit + 1e-9,
+                    "the extrapolation stays inside its clamp at t=\(t)")
+            if t > 1.3 {
+                // 0.3 s past the turn the tracker is with the new
+                // direction and close to the lid again.
+                #expect(tracker.velocity > 0, "following the open by t=\(t)")
+                #expect(abs(tracker.renderAngle - truth(t)) < 3,
+                        "back on the lid at t=\(t): \(tracker.renderAngle) vs \(truth(t))")
+            }
+        }
     }
 
-    @Test("a non-finite sample cannot corrupt the predictor")
-    func predictorGarbage() {
-        var p = AlphaBeta()
-        p.feed(100, at: 0)
-        p.feed(.nan, at: 1.0 / 60)
-        p.feed(.infinity, at: 2.0 / 60)
-        p.feed(98, at: 3.0 / 60)
-        #expect(p.renderAngle.isFinite)
-        #expect(p.velocity.isFinite)
+    @Test("a one-degree-step crawl tracks within a degree and a half")
+    func trackerSlowClose() {
+        var tracker = LidTracker()
+        let poll = 1.0 / 120
+        let truth: (Double) -> Double = { 90 - 10 * $0 }
+        for i in 0...240 {
+            let t = Double(i) * poll
+            tracker.feed(sensor(t, truth: truth), at: t)
+            tracker.tick(dt: poll, at: t)
+            guard t > 0.3 else { continue }
+            #expect(abs(tracker.renderAngle - truth(t)) < 1.5,
+                    "off the lid at t=\(t): \(tracker.renderAngle) vs \(truth(t))")
+        }
+    }
+
+    @Test("a non-finite sample cannot corrupt the tracker")
+    func trackerGarbage() {
+        var tracker = LidTracker()
+        tracker.feed(100, at: 0)
+        tracker.feed(.nan, at: 1.0 / 60)
+        tracker.feed(.infinity, at: 2.0 / 60)
+        tracker.tick(dt: 1.0 / 60, at: 3.0 / 60)
+        #expect(tracker.renderAngle.isFinite)
+        #expect(tracker.velocity.isFinite)
     }
 
     // MARK: Jitter

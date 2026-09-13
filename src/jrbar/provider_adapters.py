@@ -33,6 +33,7 @@ from .provider_contracts import (
 )
 from .provider_facts import (
     DEVIN_SUBAGENT_WORK_PREFIX,
+    MAX_SAFE_LABEL_LENGTH,
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -133,10 +134,9 @@ _ANTIGRAVITY_ENVELOPE_KEY: Final = "antigravity"
 # the parent session -- there is no SubagentStart/SubagentStop hook. The
 # synthetic work id is stateless by construction: the same tool call's
 # PostToolUse must hash to the same worker without any shared ledger.
-_DEVIN_SIDEKICK_AGENT_ID: Final = "sub-sidekick"
+_DEVIN_SIDEKICK_ID_PREFIX: Final = "sub-sidekick-"
 _DEVIN_SUBAGENT_DIGEST_LENGTH: Final = 12
 _DEVIN_WORKER_LABEL_CAP: Final = 96
-_MAX_SAFE_LABEL_BOUND: Final = 128
 
 
 class ProviderAdapterValidationError(ValueError):
@@ -752,7 +752,7 @@ def _devin_persisted_label(record: HookEvent, fallback: str) -> str | None:
     stored = record.raw.get("safe_label")
     if type(stored) is not str or not stored or stored == fallback:
         return None
-    if not stored.isprintable() or len(stored) > _MAX_SAFE_LABEL_BOUND:
+    if not stored.isprintable() or len(stored) > MAX_SAFE_LABEL_LENGTH:
         return None
     return stored
 
@@ -1204,18 +1204,31 @@ def _devin_subagent_agent_id(record: HookEvent) -> str | None:
     PreToolUse opens it, the matching PostToolUse closes it. A backgrounded
     call's PostToolUse is only the PARENT finishing its launch -- the
     worker runs on until the session ends -- so that record keeps the
-    parent identity. ``resume`` names an existing agent, so it outranks
-    the title as the hash input (a resumed call maps back onto the worker
-    it continues). A call with neither handle cannot produce an id that a
-    later record could ever reproduce, so it stays a plain parent event.
+    parent identity. ``resume`` names an existing agent by its own handle,
+    so a resumed call is tracked as its own worker (keyed on that handle);
+    the original title-keyed row lives on until the session ends or goes
+    stale.
+
+    Known limitation, verified against the live hook stream: Devin's
+    payload carries only ``tool_name``/``tool_input``/``tool_response`` --
+    no per-call id -- so two CONCURRENT ``run_subagent`` calls sharing a
+    title alias onto one worker: the second PreToolUse is a no-op start
+    and the first PostToolUse completes the shared row. With no stable
+    per-call key available, that is the best a stateless id can do.
     """
     if record.provider != "devin":
         return None
     if record.event_name not in {"PreToolUse", "PostToolUse"}:
         return None
+    if type(record.session_id) is not str or not record.session_id:
+        return None
     tool = _devin_tool_name(record)
     if tool == "sidekick":
-        return _DEVIN_SIDEKICK_AGENT_ID
+        # Scoped to the session: sidekick calls in two sessions must not
+        # share a WorkKey -- one session's PostToolUse would complete the
+        # other's worker.
+        digest = hashlib.sha256(record.session_id.encode()).hexdigest()
+        return f"{_DEVIN_SIDEKICK_ID_PREFIX}{digest[:_DEVIN_SUBAGENT_DIGEST_LENGTH]}"
     if tool != "run_subagent":
         return None
     tool_input = _devin_tool_input(record)
@@ -1234,7 +1247,7 @@ def _devin_subagent_agent_id(record: HookEvent) -> str | None:
             title = tool_input.get("title")
             if type(title) is str and title:
                 handle = title
-    if handle is None or type(record.session_id) is not str or not record.session_id:
+    if handle is None:
         return None
     digest = hashlib.sha256(f"{record.session_id}:{handle}".encode()).hexdigest()
     return f"{DEVIN_SUBAGENT_WORK_PREFIX}{digest[:_DEVIN_SUBAGENT_DIGEST_LENGTH]}"
@@ -1502,6 +1515,14 @@ def provider_facts_for_record(
                         ProviderTerminalCause.CODEX_USAGE_LIMIT
                         if record.terminal_cause is ProviderTerminalCause.CODEX_USAGE_LIMIT
                         else ProviderTerminalCause.NONE
+                    ),
+                    # "stop" ends a turn, "session_end" ends the session --
+                    # the reducer needs the name, not just the lifecycle.
+                    terminal_event=(
+                        record.event_name.value
+                        if rule.lifecycle
+                        in {WorkLifecycle.COMPLETED, WorkLifecycle.FAILED}
+                        else None
                     ),
                 ),
             )

@@ -36,7 +36,7 @@ final class LidAngleSensor {
     var onSample: (@MainActor (Sample) -> Void)?
 
     /// The bottom of the arming band: readings at or below it mean the
-    /// fold is showing or about to, so the poll steps up to 60 Hz. The
+    /// fold is showing or about to, so the poll steps up to 120 Hz. The
     /// toy sets it to `activation + margin`; above it idles at 10 Hz.
     var armingAngle: Double = -.infinity {
         didSet { pump.setArmingAngle(armingAngle) }
@@ -59,15 +59,17 @@ final class LidAngleSensor {
     func setPolling(_ on: Bool) { pump.setPolling(on) }
 }
 
-/// The queue-side half of the sensor: every HID read, the adaptive poll
-/// timer, and the once-a-second clamshell beat live here, confined to a
-/// serial queue. Not actor-isolated, not observed — just a pump that
-/// publishes immutable `Sample`s back to the main runloop.
+/// The queue-side half of the sensor: every HID read, the poll timer,
+/// and the once-a-second clamshell beat live here, confined to a serial
+/// queue. Not actor-isolated, not observed — just a pump that publishes
+/// immutable `Sample`s back to the main runloop.
 ///
-/// The poll rate is adaptive because there is no event stream: 10 Hz
-/// while the lid sits above the arming band (nothing to show), 60 Hz
-/// inside it, and 120 Hz while the lid is actually swinging — the
-/// closing gesture is where the fold earns its tracking.
+/// Two rates only, because the sensor itself only has one cadence: the
+/// report is a 10 Hz device (probed at 240 Hz it changes value every
+/// ~100 ms), so above the arming band polling at its own 10 Hz loses
+/// nothing. Inside the band the poll runs 120 Hz — a read costs ~0.5 ms
+/// and dense polls timestamp each sensor edge to ±8 ms, which is what
+/// the tracker's dead reckoning needs.
 final class SensorPump: @unchecked Sendable {
     /// Publishes a sample on the main runloop; set by the shell.
     var publish: (@MainActor @Sendable (LidAngleSensor.Sample) -> Void)?
@@ -81,22 +83,25 @@ final class SensorPump: @unchecked Sendable {
     /// Everything below is queue-side state — only ever touched on `io`.
     private var devices: [IOHIDDevice] = []
     private var timer: DispatchSourceTimer?
+    /// 0 is the parked 10 Hz, 1 is the armed 120 Hz.
     private var rateClass = 0 {
         didSet {
-            guard oldValue != rateClass, timer != nil else { return }
-            scheduleTimer()
+            guard oldValue != rateClass, let timer else { return }
+            // Reschedule the live timer — a fresh one would fire a beat
+            // ~immediately on top of this one, making the sample timing
+            // irregular exactly where regularity matters.
+            let interval = Self.intervals[rateClass]
+            timer.schedule(deadline: .now() + interval, repeating: interval,
+                           leeway: .milliseconds(2))
         }
     }
-    /// Instantaneous velocity for the closing kick — a two-sample
-    /// estimate, not the toy's predictor; it only moves the poll rate.
+    /// The last angle read; the arming-band rate decision rides on it.
     private var lastRaw: Double?
-    private var lastAt: TimeInterval?
-    private var lastVelocity = 0.0
     /// Counts poll fires; the clamshell read lands once a second.
     private var beats = 0
     private var clamshell: Bool?
 
-    private static let intervals = [1.0 / 10.0, 1.0 / 60.0, 1.0 / 120.0]
+    private static let intervals = [1.0 / 10.0, 1.0 / 120.0]
 
     init() {
         manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -115,8 +120,7 @@ final class SensorPump: @unchecked Sendable {
     func setArmingAngle(_ value: Double) {
         io.async {
             self.armingAngle = value
-            self.rateClass = self.rateClassFor(rawAngle: self.lastRaw,
-                                               velocity: self.lastVelocity)
+            self.rateClass = self.rateClassFor(rawAngle: self.lastRaw)
         }
     }
 
@@ -125,11 +129,9 @@ final class SensorPump: @unchecked Sendable {
             if on {
                 guard self.timer == nil else { return }
                 self.refreshDevices()
-                self.rateClass = self.rateClassFor(rawAngle: self.lastRaw, velocity: self.lastVelocity)
+                self.rateClass = self.rateClassFor(rawAngle: self.lastRaw)
                 // No direct beat() here: the fresh timer's deadline is
-                // .now, so it fires the first sample itself — a second
-                // one microseconds later would divide a real angle
-                // delta by a microsecond dt and read a phantom slam.
+                // .now, so it fires the first sample itself.
                 self.scheduleTimer()
             } else {
                 self.timer?.cancel()
@@ -140,26 +142,15 @@ final class SensorPump: @unchecked Sendable {
 
     // MARK: Queue side
 
-    /// 10 Hz parked, 60 Hz inside the arming band, 120 Hz while the lid
-    /// is actually closing — the kick reads the raw stream's own
-    /// instantaneous velocity, so a fast slam densifies within a sample
-    /// or two and settles back the moment the lid parks.
-    private func rateClassFor(rawAngle: Double?, velocity: Double) -> Int {
-        if velocity < -6 { return 2 }
+    /// 10 Hz above the arming band — the sensor's own cadence — and
+    /// 120 Hz inside it, where an edge's poll timestamp is the tracker's
+    /// edge time.
+    private func rateClassFor(rawAngle: Double?) -> Int {
         if let angle = rawAngle, angle <= armingAngle { return 1 }
         return 0
     }
 
     private func scheduleTimer() {
-        timer?.cancel()
-        // A fresh timer fires its first beat ~immediately — including
-        // right after a rate-class change inside a beat, where the old
-        // code let the next beat divide an angle delta by a microsecond
-        // dt and kick 120 Hz on a parked lid. Re-priming makes the
-        // first post-reschedule beat measure a clean interval instead.
-        lastRaw = nil
-        lastAt = nil
-        lastVelocity = 0
         let timer = DispatchSource.makeTimerSource(queue: io)
         timer.schedule(deadline: .now(), repeating: Self.intervals[rateClass],
                        leeway: .milliseconds(2))
@@ -168,18 +159,12 @@ final class SensorPump: @unchecked Sendable {
         self.timer = timer
     }
 
-    /// One poll: read the report, update the velocity/rate kick, drop
-    /// the once-a-second clamshell read in, publish.
+    /// One poll: read the report, drop the once-a-second clamshell read
+    /// in, re-evaluate the arming band, publish.
     private func beat() {
         let now = CACurrentMediaTime()
         let raw = readAngle()
-        if let raw, let prev = lastRaw, let prevAt = lastAt {
-            let dt = max(1e-4, now - prevAt)
-            lastVelocity = (raw - prev) / dt
-        } else {
-            lastVelocity = 0
-        }
-        if raw != nil { lastRaw = raw; lastAt = now }
+        if raw != nil { lastRaw = raw }
         beats += 1
         // Once a second in wall time, not in beats — at 120 Hz that is
         // every 120 fires, at 10 Hz every 10.
@@ -187,7 +172,7 @@ final class SensorPump: @unchecked Sendable {
             beats = 0
             clamshell = ClamshellState.read()
         }
-        let next = rateClassFor(rawAngle: lastRaw, velocity: lastVelocity)
+        let next = rateClassFor(rawAngle: lastRaw)
         if next != rateClass { rateClass = next }
         let sample = LidAngleSensor.Sample(angle: raw, at: now, clamshell: clamshell)
         DispatchQueue.main.async { [weak self] in

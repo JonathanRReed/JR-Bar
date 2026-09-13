@@ -40,9 +40,10 @@ struct AquariumView: View {
         let paused = toy?.windowOccluded ?? fixture?.paused ?? false
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { context in
             let t = context.date.timeIntervalSince1970
-            let mains = mainsByID(fish)
-            // Deep lanes draw first: the near fish swim over them.
-            let ordered = fish.sorted { depth(of: $0, mains: mains) > depth(of: $1, mains: mains) }
+            // Memoized on the fish array: the timeline ticks 30×/s but
+            // the roster only moves with the sessions, so an unchanged
+            // roster reuses the last sort instead of rebuilding it.
+            let order = fishOrder(fish)
             let empty = fish.isEmpty || fish.allSatisfy { $0.isRetired(at: context.date) }
             Canvas { canvas, size in
                 drawWater(canvas: &canvas, size: size)
@@ -58,11 +59,11 @@ struct AquariumView: View {
                 drawBubbles(canvas: &canvas, size: size, t: t, density: density)
                 // Mains lay out first so fry can orbit their parents.
                 var layouts: [String: Layout] = [:]
-                for aFish in ordered where !aFish.isFry && !aFish.isRetired(at: context.date) {
+                for aFish in order.ordered where !aFish.isFry && !aFish.isRetired(at: context.date) {
                     layouts[aFish.id] = layout(of: aFish, in: size, at: t, now: context.date)
                 }
-                for aFish in ordered where !aFish.isRetired(at: context.date) {
-                    let parent = parentContext(of: aFish, mains: mains, layouts: layouts)
+                for aFish in order.ordered where !aFish.isRetired(at: context.date) {
+                    let parent = parentContext(of: aFish, mains: order.mains, layouts: layouts)
                     let l = layouts[aFish.id]
                         ?? layout(of: aFish, in: size, at: t, now: context.date, parent: parent)
                     drawFish(canvas: &canvas, size: size, t: t, now: context.date,
@@ -83,6 +84,34 @@ struct AquariumView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.02, green: 0.07, blue: 0.25))
+    }
+
+    /// The roster memo's box: the mains table and the depth-sorted
+    /// draw order from the last distinct fish array. A plain reference
+    /// held in `ViewState`, so a hit mutates nothing SwiftUI tracks —
+    /// it's a memo, not state.
+    private final class FishOrder {
+        /// The fish array `mains`/`ordered` were built from.
+        var source: [Fish] = []
+        var mains: [String: Fish] = [:]
+        /// Deep lanes first: the near fish swim over them.
+        var ordered: [Fish] = []
+    }
+
+    @ViewState private var orderCache = FishOrder()
+
+    /// The mains table and the back-to-front draw order, rebuilt only
+    /// when the fish array itself changes — never twice on the same
+    /// roster, no matter how often the timeline ticks.
+    private func fishOrder(_ fish: [Fish]) -> (ordered: [Fish], mains: [String: Fish]) {
+        let cache = orderCache
+        guard cache.source != fish else { return (cache.ordered, cache.mains) }
+        let mains = mainsByID(fish)
+        let ordered = fish.sorted { depth(of: $0, mains: mains) > depth(of: $1, mains: mains) }
+        cache.source = fish
+        cache.mains = mains
+        cache.ordered = ordered
+        return (ordered, mains)
     }
 
     /// The tank's adult fish by id — fry anchor to these.
@@ -1228,7 +1257,7 @@ struct AquariumView: View {
     /// grows through the turnaround.
     private func patrol(of fish: Fish, in size: CGSize, at t: Double, margin: Double)
         -> (x: Double, u: Double, turn: Double) {
-        let h = AquariumModel.stableHash(fish.id)
+        let h = fish.seed
         let x0 = Double((h >> 33) & 0x3FF) / 0x3FF
         // Deep lanes swim slower: parallax.
         let omega = Double.pi * fish.speed * (1 - fish.lane * 0.3)
@@ -1250,7 +1279,7 @@ struct AquariumView: View {
         if fish.isFry, let parent {
             return fryLayout(of: fish, at: t, now: now, parent: parent)
         }
-        let h = AquariumModel.stableHash(fish.id)
+        let h = fish.seed
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
         // Half the fish loop up over the top, half dive under.
         let turnUp = (h >> 52) & 1 == 0
@@ -1359,7 +1388,7 @@ struct AquariumView: View {
     /// ask-rise, a sink or a drift off the edge carries the school.
     private func fryLayout(of fish: Fish, at t: Double, now: Date,
                            parent: (fish: Fish, layout: Layout)) -> Layout {
-        let h = AquariumModel.stableHash(fish.id)
+        let h = fish.seed
         let phase = Double(h & 0xFF) / 0xFF * .pi * 2
         let orbitR = 30 + Double((h >> 8) & 0xFF) / 0xFF * 26
         let omega = (0.45 + Double((h >> 16) & 0xFF) / 0xFF * 0.45)
@@ -1825,7 +1854,7 @@ struct AquariumView: View {
                           fish: Fish, layout l: Layout,
                           parent: (fish: Fish, layout: Layout)?, showLabels: Bool) {
         let art = Self.art(for: fish.species)
-        let h = AquariumModel.stableHash(fish.id)
+        let h = fish.seed
         let phase = Double((h >> 43) & 0xFF) / 0xFF * .pi * 2
         // Fry ride at their school's depth, a little shallower.
         let lane = fish.isFry ? (parent?.fish.lane ?? fish.lane) * 0.85 : fish.lane

@@ -40,6 +40,7 @@ from .provider_facts import (
     compare_watermarks,
     request_key_from_payload,
     request_key_to_payload,
+    safe_label_is_default,
     work_key_from_payload,
     work_key_to_payload,
 )
@@ -73,6 +74,10 @@ PROVIDER_ACTIVE_SILENCE_SECONDS: Final = {
 _TERMINAL_WORK_LIFECYCLES: Final = frozenset(
     {WorkLifecycle.COMPLETED, WorkLifecycle.FAILED}
 )
+# ProviderEventName.SESSION_END.value -- the string, not the enum: the
+# enum lives in provider_adapters, which this module must not import
+# (adapters are upstream of the reducer).
+_SESSION_END_EVENT: Final = "session_end"
 
 
 def active_silence_seconds_for(provider_id: str | None) -> float:
@@ -1590,7 +1595,16 @@ def reduce_operator_state(
                 source_health=batch.source_health,
                 source_freshness=batch.source_freshness,
                 next_actor=fact.next_actor,
-                safe_label=fact.safe_label,
+                # A later fact that only carries the fallback label (a
+                # Devin subagent stop replayed without its title) must not
+                # erase a real one the row already holds.
+                safe_label=(
+                    existing.safe_label
+                    if existing is not None
+                    and safe_label_is_default(fact.key, fact.safe_label)
+                    and not safe_label_is_default(fact.key, existing.safe_label)
+                    else fact.safe_label
+                ),
                 parent_key=fact.parent_key,
                 request_keys=existing.request_keys if existing is not None else (),
                 timing_uncertain=fact.key.source_key in decision.uncertain_sources,
@@ -1607,15 +1621,18 @@ def reduce_operator_state(
                     fact.watermark,
                     batch.source_freshness,
                 )
-            if fact.lifecycle in _TERMINAL_WORK_LIFECYCLES and (
-                fact.key.source_key.provider_id == "devin"
+            if (
+                fact.lifecycle in _TERMINAL_WORK_LIFECYCLES
+                and fact.key.source_key.provider_id == "devin"
+                and fact.terminal_event == _SESSION_END_EVENT
             ):
                 # Devin CLI reports no subagent lifecycle: a synthetic
                 # ``sub-*`` worker's only stop signal is the foreground
                 # tool call's PostToolUse, and a backgrounded sub-agent
-                # never gets one. The parent's own end (Stop/SessionEnd)
-                # is where its workers retire -- they cannot outlive the
-                # session that spawned them.
+                # never gets one. Only the parent's SessionEnd retires
+                # them -- Devin's Stop fires at the end of a TURN, and a
+                # backgrounded helper exists precisely to outlive the
+                # turn that launched it.
                 for child_key, child in tuple(works.items()):
                     if (
                         child.parent_key == fact.key
@@ -1627,10 +1644,16 @@ def reduce_operator_state(
                         child_transition = _work_transition(
                             child, WorkLifecycle.COMPLETED
                         )
+                        child_watermark = (
+                            fact.watermark
+                            if compare_watermarks(fact.watermark, child.watermark)
+                            is WatermarkOrder.NEWER
+                            else child.watermark
+                        )
                         works[child_key] = replace(
                             child,
                             lifecycle=WorkLifecycle.COMPLETED,
-                            watermark=fact.watermark,
+                            watermark=child_watermark,
                             source_health=batch.source_health,
                             source_freshness=batch.source_freshness,
                             next_actor=NextActor.NONE,
@@ -1640,7 +1663,7 @@ def reduce_operator_state(
                             work_events[child_key] = _event(
                                 child_key,
                                 child_transition,
-                                fact.watermark,
+                                child_watermark,
                                 batch.source_freshness,
                             )
 

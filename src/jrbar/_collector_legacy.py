@@ -70,6 +70,7 @@ from .provider_adapters import (
     provider_facts_for_record,
 )
 from .provider_facts import (
+    MAX_SAFE_LABEL_LENGTH,
     EventToken,
     NextActor,
     ObservationAuthority,
@@ -2891,6 +2892,8 @@ def _devin_persisted_worker_label(record: HookEvent) -> str | None:
         and type(label) is str
         and label
         and label != f"{provider_label('devin')} {work_id}"
+        and label.isprintable()
+        and len(label) <= MAX_SAFE_LABEL_LENGTH
     ):
         return label
     return None

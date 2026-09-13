@@ -10,11 +10,15 @@ import JRBarCore
 /// celebrating), still poses in a dark capsule, 4×, written to
 /// `/tmp/buddy-proof`. Manual evidence for the review, not a golden
 /// test — the skeleton's still poses are deterministic, but the proof
-/// exists so a human can look at them.
+/// exists so a human can look at them. It only runs when
+/// `JRBAR_RENDER_PROOF=1` is in the environment, so the regular suite
+/// never writes files.
 @Suite("Buddy render proof")
 @MainActor
 struct BuddyRenderProofTests {
-    @Test func snapshots() throws {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write /tmp/buddy-proof PNGs"))
+    func snapshots() throws {
         let dir = URL(fileURLWithPath: "/tmp/buddy-proof", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let moods: [(name: String, mood: NotchBuddyToy.Mood, tint: Color)] = [
