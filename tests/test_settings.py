@@ -472,3 +472,75 @@ def test_removing_a_provider_animation_actually_persists(tmp_path: Path) -> None
 
     assert load_settings(path).colors.provider_animation == {}
     assert json.loads(path.read_text())["colors"]["provider_animation"] == {}
+
+
+def test_scene_pack_selection_round_trips_and_decodes_tolerantly(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "settings.json"
+    settings = AgentMonitorSettings().with_active_scene_pack("quiet-work")
+
+    save_settings(settings, target)
+    loaded = load_settings(target)
+
+    assert loaded.active_scene_pack == "quiet-work"
+    assert loaded.to_dict()["active_scene_pack"] == "quiet-work"
+
+    save_settings(loaded.with_active_scene_pack(None), target)
+    cleared = load_settings(target)
+    assert cleared.active_scene_pack is None
+    assert cleared.to_dict()["active_scene_pack"] is None
+
+    for bad in (7, True, "", "   ", ["pack"], {"id": "pack"}):
+        target.write_text(
+            json.dumps({"settings_schema_version": 2, "active_scene_pack": bad})
+        )
+        assert load_settings(target).active_scene_pack is None, bad
+
+    for invalid in ("", "   ", 7, True):
+        with pytest.raises(ValueError):
+            AgentMonitorSettings().with_active_scene_pack(invalid)
+
+
+def test_ambient_cue_settings_default_off_and_round_trip(
+    tmp_path: Path,
+) -> None:
+    defaults = AgentMonitorSettings()
+    assert defaults.rainstick_idle_enabled is False
+    assert defaults.rainstick_night_enabled is False
+    assert defaults.milestone_odometer_enabled is False
+    assert defaults.milestone_odometer_steps == (10, 25, 50, 100)
+
+    target = tmp_path / "settings.json"
+    settings = (
+        AgentMonitorSettings()
+        .with_rainstick_idle_enabled(True)
+        .with_rainstick_night_enabled(True)
+        .with_milestone_odometer_enabled(True)
+        .with_milestone_odometer_steps([50, 5, 5, -3, True])
+    )
+    save_settings(settings, target)
+    loaded = load_settings(target)
+
+    assert loaded.rainstick_idle_enabled is True
+    assert loaded.rainstick_night_enabled is True
+    assert loaded.milestone_odometer_enabled is True
+    # Sorted, deduplicated, and the bool that equals 1 stays out.
+    assert loaded.milestone_odometer_steps == (5, 50)
+    payload = json.loads(target.read_text())
+    assert payload["milestone_odometer_steps"] == [5, 50]
+
+    target.write_text(
+        json.dumps(
+            {
+                "settings_schema_version": 2,
+                "rainstick_idle_enabled": "yes",
+                "milestone_odometer_enabled": 1,
+                "milestone_odometer_steps": "many",
+            }
+        )
+    )
+    tolerant = load_settings(target)
+    assert tolerant.rainstick_idle_enabled is False
+    assert tolerant.milestone_odometer_enabled is False
+    assert tolerant.milestone_odometer_steps == (10, 25, 50, 100)

@@ -33,6 +33,9 @@ final class DeckStore {
 
     /// The Apply sheet's choices and the plan the daemon returned for them.
     var applyLayer: DeckKeymapLayer?
+    /// The scope each hardware layer is written for ("automatic" or a
+    /// provider id), keyed by `DeckKeymapLayer.id`.
+    var applyScopes: [String: String] = [:]
     var applyAuxiliary = false
     var plan: DeckKeymapPlan?
     var planError: String?
@@ -101,6 +104,27 @@ final class DeckStore {
     var hasDevice: Bool { device?.connected == true }
     var needsApproval: Bool { hasDevice && device?.approved == false }
     var hasConflict: Bool { device?.hasConflict == true }
+
+    /// The board's active provider scope ("automatic" or a provider id).
+    var scope: String { deck?.scope ?? "automatic" }
+
+    /// The provider ids the board cycles through, in the daemon's order.
+    var scopes: [String] { deck?.scopes ?? [] }
+
+    /// Every provider the scope pickers may offer: the daemon's cycle order
+    /// first, then any provider live in the session list.
+    var providerScopes: [String] {
+        var ordered = scopes
+        for provider in core.sessions.map(\.provider) where !provider.isEmpty && !ordered.contains(provider) {
+            ordered.append(provider)
+        }
+        return ordered
+    }
+
+    /// A scope's display name, also the layer name an Apply writes.
+    func scopeName(_ scope: String) -> String {
+        scope == "automatic" || scope.isEmpty ? "Automatic" : ProviderStyle.style(for: scope).name
+    }
     /// The daemon may write to the pad.
     var canWriteDevice: Bool { device?.isUsable == true }
     /// The rail should be on screen: the core is live and an edge is chosen.
@@ -253,6 +277,12 @@ final class DeckStore {
         run("deck_bank") { try await self.core.deckBank(delta: delta) }
     }
 
+    /// The scope stepper next to the bank pager: the daemon's `deck_scope`.
+    func cycleScope(delta: Int) {
+        guard scopes.count > 0 else { return }
+        run("deck_scope") { try await self.core.deckScope(delta: delta) }
+    }
+
     func setRail(edge: DeckRailEdge) {
         if let deck { expect(deck.settingRail(edge: edge)) }
         run("deck_rail") { try await self.core.deckRail(edge: edge) }
@@ -272,17 +302,40 @@ final class DeckStore {
         run("deck_set_settings") { try await self.core.deckSetSettings(enabled: enabled, sessionMode: sessionMode, analogEnabled: analogEnabled) }
     }
 
+    /// Rebind an auxiliary control: `deck_set_settings` replaces the whole
+    /// aux set, so the other controls' current mappings go along.
+    func setAuxBinding(index: Int, action: String?) {
+        let bindings = auxControls.map { (index: $0.index, action: $0.index == index ? action : $0.mapping) }
+        run("deck_set_settings") { try await self.core.deckSetSettings(bindings: bindings) }
+    }
+
     // MARK: Sheets
+
+    /// The hardware layers the Apply sheet writes, on the selected profile.
+    var applyTargets: [DeckKeymapLayer] {
+        let profile = applyLayer?.profile ?? device?.profile ?? 0
+        let rows = keymap.layers.filter { $0.profile == profile }
+        return rows.isEmpty ? [DeckKeymapLayer(profile: profile, layer: applyLayer?.layer ?? 0)] : rows
+    }
 
     func openApplySheet() {
         let layers = keymap.layers
         let current = layers.first { $0.profile == (device?.profile ?? 0) && $0.layer == (device?.layer ?? 0) }
         applyLayer = current ?? layers.first ?? DeckKeymapLayer(profile: device?.profile ?? 0, layer: device?.layer ?? 0)
+        applyScopes = [:]
+        for row in layers { applyScopes[row.id] = row.boardScope }
         applyAuxiliary = false
         plan = nil
         planError = nil
         sheet = .apply
         loadPlan()
+    }
+
+    /// The scope a layer row is written for in the sheet.
+    func applyScope(for row: DeckKeymapLayer) -> String { applyScopes[row.id] ?? row.boardScope }
+
+    func setApplyScope(_ scope: String, for row: DeckKeymapLayer) {
+        applyScopes[row.id] = scope
     }
 
     func openRestoreSheet() { sheet = .restore }
@@ -306,7 +359,19 @@ final class DeckStore {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled, let self else { return }
             do {
-                let reply = try await self.core.deckPlanKeymap(profile: layer.profile, layer: layer.layer, includeAuxiliary: auxiliary)
+                // A scope-aware daemon plans the same layers the Apply
+                // button writes; an older one ignores `layers` and answers
+                // the single-layer plan it would also apply.
+                let targets = self.applyTargets
+                let reply: CoreReply
+                if self.keymap.layers.contains(where: { $0.scope != nil }), !targets.isEmpty {
+                    reply = try await self.core.deckPlanKeymap(
+                        profile: targets.first?.profile ?? layer.profile, layer: layer.layer,
+                        layers: targets.map { (layer: $0.layer, name: self.scopeName(self.applyScope(for: $0))) },
+                        includeAuxiliary: auxiliary)
+                } else {
+                    reply = try await self.core.deckPlanKeymap(profile: layer.profile, layer: layer.layer, includeAuxiliary: auxiliary)
+                }
                 guard !Task.isCancelled else { return }
                 if reply.ok, let plan = DeckKeymapPlan(reply.result) {
                     self.plan = plan
@@ -333,8 +398,23 @@ final class DeckStore {
                 let reply: CoreReply
                 switch sheet {
                 case .apply:
-                    let layer = self.applyLayer ?? DeckKeymapLayer(profile: 0, layer: 0)
-                    reply = try await self.core.deckApplyKeymap(profile: layer.profile, layer: layer.layer, includeAuxiliary: self.applyAuxiliary)
+                    // A daemon that reports a scope per layer row also
+                    // accepts the `layers` write and the `layer_map`
+                    // setting; an older one gets the single-layer call.
+                    if self.keymap.layers.contains(where: { $0.scope != nil }) {
+                        let targets = self.applyTargets
+                        reply = try await self.core.deckApplyKeymap(
+                            profile: targets.first?.profile ?? 0,
+                            layers: targets.map { (layer: $0.layer, name: self.scopeName(self.applyScope(for: $0))) },
+                            includeAuxiliary: self.applyAuxiliary)
+                        if reply.ok {
+                            _ = try? await self.core.deckSetSettings(
+                                layerMap: targets.map { (layer: $0.layer, scope: self.applyScope(for: $0)) })
+                        }
+                    } else {
+                        let layer = self.applyLayer ?? DeckKeymapLayer(profile: 0, layer: 0)
+                        reply = try await self.core.deckApplyKeymap(profile: layer.profile, layer: layer.layer, includeAuxiliary: self.applyAuxiliary)
+                    }
                 case .restore:
                     reply = try await self.core.deckRestoreKeymap()
                 case .clearAbsent:

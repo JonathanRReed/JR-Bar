@@ -680,6 +680,11 @@ struct CreatorMicroCard: View {
                     Text("\(deck.keySlots.filter { !$0.isEmpty }.count) of 13 on this bank · \(deck.banks.title)")
                         .foregroundStyle(.secondary)
                 }
+                LabeledContent("Board scope") {
+                    Text(deck.scope == "automatic" ? "Automatic — all providers"
+                         : ProviderStyle.style(for: deck.scope).name)
+                        .foregroundStyle(.secondary)
+                }
                 if let receipt = deck.device?.receipt {
                     LabeledContent("Last receipt") {
                         Text(receipt.text).foregroundStyle(receipt.isProblem ? .orange : .secondary)

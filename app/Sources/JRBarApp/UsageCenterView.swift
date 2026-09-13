@@ -178,6 +178,13 @@ struct ProviderUsageCard: View {
                         .padding(.top, 6)
                 }
             }
+            if let readings = readingsLine {
+                Text(readings)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !provider.isSignedOut {
                 Divider()
                 historySection
@@ -271,6 +278,34 @@ struct ProviderUsageCard: View {
         case "source_not_found", "error", "unavailable": return ("Needs setup", .orange)
         default: return nil
         }
+    }
+
+    /// The provider's own counters as one caption under the rings: tokens
+    /// counted at the snapshot's `observed_at`, the daemon's cost estimate
+    /// ("est." — the disclosure's own word, an estimate and never an
+    /// invoice), a credit balance when the provider banks in credits, and
+    /// how old the reading is. Every part rides `fidelity`/`state`: a
+    /// stale card keeps its "Stale" badge and this line still names the
+    /// reading's age rather than posing as current.
+    private var readingsLine: String? {
+        guard !provider.isSignedOut else { return nil }
+        var parts: [String] = []
+        if let tokens = provider.tokens, tokens.total > 0 {
+            var text = "\(UsageFormat.tokens(tokens.total)) tokens"
+            if tokens.cachedInput > 0 { text += " · \(UsageFormat.tokens(tokens.cachedInput)) from cache" }
+            parts.append(text)
+        }
+        if let cost = provider.estimatedCostUSD, cost > 0 {
+            parts.append("≈ \(UsageFormat.cost(cost)) est.")
+        }
+        if let credits = provider.creditsRemaining, credits >= 0 {
+            parts.append("\(UsageFormat.grouped(credits)) credits left")
+        }
+        if let observedAt = provider.observedAt,
+           let age = PanelStore.elapsed(since: Date(timeIntervalSince1970: observedAt), now: store.now) {
+            parts.append("read \(age) ago")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// What stands in for the rings when the daemon reports no window: the

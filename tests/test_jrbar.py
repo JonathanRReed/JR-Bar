@@ -20372,6 +20372,78 @@ class LidObservationRuntimeTests(unittest.TestCase):
         values.update(changes)
         return self.status_bar.PresentationSchedulerInputs(**values)
 
+    def test_lid_poll_slows_for_animation_only_arming(self) -> None:
+        # The 1s cadence belongs to lid state that drives the caffeinate
+        # hold; armed only to play a light cue, the poll can afford a
+        # slower cadence between edges.
+        self.controller.leds_enabled = True
+        self.controller.keep_awake.holding_requested = False
+        animation = self.status_bar.LedAnimationSetting("luminance 100", 1.0)
+        self.controller.settings = dataclass_replace(
+            self.controller.settings,
+            closed_lid_awake_policy=self.status_bar.CLOSED_LID_AWAKE_NEVER,
+            lid_closed_animation=animation,
+            lid_open_animation=self.status_bar.LedAnimationSetting("", 1.0),
+            lid_closed_active_animation=self.status_bar.LedAnimationSetting("", 1.0),
+            lid_open_active_animation=self.status_bar.LedAnimationSetting("", 1.0),
+        )
+
+        self.controller.reconcile_presentation_timers(self._inputs())
+
+        lid_timer = next(
+            timer
+            for timer in self.factory.live
+            if timer.feature is self.status_bar.RuntimeFeature.LID_OBSERVATION
+        )
+        self.assertEqual(lid_timer.interval, 4.0)
+        self.assertEqual(lid_timer.tolerances, [1.0])
+
+        # A keep-awake hold flips the tier back to the prompt cadence and
+        # the reconcile rebuilds the timer rather than drifting.
+        self.controller.keep_awake.holding_requested = True
+        self.controller.reconcile_presentation_timers(self._inputs())
+        lid_timer = next(
+            timer
+            for timer in self.factory.live
+            if timer.feature is self.status_bar.RuntimeFeature.LID_OBSERVATION
+        )
+        self.assertEqual(lid_timer.interval, 1.0)
+
+    def test_device_inventory_backs_off_after_stable_polls(self) -> None:
+        # A /Volumes scan every 2s buys nothing once the inventory has
+        # stopped changing; the cadence drops to the idle rate until a
+        # candidate change or the Devices pane pulls it back.
+        self.controller.leds_enabled = True
+        self.controller.settings_window = SimpleNamespace(isVisible=lambda: False)
+
+        self.controller.reconcile_presentation_timers(self._inputs())
+        timer = next(
+            timer
+            for timer in self.factory.live
+            if timer.feature is self.status_bar.RuntimeFeature.DEVICE_INVENTORY
+        )
+        self.assertEqual(timer.interval, 2.0)
+
+        self.controller._device_inventory_stable_polls = (
+            self.status_bar.DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF
+        )
+        self.controller.reconcile_presentation_timers(self._inputs())
+        timer = next(
+            timer
+            for timer in self.factory.live
+            if timer.feature is self.status_bar.RuntimeFeature.DEVICE_INVENTORY
+        )
+        self.assertEqual(timer.interval, 10.0)
+
+        self.controller._device_inventory_stable_polls = 0
+        self.controller.reconcile_presentation_timers(self._inputs())
+        timer = next(
+            timer
+            for timer in self.factory.live
+            if timer.feature is self.status_bar.RuntimeFeature.DEVICE_INVENTORY
+        )
+        self.assertEqual(timer.interval, 2.0)
+
     def test_lid_timer_is_relevance_gated_tolerant_and_withdrawn_for_lifecycle(self) -> None:
         default_settings = self.controller.settings
         blank_animation = self.status_bar.LedAnimationSetting("", 1.0)
@@ -20417,7 +20489,7 @@ class LidObservationRuntimeTests(unittest.TestCase):
         self.assertEqual(snapshot.created, 2)
         lid_timer = self.factory.live[0]
         self.assertEqual(lid_timer.interval, 1.0)
-        self.assertEqual(lid_timer.tolerances, [0.1])
+        self.assertEqual(lid_timer.tolerances, [0.25])
 
         self.clock[0] += 0.25
         self.controller.reconcile_presentation_timers(self._inputs(pointer_interaction_relevant=True))

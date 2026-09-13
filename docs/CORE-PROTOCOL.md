@@ -295,13 +295,15 @@ field is one the Control Center and the Rail decode.
  "slots":[{"index":0,"identity":"<sha256 of the work key>","session":"codex:session:…","label":"sidepulse-core","provider":"codex",
            "state":"input_required","pinned":true,"navigable":true,"color":"#FF3A00"}, …13 rows…],
  "aux":[{"index":13,"label":"Encoder 1 input 1","mapping":"previous_bank"}, …AG13..AG19…],
+ "scope":"automatic","scopes":["codex","claude"],
  "banks":{"index":0,"count":1},
  "rail":{"edge":"left"},
  "keymap":{"state":"applied","backup_at":1788896492.4,"generation":3,
-           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base"}]},
+           "layers":[{"profile":0,"layer":0,"label":"Profile 1 / Layer 1: Base","scope":"automatic"}]},
  "input_check":false,
  "last_input":{"index":1,"kind":"press","at":1788982888.4},
- "settings":{"enabled":true,"session_mode":true,"analog_enabled":false}}
+ "settings":{"enabled":true,"session_mode":true,"analog_enabled":false,
+             "bindings":[],"layer_map":[{"layer":1,"scope":"codex"},{"layer":2,"scope":"claude"}],"scopes":[]}}
 ```
 
 - `device` is `null` when no pad is known (nothing approved, nothing
@@ -310,8 +312,10 @@ field is one the Control Center and the Rail decode.
   from the probe (USB preferred when both); `connected` when the probe
   lists it or the output service holds it; `approved` when
   `creator_micro_enabled` names this serial; `profile` / `layer` are the
-  device's active position from the last inspection (0-based, as the
-  keymap indexes them; the firmware reports the layer 1-based); `firmware`
+  device's active position (0-based, as the keymap indexes them; the
+  firmware reports the layer 1-based), live from the output service's
+  `device.status` polls while it runs and from the last inspection until
+  the pad has answered; `firmware`
   is not read yet; `conflict` is `foreign_responses` while the output
   service's last receipt is `device_conflict` (another app answered on the
   report stream; the daemon stopped writing); `receipt` is the last
@@ -332,22 +336,33 @@ field is one the Control Center and the Rail decode.
   are never the same colour.
 - `aux[]` are AG13..AG19 (one encoder, three inputs; four joystick
   sectors) with the explicit `deck-controls.json` mapping kind bound to
-  each (`next_bank`, `open_usage`, …) or null; labels come from the
-  inspected keymap when there is one.
+  each (`next_bank`, `next_scope`, `open_usage`, …) or null; labels come
+  from the inspected keymap when there is one.
+- `scope` is the board's provider scope: `automatic` admits every
+  session, a provider id admits only live sessions reporting that
+  provider. The output service's `device.status` polls resolve it through
+  `settings.layer_map` (input reports carry no layer field, so the layer
+  is learned by polling); the `next_scope` / `previous_scope` actions
+  step it through `automatic` plus `scopes`. A scope change restarts
+  banking at zero and revokes queued input. `scopes` is the cycle order:
+  the non-automatic `layer_map` scopes by layer, then `settings.scopes`.
 - `keymap.state`: `stock` (no private backup, or the recovery journal
   says the original is back), `applied` (a verified JR-Bar write),
   `recovering` (an interrupted transfer: Restore is the way forward),
   `unknown` (files that do not parse); `backup_at` is the backup file's
   mtime; `generation` counts setup results since the daemon started;
   `layers` lists the editable profile/layer pairs of the inspected (or
-  backed-up) keymap.
+  backed-up) keymap, each with the `scope` the layer map assigns it.
 - `input_check`: inputs are shown as `deck_input` events and every
   bound action is paused (also turned on by a verified keymap write, as
   the Python app did). `last_input` is the last observed control
   (`kind`: `press` for a key, `dial` for AG13..15, `joystick` for
   AG16..19, `analog` for the calibrated sectors 20..23).
 - `settings` mirrors `deck-controls.json` (`enabled`, `session_mode`,
-  `analog_enabled`; the Python defaults are all off).
+  `analog_enabled`, the explicit aux `bindings`, the `layer_map` from
+  hardware layer to board scope, and extra `scopes`; the Python defaults
+  are all off, with layers 1 and 2 mapped to `codex` and `claude` on a
+  fresh install).
 
 ### lights
 The presentation program for each surface, exactly the LEDS DSL text the
@@ -558,6 +573,19 @@ Keys the app catalogued first and the daemon serves since 2026-09-10:
   it is a fact about the daemon added to the document at publish time,
   never a settings-file key, so `set_setting` on it replies `read_only`
   and `reset_settings` ignores it.
+- `active_scene_pack`: the id of the installed Scene pack whose validated
+  policy rows override the built-in scene's, or `null` for the built-ins.
+  Written from Effect Studio's "Use this pack" row; a pack id that names
+  nothing installed fails closed to the built-in policies.
+- `rainstick_idle_enabled`, `rainstick_night_enabled`,
+  `milestone_odometer_enabled`, `milestone_odometer_steps`: the opt-in
+  ambient cues `ambient_effect_runtime` produces. Rainstick parks one dim
+  advancing pixel while nothing else owns the strip (`_night` lets it run
+  inside the night scene, which withholds it otherwise); the odometer
+  plays a finite cue when the exact completion count crosses one of
+  `milestone_odometer_steps` (positive ints, sorted, deduplicated, at
+  most 16, default `[10, 25, 50, 100]`). All default off/empty-consented;
+  an enabled odometer with no valid step stays dark.
 ```json
 {"t":"settings","v":1,"generation":17,"schema":3,"document":{…}}
 ```
@@ -604,7 +632,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | name | args | effect / result |
 | --- | --- | --- |
 | `open_session` | session, action? | The controller's `open_session` (terminal launch or provider URL, honouring the session-open preference). `{session, activated, origin}`. |
-| `answer_ask` | session, decision (`approve`/`deny`), only_if_frontmost (default true) | Answers the session's live request **in its own terminal**, by posting the key that provider's CLI takes at its permission prompt (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, host{pid, tty, app, app_pid, window_evidence}}`. `window_evidence` is `focused_tab_tty` (Terminal.app / iTerm2 named the focused tab and it is this session's), `host_process_ancestry` (the frontmost application's process is the one the session descends from) or `frontmost_application_only`. See the refusals below. |
+| `answer_ask` | session, decision (`approve`/`deny`), reply_text (optional, for `input` asks), only_if_frontmost (default true) | Answers the session's live request **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, host{pid, tty, app, app_pid, window_evidence}}`. `window_evidence` is `focused_tab_tty` (Terminal.app / iTerm2 named the focused tab and it is this session's), `host_process_ancestry` (the frontmost application's process is the one the session descends from) or `frontmost_application_only`. See the refusals below. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |
@@ -639,17 +667,18 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `preview_scene_pack` | pack_id, led_count? | `not_found` when no installed pack has that id. Else renders the pack's scene-by-scene policy tour — one step per overridden scene, the scene's colour dimmed by its brightness policy, the motion policy choosing step length and interpolation — through the presentation safety compiler at the requested LED count (clamped 2–24). `{pack_id, led_count, program}` — an `EffectPreview` with a `pack_id` extra the app ignores. |
 | `serve_token` | | `{token, enabled, running}` — the bearer `JRBAR_SERVE_ACCESS_TOKEN` the daemon was launched with (null when none), whether `serve_enabled` is on, and whether the loopback server is actually bound. When `serve_enabled` and the token are both present the daemon hosts `serve.create_serve_server` in-process (port `JRBAR_SERVE_PORT`, default 8737); a missing token means no endpoint, never anonymous. The token travels on the local socket only, never inside the HTTP document it guards. |
 | `open_legacy_window` | name | Migration bridge: opens a Python window on demand even in headless mode (`settings`, `setup`, `agent_browser`, `effect_studio`, `usage_center`, `control_center`, `why`). |
-| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this auxiliary control in Settings > Devices."; `input_check` while input check is on. |
+| `deck_press` | index 0…23 | What a press of that control does, from the screen (the physical key runs the same rule through `DeckInputDispatch`). An explicit `deck-controls.json` mapping wins (`{index, action: <kind>, receipt}`; `next_bank` / `previous_bank` add `bank`, `next_scope` / `previous_scope` add `scope`; a failed app shortcut is `refused` with the deck controller's sentence). Else a session key: when that session has a live ask and the frontmost app is its terminal or origin app, the press answers it through the `answer_ask` path (`{action: "answer_ask", decision: "approve", answered: true}`); otherwise it reveals the session through the board's navigation resolver (`{action: "reveal_session", receipt, activated}`). `not_found` with "No session assigned." / "Reserved: session not observed." / "Configure this auxiliary control in Settings > Devices."; `input_check` while input check is on. |
 | `deck_pin` | index 0…12 | Toggles the pin on the identity at that key (pins are per identity and survive Clear absent). `{index, identity, pinned}`; `not_found` for an unassigned key. |
 | `deck_bank` | delta | Steps the bank, wrapping. `{index, count}`. |
+| `deck_scope` | delta | Steps the board scope through `automatic` plus the configured provider scopes, wrapping (what the `next_scope` / `previous_scope` aux actions run). `{scope, scopes}`. |
 | `deck_rail` | edge (`off`, `left`, `right`, `top`, `bottom`) | The compact rail's edge, persisted with the board. `{edge}`. |
 | `deck_clear_absent` | | Unpinned identities with no observed session leave the board; later keys move up. `{removed, banks}`. |
-| `deck_plan_keymap` | profile, layer, include_auxiliary | `creator_micro_keymap.plan_keymap` for that layer over the inspected keymap: `{profile, layer, include_auxiliary, changes[], preview, controls[{index, label}]}`, `preview` being the Python review alert's text. The first call (and any call after 120 s, or after a write) inspects the device: the output service is stopped, the keymap read, the pad handed back. `invalid_plan` with the ValueError message; otherwise the receipt code (`connection_required` when the pad is not approved, `busy` while another setup runs). Socket thread. |
-| `deck_apply_keymap` | profile, layer, include_auxiliary | `CreatorMicroSetup.apply` of that plan (private backup first, verified write, readback): `{code: keymap_verified\|already_configured, message, changes, state, backup_at, generation}`; input check turns on after a verified write. Refusals are error replies whose code is the receipt (`keymap_changed`, `recovery_required`, `readback_mismatch`, …). No alert is shown; the confirmation is the app's. |
+| `deck_plan_keymap` | profile, layer, include_auxiliary, layers? | `creator_micro_keymap.plan_keymap` for that layer over the inspected keymap: `{profile, layer, include_auxiliary, changes[], preview, controls[{index, label}]}`, `preview` being the Python review alert's text. `layers` (`[{"layer": int, "name": str}]`) previews the multi-layer write instead: every listed layer is claimed and named. The first call (and any call after 120 s, or after a write) inspects the device: the output service is stopped, the keymap read, the pad handed back. `invalid_plan` with the ValueError message; otherwise the receipt code (`connection_required` when the pad is not approved, `busy` while another setup runs). Socket thread. |
+| `deck_apply_keymap` | profile, layer, include_auxiliary, layers? | `CreatorMicroSetup.apply` of that plan (private backup first, verified write, readback): `{code: keymap_verified\|already_configured, message, changes, state, backup_at, generation}`; input check turns on after a verified write. With `layers`, one write claims and names every listed layer (`apply` re-derives the whole plan, so a forged selection cannot write arbitrary JSON). Refusals are error replies whose code is the receipt (`keymap_changed`, `recovery_required`, `readback_mismatch`, …). No alert is shown; the confirmation is the app's. |
 | `deck_restore_keymap` | | `CreatorMicroSetup.restore` from the first private backup: `{code: keymap_restored\|already_restored, message, state, backup_at, generation}`, same refusals (`backup_invalid` with no backup, `keymap_changed` for later device edits). |
 | `deck_approve_device` | | The Devices pane's Enable, for a pad that is here: the daemon probes HID once more and refuses with `no_device` ("No Creator Micro 2 is connected.") when it sees none, so a remembered serial is never enabled blindly; otherwise the sole stable serial becomes `creator_micro_device_serial` with `creator_micro_enabled` and the output service is reconfigured. `{serial, approved}`; `ambiguous_device_identity`, `device_identity_unavailable`. |
 | `deck_check_input` | enabled | Input check on or off (queued input is revoked). `{enabled}`. |
-| `deck_set_settings` | enabled?, session_mode?, analog_enabled? | Writes `deck-controls.json` (bindings untouched), reconfigures the deck runtime. The three settings; `invalid_args` for anything but bools. |
+| `deck_set_settings` | enabled?, session_mode?, analog_enabled?, bindings?, layer_map?, scopes? | Writes `deck-controls.json`, reconfigures the deck runtime. `bindings` replaces the whole auxiliary set (`{index, action|null}` rows for controls 13…19; a null unbinds; matrix-key bindings survive). `layer_map` (`{layer, scope}` rows) maps hardware layers to board scopes and `scopes` adds provider ids past the mapped ones; both are validated (no duplicates, `automatic` only inside `layer_map`). The three bools; `invalid_args` for anything else. |
 | `ping` | | `{pong, now}`. |
 | `quit` | | Replies, then the daemon releases its holds and exits. |
 

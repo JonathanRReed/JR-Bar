@@ -45,7 +45,17 @@ def run_hook_client(
 
     try:
         disposition = submit(request)
-        if disposition is HookIngressDisposition.UNAVAILABLE:
+        # UNAVAILABLE means the payload never left this process.
+        # SUBMISSION_AMBIGUOUS means the ack was lost after connect: the
+        # ingress MAY have queued it, but "maybe" is not a delivery
+        # guarantee for a turn boundary. Falling back re-processes the
+        # same payload through the dedupe-checked path, so the worst case
+        # is a suppressed duplicate -- the other direction is a silent
+        # drop, which is the failure this file exists to prevent.
+        if disposition in (
+            HookIngressDisposition.UNAVAILABLE,
+            HookIngressDisposition.SUBMISSION_AMBIGUOUS,
+        ):
             fallback(provider, Path(log_path).expanduser(), payload_text)
     except Exception:
         try:

@@ -315,6 +315,104 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused(headless) 
     assert bad_path.value.code == "invalid_path"
 
 
+def test_unsnooze_all_lifts_quiet_snoozes_not_just_asks(headless) -> None:
+    """``snooze {session: "all", seconds: 0}`` is the menu's Unsnooze-All:
+    it must reach every family actually snoozed. The old target list —
+    the ask statuses — silently missed a snoozed session that was
+    quietly working, leaving it dark forever."""
+    from jrbar.agent_browser_window import AgentBrowserActionPayload
+    from jrbar.capacity_types import SourceKey
+    from jrbar.mailbox_preferences import MailboxPreference
+    from jrbar.navigation_policy import OperatorActionKind
+    from jrbar.provider_facts import WorkIdentifier, WorkKey
+
+    controller = headless
+    key = WorkKey(SourceKey("codex", "hooks", "global", "live_agent_events"), WorkIdentifier("quiet"))
+    controller.current_operator_state = SimpleNamespace(
+        generation=0, works=(SimpleNamespace(key=key, parent_key=None),)
+    )
+    status = SimpleNamespace(agent_id="codex:session:quiet", work_key=key)
+    controller.last_snapshot = SimpleNamespace(statuses=(status,), stale_statuses=())
+    now = time.time()
+    controller.mailbox_preferences = (
+        MailboxPreference(key, snoozed_at=now - 60.0, snoozed_until=now + 3_600.0),
+    )
+    # No session is asking: the old ask-statuses target list was empty here.
+    controller._core_ask_statuses = lambda: []
+    applied = []
+    controller._apply_preference_action = lambda payload: applied.append(payload) or True
+
+    reply = core_runtime._cmd_snooze(controller, {"session": "all", "seconds": 0})
+
+    assert reply["sessions"] == ["codex:session:quiet"]
+    (payload,) = applied
+    assert isinstance(payload, AgentBrowserActionPayload)
+    assert payload.kind == OperatorActionKind.UNSNOOZE
+    assert payload.work_key == key
+
+
+def test_snooze_all_still_targets_the_ask_statuses(headless) -> None:
+    """The positive path is unchanged: ``seconds > 0`` mutes what is
+    actually asking, not every session on the board."""
+    from jrbar.provider_facts import WorkIdentifier, WorkKey
+    from jrbar.capacity_types import SourceKey
+
+    controller = headless
+    controller.current_operator_state = SimpleNamespace(generation=0, works=())
+    key = WorkKey(SourceKey("codex", "hooks", "global", "live_agent_events"), WorkIdentifier("asking"))
+    ask = SimpleNamespace(agent_id="codex:session:asking", work_key=key)
+    controller._core_ask_statuses = lambda: [ask]
+    applied = []
+    controller._apply_preference_action = lambda payload: applied.append(payload) or True
+
+    reply = core_runtime._cmd_snooze(controller, {"session": "all", "seconds": 900})
+
+    assert reply["sessions"] == ["codex:session:asking"]
+    (payload,) = applied
+    assert payload.snooze_preset == "15-minutes"
+
+
+def test_peer_arrive_depart_events_fire_on_reachability_edges(headless) -> None:
+    """``peer_arrived``/``peer_departed`` are emitted on the reachable-set
+    diff — and NOT on the first refresh, which is a baseline, not a fleet
+    of simultaneous arrivals."""
+    from jrbar.remote_peers import PeerHealth, PeerRefreshResult
+
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    def refresh(*machines: str) -> PeerRefreshResult:
+        return PeerRefreshResult(
+            health=tuple(
+                PeerHealth(machine=machine, host=f"{machine}.ts", reachable=True)
+                for machine in machines
+            )
+        )
+
+    def published_kinds() -> list[str]:
+        return [doc["kind"] for kind, doc in controller._core.published if kind == "event"]
+
+    # First application: baseline — no arrival toasts for peers that were
+    # already there when the daemon started.
+    controller.applyRemotePeerRefresh_(refresh("workstation"))
+    assert "peer_arrived" not in published_kinds()
+
+    # Second application: the fleet changed — one left, one joined.
+    controller.applyRemotePeerRefresh_(refresh("laptop"))
+    assert "peer_arrived" in published_kinds()
+    assert "peer_departed" in published_kinds()
+    labels = {
+        doc["kind"]: doc.get("label")
+        for kind, doc in controller._core.published
+        if kind == "event" and doc.get("kind", "").startswith("peer_")
+    }
+    assert labels == {"peer_arrived": "laptop", "peer_departed": "workstation"}
+
+    # A same-set refresh is quiet.
+    controller.applyRemotePeerRefresh_(refresh("laptop"))
+    assert published_kinds().count("peer_arrived") == 1
+
+
 def test_set_setting_writes_validates_and_reports_the_generation(headless, tmp_path: Path) -> None:
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -2600,3 +2698,224 @@ def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.M
     assert len(threads) == 3
     assert len(set(threads)) == 1, "each probe enumerated on a different thread"
     assert threads[0] != threading.get_ident()
+
+
+# --- answer_ask: typed replies -------------------------------------------------
+
+def _live_ask_state():
+    """One canonical work holding one live ask, reduced through the real
+    reducer so the generation and request phase are honest."""
+    from jrbar.operator_state import (
+        BootIdentifier,
+        ClockSample,
+        empty_operator_state,
+        reduce_operator_state,
+    )
+    from jrbar.provider_facts import (
+        EventToken,
+        NextActor,
+        ObservationAuthority,
+        ProviderFactBatch,
+        ProviderRequestFact,
+        ProviderRequestState,
+        ProviderWatermark,
+        ProviderWorkFact,
+        RequestIdentifier,
+        RequestKey,
+        RequestKind,
+        SourceFreshness,
+        SourceHealth,
+        WatermarkBasis,
+        WorkIdentifier,
+        WorkKey,
+        WorkLifecycle,
+    )
+    from jrbar.capacity_types import SourceKey
+
+    source = SourceKey("codex", "hooks", "local:01", "live_agent_events")
+    work_key = WorkKey(source, WorkIdentifier("work:01"))
+    request_key = RequestKey(work_key, RequestIdentifier("request:01"))
+    watermark = ProviderWatermark(
+        source, WatermarkBasis.PROVIDER_EVENT_ID, 1_800_000_000.0,
+        EventToken("event:001"), None, 10,
+    )
+    batch = ProviderFactBatch(
+        source_key=source,
+        observation_authority=ObservationAuthority.DIRECT_PROVIDER_OBSERVATION,
+        source_health=SourceHealth.HEALTHY,
+        source_freshness=SourceFreshness.FRESH,
+        observed_at_epoch=1_800_000_000.0,
+        watermark=watermark,
+        work_facts=(
+            ProviderWorkFact(
+                key=work_key, lifecycle=WorkLifecycle.WAITING,
+                watermark=watermark, safe_label="Codex work:01",
+                parent_key=None, next_actor=NextActor.USER,
+            ),
+        ),
+        request_facts=(
+            ProviderRequestFact(
+                key=request_key, state=ProviderRequestState.LIVE,
+                request_kind=RequestKind.PERMISSION,
+                next_actor=NextActor.USER, watermark=watermark,
+            ),
+        ),
+        diagnostics=(),
+    )
+    state = reduce_operator_state(
+        empty_operator_state(),
+        batch,
+        clock=ClockSample(1_800_000_000.0, 100.0, BootIdentifier("boot:01")),
+    ).state
+    return state, work_key, request_key
+
+
+def _answerable_status(work_key, request_key):
+    from jrbar.models import AgentMode, AgentStatus
+
+    return AgentStatus(
+        provider="codex",
+        agent_id="codex:session:work:01",
+        display_name="Codex work:01",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        updated_at=None,
+        event_name="PermissionRequest",
+        session_id="work:01",
+        work_key=work_key,
+        request_key=request_key,
+    )
+
+
+def _wire_answer_capture(controller, status, state, *, delivered=True):
+    """Point the command at a captured browser-answer dispatch.
+
+    The real surface is armed and completed exactly the way its worker
+    would: ``perform_browser_answer`` is the seam between the command and
+    the fenced delivery, so the command's own contract -- argument
+    validation, action selection, outcome reporting -- is what is under
+    test here."""
+    from jrbar.answer_local import AnswerDeliveryOutcome
+
+    controller.last_snapshot = SimpleNamespace(
+        statuses=(status,), stale_statuses=()
+    )
+    controller.current_operator_state = state
+    captured = []
+
+    def fake_answer(command, operator_state, statuses):
+        captured.append(command)
+        surface = controller.local_answer_surface
+        surface.last_outcome = AnswerDeliveryOutcome(
+            delivered=delivered,
+            code="sent" if delivered else "stale_ask",
+            message="ok" if delivered else "ask resolved while sending",
+            plan=None,
+        )
+        surface.completed.set()
+        return True
+
+    controller.answer_controller.perform_browser_answer = fake_answer
+    return captured
+
+
+def test_answer_ask_sends_a_typed_reply_through_the_reply_action(headless) -> None:
+    from jrbar.answer_in_place import AnswerActionKind
+
+    controller = headless
+    state, work_key, request_key = _live_ask_state()
+    status = _answerable_status(work_key, request_key)
+    captured = _wire_answer_capture(controller, status, state)
+
+    reply = controller._core_dispatch(
+        "answer_ask",
+        {
+            "session": status.agent_id,
+            "decision": "approve",
+            "reply_text": "  yes,   proceed  ",
+        },
+    )
+
+    assert reply["answered"] is True
+    assert reply["decision"] == "reply"
+    assert reply["delivered"] is True
+    assert len(captured) == 1
+    command = captured[0]
+    assert command.action is AnswerActionKind.REPLY
+    # The handler normalizes to one bounded single line before the surface
+    # ever sees it.
+    assert command.reply_text == "yes, proceed"
+
+
+def test_answer_ask_without_reply_text_still_sends_the_decision(headless) -> None:
+    from jrbar.answer_in_place import AnswerActionKind
+
+    controller = headless
+    state, work_key, request_key = _live_ask_state()
+    status = _answerable_status(work_key, request_key)
+    captured = _wire_answer_capture(controller, status, state)
+
+    reply = controller._core_dispatch(
+        "answer_ask", {"session": status.agent_id, "decision": "deny"}
+    )
+
+    assert reply["decision"] == "deny"
+    assert captured[0].action is AnswerActionKind.DENY
+    assert captured[0].reply_text is None
+
+
+@pytest.mark.parametrize(
+    "reply_text",
+    (123, "", "   ", "\x00not-printable"),
+)
+def test_answer_ask_refuses_malformed_reply_text(headless, reply_text) -> None:
+    controller = headless
+    state, work_key, request_key = _live_ask_state()
+    status = _answerable_status(work_key, request_key)
+    _wire_answer_capture(controller, status, state)
+
+    with pytest.raises(CommandError) as error:
+        controller._core_dispatch(
+            "answer_ask",
+            {"session": status.agent_id, "reply_text": reply_text},
+        )
+    assert error.value.code == "invalid_args"
+
+
+def test_answer_ask_reports_the_surface_refusal(headless) -> None:
+    controller = headless
+    state, work_key, request_key = _live_ask_state()
+    status = _answerable_status(work_key, request_key)
+    _wire_answer_capture(controller, status, state, delivered=False)
+
+    with pytest.raises(CommandError) as error:
+        controller._core_dispatch(
+            "answer_ask",
+            {"session": status.agent_id, "reply_text": "yes"},
+        )
+    assert error.value.code == "stale_ask"
+
+
+def test_answer_ask_reply_without_a_live_ask_is_not_found(headless) -> None:
+    controller = headless
+    state, work_key, request_key = _live_ask_state()
+    status = _answerable_status(work_key, request_key)
+    controller.last_snapshot = SimpleNamespace(
+        statuses=(status,), stale_statuses=()
+    )
+    controller.current_operator_state = state.__class__(
+        schema_version=state.schema_version,
+        generation=state.generation,
+        works=state.works,
+        requests=(),
+        source_watermarks=state.source_watermarks,
+        timing_uncertain_sources=state.timing_uncertain_sources,
+        clock_continuity=state.clock_continuity,
+        last_clock=state.last_clock,
+    )
+
+    with pytest.raises(CommandError) as error:
+        controller._core_dispatch(
+            "answer_ask",
+            {"session": status.agent_id, "reply_text": "yes"},
+        )
+    assert error.value.code == "not_found"

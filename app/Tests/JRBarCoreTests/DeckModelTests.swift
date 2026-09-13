@@ -33,12 +33,22 @@ struct DeckModelTests {
         #expect(deck.keymap.state == .applied)
         #expect(deck.keymap.backupAt == 1788990000.0)
         #expect(deck.keymap.generation == 4)
-        #expect(deck.keymap.layers.map(\.id) == ["0/0", "0/1"])
+        #expect(deck.keymap.layers.map(\.id) == ["0/0", "0/1", "0/2"])
         #expect(deck.keymap.layers[1].label == "Profile 1 / Layer 2: Fn")
+        #expect(deck.keymap.layers.map(\.boardScope) == ["automatic", "codex", "claude"])
         #expect(deck.inputCheck)
         #expect(deck.lastInput == DeckInput(index: 14, kind: "dial", at: 1788999900.0))
         #expect(deck.lastInput?.sentence == "Encoder 1 input 2 turned")
-        #expect(deck.settings == DeckSettings(enabled: true, sessionMode: true, analogEnabled: false))
+        #expect(deck.scope == "automatic" && deck.scopes == ["codex", "claude", "devin"])
+        #expect(deck.settings.enabled && deck.settings.sessionMode && !deck.settings.analogEnabled)
+        #expect(deck.settings.bindings == [DeckBinding(index: 13, action: "previous_bank"),
+                                          DeckBinding(index: 19, action: "next_scope"),
+                                          DeckBinding(index: 17, action: nil)])
+        #expect(deck.settings.layerMap == [DeckLayerScope(layer: 1, scope: "codex"),
+                                           DeckLayerScope(layer: 2, scope: "claude")])
+        #expect(deck.settings.scopes == ["devin"])
+        #expect(deck.settings.scope(forLayer: 1) == "codex" && deck.settings.scope(forLayer: 0) == "automatic")
+        #expect(deck.settings.scope(forLayer: 9) == "automatic", "an unmapped layer is automatic")
         #expect(deck.slots.count == 11, "the raw list keeps what the daemon sent")
 
         let keys = deck.keySlots
@@ -123,7 +133,7 @@ struct DeckModelTests {
         guard case .state(let broken) = bad else { Issue.record("not a state"); return }
         #expect(broken.deck == nil, "a malformed deck is dropped, not fatal")
 
-        let sparse = try CoreCodec.decode(frame: Data(#"{"t":"state","v":1,"generation":1,"aggregate":{"mode":"idle"},"deck":{"device":null,"slots":[],"last_input":"x"}}"#.utf8))
+        let sparse = try CoreCodec.decode(frame: Data(#"{"t":"state","v":1,"generation":1,"aggregate":{"mode":"idle"},"deck":{"device":null,"slots":[],"last_input":"x","scope":"","scopes":"nope"}}"#.utf8))
         guard case .state(let empty) = sparse else { Issue.record("not a state"); return }
         let deck = try #require(empty.deck)
         #expect(deck.device == nil && !deck.hasDevice && !deck.railShown)
@@ -131,6 +141,7 @@ struct DeckModelTests {
         #expect(deck.rail.edge == .off)
         #expect(deck.keymap.state == .stock && deck.keymap.layers.isEmpty)
         #expect(deck.lastInput == nil, "a malformed last_input is dropped")
+        #expect(deck.scope == "automatic" && deck.scopes.isEmpty, "empty or malformed scope fields fall back")
         #expect(deck.keySlots.count == 13 && deck.keySlots.allSatisfy { $0.isEmpty })
         #expect(deck.auxControls.count == 7)
         #expect(deck.settings == DeckSettings())

@@ -53,7 +53,12 @@ def controller(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         lambda: tmp_path / "activity-ledger.json",
     )
     monkeypatch.setattr(status_bar, "discover_devices", lambda: [])
-    return status_bar.StatusBarController.alloc().init()
+    controller = status_bar.StatusBarController.alloc().init()
+    # Wake now calls refresh_, whose keep-awake sync scans mounted volumes
+    # for keepalive targets — on a desk with a real SidePulse attached that
+    # touches live hardware paths. These tests are about DND wiring.
+    controller.status_keepalive_targets = lambda *args, **kwargs: []
+    return controller
 
 
 def _device(*, brightness: int = 200):

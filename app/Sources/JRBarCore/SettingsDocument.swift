@@ -225,6 +225,15 @@ public struct SettingsKey: Hashable, Sendable, Identifiable {
             SettingsKey(.lighting, "idle_auto_off_enabled", .bool),
             SettingsKey(.lighting, "idle_auto_off_after_minutes", .number),
             SettingsKey(.lighting, "active_scene", .string),
+            // The installed Scene pack whose policy rows override the
+            // built-in scene's; null is "built-in policies". Written from
+            // Effect Studio's pack rows, read here for the scene caption.
+            SettingsKey(.lighting, "active_scene_pack", .nullableString),
+            // Opt-in ambient cues: one dim drifting pixel while nothing
+            // else owns the strip, and a finite cue when the exact
+            // completion count crosses a milestone.
+            SettingsKey(.lighting, "rainstick_idle_enabled", .bool),
+            SettingsKey(.lighting, "milestone_odometer_enabled", .bool),
             SettingsKey(.lighting, "auto_dim.mode", .string),
             SettingsKey(.lighting, "auto_dim.schedule.start_minutes", .number),
             SettingsKey(.lighting, "auto_dim.schedule.end_minutes", .number),

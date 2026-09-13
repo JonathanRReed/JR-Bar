@@ -3,11 +3,16 @@ import Foundation
 
 /// Where the Screen Bar's program comes from until the daemon protocol exists.
 ///
-/// 1. `/Volumes/SidePulse/LEDS.LED` -- the hardware's own file, so the on-screen
+/// 1. `JRBAR_PROGRAM_FILE` when set -- a developer override fed from any
+///    file, watched like the device file;
+/// 2. `/Volumes/SidePulse/LEDS.LED` -- the hardware's own file, so the on-screen
 ///    band shows exactly what the strip is playing;
-/// 2. `~/.local/state/sidepulse/agent-monitor/screen-bar.led` -- a file the
-///    monitor may start writing later (it need not exist yet);
 /// 3. a built-in calm breathing program.
+///
+/// There is deliberately no daemon state file here: the monitor's programs
+/// go straight to `LEDS.LED` on the volume, and a `screen-bar.led` feed was
+/// sketched but never implemented -- watching for it only promised a source
+/// that cannot exist.
 ///
 /// Everything is event driven: kqueue watches on the file and its directory,
 /// plus mount/unmount notifications for the SD-card volume. Reads happen off
@@ -30,8 +35,6 @@ final class LEDFeed {
     }
 
     static let devicePath = "/Volumes/SidePulse/LEDS.LED"
-    static let stateDirectory = NSString(string: "~/.local/state/sidepulse/agent-monitor").expandingTildeInPath
-    static let stateFilePath = stateDirectory + "/screen-bar.led"
 
     /// The idle breath from `_led_status_legacy._render_full_strip`, lifted to a
     /// soft neutral ember so a bare screen still shows a living band. The
@@ -72,8 +75,6 @@ final class LEDFeed {
             next = .stateFile(override)
         } else if manager.fileExists(atPath: Self.devicePath) {
             next = .device(Self.devicePath)
-        } else if manager.fileExists(atPath: Self.stateDirectory) {
-            next = .stateFile(Self.stateFilePath)
         } else {
             next = .builtInIdle
         }
@@ -144,7 +145,8 @@ final class LEDFeed {
                     if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         self.publish(text, source: source)
                     } else if case .stateFile = source {
-                        // Nothing written yet: breathe until the monitor speaks.
+                        // The override file is empty or missing: breathe
+                        // until it has a program.
                         self.publish(Self.idleProgram, source: .builtInIdle)
                     } else if !FileManager.default.fileExists(atPath: path) {
                         self.resolve()

@@ -66,6 +66,7 @@ class BoardSnapshot:
     slots: tuple[SessionSlot, ...]
     unscoped_count: int = 0
     rail_edge: str = "off"
+    scope: str = "automatic"
 
 
 class DeckSessionBoard:
@@ -77,6 +78,7 @@ class DeckSessionBoard:
         self._pinned: set[str] = set()
         self._bank = 0
         self._rail_edge = "off"
+        self._scope: str | None = None
         self._revision = 0
         self._unscoped_count = 0
         self._navigation_keys: set[str] = set()
@@ -104,10 +106,49 @@ class DeckSessionBoard:
             if appended:
                 self._revision += 1
 
+    def _view(self) -> list[str | None]:
+        """Identities the active scope admits. Automatic admits the whole
+        order; a provider scope admits only live statuses reporting that
+        provider, so reserved and dead identities never gain a provider."""
+        if self._scope is None:
+            return self._order
+        return [key for key in self._order if key is not None
+                and getattr(self._statuses.get(key), "provider", None) == self._scope]
+
+    def set_scope(self, scope) -> bool:
+        """Bind the board to one provider's live sessions, or to all of them.
+
+        ``None``, ``"automatic"``, ``""`` and non-strings all mean automatic.
+        Returns whether the scope changed; a change restarts banking at zero.
+        """
+        if type(scope) is not str or scope in ("", "automatic"):
+            scope = None
+        with self._lock:
+            if scope == self._scope:
+                return False
+            self._scope = scope
+            self._bank = 0
+            self._revision += 1
+            return True
+
+    def cycle_scope(self, delta: int, scopes=()) -> bool:
+        """Step through ``("automatic", *scopes)`` with wraparound."""
+        if type(delta) is not int or delta not in (-1, 1):
+            raise ValueError("invalid scope movement")
+        with self._lock:
+            order = ["automatic"]
+            for scope in scopes or ():
+                if type(scope) is str and scope and scope != "automatic" and scope not in order:
+                    order.append(scope)
+            current = self._scope or "automatic"
+            index = order.index(current) if current in order else 0
+            return self.set_scope(order[(index + delta) % len(order)])
+
     def resolve_slot(self, index: int) -> tuple[int, str | None]:
         with self._lock:
+            view = self._view()
             offset = self._bank * SLOTS_PER_BANK + index
-            identity = self._order[offset] if 0 <= index < SLOTS_PER_BANK and offset < len(self._order) else None
+            identity = view[offset] if 0 <= index < SLOTS_PER_BANK and offset < len(view) else None
             return self._revision, identity
 
     def navigation_target(self, identity: str, revision: int | None) -> AgentStatus | None:
@@ -123,7 +164,7 @@ class DeckSessionBoard:
         if type(delta) is not int or delta not in (-1, 1):
             raise ValueError("invalid bank movement")
         with self._lock:
-            count = max(1, (len(self._order) + SLOTS_PER_BANK - 1) // SLOTS_PER_BANK)
+            count = max(1, (len(self._view()) + SLOTS_PER_BANK - 1) // SLOTS_PER_BANK)
             self._bank = (self._bank + delta) % count
             self._revision += 1
 
@@ -142,7 +183,7 @@ class DeckSessionBoard:
         """Explicitly compact only unpinned, absent sessions; never on a refresh."""
         with self._lock:
             self._order = [key for key in self._order if key in self._statuses or key in self._pinned]
-            self._bank = min(self._bank, max(0, (len(self._order) - 1) // SLOTS_PER_BANK))
+            self._bank = min(self._bank, max(0, (len(self._view()) - 1) // SLOTS_PER_BANK))
             self._revision += 1
 
     def set_rail_edge(self, edge: str) -> None:
@@ -153,9 +194,10 @@ class DeckSessionBoard:
 
     def serialize(self) -> dict:
         with self._lock:
-            # Only opaque hashes persist. No provider titles, paths, or credentials.
-            return {"version": 2, "slots": list(self._order), "pinned": sorted(self._pinned),
-                    "bank": self._bank, "rail_edge": self._rail_edge}
+            # Only opaque hashes and a provider scope persist. No provider
+            # titles, paths, or credentials.
+            return {"version": 3, "slots": list(self._order), "pinned": sorted(self._pinned),
+                    "bank": self._bank, "rail_edge": self._rail_edge, "scope": self._scope or "automatic"}
 
     def restore(self, value: object) -> None:
         if type(value) is not dict:
@@ -164,9 +206,13 @@ class DeckSessionBoard:
         fields = {"version", "slots", "pinned", "bank"}
         if version == 2:
             fields.add("rail_edge")
+        elif version == 3:
+            fields |= {"rail_edge", "scope"}
         edge = value.get("rail_edge", "off")
-        if (set(value) != fields or type(version) is not int or version not in (1, 2)
+        scope = value.get("scope", "automatic")
+        if (set(value) != fields or type(version) is not int or version not in (1, 2, 3)
                 or type(edge) is not str or edge not in RAIL_EDGES
+                or type(scope) is not str or len(scope) > 64
                 or type(value["slots"]) is not list or len(value["slots"]) > MAX_SESSIONS
                 or type(value["pinned"]) is not list or len(value["pinned"]) > MAX_SESSIONS
                 or type(value["bank"]) is not int or not 0 <= value["bank"] < MAX_SESSIONS // SLOTS_PER_BANK):
@@ -179,7 +225,8 @@ class DeckSessionBoard:
             self._order = list(slots)
             self._rail_edge = edge
             self._pinned = set(pinned)
-            self._bank = min(value["bank"], max(0, (len(slots) - 1) // SLOTS_PER_BANK))
+            self._scope = None if scope in ("", "automatic") else scope
+            self._bank = min(value["bank"], max(0, (len(self._view()) - 1) // SLOTS_PER_BANK))
             self._revision += 1
 
     def snapshot(self) -> BoardSnapshot:
@@ -209,5 +256,6 @@ class DeckSessionBoard:
                                          states.get(status.mode, "idle") if fresh else "stale",
                                          fresh and identity in self._navigation_keys, pinned))
             return BoardSnapshot(self._revision, self._bank,
-                                 max(1, (len(self._order) + SLOTS_PER_BANK - 1) // SLOTS_PER_BANK),
-                                 tuple(slots), self._unscoped_count, self._rail_edge)
+                                 max(1, (len(self._view()) + SLOTS_PER_BANK - 1) // SLOTS_PER_BANK),
+                                 tuple(slots), self._unscoped_count, self._rail_edge,
+                                 self._scope or "automatic")

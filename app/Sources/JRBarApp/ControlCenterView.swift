@@ -50,6 +50,7 @@ struct ControlCenterView: View {
                         DeckAbsentPad(store: store)
                     }
                     BankPager(store: store)
+                    AuxBindingsEditor(store: store)
                     Spacer(minLength: 0)
                     footnote
                 }
@@ -256,7 +257,8 @@ struct DeckDeviceChip: View {
                         }
                         if let profile = device?.profile, let layer = device?.layer {
                             Text("·").foregroundStyle(.tertiary)
-                            Text("profile \(profile + 1), layer \(layer + 1)")
+                            Text("Layer \(layer + 1) · \(store.scopeName(store.settings.scope(forLayer: layer)))")
+                                .help("The hardware layer the pad reports, and the board scope it selects (profile \(profile + 1))")
                         }
                     }
                     .font(.caption)
@@ -658,9 +660,79 @@ struct BankPager: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .contentTransition(.numericText())
+            if !store.scopes.isEmpty {
+                Button { store.cycleScope(delta: -1) } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Previous board scope (wraps)")
+            }
+            Text("Board: \(store.scopeName(store.scope))")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+                .help("The provider scope the board shows: a hardware layer or a scope key selects it")
+            if !store.scopes.isEmpty {
+                Button { store.cycleScope(delta: 1) } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Next board scope (wraps)")
+            }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(banks.title)
+        .accessibilityLabel("\(banks.title), board scope \(store.scopeName(store.scope))")
+    }
+}
+
+/// What each auxiliary control (the dial's three inputs, the joystick's
+/// four sectors) runs, editable in place. "Unset" leaves the input to
+/// light up and nothing more.
+struct AuxBindingsEditor: View {
+    @Bindable var store: DeckStore
+
+    private static let actions: [String] = [
+        "next_bank", "previous_bank", "next_scope", "previous_scope",
+        "reveal_current_ask", "open_control_center", "open_usage", "open_agent_browser",
+    ]
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
+            ForEach(0..<4, id: \.self) { row in
+                GridRow {
+                    cell(store.auxControls[safe: row])
+                    cell(store.auxControls[safe: row + 4])
+                }
+            }
+        }
+        .padding(.top, 10)
+        .disabled(!store.isLive)
+    }
+
+    @ViewBuilder
+    private func cell(_ control: DeckAuxControl?) -> some View {
+        if let control {
+            LabeledContent(control.label) {
+                Picker("", selection: Binding(
+                    get: { control.mapping ?? "" },
+                    set: { store.setAuxBinding(index: control.index, action: $0.isEmpty ? nil : $0) })) {
+                    Text("Unset").tag("")
+                    ForEach(Self.actions, id: \.self) { action in
+                        Text(DeckControls.actionLabel(action)).tag(action)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else {
+            Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+        }
     }
 }
 
@@ -783,14 +855,17 @@ struct SessionDragRow: View {
 
 // MARK: - Sheets
 
-/// Apply keymap…: the Python selection alert (layer picker and the
-/// auxiliary switch) and its review alert (the plan text), on one sheet.
+/// Apply keymap…: the Python selection alert and its review alert on one
+/// sheet. Every hardware layer on the profile is claimed; each is named
+/// for the provider scope it selects.
 struct ApplyKeymapSheet: View {
     @Bindable var store: DeckStore
 
     private var layers: [DeckKeymapLayer] {
         store.keymap.layers.isEmpty ? [store.applyLayer ?? DeckKeymapLayer(profile: 0, layer: 0)] : store.keymap.layers
     }
+
+    private var targets: [DeckKeymapLayer] { store.applyTargets }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -799,24 +874,43 @@ struct ApplyKeymapSheet: View {
                     .font(.system(size: 30))
                     .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Choose the JR-Bar device layer").font(.title3.weight(.semibold))
-                    Text("Close Input and other device controllers before continuing. Only the chosen layer is edited; macro definitions and other layers are preserved. Review the exact changes below.")
+                    Text("Choose the JR-Bar device layers").font(.title3.weight(.semibold))
+                    Text("Close Input and other device controllers before continuing. Every layer below is claimed and named for the scope it selects; macro definitions and other profiles are preserved. Review the exact changes below.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Picker("Profile and layer to configure", selection: Binding(
-                get: { store.applyLayer?.id ?? layers.first?.id ?? "" },
-                set: { id in
-                    store.applyLayer = layers.first { $0.id == id }
-                    store.loadPlan()
-                })) {
-                ForEach(layers) { layer in
-                    Text(layer.label).tag(layer.id)
+            ForEach(targets) { row in
+                LabeledContent("Layer \(row.layer + 1)") {
+                    Picker("", selection: Binding(
+                        get: { store.applyScope(for: row) },
+                        set: { store.setApplyScope($0, for: row) })) {
+                        Text("Automatic — all sessions").tag("automatic")
+                        ForEach(store.providerScopes, id: \.self) { scope in
+                            Text(store.scopeName(scope)).tag(scope)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
+                .font(.callout)
             }
-            .accessibilityLabel("Profile and layer to configure")
+            if Set(layers.map(\.profile)).count > 1 {
+                Picker("Profile to configure", selection: Binding(
+                    get: { store.applyLayer?.profile ?? targets.first?.profile ?? 0 },
+                    set: { profile in
+                        if let first = layers.first(where: { $0.profile == profile }) {
+                            store.applyLayer = first
+                            store.loadPlan()
+                        }
+                    })) {
+                    ForEach(Array(Set(layers.map(\.profile))).sorted(), id: \.self) { profile in
+                        Text("Profile \(profile + 1)").tag(profile)
+                    }
+                }
+                .accessibilityLabel("Profile to configure")
+            }
             Toggle("Also configure supported dial and joystick mappings", isOn: Binding(
                 get: { store.applyAuxiliary },
                 set: { store.applyAuxiliary = $0; store.loadPlan() }))

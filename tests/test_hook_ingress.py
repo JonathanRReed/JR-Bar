@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import stat
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -219,7 +221,7 @@ def test_socket_admits_on_private_same_uid_path_and_processes_request() -> None:
         assert not socket_path.exists()
 
 
-def test_lost_ack_after_acceptance_never_runs_synchronous_fallback() -> None:
+def test_lost_ack_after_acceptance_falls_back_through_dedupe() -> None:
     ack_started = threading.Event()
     release_ack = threading.Event()
 
@@ -266,11 +268,92 @@ def test_lost_ack_after_acceptance_never_runs_synchronous_fallback() -> None:
             )
             assert disposition == [HookIngressDisposition.SUBMISSION_AMBIGUOUS]
             assert ack_started.wait(1.0)
+            # The ingress DID accept it and will still process it; the
+            # client cannot observe that, so it also runs the synchronous
+            # fallback -- the dedupe-checked write path makes the double
+            # delivery a suppressed duplicate rather than a double record.
+            assert len(fallback) == 1
             release_ack.set()
             assert completed.wait(1.0)
             assert len(processed) == 1
-            assert fallback == []
             assert service.snapshot().accepted == 1
+        finally:
+            assert service.close(timeout_seconds=1.0)
+
+
+def test_a_trickling_connection_never_serializes_later_hooks() -> None:
+    """One read-to-EOF client used to hold the sole ingress slot for as
+    long as it kept the stream alive; each connection now gets its own
+    bounded worker, so a peer that never finishes cannot starve hooks."""
+    with tempfile.TemporaryDirectory(prefix="jrbar-hi-", dir="/tmp") as directory:
+        socket_path = Path(directory) / "hook-ingress.sock"
+        completed = threading.Event()
+        service = HookIngressService(
+            process=lambda _request_value: completed.set(),
+            socket_path=socket_path,
+        )
+        service.start()
+        try:
+            trickler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            trickler.connect(str(socket_path))
+            # A stream that starts but never finishes: the old code read
+            # it to EOF on the accept thread and nothing else was served.
+            trickler.sendall(b"J")
+            try:
+                assert (
+                    submit_hook_ingress(
+                        _request("concurrent"),
+                        socket_path=socket_path,
+                        timeout_seconds=0.5,
+                    )
+                    is HookIngressDisposition.ACCEPTED
+                )
+                assert completed.wait(1.0)
+            finally:
+                trickler.close()
+        finally:
+            assert service.close(timeout_seconds=1.0)
+
+
+def test_trickling_connection_dies_at_the_whole_connection_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keeping each recv under the per-read timeout must NOT keep a
+    connection alive forever: the deadline covers the whole connection."""
+    monkeypatch.setattr(
+        "jrbar.hook_ingress.HOOK_INGRESS_CONNECTION_DEADLINE_SECONDS", 0.4
+    )
+    with tempfile.TemporaryDirectory(prefix="jrbar-hi-", dir="/tmp") as directory:
+        socket_path = Path(directory) / "hook-ingress.sock"
+        service = HookIngressService(
+            process=lambda _request_value: None,
+            socket_path=socket_path,
+        )
+        service.start()
+        try:
+            trickler = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            trickler.settimeout(0.2)
+            trickler.connect(str(socket_path))
+            closed = False
+            start = time.monotonic()
+            # Drip one byte faster than the per-recv timeout so the ONLY
+            # thing that can cut this connection is the whole-connection
+            # deadline. The recv timeout doubles as the pacing: every
+            # iteration waits ~0.1s while the server still holds us.
+            while time.monotonic() - start < 3.0:
+                try:
+                    trickler.sendall(b"x")
+                except OSError:
+                    closed = True
+                    break
+                try:
+                    if trickler.recv(1) == b"":
+                        closed = True
+                        break
+                except TimeoutError:
+                    pass
+            assert closed, "a trickling connection outlived its deadline"
+            trickler.close()
         finally:
             assert service.close(timeout_seconds=1.0)
 

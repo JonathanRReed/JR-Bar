@@ -31,6 +31,7 @@ from .scene_packs import (
     ScenePackError,
     export_scene_pack,
 )
+from .scenes import Scene, ScenePolicy
 from .state_paths import default_state_dir
 
 SCENE_PACK_STORE_DIRECTORY: Final = "scene-packs"
@@ -39,6 +40,18 @@ MAX_SCENE_PACK_STORE_BYTES: Final = 4 * 1024 * 1024
 MAX_SCENE_PACK_FILENAME_BYTES: Final = 96
 _STORE_LOCK_NAME: Final = ".store.lock"
 _PACK_IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9._-]{0,79}\Z")
+
+# ``policy_overrides`` runs on the scene-policy path, which the ambient
+# runtime asks about every operator-state batch. Re-reading and
+# re-validating the pack file per tick would be pointless: the store only
+# ever writes canonical, fully validated payloads, so the file's
+# (mtime_ns, size) is a trustworthy identity for its decoded rows -- and
+# "file absent" is itself a cacheable answer. The table stays bounded so a
+# caller cycling pack ids cannot grow it without limit.
+_POLICY_OVERRIDE_CACHE_LIMIT: Final = 32
+_policy_override_cache: dict[
+    str, tuple[tuple[int, int] | None, dict[Scene, ScenePolicy] | None]
+] = {}
 
 
 class ScenePackStoreError(ValueError):
@@ -462,6 +475,54 @@ class ScenePackStore:
         """Return the validated import preview for one installed pack."""
 
         return plan_scene_pack_import(self.inspect(pack_id))
+
+    def policy_overrides(
+        self,
+        pack_id: object,
+    ) -> dict[Scene, ScenePolicy] | None:
+        """Return the installed pack's per-scene policy rows, or None.
+
+        This is the runtime read behind ``active_scene_pack``: the answer
+        is cached on the file's (mtime_ns, size) so a refresh cadence does
+        not re-read disk, and every failure -- no id, no file, a store
+        that fails its own safety scan, a payload that no longer decodes
+        canonically -- resolves to None. Callers therefore fall back to
+        the built-in scene policies instead of ever seeing an exception
+        on the scene-policy path.
+        """
+
+        try:
+            identifier = _pack_identifier(pack_id)
+        except ScenePackStoreError:
+            return None
+        target = self._target(identifier)
+        try:
+            info = target.lstat()
+        except OSError:
+            stamp = None
+        else:
+            stamp = (
+                (info.st_mtime_ns, info.st_size)
+                if stat.S_ISREG(info.st_mode)
+                and not stat.S_ISLNK(info.st_mode)
+                else None
+            )
+        key = str(target)
+        cached = _policy_override_cache.get(key)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        overrides: dict[Scene, ScenePolicy] | None = None
+        if stamp is not None:
+            try:
+                pack = self.inspect(identifier)
+            except (OSError, ScenePackStoreError, ValueError):
+                pack = None
+            if pack is not None:
+                overrides = {entry.scene: entry.policy for entry in pack.scenes}
+        if len(_policy_override_cache) >= _POLICY_OVERRIDE_CACHE_LIMIT:
+            _policy_override_cache.clear()
+        _policy_override_cache[key] = (stamp, overrides)
+        return overrides
 
     def preview_source(
         self,

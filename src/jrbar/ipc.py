@@ -4,6 +4,7 @@ import ctypes
 import errno
 import json
 import os
+import select
 import socket
 import stat
 import struct
@@ -79,7 +80,6 @@ HOOK_BREAKER_COOLDOWN_SECONDS = 30.0
 STALE_SOCKET_PROBE_TIMEOUT_SECONDS = 0.2
 PEER_READ_TIMEOUT_SECONDS = 0.5
 MAX_CONCURRENT_PEERS = 8
-SERVER_ACCEPT_TIMEOUT_SECONDS = 0.1
 SERVER_STOP_TIMEOUT_SECONDS = 0.75
 
 _Identity = tuple[int, int]
@@ -203,6 +203,61 @@ def _raw_event_from_wire(payload: bytes) -> tuple[str, dict] | None:
 
 def _identity(info: os.stat_result) -> _Identity:
     return info.st_dev, info.st_ino
+
+
+class _AcceptWakeup:
+    """Self-pipe that pulls a blocking ``select`` accept loop out of its wait.
+
+    The accept loops used to poll: a ``settimeout`` on the listening socket
+    doubled as the stop check and burned a wakeup every fraction of a second,
+    forever, even with no clients. A socketpair does the same job with zero
+    idle cost: the loop ``select``s on ``(server, read_end)`` and ``stop``
+    writes one byte to ``write_end``.
+    """
+
+    def __init__(self) -> None:
+        self.read_end, self.write_end = socket.socketpair()
+        self.read_end.setblocking(False)
+        self.write_end.setblocking(False)
+
+    def wake(self) -> None:
+        try:
+            self.write_end.send(b"\x00")
+        except (BlockingIOError, OSError):
+            pass
+
+    def drain(self) -> None:
+        while True:
+            try:
+                if not self.read_end.recv(4096):
+                    return
+            except (BlockingIOError, OSError):
+                return
+
+    def close(self) -> None:
+        for end in (self.read_end, self.write_end):
+            try:
+                end.close()
+            except OSError:
+                pass
+
+
+def _accept_one(
+    server: socket.socket,
+    wakeup: _AcceptWakeup,
+) -> socket.socket | None:
+    """Block in ``select`` until the listening socket or the wakeup is
+    readable, then accept one connection. ``None`` means only the wakeup
+    fired; the caller re-checks its running flag. ``OSError`` propagates:
+    a failed ``select``/``accept`` is as fatal to the loop as it was under
+    the old timeout-polling code (the socket died, or ``stop`` closed it)."""
+    readable, _, _ = select.select((server, wakeup.read_end), (), ())
+    if wakeup.read_end in readable:
+        wakeup.drain()
+    if server not in readable:
+        return None
+    connection, _ = server.accept()
+    return connection
 
 
 def _directory_open_flags() -> int:
@@ -713,6 +768,7 @@ class HookEventServer:
         self._workers: set[threading.Thread] = set()
         self._path_guard: _SocketPathGuard | None = None
         self._bound_identity: _Identity | None = None
+        self._accept_wakeup: _AcceptWakeup | None = None
 
     def start(self) -> Path:
         with self._lifecycle_lock:
@@ -746,12 +802,12 @@ class HookEventServer:
                 guard.assert_parent()
                 guard.chmod_socket(bound_identity, 0o600)
                 server.listen(16)
-                server.settimeout(SERVER_ACCEPT_TIMEOUT_SECONDS)
                 guard.assert_socket_identity(bound_identity)
 
                 self._peer_slots = threading.BoundedSemaphore(MAX_CONCURRENT_PEERS)
                 self._connections.clear()
                 self._workers.clear()
+                self._accept_wakeup = _AcceptWakeup()
                 self._path_guard = guard
                 self._bound_identity = bound_identity
                 self.socket = server
@@ -766,6 +822,9 @@ class HookEventServer:
             except Exception:
                 if server is not None:
                     server.close()
+                if self._accept_wakeup is not None:
+                    self._accept_wakeup.close()
+                    self._accept_wakeup = None
                 if bound_identity is not None:
                     try:
                         guard.unlink_owned_socket(bound_identity)
@@ -780,11 +839,12 @@ class HookEventServer:
             server = self.socket
             self.socket = None
             accept_thread = self.thread
-            if server is not None:
-                try:
-                    server.close()
-                except OSError:
-                    pass
+            wakeup = self._accept_wakeup
+            if wakeup is not None:
+                # Interrupt the accept thread's select BEFORE touching the
+                # listening socket so the loop sees `running` False on a
+                # live descriptor instead of a recycled fd number.
+                wakeup.wake()
             with self._peer_lock:
                 connections = tuple(self._connections)
 
@@ -802,11 +862,24 @@ class HookEventServer:
         current = threading.current_thread()
         if accept_thread is not None and accept_thread is not current:
             accept_thread.join(max(0.0, deadline - time.monotonic()))
+        if server is not None:
+            try:
+                server.close()
+            except OSError:
+                pass
+        if wakeup is not None:
+            with self._lifecycle_lock:
+                if self._accept_wakeup is wakeup:
+                    self._accept_wakeup = None
+            wakeup.close()
 
         with self._peer_lock:
             workers = tuple(self._workers)
         for worker in workers:
-            if worker is current:
+            # A worker still between "added to the set" and ".start()" was
+            # never started: join() on it raises, and its already-closed
+            # connection makes it exit on its own anyway.
+            if worker is current or worker.ident is None:
                 continue
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -832,14 +905,15 @@ class HookEventServer:
         while True:
             with self._lifecycle_lock:
                 server = self.socket
-                if not self.running or server is None:
+                wakeup = self._accept_wakeup
+                if not self.running or server is None or wakeup is None:
                     return
             try:
-                connection, _ = server.accept()
-            except TimeoutError:
-                continue
+                connection = _accept_one(server, wakeup)
             except OSError:
                 return
+            if connection is None:
+                continue
 
             with self._lifecycle_lock:
                 if not self.running or self.socket is not server:

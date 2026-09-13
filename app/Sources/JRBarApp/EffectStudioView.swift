@@ -582,6 +582,21 @@ struct EffectAssignmentsPane: View {
                     ForEach(store.scenePacks) { pack in
                         ScenePackRow(pack: pack, store: store)
                     }
+                    // A pack that was selected and then removed still
+                    // holds `active_scene_pack`; give the id a row so the
+                    // state is visible and one tap restores the built-ins.
+                    if let activeID = store.activeScenePackID,
+                       !store.scenePacks.contains(where: { $0.id == activeID }) {
+                        HStack(spacing: 8) {
+                            Text("Active pack “\(activeID)” is no longer installed")
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Spacer()
+                            Button("Use built-in scenes") { store.setActiveScenePack(nil) }
+                                .buttonStyle(.link)
+                                .font(.caption)
+                        }
+                        .padding(.vertical, 1)
+                    }
                     Button("Import scene pack…") { store.importScenePack() }
                         .buttonStyle(.link)
                         .font(.caption)
@@ -665,6 +680,8 @@ struct ScenePackRow: View {
         store.scenePreview?.packID == pack.id ? store.scenePreview?.preview : nil
     }
 
+    private var isActive: Bool { store.activeScenePackID == pack.id }
+
     var body: some View {
         HStack(spacing: 8) {
             if let preview {
@@ -673,11 +690,31 @@ struct ScenePackRow: View {
                     .frame(width: 40)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(pack.displayName).lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(pack.displayName).lineLimit(1)
+                    if isActive {
+                        Text("Active")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Capsule().fill(Color.accentColor))
+                    }
+                }
                 Text(pack.scenes.isEmpty ? "No scenes listed" : pack.scenes.joined(separator: ", "))
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
+            if isActive {
+                Button("Built-in scenes") { store.setActiveScenePack(nil) }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .help("Stop applying this pack's scene policies")
+            } else {
+                Button("Use this pack") { store.setActiveScenePack(pack.id) }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .help("Apply this pack's policies over the built-in scenes")
+            }
             Button(preview == nil ? "Preview" : "Preview again") { store.previewScenePack(pack) }
                 .buttonStyle(.link)
                 .font(.caption)

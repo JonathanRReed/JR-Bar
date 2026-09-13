@@ -484,6 +484,22 @@ else:
                 )
                 self._jrbar_reset_delivery_state = delivery_state
                 self._persist_reset_delivery_state()
+                # The app's Usage Center listens for ``quota_reset`` to
+                # pulse the provider's card and re-fetch; the celebration
+                # channels above are a user preference, this wire event is
+                # not — a reset is a fact either way.
+                publish = getattr(self, "_core_publish_event", None)
+                if callable(publish):
+                    for event in reset_events:
+                        try:
+                            publish(
+                                "quota_reset",
+                                provider=event.provider_id,
+                                instance=event.source_instance_id,
+                                label=event.label,
+                            )
+                        except Exception:
+                            pass
             self._deliver_pending_reset_events()
             thresholds = {preference.identity: preference.threshold_remaining for preference in settings.providers}
             self._jrbar_provider_threshold_crossings = threshold_crossings(

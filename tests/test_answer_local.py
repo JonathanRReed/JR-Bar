@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from jrbar.answer_in_place import MAX_ANSWER_REPLY_LENGTH
 from jrbar.answer_local import (
     ACCESSIBILITY_SETTINGS_PATH,
     ANSWER_KEYS,
@@ -14,8 +15,10 @@ from jrbar.answer_local import (
     LocalAnswerDelivery,
     LocalAnswerSurface,
     LocalAnswerTarget,
+    _unicode_chunks,
     answer_keys_for_provider,
     plan_local_answer,
+    plan_local_reply,
 )
 from jrbar.answer_runtime import _failure_text
 from jrbar.provider_contracts import ProductCapability
@@ -218,6 +221,66 @@ def test_a_matching_focused_tab_is_the_strongest_evidence():
     assert plan.facts.window_evidence() == "focused_tab_tty"
 
 
+# --- typed replies ------------------------------------------------------------
+
+
+def test_a_reply_plan_targets_the_same_checked_process():
+    plan = plan_local_reply(
+        provider="claude", reply_text="yes, ship it", ask_live=True, facts=facts()
+    )
+    assert plan.text == "yes, ship it"
+    assert plan.target_pid == 4200
+    assert plan.mechanism == "synthetic_text"
+
+
+def test_reply_text_normalizes_to_one_bounded_printable_line():
+    plan = plan_local_reply(
+        provider="codex",
+        reply_text="  ship\n it\tnow  ",
+        ask_live=True,
+        facts=facts(),
+    )
+    assert plan.text == "ship it now"
+    assert len(plan.text) <= MAX_ANSWER_REPLY_LENGTH
+    with pytest.raises(ValueError):
+        plan_local_reply(
+            provider="codex", reply_text="  \n\t ", ask_live=True, facts=facts()
+        )
+    with pytest.raises(ValueError):
+        plan_local_reply(
+            provider="codex", reply_text=42, ask_live=True, facts=facts()
+        )
+
+
+def test_reply_planning_runs_every_fence_before_text_is_sent():
+    with pytest.raises(AnswerRefusal) as raised:
+        plan_local_reply(
+            provider="claude",
+            reply_text="go",
+            ask_live=False,
+            facts=facts(),
+        )
+    assert raised.value.code == "stale_ask"
+    with pytest.raises(AnswerRefusal) as raised:
+        plan_local_reply(
+            provider="claude",
+            reply_text="go",
+            ask_live=True,
+            facts=facts(accessibility_trusted=False),
+        )
+    assert raised.value.code == "accessibility_required"
+
+
+def test_unicode_chunks_never_exceed_the_event_unit_limit():
+    text = "0123456789" * 5 + " \U0001f600 tail"  # one astral char = 2 units
+    chunks = list(_unicode_chunks(text))
+    assert "".join(chunks) == text
+    assert all(
+        len(chunk.encode("utf-16-le")) // 2 <= 20 for chunk in chunks
+    )
+    assert len(chunks) > 1
+
+
 # --- delivery -----------------------------------------------------------------
 
 
@@ -306,18 +369,20 @@ class _Action:
         self.value = value
 
 
-def _surface(**kwargs) -> tuple[LocalAnswerSurface, list]:
+def _surface(**kwargs) -> tuple[LocalAnswerSurface, list, list]:
     sent: list = []
+    typed: list = []
     delivery = LocalAnswerDelivery(
         sender=lambda pid, code: sent.append((pid, code)),
+        text_sender=lambda pid, text: typed.append((pid, text)),
         observer=lambda **_: facts(),
     )
     surface = LocalAnswerSurface(delivery=delivery, **kwargs)
-    return surface, sent
+    return surface, sent, typed
 
 
 def test_the_handler_answers_and_records_the_outcome():
-    surface, sent = _surface(resolve_target=lambda decision: target())
+    surface, sent, _typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     surface.handle(object(), request_kind=None, answer_kind=_Action("approve"), reply_text=None)
     assert sent == [(4200, 18)]
@@ -326,7 +391,7 @@ def test_the_handler_answers_and_records_the_outcome():
 
 
 def test_the_handler_raises_the_refusal_the_owner_should_read():
-    surface, sent = _surface(
+    surface, sent, _typed = _surface(
         resolve_target=lambda decision: (_ for _ in ()).throw(
             AnswerRefusal("stale_ask", "That ask is no longer live.", "gone")
         )
@@ -342,19 +407,72 @@ def test_the_handler_raises_the_refusal_the_owner_should_read():
     assert surface.completed.is_set()
 
 
-def test_a_typed_reply_is_not_something_this_surface_can_send():
-    surface, sent = _surface(resolve_target=lambda decision: target())
+def test_a_typed_reply_is_typed_into_the_same_checked_target():
+    surface, sent, typed = _surface(resolve_target=lambda decision: target())
+    surface.arm()
+    surface.handle(
+        object(),
+        request_kind=None,
+        answer_kind=_Action("reply"),
+        reply_text="yes, ship it",
+    )
+    # The text rides the unicode payload of one synthetic keyboard event
+    # chain to the frontmost pid; no provider key recipe fires for it.
+    assert typed == [(4200, "yes, ship it")]
+    assert sent == []
+    assert surface.completed.is_set()
+    assert surface.last_outcome.delivered
+    assert surface.last_outcome.plan.mechanism == "synthetic_text"
+
+
+def test_a_reply_that_fails_the_same_fences_sends_nothing():
+    sent: list = []
+    typed: list = []
+    delivery = LocalAnswerDelivery(
+        sender=lambda pid, code: sent.append((pid, code)),
+        text_sender=lambda pid, text: typed.append((pid, text)),
+        observer=lambda **kwargs: facts(frontmost_bundle_id="com.apple.Terminal"),
+    )
+    outcome = delivery.deliver(
+        provider="claude",
+        reply_text="go ahead",
+        session_pid=4242,
+        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        session_tty="/dev/ttys008",
+        is_live=lambda: True,
+    )
+    assert (outcome.delivered, outcome.code) == (False, "not_frontmost")
+    assert typed == [] and sent == []
+
+
+def test_an_empty_reply_is_refused_before_any_delivery():
+    surface, sent, typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     with pytest.raises(AnswerRefusal) as raised:
         surface.handle(
-            object(), request_kind=None, answer_kind=_Action("reply"), reply_text="hello"
+            object(), request_kind=None, answer_kind=_Action("reply"), reply_text="   "
         )
     assert raised.value.code == "unsupported"
-    assert sent == []
+    assert raised.value.reason == "invalid_reply_text"
+    assert sent == [] and typed == []
+
+
+def test_reply_text_on_a_decision_action_is_rejected():
+    surface, sent, typed = _surface(resolve_target=lambda decision: target())
+    surface.arm()
+    with pytest.raises(AnswerRefusal) as raised:
+        surface.handle(
+            object(),
+            request_kind=None,
+            answer_kind=_Action("approve"),
+            reply_text="yes",
+        )
+    assert raised.value.reason == "reply_text_on_decision"
+    assert sent == [] and typed == []
 
 
 def test_arming_forgets_the_previous_outcome():
-    surface, _ = _surface(resolve_target=lambda decision: target())
+    surface, _sent, _typed = _surface(resolve_target=lambda decision: target())
     surface.arm()
     surface.handle(object(), request_kind=None, answer_kind=_Action("approve"), reply_text=None)
     assert surface.last_outcome is not None
@@ -369,7 +487,7 @@ def test_the_registry_receives_one_handler_per_invocation():
         def register(self, invocation, handler):
             registered.append((invocation, handler))
 
-    surface, _ = _surface(resolve_target=lambda decision: target())
+    surface, _sent, _typed = _surface(resolve_target=lambda decision: target())
     invocations = ("a", "b")
     assert surface.register(_Registry(), invocations) == invocations
     assert [row[0] for row in registered] == ["a", "b"]

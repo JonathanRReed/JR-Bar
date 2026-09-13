@@ -353,6 +353,10 @@ echo "==> assembling $APP_PATH"
 CORE_PLIST="$HELPERS/jrbar-core.app/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :LSUIElement true" "$CORE_PLIST"
+# The daemon's whole job is timeliness (timers, socket fan-out, hook
+# admission); App Nap deferring its run loop is never correct for it.
+/usr/libexec/PlistBuddy -c "Add :LSAppNapIsDisabled bool true" "$CORE_PLIST" 2>/dev/null || \
+    /usr/libexec/PlistBuddy -c "Set :LSAppNapIsDisabled true" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $MINIMUM_SUPPORTED_MACOS" "$CORE_PLIST" 2>/dev/null || \
     /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MINIMUM_SUPPORTED_MACOS" "$CORE_PLIST"
 /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$CORE_PLIST" 2>/dev/null || \

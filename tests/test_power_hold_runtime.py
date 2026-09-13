@@ -58,13 +58,18 @@ def test_live_agent_hold_replaces_only_the_stale_caffeinate_child() -> None:
     )
     assert controller.update(AgentMode.WORKING)
     first = factory.processes[-1]
-    assert first.command == ("/usr/bin/caffeinate", "-ims")
+    assert first.command == ("/usr/bin/caffeinate", "-ims", "-t", "1800")
 
     controller.set_keep_display_awake(True)
 
     assert first.terminated is True
     assert len(factory.processes) == 2
-    assert factory.processes[-1].command == ("/usr/bin/caffeinate", "-dims")
+    assert factory.processes[-1].command == (
+        "/usr/bin/caffeinate",
+        "-dims",
+        "-t",
+        "1800",
+    )
     assert controller.process is factory.processes[-1]
 
 
@@ -146,7 +151,12 @@ def test_battery_release_does_not_rewrite_display_choice() -> None:
         on_battery=False,
         hold_on_battery=False,
     )
-    assert factory.processes[-1].command == ("/usr/bin/caffeinate", "-dims")
+    assert factory.processes[-1].command == (
+        "/usr/bin/caffeinate",
+        "-dims",
+        "-t",
+        "1800",
+    )
 
 
 def test_status_controller_reads_agent_and_display_choices_each_sync() -> None:

@@ -94,6 +94,11 @@ def change_deck_bank(target, delta: int) -> None:
     publish_deck_frame(target)
 
 
+def _cycle_scope(target, delta: int) -> None:
+    from .deck_controller import cycle_deck_scope
+    cycle_deck_scope(target, delta)
+
+
 def publish_deck_frame(target) -> None:
     runtime = getattr(target, "_jrbar_optional_integration_runtime", None)
     snapshot = getattr(target, "last_snapshot", None)
@@ -146,6 +151,8 @@ def deck_executor(target) -> MacDeckActionExecutor:
         open_control_center=lambda: open_control_center(target),
         next_bank=lambda: change_deck_bank(target, 1),
         previous_bank=lambda: change_deck_bank(target, -1),
+        next_scope=lambda: _cycle_scope(target, 1),
+        previous_scope=lambda: _cycle_scope(target, -1),
         session_revealer=lambda identity, revision: reveal_deck_session(target, identity, revision),
         shortcut_runner=submit_shortcut,
     )

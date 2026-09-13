@@ -22,14 +22,23 @@ public enum CoreClientError: Error, Equatable, CustomStringConvertible {
 /// Where the daemon's socket lives: `JRBAR_CORE_SOCKET`, else
 /// `$XDG_STATE_HOME/jrbar/core.sock`, else `~/.local/state/jrbar/core.sock`.
 public enum CoreSocketPath {
+    /// `$XDG_STATE_HOME/jrbar`, else `~/.local/state/jrbar` — the flat state
+    /// directory `state_paths.default_state_dir` defines, where `latest.json`,
+    /// `core.sock` and the logs land. The pre-rename `sidepulse/` tree is
+    /// migrated once (and `agent-monitor/` is not even copied) and never
+    /// written again: nothing here may read it.
+    public static func stateDirectory(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let xdg = environment["XDG_STATE_HOME"], !xdg.isEmpty {
+            return NSString(string: xdg).expandingTildeInPath + "/jrbar"
+        }
+        return NSString(string: "~/.local/state/jrbar").expandingTildeInPath
+    }
+
     public static func resolve(environment: [String: String] = ProcessInfo.processInfo.environment) -> String {
         if let override = environment["JRBAR_CORE_SOCKET"], !override.isEmpty {
             return NSString(string: override).expandingTildeInPath
         }
-        if let xdg = environment["XDG_STATE_HOME"], !xdg.isEmpty {
-            return NSString(string: xdg).expandingTildeInPath + "/jrbar/core.sock"
-        }
-        return NSString(string: "~/.local/state/jrbar/core.sock").expandingTildeInPath
+        return stateDirectory(environment: environment) + "/core.sock"
     }
 }
 
@@ -63,6 +72,15 @@ public final class CoreClient: @unchecked Sendable {
 
     public let socketPath: String
     public let replyTimeout: TimeInterval
+    /// How long a connected daemon may take to speak its `hello` before
+    /// the client drops the socket and reconnects instead of parking at
+    /// "connected, waiting for state" forever.
+    public let helloTimeout: TimeInterval
+    /// Bound on the nonblocking connect handshake.
+    public let connectTimeout: TimeInterval
+    /// Kernel-level per-send bound (SO_SNDTIMEO): a daemon that stops
+    /// draining the socket can never block a write past this.
+    public let writeTimeout: TimeInterval
     private let handler: @Sendable (Event) -> Void
 
     private let lock = NSLock()
@@ -78,9 +96,15 @@ public final class CoreClient: @unchecked Sendable {
     /// ours, we check theirs). Nil disables the check.
     public var expectedPeerUID: uid_t? = getuid()
 
-    public init(socketPath: String = CoreSocketPath.resolve(), replyTimeout: TimeInterval = 10, handler: @escaping @Sendable (Event) -> Void) {
+    public init(socketPath: String = CoreSocketPath.resolve(), replyTimeout: TimeInterval = 10,
+                helloTimeout: TimeInterval = 10, connectTimeout: TimeInterval = 5,
+                writeTimeout: TimeInterval = 5,
+                handler: @escaping @Sendable (Event) -> Void) {
         self.socketPath = socketPath
         self.replyTimeout = replyTimeout
+        self.helloTimeout = helloTimeout
+        self.connectTimeout = connectTimeout
+        self.writeTimeout = writeTimeout
         self.handler = handler
     }
 
@@ -158,19 +182,26 @@ public final class CoreClient: @unchecked Sendable {
             pending[command.id] = continuation
             let socket = fd
             lock.unlock()
-            if let errno = writeAll(socket, bytes) {
-                if let waiting = takePending(command.id) {
-                    waiting.resume(throwing: CoreClientError.writeFailed(errno))
-                }
-                return
-            }
+            // Arm the deadline BEFORE the write: it covers the whole
+            // operation (a blocked write, a lost reply), not just the
+            // wait for the reply frame.
             let timeout = timeout ?? replyTimeout
             let id = command.id
             Task.detached { [weak self] in
                 try? await Task.sleep(for: .seconds(timeout))
-                if let waiting = self?.takePending(id) {
-                    waiting.resume(throwing: CoreClientError.timeout)
+                guard let self, let waiting = self.takePending(id) else { return }
+                waiting.resume(throwing: CoreClientError.timeout)
+                // A reply that never came means the daemon may be wedged
+                // mid-read; drop the socket so the run loop reconnects
+                // instead of leaving the connection half-dead.
+                self.dropConnection(socket)
+            }
+            if let errno = writeAll(socket, bytes) {
+                if let waiting = takePending(command.id) {
+                    waiting.resume(throwing: CoreClientError.writeFailed(errno))
                 }
+                dropConnection(socket)
+                return
             }
         }
         return reply
@@ -185,7 +216,21 @@ public final class CoreClient: @unchecked Sendable {
         let connected = _isConnected
         lock.unlock()
         guard connected, socket >= 0 else { throw CoreClientError.notConnected }
-        if let errno = writeAll(socket, bytes) { throw CoreClientError.writeFailed(errno) }
+        if let errno = writeAll(socket, bytes) {
+            dropConnection(socket)
+            throw CoreClientError.writeFailed(errno)
+        }
+    }
+
+    /// Forces the read loop out of its blocking read so the run loop
+    /// tears down and reconnects. `shutdown`, never `close`: the run
+    /// loop owns the descriptor and closes it after `readLoop` returns;
+    /// a second close could land on a recycled fd number.
+    private func dropConnection(_ socket: Int32) {
+        lock.lock()
+        let current = fd == socket
+        lock.unlock()
+        if current { shutdown(socket, SHUT_RDWR) }
     }
 
     private func takePending(_ id: String) -> CheckedContinuation<CoreReply, Error>? {
@@ -207,6 +252,9 @@ public final class CoreClient: @unchecked Sendable {
                     if errno == EINTR { continue }
                     return errno
                 }
+                // A zero write on a live descriptor is a silent stall;
+                // treat it as a failure rather than spinning forever.
+                if written == 0 { return EIO }
                 offset += written
             }
             return nil
@@ -278,10 +326,38 @@ public final class CoreClient: @unchecked Sendable {
         guard socket >= 0 else { return nil }
         var noSigPipe: Int32 = 1
         setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
+        // Kernel send deadline: every write(2) on this socket returns
+        // EAGAIN instead of blocking past writeTimeout, so `writeAll`
+        // (and therefore `send`/`post`) can never park on a peer that
+        // stopped draining its receive buffer.
+        var sendTimeout = timeval(
+            tv_sec: Int(writeTimeout),
+            tv_usec: Int32((writeTimeout - TimeInterval(Int(writeTimeout))) * 1_000_000)
+        )
+        setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
+        // A full listen backlog makes connect(2) block: run it
+        // nonblocking and bound the handshake with poll.
+        let previousFlags = fcntl(socket, F_GETFL)
+        _ = fcntl(socket, F_SETFL, previousFlags | O_NONBLOCK)
         let length = socklen_t(MemoryLayout<sa_family_t>.size + MemoryLayout<UInt8>.size + pathBytes.count + 1)
-        let result = withUnsafePointer(to: &address) { pointer in
+        var result = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(socket, $0, length) }
         }
+        if result != 0, errno == EINPROGRESS {
+            var descriptor = pollfd(fd: socket, events: Int16(POLLOUT), revents: 0)
+            let remaining = Int32(max(1, connectTimeout * 1000))
+            let polled = poll(&descriptor, 1, remaining)
+            if polled > 0 {
+                var socketError: Int32 = 0
+                var errorLength = socklen_t(MemoryLayout<Int32>.size)
+                getsockopt(socket, SOL_SOCKET, SO_ERROR, &socketError, &errorLength)
+                result = socketError == 0 ? 0 : -1
+            } else {
+                result = -1
+            }
+        }
+        // Back to blocking mode; writes stay bounded by SO_SNDTIMEO.
+        _ = fcntl(socket, F_SETFL, previousFlags >= 0 ? previousFlags : 0)
         guard result == 0 else {
             close(socket)
             return nil
@@ -302,9 +378,30 @@ public final class CoreClient: @unchecked Sendable {
     private func readLoop(_ socket: Int32) -> (String, Bool) {
         var splitter = NDJSONSplitter()
         var sawHello = false
+        // A daemon that accepts but never speaks must not park the app at
+        // "connected, waiting for state" forever: until hello lands, every
+        // read is preceded by a poll bounded by the hello deadline.
+        let helloDeadline = Date(timeIntervalSinceNow: helloTimeout)
         let chunk = 64 * 1024
         var buffer = [UInt8](repeating: 0, count: chunk)
         while true {
+            if !sawHello {
+                let remaining = helloDeadline.timeIntervalSinceNow
+                if remaining <= 0 {
+                    return ("core sent no hello within \(Int(helloTimeout)) s", false)
+                }
+                var descriptor = pollfd(fd: socket, events: Int16(POLLIN), revents: 0)
+                let polled = poll(&descriptor, 1, Int32(max(1, remaining * 1000)))
+                if polled == 0 {
+                    return ("core sent no hello within \(Int(helloTimeout)) s", false)
+                }
+                if polled < 0 {
+                    if errno == EINTR { continue }
+                    if isStopped { return ("stopped", sawHello) }
+                    return (String(cString: strerror(errno)), sawHello)
+                }
+                // Readable (or a hangup/error the read below reports).
+            }
             let count = buffer.withUnsafeMutableBytes { raw in Darwin.read(socket, raw.baseAddress, chunk) }
             if count == 0 { return ("core closed the socket", sawHello) }
             if count < 0 {

@@ -1,6 +1,7 @@
 import AppKit
 import JRBarCore
 import SwiftUI
+import UserNotifications
 
 // MARK: - Lighting
 
@@ -103,6 +104,12 @@ struct LightingPage: View {
         Section {
             SettingPicker(store, "Active scene", subtitle: "Chooses which scene-scoped effect assignments are in force.",
                           path: "active_scene", options: Self.scenes, default: "calm")
+            if let pack = store.document.string("active_scene_pack"), !pack.isEmpty {
+                Text("Scene pack “\(pack)” is active — its policies override the built-in scene's. Manage packs in Effect Studio.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             LabeledContent {
                 Button("Effect Studio…") { store.onOpenEffects?() }
             } label: {
@@ -110,6 +117,17 @@ struct LightingPage: View {
             }
         } header: {
             Text("Scene")
+        }
+
+        Section {
+            SettingToggle(store, "Rainstick idle", subtitle: "One dim pixel drifts along the strip every thirty seconds while nothing else needs it — a quiet \"JR-Bar is alive\". Reduce Motion shows it as a single stationary pixel.",
+                          path: "rainstick_idle_enabled")
+            SettingToggle(store, "Completion milestones", subtitle: "A short finite celebration when the count of finished sessions crosses a milestone.",
+                          path: "milestone_odometer_enabled")
+        } header: {
+            Text("Ambient cues")
+        } footer: {
+            SectionNote("Both are opt-in and content-free: they carry no state you have to read, yield to every real signal, and stay dark during Do Not Disturb, night, low power and thermal pressure.")
         }
     }
 
@@ -395,6 +413,17 @@ struct NotificationsPage: View {
         Section("Completion") {
             SettingToggle(store, "Notification banner", subtitle: "A macOS notification when a main session finishes. Needs the system notification permission.",
                           path: "completion_notification_enabled")
+            if store.notificationPermissionDenied {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("macOS has notifications turned off for JR-Bar — banners cannot appear until it is allowed.")
+                        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Open Settings") {
+                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
+                    }
+                }
+            }
             SettingToggle(store, "Completion sweep", subtitle: "Sweep the bar in the finishing agent's colour the moment any session completes.",
                           path: "completion_sweep_enabled", default: true)
         }
@@ -465,6 +494,7 @@ struct NotificationsPage: View {
         } header: {
             Text("Battery")
         }
+        .task { store.refreshNotificationPermission() }
     }
 
     private var closedLidNote: String {
@@ -528,6 +558,18 @@ struct RemotePage: View {
                 .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
             MachineList(store: store, path: "remote_peers.unmuted_machines", title: "Unmuted machines")
                 .disabled(!(store.document.bool("remote_peers.enabled") ?? false))
+            if store.document.bool("remote_peers.enabled") ?? false, let peers = store.core.state?.peers {
+                LabeledContent("Fleet") {
+                    if peers.isEmpty {
+                        Text("No peers found").foregroundStyle(.secondary)
+                    } else {
+                        Text(peers.map { peer in
+                            peer.reachable ? peer.machine : "\(peer.machine) — \(peer.failure ?? "unreachable")"
+                        }.joined(separator: ", "))
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
         } header: {
             Text("Peers")
         }

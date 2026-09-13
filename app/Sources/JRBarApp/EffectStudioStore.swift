@@ -310,6 +310,31 @@ final class EffectStudioStore {
         }
     }
 
+    /// The `active_scene_pack` settings key: the installed pack whose
+    /// policy rows the daemon applies over the built-in scenes, or nil
+    /// for the built-ins. Read straight from the settings document —
+    /// `list_assignments` does not carry it.
+    var activeScenePackID: String? {
+        SettingsDocument(core.settings?.document ?? .object([:])).string(SettingsPath("active_scene_pack"))
+    }
+
+    /// Writes `active_scene_pack` through `set_setting`; nil clears it
+    /// back to the built-in policies. The settings document lands on
+    /// `core.settings` by itself, so there is nothing to re-fetch.
+    func setActiveScenePack(_ packID: String?) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.core.setSetting(
+                    SettingsPath("active_scene_pack"),
+                    value: packID.map(JSONValue.string) ?? .null
+                )
+            } catch {
+                self.fail("Scene pack not changed: \(Self.describe(error))")
+            }
+        }
+    }
+
     func usage(of effect: EffectDefinition) -> [EffectAssignment] { assignments?.usage(of: effect.id) ?? [] }
 
     func beginAssigning(_ effect: EffectDefinition, scope: EffectScope? = nil, target: String? = nil) {

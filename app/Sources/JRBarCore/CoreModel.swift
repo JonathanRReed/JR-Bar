@@ -31,6 +31,12 @@ public final class CoreModel {
     public private(set) var lastDecodeFailure: String?
     public private(set) var unknownMessageCount = 0
     public private(set) var connectedAt: Date?
+    /// Wall-clock arrival of the most recent `state` frame. The daemon
+    /// builds a state document every 15 s refresh but broadcasts only when
+    /// the projection changed (`doc_significant_equal` ignores the doc's
+    /// own `now`/`generation`), so a quiet daemon legitimately sends
+    /// nothing — this stamps the frame's age, not the daemon's heartbeat.
+    public private(set) var lastStateAt: Date?
     /// Commands the app sent that the daemon has not answered yet.
     public private(set) var inFlightCommands = 0
     /// Every `state`'s usage windows, kept so the Usage Center can
@@ -51,6 +57,31 @@ public final class CoreModel {
     /// sent a state; until then the file feeds keep running.
     public var isLive: Bool { connection.isConnected && state != nil }
 
+    /// A `state` frame older than this stops counting as "current": six
+    /// 15 s refresh ticks. Because the daemon dedupes unchanged frames this
+    /// is an age bound, not a heartbeat check — a merely quiet daemon
+    /// crosses it honestly, and the UI's job is to disclose the frame's age
+    /// rather than claim a disconnect (the socket is still open).
+    public static let stateStaleAfter: TimeInterval = 90
+
+    /// How old the frame on screen is: the older of its wall-clock arrival
+    /// and the daemon's own `state.now` stamp, so a replayed or
+    /// clock-skewed frame cannot look fresher than it is. Nil before the
+    /// first state.
+    public func stateAge(at now: Date = Date()) -> TimeInterval? {
+        guard let lastStateAt else { return nil }
+        var age = now.timeIntervalSince(lastStateAt)
+        if let built = state?.now { age = max(age, now.timeIntervalSince1970 - built) }
+        return max(0, age)
+    }
+
+    /// Connected but the last frame is older than `stateStaleAfter`.
+    /// `isLive` deliberately stays true — the socket is open and the
+    /// monitor may simply have had nothing new to send.
+    public func stateIsStale(at now: Date = Date()) -> Bool {
+        (stateAge(at: now) ?? 0) > Self.stateStaleAfter
+    }
+
     public func start() {
         guard client == nil else { return }
         let client = CoreClient(socketPath: socketPath) { [weak self] event in
@@ -65,6 +96,7 @@ public final class CoreModel {
         client = nil
         connection = .idle
         connectedAt = nil
+        lastStateAt = nil
     }
 
     public func retryNow() { client?.retryNow() }
@@ -434,6 +466,14 @@ public final class CoreModel {
         try await send("deck_bank", args: ["delta": .number(Double(delta))])
     }
 
+    /// `deck_scope {delta}`: ±1, stepping the board scope through
+    /// `automatic` plus the configured provider scopes, wrapping.
+    /// `{scope, scopes}`.
+    @discardableResult
+    public func deckScope(delta: Int) async throws -> CoreReply {
+        try await send("deck_scope", args: ["delta": .number(Double(delta))])
+    }
+
     /// `deck_rail {edge}`: off, left, right, top or bottom.
     @discardableResult
     public func deckRail(edge: DeckRailEdge) async throws -> CoreReply {
@@ -452,6 +492,18 @@ public final class CoreModel {
         ])
     }
 
+    /// `deck_plan_keymap {profile, layers, include_auxiliary}`: the review
+    /// for the multi-layer write `deckApplyKeymap(profile:layers:)` runs.
+    /// A daemon that predates `layers` answers the `layer` plan instead.
+    public func deckPlanKeymap(profile: Int, layer: Int, layers: [(layer: Int, name: String)],
+                               includeAuxiliary: Bool) async throws -> CoreReply {
+        try await send("deck_plan_keymap", args: [
+            "profile": .number(Double(profile)), "layer": .number(Double(layer)),
+            "layers": .array(layers.map { .object(["layer": .number(Double($0.layer)), "name": .string($0.name)]) }),
+            "include_auxiliary": .bool(includeAuxiliary),
+        ])
+    }
+
     /// `deck_apply_keymap {profile, layer, include_auxiliary}`: backs the
     /// original up, writes the vendor keycodes to that layer and verifies
     /// the readback. The reply carries the receipt `{code, message}`.
@@ -459,6 +511,18 @@ public final class CoreModel {
     public func deckApplyKeymap(profile: Int, layer: Int, includeAuxiliary: Bool) async throws -> CoreReply {
         try await send("deck_apply_keymap", args: [
             "profile": .number(Double(profile)), "layer": .number(Double(layer)), "include_auxiliary": .bool(includeAuxiliary),
+        ])
+    }
+
+    /// `deck_apply_keymap {profile, layers, include_auxiliary}`: one write
+    /// claiming and naming every listed layer at once.
+    @discardableResult
+    public func deckApplyKeymap(profile: Int, layers: [(layer: Int, name: String)],
+                                includeAuxiliary: Bool) async throws -> CoreReply {
+        try await send("deck_apply_keymap", args: [
+            "profile": .number(Double(profile)),
+            "layers": .array(layers.map { .object(["layer": .number(Double($0.layer)), "name": .string($0.name)]) }),
+            "include_auxiliary": .bool(includeAuxiliary),
         ])
     }
 
@@ -476,13 +540,31 @@ public final class CoreModel {
         try await send("deck_check_input", args: ["enabled": .bool(enabled)])
     }
 
-    /// `deck_set_settings {enabled, session_mode, analog_enabled}` (any subset).
+    /// `deck_set_settings {enabled, session_mode, analog_enabled, bindings,
+    /// layer_map, scopes}` (any subset). `bindings` replaces every auxiliary
+    /// binding; `layer_map` maps hardware layers to board scopes; `scopes`
+    /// adds provider scopes past the mapped ones.
     @discardableResult
-    public func deckSetSettings(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil) async throws -> CoreReply {
+    public func deckSetSettings(enabled: Bool? = nil, sessionMode: Bool? = nil, analogEnabled: Bool? = nil,
+                                bindings: [(index: Int, action: String?)]? = nil,
+                                layerMap: [(layer: Int, scope: String)]? = nil,
+                                scopes: [String]? = nil) async throws -> CoreReply {
         var args: [String: JSONValue] = [:]
         if let enabled { args["enabled"] = .bool(enabled) }
         if let sessionMode { args["session_mode"] = .bool(sessionMode) }
         if let analogEnabled { args["analog_enabled"] = .bool(analogEnabled) }
+        if let bindings {
+            args["bindings"] = .array(bindings.map {
+                .object(["index": .number(Double($0.index)),
+                         "action": $0.action.map(JSONValue.string) ?? .null])
+            })
+        }
+        if let layerMap {
+            args["layer_map"] = .array(layerMap.map {
+                .object(["layer": .number(Double($0.layer)), "scope": .string($0.scope)])
+            })
+        }
+        if let scopes { args["scopes"] = .array(scopes.map(JSONValue.string)) }
         return try await send("deck_set_settings", args: args)
     }
 
@@ -511,6 +593,7 @@ public final class CoreModel {
             self.hello = hello
         case .state(let state):
             self.state = state
+            lastStateAt = Date()
             usageSamples.record(state.usage, now: state.now ?? Date().timeIntervalSince1970)
         case .lights(let lights):
             self.lights = lights

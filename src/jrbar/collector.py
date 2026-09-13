@@ -134,6 +134,7 @@ class LiveAgentMonitor(_LegacyLiveAgentMonitor):
     def snapshot(self):
         now = _legacy._canonical_datetime(self._clock_sampler().wall_epoch)
         with self.lock:
+            self._reapply_acknowledgements_locked()
             state = self.operator_state
             events = self._pending_operator_events
             self._pending_operator_events = ()
@@ -161,6 +162,7 @@ class LiveAgentMonitor(_LegacyLiveAgentMonitor):
     def current_statuses_by_key(self) -> dict[str, AgentStatus]:
         now = _legacy._canonical_datetime(self._clock_sampler().wall_epoch)
         with self.lock:
+            self._reapply_acknowledgements_locked()
             state = self.operator_state
             health = self.restore_health
             overlays = MappingProxyType(dict(self._status_overlays_by_work_key))

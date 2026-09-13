@@ -111,6 +111,8 @@ class MacDeckActionExecutor:
         open_control_center: Callable[[], None] | None = None,
         next_bank: Callable[[], None] | None = None,
         previous_bank: Callable[[], None] | None = None,
+        next_scope: Callable[[], None] | None = None,
+        previous_scope: Callable[[], None] | None = None,
         session_revealer: Callable[[str, int | None], DeckActionReceipt] | None = None,
         shortcut_runner: Callable[[str], DeckActionReceipt] | None = None,
     ) -> None:
@@ -124,6 +126,8 @@ class MacDeckActionExecutor:
             "open_control_center": (open_control_center, "opened_control_center"),
             "next_bank": (next_bank, "bank_changed"),
             "previous_bank": (previous_bank, "bank_changed"),
+            "next_scope": (next_scope, "scope_changed"),
+            "previous_scope": (previous_scope, "scope_changed"),
         }
 
     def reveal_session(self, identity: str, revision: int | None) -> DeckActionReceipt:

@@ -4,6 +4,7 @@ import JRBarCore
 import Observation
 import ServiceManagement
 import SwiftUI
+import UserNotifications
 
 /// The Settings window's state. The daemon's document is the only source of
 /// truth; this store overlays the edits it has sent and not yet seen echoed,
@@ -132,6 +133,20 @@ final class SettingsStore {
     /// toggle can say "⌃⌥J is taken by another app" instead of silently
     /// doing nothing while looking enabled.
     var panelHotkeyRegistrationFailed = false
+
+    /// macOS's answer to the notification permission, asked by the
+    /// Notifications page on appear: the banner toggle can read on while
+    /// delivery is denied at the system level, and a silent denial is
+    /// indistinguishable from a bug.
+    var notificationPermissionDenied = false
+
+    func refreshNotificationPermission() {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            let denied = settings.authorizationStatus == .denied
+            Task { @MainActor [weak self] in self?.notificationPermissionDenied = denied }
+        }
+    }
 
     init(core: CoreModel) {
         self.core = core
@@ -408,6 +423,21 @@ final class SettingsStore {
     /// this Mac — nil means the daemon does not say.
     func hookDetected(_ provider: String) -> Bool? {
         core.state?.health?["detected"]?[provider]?.boolValue
+    }
+
+    /// `health.sources[provider]`: whether the provider's hook feed is
+    /// still delivering (`fresh`) and how many seconds since the last
+    /// event it accepted (`heard_age_seconds`, nil when it never has).
+    /// The panel's quiet-feed marker reads the same decode through
+    /// `CoreState.sourceHealth(for:)`.
+    func sourceHealth(_ provider: String) -> (fresh: Bool, heardAgeSeconds: Double?)? {
+        core.state?.sourceHealth(for: provider)
+    }
+
+    /// `health.intake`: the intake report's verdict codes (`hook_state`,
+    /// `source_health`) and the `silence_seconds` bound behind them.
+    var intakeHealth: (hookState: String?, sourceHealth: String?, silenceSeconds: Double?)? {
+        core.state?.intakeHealth
     }
 
     /// `install_hooks` awaited: the reply's `results[provider]` carries

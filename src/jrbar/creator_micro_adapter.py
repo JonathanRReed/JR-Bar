@@ -345,6 +345,7 @@ class CreatorMicro2Adapter:
         self._rpc_max_bytes = CreatorMicro2Framer.bounded_budget(rpc_max_bytes)
         self._decoder = RpcStreamDecoder(max_bytes=self._rpc_max_bytes)
         self._notifications: deque[tuple[float, dict[str, Any]]] = deque(maxlen=128)
+        self._status_retry_at = 0.0
         self.conflict = DeviceConflict()
         self.connected = False
         self.connection_generation = 0
@@ -376,6 +377,7 @@ class CreatorMicro2Adapter:
         self.connected = True
         self.connection_generation += 1
         self.conflict.reset()
+        self._status_retry_at = 0.0
         self._decoder = RpcStreamDecoder(max_bytes=self._rpc_max_bytes)
         return Receipt("connected")
 
@@ -527,6 +529,23 @@ class CreatorMicro2Adapter:
         )
         self._notifications.clear()
         return output
+
+    def query_status(self) -> dict[str, Any] | None:
+        """``device.status`` result, or None when it cannot be trusted.
+
+        The call shares the single-writer generation and conflict rules with
+        output writes; a failed answer is not retried on the next tick, it is
+        retried after a long pause so a firmware without the method does not
+        keep an 8-second RPC on the input path.
+        """
+        if not self.connected or self.conflict.active or self._clock() < self._status_retry_at:
+            return None
+        receipt, response = self._call("device.status", {})
+        result = (response or {}).get("result") if receipt.code == "applied" else None
+        if not isinstance(result, dict):
+            self._status_retry_at = self._clock() + 30.0
+            return None
+        return result
 
     def _disconnect_for_retry(self) -> None:
         self._notifications.clear()

@@ -16,12 +16,15 @@ DeckActionKind = Literal[
     "open_control_center",
     "next_bank",
     "previous_bank",
+    "next_scope",
+    "previous_scope",
     "run_system_shortcut",
     "reveal_session",
 ]
 
 _KINDS = frozenset({"open_app", "shortcut", "reveal_current_ask", "open_agent_browser", "open_usage",
-                    "open_control_center", "next_bank", "previous_bank", "run_system_shortcut", "reveal_session"})
+                    "open_control_center", "next_bank", "previous_bank", "next_scope", "previous_scope",
+                    "run_system_shortcut", "reveal_session"})
 _MODIFIERS = frozenset({"command", "control", "option", "shift"})
 _SERIALIZED_FIELDS = frozenset({"kind", "bundle_id", "key_code", "modifiers"})
 _BUNDLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z0-9.-]*[A-Za-z0-9]$")

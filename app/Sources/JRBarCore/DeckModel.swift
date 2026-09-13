@@ -390,6 +390,8 @@ public enum DeckControls {
         case "open_control_center": return "Control Center"
         case "next_bank": return "Next bank"
         case "previous_bank": return "Previous bank"
+        case "next_scope": return "Next board scope"
+        case "previous_scope": return "Previous board scope"
         case "run_system_shortcut": return "System shortcut"
         case "reveal_session": return "Reveal session"
         default: return action.replacingOccurrences(of: "_", with: " ").capitalized
@@ -487,23 +489,31 @@ public struct DeckKeymapLayer: Codable, Hashable, Sendable, Identifiable {
     public var profile: Int
     public var layer: Int
     public var label: String
+    /// The board scope the daemon's layer map assigns this layer, or nil on
+    /// a daemon that does not know scopes (reads as automatic).
+    public var scope: String?
 
     public var id: String { "\(profile)/\(layer)" }
 
-    public init(profile: Int, layer: Int, label: String? = nil) {
+    public init(profile: Int, layer: Int, label: String? = nil, scope: String? = nil) {
         self.profile = profile
         self.layer = layer
         self.label = label ?? "Profile \(profile + 1) / Layer \(layer + 1)"
+        self.scope = scope
     }
 
-    enum CodingKeys: String, CodingKey { case profile, layer, label }
+    enum CodingKeys: String, CodingKey { case profile, layer, label, scope }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         profile = try c.decodeIfPresent(Int.self, forKey: .profile) ?? 0
         layer = try c.decodeIfPresent(Int.self, forKey: .layer) ?? 0
         label = try c.decodeIfPresent(String.self, forKey: .label) ?? "Profile \(profile + 1) / Layer \(layer + 1)"
+        scope = try c.decodeIfPresent(String.self, forKey: .scope)
     }
+
+    /// The scope the layer selects, defaulting to every provider.
+    public var boardScope: String { scope?.isEmpty == false ? scope! : "automatic" }
 }
 
 public struct DeckKeymap: Codable, Hashable, Sendable {
@@ -622,22 +632,75 @@ public struct DeckInput: Codable, Hashable, Sendable {
     }
 }
 
-/// `deck-controls.json`: the three switches of the Devices card.
+/// One explicit auxiliary-control binding the daemon persists
+/// (`settings.bindings` and `deck_set_settings`'s `bindings` argument).
+public struct DeckBinding: Codable, Hashable, Sendable {
+    public var index: Int
+    /// The deck action kind, or nil when the control is left unbound.
+    public var action: String?
+
+    public init(index: Int, action: String? = nil) {
+        self.index = index
+        self.action = action
+    }
+
+    enum CodingKeys: String, CodingKey { case index, action }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        index = try c.decodeIfPresent(Int.self, forKey: .index) ?? 0
+        action = try c.decodeIfPresent(String.self, forKey: .action)
+    }
+}
+
+/// One `{"layer": int, "scope": str}` row of the daemon's layer map.
+public struct DeckLayerScope: Codable, Hashable, Sendable {
+    public var layer: Int
+    public var scope: String
+
+    public init(layer: Int, scope: String) {
+        self.layer = layer
+        self.scope = scope
+    }
+
+    enum CodingKeys: String, CodingKey { case layer, scope }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        layer = try c.decodeIfPresent(Int.self, forKey: .layer) ?? 0
+        scope = try c.decodeIfPresent(String.self, forKey: .scope) ?? "automatic"
+    }
+}
+
+/// `deck-controls.json`: the three switches of the Devices card plus the
+/// layer map and the aux bindings a scope-capable daemon reports.
 public struct DeckSettings: Codable, Hashable, Sendable {
     public var enabled: Bool
     public var sessionMode: Bool
     public var analogEnabled: Bool
+    /// Explicit bindings only; `aux[].mapping` already carries the defaults.
+    public var bindings: [DeckBinding]?
+    public var layerMap: [DeckLayerScope]?
+    /// Provider scopes the board cycles past the mapped ones.
+    public var scopes: [String]?
 
-    public init(enabled: Bool = false, sessionMode: Bool = true, analogEnabled: Bool = false) {
+    public init(enabled: Bool = false, sessionMode: Bool = true, analogEnabled: Bool = false,
+                bindings: [DeckBinding]? = nil, layerMap: [DeckLayerScope]? = nil, scopes: [String]? = nil) {
         self.enabled = enabled
         self.sessionMode = sessionMode
         self.analogEnabled = analogEnabled
+        self.bindings = bindings
+        self.layerMap = layerMap
+        self.scopes = scopes
     }
 
     enum CodingKeys: String, CodingKey {
         case enabled
         case sessionMode = "session_mode"
         case analogEnabled = "analog_enabled"
+        case bindings
+        case layerMap = "layer_map"
+        case scopes
     }
 
     public init(from decoder: Decoder) throws {
@@ -645,6 +708,14 @@ public struct DeckSettings: Codable, Hashable, Sendable {
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         sessionMode = try c.decodeIfPresent(Bool.self, forKey: .sessionMode) ?? true
         analogEnabled = try c.decodeIfPresent(Bool.self, forKey: .analogEnabled) ?? false
+        bindings = try? c.decodeIfPresent([DeckBinding].self, forKey: .bindings)
+        layerMap = try? c.decodeIfPresent([DeckLayerScope].self, forKey: .layerMap)
+        scopes = try? c.decodeIfPresent([String].self, forKey: .scopes)
+    }
+
+    /// The scope a hardware layer selects, or "automatic" when unmapped.
+    public func scope(forLayer layer: Int) -> String {
+        layerMap?.first { $0.layer == layer }?.scope ?? "automatic"
     }
 }
 
@@ -661,10 +732,15 @@ public struct DeckState: Codable, Hashable, Sendable {
     public var inputCheck: Bool
     public var lastInput: DeckInput?
     public var settings: DeckSettings
+    /// The board's provider scope: "automatic" or a provider id.
+    public var scope: String
+    /// The provider scopes the board cycles through, in the daemon's order.
+    public var scopes: [String]
 
     public init(device: DeckDevice? = nil, slots: [DeckSlot] = [], aux: [DeckAuxControl] = [], banks: DeckBanks = DeckBanks(),
                 rail: DeckRail = DeckRail(), keymap: DeckKeymap = DeckKeymap(), inputCheck: Bool = false,
-                lastInput: DeckInput? = nil, settings: DeckSettings = DeckSettings()) {
+                lastInput: DeckInput? = nil, settings: DeckSettings = DeckSettings(),
+                scope: String = "automatic", scopes: [String] = []) {
         self.device = device
         self.slots = slots
         self.aux = aux
@@ -674,10 +750,12 @@ public struct DeckState: Codable, Hashable, Sendable {
         self.inputCheck = inputCheck
         self.lastInput = lastInput
         self.settings = settings
+        self.scope = scope
+        self.scopes = scopes
     }
 
     enum CodingKeys: String, CodingKey {
-        case device, slots, aux, banks, rail, keymap, settings
+        case device, slots, aux, banks, rail, keymap, settings, scope, scopes
         case inputCheck = "input_check"
         case lastInput = "last_input"
     }
@@ -693,6 +771,8 @@ public struct DeckState: Codable, Hashable, Sendable {
         inputCheck = try c.decodeIfPresent(Bool.self, forKey: .inputCheck) ?? false
         lastInput = try? c.decodeIfPresent(DeckInput.self, forKey: .lastInput)
         settings = try c.decodeIfPresent(DeckSettings.self, forKey: .settings) ?? DeckSettings()
+        scope = (try? c.decodeIfPresent(String.self, forKey: .scope)).flatMap { $0.flatMap { $0.isEmpty ? nil : $0 } } ?? "automatic"
+        scopes = (try? c.decodeIfPresent([String].self, forKey: .scopes)) ?? []
     }
 
     /// Exactly thirteen slots in key order, padded with unassigned ones so

@@ -170,6 +170,7 @@ class CreatorMicroSetup:
             # cannot write arbitrary JSON through the setup confirmation.
             expected = plan_keymap(plan.original_json, {"layer_index": plan.observed_layer + 1, "profile_index": plan.observed_profile},
                                    profile_index=plan.profile_index, layer_index=plan.layer_index,
+                                   layer_indexes=plan.layer_indexes, layer_names=plan.layer_names,
                                    include_auxiliary=plan.include_auxiliary)
             if expected != plan:
                 return Receipt("invalid_plan")

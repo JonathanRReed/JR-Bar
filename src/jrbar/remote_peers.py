@@ -130,6 +130,12 @@ REMOTE_LEDGER_FILE_NAME: Final = "remote-ledger.json"
 DEFAULT_REMOTE_LEDGER_PATH: Final = (
     "~/.local/state/jrbar/remote-ledger.json"
 )
+#: The pre-rename default, still persisted in settings files written before
+#: the move to ``~/.local/state/jrbar`` -- treated as unset so the ledger
+#: lands where this build actually reads and writes.
+LEGACY_REMOTE_LEDGER_PATH: Final = (
+    "~/.local/state/sidepulse/agent-monitor/remote-ledger.json"
+)
 
 _DOCUMENT_FIELDS: Final = frozenset(
     {"document", "version", "machine", "generated_at", "rows", "truncated_rows"}
@@ -1427,6 +1433,7 @@ class RemotePeerSettings:
             remote_ledger_path=(
                 self.remote_ledger_path
                 if remote_path_is_safe(self.remote_ledger_path)
+                and self.remote_ledger_path != LEGACY_REMOTE_LEDGER_PATH
                 else DEFAULT_REMOTE_LEDGER_PATH
             ),
         )

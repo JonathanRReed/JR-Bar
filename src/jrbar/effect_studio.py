@@ -773,7 +773,11 @@ class EffectAssignmentPlan:
     settings_write_required: bool = True
 
 
-def _assignment_target(scope: AssignmentScope, target_id: object) -> tuple[str | None, ScenePolicy | None]:
+def _assignment_target(
+    scope: AssignmentScope,
+    target_id: object,
+    overrides: object = None,
+) -> tuple[str | None, ScenePolicy | None]:
     if scope is AssignmentScope.GLOBAL:
         if target_id is not None:
             raise EffectStudioError("global assignment cannot name a target")
@@ -789,7 +793,7 @@ def _assignment_target(scope: AssignmentScope, target_id: object) -> tuple[str |
         return target, None
     if scope is AssignmentScope.SCENE:
         scene = scene_from_value(target)
-        policy = policy_for_scene(scene)
+        policy = policy_for_scene(scene, overrides=overrides)
         if scene is None or policy is None:
             raise EffectStudioError("scene target is unknown")
         return scene.value, policy
@@ -808,13 +812,23 @@ def plan_assignment(
     scope: object,
     target_id: object = None,
     registry: EffectRegistry = EFFECT_REGISTRY,
+    *,
+    overrides: object = None,
 ) -> EffectAssignmentPlan:
-    """Describe one scoped assignment without changing saved settings."""
+    """Describe one scoped assignment without changing saved settings.
+
+    ``overrides`` is the active Scene pack's ``Scene -> ScenePolicy``
+    table (``ScenePackStore.policy_overrides``); a scene-scoped plan then
+    carries the policy that would actually play while that pack is
+    active. This module stays pure -- resolving which pack is active and
+    loading its rows is the caller's job, so a caller without pack
+    context simply leaves it None and gets the built-in policy.
+    """
 
     effect = _require_effect(_registry(registry), effect_id)
     if type(scope) is not AssignmentScope:
         raise EffectStudioError("scope must be AssignmentScope")
-    target, scene_policy = _assignment_target(scope, target_id)
+    target, scene_policy = _assignment_target(scope, target_id, overrides)
     return EffectAssignmentPlan(
         effect_id=effect.identifier,
         scope=scope,

@@ -521,6 +521,9 @@ struct SessionsEmptyState: View {
 
     private var detail: String {
         if live {
+            if let stale = store.staleDetail {
+                return "\(stale); showing what it last sent."
+            }
             if store.hiddenCount > 0 {
                 return "Everything you had running is finished and acknowledged."
             }
@@ -596,6 +599,13 @@ struct SessionRowView: View {
                     HStack(spacing: 6) {
                         Text(row.label).fontWeight(.medium).lineLimit(1).truncationMode(.tail)
                         if row.workers > 0 { CountBadge(text: "\(row.workers)").help("\(row.workers) workers") }
+                        if row.activity == .done, store.unseenCompletionIDs.contains(row.id) {
+                            // `state.unseen_completions`: the same accent
+                            // dot History gives a row newer than the last
+                            // visit.
+                            Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                                .help("Finished since you last looked")
+                        }
                         if row.isSnoozed(now: store.now) {
                             // The family mailbox is muted until the time in
                             // the tooltip: say so, or the quiet row reads
@@ -603,9 +613,23 @@ struct SessionRowView: View {
                             Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                         }
                         if row.stale { Text("stale").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1) }
+                        if let quiet = store.quietFeedText(for: row) {
+                            // The provider's hook feed stopped arriving
+                            // while the row still claims to be live: the
+                            // daemon's `health.sources` fact, once per
+                            // provider.
+                            Text(quiet).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                                .help("\(row.style.name)'s hook feed has not delivered — this row may be behind")
+                        }
                     }
                     HStack(spacing: 4) {
                         Text(row.style.name).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        if let fact = row.activityFact {
+                            // The hook's last word ("running Bash") — the
+                            // row's activity made specific.
+                            Text("·").foregroundStyle(.quaternary)
+                            Text(fact).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        }
                         if row.isRemote {
                             // A peer's session: name the machine, never a
                             // path this Mac cannot open.
@@ -614,6 +638,12 @@ struct SessionRowView: View {
                         } else if let tail = row.cwdTail {
                             Text("·").foregroundStyle(.quaternary)
                             Text(tail).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                        }
+                        if let origin = row.originLabel {
+                            // Provenance, kept quiet: where the session was
+                            // launched from, trailing so it yields first.
+                            Text("·").foregroundStyle(.quaternary)
+                            Text("via \(origin)").foregroundStyle(.tertiary).lineLimit(1).truncationMode(.tail)
                         }
                     }
                     .font(.system(size: 11))
@@ -746,6 +776,13 @@ struct AskRow: View {
                                 .font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
                         } else if snoozed {
                             Text("snoozed").font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                        }
+                        if let quiet = store.quietFeedText(for: row) {
+                            // Same once-per-provider marker as the plain
+                            // rows: an ask can be the provider's topmost
+                            // live row.
+                            Text(quiet).font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                                .help("\(row.style.name)'s hook feed has not delivered — this row may be behind")
                         }
                     }
                     Text(row.ask?.summary ?? "Needs your answer")
@@ -1267,6 +1304,12 @@ struct DevicesSection: View {
             .frame(height: 20)
             .padding(.bottom, 8)
             HStack(spacing: 8) {
+                // The bar is a brightness target too — with no strip
+                // attached this slider still dims it (`set_brightness
+                // "all"` reaches the virtual device), so "no hardware"
+                // is not a reason to grey it out.
+                let hasTarget = store.hasHardware
+                    || store.devices.contains { $0.kind == "screen_bar" && $0.isPresent }
                 Image(systemName: "sun.min").font(.system(size: 10)).foregroundStyle(.tertiary)
                 Slider(value: Binding(
                     get: { store.brightness },
@@ -1275,8 +1318,8 @@ struct DevicesSection: View {
                     if !editing { store.setBrightness(store.brightness, final: true) }
                 }
                 .controlSize(.mini)
-                .disabled(!store.isLive || !store.hasHardware)
-                .accessibilityLabel("Strip brightness")
+                .disabled(!store.isLive || !hasTarget)
+                .accessibilityLabel("Brightness")
                 .accessibilityValue("\(Int((store.brightness * 100).rounded())) percent")
                 Image(systemName: "sun.max").font(.system(size: 11)).foregroundStyle(.tertiary)
                 Text("\(Int((store.brightness * 100).rounded()))%")
@@ -1288,7 +1331,8 @@ struct DevicesSection: View {
             .frame(height: 18)
             .padding(.bottom, 10)
             .help(store.isLive
-                  ? (store.hasHardware ? "Strip brightness (sends set_brightness)" : "No strip connected")
+                  ? (store.hasHardware ? "Brightness — strip, Dot and Screen Bar"
+                                       : "Screen Bar brightness — no strip connected")
                   : "Brightness needs the monitor")
         }
         .frame(height: CGFloat(PanelLayout.devicesHeight), alignment: .top)

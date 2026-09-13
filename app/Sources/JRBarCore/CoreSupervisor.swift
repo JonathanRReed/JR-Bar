@@ -50,6 +50,9 @@ public final class CoreSupervisor: @unchecked Sendable {
     private var stdoutRemainder = ""
     private var stderrRemainder = ""
     private let queue = DispatchQueue(label: "jrbar.core.supervisor")
+    /// Test seam: replaces `Process.run()` so a test can hold a spawn in
+    /// flight and race `stop()` against it.
+    var processRunHook: ((Process) throws -> Void)?
 
     public init(executable: String, arguments: [String] = [], environment: [String: String]? = nil,
                 maxFailures: Int = 10, failureWindow: TimeInterval = 120, backoffScale: Double = 1.0) {
@@ -182,18 +185,35 @@ public final class CoreSupervisor: @unchecked Sendable {
             self?.consume(stderr.fileHandleForReading.readDataToEndOfFile(), stream: "stderr")
             self?.childExited(finished, generation: myGeneration)
         }
+        // run() and the `self.process` assignment happen inside ONE
+        // critical section. A stop() that lands while the spawn is in
+        // flight either ran first (we see `stopping` and never launch) or
+        // blocks on the lock until the child is published -- then kills
+        // it. Either way an unsupervised orphan is impossible, and
+        // `self.process` never holds a child nothing can reach.
+        lock.lock()
+        if stopping {
+            lock.unlock()
+            return
+        }
         do {
-            try process.run()
+            try (processRunHook ?? { try $0.run() })(process)
         } catch {
+            lock.unlock()
             onOutput?("supervisor", "cannot launch \(executable): \(error)")
             recordFailure()
             return
         }
-        lock.lock()
         self.process = process
+        let pid = process.processIdentifier
+        let newState = State.running(pid: pid)
+        let changed = _state != newState
+        _state = newState
         lock.unlock()
-        onOutput?("supervisor", "core started (pid \(process.processIdentifier))")
-        setState(.running(pid: process.processIdentifier))
+        onOutput?("supervisor", "core started (pid \(pid))")
+        // The state was committed under the lock; only announce it if a
+        // racing stop() has not already published `.stopped`.
+        if changed, state == newState { onStateChange?(newState) }
     }
 
     private func childExited(_ process: Process, generation: Int) {
@@ -203,7 +223,11 @@ public final class CoreSupervisor: @unchecked Sendable {
         lock.lock()
         let current = self.generation == generation
         let stopping = self.stopping
-        if current { self.process = nil }
+        // Clear `self.process` whenever THIS child is the one it holds --
+        // even when a stop() bumped the generation -- so `start()` is
+        // never blocked by a reference to a dead child. A respawn that
+        // already replaced the reference is left alone.
+        if self.process === process { self.process = nil }
         lock.unlock()
         if let signal {
             onOutput?("supervisor", "core exited on signal \(signal)")
@@ -307,6 +331,29 @@ public enum ServeToken {
 
 // MARK: - The bundled daemon
 
+/// Byte-capped output accumulator shared by the readability queue and the
+/// calling thread inside `BundledCore.run`.
+private final class _BoundedOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var buffer = Data()
+    private let capacity: Int
+
+    init(capacity: Int) { self.capacity = capacity }
+
+    func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        lock.lock()
+        let room = capacity - buffer.count
+        if room > 0 { buffer.append(data.prefix(room)) }
+        lock.unlock()
+    }
+
+    var data: Data {
+        lock.lock(); defer { lock.unlock() }
+        return buffer
+    }
+}
+
 extension CoreSupervisor {
     /// What a packaged `JR-Bar.app` carries under `Contents/Helpers`: the
     /// frozen daemon (`jrbar-core.app/Contents/MacOS/jrbar-core`, one binary
@@ -346,7 +393,12 @@ extension CoreSupervisor {
         /// Runs the bundled binary once (`agent-monitor install all`, `hooks
         /// doctor`) and hands back its exit status and combined output.
         /// Blocks the calling thread; call it off the main thread.
-        public func run(_ arguments: [String], timeout: TimeInterval = 60) -> (status: Int32, output: String) {
+        /// `timeout` is a real bound: output accumulates on the pipe's
+        /// readability queue (capped at `maxOutputBytes`) and the wait for
+        /// exit is a semaphore, so a hung child is SIGKILLed at the
+        /// deadline rather than blocking `readDataToEndOfFile` forever.
+        public func run(_ arguments: [String], timeout: TimeInterval = 60,
+                        maxOutputBytes: Int = 1024 * 1024) -> (status: Int32, output: String) {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = arguments
@@ -362,17 +414,25 @@ extension CoreSupervisor {
             } catch {
                 return (-1, "cannot launch \(executable): \(error)")
             }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let deadline = Date(timeIntervalSinceNow: timeout)
-            while process.isRunning, Date() < deadline {
-                Thread.sleep(forTimeInterval: 0.02)
+            let output = _BoundedOutput(capacity: max(0, maxOutputBytes))
+            let readHandle = pipe.fileHandleForReading
+            readHandle.readabilityHandler = { handle in
+                output.append(handle.availableData)
             }
-            if process.isRunning {
+            let exited = DispatchSemaphore(value: 0)
+            process.terminationHandler = { _ in exited.signal() }
+            if exited.wait(timeout: .now() + timeout) == .timedOut {
+                readHandle.readabilityHandler = nil
                 kill(process.processIdentifier, SIGKILL)
                 process.waitUntilExit()
                 return (-2, "timed out after \(Int(timeout)) s")
             }
-            return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+            process.waitUntilExit()
+            readHandle.readabilityHandler = nil
+            // The writer is closed: the drain returns the buffered tail
+            // without blocking.
+            output.append(readHandle.readDataToEndOfFile())
+            return (process.terminationStatus, String(decoding: output.data, as: UTF8.self))
         }
     }
 

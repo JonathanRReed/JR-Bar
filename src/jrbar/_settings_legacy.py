@@ -90,8 +90,14 @@ DEFAULT_MENU_BAR_ICON_STYLE = "glyph"
 CLAUDE_PLAN_LIMITS_CONSENT_VERSION = 1
 CALIBRATION_PROFILE_SLOTS = ("Day", "Night", "Travel")
 BRACKET_STYLE_CHOICES = ("auto", "spatial", "identity")
+#: The completion counts the Milestone Odometer cues on when the user has
+#: not picked its own ladder. ``milestone_odometer.MilestoneOdometerPreferences``
+#: requires at least one step while enabled, so the persisted default is a
+#: non-empty ladder and the runtime still fails closed on an empty one.
+DEFAULT_MILESTONE_ODOMETER_STEPS = (10, 25, 50, 100)
+MAX_MILESTONE_ODOMETER_STEP_COUNT = 16
 
-WEBHOOK_EVENT_KEYS = ("completion",)
+WEBHOOK_EVENT_KEYS = ("completion", "ask_opened", "failed", "quota_crossed")
 CLOSED_LID_AWAKE_NEVER = "never"
 CLOSED_LID_AWAKE_AGENTS = "agents"
 CLOSED_LID_AWAKE_ALWAYS = "always"
@@ -406,6 +412,13 @@ class AgentMonitorSettings:
     # until a runtime owner consumes this policy, existing display behavior is
     # unchanged, while every settings document has one valid active scene.
     active_scene: str = DEFAULT_SCENE.value
+    # The installed Scene pack whose validated policy rows override the
+    # built-in scene's, or None for the built-ins. The id only names a row
+    # in the scene-pack store -- the runtime read
+    # (ScenePackStore.policy_overrides) fails closed, so a pack that was
+    # removed or no longer validates silently returns the scene to its
+    # built-in policy rather than wedging the display.
+    active_scene_pack: str | None = None
     # Presentation-only DND policy. New installations are inactive. These
     # remain bounded scalar fields so Settings can preserve unknown peers while
     # compare-and-set protects one coherent transaction.
@@ -476,6 +489,22 @@ class AgentMonitorSettings:
     # Still legacy and still inert: threshold alerts are an outbound effect
     # and have no authority-fed producer yet.
     quota_alerts_enabled: bool = False
+    # Opt-in ambient cues, consumed by ambient_effect_runtime's observer.
+    # Rainstick Idle parks one dim pixel that advances every 30 s while no
+    # higher-priority signal owns the strip -- a content-free "JR-Bar is
+    # alive" -- and the Milestone Odometer plays a finite cue when the
+    # exact completion count crosses a configured step. Both default off:
+    # they are ambient decoration, not signal, so nothing should light for
+    # them until the user asks.
+    rainstick_idle_enabled: bool = False
+    # A separate consent for letting the idle pixel run inside the night
+    # scene, which withholds it by default even when Rainstick is on.
+    rainstick_night_enabled: bool = False
+    milestone_odometer_enabled: bool = False
+    # The exact completion counts that earn a cue -- positive, sorted,
+    # deduplicated, bounded (the pure planner accepts at most 16). The
+    # default ladder makes the toggle meaningful on its own.
+    milestone_odometer_steps: tuple[int, ...] = DEFAULT_MILESTONE_ODOMETER_STEPS
     # Capacity retention is a separate, explicit consent boundary. Existing
     # transcript and broad usage settings never enable either history stream.
     capacity_history_enabled: bool = False
@@ -1194,6 +1223,31 @@ class AgentMonitorSettings:
             raise ValueError("invalid scene")
         return replace(self, active_scene=selected.value)
 
+    def with_active_scene_pack(self, pack_id: object) -> AgentMonitorSettings:
+        """``None`` (or a blank value) restores the built-in scene policies.
+
+        The id is only stored, not resolved here -- whether it names an
+        installed pack is the store's question to answer at read time, so
+        a pack installed later simply starts applying.
+        """
+        if pack_id is None:
+            return replace(self, active_scene_pack=None)
+        if type(pack_id) is not str or not pack_id.strip():
+            raise ValueError("invalid scene pack")
+        return replace(self, active_scene_pack=pack_id.strip())
+
+    def with_rainstick_idle_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, rainstick_idle_enabled=bool(enabled))
+
+    def with_rainstick_night_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, rainstick_night_enabled=bool(enabled))
+
+    def with_milestone_odometer_enabled(self, enabled: bool) -> AgentMonitorSettings:
+        return replace(self, milestone_odometer_enabled=bool(enabled))
+
+    def with_milestone_odometer_steps(self, steps: object) -> AgentMonitorSettings:
+        return replace(self, milestone_odometer_steps=_milestone_steps_setting(steps))
+
     def effective_scene_policy(
         self,
         accessibility_preferences: object | None = None,
@@ -1202,6 +1256,7 @@ class AgentMonitorSettings:
         return effective_policy_for_scene(
             self.active_scene,
             accessibility_preferences=accessibility_preferences,
+            overrides=_active_scene_pack_overrides(self.active_scene_pack),
         )
 
     def dnd_settings(self) -> ParsedDndSettings:
@@ -1612,6 +1667,12 @@ class AgentMonitorSettings:
             "focus_sync_enabled": self.focus_sync_enabled,
             "serve_enabled": self.serve_enabled,
             "active_scene": _scene_setting(self.active_scene),
+            "active_scene_pack": (
+                self.active_scene_pack
+                if type(self.active_scene_pack) is str
+                and self.active_scene_pack.strip()
+                else None
+            ),
             **dnd_payload,
             "tips_enabled": self.tips_enabled,
             "menu_bar_label_enabled": self.menu_bar_label_enabled,
@@ -1656,6 +1717,12 @@ class AgentMonitorSettings:
             "usage_event_hook_path": self.usage_event_hook_path,
             "studio_library": [list(item) for item in self.studio_library],
             "quota_alerts_enabled": self.quota_alerts_enabled,
+            "rainstick_idle_enabled": self.rainstick_idle_enabled,
+            "rainstick_night_enabled": self.rainstick_night_enabled,
+            "milestone_odometer_enabled": self.milestone_odometer_enabled,
+            "milestone_odometer_steps": list(
+                _milestone_steps_setting(self.milestone_odometer_steps)
+            ),
             "quota_alert_thresholds": list(normalize_quota_thresholds(self.quota_alert_thresholds)),
             "global_brightness_scale": self.global_brightness_scale,
             "focus_signal_policy": dict(self.focus_signal_policy),
@@ -1763,6 +1830,42 @@ def _focus_dim_rules(raw: object) -> dict[str, float]:
 def _scene_setting(raw: object) -> str:
     selected = scene_from_value(raw)
     return DEFAULT_SCENE.value if selected is None else selected.value
+
+
+def _active_scene_pack_overrides(pack_id: object):
+    """The selected pack's validated ``Scene -> ScenePolicy`` rows, or None.
+
+    Imported lazily because the pack store is a persistence owner this
+    module must not load at import time; the read itself is mtime-cached
+    inside ``ScenePackStore.policy_overrides``, so the per-tick policy
+    lookups this feeds cost one lstat. Every failure -- no pack selected,
+    the pack removed, the store unreadable -- fails closed to the
+    built-in policies rather than surfacing on the scene path.
+    """
+    if type(pack_id) is not str or not pack_id.strip():
+        return None
+    try:
+        from .scene_pack_store import ScenePackStore
+
+        return ScenePackStore().policy_overrides(pack_id.strip())
+    except Exception:
+        return None
+
+
+def _milestone_steps_setting(raw: object) -> tuple[int, ...]:
+    """Positive completion counts, sorted, deduplicated and bounded.
+
+    ``bool`` is rejected explicitly: JSON ``true`` would otherwise slip in
+    as ``1`` and silently turn the toggle's own value into a milestone.
+    A missing or malformed value keeps the default ladder so the opt-in
+    toggle is meaningful by itself.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return DEFAULT_MILESTONE_ODOMETER_STEPS
+    steps = tuple(
+        sorted({step for step in raw if type(step) is int and step > 0})
+    )[:MAX_MILESTONE_ODOMETER_STEP_COUNT]
+    return steps if steps else DEFAULT_MILESTONE_ODOMETER_STEPS
 
 
 def _preserve_corrupt_settings(target: Path) -> None:
@@ -1945,6 +2048,14 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
         focus_sync_enabled=_bool_setting(data.get("focus_sync_enabled"), False),
         serve_enabled=_bool_setting(data.get("serve_enabled"), False),
         active_scene=_scene_setting(data.get("active_scene")),
+        active_scene_pack=(
+            # Tolerant decode: anything that is not a non-empty string is
+            # "no pack", never a load failure.
+            data.get("active_scene_pack").strip()
+            if type(data.get("active_scene_pack")) is str
+            and data.get("active_scene_pack").strip()
+            else None
+        ),
         dnd_schedule_enabled=parsed_dnd.schedule.enabled,
         dnd_schedule_start_minutes=parsed_dnd.schedule.start_minutes,
         dnd_schedule_end_minutes=parsed_dnd.schedule.end_minutes,
@@ -2001,6 +2112,18 @@ def load_settings(path: Path | None = None) -> AgentMonitorSettings:
             else 0
         ),
         quota_alerts_enabled=_bool_setting(data.get("quota_alerts_enabled"), False),
+        rainstick_idle_enabled=_bool_setting(
+            data.get("rainstick_idle_enabled"), False
+        ),
+        rainstick_night_enabled=_bool_setting(
+            data.get("rainstick_night_enabled"), False
+        ),
+        milestone_odometer_enabled=_bool_setting(
+            data.get("milestone_odometer_enabled"), False
+        ),
+        milestone_odometer_steps=_milestone_steps_setting(
+            data.get("milestone_odometer_steps")
+        ),
         capacity_history_enabled=_bool_setting(
             data.get("capacity_history_enabled"), False
         ),

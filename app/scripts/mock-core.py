@@ -124,12 +124,17 @@ DECK_AUX_LABELS = {13: "Encoder 1 input 1", 14: "Encoder 1 input 2", 15: "Encode
                    16: "Joystick sector 1", 17: "Joystick sector 2", 18: "Joystick sector 3", 19: "Joystick sector 4"}
 DECK_ANALOG = 4
 DECK_RAIL_EDGES = ("off", "left", "right", "top", "bottom")
+# The bounded action vocabulary of src/jrbar/deck_actions.py.
+DECK_ACTIONS = ("open_app", "shortcut", "reveal_current_ask", "open_agent_browser", "open_usage",
+                "open_control_center", "next_bank", "previous_bank", "next_scope", "previous_scope",
+                "run_system_shortcut", "reveal_session")
 DECK_STATES = ("input_required", "failure", "active", "completed", "idle", "stale", "unavailable", "unknown",
                "ended_unconfirmed")
 # Per-key lighting is a solid colour: ask, working, done, else dark.
 DECK_STATE_COLORS = {"input_required": "#FF3A00", "failure": "#FF3A00", "active": "#00E5FF", "completed": "#00FF66"}
 DECK_DARK = "#020204"
-# The stock keymap of the mock's pad: one profile with two layers.
+# The stock keymap of the mock's pad: one profile with the three layers the
+# real firmware ships.
 DECK_STOCK_LAYERS = [
     {"profile": 0, "layer": 0, "name": "Base",
      "keys": [["KC_1", "KC_2"], ["KC_Q", "KC_W", "KC_E", "KC_R"], ["KC_A", "KC_S", "KC_D", "KC_F"], ["KC_Z", "KC_X", "KC_C"]],
@@ -139,6 +144,11 @@ DECK_STOCK_LAYERS = [
      "keys": [["KC_F1", "KC_F2"], ["KC_F3", "KC_F4", "KC_F5", "KC_F6"], ["KC_F7", "KC_F8", "KC_F9", "KC_F10"],
               ["KC_F11", "KC_F12", "KC_NO"]],
      "encoders": [["KC_BRID", "KC_BRIU", "KC_NO"]],
+     "joystick": ["KC_NO", "KC_NO", "KC_NO", "KC_NO"]},
+    {"profile": 0, "layer": 2, "name": "Macros",
+     "keys": [["KC_M0", "KC_M1"], ["KC_M2", "KC_M3", "KC_M4", "KC_M5"], ["KC_M6", "KC_M7", "KC_M8", "KC_M9"],
+              ["KC_M10", "KC_M11", "KC_M12"]],
+     "encoders": [["KC_NO", "KC_NO", "KC_NO"]],
      "joystick": ["KC_NO", "KC_NO", "KC_NO", "KC_NO"]},
 ]
 # User-facing receipt strings, verbatim from creator_micro_setup_controller.py.
@@ -843,6 +853,7 @@ def default_settings_document() -> dict:
     return {
         "settings_schema_version": 1,
         "active_scene": "calm",
+        "active_scene_pack": None,
         "agent_keep_awake_enabled": True,
         "alert_burst": 3,
         "auto_dim": {
@@ -952,10 +963,14 @@ def default_settings_document() -> dict:
         "linked_dot_scale": 0.3,
         "menu_bar_icon_style": "meters",
         "menu_bar_label_enabled": False,
+        "milestone_odometer_enabled": False,
+        "milestone_odometer_steps": [10, 25, 50, 100],
         "notification_policy_version": 1,
         "operator_history_retention_days": 0,
         "quota_alert_thresholds": [90.0, 95.0],
         "quota_alerts_enabled": True,
+        "rainstick_idle_enabled": False,
+        "rainstick_night_enabled": False,
         "reminder_alerts_enabled": False,
         "remote_peers": {
             "enabled": False, "include_messages": False, "max_peers": 8, "muted_machines": [],
@@ -1200,6 +1215,15 @@ class World:
         # Explicit mappings for the auxiliary controls (deck-controls.json bindings).
         self.deck_aux_mappings = {13: "previous_bank", 14: "next_bank", 15: "open_control_center", 16: "reveal_current_ask",
                                   17: "open_usage", 18: None, 19: None}
+        # deck-controls.json v3: the hardware layer each board scope answers
+        # to (the daemon's default map) and provider scopes past those.
+        self.deck_layer_map = {1: "codex", 2: "claude"}
+        self.deck_scopes_extra: list[str] = []
+        self.deck_bindings: dict[int, str] = {}
+        # The board's provider scope and the hardware layer the pad reports
+        # through device.status (input reports carry no layer field).
+        self.deck_scope = "automatic"
+        self.deck_hw_layer = 0
         self.history: list[dict] = []
         self.clear_batches: dict[str, dict] = {}
         self.batch_counter = 0
@@ -1413,15 +1437,59 @@ class World:
         return (self.deck_present and self.deck_approved and not self.deck_conflict
                 and self.deck_settings["enabled"] and self.deck_settings["session_mode"])
 
+    def deck_view(self) -> list[str]:
+        """Identities the active scope admits. Automatic admits the whole
+        order; a provider scope admits only live sessions reporting that
+        provider, so reserved and dead identities never gain one."""
+        if self.deck_scope in (None, "", "automatic"):
+            return list(self.deck_order)
+        return [identity for identity in self.deck_order
+                if self.deck_identities[identity][0] in self.sessions
+                and self.sessions[self.deck_identities[identity][0]].get("provider") == self.deck_scope]
+
+    def deck_all_scopes(self) -> list[str]:
+        """Provider scopes in cycle order: mapped layers first, then extras."""
+        ordered = []
+        for _layer, scope in sorted(self.deck_layer_map.items()):
+            if scope != "automatic" and scope not in ordered:
+                ordered.append(scope)
+        for scope in self.deck_scopes_extra:
+            if scope != "automatic" and scope not in ordered:
+                ordered.append(scope)
+        return ordered
+
+    def deck_set_scope(self, scope) -> None:
+        """Bind the board to one provider's live sessions; a change restarts
+        banking at zero."""
+        scope = scope if isinstance(scope, str) and scope not in ("", "automatic") else "automatic"
+        if scope != self.deck_scope:
+            self.deck_scope = scope
+            self.deck_bank = 0
+
+    def deck_cycle_scope(self, delta: int) -> str:
+        order = ["automatic"] + self.deck_all_scopes()
+        index = order.index(self.deck_scope) if self.deck_scope in order else 0
+        self.deck_set_scope(order[(index + delta) % len(order)])
+        return self.deck_scope
+
+    def deck_hw_layer_changed(self, layer: int) -> None:
+        """A device.status answer: the pad's own layer selects the scope the
+        layer map assigns it."""
+        if self.deck_hw_layer == layer:
+            return
+        self.deck_hw_layer = layer
+        self.deck_set_scope(self.deck_layer_map.get(layer, "automatic"))
+
     def deck_bank_count(self) -> int:
-        return max(1, (len(self.deck_order) + DECK_SLOTS - 1) // DECK_SLOTS)
+        return max(1, (len(self.deck_view()) + DECK_SLOTS - 1) // DECK_SLOTS)
 
     def deck_slots(self) -> list[dict]:
         driven = self.deck_driven()
+        view = self.deck_view()
         slots = []
         for index in range(DECK_SLOTS):
             offset = self.deck_bank * DECK_SLOTS + index
-            identity = self.deck_order[offset] if offset < len(self.deck_order) else None
+            identity = view[offset] if offset < len(view) else None
             if identity is None:
                 slots.append({"index": index, "identity": None, "session": None, "label": None, "provider": None,
                               "state": "unavailable", "pinned": False, "navigable": False,
@@ -1442,7 +1510,8 @@ class World:
 
     def deck_layer_rows(self) -> list[dict]:
         return [{"profile": layer["profile"], "layer": layer["layer"],
-                 "label": f"Profile {layer['profile'] + 1} / Layer {layer['layer'] + 1}: {layer['name']}"}
+                 "label": f"Profile {layer['profile'] + 1} / Layer {layer['layer'] + 1}: {layer['name']}",
+                 "scope": self.deck_layer_map.get(layer["layer"], "automatic")}
                 for layer in self.deck_layers]
 
     def deck_state(self) -> dict:
@@ -1451,10 +1520,18 @@ class World:
             if self.deck_present:
                 device = {"serial": DECK_SERIAL, "name": "Creator Micro 2", "transport": self.deck_transport,
                           "connected": True, "approved": self.deck_approved, "firmware": "v0.6.1",
-                          "layer": 0, "profile": 0, "conflict": self.deck_conflict,
+                          "layer": self.deck_hw_layer, "profile": 0, "conflict": self.deck_conflict,
                           "receipt": dict(self.deck_receipt) if self.deck_receipt else None}
+            settings = dict(self.deck_settings)
+            settings["bindings"] = [{"index": index, "action": action}
+                                    for index, action in sorted(self.deck_bindings.items())]
+            settings["layer_map"] = [{"layer": layer, "scope": scope}
+                                     for layer, scope in sorted(self.deck_layer_map.items())]
+            settings["scopes"] = list(self.deck_scopes_extra)
             return {
                 "device": device,
+                "scope": self.deck_scope,
+                "scopes": self.deck_all_scopes(),
                 "slots": self.deck_slots(),
                 "aux": self.deck_aux(),
                 "banks": {"index": self.deck_bank, "count": self.deck_bank_count()},
@@ -1462,7 +1539,7 @@ class World:
                 "keymap": dict(self.deck_keymap) | {"layers": self.deck_layer_rows()},
                 "input_check": self.deck_input_check,
                 "last_input": dict(self.deck_last_input) if self.deck_last_input else None,
-                "settings": dict(self.deck_settings),
+                "settings": settings,
             }
 
     def deck_error(self, cid, code: str, message: str | None = None) -> dict:
@@ -1501,18 +1578,9 @@ class World:
     def deck_find_layer(self, profile: int, layer: int) -> dict | None:
         return next((row for row in self.deck_layers if row["profile"] == profile and row["layer"] == layer), None)
 
-    def deck_plan(self, args: dict) -> dict | str:
-        """The apply plan (creator_micro_keymap.plan_keymap) or an error message."""
-        profile = args.get("profile", 0)
-        layer = args.get("layer", 0)
-        include_auxiliary = args.get("include_auxiliary", False)
-        if type(profile) is not int or type(layer) is not int:
-            return "invalid selected profile" if type(profile) is not int else "invalid selected layer"
-        if type(include_auxiliary) is not bool:
-            return "include_auxiliary must be a bool"
-        row = self.deck_find_layer(profile, layer)
-        if row is None:
-            return "invalid selected layer"
+    def deck_layer_changes(self, row: dict, include_auxiliary: bool,
+                           controls: list[dict] | None = None) -> list[str]:
+        """One layer's claim lines; `controls` collects the first layer's labels."""
         changes: list[str] = []
         key_index = 0
         for keys in row["keys"]:
@@ -1522,7 +1590,8 @@ class World:
                     changes.append(f"Key {key_index}: {old} -> {new}; "
                                    "replaces its normal keystroke with a JR-Bar device input.")
                 key_index += 1
-        controls = [{"index": index, "label": f"Key {index + 1}"} for index in range(DECK_SLOTS)]
+        if controls is not None:
+            controls.extend({"index": index, "label": f"Key {index + 1}"} for index in range(DECK_SLOTS))
         if include_auxiliary:
             auxiliary: list[tuple[str, str]] = []
             for encoder, inputs in enumerate(row["encoders"]):
@@ -1532,23 +1601,73 @@ class World:
                 auxiliary.append((old, f"Joystick sector {index + 1}"))
             for index, (old, label) in enumerate(auxiliary, DECK_SLOTS):
                 code = f"KV_OAI_AG{index:02d}"
-                controls.append({"index": index, "label": label})
+                if controls is not None:
+                    controls.append({"index": index, "label": label})
                 if old != code:
                     changes.append(f"{label}: {old} -> {code}; replaces its normal firmware action.")
+        return changes
+
+    def deck_plan(self, args: dict, multi: bool = False) -> dict | str:
+        """The apply plan (creator_micro_keymap.plan_keymap) or an error message.
+        ``multi`` reads the ``layers`` arg deck_apply_keymap accepts: every
+        listed layer is claimed and named at once."""
+        profile = args.get("profile", 0)
+        layer = args.get("layer", 0)
+        include_auxiliary = args.get("include_auxiliary", False)
+        if type(profile) is not int or type(layer) is not int:
+            return "invalid selected profile" if type(profile) is not int else "invalid selected layer"
+        if type(include_auxiliary) is not bool:
+            return "include_auxiliary must be a bool"
+        targets: list[tuple[int, str | None]] = [(layer, None)]
+        if multi and args.get("layers") is not None:
+            rows = args["layers"]
+            if type(rows) is not list or not rows or len(rows) > 24:
+                return "layers must be a list of {layer, name} rows"
+            targets = []
+            for entry in rows:
+                if type(entry) is not dict or set(entry) != {"layer", "name"}:
+                    return "layers rows must be {layer, name}"
+                target, name = entry["layer"], entry["name"]
+                if type(target) is not int or target < 0:
+                    return "invalid selected layer"
+                if type(name) is not str or not name.strip() or len(name) > 64 or not name.isprintable():
+                    return "invalid layer name"
+                targets.append((target, name))
+            if len({target for target, _name in targets}) != len(targets):
+                return "invalid selected layer"
+        for target, _name in targets:
+            if self.deck_find_layer(profile, target) is None:
+                return "invalid selected layer"
+        changes: list[str] = []
+        controls: list[dict] = []
+        for position, (target, _name) in enumerate(targets):
+            row = self.deck_find_layer(profile, target)
+            layer_changes = self.deck_layer_changes(row, include_auxiliary,
+                                                    controls if position == 0 else None)
+            if len(targets) > 1 and layer_changes:
+                changes.append(f"Layer {target + 1}: {len(layer_changes)} keys claimed for JR-Bar device inputs.")
+            changes.extend(layer_changes)
         changed = "\n".join(changes) if changes else "No device keys need to change."
+        if len(targets) > 1:
+            selected = (f"Selected profile {profile + 1}, layers "
+                        f"{', '.join(str(target + 1) for target, _name in targets)}:\n\n")
+        else:
+            selected = f"Selected profile {profile + 1}, layer {targets[0][0] + 1}:\n\n"
         preview = (
-            f"Selected profile {profile + 1}, layer {layer + 1}:\n\n"
-            f"{changed}\n\n"
+            selected + f"{changed}\n\n"
             "The listed keys will replace their normal keystrokes with JR-Bar device inputs. "
             + ("Supported dial/joystick mappings listed above also change. " if include_auxiliary
                else "Dial and joystick mappings stay unchanged. ")
             + "Thread colors are device-wide, not layer-specific. Stored mappings may require reconnecting to activate. "
             "JR-Bar does not switch the device profile or layer through an undocumented RPC."
         )
-        return {"profile": profile, "layer": layer, "include_auxiliary": include_auxiliary,
-                "changes": changes, "preview": preview, "controls": controls}
+        return {"profile": profile, "layer": targets[0][0], "include_auxiliary": include_auxiliary,
+                "changes": changes, "preview": preview, "controls": controls,
+                "targets": [target for target, _name in targets],
+                "layer_names": [(target, name) for target, name in targets if name is not None]}
 
-    def deck_write_layer(self, profile: int, layer: int, include_auxiliary: bool, restore: bool) -> None:
+    def deck_write_layer(self, profile: int, layer: int, include_auxiliary: bool, restore: bool,
+                         name: str | None = None) -> None:
         """Rewrites (or restores) the mock pad's layer so the next plan reads 'already configured'."""
         row = self.deck_find_layer(profile, layer)
         stock = next(r for r in DECK_STOCK_LAYERS if r["profile"] == profile and r["layer"] == layer)
@@ -1558,7 +1677,10 @@ class World:
             row["keys"] = json.loads(json.dumps(stock["keys"]))
             row["encoders"] = json.loads(json.dumps(stock["encoders"]))
             row["joystick"] = list(stock["joystick"])
+            row["name"] = stock["name"]
             return
+        if name is not None:
+            row["name"] = name
         index = 0
         for keys in row["keys"]:
             for column in range(len(keys)):
@@ -1880,6 +2002,7 @@ class World:
             ("deck_conflict_cleared", 1.0),
             ("gemini_failed", 1.0),
             ("claude_completed", 1.5),
+            ("deck_layer", 1.0),
             ("idle", 2.0),
         ]
 
@@ -1914,6 +2037,14 @@ class World:
                     self.deck_keymap["generation"] += 1
                 self.deck_push_receipt("connection_changed")
                 self.push_event("device_connected", None, "Creator Micro 2", notify=False)
+        elif name == "deck_layer":
+            if self.deck_present:
+                # The pad's own layer key: input reports carry no layer field,
+                # so this is what a device.status answer would say.
+                with self.lock:
+                    self.deck_hw_layer_changed((self.deck_hw_layer + 1) % len(self.deck_layers))
+                log(f"timeline: pad switches to hardware layer {self.deck_hw_layer + 1}")
+                self.push_state()
         elif name == "codex_ask":
             log("timeline: codex ask opens")
             self.open_ask(CODEX_ID, "Run: rm -rf build")
@@ -2660,6 +2791,10 @@ class World:
                     self.deck_bank = (self.deck_bank + (1 if action == "next_bank" else -1)) % count
                     result["bank"] = {"index": self.deck_bank, "count": count}
                 self.push_state()
+            elif action in ("next_scope", "previous_scope"):
+                with self.lock:
+                    result["scope"] = self.deck_cycle_scope(1 if action == "next_scope" else -1)
+                self.push_state()
             else:
                 self.push_log("info", f"deck: {deck_control_label(index)} runs {action}")
         elif name == "deck_pin":
@@ -2668,8 +2803,9 @@ class World:
             if type(index) is not int or not 0 <= index < DECK_SLOTS:
                 return self.deck_error(cid, "invalid_args", "index must be 0..12")
             with self.lock:
+                view = self.deck_view()
                 offset = self.deck_bank * DECK_SLOTS + index
-                identity = self.deck_order[offset] if offset < len(self.deck_order) else None
+                identity = view[offset] if offset < len(view) else None
                 if identity is None:
                     return self.deck_error(cid, "not_found", "No session assigned.")
                 if identity in self.deck_pinned:
@@ -2686,6 +2822,16 @@ class World:
                 count = self.deck_bank_count()
                 self.deck_bank = (self.deck_bank + delta) % count
                 result = {"index": self.deck_bank, "count": count}
+            self.push_state()
+        elif name == "deck_scope":
+            delta = args.get("delta", 1)
+            if type(delta) is not int:
+                return self.deck_error(cid, "invalid_args", "delta must be an integer")
+            with self.lock:
+                count = 1 + len(self.deck_all_scopes())
+                for _ in range(abs(delta) % count):
+                    self.deck_cycle_scope(1 if delta > 0 else -1)
+                result = {"scope": self.deck_scope, "scopes": self.deck_all_scopes()}
             self.push_state()
         elif name == "deck_rail":
             edge = args.get("edge")
@@ -2709,7 +2855,7 @@ class World:
             self.push_state()
             self.push_log("info", f"deck: cleared {removed} absent slots")
         elif name == "deck_plan_keymap":
-            plan = self.deck_plan(args)
+            plan = self.deck_plan(args, multi=True)
             if isinstance(plan, str):
                 return self.deck_error(cid, "invalid_plan", plan)
             result = plan
@@ -2722,7 +2868,7 @@ class World:
             if self.deck_keymap["state"] == "recovering":
                 self.deck_set_receipt("recovery_required")
                 return self.deck_error(cid, "recovery_required")
-            plan = self.deck_plan(args)
+            plan = self.deck_plan(args, multi=True)
             if isinstance(plan, str):
                 self.deck_set_receipt("invalid_plan")
                 return self.deck_error(cid, "invalid_plan", plan)
@@ -2731,7 +2877,10 @@ class World:
                 result = {"code": "already_configured", "message": receipt["message"]} | dict(self.deck_keymap)
             else:
                 with self.lock:
-                    self.deck_write_layer(plan["profile"], plan["layer"], plan["include_auxiliary"], restore=False)
+                    names = dict(plan.get("layer_names") or [])
+                    for target in plan["targets"]:
+                        self.deck_write_layer(plan["profile"], target, plan["include_auxiliary"], restore=False,
+                                              name=names.get(target))
                     self.deck_keymap = {"state": "applied", "backup_at": self.deck_keymap.get("backup_at") or time.time(),
                                         "generation": self.deck_keymap["generation"] + 1}
                     self.deck_input_check = True
@@ -2776,11 +2925,70 @@ class World:
                 self.deck_input_burst()
         elif name == "deck_set_settings":
             updates = {key: args[key] for key in ("enabled", "session_mode", "analog_enabled") if key in args}
-            if not updates or any(type(value) is not bool for value in updates.values()):
+            if any(type(value) is not bool for value in updates.values()):
                 return self.deck_error(cid, "invalid_args", "enabled, session_mode and analog_enabled must be bools")
+            if "bindings" in args:
+                rows = args["bindings"]
+                if type(rows) is not list or len(rows) > 7:
+                    return self.deck_error(cid, "invalid_args", "bindings must be a list of auxiliary control mappings")
+                aux = {}
+                for entry in rows:
+                    if type(entry) is not dict or set(entry) != {"index", "action"}:
+                        return self.deck_error(cid, "invalid_args", "binding rows must be {index, action}")
+                    index, action = entry["index"], entry["action"]
+                    if type(index) is not int or index not in DECK_AUX_LABELS or index in aux:
+                        return self.deck_error(cid, "invalid_args", "binding index must name an auxiliary control (13-19)")
+                    if action is not None and (type(action) is not str or action not in DECK_ACTIONS):
+                        return self.deck_error(cid, "invalid_args", "binding action must be a deck action kind or null")
+                    aux[index] = action
+                updates["bindings"] = aux
+            if "layer_map" in args:
+                rows = args["layer_map"]
+                if type(rows) is not list or len(rows) > 24:
+                    return self.deck_error(cid, "invalid_args", "layer_map must be a list of {layer, scope} rows")
+                mapped = {}
+                for entry in rows:
+                    if type(entry) is not dict or set(entry) != {"layer", "scope"}:
+                        return self.deck_error(cid, "invalid_args", "layer_map rows must be {layer, scope}")
+                    layer, scope = entry["layer"], entry["scope"]
+                    if (type(layer) is not int or layer < 0 or layer in mapped
+                            or type(scope) is not str or not scope.strip()
+                            or len(scope) > 64 or not scope.isprintable()):
+                        return self.deck_error(cid, "invalid_args", "invalid deck layer map")
+                    mapped[layer] = scope
+                updates["layer_map"] = mapped
+            if "scopes" in args:
+                rows = args["scopes"]
+                if type(rows) is not list or len(rows) > 24 or any(type(scope) is not str for scope in rows):
+                    return self.deck_error(cid, "invalid_args", "scopes must be a list of provider ids")
+                extra = []
+                for scope in rows:
+                    if scope not in extra:
+                        extra.append(scope)
+                updates["scopes"] = extra
+            if not updates:
+                return self.deck_error(cid, "invalid_args",
+                                       "enabled, session_mode and analog_enabled must be bools; bindings, layer_map and scopes must be lists")
             with self.lock:
-                self.deck_settings.update(updates)
+                self.deck_settings.update({key: value for key, value in updates.items()
+                                           if key in ("enabled", "session_mode", "analog_enabled")})
+                if "bindings" in updates:
+                    # Explicit aux bindings replace the whole auxiliary set.
+                    self.deck_aux_mappings = {index: updates["bindings"].get(index) for index in DECK_AUX_LABELS}
+                    self.deck_bindings = {index: action for index, action in updates["bindings"].items()
+                                          if action is not None}
+                if "layer_map" in updates:
+                    self.deck_layer_map = dict(updates["layer_map"])
+                    # The pad is on deck_hw_layer; its mapped scope wins now.
+                    self.deck_set_scope(self.deck_layer_map.get(self.deck_hw_layer, "automatic"))
+                if "scopes" in updates:
+                    self.deck_scopes_extra = list(updates["scopes"])
                 result = dict(self.deck_settings)
+                result["bindings"] = [{"index": index, "action": action}
+                                      for index, action in sorted(self.deck_bindings.items())]
+                result["layer_map"] = [{"layer": layer, "scope": scope}
+                                       for layer, scope in sorted(self.deck_layer_map.items())]
+                result["scopes"] = list(self.deck_scopes_extra)
             self.push_state()
         elif name == "quit":
             result = {"bye": True}

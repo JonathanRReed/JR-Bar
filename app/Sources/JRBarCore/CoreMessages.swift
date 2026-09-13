@@ -8,6 +8,18 @@ import Foundation
 
 public enum CoreProtocol {
     public static let version = 1
+    /// The newest `settings.schema` this build's controls were written
+    /// against; a daemon above it gets a banner in the Settings window
+    /// rather than silent blind writes.
+    public static let knownSettingsSchema = 3
+}
+
+/// Decodes a structured row tolerantly: one malformed row drops out of the
+/// list instead of failing the whole document. The daemon's schema moves
+/// faster than a pinned decoder, and a version-skew row must not blank the
+/// panel — or take the strip's program with it.
+private func tolerantRows<T: Decodable>(_ type: T.Type, _ raw: [JSONValue]?) -> [T] {
+    (raw ?? []).compactMap { try? ReplyDecoding.decode(T.self, from: $0) }
 }
 
 // MARK: - hello
@@ -158,12 +170,21 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     /// The family mailbox's active snooze (`snoozed_until`), when one
     /// covers this session.
     public var snoozedUntil: Double?
+    /// The hook's last word for the session: the canonical event name
+    /// (`PreToolUse`, `PostToolUse`, …), the tool it was about when one
+    /// applied, and the message it carried. Facts, not state — a finished
+    /// row's `event` is history rather than something happening now, and
+    /// `message` can carry agent prose, so it needs bounding before it
+    /// renders anywhere.
+    public var event: String?
+    public var tool: String?
+    public var message: String?
 
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
-                snoozedUntil: Double? = nil) {
+                snoozedUntil: Double? = nil, event: String? = nil, tool: String? = nil, message: String? = nil) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -183,10 +204,14 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.terminal = terminal
         self.workers = workers
         self.snoozedUntil = snoozedUntil
+        self.event = event
+        self.tool = tool
+        self.message = message
     }
 
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers
+        case event, tool, message
         case shortId = "short_id"
         case nextActor = "next_actor"
         case updatedAt = "updated_at"
@@ -214,6 +239,9 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         terminal = try c.decodeIfPresent(CoreTerminal.self, forKey: .terminal)
         workers = try c.decodeIfPresent(Int.self, forKey: .workers) ?? 0
         snoozedUntil = try c.decodeIfPresent(Double.self, forKey: .snoozedUntil)
+        event = try c.decodeIfPresent(String.self, forKey: .event)
+        tool = try c.decodeIfPresent(String.self, forKey: .tool)
+        message = try c.decodeIfPresent(String.self, forKey: .message)
     }
 }
 
@@ -362,6 +390,46 @@ public struct CoreUsageForecast: Codable, Hashable, Sendable {
     }
 }
 
+/// `usage.providers[].tokens`: the provider's own counters at
+/// `observed_at` — input, cached-input and output tokens for whatever
+/// period the provider reports on. They ride the provider's `fidelity`:
+/// a stale or derived snapshot's counts are stale or derived counts, and
+/// a snapshot that counted nothing sends zeroes rather than omitting the
+/// block.
+public struct CoreUsageTokens: Codable, Hashable, Sendable {
+    public var input: Int
+    public var cachedInput: Int
+    public var output: Int
+
+    /// Everything the provider counted, cache reads included.
+    public var total: Int { input + cachedInput + output }
+
+    public init(input: Int = 0, cachedInput: Int = 0, output: Int = 0) {
+        self.input = input
+        self.cachedInput = cachedInput
+        self.output = output
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case input, output
+        case cachedInput = "cached_input"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Counters are integers on the wire; a daemon that sends a float
+        // loses nothing by having it truncated.
+        func counter(_ key: CodingKeys) -> Int {
+            if let value = try? c.decodeIfPresent(Int.self, forKey: key) { return max(0, value) }
+            if let value = try? c.decodeIfPresent(Double.self, forKey: key), value.isFinite { return max(0, Int(value)) }
+            return 0
+        }
+        input = counter(.input)
+        cachedInput = counter(.cachedInput)
+        output = counter(.output)
+    }
+}
+
 public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var windows: [CoreUsageWindow]
@@ -382,10 +450,23 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// False when the provider has no quota source at all (Pi, Kiro, …):
     /// a "meters" checkbox for it would be a dead control.
     public var quotaSource: Bool
+    /// The provider's token counters at `observed_at`; absent when the
+    /// daemon predates the field, present (possibly all-zero) otherwise.
+    public var tokens: CoreUsageTokens?
+    /// The daemon's own cost estimate for the snapshot's period — an
+    /// estimate from list prices, never an invoice.
+    public var estimatedCostUSD: Double?
+    /// A credit balance, for providers that bill in credits rather than
+    /// percent-of-window.
+    public var creditsRemaining: Double?
+    /// When the snapshot was taken (epoch seconds): the age a stale lane
+    /// should name instead of posing as current.
+    public var observedAt: Double?
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
-                instance: String? = nil, quotaSource: Bool = true) {
+                instance: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,
+                estimatedCostUSD: Double? = nil, creditsRemaining: Double? = nil, observedAt: Double? = nil) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
@@ -396,12 +477,19 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         self.reason = reason
         self.instance = instance
         self.quotaSource = quotaSource
+        self.tokens = tokens
+        self.estimatedCostUSD = estimatedCostUSD
+        self.creditsRemaining = creditsRemaining
+        self.observedAt = observedAt
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        windows = try c.decodeIfPresent([CoreUsageWindow].self, forKey: .windows) ?? []
+        windows = tolerantRows(
+            CoreUsageWindow.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .windows)
+        )
         fidelity = try c.decodeIfPresent(String.self, forKey: .fidelity)
         state = try c.decodeIfPresent(String.self, forKey: .state)
         forecast = try c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
@@ -410,6 +498,10 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         reason = try? c.decodeIfPresent(String.self, forKey: .reason)
         instance = try? c.decodeIfPresent(String.self, forKey: .instance)
         quotaSource = (try? c.decodeIfPresent(Bool.self, forKey: .quotaSource)) ?? true
+        tokens = try? c.decodeIfPresent(CoreUsageTokens.self, forKey: .tokens)
+        estimatedCostUSD = try? c.decodeIfPresent(Double.self, forKey: .estimatedCostUSD)
+        creditsRemaining = try? c.decodeIfPresent(Double.self, forKey: .creditsRemaining)
+        observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
     }
 
     /// Stable identity across multi-account rows of the same provider;
@@ -420,8 +512,11 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, windows, fidelity, state, forecast, account, action, reason, instance
+        case id, windows, fidelity, state, forecast, account, action, reason, instance, tokens
         case quotaSource = "quota_source"
+        case estimatedCostUSD = "estimated_cost_usd"
+        case creditsRemaining = "credits_remaining"
+        case observedAt = "observed_at"
     }
 
     /// `not_signed_in`, `signed_out`, `unauthenticated`, `no_auth`: the CLI
@@ -455,7 +550,10 @@ public struct CoreUsage: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         refreshedAt = try c.decodeIfPresent(Double.self, forKey: .refreshedAt)
-        providers = try c.decodeIfPresent([CoreProviderUsage].self, forKey: .providers) ?? []
+        providers = tolerantRows(
+            CoreProviderUsage.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .providers)
+        )
     }
 }
 
@@ -512,6 +610,31 @@ public struct CoreEscalation: Codable, Hashable, Sendable {
     public var stageNumber: Int { Self.stageNumber(stage) }
 }
 
+/// One remote peer as of the daemon's last refresh (`state.peers`).
+/// Facts only: reachable or not, how many rows it published, and the
+/// failure word when it did not answer.
+public struct CorePeer: Codable, Hashable, Sendable, Identifiable {
+    public var machine: String
+    public var host: String?
+    public var reachable: Bool
+    public var rows: Int
+    public var failure: String?
+
+    public var id: String { machine }
+
+    public init(machine: String, host: String? = nil, reachable: Bool = false, rows: Int = 0, failure: String? = nil) {
+        self.machine = machine
+        self.host = host
+        self.reachable = reachable
+        self.rows = rows
+        self.failure = failure
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case machine, host, reachable, rows, failure
+    }
+}
+
 public struct CoreState: Codable, Hashable, Sendable {
     public var generation: Int
     public var now: Double?
@@ -534,12 +657,19 @@ public struct CoreState: Codable, Hashable, Sendable {
     /// Moves when the effect registry, packs or assignments change, so the
     /// Effect Studio can reload its catalog without reconnecting.
     public var catalogGeneration: Int?
+    /// `unseen_completions`: ids of listed sessions that finished since
+    /// the user last looked — the daemon intersects it with the rows it
+    /// still lists, so membership is all a "new" marker has to check.
+    public var unseenCompletions: [String]
+    /// `peers`: the remote-peers fleet as of the last refresh — absent
+    /// while the feature is off, one row per discovered peer otherwise.
+    public var peers: [CorePeer]?
 
     public init(generation: Int = 0, now: Double? = nil, aggregate: CoreAggregate = CoreAggregate(),
                 sessions: [CoreSession] = [], asks: [CoreAsk] = [], devices: [CoreDevice] = [], usage: CoreUsage? = nil,
                 power: CorePower? = nil, focus: CoreFocus? = nil, escalation: CoreEscalation? = nil,
                 health: JSONValue? = nil, settingsGeneration: Int? = nil, deck: DeckState? = nil, hiddenCount: Int? = nil,
-                catalogGeneration: Int? = nil) {
+                catalogGeneration: Int? = nil, unseenCompletions: [String] = [], peers: [CorePeer]? = nil) {
         self.generation = generation
         self.now = now
         self.aggregate = aggregate
@@ -555,6 +685,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         self.deck = deck
         self.hiddenCount = hiddenCount
         self.catalogGeneration = catalogGeneration
+        self.unseenCompletions = unseenCompletions
+        self.peers = peers
     }
 
     enum CodingKeys: String, CodingKey {
@@ -562,6 +694,8 @@ public struct CoreState: Codable, Hashable, Sendable {
         case settingsGeneration = "settings_generation"
         case hiddenCount = "hidden_count"
         case catalogGeneration = "catalog_generation"
+        case unseenCompletions = "unseen_completions"
+        case peers
     }
 
     public init(from decoder: Decoder) throws {
@@ -569,9 +703,18 @@ public struct CoreState: Codable, Hashable, Sendable {
         generation = try c.decodeIfPresent(Int.self, forKey: .generation) ?? 0
         now = try c.decodeIfPresent(Double.self, forKey: .now)
         aggregate = try c.decodeIfPresent(CoreAggregate.self, forKey: .aggregate) ?? CoreAggregate()
-        sessions = try c.decodeIfPresent([CoreSession].self, forKey: .sessions) ?? []
-        asks = try c.decodeIfPresent([CoreAsk].self, forKey: .asks) ?? []
-        devices = try c.decodeIfPresent([CoreDevice].self, forKey: .devices) ?? []
+        sessions = tolerantRows(
+            CoreSession.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .sessions)
+        )
+        asks = tolerantRows(
+            CoreAsk.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .asks)
+        )
+        devices = tolerantRows(
+            CoreDevice.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .devices)
+        )
         usage = try c.decodeIfPresent(CoreUsage.self, forKey: .usage)
         power = try c.decodeIfPresent(CorePower.self, forKey: .power)
         focus = try c.decodeIfPresent(CoreFocus.self, forKey: .focus)
@@ -588,6 +731,8 @@ public struct CoreState: Codable, Hashable, Sendable {
             hiddenCount = nil
         }
         catalogGeneration = try? c.decodeIfPresent(Int.self, forKey: .catalogGeneration)
+        unseenCompletions = (try? c.decodeIfPresent([String].self, forKey: .unseenCompletions)) ?? []
+        peers = tolerantRows(CorePeer.self, try c.decodeIfPresent([JSONValue].self, forKey: .peers))
     }
 
     /// Sessions the panel lists: `kind == "main"`. Workers roll up into their parent's badge.
@@ -606,6 +751,26 @@ public struct CoreState: Codable, Hashable, Sendable {
             guard let session = ask.session, !session.isEmpty else { return true }
             return !known.contains(session)
         }
+    }
+
+    /// `health.sources[provider]` decoded: whether the provider's hook
+    /// feed is still delivering (`fresh`) and how many seconds since the
+    /// last event it accepted (`heard_age_seconds`, nil when it never
+    /// has). `health` stays a reserved JSONValue subtree — this and
+    /// `intakeHealth` are the parts of it consumers need typed.
+    public func sourceHealth(for provider: String) -> (fresh: Bool, heardAgeSeconds: Double?)? {
+        guard let source = health?["sources"]?[provider]?.objectValue else { return nil }
+        return (source["fresh"]?.boolValue ?? false, source["heard_age_seconds"]?.doubleValue)
+    }
+
+    /// `health.intake`: the intake report's verdict codes (`hook_state`,
+    /// `source_health`) and the `silence_seconds` bound it judges
+    /// quiet by; nil from a daemon that reports no intake at all.
+    public var intakeHealth: (hookState: String?, sourceHealth: String?, silenceSeconds: Double?)? {
+        guard let intake = health?["intake"], !intake.isNull else { return nil }
+        return (intake["hook_state"]?.stringValue,
+                intake["source_health"]?.stringValue,
+                intake["silence_seconds"]?.doubleValue)
     }
 }
 
@@ -812,7 +977,10 @@ public struct CoreLights: Codable, Hashable, Sendable {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        surfaces = try c.decodeIfPresent([String: CoreLightSurface].self, forKey: .surfaces) ?? [:]
+        let rawSurfaces = try c.decodeIfPresent([String: JSONValue].self, forKey: .surfaces) ?? [:]
+        surfaces = rawSurfaces.compactMapValues {
+            try? ReplyDecoding.decode(CoreLightSurface.self, from: $0)
+        }
         linked = try c.decodeIfPresent(Bool.self, forKey: .linked)
         devicesLinked = try? c.decodeIfPresent(Bool.self, forKey: .devicesLinked)
         linkedSkewMs = try? c.decodeIfPresent(Double.self, forKey: .linkedSkewMs)

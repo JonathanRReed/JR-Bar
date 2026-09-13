@@ -232,6 +232,13 @@ struct FirstRunCardView: View {
                     Text("Red means it broke — everything else is working or done.")
                 }
                 fact {
+                    Image(systemName: "cursorarrow.rays")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                } text: {
+                    Text("Hover the band to see who's asking — click it to jump to that session.")
+                }
+                fact {
                     Image(nsImage: StatusItemController.glyph())
                         .renderingMode(.template)
                         .foregroundStyle(.secondary)

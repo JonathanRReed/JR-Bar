@@ -529,3 +529,125 @@ def test_runtime_dispatch_expires_without_bypassing_the_surface_owner(
         AmbientEffectSurface.SCREEN_BAR,
         now_monotonic=50.0 + output.expires_after_ms / 1_000.0,
     ) is None
+
+
+def _cue_settings(**overrides):
+    base = {
+        "active_scene": "calm",
+        "active_scene_pack": None,
+        "rainstick_idle_enabled": False,
+        "rainstick_night_enabled": False,
+        "milestone_odometer_enabled": False,
+        "milestone_odometer_steps": (10, 25, 50, 100),
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_opted_in_cues_plan_presentations_while_defaults_stay_silent(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+
+    # Default flags: the planners still run, but the disabled preference
+    # declines the idle cue and the odometer keeps no state.
+    silent = controller_type()
+    silent.settings = _cue_settings()
+    silent.observe_operator_history_events((), empty_operator_state())
+    assert silent._rainstick_idle_plan.disposition.value == "suppress"
+    # An unadmitted context returns before any odometer state exists.
+    assert not hasattr(silent, "_milestone_odometer_state")
+
+    # Opted in: the same observation produces a live rainstick plan.
+    enabled = controller_type()
+    enabled.settings = _cue_settings(rainstick_idle_enabled=True)
+    enabled.observe_operator_history_events((), empty_operator_state())
+    rainstick = enabled._rainstick_idle_plan
+    assert rainstick.disposition.value == "move"
+    assert rainstick.animated is True
+
+
+def test_milestone_odometer_counts_completions_and_fails_closed_on_bad_steps(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    state, work_key, _request_key, watermark = _canonical_state(
+        lifecycle=WorkLifecycle.COMPLETED,
+    )
+    event = _operator_event(work_key, TransitionKind.COMPLETED, watermark)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+
+    enabled = controller_type()
+    enabled.settings = _cue_settings(
+        milestone_odometer_enabled=True,
+        milestone_odometer_steps=(1,),
+    )
+    enabled.observe_operator_history_events((event,), state)
+    assert enabled._milestone_odometer_state.completed_count == 1
+    dispatch = enabled._ambient_effect_dispatch
+    families = {output.family for output in dispatch.outputs} | {
+        item.family for item in dispatch.suppressed
+    }
+    assert AmbientEffectFamily.MILESTONE_ODOMETER in families
+
+    # A malformed persisted ladder disables the cue instead of crashing:
+    # no odometer plan reaches the dispatch and nothing is counted.
+    malformed = controller_type()
+    malformed.settings = _cue_settings(
+        milestone_odometer_enabled=True,
+        milestone_odometer_steps="many",
+    )
+    malformed.observe_operator_history_events((event,), state)
+    assert malformed._milestone_odometer_state.completed_count == 0
+
+    # Disabled: the completion is not counted either.
+    disabled = controller_type()
+    disabled.settings = _cue_settings(milestone_odometer_steps=(1,))
+    disabled.observe_operator_history_events((event,), state)
+    assert disabled._milestone_odometer_state.completed_count == 0
+
+
+def test_the_active_scene_pack_overrides_the_policy_the_runtime_resolves(
+    monkeypatch,
+) -> None:
+    from jrbar.dnd_policy import DisplayAdmission
+    from jrbar.scenes import SCENE_POLICIES, Scene
+
+    class _PackStore:
+        def __init__(self, root=None):
+            pass
+
+        def policy_overrides(self, pack_id):
+            assert pack_id == "quiet-work"
+            return {
+                Scene.CALM: replace(
+                    SCENE_POLICIES[Scene.CALM],
+                    display_admission=DisplayAdmission.NONE,
+                )
+            }
+
+    monkeypatch.setattr(
+        "jrbar.scene_pack_store.ScenePackStore", _PackStore
+    )
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    controller = controller_type()
+    controller.settings = _cue_settings(
+        active_scene_pack="quiet-work",
+        rainstick_idle_enabled=True,
+    )
+
+    controller.observe_operator_history_events((), empty_operator_state())
+
+    # The pack's tighter display admission reads as DND: even the opted-in
+    # rainstick stays suppressed.
+    plan = controller._rainstick_idle_plan
+    assert plan.disposition.value == "suppress"
+    assert {reason.value for reason in plan.suppression_reasons} == {"dnd"}

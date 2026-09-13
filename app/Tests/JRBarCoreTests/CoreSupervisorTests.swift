@@ -103,4 +103,90 @@ struct CoreSupervisorTests {
         #expect(log.lines.contains { $0.hasPrefix("cannot launch /nonexistent/jrbar-core") })
         missing.stop(gracePeriod: 0)
     }
+
+    /// A settable flag polled from async tests (semaphore waits are
+    /// unavailable in async contexts on this toolchain).
+    final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _set = false
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return _set }
+        func set() { lock.lock(); _set = true; lock.unlock() }
+    }
+
+    @Test("a stop that lands mid-spawn still kills the child and never wedges the supervisor")
+    func stopDuringSpawn() async throws {
+        let supervisor = CoreSupervisor(executable: "/bin/sh",
+                                        arguments: ["-c", "echo late; exec sleep 60"],
+                                        backoffScale: 0.02)
+        let runEntered = Flag()
+        let releaseRun = DispatchSemaphore(value: 0)
+        supervisor.processRunHook = { process in
+            runEntered.set()
+            releaseRun.wait()
+            try process.run()
+        }
+        let log = Log()
+        supervisor.onOutput = { stream, line in log.add("\(stream): \(line)") }
+        defer {
+            supervisor.processRunHook = nil
+            supervisor.stop(gracePeriod: 0.5)
+        }
+
+        let spawnThread = Thread { supervisor.start() }
+        spawnThread.start()
+        #expect(await Self.wait { runEntered.isSet }, "spawn never reached run()")
+
+        // stop() must wait out the in-flight spawn, then kill the child.
+        let stopDone = Flag()
+        Thread.detachNewThread {
+            supervisor.stop(gracePeriod: 2.0)
+            stopDone.set()
+        }
+        // Give stop() a moment to block on the supervisor lock, then let
+        // the spawn proceed: the child becomes visible and is terminated.
+        try await Task.sleep(for: .milliseconds(100))
+        releaseRun.signal()
+
+        #expect(await Self.wait { stopDone.isSet }, "stop() wedged on a mid-flight spawn")
+        #expect(supervisor.state == .stopped)
+        #expect(await Self.wait { log.lines.contains { $0.hasPrefix("supervisor: core exited") } },
+                "the spawned child was never supervised to exit; lines: \(log.lines)")
+
+        // And the supervisor is not stuck in .stopped: a fresh start works.
+        supervisor.processRunHook = nil
+        supervisor.start()
+        #expect(await Self.wait { supervisor.isRunning })
+        supervisor.stop(gracePeriod: 1.0)
+        #expect(supervisor.state == .stopped)
+    }
+
+    @Test("a bundled one-shot command captures output and honours its timeout")
+    func bundledRunCapturesAndTimesOut() async throws {
+        let core = CoreSupervisor.BundledCore(executable: "/bin/sh", hookShim: "/bin/sh")
+
+        let ok = core.run(["-c", "echo first; echo second; exit 7"], timeout: 10)
+        #expect(ok.status == 7)
+        #expect(ok.output.contains("first") && ok.output.contains("second"),
+                "output was \(ok.output)")
+
+        let started = Date()
+        let hung = core.run(["-c", "echo early; exec sleep 60"], timeout: 0.3)
+        #expect(Date().timeIntervalSince(started) < 10,
+                "a hung child outlived its deadline")
+        #expect(hung.status == -2)
+        #expect(hung.output.contains("timed out"))
+    }
+
+    @Test("a bundled one-shot command caps accumulated output")
+    func bundledRunCapsOutput() async throws {
+        let core = CoreSupervisor.BundledCore(executable: "/bin/sh", hookShim: "/bin/sh")
+        let result = core.run(
+            ["-c", "yes abcdefghijklmnopqrstuvwxyz | head -c 200000"],
+            timeout: 10,
+            maxOutputBytes: 4096
+        )
+        #expect(result.status == 0)
+        #expect(result.output.utf8.count <= 4096,
+                "output ran to \(result.output.utf8.count) bytes")
+    }
 }

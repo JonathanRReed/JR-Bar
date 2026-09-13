@@ -167,6 +167,10 @@ def apply_deck_settings_result(controller: object, payload: DeckSettingsApplyRes
         pane.set_save_pending(False)
         pane.set_status("Device actions saved.")
     if not getattr(controller, "_runtime_termination_started", False):
+        # A saved layer map or scope list re-scopes the board for the layer
+        # the pad is on right now.
+        from .deck_controller import refresh_deck_scope
+        refresh_deck_scope(controller)
         controller.reconfigureDeckRuntime_(payload.candidate)
 
 

@@ -419,6 +419,77 @@ def project_attention_from_operator_state(
     )
 
 
+def regate_actionable_attention(
+    projection: AttentionProjection,
+    live_request_keys: frozenset,
+) -> AttentionProjection:
+    """Demote asks the canonical state no longer holds live.
+
+    The live projector's ``actionable`` flag is a status-level heuristic
+    (mode + event); it cannot see that the reducer moved a request to
+    STALE_HOLD or resolved it -- so a held ask kept pulsing "needs you"
+    and restarting the escalation ramp while the canonical surfaces said
+    otherwise. ``live_request_keys`` is the set of request keys the same
+    snapshot's operator state still holds as live and user-actionable; a
+    keyed row whose request is absent from it (stale-hold, resolved,
+    expired, or evicted with its work) drops its actionable claim and its
+    WAITING lifecycle. Keyless rows are left alone -- canonical cannot
+    disprove an ask it never modelled.
+    """
+    if type(live_request_keys) is not frozenset:
+        raise ValueError("invalid live request keys")
+
+    def gated(row: ProjectedAgentRow) -> ProjectedAgentRow:
+        if (
+            not row.actionable
+            or row.request_key is None
+            or row.request_key in live_request_keys
+        ):
+            return row
+        return replace(
+            row,
+            actionable=False,
+            lifecycle_mode=_lifecycle_mode(row.source_status, False),
+        )
+
+    visible = tuple(gated(row) for row in projection.visible_rows)
+    workers = tuple(gated(row) for row in projection.worker_rows)
+    if visible == projection.visible_rows and workers == projection.worker_rows:
+        return projection
+    actionable = tuple(
+        sorted(
+            (row for row in (*visible, *workers) if row.actionable),
+            key=lambda row: (row.updated_at, row.agent_id),
+        )
+    )
+    representative = min(
+        _light_driver_candidates(visible, workers),
+        key=lambda row: (
+            _LIFECYCLE_PRIORITY[row.lifecycle_mode],
+            -row.updated_at.timestamp(),
+            row.agent_id,
+        ),
+        default=None,
+    )
+    return AttentionProjection(
+        lifecycle_mode=(
+            representative.lifecycle_mode
+            if representative is not None
+            else LifecycleMode.IDLE
+        ),
+        actionable_attention=actionable,
+        visible_rows=visible,
+        worker_rows=workers,
+        transient_signals=projection.transient_signals,
+        dominant_provider=(
+            actionable[0].provider
+            if actionable
+            else representative.provider if representative is not None else None
+        ),
+        click_target_agent_id=actionable[0].agent_id if actionable else None,
+    )
+
+
 _PROMOTABLE_PARENT_LIFECYCLES = frozenset(
     {
         LifecycleMode.IDLE,

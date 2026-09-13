@@ -15,11 +15,22 @@ AWAKE_GRACE_SECONDS = 300.0
 SD_STATUS_READ_SECONDS = 60.0
 KEEPALIVE_FILE_NAME = "keepalive"
 STATUS_FILE_NAME = KEEPALIVE_FILE_NAME
+# -t bounds the assertion by TIME as well as by process life, matching
+# the closed-lid hold in lid_sleep.py: the sync tick re-spawns the hold
+# while work continues, and a hold whose renewals stopped (App Nap with
+# the display asleep, a wedge, a bootout) must die on its own instead of
+# burning a closed laptop all night.
+CAFFEINATE_SELF_EXPIRE_SECONDS = 1800
 # -i idle sleep, -m disk sleep, -s system sleep (AC): the machine stays
 # up for the AGENTS. No -d and no -u -- the display may sleep and the
 # hold must never count as user activity; -dimsu kept the SCREEN awake
 # all night for a background monitor.
-CAFFEINATE_COMMAND = ("/usr/bin/caffeinate", "-ims")
+CAFFEINATE_COMMAND = (
+    "/usr/bin/caffeinate",
+    "-ims",
+    "-t",
+    str(CAFFEINATE_SELF_EXPIRE_SECONDS),
+)
 
 #: The modes that hold the machine awake in their own right.
 WORK_MODES = frozenset(

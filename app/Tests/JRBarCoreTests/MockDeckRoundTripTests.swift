@@ -31,9 +31,12 @@ struct MockDeckRoundTripTests {
         #expect(deck.keySlots[1].pinned, "codex is pinned in the seed")
         #expect(deck.keySlots[0].state == .active && deck.keySlots[2].state == .idle)
         #expect(deck.keySlots[3].isReserved && deck.keySlots[3].subtitle == "Session not observed")
-        #expect(deck.keymap.state == .stock && deck.keymap.layers.count == 2 && deck.rail.edge == .off)
+        #expect(deck.keymap.state == .stock && deck.keymap.layers.count == 3 && deck.rail.edge == .off)
         #expect(deck.settings.enabled && deck.settings.sessionMode && !deck.settings.analogEnabled)
         #expect(deck.auxControls[1].mapping == "next_bank")
+        #expect(deck.scope == "automatic" && deck.scopes == ["codex", "claude"])
+        #expect(deck.settings.layerMap == [DeckLayerScope(layer: 1, scope: "codex"), DeckLayerScope(layer: 2, scope: "claude")])
+        #expect(deck.keymap.layers.map(\.boardScope) == ["automatic", "codex", "claude"])
 
         // Approval binds the connected serial.
         let approved = try await model.deckApproveDevice()
@@ -142,14 +145,6 @@ struct MockDeckRoundTripTests {
         let noop = try #require(DeckKeymapPlan((try await model.deckPlanKeymap(profile: 0, layer: 0, includeAuxiliary: false)).result))
         #expect(noop.isNoop && noop.preview.contains("No device keys need to change."))
 
-        // Restore puts the stock layer back; again is already_restored.
-        let restored = try await model.deckRestoreKeymap()
-        #expect(restored.ok && restored.result?["code"]?.stringValue == "keymap_restored")
-        #expect(await MockCoreIntegrationTests.wait { model.deck?.keymap.state == .stock })
-        let restoredAgain = try await model.deckRestoreKeymap()
-        #expect(restoredAgain.ok && restoredAgain.result?["code"]?.stringValue == "already_restored")
-        #expect(await MockCoreIntegrationTests.wait { model.deck?.device?.receipt?.code == "already_restored" })
-
         // Settings: any subset of bools; anything else is invalid.
         let settings = try await model.deckSetSettings(analogEnabled: true)
         #expect(settings.ok && settings.result?["analog_enabled"]?.boolValue == true)
@@ -159,8 +154,92 @@ struct MockDeckRoundTripTests {
         #expect(await MockCoreIntegrationTests.wait { model.deck?.settings.sessionMode == false })
         #expect(model.deck?.keySlots[0].isLit == false, "without session mode the pad is not driven per key")
         _ = try await model.deckSetSettings(sessionMode: true)
+
+        // Explicit aux bindings replace the whole auxiliary set: index 19
+        // gains next_scope, the dial keeps its bank paging, index 18 clears.
+        let bound = try await model.deckSetSettings(bindings: [
+            (index: 13, action: "previous_bank"), (index: 14, action: "next_bank"),
+            (index: 15, action: "open_control_center"), (index: 16, action: "reveal_current_ask"),
+            (index: 17, action: "open_usage"), (index: 18, action: nil), (index: 19, action: "next_scope"),
+        ])
+        #expect(bound.ok && bound.result?["bindings"]?.arrayValue?.count == 6)
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.auxControls[6].mapping == "next_scope" })
+        #expect(model.deck?.settings.bindings?.last == DeckBinding(index: 19, action: "next_scope"))
+        let badBinding = try await model.deckSetSettings(bindings: [(index: 5, action: "next_scope")])
+        #expect(!badBinding.ok && badBinding.error?.code == "invalid_args")
+
+        // A provider scope limits the board to that provider's live
+        // sessions; next_scope cycles automatic -> codex -> claude -> wrap.
+        let scoped = try await model.deckPress(index: 19)
+        #expect(scoped.ok && scoped.result?["scope"]?.stringValue == "codex")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scope == "codex" })
+        #expect(model.deck?.keySlots.compactMap(\.session) == ["codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c"],
+                "only codex's live session stays; archived codex identities never gain a slot")
+        #expect(model.deck?.banks.count == 1)
+        let scopedAgain = try await model.deckPress(index: 19)
+        #expect(scopedAgain.result?["scope"]?.stringValue == "claude")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scope == "claude" })
+        #expect(model.deck?.keySlots.compactMap(\.session) == ["claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973"])
+        let wrappedScope = try await model.deckPress(index: 19)
+        #expect(wrappedScope.result?["scope"]?.stringValue == "automatic")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scope == "automatic" })
+        #expect(model.deck?.keySlots.filter { !$0.isEmpty }.count == 13, "automatic shows the whole board again")
+
+        // `deck_scope` cycles the same order from the scope stepper, no
+        // aux binding needed.
+        let stepped = try await model.deckScope(delta: 1)
+        #expect(stepped.ok && stepped.result?["scope"]?.stringValue == "codex")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scope == "codex" })
+        let steppedBack = try await model.deckScope(delta: -1)
+        #expect(steppedBack.result?["scope"]?.stringValue == "automatic")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scope == "automatic" })
+
+        // The layer map re-scopes the hardware layers; the pad is on layer
+        // 1, which maps to automatic, so the board stays unscoped.
+        let mapped = try await model.deckSetSettings(layerMap: [
+            (layer: 0, scope: "automatic"), (layer: 1, scope: "codex"), (layer: 2, scope: "devin"),
+        ])
+        #expect(mapped.ok)
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scopes == ["codex", "devin"] })
+        #expect(model.deck?.scope == "automatic")
+        #expect(model.deck?.keymap.layers[2].boardScope == "devin")
+        let extra = try await model.deckSetSettings(scopes: ["t3code"])
+        #expect(extra.ok && extra.result?["scopes"]?.arrayValue?.compactMap(\.stringValue) == ["t3code"])
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.scopes == ["codex", "devin", "t3code"] })
         let nothing = try await model.deckSetSettings()
         #expect(!nothing.ok && nothing.error?.code == "invalid_args")
+
+        // The multi-layer plan previews the same write the layers apply
+        // runs; layer 1 is already claimed, so only layers 2 and 3 change.
+        let multiReply = try await model.deckPlanKeymap(
+            profile: 0, layer: 0,
+            layers: [(layer: 0, name: "Automatic"), (layer: 1, name: "Codex"), (layer: 2, name: "Devin")],
+            includeAuxiliary: false)
+        let multiPlan = try #require(DeckKeymapPlan(multiReply.result))
+        #expect(multiPlan.preview.hasPrefix("Selected profile 1, layers 1, 2, 3:"))
+        #expect(multiPlan.changes.count == 2 + 26)
+        #expect(multiPlan.changes.first == "Layer 2: 13 keys claimed for JR-Bar device inputs.")
+
+        // A multi-layer apply claims and names every listed layer at once.
+        let layers = try await model.deckApplyKeymap(
+            profile: 0,
+            layers: [(layer: 0, name: "Automatic"), (layer: 1, name: "Codex"), (layer: 2, name: "Devin")],
+            includeAuxiliary: false)
+        #expect(layers.ok && layers.result?["code"]?.stringValue == "keymap_verified")
+        #expect(await MockCoreIntegrationTests.wait {
+            model.deck?.keymap.layers.map(\.label) == ["Profile 1 / Layer 1: Automatic", "Profile 1 / Layer 2: Codex", "Profile 1 / Layer 3: Devin"]
+        })
+
+        // Restore puts the stock layers back, names included; again is
+        // already_restored.
+        let restored = try await model.deckRestoreKeymap()
+        #expect(restored.ok && restored.result?["code"]?.stringValue == "keymap_restored")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.keymap.state == .stock })
+        #expect(model.deck?.keymap.layers.map(\.label)
+                == ["Profile 1 / Layer 1: Base", "Profile 1 / Layer 2: Fn", "Profile 1 / Layer 3: Macros"])
+        let restoredAgain = try await model.deckRestoreKeymap()
+        #expect(restoredAgain.ok && restoredAgain.result?["code"]?.stringValue == "already_restored")
+        #expect(await MockCoreIntegrationTests.wait { model.deck?.device?.receipt?.code == "already_restored" })
 
         // Clear absent: the fifteen unobserved, unpinned identities leave; one bank remains.
         let cleared = try await model.deckClearAbsent()

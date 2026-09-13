@@ -81,3 +81,59 @@ def test_scene_pack_store_previews_before_import_and_leaves_no_store_on_failure(
         raise AssertionError("unsafe Scene pack was accepted")
 
     assert not store.root.exists()
+
+
+def test_policy_overrides_fail_closed_for_missing_bad_or_corrupt_packs(
+    tmp_path: Path,
+) -> None:
+    store = ScenePackStore(tmp_path / "scene-packs")
+
+    # Nothing installed, unsafe ids, and missing files all degrade to None.
+    assert store.policy_overrides("quiet-work") is None
+    assert store.policy_overrides("BAD ID") is None
+    assert store.policy_overrides("../escape") is None
+
+    store.install(_pack())
+    target = store.root / "quiet-work.json"
+
+    # External corruption is not a crash: the caller keeps built-ins.
+    target.write_text("{not json", encoding="utf-8")
+    assert store.policy_overrides("quiet-work") is None
+
+
+def test_policy_overrides_cache_hits_one_file_stamp_and_reloads_on_change(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import os
+
+    from jrbar.scenes import MotionLevel, Scene
+
+    store = ScenePackStore(tmp_path / "scene-packs")
+    store.install(_pack())
+    target = store.root / "quiet-work.json"
+
+    overrides = store.policy_overrides("quiet-work")
+    assert overrides is not None
+    assert overrides[Scene.CALM].brightness == 0.35
+    assert overrides[Scene.CALM].motion is MotionLevel.REDUCED
+    # Scenes the pack omits are absent — the base policy fills them.
+    assert Scene.FOCUS not in overrides
+
+    # The same (mtime, size) stamp is served from the cache: an inspect
+    # that would raise is never reached.
+    monkeypatch.setattr(
+        store,
+        "inspect",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("re-read")),
+    )
+    assert store.policy_overrides("quiet-work") is overrides
+    monkeypatch.undo()
+
+    # A changed mtime reloads from disk rather than serving stale rows.
+    stamp = target.stat()
+    os.utime(target, ns=(stamp.st_atime_ns + 1, stamp.st_mtime_ns + 1))
+    reloaded = store.policy_overrides("quiet-work")
+    assert reloaded is not None
+    assert reloaded is not overrides
+    assert reloaded[Scene.CALM].brightness == 0.35

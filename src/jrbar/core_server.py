@@ -16,13 +16,15 @@ import json
 import os
 import socket
 import stat
+import struct
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Final
 
-from .ipc import _same_uid_peer
+from .ipc import _accept_one, _AcceptWakeup, _same_uid_peer
 from .state_paths import default_state_dir
 
 PROTOCOL_VERSION: Final = 1
@@ -32,7 +34,25 @@ MAX_CLIENTS: Final = 4
 STATE_MIN_INTERVAL_SECONDS: Final = 1.0 / 20.0
 LIGHTS_MIN_INTERVAL_SECONDS: Final = 1.0 / 30.0
 SETTINGS_MIN_INTERVAL_SECONDS: Final = 1.0 / 10.0
-ACCEPT_TIMEOUT_SECONDS: Final = 0.25
+# SO_SNDTIMEO on every accepted client: the flusher fans frames out
+# serially, so one peer that stops reading must not wedge publishing for
+# the rest. A send that blocks longer than this counts one strike; a
+# client with CLIENT_MAX_BLOCKED_SENDS consecutive strikes is dropped
+# (a timed-out sendall may have written a partial frame, so the stream
+# is already suspect by then).
+CLIENT_SEND_TIMEOUT_SECONDS: Final = 1.0
+CLIENT_MAX_BLOCKED_SENDS: Final = 3
+# Bound on queued event/log frames waiting for the flusher. Coalesced
+# kinds (state/lights/settings) live in `_pending` latest-wins and are
+# already bounded; this cap keeps an absent flusher or a burst of logs
+# from growing memory without limit. Overflow drops the OLDEST frames.
+MAX_QUEUED_FRAMES: Final = 128
+STALE_SOCKET_PROBE_TIMEOUT_SECONDS: Final = 0.5
+_SEND_TIMEOUT_TIMEVAL: Final = struct.pack(
+    "ll",
+    int(CLIENT_SEND_TIMEOUT_SECONDS),
+    int((CLIENT_SEND_TIMEOUT_SECONDS % 1.0) * 1_000_000),
+)
 DEFAULT_CAPABILITIES: Final = (
     "sessions",
     "lights",
@@ -80,6 +100,7 @@ class _Client:
         self.index = index
         self.write_lock = threading.Lock()
         self.alive = True
+        self.blocked_sends = 0
 
     def send(self, frame: bytes) -> bool:
         if not self.alive:
@@ -87,10 +108,20 @@ class _Client:
         with self.write_lock:
             try:
                 self.connection.sendall(frame)
-                return True
+            except TimeoutError:
+                # SO_SNDTIMEO fired: the peer stopped draining its buffer.
+                # Tolerate a few consecutive blocked sends (a busy app may
+                # just be slow), then declare the client dead so the
+                # flusher stops paying the timeout on every frame.
+                self.blocked_sends += 1
+                if self.blocked_sends >= CLIENT_MAX_BLOCKED_SENDS:
+                    self.alive = False
+                return self.alive
             except OSError:
                 self.alive = False
                 return False
+            self.blocked_sends = 0
+            return True
 
     def close(self) -> None:
         self.alive = False
@@ -141,12 +172,13 @@ class CoreServer:
         self._client_counter = 0
         self._server: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
+        self._accept_wakeup: _AcceptWakeup | None = None
         self._running = False
         self._own_inode: int | None = None
 
         self._flush_condition = threading.Condition()
         self._pending: dict[str, dict[str, Any]] = {}
-        self._queue: list[bytes] = []
+        self._queue: deque[bytes] = deque()
         self._last_sent: dict[str, float] = {}
         # The last frame actually fanned out per coalesced kind; identical
         # documents are never put on the wire twice. A state poke that
@@ -161,7 +193,8 @@ class CoreServer:
         self._flusher: threading.Thread | None = None
         self._event_counter = 0
         self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0,
-                      "refused_clients": 0, "deduped_frames": 0}
+                      "refused_clients": 0, "deduped_frames": 0,
+                      "dropped_queue": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -184,8 +217,8 @@ class CoreServer:
                 os.umask(previous_umask)
             os.chmod(path, 0o600)
             server.listen(8)
-            server.settimeout(ACCEPT_TIMEOUT_SECONDS)
             self._own_inode = os.stat(path).st_ino
+            self._accept_wakeup = _AcceptWakeup()
             self._server = server
             self._running = True
             self._accept_thread = threading.Thread(
@@ -206,20 +239,31 @@ class CoreServer:
             self._running = False
             server = self._server
             self._server = None
+            wakeup = self._accept_wakeup
             clients = list(self._clients)
             self._clients = []
         with self._flush_condition:
             self._flush_condition.notify_all()
-        if server is not None:
-            try:
-                server.close()
-            except OSError:
-                pass
+        if wakeup is not None:
+            # Interrupt the accept thread's select BEFORE closing the
+            # listening socket so the loop observes `running` False on a
+            # live descriptor rather than a possibly-recycled fd number.
+            wakeup.wake()
         for client in clients:
             client.close()
         for thread in (self._accept_thread, self._flusher):
             if thread is not None and thread is not threading.current_thread():
                 thread.join(timeout_seconds)
+        if server is not None:
+            try:
+                server.close()
+            except OSError:
+                pass
+        if wakeup is not None:
+            with self._lock:
+                if self._accept_wakeup is wakeup:
+                    self._accept_wakeup = None
+            wakeup.close()
         try:
             if self._own_inode is not None and os.stat(self.socket_path).st_ino == self._own_inode:
                 self.socket_path.unlink()
@@ -239,22 +283,47 @@ class CoreServer:
 
     @staticmethod
     def _unlink_stale(path: Path) -> None:
+        """Unlink the socket path only when a live listener is DISPROVEN.
+
+        A clean refusal (``ECONNREFUSED``) means nobody listens on that
+        inode. A probe TIMEOUT means the opposite of proof: a wedged or
+        overloaded live daemon reads exactly like that, and unlinking its
+        path lets a second daemon steal it -- the split-brain this method
+        exists to prevent. Ambiguous outcomes refuse to start instead.
+        Mirrors ``ipc._existing_socket_refuses_connections``.
+        """
         try:
             info = path.lstat()
         except FileNotFoundError:
             return
         if not stat.S_ISSOCK(info.st_mode):
             raise OSError(f"refusing to replace a non-socket at {path}")
+        expected = (info.st_dev, info.st_ino)
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            probe.settimeout(0.5)
+            probe.settimeout(STALE_SOCKET_PROBE_TIMEOUT_SECONDS)
             probe.connect(str(path))
+        except ConnectionRefusedError:
+            pass  # proven dead; re-verify the inode below, then unlink
         except OSError:
-            path.unlink()
-            return
+            raise OSError(f"refusing to replace a live or unproven socket: {path}")
+        else:
+            raise OSError(f"another core is listening on {path}")
         finally:
             probe.close()
-        raise OSError(f"another core is listening on {path}")
+        try:
+            current = path.lstat()
+        except FileNotFoundError:
+            return
+        if not stat.S_ISSOCK(current.st_mode) or (current.st_dev, current.st_ino) != expected:
+            raise OSError(f"socket path changed while proving staleness: {path}")
+        path.unlink()
+        try:
+            after = path.lstat()
+        except FileNotFoundError:
+            return
+        if stat.S_ISSOCK(after.st_mode) and (after.st_dev, after.st_ino) == expected:
+            raise OSError(f"socket path survived removal: {path}")
 
     # -- publishing ---------------------------------------------------------
 
@@ -308,6 +377,13 @@ class CoreServer:
             self._log(f"core dropped oversize {body.get('t')} frame ({len(frame)} bytes)")
             return
         self._queue.append(frame)
+        # Bound the backlog: drop the OLDEST queued frames so a flusher
+        # that cannot keep up sheds history instead of memory.
+        while len(self._queue) > MAX_QUEUED_FRAMES:
+            self._queue.popleft()
+            self.stats["dropped_queue"] += 1
+        if self.stats["dropped_queue"] and self.stats["dropped_queue"] % 128 == 1:
+            self._log("core queue overflow; dropped oldest frames")
 
     def _flush_loop(self) -> None:
         while True:
@@ -375,14 +451,24 @@ class CoreServer:
         while True:
             with self._lock:
                 server = self._server
-                if not self._running or server is None:
+                wakeup = self._accept_wakeup
+                if not self._running or server is None or wakeup is None:
                     return
             try:
-                connection, _ = server.accept()
-            except TimeoutError:
-                continue
+                connection = _accept_one(server, wakeup)
             except OSError:
                 return
+            if connection is None:
+                continue
+            try:
+                # Kernel-level send deadline: a peer that stops reading
+                # must not wedge the serial fan-out for everyone else.
+                connection.setsockopt(
+                    socket.SOL_SOCKET, socket.SO_SNDTIMEO, _SEND_TIMEOUT_TIMEVAL
+                )
+            except OSError:
+                connection.close()
+                continue
             if not _same_uid_peer(connection, self._peer_uid_reader):
                 self.stats["refused_clients"] += 1
                 self._log("core refused a foreign-uid peer")

@@ -40,7 +40,7 @@ from tests.test_creator_micro_setup import Device, keymap
 
 REAL_THREAD = threading.Thread
 DECK_COMMANDS = {
-    "deck_press", "deck_pin", "deck_bank", "deck_rail", "deck_clear_absent", "deck_plan_keymap",
+    "deck_press", "deck_pin", "deck_bank", "deck_scope", "deck_rail", "deck_clear_absent", "deck_plan_keymap",
     "deck_apply_keymap", "deck_restore_keymap", "deck_approve_device", "deck_check_input", "deck_set_settings",
 }
 SERIAL = "D0CF130481EC"
@@ -163,7 +163,9 @@ def test_deck_document_has_the_shape_the_app_decodes() -> None:
         settings={"enabled": True, "session_mode": True, "analog_enabled": False},
         bindings={14: "next_bank"}, driven=True,
     )
-    assert set(document) == {"device", "slots", "aux", "banks", "rail", "keymap", "input_check", "last_input", "settings"}
+    assert set(document) == {"device", "slots", "aux", "banks", "rail", "keymap", "input_check", "last_input",
+                             "settings", "scope", "scopes"}
+    assert document["scope"] == "automatic" and document["scopes"] == []
     assert set(document["device"]) == {"serial", "name", "transport", "connected", "approved", "firmware", "layer", "profile", "conflict", "receipt"}
     assert len(document["slots"]) == 13 and len(document["aux"]) == 7
     assert set(document["slots"][0]) == {"index", "identity", "session", "label", "provider", "state", "pinned", "navigable", "color"}
@@ -172,6 +174,8 @@ def test_deck_document_has_the_shape_the_app_decodes() -> None:
     assert document["aux"][1] == {"index": 14, "label": "Encoder 1 input 2", "mapping": "next_bank"}
     assert document["keymap"] == {"state": "applied", "backup_at": 2.0, "generation": 3,
                                   "layers": [{"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Base"}]}
+    assert document["settings"] == {"enabled": True, "session_mode": True, "analog_enabled": False,
+                                    "bindings": [], "layer_map": [], "scopes": []}
     assert document["rail"] == {"edge": "left"} and document["banks"] == {"index": 0, "count": 1}
     assert build_deck_document(device=None, slots=[], bank=0, bank_count=0, rail_edge="sideways", keymap_state="weird",
                                backup_at=None, keymap_generation=0, layers=[], input_check=False, last_input=None,
@@ -209,7 +213,9 @@ def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one(headless)
     assert deck["banks"] == {"index": 0, "count": 1} and deck["rail"] == {"edge": "off"}
     assert deck["keymap"] == {"state": "stock", "backup_at": None, "generation": 0, "layers": []}
     assert deck["input_check"] is False and deck["last_input"] is None
-    assert deck["settings"] == {"enabled": False, "session_mode": False, "analog_enabled": False}
+    assert deck["settings"] == {"enabled": False, "session_mode": False, "analog_enabled": False,
+                               "bindings": [], "layer_map": [], "scopes": []}
+    assert deck["scope"] == "automatic" and deck["scopes"] == []
     # A pad the probe can see but nobody approved yet.
     controller._core_deck_devices = [{"serial_number": SERIAL, "bus_type": 2, "product_id": 0x8297}]
     device = controller._core_build_state()["deck"]["device"]
@@ -492,7 +498,9 @@ def test_plan_apply_and_restore_run_the_setup_path_without_alerts(deck_live) -> 
     assert device.writes == []  # inspection only reads
     assert controller._deck_test_runtimes[-1] is controller._jrbar_optional_integration_runtime  # the pad was handed back
     state = controller._core_build_state()["deck"]
-    assert state["keymap"]["layers"] == [{"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Layer 1"}]
+    assert state["keymap"]["layers"] == [
+        {"profile": 0, "layer": 0, "label": "Profile 1 / Layer 1: Layer 1", "scope": "automatic"}
+    ]
     assert state["device"]["profile"] == 0 and state["device"]["layer"] == 0
     with pytest.raises(CommandError) as bad_layer:
         controller._core_dispatch("deck_plan_keymap", {"profile": 0, "layer": 4})
@@ -518,6 +526,86 @@ def test_plan_apply_and_restore_run_the_setup_path_without_alerts(deck_live) -> 
     assert device.raw == keymap()
     assert controller._core_dispatch("deck_restore_keymap", {})["code"] == "already_restored"
     assert controller._core_build_state()["deck"]["keymap"]["state"] == "stock"
+
+
+def test_multi_layer_plan_and_apply_claim_and_name_every_listed_layer(deck_live) -> None:
+    import copy
+
+    from jrbar.deck_control_settings import DeckControlSettings
+
+    controller = deck_live
+    controller._deck_control_settings = DeckControlSettings()  # the fake runtime does not load controls
+    device = controller._deck_test_devices[SERIAL]
+    document = json.loads(keymap())
+    layer = document["profiles"][0]["layers"][0]
+    document["profiles"][0]["layers"] = [copy.deepcopy(layer) for _ in range(3)]
+    device.raw = json.dumps(document)
+    backup = controller._core_deck_backup_path(SERIAL)
+    for path in (backup, backup.with_suffix(".recovery.json")):
+        path.unlink(missing_ok=True)
+    controller._core_deck_inspection = None
+
+    layers = [{"layer": 0, "name": "Automatic"}, {"layer": 1, "name": "Codex"}, {"layer": 2, "name": "Claude"}]
+    plan = controller._core_dispatch("deck_plan_keymap", {"profile": 0, "layer": 0, "layers": layers})
+    assert plan["preview"].startswith("Selected profile 1, layers 1, 2, 3:\n\n")
+    assert plan["changes"][0] == "Layer 1: 13 keys claimed for JR-Bar device inputs."
+    assert len(plan["changes"]) == 3 + 3 * 13
+    assert device.writes == []  # planning never writes
+
+    applied = controller._core_dispatch(
+        "deck_apply_keymap", {"profile": 0, "layer": 0, "layers": layers, "include_auxiliary": False})
+    assert applied["code"] == "keymap_verified"
+    written = json.loads(device.raw)["profiles"][0]["layers"]
+    assert [entry.get("name") for entry in written] == ["Automatic", "Codex", "Claude"]
+    assert all(entry["layout"]["keymap"][0] == ["KV_OAI_AG00", "KV_OAI_AG01"] for entry in written)
+    state = controller._core_build_state()["deck"]
+    assert state["keymap"]["state"] == "applied"
+    assert [row["label"] for row in state["keymap"]["layers"]] == [
+        "Profile 1 / Layer 1: Layer 1", "Profile 1 / Layer 2: Layer 2", "Profile 1 / Layer 3: Layer 3"]
+    assert [row["scope"] for row in state["keymap"]["layers"]] == ["automatic", "codex", "claude"]
+
+    with pytest.raises(CommandError) as bad_rows:
+        controller._core_dispatch("deck_apply_keymap", {"profile": 0, "layer": 0, "layers": [{"layer": 0}]})
+    assert (bad_rows.value.code, bad_rows.value.message) == ("invalid_plan", "layers rows must be {layer, name}")
+    with pytest.raises(CommandError) as bad_name:
+        controller._core_dispatch("deck_apply_keymap",
+                                  {"profile": 0, "layer": 0, "layers": [{"layer": 0, "name": " "}]})
+    assert (bad_name.value.code, bad_name.value.message) == ("invalid_plan", "invalid layer name")
+    with pytest.raises(CommandError) as bad_layer:
+        controller._core_dispatch("deck_plan_keymap",
+                                  {"profile": 0, "layer": 0, "layers": [{"layer": 9, "name": "Nine"}]})
+    assert (bad_layer.value.code, bad_layer.value.message) == ("invalid_plan", "invalid selected layer")
+
+
+def test_deck_scope_cycles_and_the_hardware_layer_maps_back(deck_live) -> None:
+    from jrbar.deck_control_settings import DeckControlSettings
+
+    controller = deck_live
+    controller._deck_control_settings = DeckControlSettings()
+    reply = controller._core_dispatch("deck_scope", {"delta": 1})
+    assert reply["scope"] == "codex" and reply["scopes"] == ["codex", "claude"]
+    assert controller._core_dispatch("deck_scope", {"delta": 1})["scope"] == "claude"
+    assert controller._core_dispatch("deck_scope", {"delta": 1})["scope"] == "automatic"
+    assert controller._core_dispatch("deck_scope", {"delta": -1})["scope"] == "claude"
+    assert controller._core_dispatch("deck_scope", {"delta": -2})["scope"] == "automatic"
+    with pytest.raises(CommandError) as bad:
+        controller._core_dispatch("deck_scope", {"delta": "next"})
+    assert bad.value.code == "invalid_args"
+
+    # A device.status answer re-scopes the board through the layer map;
+    # the same answer twice is a no-op, a non-integer layer is ignored.
+    controller.applyDeckLayer_({"layer": 1, "profile": 0})
+    assert controller._deck_active_layer == 1 and controller._deck_active_profile == 0
+    assert controller._core_build_state()["deck"]["scope"] == "codex"
+    assert controller._core_build_state()["deck"]["device"]["layer"] == 1
+    revision = controller._core_deck_board().snapshot().revision
+    controller.applyDeckLayer_({"layer": 1, "profile": 0})
+    assert controller._core_deck_board().snapshot().revision == revision
+    controller.applyDeckLayer_({"layer": 0, "profile": 0})
+    assert controller._core_build_state()["deck"]["scope"] == "automatic"
+    controller.applyDeckLayer_({"layer": "nine"})
+    assert controller._deck_active_layer is None
+    assert controller._core_build_state()["deck"]["scope"] == "automatic"
 
 
 def test_setup_refusals_are_error_replies_with_the_receipt_sentence(deck_live) -> None:
@@ -580,7 +668,9 @@ def test_approve_device_and_set_settings_persist_and_reconfigure(deck_live, monk
         controller._core_dispatch("deck_set_settings", {"enabled": "yes"})
     assert bad.value.code == "invalid_args"
     reply = controller._core_dispatch("deck_set_settings", {"enabled": True, "session_mode": True})
-    assert reply == {"enabled": True, "session_mode": True, "analog_enabled": False}
+    assert reply == {"enabled": True, "session_mode": True, "analog_enabled": False, "bindings": [],
+                     "layer_map": [{"layer": 1, "scope": "codex"}, {"layer": 2, "scope": "claude"}],
+                     "scopes": []}
     saved = load_deck_controls()
     assert saved.enabled is True and saved.session_mode is True and saved.analog_enabled is False
     assert controller._deck_control_settings == saved

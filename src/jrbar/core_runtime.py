@@ -518,13 +518,26 @@ def _cmd_answer_ask(self, args):
     """
     from .announcer_stack import announcer_alert_identity
     from .answer_controller import AnswerBrowserCommand
-    from .answer_in_place import AnswerActionKind
+    from .answer_in_place import MAX_ANSWER_REPLY_LENGTH, AnswerActionKind
     from .answer_local import raise_application, session_host
 
     status = _find_status(self, args.get("session"))
     decision = str(args.get("decision") or "approve").lower()
     if decision not in ("approve", "deny"):
         raise CommandError("invalid_args", "decision must be approve or deny")
+    reply_text = args.get("reply_text")
+    if reply_text is not None:
+        # An ``input`` ask takes the words themselves: normalized to one
+        # bounded printable line here, then typed into the session's
+        # terminal and submitted by the same fenced surface.
+        if type(reply_text) is not str:
+            raise CommandError("invalid_args", "reply_text must be a string")
+        normalized = " ".join(reply_text.split())[:MAX_ANSWER_REPLY_LENGTH]
+        if not normalized or not normalized.isprintable():
+            raise CommandError(
+                "invalid_args", "reply_text must be non-empty printable text"
+            )
+        reply_text = normalized
     state = getattr(self, "current_operator_state", None)
     work_key = getattr(status, "work_key", None)
     request = None
@@ -553,8 +566,14 @@ def _cmd_answer_ask(self, args):
         work_key=work_key,
         generation=state.generation,
         request_identity=announcer_alert_identity(request.key),
-        action=AnswerActionKind.APPROVE if decision == "approve" else AnswerActionKind.DENY,
-        reply_text=None,
+        action=(
+            AnswerActionKind.REPLY
+            if reply_text is not None
+            else AnswerActionKind.APPROVE
+            if decision == "approve"
+            else AnswerActionKind.DENY
+        ),
+        reply_text=reply_text,
     )
     snapshot = self.last_snapshot
     surface.arm()
@@ -573,7 +592,7 @@ def _cmd_answer_ask(self, args):
     self.refresh_(None)
     return {
         "session": status.agent_id,
-        "decision": decision,
+        "decision": "reply" if reply_text is not None else decision,
         "answered": True,
         **outcome.document(),
     }
@@ -590,7 +609,15 @@ def _cmd_snooze(self, args):
     if state is None:
         raise CommandError("not_found", "no operator state yet")
     if session == "all":
-        targets = list(self._core_ask_statuses())
+        if seconds <= 0:
+            # Unsnooze-all means every family actually snoozed — quiet
+            # working rows too, not just the sessions currently asking.
+            snapshot = getattr(self, "last_snapshot", None)
+            pool = [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())] if snapshot else []
+            snoozed = set(self._core_snoozed_untils(pool))
+            targets = [status for status in pool if status.agent_id in snoozed]
+        else:
+            targets = list(self._core_ask_statuses())
     else:
         targets = [_find_status(self, session)]
     applied: list[str] = []
@@ -2054,7 +2081,31 @@ def _deck_plan_args(args: dict[str, Any]) -> tuple[int, int, bool]:
     return profile, layer, include_auxiliary
 
 
-def _deck_plan(preview, profile: int, layer: int, include_auxiliary: bool):
+def _deck_layers_arg(args: dict[str, Any]) -> tuple[tuple[int, ...], tuple[tuple[int, str], ...]] | None:
+    """Optional ``layers`` rows ({"layer": int, "name": str}) for a
+    multi-layer apply: every listed layer is claimed and named."""
+    rows = args.get("layers")
+    if rows is None:
+        return None
+    if type(rows) is not list or not rows or len(rows) > 24:
+        raise CommandError("invalid_plan", "layers must be a list of {layer, name} rows")
+    indexes = []
+    names = []
+    for row in rows:
+        if type(row) is not dict or set(row) != {"layer", "name"}:
+            raise CommandError("invalid_plan", "layers rows must be {layer, name}")
+        layer, name = row["layer"], row["name"]
+        if type(layer) is not int or layer < 0:
+            raise CommandError("invalid_plan", "invalid selected layer")
+        if type(name) is not str or not name.strip() or len(name) > 64 or not name.isprintable():
+            raise CommandError("invalid_plan", "invalid layer name")
+        indexes.append(layer)
+        names.append((layer, name))
+    return tuple(indexes), tuple(names)
+
+
+def _deck_plan(preview, profile: int, layer: int, include_auxiliary: bool,
+               layer_indexes=None, layer_names=None):
     """Re-plan the inspected keymap for another layer without touching the
     device (``plan_keymap`` is pure; ``setup.apply`` re-verifies it)."""
     from .creator_micro_keymap import plan_keymap
@@ -2066,6 +2117,8 @@ def _deck_plan(preview, profile: int, layer: int, include_auxiliary: bool):
             {"profile_index": plan.observed_profile, "layer_index": plan.observed_layer + 1},
             profile_index=profile,
             layer_index=layer,
+            layer_indexes=layer_indexes,
+            layer_names=layer_names,
             include_auxiliary=include_auxiliary,
         )
     except ValueError as error:
@@ -2115,6 +2168,22 @@ def _cmd_deck_bank(self, args):
     return {"index": snapshot.bank, "count": snapshot.bank_count}
 
 
+@command("deck_scope")
+def _cmd_deck_scope(self, args):
+    from .deck_controller import cycle_deck_scope
+
+    delta = args.get("delta", 1)
+    if isinstance(delta, bool) or type(delta) is not int:
+        raise CommandError("invalid_args", "delta must be an integer")
+    controls = getattr(self, "_deck_control_settings", None)
+    count = 1 + len(controls.all_scopes()) if controls is not None else 1
+    for _ in range(abs(delta) % count):
+        cycle_deck_scope(self, 1 if delta > 0 else -1)
+    snapshot = self._core_deck_board().snapshot()
+    self._core_publish_state()
+    return {"scope": snapshot.scope, "scopes": list(controls.all_scopes()) if controls is not None else []}
+
+
 @command("deck_rail")
 def _cmd_deck_rail(self, args):
     board = self._core_deck_board()
@@ -2148,8 +2217,12 @@ def _cmd_deck_clear_absent(self, args):
 @command("deck_plan_keymap", main_thread=False)
 def _cmd_deck_plan_keymap(self, args):
     profile, layer, include_auxiliary = _deck_plan_args(args)
+    layers = _deck_layers_arg(args)
     preview = self._core_deck_inspect()
-    return core_deck.plan_document(_deck_plan(preview, profile, layer, include_auxiliary))
+    return core_deck.plan_document(
+        _deck_plan(preview, profile, layer, include_auxiliary,
+                   layer_indexes=None if layers is None else layers[0],
+                   layer_names=None if layers is None else layers[1]))
 
 
 @command("deck_apply_keymap", main_thread=False)
@@ -2157,8 +2230,11 @@ def _cmd_deck_apply_keymap(self, args):
     from .creator_micro_setup_controller import SetupPreview, begin_creator_micro_apply
 
     profile, layer, include_auxiliary = _deck_plan_args(args)
+    layers = _deck_layers_arg(args)
     preview = self._core_deck_inspect()
-    plan = _deck_plan(preview, profile, layer, include_auxiliary)
+    plan = _deck_plan(preview, profile, layer, include_auxiliary,
+                      layer_indexes=None if layers is None else layers[0],
+                      layer_names=None if layers is None else layers[1])
     self._deck_control_labels = plan.control_labels
     result = self._core_deck_run_setup(
         lambda: begin_creator_micro_apply(self, SetupPreview(preview.approved_serial, plan))
@@ -2218,6 +2294,57 @@ def _cmd_deck_check_input(self, args):
     return {"enabled": enabled}
 
 
+def _deck_bindings_update(value, previous) -> tuple:
+    """The ``bindings`` argument: a full replacement list of auxiliary
+    (13..19) mappings, {"index": int, "action": kind | null}. Matrix-key
+    bindings are managed by the Devices pane and survive."""
+    from .deck_actions import DeckAction
+
+    if type(value) is not list or len(value) > 7:
+        raise CommandError("invalid_args", "bindings must be a list of auxiliary control mappings")
+    aux = []
+    for row in value:
+        if type(row) is not dict or set(row) != {"index", "action"}:
+            raise CommandError("invalid_args", "binding rows must be {index, action}")
+        index, action = row["index"], row["action"]
+        if type(index) is not int or not 13 <= index < 20:
+            raise CommandError("invalid_args", "binding index must name an auxiliary control (13-19)")
+        if action is not None:
+            if type(action) is not str:
+                raise CommandError("invalid_args", "binding action must be a deck action kind or null")
+            try:
+                aux.append((index, DeckAction(action)))
+            except (TypeError, ValueError) as error:
+                raise CommandError("invalid_args", "binding action must be a deck action kind or null") from error
+    if len({index for index, _action in aux}) != len(aux):
+        raise CommandError("invalid_args", "duplicate auxiliary binding")
+    kept = tuple(entry for entry in previous.bindings if not 13 <= entry[0] < 20)
+    return tuple(sorted((*kept, *aux)))
+
+
+def _deck_layer_map_update(value) -> tuple:
+    if type(value) is not list or len(value) > 24:
+        raise CommandError("invalid_args", "layer_map must be a list of {layer, scope} rows")
+    entries = []
+    for row in value:
+        if type(row) is not dict or set(row) != {"layer", "scope"}:
+            raise CommandError("invalid_args", "layer_map rows must be {layer, scope}")
+        entries.append((row["layer"], row["scope"]))
+    return tuple(entries)
+
+
+def _deck_scopes_update(value) -> tuple:
+    if type(value) is not list or len(value) > 24:
+        raise CommandError("invalid_args", "scopes must be a list of provider ids")
+    scopes = []
+    for scope in value:
+        if type(scope) is not str:
+            raise CommandError("invalid_args", "scopes must be provider id strings")
+        if scope not in scopes:
+            scopes.append(scope)
+    return tuple(scopes)
+
+
 @command("deck_set_settings", main_thread=False)
 def _cmd_deck_set_settings(self, args):
     from dataclasses import replace
@@ -2226,7 +2353,7 @@ def _cmd_deck_set_settings(self, args):
     from .deck_settings_controller import DeckSettingsApplyResult
 
     updates = {key: args[key] for key in ("enabled", "session_mode", "analog_enabled") if key in args}
-    if not updates or any(type(value) is not bool for value in updates.values()):
+    if any(type(value) is not bool for value in updates.values()):
         raise CommandError("invalid_args", "enabled, session_mode and analog_enabled must be bools")
     previous = getattr(self, "_deck_control_settings", None)
     if type(previous) is not DeckControlSettings:
@@ -2234,7 +2361,21 @@ def _cmd_deck_set_settings(self, args):
             previous = load_deck_controls()
         except (OSError, ValueError, TypeError) as error:
             raise CommandError("refused", "Deck settings could not be read safely.") from error
-    candidate = replace(previous, **updates)
+    if "bindings" in args:
+        updates["bindings"] = _deck_bindings_update(args["bindings"], previous)
+    if "layer_map" in args:
+        updates["layer_map"] = _deck_layer_map_update(args["layer_map"])
+    if "scopes" in args:
+        updates["scopes"] = _deck_scopes_update(args["scopes"])
+    if not updates:
+        raise CommandError(
+            "invalid_args",
+            "enabled, session_mode and analog_enabled must be bools; bindings, layer_map and scopes must be lists",
+        )
+    try:
+        candidate = replace(previous, **updates)
+    except (TypeError, ValueError) as error:
+        raise CommandError("invalid_args", str(error)) from error
     if candidate != previous:
         try:
             save_deck_controls(candidate, expected=previous)
@@ -2253,6 +2394,9 @@ def _cmd_deck_set_settings(self, args):
         "enabled": candidate.enabled,
         "session_mode": candidate.session_mode,
         "analog_enabled": candidate.analog_enabled,
+        "bindings": [{"index": index, "action": action.kind} for index, action in candidate.bindings],
+        "layer_map": [{"layer": layer, "scope": scope} for layer, scope in candidate.layer_map],
+        "scopes": list(candidate.scopes),
     }
 
 
@@ -2395,6 +2539,11 @@ def build_headless_controller_class() -> type:
             self._core_deck_probe_error: str | None = None
             self._core_deck_integration_cache: tuple[float, bool, str | None] | None = None
             self._core_deck_lock = threading.Lock()
+            # Live device position from the output owner's device.status
+            # polls; input reports carry no layer field. None until the pad
+            # answers, so the document falls back to the inspected values.
+            self._deck_active_layer: int | None = None
+            self._deck_active_profile: int | None = None
             return self
 
         # -- launch (the non-hostile half of the production launch) ---------
@@ -3396,6 +3545,11 @@ def build_headless_controller_class() -> type:
         def applyDeckControlsLoaded_(self, payload) -> None:
             self._core_publish_state()
 
+        def applyDeckLayer_(self, payload) -> None:
+            from .deck_controller import apply_deck_layer
+
+            apply_deck_layer(self, payload)
+
         def applyDeckInput_(self, batch) -> None:
             """A physical input batch (main thread): the same executor as the
             menu-bar app, with the 0.8 session-key rule (answer a live ask
@@ -3475,6 +3629,8 @@ def build_headless_controller_class() -> type:
                 if action.kind in ("next_bank", "previous_bank"):
                     snapshot = self._core_deck_board().snapshot()
                     result["bank"] = {"index": snapshot.bank, "count": snapshot.bank_count}
+                elif action.kind in ("next_scope", "previous_scope"):
+                    result["scope"] = self._core_deck_board().snapshot().scope
                 elif not receipt.success:
                     raise CommandError("refused", core_deck.receipt_message(receipt.code, source="action"))
                 legacy.log_status_bar(f"deck: {core_deck.control_label(index)} runs {action.kind}: {receipt.code}")
@@ -3649,7 +3805,8 @@ def build_headless_controller_class() -> type:
                 legacy.log_status_bar(f"core: deck board unavailable: {exc.__class__.__name__}")
                 snapshot = self._core_deck_board().snapshot()
             controls = getattr(self, "_deck_control_settings", None)
-            bindings = {index: action.kind for index, action in getattr(controls, "bindings", ()) or ()}
+            effective = controls.effective_bindings() if controls is not None else ()
+            bindings = {index: action.kind for index, action in effective}
             control_labels = dict(getattr(self, "_deck_control_labels", ()) or ())
             enabled, approved_serial = self._core_deck_integration()
             rows = self._core_deck_probe_rows()
@@ -3666,6 +3823,11 @@ def build_headless_controller_class() -> type:
             row = next((row for row in rows if row.get("serial_number") == serial), None) if serial else None
             inspection = self._core_deck_inspection
             plan = inspection[1].plan if inspection is not None else None
+            # The live position comes from the output owner's device.status
+            # polls; until the pad has answered (or ever, without a service)
+            # the inspected values are the honest ones.
+            live_layer = getattr(self, "_deck_active_layer", None)
+            live_profile = getattr(self, "_deck_active_profile", None)
             device = None
             if serial is not None or rows:
                 device = core_deck.device_document(
@@ -3673,8 +3835,8 @@ def build_headless_controller_class() -> type:
                     transport=core_deck.transport_word(row.get("bus_type")) if row else None,
                     connected=row is not None or service_connected,
                     approved=enabled and approved_serial is not None and serial == approved_serial,
-                    layer=plan.observed_layer if plan is not None else None,
-                    profile=plan.observed_profile if plan is not None else None,
+                    layer=live_layer if live_layer is not None else (plan.observed_layer if plan is not None else None),
+                    profile=live_profile if live_profile is not None else (plan.observed_profile if plan is not None else None),
                     conflict="foreign_responses" if reason == "device_conflict" else None,
                     receipt=self._core_deck_receipt,
                 )
@@ -3700,7 +3862,11 @@ def build_headless_controller_class() -> type:
                     )
                 )
             keymap = core_deck.keymap_facts(self._core_deck_backup_path(serial))
-            layers = core_deck.keymap_layer_rows(plan.original_json if plan is not None else keymap.original_json)
+            layer_scopes = dict(getattr(controls, "layer_map", ()) or ())
+            layers = core_deck.keymap_layer_rows(
+                plan.original_json if plan is not None else keymap.original_json,
+                layer_scopes,
+            )
             try:
                 brightness = self.effective_brightness_for_device(CreatorMicroBrightnessProfile()) / 255.0
             except Exception:
@@ -3730,12 +3896,17 @@ def build_headless_controller_class() -> type:
                     "enabled": bool(getattr(controls, "enabled", False)),
                     "session_mode": bool(getattr(controls, "session_mode", False)),
                     "analog_enabled": bool(getattr(controls, "analog_enabled", False)),
+                    "bindings": [(index, action.kind) for index, action in getattr(controls, "bindings", ()) or ()],
+                    "layer_map": list(layer_scopes.items()),
+                    "scopes": list(getattr(controls, "scopes", ()) or ()),
                 },
                 bindings=bindings,
                 control_labels=control_labels,
                 colors=colors,
                 brightness=brightness,
                 driven=bool(getattr(receipt, "available", False)) and bool(getattr(controls, "session_mode", False)),
+                scope=snapshot.scope,
+                scopes=controls.all_scopes() if controls is not None else (),
             )
 
         # -- server plumbing ---------------------------------------------------
@@ -4481,6 +4652,26 @@ def build_headless_controller_class() -> type:
                 document["deck"] = self._core_deck_document(document["sessions"])
             except Exception:
                 legacy.log_status_bar(f"core: deck projection failed: {traceback.format_exc(limit=6)}")
+            try:
+                # Peer fleet facts, not projections: who was reachable at the
+                # last refresh and how many rows they published. ``peers`` is
+                # absent (not empty) while the feature is off.
+                if self.settings.remote_peers.enabled:
+                    refresh = getattr(self, "_remote_refresh", None)
+                    health = tuple(getattr(refresh, "health", ()) or ())
+                    if health:
+                        document["peers"] = [
+                            {
+                                "machine": peer.machine,
+                                "host": peer.host,
+                                "reachable": bool(peer.reachable),
+                                "rows": int(getattr(peer, "row_count", 0) or 0),
+                                **({"failure": peer.failure} if getattr(peer, "failure", None) else {}),
+                            }
+                            for peer in health
+                        ]
+            except Exception:
+                legacy.log_status_bar(f"core: peers projection failed: {traceback.format_exc(limit=6)}")
             return document
 
         def _core_light_facts(self, device, *, preview: bool, display_kind: str | None) -> LightFacts:

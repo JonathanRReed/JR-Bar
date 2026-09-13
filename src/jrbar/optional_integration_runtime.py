@@ -100,6 +100,8 @@ class CreatorMicroOutputService:
         callback: Callable[[CreatorMicroOutputReceipt], None] | None = None,
         input_callback: Callable[[list[dict[str, Any]]], None] | None = None,
         input_reset_callback: Callable[[], None] | None = None,
+        layer_callback: Callable[[dict[str, int | None]], None] | None = None,
+        status_poll_seconds: float = 2.0,
     ) -> None:
         if adapter_factory is _creator_output_adapter:
             if not approved_serial:
@@ -110,6 +112,8 @@ class CreatorMicroOutputService:
         self._callback = callback
         self._input_callback = input_callback
         self._input_reset_callback = input_reset_callback
+        self._layer_callback = layer_callback
+        self._status_poll_seconds = max(0.05, float(status_poll_seconds))
         self._condition = threading.Condition()
         self._pending: tuple[AgentMode, str | None, CreatorMicroLightFrame | None] | None = None
         self._closed = False
@@ -145,12 +149,40 @@ class CreatorMicroOutputService:
         if self._callback is not None:
             self._callback(CreatorMicroOutputReceipt(available, reason, detail[:256]))
 
+    def _poll_status(self, adapter, last_position):
+        """One ``device.status`` read: the only way to learn which hardware
+        layer the pad is on, since input reports carry no layer field.
+
+        Returns the observed ``(layer_index, profile_index)`` and fires the
+        layer callback with zero-based indexes whenever the answer changed.
+        A refused or failed query leaves the position unchanged; the adapter
+        itself backs a failed query off for a while.
+        """
+        if self._layer_callback is None:
+            return last_position
+        query = getattr(adapter, "query_status", None)
+        if not callable(query):
+            return last_position
+        status = query()
+        if not isinstance(status, dict):
+            return last_position
+        layer = status.get("layer_index")
+        profile = status.get("profile_index")
+        if type(layer) is not int or layer < 1 or (profile is not None and type(profile) is not int):
+            return last_position
+        position = (layer, profile)
+        if position != last_position:
+            self._layer_callback({"layer": layer - 1, "profile": profile})
+        return position
+
     def _run(self) -> None:
         adapter = None
         last_output = None
         last_write_at = 0.0
         retry_delay = 1.0
         retry_at = 0.0
+        next_status_poll = 0.0
+        last_status = None
         try:
             while True:
                 with self._condition:
@@ -197,6 +229,10 @@ class CreatorMicroOutputService:
                             self._input_reset_callback()
                         self._publish(True, "ready")
                         retry_delay = 1.0
+                        # Learn the layer the pad is already on before the
+                        # first input or lighting frame lands.
+                        last_status = self._poll_status(adapter, None)
+                        next_status_poll = time.monotonic() + self._status_poll_seconds
                     except OSError as error:
                         if adapter is not None:
                             adapter.close()
@@ -248,6 +284,17 @@ class CreatorMicroOutputService:
                     failed = failed or not adapter.connected
                     if not failed and inputs and self._input_callback is not None:
                         self._input_callback(inputs)
+                    now = time.monotonic()
+                    if inputs:
+                        # A key press may itself have switched the layer.
+                        next_status_poll = now
+                    if not failed and now >= next_status_poll:
+                        last_status = self._poll_status(adapter, last_status)
+                        next_status_poll = now + self._status_poll_seconds
+                        if adapter.conflict.active:
+                            self._publish(False, "device_conflict")
+                            return
+                        failed = failed or not adapter.connected
                     with self._condition:
                         self._busy = False
                         self._condition.notify_all()
@@ -407,6 +454,7 @@ class OptionalIntegrationRuntime:
                     callback=self._publish_creator_receipt,
                     input_callback=self._deck_dispatch.receive,
                     input_reset_callback=self._reset_deck_connection,
+                    layer_callback=self._deck_apply_layer,
                 )
                 with self._lock:
                     if self._closed:
@@ -434,6 +482,24 @@ class OptionalIntegrationRuntime:
             )
             if callable(dispatch):
                 dispatch("applyCreatorMicroOutputReceipt:", receipt, False)
+
+    def _deck_apply_layer(self, status: dict) -> None:
+        """``device.status`` answers arrive on the output thread; the board
+        and the controller's live layer/profile fields live on the main one."""
+        with self._lock:
+            if self._closed:
+                return
+        dispatch = getattr(
+            self._target,
+            "performSelectorOnMainThread_withObject_waitUntilDone_",
+            None,
+        )
+        if callable(dispatch):
+            dispatch("applyDeckLayer:", dict(status), False)
+            return
+        apply = getattr(self._target, "applyDeckLayer_", None)
+        if callable(apply):
+            apply(dict(status))
 
     def publish_creator_output(
         self,

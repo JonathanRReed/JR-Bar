@@ -30,6 +30,16 @@ class KeymapPlan:
     observed_layer: int = 0
     include_auxiliary: bool = False
     control_labels: tuple[tuple[int, str], ...] = ()
+    # Every layer the write touches (``layer_index`` is the first of these)
+    # and the ``name`` each was given, both single-element for a one-layer plan.
+    layer_indexes: tuple[int, ...] = ()
+    layer_names: tuple[tuple[int, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        if type(self.layer_indexes) is not tuple or not self.layer_indexes:
+            object.__setattr__(self, "layer_indexes", (self.layer_index,))
+        if type(self.layer_names) is not tuple:
+            object.__setattr__(self, "layer_names", ())
 
 
 def _reject_constant(value: str) -> None:
@@ -156,8 +166,13 @@ def _keymap(layer: dict[str, Any]) -> list[list[str]]:
 
 
 def plan_keymap(raw: str, status: dict[str, Any], *, profile_index: int | None = None,
-                layer_index: int | None = None, include_auxiliary: bool = False) -> KeymapPlan:
-    """Plan AG00..AG12 without I/O, preserving dial and joystick mappings."""
+                layer_index: int | None = None, layer_indexes=None, layer_names=None,
+                include_auxiliary: bool = False) -> KeymapPlan:
+    """Plan AG00..AG12 without I/O, preserving dial and joystick mappings.
+
+    ``layer_indexes`` claims the matrix on several layers at once (one
+    ``layer_index`` stays supported for the single-layer path) and
+    ``layer_names`` gives each claimed layer a ``name`` such as "Codex"."""
 
     original = _load_keymap_json(raw)
     proposed = copy.deepcopy(original)
@@ -167,57 +182,90 @@ def plan_keymap(raw: str, status: dict[str, Any], *, profile_index: int | None =
             type(status["profile_index"]) is not int or status["profile_index"] != observed_profile):
         raise ValueError("device status profile_index disagrees with keymap")
     profile_index = observed_profile if profile_index is None else profile_index
-    layer_index = observed_layer if layer_index is None else layer_index
     if type(profile_index) is not int or not 0 <= profile_index < len(proposed["profiles"]):
         raise ValueError("invalid selected profile")
     profile = proposed["profiles"][profile_index]
-    if type(layer_index) is not int or not 0 <= layer_index < len(profile.get("layers", [])):
+    layers = profile.get("layers", [])
+    if layer_indexes is None:
+        targets = (observed_layer if layer_index is None else layer_index,)
+    else:
+        if type(layer_indexes) not in (list, tuple) or not layer_indexes:
+            raise ValueError("invalid selected layers")
+        targets = tuple(layer_indexes)
+    if (any(type(target) is not int or not 0 <= target < len(layers) for target in targets)
+            or len(set(targets)) != len(targets)):
         raise ValueError("invalid selected layer")
-    layer = profile["layers"][layer_index]
+    layer_index = targets[0]
     if type(include_auxiliary) is not bool:
         raise ValueError("include_auxiliary must be a bool")
-    keymap = _keymap(layer)
+    names = {}
+    if layer_names is not None:
+        if type(layer_names) not in (list, tuple):
+            raise ValueError("invalid layer names")
+        for entry in layer_names:
+            if (type(entry) not in (list, tuple) or len(entry) != 2
+                    or type(entry[0]) is not int or entry[0] not in targets
+                    or type(entry[1]) is not str or not entry[1].strip()
+                    or len(entry[1]) > 64 or not entry[1].isprintable()):
+                raise ValueError("invalid layer names")
+            names[entry[0]] = entry[1]
 
     changes: list[str] = []
-    key_index = 0
-    for row in keymap:
-        for column, old_keycode in enumerate(row):
-            new_keycode = f"KV_OAI_AG{key_index:02d}"
-            if old_keycode != new_keycode:
-                changes.append(
-                    f"Key {key_index}: {old_keycode} -> {new_keycode}; "
-                    "replaces its normal keystroke with a JR-Bar device input."
-                )
-                row[column] = new_keycode
-            key_index += 1
-
     labels = [(index, f"Key {index + 1}") for index in range(13)]
-    if include_auxiliary:
-        layout = layer["layout"]
-        encoders = layout.get("encoders", [])
-        if not isinstance(encoders, list) or any(
-                not isinstance(row, list) or len(row) != 3 or any(type(key) is not str for key in row)
-                for row in encoders):
-            raise ValueError("unsupported encoder layout; nothing was changed")
-        auxiliary = []
-        for encoder, row in enumerate(encoders):
-            for position in range(3):
-                auxiliary.append((row, position, f"Encoder {encoder + 1} input {position + 1}"))
-        joystick = layout.get("joystick", {})
-        if not isinstance(joystick, dict) or not isinstance(joystick.get("sectors", []), list):
-            raise ValueError("unsupported joystick layout; nothing was changed")
-        for index, sector in enumerate(joystick.get("sectors", [])):
-            if not isinstance(sector, dict) or type(sector.get("k")) is not str:
-                raise ValueError("unsupported joystick sector; nothing was changed")
-            auxiliary.append((sector, "k", f"Joystick sector {index + 1}"))
-        if 13 + len(auxiliary) > 20:
-            raise ValueError("selected controls exceed the firmware's 20 AG slots; retain the auxiliary mappings")
-        for index, (parent, position, label) in enumerate(auxiliary, 13):
-            code = f"KV_OAI_AG{index:02d}"
-            labels.append((index, label))
-            if parent[position] != code:
-                changes.append(f"{label}: {parent[position]} -> {code}; replaces its normal firmware action.")
-                parent[position] = code
+    for target in targets:
+        layer = layers[target]
+        if target in names:
+            layer["name"] = names[target]
+        keymap = _keymap(layer)
+        layer_changes: list[str] = []
+        key_index = 0
+        for row in keymap:
+            for column, old_keycode in enumerate(row):
+                new_keycode = f"KV_OAI_AG{key_index:02d}"
+                if old_keycode != new_keycode:
+                    layer_changes.append(
+                        f"Key {key_index}: {old_keycode} -> {new_keycode}; "
+                        "replaces its normal keystroke with a JR-Bar device input."
+                    )
+                    row[column] = new_keycode
+                key_index += 1
+
+        if include_auxiliary:
+            layout = layer["layout"]
+            encoders = layout.get("encoders", [])
+            if not isinstance(encoders, list) or any(
+                    not isinstance(row, list) or len(row) != 3 or any(type(key) is not str for key in row)
+                    for row in encoders):
+                raise ValueError("unsupported encoder layout; nothing was changed")
+            auxiliary = []
+            for encoder, row in enumerate(encoders):
+                for position in range(3):
+                    auxiliary.append((row, position, f"Encoder {encoder + 1} input {position + 1}"))
+            joystick = layout.get("joystick", {})
+            if not isinstance(joystick, dict) or not isinstance(joystick.get("sectors", []), list):
+                raise ValueError("unsupported joystick layout; nothing was changed")
+            for index, sector in enumerate(joystick.get("sectors", [])):
+                if not isinstance(sector, dict) or type(sector.get("k")) is not str:
+                    raise ValueError("unsupported joystick sector; nothing was changed")
+                auxiliary.append((sector, "k", f"Joystick sector {index + 1}"))
+            if 13 + len(auxiliary) > 20:
+                raise ValueError(
+                    "selected controls exceed the firmware's 20 AG slots; retain the auxiliary mappings"
+                )
+            for index, (parent, position, label) in enumerate(auxiliary, 13):
+                code = f"KV_OAI_AG{index:02d}"
+                if target == targets[0]:
+                    labels.append((index, label))
+                if parent[position] != code:
+                    layer_changes.append(
+                        f"{label}: {parent[position]} -> {code}; replaces its normal firmware action."
+                    )
+                    parent[position] = code
+        if len(targets) > 1 and layer_changes:
+            changes.append(
+                f"Layer {target + 1}: {len(layer_changes)} keys claimed for JR-Bar device inputs."
+            )
+        changes.extend(layer_changes)
 
     proposed_json = _canonical_json(proposed)
     if len(proposed_json.encode("utf-8")) > _MAX_JSON_BYTES:
@@ -236,6 +284,8 @@ def plan_keymap(raw: str, status: dict[str, Any], *, profile_index: int | None =
         observed_layer=observed_layer,
         include_auxiliary=include_auxiliary,
         control_labels=tuple(labels),
+        layer_indexes=targets,
+        layer_names=tuple(sorted(names.items())),
     )
 
 

@@ -25,8 +25,9 @@ from .hook_ingress_protocol import (
     encode_hook_ingress_response,
 )
 from .ipc import (
-    SERVER_ACCEPT_TIMEOUT_SECONDS,
     ProviderRefreshHint,
+    _accept_one,
+    _AcceptWakeup,
     _bind_socket_in_guard,
     _existing_socket_refuses_connections,
     _identity,
@@ -39,6 +40,14 @@ from .state_paths import default_state_dir
 MAX_HOOK_INGRESS_ACCEPTED: Final = 32
 MAX_HOOK_INGRESS_METRIC_COUNT: Final = 10_000
 HOOK_INGRESS_READ_TIMEOUT_SECONDS: Final = 0.25
+# Whole-connection budget, not per-recv: a trickling client that keeps
+# the byte stream just barely alive still dies at this deadline instead
+# of holding a worker slot for hours.
+HOOK_INGRESS_CONNECTION_DEADLINE_SECONDS: Final = 5.0
+# Bound on simultaneous inbound connections, each served by its own
+# worker thread (one wedged or trickling peer can no longer serialize
+# every hook behind it).
+MAX_HOOK_INGRESS_CONNECTIONS: Final = 8
 HOOK_INGRESS_LISTEN_BACKLOG: Final = 32
 
 
@@ -242,7 +251,12 @@ class HookIngressService:
         self._server_socket: socket.socket | None = None
         self._server_thread: threading.Thread | None = None
         self._server_running = False
-        self._active_connection: socket.socket | None = None
+        self._accept_wakeup: _AcceptWakeup | None = None
+        self._connection_slots = threading.BoundedSemaphore(
+            MAX_HOOK_INGRESS_CONNECTIONS
+        )
+        self._connections: set[socket.socket] = set()
+        self._connection_workers: set[threading.Thread] = set()
         self._path_guard: _SocketPathGuard | None = None
         self._bound_identity: tuple[int, int] | None = None
 
@@ -280,8 +294,13 @@ class HookIngressService:
                 guard.assert_parent()
                 guard.chmod_socket(bound_identity, 0o600)
                 server.listen(HOOK_INGRESS_LISTEN_BACKLOG)
-                server.settimeout(SERVER_ACCEPT_TIMEOUT_SECONDS)
                 guard.assert_socket_identity(bound_identity)
+                self._connection_slots = threading.BoundedSemaphore(
+                    MAX_HOOK_INGRESS_CONNECTIONS
+                )
+                self._connections.clear()
+                self._connection_workers.clear()
+                self._accept_wakeup = _AcceptWakeup()
                 self._path_guard = guard
                 self._bound_identity = bound_identity
                 self._server_socket = server
@@ -297,6 +316,9 @@ class HookIngressService:
             except Exception:
                 if server is not None:
                     server.close()
+                if self._accept_wakeup is not None:
+                    self._accept_wakeup.close()
+                    self._accept_wakeup = None
                 if bound_identity is not None:
                     try:
                         guard.unlink_owned_socket(bound_identity)
@@ -528,38 +550,58 @@ class HookIngressService:
         while True:
             with self._server_lock:
                 server = self._server_socket
-                if not self._server_running or server is None:
+                wakeup = self._accept_wakeup
+                if not self._server_running or server is None or wakeup is None:
                     return
             try:
-                connection, _ = server.accept()
-            except TimeoutError:
-                continue
+                connection = _accept_one(server, wakeup)
             except OSError:
                 return
+            if connection is None:
+                continue
             with self._server_lock:
                 if not self._server_running or self._server_socket is not server:
                     connection.close()
                     return
-                self._active_connection = connection
-            try:
-                with connection:
-                    self._handle_connection(connection)
-            finally:
-                with self._server_lock:
-                    if self._active_connection is connection:
-                        self._active_connection = None
+                if not self._connection_slots.acquire(blocking=False):
+                    # Every worker slot is held; refuse at the TCP level
+                    # (close) so the submitter sees a clean failure.
+                    connection.close()
+                    continue
+                worker = threading.Thread(
+                    target=self._serve_connection,
+                    args=(connection,),
+                    name="JRBarHookIngressConn",
+                    daemon=True,
+                )
+                self._connections.add(connection)
+                self._connection_workers.add(worker)
+            worker.start()
+
+    def _serve_connection(self, connection: socket.socket) -> None:
+        try:
+            with connection:
+                self._handle_connection(connection)
+        finally:
+            with self._server_lock:
+                self._connections.discard(connection)
+                self._connection_workers.discard(threading.current_thread())
+            self._connection_slots.release()
 
     def _handle_connection(self, connection: socket.socket) -> None:
         if not _same_uid_peer(connection, self._peer_uid_reader):
             return
-        try:
-            connection.settimeout(HOOK_INGRESS_READ_TIMEOUT_SECONDS)
-        except OSError:
-            return
+        deadline = self._now() + HOOK_INGRESS_CONNECTION_DEADLINE_SECONDS
         chunks: list[bytes] = []
         total = 0
         while True:
+            remaining = deadline - self._now()
+            if remaining <= 0.0:
+                return
             try:
+                connection.settimeout(
+                    min(HOOK_INGRESS_READ_TIMEOUT_SECONDS, remaining)
+                )
                 chunk = connection.recv(65536)
             except (TimeoutError, OSError):
                 return
@@ -597,14 +639,16 @@ class HookIngressService:
             self._server_running = False
             server = self._server_socket
             self._server_socket = None
-            connection = self._active_connection
+            connections = tuple(self._connections)
+            workers = tuple(self._connection_workers)
             thread = self._server_thread
-            if server is not None:
-                try:
-                    server.close()
-                except OSError:
-                    pass
-            if connection is not None:
+            wakeup = self._accept_wakeup
+            if wakeup is not None:
+                # Interrupt the accept thread's select BEFORE touching the
+                # listening socket so it sees `_server_running` False on a
+                # live descriptor rather than a possibly-recycled fd.
+                wakeup.wake()
+            for connection in connections:
                 try:
                     connection.shutdown(socket.SHUT_RDWR)
                 except OSError:
@@ -613,8 +657,29 @@ class HookIngressService:
                     connection.close()
                 except OSError:
                     pass
-        if thread is not None and thread is not threading.current_thread():
+        current = threading.current_thread()
+        if thread is not None and thread is not current:
             thread.join(max(0.0, deadline - self._now()))
+        if server is not None:
+            try:
+                server.close()
+            except OSError:
+                pass
+        for worker in workers:
+            # A worker still between "added to the set" and ".start()" was
+            # never started: join() on it raises, and its already-closed
+            # connection makes it exit on its own anyway.
+            if worker is current or worker.ident is None:
+                continue
+            remaining = deadline - self._now()
+            if remaining <= 0.0:
+                break
+            worker.join(remaining)
+        if wakeup is not None:
+            with self._server_lock:
+                if self._accept_wakeup is wakeup:
+                    self._accept_wakeup = None
+            wakeup.close()
         stopped = thread is None or not thread.is_alive()
         with self._server_lock:
             guard = self._path_guard

@@ -2124,6 +2124,9 @@ def _build_led_behavior_pane(target: StatusBarController):
     webhook_event_boxes: dict[str, object] = {}
     for label, event_key in (
         ("Completions", "completion"),
+        ("Asks", "ask_opened"),
+        ("Failures", "failed"),
+        ("Quota crossings", "quota_crossed"),
     ):
         box = native_ui.make_checkbox(label, target, "toggleWebhookEvent:")
         box.setIdentifier_(event_key)
@@ -2137,7 +2140,8 @@ def _build_led_behavior_pane(target: StatusBarController):
             bridge_row,
             help_text=(
                 "Each ticked moment POSTs one JSON event to the same "
-                "URL: completions."
+                "URL: completions, new asks, failures and quota "
+                "crossings. One call per event, never retried."
             ),
         )
     )

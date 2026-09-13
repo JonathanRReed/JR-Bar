@@ -2,7 +2,63 @@
 
 All notable changes to JR-Bar are documented here.
 
-## 0.9.4 (unreleased)
+## 0.9.5 (unreleased)
+
+- The Creator Micro 2's hardware layers now mean something. The daemon
+  polls the pad's live layer over `device.status` and scopes the session
+  board to it: layer 1 stays Automatic (every session, asks first),
+  layer 2 is Codex, layer 3 is Claude, and any provider — T3 Code
+  included — can be added as a cyclable scope from the Control Center.
+  Because input reports carry no layer field, lighting follows the
+  board the pad is actually showing; scoped boards only ever carry live
+  sessions of that provider, so dead "Reserved" identities can't fill a
+  layer. The keymap now writes every mapped layer in one apply (the
+  preview shows the real multi-layer write), and the encoder pages
+  banks while the joystick cycles scopes out of the box — explicit aux
+  bindings still replace the whole set.
+- Snoozed sessions stop asking for attention. A snoozed ask or working
+  session no longer drives the attention lights, the escalation ladder,
+  or the "needs you" count — the gate sits at the projection seam, so
+  every consumer agrees. "Unsnooze all" previously only lifted asking
+  sessions; it now clears every family actually snoozed, and the status
+  menu shows a live "N sessions snoozed — unsnooze all" row while any
+  exist. When escalation does fire, the menu names the stage ("menu
+  bar flash", "chime") so a repeating chime is no longer a mystery.
+- The webhook toggles do what they say. Ask opened, session failed, and
+  quota threshold crossed now emit through the existing escalation
+  webhook machinery — once per edge, never for refused batches — where
+  only "completion" was wired before. Quota resets publish a
+  `quota_reset` event regardless of celebration preferences so the
+  Usage Center can refresh, and peer arrivals/departures emit events
+  while `state.peers` finally carries the live fleet (the Remote page
+  shows it).
+- One bad row can't blank the document. State decoding now drops a
+  malformed session, ask, device, usage row, or light surface
+  individually instead of rejecting the whole frame; a field whose
+  container type violates the protocol still fails closed.
+- Settings tells the truth about what it can't do. A banner warns when
+  the daemon's settings schema is newer than the app understands,
+  notifications show a "permission denied" warning with an Open
+  Settings button instead of a toggle that can't deliver, and the
+  panel's brightness slider stays enabled without a strip because the
+  Screen Bar is a real brightness target. The first-run card now
+  teaches the band's two powers — hover for who's asking, click to jump
+  to the session.
+- Idle power draw drops. Device inventory polling backs off once the
+  hardware set is stable (and speeds back up around connection changes
+  or while the Devices pane is open), lid observation runs a slower
+  cadence when only animations need it, screen sleep forces an
+  immediate lid poll, wake forces a lighting reassert because the strip
+  may have rebooted into its stored program, and the repeating timers
+  carry wider tolerances. A mounted SidePulse volume no longer leaks
+  into tests through the keepalive scan.
+- Scene packs now apply. The active pack merges its policy overrides
+  over the base policies fail-closed (missing, corrupt, or mistyped
+  entries disable rather than guess), the cache is bounded and keyed on
+  content, and the rainstick idle/night and milestone-odometer cues have
+  real settings flags so they can actually be turned on.
+
+## 0.9.4
 
 - Black means black on a linked Screen Bar. The mirror's luminance lift
   was a flat floor, so every dim code — embers, fade tails, codes the

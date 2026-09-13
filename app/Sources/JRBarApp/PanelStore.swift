@@ -29,6 +29,12 @@ struct SessionRow: Identifiable, Equatable {
     let isRemote: Bool
     /// The machine a remote row runs on, for the "on studio-mac" line.
     let remoteMachine: String?
+    /// The hook's last word about a working row, humanised ("running
+    /// Bash", "compacting"); nil when there is nothing honest to say.
+    let activityFact: String?
+    /// Where the session was launched from (`origin.label`: "VS Code",
+    /// "cloud ingest"), shown as the subtitle's quiet "via …" tail.
+    let originLabel: String?
 
     init(session: CoreSession, pinnedAsk: CoreAsk?, document: SettingsDocument? = nil) {
         id = session.id
@@ -43,6 +49,10 @@ struct SessionRow: Identifiable, Equatable {
         terminalApp = session.terminal?.app
         snoozedUntil = session.snoozedUntil
         activity = SessionActivity.reduce(session)
+        activityFact = Self.activityFact(session: session, activity: activity)
+        // A peer's origin is the peer's fact: "via VS Code" on a remote row
+        // would name this Mac's apps for another machine's session.
+        originLabel = session.isRemote ? nil : Self.shortFact(session.origin?.label, limit: 32)
         since = session.since.map { Date(timeIntervalSince1970: $0) }
         workers = session.workers
         ask = pinnedAsk ?? session.ask.map { ask in
@@ -79,6 +89,8 @@ struct SessionRow: Identifiable, Equatable {
         stale = false
         isRemote = remote
         remoteMachine = CoreSession.remoteMachine(inID: session)
+        activityFact = nil
+        originLabel = nil
     }
 
     /// The row's whole tooltip: where the session runs, the full working
@@ -94,6 +106,12 @@ struct SessionRow: Identifiable, Equatable {
         if let cwd, !cwd.isEmpty { parts.append(cwd) }
         if isSnoozed(now: now), let until = snoozedUntil {
             parts.append("Snoozed until \(PanelStore.clockTime(Date(timeIntervalSince1970: until)))")
+        }
+        if let activityFact {
+            parts.append("Last hook event: \(activityFact)")
+        }
+        if let originLabel {
+            parts.append("via \(originLabel)")
         }
         if activity == .ended {
             parts.append("Went away without confirming it finished — the agent may have been closed or killed")
@@ -149,6 +167,40 @@ struct SessionRow: Identifiable, Equatable {
         let parts = text.split(separator: "/", omittingEmptySubsequences: true)
         if parts.count <= 2 { return text }
         return parts.suffix(2).joined(separator: "/")
+    }
+
+    /// The hook's last word about a working row, in the panel's words:
+    /// "running Bash", "ran Edit", "compacting". Only `.working` gets
+    /// one — a finished row's last event is history, a waiting row's ask
+    /// is already the fact that matters, and a stale row's event stopped
+    /// being current when the feed did.
+    static func activityFact(session: CoreSession, activity: SessionActivity) -> String? {
+        guard activity == .working, !session.stale else { return nil }
+        if let tool = shortFact(session.tool) {
+            switch session.event {
+            case "PostToolUse", "PostToolUseFailure": return "ran \(tool)"
+            default: return "running \(tool)"
+            }
+        }
+        switch session.event {
+        case "PreCompact", "PostCompact": return "compacting"
+        case "SessionStart": return "starting"
+        case "Notification", "PermissionRequest":
+            // `message` can carry agent prose; a bounded snippet is the
+            // most the subtitle should ever show of it.
+            return shortFact(session.message, limit: 48)
+        default: return nil
+        }
+    }
+
+    /// One line of fact text, short enough for the subtitle: whitespace
+    /// collapsed, capped at `limit` characters; nil when nothing is left.
+    static func shortFact(_ text: String?, limit: Int = 24) -> String? {
+        guard let text else { return nil }
+        let collapsed = text.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }.joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        if collapsed.count <= limit { return collapsed }
+        return String(collapsed.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "…"
     }
 }
 
@@ -327,6 +379,7 @@ final class PanelStore {
         switch core.connection {
         case .connected where core.state != nil:
             let version = core.hello?.coreVersion ?? "?"
+            if let stale = staleUpdateText { return "Monitor \(version) connected — quiet, \(stale)" }
             return "Monitor \(version) connected"
         case .connected: return "Connected, waiting for state"
         case .connecting(let attempt): return attempt <= 1 ? "Connecting to the monitor…" : "Reconnecting to the monitor (try \(attempt))…"
@@ -334,6 +387,35 @@ final class PanelStore {
         case .idle: return "Monitor client idle"
         }
     }
+
+    /// The reference clock for frame-age questions: `now` while the panel
+    /// is open so its one-second clock keeps the disclosure current on its
+    /// own (a wedged daemon sends nothing that would flip it); the real
+    /// wall clock when closed, where a `now` frozen at close time would
+    /// understate the age in the status menu.
+    private var stalenessReference: Date { isOpen ? now : Date() }
+
+    /// Age of the `state` frame the panel is drawing, nil before the first one.
+    var stateAge: TimeInterval? { core.stateAge(at: stalenessReference) }
+
+    /// Connected but the frame on screen is older than
+    /// `CoreModel.stateStaleAfter`. The daemon dedupes unchanged frames,
+    /// so quiet happens on a healthy monitor too — this is disclosed, never
+    /// treated as a disconnect: `isLive` stays true and the dot stays green.
+    var stateIsStale: Bool { core.isLive && core.stateIsStale(at: stalenessReference) }
+
+    /// "last update 3m ago" while the live frame is stale, else nil.
+    var staleUpdateText: String? {
+        guard stateIsStale, let age = stateAge else { return nil }
+        let reference = stalenessReference
+        let text = Self.elapsed(since: reference.addingTimeInterval(-age), now: reference) ?? "\(Int(age))s"
+        return "last update \(text) ago"
+    }
+
+    /// "Monitor is quiet — last update 3m ago": the one-line disclosure
+    /// that takes the header's count slot and the empty state's detail
+    /// while the frame on screen is old.
+    var staleDetail: String? { staleUpdateText.map { "Monitor is quiet — \($0)" } }
 
     var aggregate: AgentAggregateState {
         if core.isLive, let state = core.state { return AgentAggregateState.from(aggregate: state.aggregate) }
@@ -347,6 +429,10 @@ final class PanelStore {
     /// precedence and the status icon's label agree.
     var headerCounts: String {
         guard core.isLive, let state = core.state else { return fallbackDetail }
+        // Past `stateStaleAfter` these counts are the last frame's, not
+        // now's — the disclosure takes the line rather than present a
+        // stale frame as current.
+        if let stale = staleDetail { return stale }
         let parts = state.aggregate.countParts
         if parts.isEmpty {
             let total = state.mainSessions.count
@@ -596,6 +682,56 @@ final class PanelStore {
         return hooks.compactMap { provider, state in
             state.stringValue == "missing" ? provider : nil
         }.sorted()
+    }
+
+    // MARK: Derived: hook feed health and unseen completions
+
+    /// `state.unseen_completions`: ids of rows that finished since the
+    /// user last looked — the daemon intersects it with the rows it still
+    /// lists, so membership is all the "new" dot has to check.
+    var unseenCompletionIDs: Set<String> {
+        guard core.isLive else { return [] }
+        return Set(core.state?.unseenCompletions ?? [])
+    }
+
+    /// How long a provider's hook feed may be silent while it still has
+    /// live rows before the panel says so. Matches the daemon's own
+    /// ingest-lag bound (`DEFAULT_INGEST_LAG_SECONDS`): past it, a feed
+    /// that is not delivering is a fault, not a pause between events.
+    nonisolated static let sourceQuietBound: TimeInterval = 5 * 60
+
+    /// `health.sources` providers whose hook feed stopped delivering while
+    /// they still have live rows — provider id → seconds since the feed
+    /// last was heard. The gate is deliberately narrow: an installed-but-
+    /// silent provider with nothing running is not a fault, and a remote
+    /// row says nothing about this Mac's intake.
+    var quietFeeds: [String: Double] {
+        guard core.isLive, let state = core.state else { return [:] }
+        var result: [String: Double] = [:]
+        for session in core.sessions where !session.isRemote {
+            let activity = SessionActivity.reduce(session)
+            guard activity == .working || activity == .waiting else { continue }
+            guard let source = state.sourceHealth(for: session.provider),
+                  !source.fresh,
+                  let age = source.heardAgeSeconds,
+                  age.isFinite, age >= Self.sourceQuietBound else { continue }
+            result[session.provider] = max(result[session.provider] ?? 0, age)
+        }
+        return result
+    }
+
+    /// "feed quiet 15m" for the topmost live row of a provider whose hook
+    /// feed stopped arriving; nil on every other row, so the marker is
+    /// once per provider, on the row that proves the silence matters.
+    func quietFeedText(for row: SessionRow) -> String? {
+        guard let age = quietFeeds[row.style.id],
+              row.activity == .working || row.activity == .waiting,
+              rows.first(where: {
+                  $0.style.id == row.style.id && ($0.activity == .working || $0.activity == .waiting)
+              })?.id == row.id
+        else { return nil }
+        let elapsed = Self.elapsed(since: now.addingTimeInterval(-age), now: now) ?? "\(Int(age))s"
+        return "feed quiet \(elapsed)"
     }
 
     // MARK: Derived: the usage sparklines

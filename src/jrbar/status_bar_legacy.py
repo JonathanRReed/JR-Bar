@@ -172,7 +172,12 @@ from .animation_store import (
 )
 from .app_bundle import default_app_bundle_path, running_inside_bundle
 from .product_identity import PRODUCT_DISPLAY_NAME
-from .attention import AttentionProjection, LifecycleMode, project_attention
+from .attention import (
+    AttentionProjection,
+    LifecycleMode,
+    project_attention,
+    regate_actionable_attention,
+)
 from .audit import (
     remove_orphaned_state_files,
     trim_oversized_logs,
@@ -1433,6 +1438,14 @@ NOTIFICATION_FOREGROUND_PRESENTATION_OPTIONS = 1 << 2
 BRIGHTNESS_WATCH_SECONDS = 3.0
 BRIGHTNESS_WATCH_MIN_DELTA = 3
 STATUS_BAR_DEVICE_POLL_SECONDS = 2.0
+# A stable volume inventory needs no 2s cadence: nothing about /Volumes
+# changes on a machine whose devices are already known, and the fast rate
+# exists for plug/unplug edges plus a Devices pane the user is watching.
+STATUS_BAR_DEVICE_IDLE_POLL_SECONDS = 10.0
+DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF = 15
+# Animation-only lid observation gets a slower cadence; the 1s poll is
+# reserved for when the lid state drives the caffeinate hold.
+LID_OBSERVATION_ANIMATION_SECONDS = 4.0
 # Event-driven refreshes run at most this often; bursts coalesce into
 # one trailing refresh. Direct refresh_(None) calls stay synchronous.
 EVENT_REFRESH_FLOOR_SECONDS = 0.25
@@ -1442,6 +1455,15 @@ EVENT_REFRESH_FLOOR_SECONDS = 0.25
 # brightness should be 100%"). An explicit per-Focus "Turn off" (scale
 # exactly 0) still silences them.
 SIGNAL_DISPLAY_KINDS = frozenset({LED_DISPLAY_FAILURE})
+# Ledger edges that double as opt-in webhook moments. ``COMPLETED`` is
+# absent on purpose: ``track_completions`` owns the completion edge (its
+# "whole family finished" rule is stricter than a per-row mode change)
+# and already posts ``jrbar.completion`` from there.
+_WEBHOOK_EVENT_BY_ACTIVITY_KIND = {
+    ActivityKind.ASKED: "ask_opened",
+    ActivityKind.BLOCKED: "failed",
+    ActivityKind.THRESHOLD_CROSSED: "quota_crossed",
+}
 # ioreg is a subprocess fork on the main thread and refresh_ runs on
 # every hook event; power-state changes may lag by up to this TTL.
 BATTERY_SNAPSHOT_CACHE_SECONDS = 5.0
@@ -2135,9 +2157,12 @@ class StatusBarController(NSObject):
         self._usage_refresh_workers = UsageRefreshWorkerOwner()
         self._lid_observation_active = False
         self._lid_observation_fire_at = None
+        self._lid_observation_scheduled_interval: float | None = None
         self._device_inventory_active = False
         self._device_inventory_fire_at = None
         self._device_inventory_candidates: tuple[DeviceCandidate, ...] = ()
+        self._device_inventory_stable_polls = 0
+        self._device_inventory_scheduled_interval: float | None = None
         self._display_environment_active = False
         self._display_environment_fire_at = None
         self._calendar_observation_active = False
@@ -2400,6 +2425,15 @@ class StatusBarController(NSObject):
 
     def dndWorkspaceDidWake_(self, _notification) -> None:
         self._refresh_dnd_environment("handle_wake")
+        # If the bus powered down over the sleep each strip rebooted into
+        # its stored program at t=0; if it stayed powered our anchor still
+        # holds. Either way the monotonic reassert clocks froze while the
+        # device clock did not, so the next write goes out as a reassert:
+        # the strip restarts at the program the anchor already describes
+        # and the published anchor moves to the write.
+        for controller in (self.agent_led_controllers_by_device or {}).values():
+            controller.last_attempt_monotonic = 0.0
+        self.refresh_(None)
 
     def dndWorkspaceWillSleep_(self, _notification) -> None:
         self._refresh_dnd_environment("handle_sleep")
@@ -2409,6 +2443,11 @@ class StatusBarController(NSObject):
 
     def dndScreensDidSleep_(self, _notification) -> None:
         self._refresh_dnd_environment("handle_screen_sleep")
+        # Closing the lid IS a screens-sleep edge in the common case --
+        # poll once now instead of waiting out the steady-state cadence
+        # (which is slower when only animations arm the observation).
+        if self._lid_observation_active:
+            self._lid_observation_timer_fired()
 
     def dndSessionDidBecomeActive_(self, _notification) -> None:
         self._refresh_dnd_environment("handle_activation")
@@ -2799,6 +2838,9 @@ class StatusBarController(NSObject):
             SimpleNamespace(statuses=visible, collected_at=snapshot.collected_at),
             self.settings,
         )
+        live_request_keys = self._live_actionable_request_keys()
+        if live_request_keys is not None:
+            projection = regate_actionable_attention(projection, live_request_keys)
         self.current_attention_projection = projection
         # Light-row flight recorder: one line whenever the set of rows
         # allowed to paint the strip changes. Diagnosing "why is the
@@ -2826,6 +2868,10 @@ class StatusBarController(NSObject):
                 self.settings,
             )
         )
+        if live_request_keys is not None and mailbox_projection is not projection:
+            mailbox_projection = regate_actionable_attention(
+                mailbox_projection, live_request_keys
+            )
         active_ids = {
             row.agent_id
             for row in mailbox_projection.visible_rows
@@ -3387,6 +3433,22 @@ class StatusBarController(NSObject):
         changed = remote_refresh_signature(result) != remote_refresh_signature(
             self._remote_refresh
         )
+        # Reachability edges are the app's ``peer_arrived``/``peer_departed``
+        # toasts: compare the reachable-machine sets before the swap, not
+        # the ledgers — a fresh ledger from a machine that never left is
+        # not an arrival.
+        publish = getattr(self, "_core_publish_event", None)
+        # The first fetch sets the baseline rather than reporting every
+        # already-reachable peer as an arrival — a daemon restart is not
+        # a fleet event.
+        if callable(publish) and getattr(self, "_remote_refresh_ever_applied", False):
+            before = {h.machine for h in self._remote_refresh.health if h.reachable}
+            after = {h.machine for h in result.health if h.reachable}
+            for machine in sorted(after - before):
+                publish("peer_arrived", label=machine)
+            for machine in sorted(before - after):
+                publish("peer_departed", label=machine)
+        self._remote_refresh_ever_applied = True
         self._remote_refresh = result
         # A refresh per minute that changes nothing is a rebuild of the
         # whole dropdown for no reason; only a real change re-renders.
@@ -7702,19 +7764,67 @@ class StatusBarController(NSObject):
 
     # --- Ask escalation ------------------------------------------------
 
+    def _live_actionable_request_keys(self) -> frozenset | None:
+        """Request keys the canonical state still holds live for the user.
+
+        ``None`` when no operator state has arrived yet -- callers then
+        skip gating entirely rather than disproving every ask. An empty
+        frozenset is a real answer: canonical knows the asks and none of
+        them are live.
+        """
+        state = getattr(self, "current_operator_state", None)
+        if state is None:
+            return None
+        return frozenset(
+            request.key
+            for request in state.requests
+            if request.phase
+            in {
+                RequestPhase.LIVE_UNACKNOWLEDGED,
+                RequestPhase.LIVE_ACKNOWLEDGED,
+            }
+            and request.next_actor is NextActor.USER
+        )
+
+    def _acknowledged_request_keys(self) -> frozenset:
+        """The asks a live local acknowledgement covers.
+
+        ``LIVE_ACKNOWLEDGED`` asks stay out of every effect that reads the
+        reduced state -- the light, the chime, escalation webhooks -- so
+        the reducer and this surface have to agree on the same key set.
+        """
+        state = getattr(self, "local_triage_state", None)
+        if state is None:
+            return frozenset()
+        return frozenset(
+            item.request_key for item in state.acknowledgements
+        )
+
     def track_ask_blocked(self, projection) -> None:
         """Per-agent ask/blocked episode tracking. Escalation follows the
         OLDEST currently-unanswered ask -- aggregate-level tracking let a
         brand-new ask inherit a stage-3 chime from a different, already
         answered agent's long episode. Pass an empty tuple to clear
-        (e.g. the refresh error path, where no state can be confirmed)."""
+        (e.g. the refresh error path, where no state can be confirmed).
+
+        An ask covered by a live acknowledgement ("I'm on It") is not
+        blocked on the operator at all, so it earns no clock here; the
+        projection deliberately keeps the row visible. "Resume
+        Escalation" drops the key, the row re-enters ``current``, and its
+        interval starts fresh rather than inheriting time spent
+        acknowledged."""
         now = time.monotonic()
         if not isinstance(projection, AttentionProjection):
             projection = projection_for_statuses(projection, self.settings)
+        acknowledged = self._acknowledged_request_keys()
         current = {
             row.agent_id
             for row in projection.actionable_attention
             if row.agent_id
+            and (
+                row.request_key is None
+                or row.request_key not in acknowledged
+            )
         }
         tracked = getattr(self, "ask_blocked_by_agent", {})
         updated = {agent_id: tracked.get(agent_id, now) for agent_id in current}
@@ -7807,7 +7917,13 @@ class StatusBarController(NSObject):
             log_status_bar(f"activity ledger save failed: {exc}")
 
     def record_activity_entries(self, entries: tuple[ActivityEntry, ...]) -> None:
-        """Fold a batch of facts into the ledger and persist the result."""
+        """Fold a batch of facts into the ledger and persist the result.
+
+        The same edge also carries the opt-in moment webhooks: a ledger
+        entry exists exactly once per transition, so each ticked event
+        posts once and a refused batch posts nothing. ``completion`` is
+        deliberately absent from the map -- ``track_completions`` owns
+        that edge and already posts it."""
         if not entries:
             return
         ledger = self.ensure_activity_ledger()
@@ -7817,6 +7933,25 @@ class StatusBarController(NSObject):
             log_status_bar(f"activity ledger refused an entry: {exc}")
             return
         self._store_activity_ledger(updated)
+        for entry in entries:
+            event_key = _WEBHOOK_EVENT_BY_ACTIVITY_KIND.get(entry.kind)
+            if event_key is None or not self.webhook_event_enabled(event_key):
+                continue
+            payload = {
+                "event": f"jrbar.{event_key}",
+                "provider": entry.provider,
+                "label": entry.label,
+            }
+            if entry.subject_id is not None:
+                payload["session"] = entry.subject_id
+            if entry.detail is not None:
+                payload["detail"] = entry.detail
+            try:
+                self.post_webhook(payload)
+            except Exception as exc:
+                log_status_bar(
+                    f"{event_key} webhook routing failed: {exc}"
+                )
 
     def mark_activity_seen_now(self, epoch: float | None = None) -> None:
         """Opening the dropdown is the visit that clears "since you left"."""
@@ -8882,6 +9017,9 @@ class StatusBarController(NSObject):
         return {
             "jrbar.completion": signals_module.SIGNAL_COMPLETION,
             "jrbar.escalation": signals_module.INTERRUPT_ESCALATION,
+            "jrbar.ask_opened": signals_module.INTERRUPT_ASK,
+            "jrbar.failed": signals_module.INTERRUPT_FAILURE,
+            "jrbar.quota_crossed": signals_module.SIGNAL_QUOTA,
         }.get(payload_dict.get("event"))
 
     def webhook_effect_allowed(self, payload_dict: object) -> bool:
@@ -9479,6 +9617,7 @@ class StatusBarController(NSObject):
             sources=(SourceSpec("event-bus", socket_path),),
             stale_after_seconds=3600,
             latest_state_path=default_latest_state_path(),
+            acknowledged_requests_supplier=self._acknowledged_request_keys,
         )
 
     def build_transcript_monitor(self) -> AgentMonitor | None:
@@ -9509,7 +9648,10 @@ class StatusBarController(NSObject):
         )
         if not sources:
             return None
-        return AgentMonitor(sources=sources)
+        return AgentMonitor(
+            sources=sources,
+            acknowledged_requests_supplier=self._acknowledged_request_keys,
+        )
 
     def ingest_transcript_fallback(self) -> None:
         monitor = getattr(self, "transcript_monitor", None)
@@ -10180,6 +10322,13 @@ class StatusBarController(NSObject):
             occurred_at=occurred_at,
             state=state,
         )
+        # The stored acknowledgement changes what counts as blocked NOW,
+        # not on the next refresh tick: re-running the tracker drops the
+        # escalation clock for "I'm on It" -- and after a resume starts
+        # the interval fresh instead of counting time spent acknowledged.
+        projection = getattr(self, "current_attention_projection", None)
+        if isinstance(projection, AttentionProjection):
+            self.track_ask_blocked(projection)
         self._republish_operator_surfaces()
         return True
 
@@ -14575,7 +14724,22 @@ class StatusBarController(NSObject):
             )[:MAX_RUNTIME_PHYSICAL_DEVICES]
         )
         signature = device_connection_signature(list(devices))
-        if same_candidates and signature == self.last_connected_device_signature:
+        stable = same_candidates and signature == self.last_connected_device_signature
+        was_backed_off = (
+            self._device_inventory_stable_polls
+            >= DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF
+        )
+        self._device_inventory_stable_polls = (
+            self._device_inventory_stable_polls + 1 if stable else 0
+        )
+        if (
+            self._device_inventory_stable_polls
+            >= DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF
+        ) != was_backed_off:
+            # The cadence tier flipped -- the interval comparison in the
+            # scheduler reconcile sees it and rebuilds the intent.
+            self.reconcile_lid_observation()
+        if stable:
             return
         previous_generation = self._hardware_write_generation
         self._hardware_write_generation += 1
@@ -14852,6 +15016,32 @@ class StatusBarController(NSObject):
                     getattr(self.settings, "screen_bar_phase_offset_ms", 0.0) or 0.0
                 )
                 reanchor(result.completed_at + offset_ms / 1000.0)
+
+    def _lid_observation_interval(self) -> float:
+        # The 1s cadence exists to catch the lid edge promptly when the
+        # state drives real behavior -- the caffeinate hold answering an
+        # ask while the lid is shut. An animation-only arming tolerates a
+        # slower cadence: the cue lands on hardware seconds later, and a
+        # 1Hz ioreg fork buys nothing between edges.
+        if (
+            self.settings.closed_lid_awake_policy != CLOSED_LID_AWAKE_NEVER
+            or bool(getattr(self.keep_awake, "holding_requested", False))
+        ):
+            return LID_POLL_SECONDS
+        return LID_OBSERVATION_ANIMATION_SECONDS
+
+    def _device_inventory_interval(self) -> float:
+        # A pane the user is watching, or an inventory that is still
+        # changing, keeps the 2s rate; a stable one backs off -- the
+        # timer intent carries the cadence, so the tier lives in the
+        # reconcile comparison below to force a re-plan when it flips.
+        if (
+            self._devices_pane_requests_inventory()
+            or self._device_inventory_stable_polls
+            < DEVICE_INVENTORY_STABLE_POLLS_BEFORE_BACKOFF
+        ):
+            return STATUS_BAR_DEVICE_POLL_SECONDS
+        return STATUS_BAR_DEVICE_IDLE_POLL_SECONDS
 
     def _lid_observation_relevant(self) -> bool:
         if self.settings.closed_lid_awake_policy != CLOSED_LID_AWAKE_NEVER:
@@ -15177,6 +15367,12 @@ class StatusBarController(NSObject):
         now: float | None = None,
     ) -> None:
         desired = bool(active)
+        if not desired:
+            # No timer armed: the scheduled value tracks whatever the
+            # interval would be so the reconcile comparison stays quiet.
+            self._lid_observation_scheduled_interval = (
+                self._lid_observation_interval()
+            )
         if desired == self._lid_observation_active:
             return
         previous_generation = self._os_poll_generation
@@ -15197,6 +15393,10 @@ class StatusBarController(NSObject):
         now: float | None = None,
     ) -> None:
         desired = bool(active)
+        if not desired:
+            self._device_inventory_scheduled_interval = (
+                self._device_inventory_interval()
+            )
         if desired == self._device_inventory_active:
             return
         previous_generation = self._os_poll_generation
@@ -15358,6 +15558,10 @@ class StatusBarController(NSObject):
                 "_scheduled_settings_message_deadline",
                 None,
             )
+            and self._lid_observation_interval()
+            == self._lid_observation_scheduled_interval
+            and self._device_inventory_interval()
+            == self._device_inventory_scheduled_interval
         ):
             return
 
@@ -15432,6 +15636,10 @@ class StatusBarController(NSObject):
                         "_scheduled_settings_message_deadline",
                         None,
                     )
+                    or self._lid_observation_interval()
+                    != self._lid_observation_scheduled_interval
+                    or self._device_inventory_interval()
+                    != self._device_inventory_scheduled_interval
                 ):
                     now = self._presentation_monotonic()
                     plan = plan_presentation_schedule(
@@ -15478,25 +15686,31 @@ class StatusBarController(NSObject):
                     intents = plan.intents
                     if current_lid_active:
                         assert self._lid_observation_fire_at is not None
+                        lid_interval = self._lid_observation_interval()
+                        self._lid_observation_scheduled_interval = lid_interval
                         intents = (
                             *intents,
                             RuntimeTimerIntent(
                                 feature=RuntimeFeature.LID_OBSERVATION,
                                 fire_at=self._lid_observation_fire_at,
-                                interval=LID_POLL_SECONDS,
-                                tolerance=LID_POLL_SECONDS * 0.1,
+                                interval=lid_interval,
+                                tolerance=lid_interval * 0.25,
                                 common_modes=True,
                             ),
                         )
                     if current_device_inventory_active:
                         assert self._device_inventory_fire_at is not None
+                        inventory_interval = self._device_inventory_interval()
+                        self._device_inventory_scheduled_interval = (
+                            inventory_interval
+                        )
                         intents = (
                             *intents,
                             RuntimeTimerIntent(
                                 feature=RuntimeFeature.DEVICE_INVENTORY,
                                 fire_at=self._device_inventory_fire_at,
-                                interval=STATUS_BAR_DEVICE_POLL_SECONDS,
-                                tolerance=STATUS_BAR_DEVICE_POLL_SECONDS * 0.1,
+                                interval=inventory_interval,
+                                tolerance=inventory_interval * 0.25,
                                 # Default mode: statting volumes mid-scroll
                                 # was menu jank; deferring a poll until the
                                 # scroll ends is invisible.

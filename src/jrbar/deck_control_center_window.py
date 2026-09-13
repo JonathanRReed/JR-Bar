@@ -163,8 +163,11 @@ class DeckControlCenterWindow(NSObject):
         self.bank_label.setStringValue_(f"Bank {snapshot.bank + 1} of {snapshot.bank_count}")
         output = getattr(self.target, "_creator_micro_output_receipt", None)
         device_state = getattr(output, "reason", "software_only").replace("_", " ")
+        from .models import provider_label
+        scope_word = "all providers" if snapshot.scope == "automatic" else provider_label(snapshot.scope)
         self.summary.setStringValue_(f"{device_state.capitalize()} · "
                                     f"{'Session keys' if controls and controls.session_mode else 'Aggregate lighting'} · "
+                                    f"board: {scope_word} · "
                                     f"{snapshot.unscoped_count} unscoped observations stay in Agent Browser")
         labels = dict(getattr(self.target, "_deck_control_labels", ()))
         last = getattr(self.target, "_deck_last_input", None)

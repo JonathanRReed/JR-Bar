@@ -134,7 +134,8 @@ extension CoreAggregate {
 }
 
 /// The reduction behind `AgentStateMonitor` (app target): reads
-/// `~/.local/state/sidepulse/agent-monitor/latest.json` and answers the
+/// `~/.local/state/jrbar/latest.json` (the flat dir
+/// `state_paths.default_state_dir` defines) and answers the
 /// one-word state plus the detail line.
 ///
 /// The file may carry either the public `agents` summary
@@ -145,10 +146,23 @@ extension CoreAggregate {
 public enum AgentMonitorFeed {
     public static let completedWindow: TimeInterval = 90
 
-    public static func reduce(_ data: Data?, now: Date = Date()) -> (state: AgentAggregateState, detail: String) {
+    /// A `latest.json` older than this is a fossil, not a snapshot. The
+    /// monitor rewrites the file (atomically, debounced to about a second)
+    /// on every state change and never heartbeats it, so its age is "how
+    /// long since the last change reached disk" — and past a few minutes
+    /// the fallback must say so rather than present a frozen file as now.
+    public static let staleAfter: TimeInterval = 5 * 60
+
+    public static func reduce(_ data: Data?, now: Date = Date(), fileModifiedAt: Date? = nil) -> (state: AgentAggregateState, detail: String) {
         guard let data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return (.idle, "No agent monitor state")
         }
+        // When the file was last written: the v2 document's own clock
+        // stamp first (robust to the file being copied), then the caller's
+        // mtime — an `agents` summary carries no clock of its own.
+        let writtenAt = ((json["last_clock"] as? [String: Any])?["wall_epoch"] as? Double)
+            ?? (json["updated_at"] as? Double)
+            ?? fileModifiedAt?.timeIntervalSince1970
         var lifecycle: [String: Int] = [:]
         var nextActor: [String: Int] = [:]
         var recentlyCompleted = 0
@@ -171,6 +185,14 @@ public enum AgentMonitorFeed {
         } else {
             return (.idle, "Unrecognised latest.json")
         }
+        // A recognised document older than `staleAfter` collapsed to idle:
+        // "the file stopped moving" is the only claim left standing.
+        if let writtenAt {
+            let age = now.timeIntervalSince1970 - writtenAt
+            if age > staleAfter {
+                return (.idle, "Monitor quiet — last update \(ageText(age)) ago")
+            }
+        }
         let active = (lifecycle["active"] ?? 0)
         let waiting = (lifecycle["waiting"] ?? 0) + (nextActor["user"] ?? 0)
         let failed = lifecycle["failed"] ?? 0
@@ -188,5 +210,17 @@ public enum AgentMonitorFeed {
         let total = lifecycle.values.reduce(0, +)
         let detail = parts.isEmpty ? (total > 0 ? "\(total) sessions, nothing live" : "No sessions") : parts.joined(separator: " · ")
         return (state, detail)
+    }
+
+    /// "47s" / "6m" / "2h" — a file age in the same shorthand the panel's
+    /// elapsed column uses.
+    static func ageText(_ seconds: TimeInterval) -> String {
+        let s = max(0, Int(seconds))
+        if s < 60 { return "\(s)s" }
+        let minutes = s / 60
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h" }
+        return "\(hours / 24)d"
     }
 }

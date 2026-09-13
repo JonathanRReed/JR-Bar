@@ -7,6 +7,8 @@ windows, preferences, or notification APIs.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
@@ -141,8 +143,73 @@ def scene_from_value(value: object) -> Scene | None:
         return None
 
 
-def policy_for_scene(scene: object, *, reduce_motion: bool = False) -> ScenePolicy | None:
-    """Return an immutable policy, failing closed for malformed input."""
+# The ScenePolicy fields an installed Scene pack may restate for a scene.
+# ``scene`` itself is deliberately absent: a pack retunes what a scene
+# means, it can never rename or reseat the scene the user picked.
+# ``reduce_motion`` is likewise absent -- it is a runtime accessibility
+# input, not pack data.
+_PACK_OVERRIDABLE_FIELDS = (
+    "surface_role",
+    "brightness",
+    "motion",
+    "notifications",
+    "display_admission",
+    "device_selection",
+)
+
+
+def _pack_override_fields(row: object) -> dict[str, object] | None:
+    """One override row's fields, or None when the row is unusable.
+
+    ``ScenePackStore.policy_overrides`` hands back already-validated
+    ``ScenePolicy`` rows, so the common path is a plain attribute copy.
+    A mapping row -- a caller that built the table by hand -- is accepted
+    only when every field it names is a known overridable field carrying
+    the exact type the field declares; anything else fails closed to the
+    base policy rather than smuggling a half-coherent override.
+    """
+    if type(row) is ScenePolicy:
+        return {field: getattr(row, field) for field in _PACK_OVERRIDABLE_FIELDS}
+    if not isinstance(row, Mapping):
+        return None
+    allowed: dict[str, tuple[type, ...]] = {
+        "surface_role": (SurfaceRole,),
+        "brightness": (int, float),
+        "motion": (MotionLevel,),
+        "notifications": (NotificationMode,),
+        "display_admission": (DisplayAdmission,),
+        "device_selection": (DeviceSelection,),
+    }
+    fields: dict[str, object] = {}
+    for field in _PACK_OVERRIDABLE_FIELDS:
+        value = row.get(field)
+        if value is None:
+            continue
+        expected = allowed[field]
+        if type(value) not in expected:
+            return None
+        if field == "brightness":
+            value = float(value)
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                return None
+        fields[field] = value
+    return fields
+
+
+def policy_for_scene(
+    scene: object,
+    *,
+    reduce_motion: bool = False,
+    overrides: object = None,
+) -> ScenePolicy | None:
+    """Return an immutable policy, failing closed for malformed input.
+
+    ``overrides`` is the validated ``Scene -> ScenePolicy`` table of the
+    active Scene pack (``ScenePackStore.policy_overrides``). A row merges
+    over the base policy for that scene only; a scene the pack does not
+    name -- and any row that does not decode cleanly -- keeps the built-in
+    policy untouched.
+    """
     selected = scene_from_value(scene)
     if selected is None or type(reduce_motion) is not bool:
         return None
@@ -152,26 +219,41 @@ def policy_for_scene(scene: object, *, reduce_motion: bool = False) -> ScenePoli
     values = {
         field: getattr(policy, field) for field in policy.__dataclass_fields__
     }
-    return ScenePolicy(**{**values, "reduce_motion": reduce_motion})
+    if isinstance(overrides, Mapping):
+        row = overrides.get(selected)
+        if row is None:
+            row = overrides.get(selected.value)
+        fields = _pack_override_fields(row)
+        if fields is not None:
+            values.update(fields)
+    values["scene"] = selected
+    values["reduce_motion"] = reduce_motion
+    return ScenePolicy(**values)
 
 
 def effective_policy_for_scene(
     scene: object,
     *,
     accessibility_preferences: object | None = None,
+    overrides: object = None,
 ) -> ScenePolicy | None:
     """Resolve a scene against an already-read accessibility snapshot.
 
     This adapter deliberately performs no system preference lookup. Runtime
     owners can pass their existing accessibility snapshot when one is
     available; callers without one retain the scene's normal motion policy.
+    ``overrides`` is forwarded to :func:`policy_for_scene` unchanged.
     """
     reduce_motion = False
     if accessibility_preferences is not None:
         reduce_motion = getattr(accessibility_preferences, "reduce_motion", None)
         if type(reduce_motion) is not bool:
             return None
-    return policy_for_scene(scene, reduce_motion=reduce_motion)
+    return policy_for_scene(
+        scene,
+        reduce_motion=reduce_motion,
+        overrides=overrides,
+    )
 
 
 def scene_options() -> tuple[Scene, ...]:

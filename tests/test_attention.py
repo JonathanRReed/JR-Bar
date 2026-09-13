@@ -8,6 +8,7 @@ from jrbar.attention import (
     SignalKind,
     project_attention,
     project_attention_from_operator_state,
+    regate_actionable_attention,
     stable_event_key,
 )
 from jrbar.capacity_types import SourceKey
@@ -461,3 +462,67 @@ def test_canonical_completed_parent_with_active_child_projects_active() -> None:
 
     (main_row,) = projection.visible_rows
     assert main_row.lifecycle_mode is LifecycleMode.ACTIVE
+
+
+def test_regate_demotes_asks_the_canonical_state_no_longer_holds() -> None:
+    source = SourceKey("codex", "hooks", "global", "live_agent_events")
+    work_key = WorkKey(source, WorkIdentifier("work:held"))
+    held_key = RequestKey(work_key, RequestIdentifier("request:held"))
+    live_key = RequestKey(work_key, RequestIdentifier("request:live"))
+    held = replace(
+        status(event_name="PermissionRequest", mode=AgentMode.WAITING_FOR_INPUT),
+        request_key=held_key,
+    )
+    live = replace(
+        status(
+            agent_id="codex:session:other",
+            event_name="PermissionRequest",
+            mode=AgentMode.WAITING_FOR_INPUT,
+        ),
+        request_key=live_key,
+    )
+    projection = project_attention(
+        snapshot_with(held, live), AgentMonitorSettings()
+    )
+    assert len(projection.actionable_attention) == 2
+
+    gated = regate_actionable_attention(projection, frozenset({live_key}))
+
+    (survivor,) = gated.actionable_attention
+    assert survivor.request_key == live_key
+    held_row = next(
+        row for row in gated.visible_rows if row.request_key == held_key
+    )
+    assert held_row.actionable is False
+    assert held_row.lifecycle_mode is LifecycleMode.UNKNOWN
+    assert gated.click_target_agent_id == "codex:session:other"
+
+
+def test_regate_without_live_asks_clears_the_attention_aggregates() -> None:
+    source = SourceKey("codex", "hooks", "global", "live_agent_events")
+    held_key = RequestKey(
+        WorkKey(source, WorkIdentifier("work:held")),
+        RequestIdentifier("request:held"),
+    )
+    held = replace(
+        status(event_name="PermissionRequest", mode=AgentMode.WAITING_FOR_INPUT),
+        request_key=held_key,
+    )
+    projection = project_attention(snapshot_with(held), AgentMonitorSettings())
+
+    gated = regate_actionable_attention(projection, frozenset())
+
+    assert gated.actionable_attention == ()
+    assert gated.lifecycle_mode is LifecycleMode.UNKNOWN
+    assert gated.click_target_agent_id is None
+
+
+def test_regate_keeps_keyless_asks_and_returns_identity_when_unchanged() -> None:
+    keyless = status(
+        event_name="PermissionRequest", mode=AgentMode.WAITING_FOR_INPUT
+    )
+    projection = project_attention(
+        snapshot_with(keyless), AgentMonitorSettings()
+    )
+
+    assert regate_actionable_attention(projection, frozenset()) is projection

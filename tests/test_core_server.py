@@ -238,6 +238,153 @@ def test_fifth_client_is_refused_and_stale_socket_is_replaced(sock_dir: Path) ->
     assert not path.exists()
 
 
+def test_a_client_that_stops_reading_is_dropped_without_wedging_fanout(
+    server: CoreServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One stalled reader must not park the serial flusher: SO_SNDTIMEO
+    bounds every send, and enough consecutive blocked sends drop the
+    client so the other clients keep receiving frames."""
+    import struct as _struct
+
+    # Shrink the per-send deadline and the strike budget so the stall is
+    # measured in tenths of a second rather than whole seconds.
+    monkeypatch.setattr(
+        "jrbar.core_server._SEND_TIMEOUT_TIMEVAL", _struct.pack("ll", 0, 200_000)
+    )
+    monkeypatch.setattr("jrbar.core_server.CLIENT_MAX_BLOCKED_SENDS", 2)
+
+    reader = _connect(server)
+    assert _read_frames(reader, 4)[0]["t"] == "hello"
+
+    # The healthy client drains continuously on its own thread so it
+    # never accrues strikes itself; a client that cannot keep up DOES
+    # legitimately lose frames to the send timeout.
+    received: list[dict] = []
+    read_errors: list[Exception] = []
+    marker_seen = threading.Event()
+    keep_reading = threading.Event()
+    keep_reading.set()
+
+    def drain() -> None:
+        reader.settimeout(0.2)
+        buffer = b""
+        while keep_reading.is_set():
+            try:
+                chunk = reader.recv(65536)
+            except TimeoutError:
+                continue
+            except OSError as exc:
+                read_errors.append(exc)
+                return
+            if not chunk:
+                return
+            buffer += chunk
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                try:
+                    frame = json.loads(line)
+                except ValueError as exc:
+                    read_errors.append(exc)
+                    return
+                received.append(frame)
+                if frame.get("kind") == "marker":
+                    marker_seen.set()
+
+    drain_thread = threading.Thread(target=drain, daemon=True)
+    drain_thread.start()
+
+    staller = _connect(server)
+    # Shrink the peer's receive buffer so a few big frames fill it, then
+    # read only the greeting and never read again.
+    staller.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
+    assert _read_frames(staller, 4)[0]["t"] == "hello"
+
+    blob = "x" * (200 * 1024)
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and server.client_count > 1:
+        server.publish_event({"kind": "fill", "blob": blob})
+    assert server.client_count == 1, "a peer that never reads was never dropped"
+
+    server.publish_event({"kind": "marker"})
+    assert marker_seen.wait(3.0), (
+        "a stalled peer starved every frame to healthy clients"
+    )
+    keep_reading.clear()
+    drain_thread.join(1.0)
+    assert read_errors == []
+    staller.close()
+    reader.close()
+
+
+def test_event_queue_is_bounded_and_drops_oldest(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a running flusher the queue must still stay bounded:
+    event/log frames shed oldest-first while coalesced documents keep
+    their latest-wins slot."""
+    monkeypatch.setattr("jrbar.core_server.MAX_QUEUED_FRAMES", 4)
+    instance = _server(sock_dir)  # not started: nothing drains the queue
+    for index in range(10):
+        instance.publish_event({"kind": "burst", "index": index})
+    assert len(instance._queue) == 4
+    assert instance.stats["dropped_queue"] == 6
+    kept = [json.loads(frame)["index"] for frame in instance._queue]
+    assert kept == [6, 7, 8, 9]
+
+
+def test_stale_socket_probe_ambiguity_never_unlinks(
+    sock_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe TIMEOUT is not proof of death: a wedged-but-live daemon
+    reads identically, so the path must be left alone and startup must
+    refuse -- only ECONNREFUSED may unlink (ipc.py parity)."""
+    import jrbar.core_server as core_server
+
+    path = sock_dir / "core.sock"
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(path))
+    stale.close()
+    assert path.exists()
+
+    class _TimingOutProbe:
+        def settimeout(self, _seconds: float) -> None:
+            pass
+
+        def connect(self, _path: str) -> None:
+            raise TimeoutError("probe timed out under load")
+
+        def close(self) -> None:
+            pass
+
+    class _SocketModule:
+        AF_UNIX = socket.AF_UNIX
+        SOCK_STREAM = socket.SOCK_STREAM
+
+        @staticmethod
+        def socket(*_args: object, **_kwargs: object) -> object:
+            return _TimingOutProbe()
+
+    monkeypatch.setattr(core_server, "socket", _SocketModule)
+    with pytest.raises(OSError, match="unproven"):
+        core_server.CoreServer._unlink_stale(path)
+    monkeypatch.undo()
+    assert path.exists(), "an ambiguous probe must never remove the path"
+
+    # And the real path: a bound-then-closed socket refuses cleanly and is
+    # still replaced exactly as before.
+    instance = _server(sock_dir)
+    instance.start()
+    try:
+        client = _connect(instance)
+        assert _read_frames(client, 1)[0]["t"] == "hello"
+        client.close()
+    finally:
+        instance.stop()
+
+
 def test_dispatch_runs_on_the_reader_thread_and_reply_is_serialisable(sock_dir: Path) -> None:
     seen: dict[str, object] = {}
 

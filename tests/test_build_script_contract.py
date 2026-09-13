@@ -88,6 +88,8 @@ def test_package_builder_assembles_the_swift_app_daemon_and_shim() -> None:
     assert "packaging/jrbar_entry.py" in text
     # The daemon bundle is headless and the app hands the daemon its commit.
     assert 'Add :LSUIElement bool true" "$CORE_PLIST"' in text
+    # App Nap must never defer the daemon: its whole job is timeliness.
+    assert 'Add :LSAppNapIsDisabled bool true" "$CORE_PLIST"' in text
     assert ":JRBarCommit string $COMMIT" in text
     # Everything the old PyInstaller UI bundle needed is gone.
     assert "--collect-submodules Cocoa" in text

@@ -27,6 +27,11 @@ final class ScreenBarController {
     private var lastCodes: [RGB8] = []
     private var lastRaw: [RGB8] = Array(repeating: .black, count: ScreenBarGeometry.ledCount)
     private var displayAsleep = false
+    /// The daemon's last epoch anchor — kept so wake can re-lock: the
+    /// strip's firmware clock runs through sleep while `CACurrentMediaTime`
+    /// pauses, so the media-time anchor computed before the sleep no longer
+    /// maps to the strip's phase afterwards.
+    private var lastAnchorEpoch: Double?
     /// Reduce Motion: the band holds the program's brightest frame instead
     /// of playing it. Live-read and re-presented on the workspace's change.
     private var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -137,7 +142,15 @@ final class ScreenBarController {
 
     @objc private func screensChanged(_ note: Notification) { reposition() }
     @objc private func screensDidSleep(_ note: Notification) { displayAsleep = true; updateClock() }
-    @objc private func screensDidWake(_ note: Notification) { displayAsleep = false; present() }
+    @objc private func screensDidWake(_ note: Notification) {
+        displayAsleep = false
+        if let epoch = lastAnchorEpoch {
+            let now = CACurrentMediaTime()
+            let locked = Self.mediaTime(forEpoch: epoch)
+            if locked <= now + 0.05, now - locked < 6 * 3600 { anchor = locked }
+        }
+        present()
+    }
 
     /// Reduce Motion toggled in System Settings: freeze the moving program
     /// or hand a still one back to Core Animation.
@@ -175,6 +188,7 @@ final class ScreenBarController {
             // and a re-aligned anchor replays the plan instead of paying
             // for a recompile. A nil anchor carries no phase word, so an
             // identical republish never restarts.
+            lastAnchorEpoch = anchorEpoch
             guard let anchorEpoch else { return }
             let now = CACurrentMediaTime()
             let locked = Self.mediaTime(forEpoch: anchorEpoch)
@@ -216,6 +230,7 @@ final class ScreenBarController {
         self.sampler = sampler
         plan = LEDSKeyframePlan.render(sampler: sampler)
         anchor = now
+        lastAnchorEpoch = anchorEpoch
         if let anchorEpoch {
             let locked = Self.mediaTime(forEpoch: anchorEpoch)
             // Trust anchors from the recent past; a future or absurd anchor

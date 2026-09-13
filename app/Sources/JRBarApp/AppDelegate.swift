@@ -132,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         panel.setAnchorProvider { [weak statusItem] in statusItem?.anchorRect }
         panel.onOpenStateChange = { [weak statusItem] open in statusItem?.setPanelOpen(open) }
         statusItem.onTogglePanel = { [weak panel] in panel?.toggle() }
+        statusItem.onUnsnoozeAll = { [weak core] in core?.snooze(session: nil, seconds: 0) }
         // The optional global hotkey (Settings › General) toggles the panel
         // through the same path the status item's click does.
         let hotkey = PanelHotkey()
@@ -795,6 +796,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func refreshAggregate() {
         guard let store, let statusItem else { return }
         statusItem.update(state: store.aggregate, detail: store.headerCounts)
+        let now = Date()
+        statusItem.setSnoozed(store.rows.filter { $0.isSnoozed(now: now) }.count)
     }
 
     /// `menu_bar_icon_style` plus what each style shows: the meters (one
@@ -830,9 +833,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let ceiling = EventPolicy.escalationCeiling(document?.string("escalation_tier"))
             let stage = min(state.escalation?.stageNumber ?? 0, ceiling)
             let asksOpen = !state.asks.isEmpty || state.mainSessions.contains { $0.ask != nil }
-            statusItem.setEscalationPulse(stage >= 2 && asksOpen)
+            statusItem.setEscalation(stage: stage, asksOpen: asksOpen)
         } else {
-            statusItem.setEscalationPulse(false)
+            statusItem.setEscalation(stage: 0, asksOpen: false)
         }
     }
 

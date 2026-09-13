@@ -1,5 +1,6 @@
 """Answering an ask in place: the exact key each provider's CLI takes at its
-permission prompt, behind a chain of safety checks.
+permission prompt -- or, for an ``input`` ask, the reply text typed out and
+submitted with Return -- behind a chain of safety checks.
 
 This is the local runtime surface ``local.answer_in_place`` that the product
 contract binds ``ProductCapability.ANSWERING`` to (provider_contracts.py). A
@@ -42,6 +43,8 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
+
+from .answer_in_place import MAX_ANSWER_REPLY_LENGTH
 
 # --- refusal vocabulary ------------------------------------------------------
 #: Every code this surface can answer with. ``docs/CORE-PROTOCOL.md`` documents
@@ -302,20 +305,19 @@ class AnswerPlan:
         }
 
 
-def plan_local_answer(
+def _checked_answer_host(
     *,
     provider: str,
-    decision: str,
     ask_live: bool,
     facts: AnswerHostFacts,
-) -> AnswerPlan:
-    """Decide, from facts alone, whether this key may be sent. Pure.
+) -> ProviderAnswerKeys:
+    """Every check a delivery must pass, whichever payload it carries.
 
     Raises ``AnswerRefusal`` with the exact refusal code for the first check
     that fails, in the order that makes the refusal most useful to read.
+    Returns the provider's measured key recipe -- a provider with no recipe
+    has no in-place answer of ANY kind.
     """
-    if decision not in ("approve", "deny"):
-        raise ValueError("decision must be approve or deny")
     if type(facts) is not AnswerHostFacts:
         raise ValueError("invalid answer host facts")
 
@@ -390,6 +392,20 @@ def plan_local_answer(
             "ax_not_trusted",
         )
 
+    return keys
+
+
+def plan_local_answer(
+    *,
+    provider: str,
+    decision: str,
+    ask_live: bool,
+    facts: AnswerHostFacts,
+) -> AnswerPlan:
+    """Decide, from facts alone, whether this key may be sent. Pure."""
+    if decision not in ("approve", "deny"):
+        raise ValueError("decision must be approve or deny")
+    keys = _checked_answer_host(provider=provider, ask_live=ask_live, facts=facts)
     return AnswerPlan(
         provider=keys.provider,
         decision=decision,
@@ -397,6 +413,78 @@ def plan_local_answer(
         target_pid=facts.frontmost_pid,
         mechanism="synthetic_keystroke",
         meaning=keys.meaning_for(decision),
+        facts=facts,
+    )
+
+
+# --- typed replies -------------------------------------------------------------
+#
+# An ``input`` ask wants words, not a verdict. The payload is the same
+# synthetic keystroke macOS offers -- a keyboard event posted to the session
+# host's pid -- but carrying a unicode string instead of a key code, then a
+# bare Return to submit. Every fence above applies unchanged: the ask must
+# still be live, the session's terminal must still be the frontmost window.
+
+
+def _normalized_reply_text(value: object) -> str:
+    """One bounded single line of printable text, or ``ValueError``."""
+    if type(value) is not str:
+        raise ValueError("invalid reply text")
+    normalized = " ".join(value.split())[:MAX_ANSWER_REPLY_LENGTH]
+    if not normalized or not normalized.isprintable():
+        raise ValueError("invalid reply text")
+    return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class AnswerReplyPlan:
+    """A typed reply the checks agreed to: the text, and Return after it."""
+
+    provider: str
+    text: str
+    target_pid: int
+    mechanism: str
+    meaning: str
+    facts: AnswerHostFacts
+
+    def __post_init__(self) -> None:
+        if not (
+            type(self.provider) is str
+            and type(self.text) is str
+            and self.text == _normalized_reply_text(self.text)
+            and type(self.target_pid) is int
+            and self.target_pid > 0
+            and type(self.mechanism) is str
+            and type(self.meaning) is str
+            and type(self.facts) is AnswerHostFacts
+        ):
+            raise ValueError("invalid reply plan")
+
+    def document(self) -> dict[str, object]:
+        return {
+            "mechanism": self.mechanism,
+            "characters": len(self.text),
+            "meaning": self.meaning,
+            "host": self.facts.document(),
+        }
+
+
+def plan_local_reply(
+    *,
+    provider: str,
+    reply_text: str,
+    ask_live: bool,
+    facts: AnswerHostFacts,
+) -> AnswerReplyPlan:
+    """Decide, from facts alone, whether this reply may be typed. Pure."""
+    text = _normalized_reply_text(reply_text)
+    keys = _checked_answer_host(provider=provider, ask_live=ask_live, facts=facts)
+    return AnswerReplyPlan(
+        provider=keys.provider,
+        text=text,
+        target_pid=facts.frontmost_pid,
+        mechanism="synthetic_text",
+        meaning="type the reply text and press Return",
         facts=facts,
     )
 
@@ -634,6 +722,79 @@ def post_answer_key(pid: int, key_code: int) -> None:
         ) from error
 
 
+#: macOS virtual key code for Return (Carbon ``kVK_Return``).
+_KEY_RETURN: Final = AnswerKey("return", 36)
+
+#: UTF-16 code units per keyboard event. ``CGEventKeyboardSetUnicodeString``
+#: carries a bounded string; 20 keeps every event far inside that bound, and
+#: chunking on characters means a surrogate pair is never split.
+_TEXT_EVENT_UNIT_LIMIT: Final = 20
+
+
+def _unicode_chunks(text: str) -> Iterable[str]:
+    chunk: list[str] = []
+    units = 0
+    for char in text:
+        char_units = len(char.encode("utf-16-le")) // 2
+        if chunk and units + char_units > _TEXT_EVENT_UNIT_LIMIT:
+            yield "".join(chunk)
+            chunk, units = [], 0
+        chunk.append(char)
+        units += char_units
+    if chunk:
+        yield "".join(chunk)
+
+
+def post_answer_text(pid: int, text: str) -> None:
+    """Type ``text`` into that process, then press Return. Raises on failure.
+
+    A key code can only name one physical key, so the reply rides
+    ``CGEventKeyboardSetUnicodeString`` -- the unicode payload an ordinary
+    keyboard event carries. The string goes on the key-DOWN event (typing is
+    a key-down behaviour); a plain key-up follows, and a bare Return submits,
+    the same as the binary path's single keystroke.
+    """
+    if type(pid) is not int or pid <= 0 or type(text) is not str or not text:
+        raise AnswerRefusal("send_failed", "Invalid keystroke target.", "bad_target")
+    try:
+        from Quartz import (
+            CGEventCreateKeyboardEvent,
+            CGEventKeyboardSetUnicodeString,
+            CGEventPostToPid,
+            CGEventSetFlags,
+        )
+    except Exception as error:  # pragma: no cover - macOS only
+        raise AnswerRefusal(
+            "send_failed",
+            "This build cannot post keyboard events.",
+            type(error).__name__,
+        ) from error
+    for chunk in _unicode_chunks(text):
+        key_down = CGEventCreateKeyboardEvent(None, 0, True)
+        key_up = CGEventCreateKeyboardEvent(None, 0, False)
+        if key_down is None or key_up is None:
+            raise AnswerRefusal(
+                "send_failed",
+                "macOS refused to build the keystroke.",
+                "event_creation_failed",
+            )
+        CGEventSetFlags(key_down, 0)
+        CGEventSetFlags(key_up, 0)
+        CGEventKeyboardSetUnicodeString(
+            key_down, len(chunk.encode("utf-16-le")) // 2, chunk
+        )
+        try:
+            CGEventPostToPid(pid, key_down)
+            CGEventPostToPid(pid, key_up)
+        except Exception as error:  # pragma: no cover - macOS only
+            raise AnswerRefusal(
+                "send_failed",
+                "macOS refused to deliver the keystroke.",
+                type(error).__name__,
+            ) from error
+    post_answer_key(pid, _KEY_RETURN.key_code)
+
+
 def observe_host_facts(
     *,
     session_pid: int | None,
@@ -756,7 +917,7 @@ class AnswerDeliveryOutcome:
     delivered: bool
     code: str
     message: str
-    plan: AnswerPlan | None
+    plan: AnswerPlan | AnswerReplyPlan | None
 
     def document(self) -> dict[str, object]:
         document: dict[str, object] = {
@@ -782,10 +943,12 @@ class LocalAnswerDelivery:
         self,
         *,
         sender: Callable[[int, int], None] | None = None,
+        text_sender: Callable[[int, str], None] | None = None,
         observer: Callable[..., AnswerHostFacts] | None = None,
         clock: Callable[[], float] | None = None,
     ) -> None:
         self._sender = sender or post_answer_key
+        self._text_sender = text_sender or post_answer_text
         self._observer = observer or observe_host_facts
         self._clock = clock or time.monotonic
         self._lock = threading.RLock()
@@ -795,7 +958,8 @@ class LocalAnswerDelivery:
         self,
         *,
         provider: str,
-        decision: str,
+        decision: str | None = None,
+        reply_text: str | None = None,
         session_pid: int | None,
         expected_bundle_ids: Iterable[str],
         session_tty: str | None,
@@ -809,12 +973,20 @@ class LocalAnswerDelivery:
                     expected_bundle_ids=expected_bundle_ids,
                     session_tty=session_tty,
                 )
-                plan = plan_local_answer(
-                    provider=provider,
-                    decision=decision,
-                    ask_live=bool(is_live()),
-                    facts=facts,
-                )
+                if reply_text is not None:
+                    plan: AnswerPlan | AnswerReplyPlan = plan_local_reply(
+                        provider=provider,
+                        reply_text=reply_text,
+                        ask_live=bool(is_live()),
+                        facts=facts,
+                    )
+                else:
+                    plan = plan_local_answer(
+                        provider=provider,
+                        decision=decision,
+                        ask_live=bool(is_live()),
+                        facts=facts,
+                    )
                 if self._clock() - started > DELIVERY_BUDGET_SECONDS:
                     raise AnswerRefusal(
                         "stale_ask",
@@ -829,7 +1001,10 @@ class LocalAnswerDelivery:
                         "nothing was sent.",
                         "resolved_while_sending",
                     )
-                self._sender(plan.target_pid, plan.key.key_code)
+                if type(plan) is AnswerReplyPlan:
+                    self._text_sender(plan.target_pid, plan.text)
+                else:
+                    self._sender(plan.target_pid, plan.key.key_code)
             except AnswerRefusal as refusal:
                 outcome = AnswerDeliveryOutcome(
                     delivered=False,
@@ -842,7 +1017,11 @@ class LocalAnswerDelivery:
             outcome = AnswerDeliveryOutcome(
                 delivered=True,
                 code="sent",
-                message=f"Sent {plan.key.label} to {plan.facts.frontmost_bundle_id}.",
+                message=(
+                    f"Sent reply to {plan.facts.frontmost_bundle_id}."
+                    if type(plan) is AnswerReplyPlan
+                    else f"Sent {plan.key.label} to {plan.facts.frontmost_bundle_id}."
+                ),
                 plan=plan,
             )
             self.last_outcome = outcome
@@ -921,35 +1100,63 @@ class LocalAnswerSurface:
         reply_text: str | None,
     ) -> None:
         """Answer the controller's in-flight request, or raise the refusal."""
+        action_value = getattr(answer_kind, "value", answer_kind)
         decision = _decision_for(answer_kind)
         try:
-            if decision is None:
-                raise AnswerRefusal(
-                    "unsupported",
-                    "Only approve and deny can be answered in place.",
-                    "unsupported_action",
+            if action_value == "reply":
+                try:
+                    text = _normalized_reply_text(reply_text)
+                except ValueError:
+                    raise AnswerRefusal(
+                        "unsupported",
+                        "That reply cannot be typed in place.",
+                        "invalid_reply_text",
+                    ) from None
+                target = self._resolve_target("reply")
+                if type(target) is not LocalAnswerTarget:
+                    raise AnswerRefusal(
+                        "stale_ask",
+                        "There is no live ask to answer.",
+                        "no_target",
+                    )
+                outcome = self._delivery.deliver(
+                    provider=target.provider,
+                    reply_text=text,
+                    session_pid=target.session_pid,
+                    expected_bundle_ids=target.expected_bundle_ids,
+                    session_tty=target.session_tty,
+                    is_live=target.is_live,
                 )
-            if reply_text:
-                raise AnswerRefusal(
-                    "unsupported",
-                    "A typed reply cannot be answered in place.",
-                    "reply_text_unsupported",
+            else:
+                if decision is None:
+                    raise AnswerRefusal(
+                        "unsupported",
+                        "Only approve, deny and typed replies can be answered "
+                        "in place.",
+                        "unsupported_action",
+                    )
+                if reply_text is not None:
+                    raise AnswerRefusal(
+                        "unsupported",
+                        "A typed reply belongs to the reply action, not a "
+                        "decision.",
+                        "reply_text_on_decision",
+                    )
+                target = self._resolve_target(decision)
+                if type(target) is not LocalAnswerTarget:
+                    raise AnswerRefusal(
+                        "stale_ask",
+                        "There is no live ask to answer.",
+                        "no_target",
+                    )
+                outcome = self._delivery.deliver(
+                    provider=target.provider,
+                    decision=decision,
+                    session_pid=target.session_pid,
+                    expected_bundle_ids=target.expected_bundle_ids,
+                    session_tty=target.session_tty,
+                    is_live=target.is_live,
                 )
-            target = self._resolve_target(decision)
-            if type(target) is not LocalAnswerTarget:
-                raise AnswerRefusal(
-                    "stale_ask",
-                    "There is no live ask to answer.",
-                    "no_target",
-                )
-            outcome = self._delivery.deliver(
-                provider=target.provider,
-                decision=decision,
-                session_pid=target.session_pid,
-                expected_bundle_ids=target.expected_bundle_ids,
-                session_tty=target.session_tty,
-                is_live=target.is_live,
-            )
         except AnswerRefusal as refusal:
             outcome = AnswerDeliveryOutcome(
                 delivered=False,
@@ -1004,6 +1211,7 @@ __all__ = [
     "AnswerKey",
     "AnswerPlan",
     "AnswerRefusal",
+    "AnswerReplyPlan",
     "LocalAnswerDelivery",
     "LocalAnswerSurface",
     "LocalAnswerTarget",
@@ -1016,7 +1224,9 @@ __all__ = [
     "frontmost_application",
     "observe_host_facts",
     "plan_local_answer",
+    "plan_local_reply",
     "post_answer_key",
+    "post_answer_text",
     "process_alive",
     "process_ancestry",
     "raise_application",

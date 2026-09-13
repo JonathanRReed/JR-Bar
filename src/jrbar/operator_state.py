@@ -1962,3 +1962,65 @@ def reduce_operator_state(
         invalidations=frozenset(invalidations),
         diagnostics=_diagnostic_tuple(diagnostics),
     )
+
+
+def apply_acknowledgements(
+    state: CanonicalOperatorState,
+    acknowledged_requests: frozenset[RequestKey],
+) -> CanonicalOperatorState:
+    """Re-derive live request phases after the acknowledgement set changed.
+
+    The reducer only runs when a fact batch arrives; an "I'm on It" tap (or
+    a "Resume Escalation") must not wait for the session to say something.
+    This applies the SAME rule the reduce loop uses -- only the two live
+    phases move, and eligibility is re-derived with the request's own
+    actionability -- so a snapshot taken between batches tells the truth
+    the next batch would have told anyway. Requests hold no other truth
+    here: nothing is resolved, expired or reopened, so no semantic events
+    are produced and the generation is untouched.
+    """
+    if type(state) is not CanonicalOperatorState:
+        raise OperatorStateValidationError("invalid operator state")
+    if type(acknowledged_requests) is not frozenset or not all(
+        type(key) is RequestKey for key in acknowledged_requests
+    ):
+        raise OperatorStateValidationError("invalid acknowledged requests")
+    if len(acknowledged_requests) > MAX_CANONICAL_REQUESTS:
+        raise OperatorStateValidationError("invalid acknowledged requests")
+
+    live_phases = {
+        RequestPhase.LIVE_UNACKNOWLEDGED,
+        RequestPhase.LIVE_ACKNOWLEDGED,
+    }
+    changed = False
+    requests: list[CanonicalRequestTruth] = []
+    for request in state.requests:
+        if request.phase not in live_phases:
+            requests.append(request)
+            continue
+        phase = (
+            RequestPhase.LIVE_ACKNOWLEDGED
+            if request.key in acknowledged_requests
+            else RequestPhase.LIVE_UNACKNOWLEDGED
+        )
+        if phase is request.phase:
+            requests.append(request)
+            continue
+        actionable = (
+            request.request_kind is not RequestKind.UNKNOWN
+            and request.next_actor is NextActor.USER
+        )
+        requests.append(
+            replace(
+                request,
+                phase=phase,
+                acknowledgement_eligibility=_request_eligibility(
+                    phase,
+                    actionable=actionable,
+                ),
+            )
+        )
+        changed = True
+    if not changed:
+        return state
+    return replace(state, requests=tuple(requests))

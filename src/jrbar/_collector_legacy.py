@@ -40,6 +40,7 @@ from .models import (
 )
 from .operator_state import (
     ACTIVE_SILENCE_SECONDS,
+    MAX_CANONICAL_REQUESTS,
     PRESENCE_HORIZON_SECONDS,
     AcknowledgementEligibility,
     BootIdentifier,
@@ -53,6 +54,7 @@ from .operator_state import (
     RequestPhase,
     SemanticEventKey,
     empty_operator_state,
+    apply_acknowledgements,
     reduce_operator_state,
     semantic_event_key_from_payload,
     semantic_event_key_to_payload,
@@ -565,6 +567,37 @@ class LiveSessionMemory:
     _live_sessions: frozenset[tuple[str, str]] = frozenset()
     _live_sessions_at: float = 0.0
 
+    #: Optional callable returning the RequestKeys local triage has
+    #: acknowledged (``operator-triage.json`` lives on the controller, not
+    #: the collector). Pulled at reduce time so an acknowledge or a resume
+    #: applies to the very next batch.
+    acknowledged_requests_supplier: Callable[[], frozenset[RequestKey]] | None = None
+
+    def _acknowledged_request_keys(self) -> frozenset[RequestKey]:
+        """The asks a local acknowledgement currently covers.
+
+        Anything malformed -- no supplier, a throwing supplier, a wrong
+        shape -- fails closed to "nothing acknowledged" rather than
+        poisoning the reduce.
+        """
+        supplier = getattr(self, "acknowledged_requests_supplier", None)
+        if not callable(supplier):
+            return frozenset()
+        try:
+            keys = supplier()
+        except Exception:
+            return frozenset()
+        if type(keys) is not frozenset:
+            try:
+                keys = frozenset(keys)
+            except TypeError:
+                return frozenset()
+        if len(keys) > MAX_CANONICAL_REQUESTS or not all(
+            type(key) is RequestKey for key in keys
+        ):
+            return frozenset()
+        return keys
+
     def note_live_sessions(
         self, sessions: Iterable[tuple[str, str]], *, now: float | None = None
     ) -> None:
@@ -612,6 +645,7 @@ class AgentMonitor(LiveSessionMemory):
         transcript_records_cache_max_entries: int = TRANSCRIPT_RECORDS_CACHE_MAX_ENTRIES,
         transcript_file_list_cache_max_entries: int = TRANSCRIPT_FILE_LIST_CACHE_MAX_ENTRIES,
         clock_sampler: Callable[[], ClockSample] = _default_clock_sample,
+        acknowledged_requests_supplier: Callable[[], frozenset[RequestKey]] | None = None,
     ) -> None:
         self.sources = tuple(sources) if sources is not None else default_sources()
         self.stale_after_seconds = stale_after_seconds
@@ -634,6 +668,7 @@ class AgentMonitor(LiveSessionMemory):
         self._latest_status_signature: tuple[Any, ...] | None = None
         self._latest_statuses_by_key: dict[str, AgentStatus] | None = None
         self._clock_sampler = clock_sampler
+        self.acknowledged_requests_supplier = acknowledged_requests_supplier
         self.operator_state = empty_operator_state()
         self._canonical_signature: tuple[Any, ...] | None = None
         self._pending_operator_events: tuple[CanonicalOperatorEvent, ...] = ()
@@ -724,7 +759,10 @@ class AgentMonitor(LiveSessionMemory):
         )
 
     def _refresh_canonical_state(self) -> bool:
-        signature = self._input_signature()
+        # The acknowledgement set is reduce INPUT: an "I'm on It" tap that
+        # never reached the signature would leave requests claiming
+        # LIVE_UNACKNOWLEDGED until the next file write re-derived them.
+        signature = (self._input_signature(), self._acknowledged_request_keys())
         if signature == self._canonical_signature:
             return self._canonical_records_seen
         clock = self._clock_sampler()
@@ -782,8 +820,14 @@ class AgentMonitor(LiveSessionMemory):
         previous_watermarks = dict(self.operator_state.source_watermarks)
         state = empty_operator_state()
         events: dict[SemanticEventKey, CanonicalOperatorEvent] = {}
+        acknowledged = self._acknowledged_request_keys()
         for batch in batches:
-            reduced = reduce_operator_state(state, batch, clock=clock)
+            reduced = reduce_operator_state(
+                state,
+                batch,
+                clock=clock,
+                acknowledged_requests=acknowledged,
+            )
             state = reduced.state
             events.update((event.key, event) for event in reduced.events)
         if suppressed_work_keys:
@@ -1093,6 +1137,7 @@ class LiveAgentMonitor(LiveSessionMemory):
         latest_state_path: Path | None = None,
         restore_work_keys: tuple[WorkKey, ...] = (),
         clock_sampler: Callable[[], ClockSample] = _default_clock_sample,
+        acknowledged_requests_supplier: Callable[[], frozenset[RequestKey]] | None = None,
     ) -> None:
         self.sources = tuple(sources)
         self.stale_after_seconds = stale_after_seconds
@@ -1121,6 +1166,7 @@ class LiveAgentMonitor(LiveSessionMemory):
         self._latest_state_dirty = False
         self._latest_state_written_at = 0.0
         self._latest_state_write_lock = threading.Lock()
+        self.acknowledged_requests_supplier = acknowledged_requests_supplier
         self.load_latest_state()
 
     def ingest_record(self, record: HookEvent) -> None:
@@ -1204,12 +1250,15 @@ class LiveAgentMonitor(LiveSessionMemory):
     ) -> None:
         sampled_clock = self._clock_sampler() if clock is None else clock
         with self.lock:
+            acknowledged = self._acknowledged_request_keys()
             reduced = reduce_operator_state(
                 self.operator_state,
                 batch,
                 clock=sampled_clock,
+                acknowledged_requests=acknowledged,
             )
             self.operator_state = reduced.state
+            self._acknowledged_applied = acknowledged
             events = {
                 event.key: event
                 for event in (*self._pending_operator_events, *reduced.events)
@@ -1321,9 +1370,27 @@ class LiveAgentMonitor(LiveSessionMemory):
                 retained_watermark = batch.watermark
                 equal_watermark_confirmed = True
 
+    def _reapply_acknowledgements_locked(self) -> None:
+        """Fold the current acknowledgement set into stored state.
+
+        ``ingest_batch`` already re-derives every live request's phase, but
+        only when a batch arrives; a triage tap between batches would
+        otherwise leave the reduced truth a batch behind the file.
+        """
+        keys = self._acknowledged_request_keys()
+        if keys == getattr(self, "_acknowledged_applied", None):
+            return
+        updated = apply_acknowledgements(self.operator_state, keys)
+        self._acknowledged_applied = keys
+        if updated is self.operator_state:
+            return
+        self.operator_state = updated
+        self._latest_state_dirty = True
+
     def snapshot(self) -> MonitorSnapshot:
         now = _canonical_datetime(self._clock_sampler().wall_epoch)
         with self.lock:
+            self._reapply_acknowledgements_locked()
             state = self.operator_state
             events = self._pending_operator_events
             self._pending_operator_events = ()
@@ -1403,6 +1470,7 @@ class LiveAgentMonitor(LiveSessionMemory):
 
     def current_statuses_by_key(self) -> dict[str, AgentStatus]:
         with self.lock:
+            self._reapply_acknowledgements_locked()
             state = self.operator_state
             overlays = MappingProxyType(dict(self._status_overlays_by_work_key))
             supplemental = tuple(self._compatibility_statuses_by_agent_id.values())

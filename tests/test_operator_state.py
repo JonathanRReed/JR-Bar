@@ -1614,3 +1614,85 @@ def test_health_loss_still_holds_its_quarantine_past_the_lease() -> None:
     )
     assert source in still_held.state.timing_uncertain_sources
     assert still_held.state.clock_continuity.status is ClockContinuityStatus.UNCERTAIN
+
+
+def test_apply_acknowledgements_rederives_only_live_phases() -> None:
+    """An "I'm on It" tap between batches must flip the same phase the next
+    batch would -- and "Resume Escalation" must put it back."""
+    from jrbar.operator_state import apply_acknowledgements
+
+    state, _batch_fact, _work_key, request_key = _initial_active_request()
+    assert state.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
+
+    acknowledged = apply_acknowledgements(state, frozenset({request_key}))
+    assert acknowledged.requests[0].phase is RequestPhase.LIVE_ACKNOWLEDGED
+    assert (
+        acknowledged.requests[0].acknowledgement_eligibility
+        is AcknowledgementEligibility.ALREADY_ACKNOWLEDGED
+    )
+    # The acknowledgement set carries no new facts: generation untouched.
+    assert acknowledged.generation == state.generation
+
+    resumed = apply_acknowledgements(acknowledged, frozenset())
+    assert resumed.requests[0].phase is RequestPhase.LIVE_UNACKNOWLEDGED
+    assert (
+        resumed.requests[0].acknowledgement_eligibility
+        is AcknowledgementEligibility.ELIGIBLE
+    )
+
+
+def test_apply_acknowledgements_is_a_noop_without_a_phase_change() -> None:
+    """Re-applying the same set must return the identical object so monitors
+    can cheaply detect "nothing moved"."""
+    from jrbar.operator_state import apply_acknowledgements
+
+    state, _batch_fact, _work_key, request_key = _initial_active_request()
+    acknowledged = apply_acknowledgements(state, frozenset({request_key}))
+
+    assert apply_acknowledgements(acknowledged, frozenset({request_key})) is acknowledged
+    assert apply_acknowledgements(acknowledged, frozenset()) is not acknowledged
+
+
+def test_apply_acknowledgements_never_moves_terminal_requests() -> None:
+    """A resolved request stays resolved even if a stale key lingers in the
+    acknowledgement set."""
+    from jrbar.operator_state import apply_acknowledgements
+
+    state, _batch_fact, work_key, request_key = _initial_active_request()
+    resolved = reduce_operator_state(
+        state,
+        _batch(
+            watermark=_watermark("event:002", epoch=1_800_000_001.0),
+            request_facts=(
+                _request_fact(
+                    ProviderRequestState.RESOLVED,
+                    key=request_key,
+                    watermark=_watermark("event:002", epoch=1_800_000_001.0),
+                ),
+            ),
+        ),
+        clock=_clock(wall=1_800_000_001.0, monotonic=101.0),
+    )
+    assert resolved.state.requests[0].phase is RequestPhase.RESOLVED
+
+    applied = apply_acknowledgements(resolved.state, frozenset({request_key}))
+    assert applied is resolved.state
+
+
+def test_apply_acknowledgements_validates_inputs() -> None:
+    """The helper shares the reducer's fail-closed contract: malformed sets
+    refuse rather than silently acknowledging nothing."""
+    from jrbar.operator_state import apply_acknowledgements
+
+    state, _batch_fact, _wk, request_key = _initial_active_request()
+
+    with pytest.raises(OperatorStateValidationError):
+        apply_acknowledgements(state, {request_key})
+    with pytest.raises(OperatorStateValidationError):
+        apply_acknowledgements(state, frozenset({"not-a-key"}))
+    oversized = frozenset(
+        RequestKey(_work_key(f"work:{i:02d}"), RequestIdentifier(f"r:{i}"))
+        for i in range(MAX_CANONICAL_REQUESTS + 1)
+    )
+    with pytest.raises(OperatorStateValidationError):
+        apply_acknowledgements(state, oversized)

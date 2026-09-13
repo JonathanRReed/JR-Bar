@@ -168,6 +168,39 @@ struct CodecTests {
         #expect(log.message == "hooks drained")
     }
 
+    @Test("a malformed row drops out instead of sinking the document")
+    func tolerantRows() throws {
+        let frame = """
+            {"t":"state","v":1,"generation":9,"now":1788982892.0,
+             "sessions":[
+               {"id":"claude:session:good","provider":"claude","kind":"main"},
+               {"provider":"codex"},
+               42,
+               {"id":"codex:session:also-good","provider":"codex","kind":"main"}],
+             "asks":[{"session":"s","summary":"ok"},42],
+             "devices":[{"id":"d1","kind":"pro"},"oops"],
+             "usage":{"providers":[{"id":"claude","windows":[]},{"windows":42}]}}
+            """
+        guard case .state(let state) = try CoreCodec.decode(frame: Data(frame.utf8)) else {
+            Issue.record("not a state"); return
+        }
+        #expect(state.sessions.map(\.id) == ["claude:session:good", "codex:session:also-good"])
+        #expect(state.asks.count == 1)
+        #expect(state.devices.map(\.id) == ["d1"])
+        #expect(state.usage?.providers.map(\.id) == ["claude"])
+
+        let lightsFrame = """
+            {"t":"lights","v":1,"surfaces":{
+              "screen_bar":{"program":"off 1ms\\n#000000","led_count":8},
+              "hardware":42}}
+            """
+        guard case .lights(let lights) = try CoreCodec.decode(frame: Data(lightsFrame.utf8)) else {
+            Issue.record("not lights"); return
+        }
+        #expect(lights.screenBar?.ledCount == 8)
+        #expect(lights.hardware == nil)
+    }
+
     @Test("unknown types and future versions are not errors")
     func unknown() throws {
         guard case .unknown(let type, let version) = try CoreFixtures.message("unknown_type.json") else {

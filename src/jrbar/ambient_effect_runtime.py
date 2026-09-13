@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .accessibility_display import AccessibilityDisplayPreferences
@@ -101,6 +102,7 @@ from .glance_light import (
 )
 from .handoff_baton import HandoffBatonPlan, HandoffEndpoint, plan_handoff_baton
 from .milestone_odometer import (
+    MAX_MILESTONE_STEPS,
     MilestoneOdometerPlan,
     MilestoneOdometerPreferences,
     MilestoneOdometerState,
@@ -133,7 +135,7 @@ from .recovery_grace_note import (
     RecoveryGracePlan,
     plan_recovery_grace_note,
 )
-from .scenes import DEFAULT_SCENE, Scene, scene_from_value
+from .scenes import DEFAULT_SCENE, Scene, ScenePolicy, scene_from_value
 from .semantic_effect_router import (
     DEFAULT_SEMANTIC_EFFECT_MAP,
     SEMANTIC_PRIORITY,
@@ -630,6 +632,86 @@ def _environment(controller: object) -> tuple[DisplayAdmission, GlanceEnvironmen
     )
 
 
+def _active_pack_scene_policy(
+    settings: object,
+    scene: Scene,
+) -> ScenePolicy | None:
+    """The active Scene pack's override row for ``scene``, fail-closed.
+
+    Only the pack's own row is consulted -- never the base policy the row
+    merged over -- because the built-in policies declare gates the
+    runtime has never applied (calm admits only asks), so folding the
+    merged policy in here would quietly change a default install.
+    ``ScenePackStore.policy_overrides`` is mtime-cached, so asking every
+    batch costs one lstat, and any store or decode failure reads as "no
+    pack" rather than an exception on the observation path.
+    """
+
+    pack_id = getattr(settings, "active_scene_pack", None)
+    if type(pack_id) is not str or not pack_id.strip():
+        return None
+    try:
+        from .scene_pack_store import ScenePackStore
+
+        overrides = ScenePackStore().policy_overrides(pack_id.strip())
+    except Exception:
+        return None
+    if not isinstance(overrides, Mapping):
+        return None
+    policy = overrides.get(scene)
+    return policy if type(policy) is ScenePolicy else None
+
+
+# Most-to-least permissive. A pack row may tighten what a scene shows;
+# it may never widen past what the live DND projection allows, since DND
+# is the stronger, user-visible boundary.
+_ADMISSION_STRICTNESS = {
+    DisplayAdmission.NONE: 0,
+    DisplayAdmission.ASKS: 1,
+    DisplayAdmission.CRITICAL: 2,
+    DisplayAdmission.ALL: 3,
+}
+
+
+def _pack_display_admission(
+    base: DisplayAdmission,
+    pack_policy: ScenePolicy | None,
+) -> DisplayAdmission:
+    """Fold the pack row's ``display_admission`` under the DND admission."""
+
+    if pack_policy is None or type(pack_policy.display_admission) is not DisplayAdmission:
+        return base
+    if _ADMISSION_STRICTNESS[pack_policy.display_admission] < _ADMISSION_STRICTNESS[base]:
+        return pack_policy.display_admission
+    return base
+
+
+def _scene_pack_environment(
+    controller: object,
+    settings: object,
+    scene: Scene,
+) -> tuple[DisplayAdmission, GlanceEnvironment]:
+    """``_environment`` with the active pack's admission folded in.
+
+    When the pack tightens the admission the Glance environment is
+    rebuilt to match, so downstream consumers see one coherent answer
+    rather than a suppressed admission beside an un-suppressed flag pair.
+    """
+
+    admission, environment = _environment(controller)
+    merged = _pack_display_admission(
+        admission,
+        _active_pack_scene_policy(settings, scene),
+    )
+    if merged is admission:
+        return admission, environment
+    return merged, replace(
+        environment,
+        dnd_active=merged is not DisplayAdmission.ALL,
+        dim_asks_in_dnd=merged is DisplayAdmission.ASKS,
+    )
+
+
 def _history(controller: object) -> EffectHistory:
     current = getattr(controller, "_effect_history", None)
     if type(current) is EffectHistory:
@@ -834,9 +916,9 @@ def _record_delivery(
     now = time.time()
     notification_id = _notification_id(event_key, prefix)
     semantic = _semantic_kind(event_key, interruption_class, prefix)
-    admission, glance_environment = _environment(controller)
     settings = getattr(controller, "settings", None)
     scene = scene_from_value(getattr(settings, "active_scene", None)) or DEFAULT_SCENE
+    admission, glance_environment = _scene_pack_environment(controller, settings, scene)
     accessibility = getattr(controller, "_accessibility_display_preferences", None)
     reduce_motion = bool(getattr(accessibility, "reduce_motion", False))
     assignment_context = _assignment_context(
@@ -1155,8 +1237,23 @@ def _milestone_odometer(
         return
     settings = getattr(controller, "settings", None)
     raw_steps = getattr(settings, "milestone_odometer_steps", ())
-    steps = tuple(raw_steps) if type(raw_steps) in {tuple, list} else ()
-    enabled = bool(getattr(settings, "milestone_odometer_enabled", False))
+    # The settings loader already normalises this tuple; this second pass
+    # keeps a hand-forged settings object (or a hand-edited document) from
+    # raising inside MilestoneOdometerPreferences, which would abort the
+    # whole observation batch via the caller's blanket except.
+    steps = tuple(
+        sorted(
+            {
+                step
+                for step in (raw_steps if type(raw_steps) in {tuple, list} else ())
+                if type(step) is int and step > 0
+            }
+        )
+    )[:MAX_MILESTONE_STEPS]
+    # Enabled with no valid step is "off", not a construction error: the
+    # pure planner refuses that combination, and a refused preferences
+    # object must never cost the rest of the batch.
+    enabled = bool(getattr(settings, "milestone_odometer_enabled", False)) and bool(steps)
     preferences = MilestoneOdometerPreferences(
         enabled=enabled,
         milestone_steps=steps if enabled else (),
@@ -1469,8 +1566,8 @@ def _observe_dot_and_rainstick(
         ),
     )
 
-    admission, _environment_plan = _environment(controller)
     scene = scene_from_value(getattr(settings, "active_scene", None)) or DEFAULT_SCENE
+    admission, _environment_plan = _scene_pack_environment(controller, settings, scene)
     surface_visible = any(
         getattr(controller, attribute, None) is not None
         for attribute in ("status_item", "virtual_status_device")

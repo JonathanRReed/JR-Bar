@@ -89,6 +89,19 @@ struct SettingsPageContainer: View {
                     }
                 }
             }
+            if let schema = store.core.settings?.schema, schema > CoreProtocol.knownSettingsSchema {
+                Section {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Newer settings schema").fontWeight(.semibold)
+                            Text("The monitor speaks schema \(schema); this app knows \(CoreProtocol.knownSettingsSchema). Newer settings may not appear — update the app.")
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                    }
+                }
+            }
             if let error = store.lastError {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle.fill")

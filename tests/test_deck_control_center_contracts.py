@@ -71,6 +71,50 @@ def test_pins_survive_explicit_absent_clear_and_serialize_only_opaque_ids():
     assert restored.resolve_slot(0)[1] == session_identity(a)
 
 
+def test_provider_scope_filters_the_board_restarts_banking_and_revokes_context():
+    board = DeckSessionBoard(clock=lambda: NOW)
+    codex = status(session="codex-a")
+    claude = replace(status(session="claude-a"), provider="claude", agent_id="claude:claude-a",
+                     work_key=WorkKey(SourceKey("claude", "native", "account-a", "threads"),
+                                      WorkIdentifier("claude-a")))
+    board.update([codex, claude], navigation_keys={session_identity(codex)})
+    assert board.snapshot().scope == "automatic"
+    revision, _ = board.resolve_slot(0)
+    assert board.navigation_target(session_identity(codex), revision) is codex
+
+    assert board.set_scope("claude") is True
+    snapshot = board.snapshot()
+    assert snapshot.scope == "claude" and snapshot.bank_count == 1 and snapshot.bank == 0
+    assert [slot.identity for slot in snapshot.slots if slot.identity is not None] == [session_identity(claude)]
+    assert board.navigation_target(session_identity(codex), revision) is None  # the scope change bumped the revision
+
+    # Dead and reserved identities never gain a provider: codex left the
+    # board's live statuses, so its scope shows nothing, not a Reserved row.
+    board.update([claude])
+    assert board.set_scope("codex") is True
+    assert all(slot.identity is None for slot in board.snapshot().slots)
+    assert board.set_scope("codex") is False  # no churn on a duplicate answer
+
+    # cycle_scope wraps automatic -> mapped scopes -> automatic, and a
+    # scope not in the cycle list still applies when set directly.
+    assert board.cycle_scope(1, ("claude", "t3code")) is True and board.snapshot().scope == "claude"
+    assert board.cycle_scope(1, ("claude", "t3code")) is True and board.snapshot().scope == "t3code"
+    assert board.cycle_scope(1, ("claude", "t3code")) is True and board.snapshot().scope == "automatic"
+    board.set_scope("devin")
+    assert board.cycle_scope(1, ("claude",)) is True and board.snapshot().scope == "claude"
+    with pytest.raises(ValueError):
+        board.cycle_scope(2)
+
+    # The scope persists as an opaque string beside the slot digests.
+    board.set_scope("claude")
+    restored = DeckSessionBoard(clock=lambda: NOW)
+    restored.restore(board.serialize())
+    assert restored.snapshot().scope == "claude"
+    restored.restore({"version": 2, "slots": board.serialize()["slots"], "pinned": [], "bank": 0,
+                      "rail_edge": "off"})
+    assert restored.snapshot().scope == "automatic"  # v2 predates scopes
+
+
 def test_per_session_light_frames_keep_unknown_and_unassigned_slots_off():
     board = DeckSessionBoard(clock=lambda: NOW)
     board.update([status()])
@@ -112,7 +156,9 @@ def test_normalized_user_inputs_are_fifo_and_reset_revokes_pending_work():
 
 
 def test_legacy_mappings_migrate_and_duplicate_json_is_refused():
-    assert decode_deck_controls('{"version":1,"enabled":false,"bindings":[]}') == DeckControlSettings()
+    # v1 predates both the option fields and the layer map: it loads with
+    # every layer automatic rather than silently gaining a provider map.
+    assert decode_deck_controls('{"version":1,"enabled":false,"bindings":[]}') == DeckControlSettings(layer_map=())
     with pytest.raises(ValueError, match="duplicate"):
         decode_deck_controls('{"version":1,"enabled":false,"enabled":true,"bindings":[]}')
     action = DeckAction("run_system_shortcut", shortcut_name="Open editor")

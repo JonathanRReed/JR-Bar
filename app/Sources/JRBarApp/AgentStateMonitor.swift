@@ -8,13 +8,15 @@ extension AgentAggregateState {
     var tint: NSColor? { tintHex.flatMap { NSColor(hex: $0) } }
 }
 
-/// Reads `~/.local/state/sidepulse/agent-monitor/latest.json` and reduces it
-/// to one `AgentAggregateState`, re-reading only when the directory changes.
+/// Reads `~/.local/state/jrbar/latest.json` — the flat state dir
+/// `CoreSocketPath.stateDirectory` resolves, the same place the daemon's
+/// `default_latest_state_path()` writes — and reduces it to one
+/// `AgentAggregateState`, re-reading only when the directory changes.
 /// The reduction itself is `AgentMonitorFeed.reduce` in JRBarCore, so the
 /// words and the precedence are unit-testable without AppKit.
 @MainActor
 final class AgentStateMonitor {
-    static let directory = NSString(string: "~/.local/state/sidepulse/agent-monitor").expandingTildeInPath
+    static let directory = CoreSocketPath.stateDirectory()
     static let path = directory + "/latest.json"
     nonisolated static let completedWindow: TimeInterval = AgentMonitorFeed.completedWindow
 
@@ -46,7 +48,10 @@ final class AgentStateMonitor {
         let path = Self.path
         Task.detached(priority: .utility) {
             let data = try? Data(contentsOf: URL(fileURLWithPath: path))
-            let result = AgentMonitorFeed.reduce(data)
+            // The doc's `last_clock` stamp is checked first; the mtime is
+            // the fallback age for a document that carries no clock.
+            let modified = (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+            let result = AgentMonitorFeed.reduce(data, fileModifiedAt: modified)
             await MainActor.run { [weak self] in
                 guard let self, self.generation == generation else { return }
                 if result.state != self.state || result.detail != self.detail {
@@ -60,7 +65,7 @@ final class AgentStateMonitor {
 
     /// The file-feed reduction; `now` is injectable for the tests, which
     /// exercise this through `AgentMonitorFeed.reduce` in JRBarCore.
-    nonisolated static func reduce(_ data: Data?, now: Date = Date()) -> (state: AgentAggregateState, detail: String) {
-        AgentMonitorFeed.reduce(data, now: now)
+    nonisolated static func reduce(_ data: Data?, now: Date = Date(), fileModifiedAt: Date? = nil) -> (state: AgentAggregateState, detail: String) {
+        AgentMonitorFeed.reduce(data, now: now, fileModifiedAt: fileModifiedAt)
     }
 }

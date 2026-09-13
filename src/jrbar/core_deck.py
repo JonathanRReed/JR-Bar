@@ -151,9 +151,15 @@ def transport_word(bus_type: object) -> str | None:
 def preview_text(plan: KeymapPlan) -> str:
     """The review alert's text, as creator_micro_setup_controller shows it."""
     changed = "\n".join(plan.changes) if plan.changes else "No device keys need to change."
+    targets = plan.layer_indexes or (plan.layer_index,)
+    if len(targets) > 1:
+        selected = (f"Selected profile {plan.profile_index + 1}, layers "
+                    f"{', '.join(str(target + 1) for target in targets)}:\n\n")
+    else:
+        selected = f"Selected profile {plan.profile_index + 1}, layer {plan.layer_index + 1}:\n\n"
     return (
-        f"Selected profile {plan.profile_index + 1}, layer {plan.layer_index + 1}:\n\n"
-        f"{changed}\n\n"
+        selected
+        + f"{changed}\n\n"
         "The listed keys will replace their normal keystrokes with JR-Bar device inputs. "
         + ("Supported dial/joystick mappings listed above also change. " if plan.include_auxiliary
            else "Dial and joystick mappings stay unchanged. ")
@@ -174,14 +180,16 @@ def plan_document(plan: KeymapPlan) -> dict[str, Any]:
     }
 
 
-def keymap_layer_rows(raw: str | None) -> list[dict[str, Any]]:
+def keymap_layer_rows(raw: str | None, layer_scopes: dict[int, str] | None = None) -> list[dict[str, Any]]:
     """``keymap.layers`` from a keymap JSON text (the inspected original or
-    the backup's); empty when there is none or it does not parse."""
+    the backup's); empty when there is none or it does not parse. Each row
+    carries the board scope the layer map assigns it, or ``automatic``."""
     if not isinstance(raw, str) or not raw:
         return []
     try:
         return [
-            {"profile": profile, "layer": layer, "label": label}
+            {"profile": profile, "layer": layer, "label": label,
+             "scope": (layer_scopes or {}).get(layer, "automatic")}
             for profile, layer, label in keymap_layers(raw)
         ]
     except (ValueError, TypeError):
@@ -211,9 +219,10 @@ def observed_keymap_state(plan: KeymapPlan | None, filed: str) -> str:
     if plan is None or filed == "recovering":
         return filed
     matrix = sum(1 for line in plan.changes if line.startswith("Key "))
+    targets = len(plan.layer_indexes) or 1
     if matrix == 0:
         return "applied"
-    if matrix == SLOTS_PER_BANK:
+    if matrix == SLOTS_PER_BANK * targets:
         return "stock"
     # Some keys ours, some not: neither word is true, and guessing which
     # would be the one that decides whether Apply or Restore is offered.
@@ -342,10 +351,14 @@ def build_deck_document(
     colors: object = None,
     brightness: float = 0.4,
     driven: bool = False,
+    scope: str = "automatic",
+    scopes: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """``state.deck``: the shape the Control Center and the Rail decode."""
     return {
         "device": dict(device) if device is not None else None,
+        "scope": scope if type(scope) is str and scope else "automatic",
+        "scopes": [scope_name for scope_name in scopes if type(scope_name) is str and scope_name],
         "slots": [slot_document(slot, colors=colors, brightness=brightness, driven=driven) for slot in slots],
         "aux": aux_documents(bindings, control_labels),
         "banks": {"index": int(bank), "count": max(1, int(bank_count))},
@@ -362,6 +375,15 @@ def build_deck_document(
             "enabled": bool(settings.get("enabled", False)),
             "session_mode": bool(settings.get("session_mode", False)),
             "analog_enabled": bool(settings.get("analog_enabled", False)),
+            "bindings": [
+                {"index": index, "action": action}
+                for index, action in (settings.get("bindings") or [])
+            ],
+            "layer_map": [
+                {"layer": layer, "scope": layer_scope}
+                for layer, layer_scope in (settings.get("layer_map") or [])
+            ],
+            "scopes": [scope_name for scope_name in (settings.get("scopes") or [])],
         },
     }
 

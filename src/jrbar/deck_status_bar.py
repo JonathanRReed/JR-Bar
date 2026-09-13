@@ -46,6 +46,11 @@ def install_deck_status_bar(base):
 
             apply_deck_input(self, payload)
 
+        def applyDeckLayer_(self, payload) -> None:
+            from .deck_controller import apply_deck_layer
+
+            apply_deck_layer(self, payload)
+
         @objc.IBAction
         def openDeckControlCenter_(self, _sender) -> None:
             from .deck_control_center import open_control_center

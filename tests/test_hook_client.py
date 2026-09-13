@@ -195,9 +195,13 @@ def test_submit_returns_unavailable_without_leaking_exception_text(tmp_path: Pat
     assert fake.closed
 
 
-def test_submit_does_not_fallback_after_connected_submission_loses_ack(
+def test_submit_falls_back_after_connected_submission_loses_ack(
     tmp_path: Path,
 ) -> None:
+    """A lost ack after connect is AMBIGUOUS: the ingress may have queued
+    the request, but the hook cannot tell -- so the client re-processes
+    through the dedupe-checked synchronous path. Worst case is a
+    suppressed duplicate; the alternative is a silently dropped event."""
     target = tmp_path / HOOK_INGRESS_SOCKET_NAME
     fake = _ReceiveFailureSocket()
 
@@ -218,12 +222,21 @@ def test_submit_does_not_fallback_after_connected_submission_loses_ack(
 
     assert disposition is HookIngressDisposition.SUBMISSION_AMBIGUOUS
     assert result == 0
-    assert fallback == []
+    assert len(fallback) == 1
     assert fake.sent
     assert fake.closed
 
 
-def test_client_falls_back_only_when_ingress_is_unavailable() -> None:
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        HookIngressDisposition.UNAVAILABLE,
+        HookIngressDisposition.SUBMISSION_AMBIGUOUS,
+    ],
+)
+def test_client_falls_back_when_admission_is_unproven(
+    disposition: HookIngressDisposition,
+) -> None:
     fallback: list[tuple[str, Path, str]] = []
 
     assert (
@@ -231,7 +244,7 @@ def test_client_falls_back_only_when_ingress_is_unavailable() -> None:
             "claude",
             Path("/tmp/state/claude.jsonl"),
             '{"hook_event_name":"Stop"}',
-            submit=lambda _request_value: HookIngressDisposition.UNAVAILABLE,
+            submit=lambda _request_value: disposition,
             fallback=lambda provider, path, payload: fallback.append((provider, path, payload)),
         )
         == 0
@@ -264,7 +277,6 @@ def test_client_rejects_oversized_payload_without_fallback() -> None:
         HookIngressDisposition.REFUSED_FULL,
         HookIngressDisposition.REFUSED_CLOSED,
         HookIngressDisposition.REFUSED_INVALID,
-        HookIngressDisposition.SUBMISSION_AMBIGUOUS,
     ],
 )
 def test_client_never_retries_an_explicit_admission_outcome_out_of_order(

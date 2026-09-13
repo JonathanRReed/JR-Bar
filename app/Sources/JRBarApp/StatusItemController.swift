@@ -16,6 +16,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let detailItem = NSMenuItem()
     private let feedItem = NSMenuItem()
     private let coreItem = NSMenuItem()
+    private let snoozedItem = NSMenuItem()
+    private let escalationItem = NSMenuItem()
     private let showBarItem: NSMenuItem
     private let renderer = StatusIconRenderer.shared
     private var currentSpec: StatusIconSpec?
@@ -29,6 +31,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
+    var onUnsnoozeAll: (@MainActor () -> Void)?
     var isScreenBarShown = true { didSet { showBarItem.state = isScreenBarShown ? .on : .off } }
     /// The style and ring the next `update` draws with.
     var iconStyle: StatusIconStyle = .agents {
@@ -102,6 +105,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         detailItem.isEnabled = false
         feedItem.isEnabled = false
         coreItem.isEnabled = false
+        snoozedItem.isHidden = true
+        snoozedItem.target = self
+        snoozedItem.action = #selector(unsnoozeAll(_:))
+        escalationItem.isHidden = true
+        escalationItem.isEnabled = false
         showBarItem.target = self
         showBarItem.state = .on
 
@@ -120,6 +128,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(detailItem)
         menu.addItem(coreItem)
         menu.addItem(feedItem)
+        menu.addItem(snoozedItem)
+        menu.addItem(escalationItem)
         menu.addItem(.separator())
         menu.addItem(open)
         menu.addItem(history)
@@ -282,6 +292,22 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         redraw()
     }
 
+    /// While an unanswered ask is escalating, the menu names what is
+    /// happening — a pulsing icon or a recurring chime is otherwise a
+    /// mystery with no off switch in sight.
+    func setEscalation(stage: Int, asksOpen: Bool) {
+        setEscalationPulse(stage >= 2 && asksOpen)
+        let active = stage >= 2 && asksOpen
+        escalationItem.isHidden = !active
+        guard active else { return }
+        let what = stage >= 3 ? "Chime" : "Menu bar"
+        escalationItem.attributedTitle = NSAttributedString(
+            string: "Escalating: \(what.lowercased()) — an ask is unanswered", attributes: [
+                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.systemOrange,
+            ])
+    }
+
     /// The whole-item fade is for the glyph styles, which have nowhere else
     /// to put the escalation. In the strips a dot is already pulsing amber,
     /// and fading the strip on top of that only makes it unreadable — so
@@ -319,6 +345,19 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         ])
     }
 
+    /// Snooze is a right-click gesture on a row, so its only reminder lives
+    /// here: while any family is snoozed the menu says how many and offers
+    /// the lift-all. Hidden at zero — a quiet menu is the default.
+    func setSnoozed(_ count: Int) {
+        snoozedItem.isHidden = count <= 0
+        guard count > 0 else { return }
+        let noun = count == 1 ? "1 session snoozed" : "\(count) sessions snoozed"
+        snoozedItem.attributedTitle = NSAttributedString(string: "\(noun) — unsnooze all", attributes: [
+            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+    }
+
     @objc private func clicked(_ sender: Any?) {
         let event = NSApp.currentEvent
         let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
@@ -333,6 +372,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openPanel(_ sender: Any?) {
         onTogglePanel?()
+    }
+
+    @objc private func unsnoozeAll(_ sender: Any?) {
+        onUnsnoozeAll?()
     }
 
     @objc private func openSettings(_ sender: Any?) {
