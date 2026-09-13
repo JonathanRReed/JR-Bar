@@ -777,22 +777,44 @@ def _work_for_status(operator_state: object, status: object):
     return None
 
 
+def _extras_host_bundle_ids(extras: SessionExtras | None) -> frozenset[str]:
+    """The bundle ids that could host this session: resolved terminal first,
+    hook origin as the second acceptable identity -- the same set
+    ``session_host`` hands the delivery fence as ``expected_bundle_ids``.
+    """
+    ids: set[str] = set()
+    if extras is None:
+        return frozenset()
+    for block in (extras.terminal, extras.origin):
+        bundle = (block or {}).get("bundle_id") if isinstance(block, Mapping) else None
+        if isinstance(bundle, str) and bundle:
+            ids.add(bundle)
+    return frozenset(ids)
+
+
 def _answer_flags(
     request: object,
     contracts_by_source: object,
     has_answer_handler: object,
+    host_bundle_ids: object = None,
 ) -> tuple[bool, bool]:
     """``(answerable, replyable)`` for one ask, from the provider's own
     negotiated contract.
 
     ``answerable`` means the answer chain can deliver a decision to this
     session: the contract declares ``answering``, the invocation binds the
-    reviewed local surface, and a handler is registered for it. A provider
-    that only declares ``actionable_requests`` resolves to ``False`` --
-    the button must not offer what no daemon can type. ``replyable`` is
-    the narrower "this ask takes free text" (input asks only).
+    reviewed local surface, a handler is registered for it, AND the
+    session's host can satisfy the delivery fence's exact focused-tab
+    proof. A provider that only declares ``actionable_requests`` resolves
+    to ``False`` -- the button must not offer what no daemon can type --
+    and so does a session hosted by a terminal that cannot name its
+    focused tab (Ghostty, an IDE panel, an unresolved or remote host):
+    offering it there would advertise a control that can only refuse.
+    ``replyable`` is the narrower "this ask takes free text" (input asks
+    only).
     """
     from .answer_in_place import answer_capability_for_request
+    from .answer_local import host_offers_focused_tab_proof
 
     if request is None:
         return (False, False)
@@ -816,6 +838,8 @@ def _answer_flags(
                 return (False, False)
         except Exception:
             return (False, False)
+    if not host_offers_focused_tab_proof(host_bundle_ids):
+        return (False, False)
     return (True, bool(getattr(capability, "supports_reply_text", False)))
 
 
@@ -826,6 +850,7 @@ def ask_document(
     with_session: bool,
     answer_contracts: object = None,
     has_answer_handler: object = None,
+    host_bundle_ids: object = None,
 ) -> dict[str, Any]:
     request = _request_for_status(operator_state, status)
     kind = getattr(getattr(request, "request_kind", None), "value", None)
@@ -842,7 +867,7 @@ def ask_document(
     )
     summary = getattr(status, "message", None) or getattr(status, "tool_name", None)
     answerable, replyable = _answer_flags(
-        request, answer_contracts, has_answer_handler
+        request, answer_contracts, has_answer_handler, host_bundle_ids
     )
     document: dict[str, Any] = {
         "kind": kind,
@@ -970,6 +995,7 @@ def session_document(
                 with_session=False,
                 answer_contracts=answer_contracts,
                 has_answer_handler=has_answer_handler,
+                host_bundle_ids=_extras_host_bundle_ids(extras),
             )
             if agent_id in ask_ids
             else None
@@ -1303,6 +1329,9 @@ def build_state_document(
             with_session=True,
             answer_contracts=answer_contracts,
             has_answer_handler=has_answer_handler,
+            host_bundle_ids=_extras_host_bundle_ids(
+                extras_by_id.get(str(getattr(status, "agent_id", "") or ""))
+            ),
         )
         for status in ask_statuses
         if str(getattr(status, "agent_id", "") or "") in listed_ids

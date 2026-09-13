@@ -17,16 +17,21 @@ therefore the whole risk, and every check below exists to refuse instead:
 
 * the ask is still live in the daemon's canonical state, same request id and
   same state generation;
-* the session's process is alive and its pid is known;
+* the session's process is PROVEN alive and its pid is known -- an unread
+  liveness check refuses like a dead one;
 * the frontmost application is the app that hosts this session;
-* the frontmost application's process is an ANCESTOR of the session's process,
-  which is what proves the window in front belongs to this session and not to
-  another window of the same kind of terminal;
-* where the terminal exposes its focused tab's tty (Terminal.app, iTerm2), that
-  tty is the session's tty;
+* the frontmost application's process is PROVEN an ANCESTOR of the session's
+  process -- an unwalkable ancestry is a refusal, because on a terminal that
+  shares one process across windows (Ghostty above all) ancestry alone cannot
+  tell this session's window from a sibling's;
+* the terminal names its focused tab's tty and that tty IS the session's.
+  Only Terminal.app and iTerm2 expose that proof; a session hosted anywhere
+  else -- or whose own tty could not be resolved -- has no safe in-place
+  answer and refuses, leaving Open-in-terminal as the honest path;
 * Accessibility is granted, without which the keystroke silently goes nowhere.
 
-Anything that fails refuses. There is no "type it anyway" path.
+Anything that fails refuses, and anything that cannot be proven refuses too.
+There is no "type it anyway" path.
 
 The keys were measured against the real CLIs on this Mac (2026-09-10, Claude
 Code 2.1.263 and codex-cli 0.153.4) with scripts/verify_providers_live.py's
@@ -264,7 +269,11 @@ class AnswerHostFacts:
 
     def window_evidence(self) -> str:
         """How sure JR-Bar is that the window in front is this session's."""
-        if self.focused_tab_tty is not None and self.session_tty is not None:
+        if (
+            self.focused_tab_tty is not None
+            and self.session_tty is not None
+            and self.focused_tab_tty == self.session_tty
+        ):
             return "focused_tab_tty"
         if self.frontmost_ancestor_of_session:
             return "host_process_ancestry"
@@ -340,6 +349,15 @@ def _checked_answer_host(
             "That session's process is no longer running.",
             "no_live_process",
         )
+    if facts.session_alive is not True:
+        # ``None`` is "nobody could look", not "alive": a keystroke aimed at
+        # a process that may be gone lands wherever the terminal is focused.
+        raise AnswerRefusal(
+            "session_gone",
+            "JR-Bar cannot confirm that session's process is still running; "
+            "nothing was sent.",
+            "liveness_unproven",
+        )
 
     if facts.frontmost_bundle_id is None:
         raise AnswerRefusal(
@@ -374,12 +392,37 @@ def _checked_answer_host(
             "A different window of that terminal is in front.",
             "other_window",
         )
-    # Exact, where the terminal will say which tab has focus.
-    if (
-        facts.focused_tab_tty is not None
-        and facts.session_tty is not None
-        and facts.focused_tab_tty != facts.session_tty
-    ):
+    if facts.frontmost_ancestor_of_session is not True:
+        # ``None`` is "the walk could not decide". On a one-process-many-
+        # windows terminal that is exactly the case ancestry cannot rule on,
+        # so unknown ownership is a refusal, never permission.
+        raise AnswerRefusal(
+            "not_frontmost",
+            "JR-Bar cannot prove the window in front owns that session; "
+            "nothing was sent.",
+            "ownership_unproven",
+        )
+    # The exact focused-target proof, required of every host now. The key
+    # lands on whatever tab is focused in the frontmost window, so the
+    # terminal must name that tab's tty and it must be this session's.
+    # ``focused_tab_tty`` is ``None`` both for terminals with no scripting
+    # call (Ghostty, kitty, WezTerm, Alacritty -- where ancestry cannot pick
+    # a window) and for a probe that failed; neither is affirmative proof.
+    if facts.session_tty is None:
+        raise AnswerRefusal(
+            "not_frontmost",
+            "JR-Bar cannot name that session's terminal tab; nothing was "
+            "sent.",
+            "session_tty_unknown",
+        )
+    if facts.focused_tab_tty is None:
+        raise AnswerRefusal(
+            "not_frontmost",
+            "JR-Bar cannot prove which tab of that terminal is in front; "
+            "nothing was sent. Open the session's terminal to answer there.",
+            "focused_tab_unproven",
+        )
+    if facts.focused_tab_tty != facts.session_tty:
         raise AnswerRefusal(
             "not_frontmost",
             "A different tab of that terminal is in front.",
@@ -612,8 +655,9 @@ def tty_for_pid(pid: object) -> str | None:
 
 
 #: Terminals that will name their focused tab's tty over Apple events. Ghostty,
-#: kitty, Alacritty and WezTerm have no such call, so for them the ancestry
-#: check above is the last word.
+#: kitty, Alacritty and WezTerm have no such call -- and since the delivery
+#: fence now requires that exact proof, a session hosted in one can never be
+#: answered in place. The honest path there is Open-in-terminal.
 _FOCUSED_TTY_SCRIPTS: Final[Mapping[str, str]] = {
     "com.apple.Terminal": (
         'tell application id "com.apple.Terminal" to '
@@ -653,6 +697,25 @@ def focused_tab_tty(bundle_id: object) -> str | None:
         return None
     value = completed.stdout.strip()
     return value or None
+
+
+#: The only hosts that can satisfy the fence's exact focused-target proof.
+FOCUSED_TAB_PROOF_BUNDLES: Final = frozenset(_FOCUSED_TTY_SCRIPTS)
+
+
+def host_offers_focused_tab_proof(bundle_ids: object) -> bool:
+    """Whether any expected host can name its focused tab's tty.
+
+    The projection uses this to keep ``answerable`` honest: a session hosted
+    by a terminal with no scripting call can never pass the delivery fence,
+    so the button must not be offered where it would always refuse.
+    """
+    if not isinstance(bundle_ids, (frozenset, set, list, tuple)):
+        return False
+    return any(
+        type(bundle_id) is str and bundle_id in FOCUSED_TAB_PROOF_BUNDLES
+        for bundle_id in bundle_ids
+    )
 
 
 def raise_application(bundle_id: object, timeout_seconds: float = 2.0) -> bool:
@@ -924,6 +987,12 @@ class AnswerDeliveryOutcome:
             "delivered": self.delivered,
             "code": self.code,
             "message": self.message,
+            # A posted key is an attempted delivery, never a confirmed
+            # approval: only the provider's own stream closing the request
+            # proves the answer landed. ``provider_pending`` keeps that
+            # distinction on the wire instead of letting ``delivered``
+            # read as "resolved".
+            "confirmation": "provider_pending" if self.delivered else "none",
         }
         if self.plan is not None:
             document.update(self.plan.document())
@@ -1206,6 +1275,7 @@ __all__ = [
     "ANSWER_REFUSAL_CODES",
     "DEFAULT_ACCESSIBILITY_APP_NAME",
     "DELIVERY_BUDGET_SECONDS",
+    "FOCUSED_TAB_PROOF_BUNDLES",
     "AnswerDeliveryOutcome",
     "AnswerHostFacts",
     "AnswerKey",
@@ -1222,6 +1292,7 @@ __all__ = [
     "answer_keys_for_provider",
     "focused_tab_tty",
     "frontmost_application",
+    "host_offers_focused_tab_proof",
     "observe_host_facts",
     "plan_local_answer",
     "plan_local_reply",

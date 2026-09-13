@@ -26,15 +26,17 @@ from jrbar.providers import negotiated_provider_sources
 
 
 def facts(**overrides) -> AnswerHostFacts:
+    """A fully-proven Terminal.app host: the only shape the fence still
+    delivers through, since ancestry alone stopped being enough."""
     base = dict(
         session_pid=4242,
         session_alive=True,
         session_tty="/dev/ttys008",
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
-        frontmost_bundle_id="com.mitchellh.ghostty",
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
+        frontmost_bundle_id="com.apple.Terminal",
         frontmost_pid=4200,
         frontmost_ancestor_of_session=True,
-        focused_tab_tty=None,
+        focused_tab_tty="/dev/ttys008",
         accessibility_trusted=True,
     )
     base.update(overrides)
@@ -47,7 +49,7 @@ def target(**overrides) -> LocalAnswerTarget:
         session_id="claude:session:abc",
         session_pid=4242,
         session_tty="/dev/ttys008",
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         is_live=lambda: True,
     )
     base.update(overrides)
@@ -102,7 +104,7 @@ def test_the_declared_binding_is_the_reviewed_local_surface__and_2_more() -> Non
     assert plan.key.label == "y"
     assert plan.target_pid == 4200
     assert plan.mechanism == "synthetic_keystroke"
-    assert plan.facts.window_evidence() == "host_process_ancestry"
+    assert plan.facts.window_evidence() == "focused_tab_tty"
 
     # --- scenario: deny_is_planned_exactly_like_approve
     plan = plan_local_answer(
@@ -120,6 +122,13 @@ def test_every_failed_check_refuses_with_its_own_reason__and_2_more() -> None:
         ("dead session", {"session_alive": False}, True, "session_gone", "no_live_process"),
         ("no pid", {"session_pid": None}, True, "session_gone", "no_live_process"),
         (
+            "liveness unread",
+            {"session_alive": None},
+            True,
+            "session_gone",
+            "liveness_unproven",
+        ),
+        (
             "nothing frontmost",
             {"frontmost_bundle_id": None},
             True,
@@ -135,10 +144,10 @@ def test_every_failed_check_refuses_with_its_own_reason__and_2_more() -> None:
         ),
         (
             "another app",
-            {"frontmost_bundle_id": "com.apple.Terminal"},
+            {"frontmost_bundle_id": "com.mitchellh.ghostty"},
             True,
             "not_frontmost",
-            "frontmost_is:com.apple.Terminal",
+            "frontmost_is:com.mitchellh.ghostty",
         ),
         (
             "another window",
@@ -146,6 +155,27 @@ def test_every_failed_check_refuses_with_its_own_reason__and_2_more() -> None:
             True,
             "not_frontmost",
             "other_window",
+        ),
+        (
+            "ownership unwalkable",
+            {"frontmost_ancestor_of_session": None},
+            True,
+            "not_frontmost",
+            "ownership_unproven",
+        ),
+        (
+            "session tty unknown",
+            {"session_tty": None},
+            True,
+            "not_frontmost",
+            "session_tty_unknown",
+        ),
+        (
+            "focused tab unproven",
+            {"focused_tab_tty": None},
+            True,
+            "not_frontmost",
+            "focused_tab_unproven",
         ),
         (
             "another tab",
@@ -189,15 +219,24 @@ def test_every_failed_check_refuses_with_its_own_reason__and_2_more() -> None:
 
 
 
-def test_undeterminable_window_evidence_does_not_refuse__and_2_more() -> None:
-    # --- scenario: undeterminable_window_evidence_does_not_refuse
-    plan = plan_local_answer(
-        provider="claude",
-        decision="approve",
-        ask_live=True,
-        facts=facts(frontmost_ancestor_of_session=None),
-    )
-    assert plan.facts.window_evidence() == "frontmost_application_only"
+def test_undeterminable_window_evidence_now_refuses__and_2_more() -> None:
+    # --- scenario: undeterminable_window_evidence_now_refuses
+    # The fence used to deliver on "frontmost application only"; after the
+    # upgrade an unreadable answer is a refusal, not permission.
+    for overrides, reason in [
+        ({"frontmost_ancestor_of_session": None}, "ownership_unproven"),
+        ({"focused_tab_tty": None}, "focused_tab_unproven"),
+        ({"session_tty": None}, "session_tty_unknown"),
+        ({"session_alive": None}, "liveness_unproven"),
+    ]:
+        with pytest.raises(AnswerRefusal) as raised:
+            plan_local_answer(
+                provider="claude",
+                decision="approve",
+                ask_live=True,
+                facts=facts(**overrides),
+            )
+        assert raised.value.reason == reason
 
     # --- scenario: a_matching_focused_tab_is_the_strongest_evidence
     plan = plan_local_answer(
@@ -280,7 +319,7 @@ def test_delivery_posts_the_key_once_to_the_frontmost_process__and_2_more() -> N
         provider="codex",
         decision="approve",
         session_pid=4242,
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         session_tty="/dev/ttys008",
         is_live=lambda: True,
     )
@@ -298,7 +337,7 @@ def test_delivery_posts_the_key_once_to_the_frontmost_process__and_2_more() -> N
         provider="claude",
         decision="deny",
         session_pid=4242,
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         session_tty="/dev/ttys008",
         is_live=lambda: next(answers),
     )
@@ -318,7 +357,7 @@ def test_delivery_posts_the_key_once_to_the_frontmost_process__and_2_more() -> N
         provider="claude",
         decision="approve",
         session_pid=4242,
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         session_tty="/dev/ttys008",
         is_live=lambda: True,
     )
@@ -332,13 +371,13 @@ def test_a_refused_delivery_reports_the_code_and_sends_nothing():
     sent = []
     delivery = LocalAnswerDelivery(
         sender=lambda pid, code: sent.append((pid, code)),
-        observer=lambda **kwargs: facts(frontmost_bundle_id="com.apple.Terminal"),
+        observer=lambda **kwargs: facts(expected_bundle_ids=frozenset({"com.mitchellh.ghostty"})),
     )
     outcome = delivery.deliver(
         provider="claude",
         decision="approve",
         session_pid=4242,
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         session_tty="/dev/ttys008",
         is_live=lambda: True,
     )
@@ -417,13 +456,13 @@ def test_a_reply_that_fails_the_same_fences_sends_nothing__and_2_more() -> None:
     delivery = LocalAnswerDelivery(
         sender=lambda pid, code: sent.append((pid, code)),
         text_sender=lambda pid, text: typed.append((pid, text)),
-        observer=lambda **kwargs: facts(frontmost_bundle_id="com.apple.Terminal"),
+        observer=lambda **kwargs: facts(expected_bundle_ids=frozenset({"com.mitchellh.ghostty"})),
     )
     outcome = delivery.deliver(
         provider="claude",
         reply_text="go ahead",
         session_pid=4242,
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         session_tty="/dev/ttys008",
         is_live=lambda: True,
     )
@@ -492,7 +531,7 @@ def test_an_outcome_document_carries_the_mechanism_and_the_key__and_1_more() -> 
         provider="codex",
         decision="deny",
         session_pid=4242,
-        expected_bundle_ids=frozenset({"com.mitchellh.ghostty"}),
+        expected_bundle_ids=frozenset({"com.apple.Terminal"}),
         session_tty="/dev/ttys008",
         is_live=lambda: True,
     )
@@ -501,8 +540,8 @@ def test_an_outcome_document_carries_the_mechanism_and_the_key__and_1_more() -> 
     assert document["key"] == "3"
     assert document["key_code"] == 20
     assert document["host"]["tty"] == "/dev/ttys008"
-    assert document["host"]["app"] == "com.mitchellh.ghostty"
-    assert document["host"]["window_evidence"] == "host_process_ancestry"
+    assert document["host"]["app"] == "com.apple.Terminal"
+    assert document["host"]["window_evidence"] == "focused_tab_tty"
 
     # --- scenario: an_unknown_refusal_code_is_not_expressible
     with pytest.raises(ValueError):
