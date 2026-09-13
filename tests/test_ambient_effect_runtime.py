@@ -1,13 +1,17 @@
 from dataclasses import replace
 from types import SimpleNamespace
 
+import pytest
+
 from jrbar.ambient_effect_consumer import active_hardware_ambient_presentation
 from jrbar.ambient_effect_dispatch import AmbientEffectFamily, AmbientEffectSurface
 from jrbar.ambient_effect_runtime import (
     active_ambient_surface_output,
     install_ambient_effect_runtime,
+    request_idle_screensaver_peek,
 )
 from jrbar.capacity_types import SourceKey
+from jrbar.core_server import CommandError
 from jrbar.dnd_policy import compose_dnd_contributions
 from jrbar.effect_assignment_store import (
     EffectAssignmentCache,
@@ -888,3 +892,118 @@ def test_idle_screensaver_respects_night_consent_and_dnd_admission(
     packed.observe_operator_history_events((), empty_operator_state())
     assert _screensaver_output(packed._ambient_effect_dispatch) is None
     assert packed._idle_screensaver_fact["screensaver"]["state"] == "off"
+
+
+def test_idle_screensaver_peek_plays_now_then_retires(monkeypatch) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    clock = [10_000.0]
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic",
+        lambda: clock[0],
+    )
+
+    # Toggle off and nowhere near the delay: a peek still stages the
+    # picked effect -- it is the owner pressing "Play it now".
+    controller = controller_type()
+    controller.settings = _cue_settings(
+        idle_screensaver_enabled=False,
+        idle_screensaver_effect="rainbow",
+    )
+    controller.idle_since_monotonic = clock[0]
+
+    reply = request_idle_screensaver_peek(controller)
+    assert reply["effect_id"] == "rainbow"
+    assert 2.0 <= reply["seconds"] <= 15.0
+    assert controller._idle_screensaver_peek_until == clock[0] + reply["seconds"]
+
+    controller.observe_operator_history_events((), empty_operator_state())
+    output = _screensaver_output(controller._ambient_effect_dispatch)
+    assert output is not None
+    assert output.effect_identity == "rainbow"
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "peeking"
+
+    # The first batch past the window retires it through the ordinary
+    # merge, and the fact returns to "off" (still armed? no -- disabled).
+    clock[0] += reply["seconds"] + 0.1
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(controller._ambient_effect_dispatch) is None
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "off"
+    assert controller._idle_screensaver_peek_until is None
+
+
+def test_idle_screensaver_peek_still_yields_to_a_live_semantic(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.time", lambda: 1_800_000_010.0
+    )
+    clock = [10_000.0]
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic",
+        lambda: clock[0],
+    )
+
+    controller = controller_type()
+    controller.settings = _cue_settings(
+        idle_screensaver_enabled=True,
+        idle_screensaver_effect="rainbow",
+    )
+    request_idle_screensaver_peek(controller, seconds=5)
+
+    # A working session is live: the admission gates apply to a peek too,
+    # so nothing stages and the fact stays honest about it.
+    state, work_key, _request_key, watermark = _canonical_state(
+        lifecycle=WorkLifecycle.ACTIVE,
+    )
+    event = _operator_event(work_key, TransitionKind.BECAME_ACTIVE, watermark)
+    controller.observe_operator_history_events((event,), state)
+    assert _screensaver_output(controller._ambient_effect_dispatch) is None
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "off"
+
+    # Once the signal clears, a batch inside the window still stages it.
+    clock[0] += 1.0
+    controller.observe_operator_history_events((), empty_operator_state())
+    assert _screensaver_output(controller._ambient_effect_dispatch) is not None
+    assert controller._idle_screensaver_fact["screensaver"]["state"] == "peeking"
+
+
+def test_idle_screensaver_peek_refuses_without_a_known_effect(
+    monkeypatch,
+) -> None:
+    controller_type = _controller_type()
+    install_ambient_effect_runtime(controller_type)
+    monkeypatch.setattr(
+        "jrbar.ambient_effect_runtime.time.monotonic", lambda: 10_000.0
+    )
+
+    # Nothing picked at all: the card should never have offered it, but
+    # the command still answers an honest refusal.
+    controller = controller_type()
+    controller.settings = _cue_settings(idle_screensaver_effect=None)
+    with pytest.raises(CommandError) as refused:
+        request_idle_screensaver_peek(controller)
+    assert refused.value.code == "invalid_args"
+    assert not hasattr(controller, "_idle_screensaver_peek_until")
+
+    # An id the registry does not know fails closed the same way the
+    # idle path does.
+    unknown = controller_type()
+    unknown.settings = _cue_settings(idle_screensaver_effect="not-a-real-effect")
+    with pytest.raises(CommandError) as missing:
+        request_idle_screensaver_peek(unknown)
+    assert missing.value.code == "not_found"
+    assert not hasattr(unknown, "_idle_screensaver_peek_until")
+
+    # A hand-forged seconds is invalid; a real one clamps into 2…15.
+    bad = controller_type()
+    bad.settings = _cue_settings(idle_screensaver_effect="rainbow")
+    with pytest.raises(CommandError):
+        request_idle_screensaver_peek(bad, seconds="a while")
+    assert request_idle_screensaver_peek(bad, seconds=600)["seconds"] == 15.0
+    assert request_idle_screensaver_peek(bad, seconds=0.1)["seconds"] == 2.0

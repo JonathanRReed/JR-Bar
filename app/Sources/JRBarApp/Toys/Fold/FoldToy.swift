@@ -9,9 +9,10 @@ import SwiftUI
 /// comes down, like it is holding its angle in the room. The pieces stay
 /// small: `LidAngleSensor` reads the hinge, `FoldCapture` grabs the
 /// built-in display, `FoldRenderer` warps it into the click-through
-/// `FoldOverlayWindow`. When the fold amount is 0 the overlay is ordered
-/// out and nothing — not even the capture — is running. Render can also
-/// be handed to Bendy or Lid Plane; then all of this stays parked.
+/// `FoldOverlayWindow`. While the toy is armed the capture stays live —
+/// only the overlay hides above the activation angle, so crossing it
+/// never restarts a stream. Render can also be handed to Bendy or Lid
+/// Plane; then all of this stays parked.
 @MainActor
 @Observable
 final class FoldToy: Toy {
@@ -49,9 +50,18 @@ final class FoldToy: Toy {
     @ObservationIgnored private var capture: FoldCapture?
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     /// The smoothed radians past the anchor the renderer is showing —
-    /// sensor readings step at 30 Hz, the fold should glide.
+    /// sensor readings step at 30 Hz, the fold glides at the display's
+    /// own rate because the display link, not the sensor, carries the
+    /// easing between samples.
     @ObservationIgnored private var displayedDelta = 0.0
     @ObservationIgnored private var lastDeltaTick: TimeInterval = 0
+    /// The vsync heartbeat while the fold is armed. CADisplayLink needs
+    /// an NSObject target, so the box holds the closure.
+    @ObservationIgnored private var tickLink: CADisplayLink?
+    @ObservationIgnored private let tickBox = TickBox()
+    /// A missing built-in screen makes `ensureOverlay` fail; retrying
+    /// every vsync would spin, so attempts are half a second apart.
+    @ObservationIgnored private var lastOverlayAttempt: TimeInterval = 0
     /// The displayParameters version the overlay was last framed for.
     @ObservationIgnored private var reframedVersion = -1
     /// Set when a safety input parked us; only a resume from here waits
@@ -101,6 +111,9 @@ final class FoldToy: Toy {
         })
 
         sensor.onSample = { [weak self] angle in self?.noteSensorSample(angle) }
+        tickBox.onTick = { [weak self] in
+            MainActor.assumeIsolated { self?.tickFrame() }
+        }
         observe()
     }
 
@@ -185,6 +198,9 @@ final class FoldToy: Toy {
     private func reconcile() {
         let settings = settings
         jitter.tolerance = settings.jitterTolerance
+        // Every path — off, parked, paused — leaves the vsync link
+        // matching the machine; a parked fold runs no timer.
+        defer { refreshTick() }
         guard settings.enabled, settings.provider == .jrbar else {
             paused = false
             resumeWork?.cancel()
@@ -232,43 +248,82 @@ final class FoldToy: Toy {
             overlay?.reframe()
             reframedVersion = displayVersion
         }
-        updatePresentation()
     }
 
-    /// Gates, smooths and presents the fold. The gate reads the raw
-    /// angle; the shader gets an eased delta so 30 Hz sensor steps glide
-    /// instead of clicking.
-    private func updatePresentation() {
+    /// Radians the fold wants right now, from the freshest truth — 0 when
+    /// the gate is closed, so easing home is also how the overlay leaves.
+    private var targetDelta: Double {
         guard let gate = gateAngle,
               FoldMath.allows(rawAngle: gate, activation: settings.activationAngle),
-              pauseReason == nil else {
+              pauseReason == nil else { return 0 }
+        return FoldMath.deltaRadians(
+            angle: effectiveAngle ?? gate, activation: settings.activationAngle)
+    }
+
+    /// Starts or stops the vsync heartbeat to match the machine: armed
+    /// means the fold could be or become visible — enabled, ours to
+    /// render, permissioned, unpaused. A stopped link is not a parked
+    /// fold; `reconcile` calls `tickFrame` once on every pass so a new
+    /// sample is never a frame late.
+    private func refreshTick() {
+        let armed = settings.enabled && settings.provider == .jrbar && !paused
+            && !rendererFailed && FoldCapturePermission.granted && pauseReason == nil
+        if armed {
+            if tickLink == nil {
+                // On macOS the link comes from the screen it drives.
+                let link = (FoldOverlayWindow.builtinScreen() ?? NSScreen.main)?
+                    .displayLink(target: tickBox, selector: #selector(TickBox.tick))
+                link?.add(to: .main, forMode: .common)
+                tickLink = link
+            }
+            lastDeltaTick = CACurrentMediaTime()
+            tickFrame()
+        } else if let link = tickLink {
+            link.invalidate()
+            tickLink = nil
             displayedDelta = 0
             overlay?.setVisible(false)
-            return
         }
-        let target = FoldMath.deltaRadians(
-            angle: effectiveAngle ?? gate, activation: settings.activationAngle)
+    }
+
+    /// One heartbeat: ease the delta toward its target, push the
+    /// uniforms, and show or hide the overlay to match. Runs at the
+    /// display's refresh while armed, so the fold's motion is the
+    /// screen's own cadence — the 30 Hz sensor only moves the target.
+    private func tickFrame() {
         let now = CACurrentMediaTime()
         displayedDelta = FoldMath.smoothed(
-            current: displayedDelta, target: target, dt: now - lastDeltaTick)
+            current: displayedDelta, target: targetDelta, dt: now - lastDeltaTick)
         lastDeltaTick = now
-        guard FoldMath.showsOverlay(
-            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false) else {
+        let wantVisible = FoldMath.showsOverlay(
+            delta: displayedDelta, hasFrame: capture?.hasFrame ?? false)
+        guard wantVisible else {
             overlay?.setVisible(false)
+            // The link's only job is motion; fully at rest — gate shut
+            // and the ease finished — it stands down until the next
+            // reconcile arms it again.
+            if targetDelta == 0 && abs(displayedDelta) <= 0.002, let link = tickLink {
+                link.invalidate()
+                tickLink = nil
+            }
             return
         }
-        guard let overlay = ensureOverlay() else { return }
         let settings = settings
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let fold = Float(FoldMath.foldAmount(
-            angle: effectiveAngle ?? gate, activation: settings.activationAngle))
-        overlay.renderer.params = FoldRenderer.Params(
-            delta: Float(displayedDelta),
-            blur: settings.style == .fog && !reduceMotion ? Float(settings.blur) : 0,
-            persp: Float(settings.perspective),
-            dim: settings.style == .tilt ? 0 : fold * Float(settings.shade))
-        overlay.setVisible(true)
-        overlay.redraw()
+        let fold = Float(abs(sin(displayedDelta)))
+        if overlay == nil {
+            guard now - lastOverlayAttempt > 0.5 else { return }
+            lastOverlayAttempt = now
+            guard ensureOverlay() != nil else { return }
+        }
+        if let overlay {
+            overlay.renderer.params = FoldRenderer.Params(
+                delta: Float(displayedDelta),
+                blur: settings.style == .fog && !reduceMotion ? Float(settings.blur) : 0,
+                persp: Float(settings.perspective),
+                dim: settings.style == .tilt ? 0 : fold * Float(settings.shade))
+            overlay.setVisible(true)
+        }
     }
 
     private func ensureOverlay() -> FoldOverlayWindow? {
@@ -293,11 +348,12 @@ final class FoldToy: Toy {
         let capture = FoldCapture()
         self.capture = capture
         capture.onFrame = { [weak self] buffer in
-            guard let self, let overlay = self.overlay else { return }
+            guard let self else { return }
             // Push once per delivered frame; a draw then costs one
-            // triangle, not a texture conversion.
-            if overlay.renderer.setDesktopFrame(buffer), overlay.isVisible {
-                overlay.redraw()
+            // triangle, not a texture conversion. The first frame is
+            // also what can make the overlay showable.
+            if self.overlay?.renderer.setDesktopFrame(buffer) ?? false {
+                self.tickFrame()
             }
         }
         Task { [weak self, weak capture] in
@@ -413,6 +469,7 @@ final class FoldToy: Toy {
         resumeWork = nil
         standDown()
         sensor.setPolling(false)
+        refreshTick()
         let url = provider == .bendy ? bendyURL : lidPlaneURL
         if let url {
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, _ in }
@@ -595,4 +652,11 @@ private struct FoldControlsView: View {
     private func degrees(_ value: Double) -> String {
         value == value.rounded() ? "\(Int(value))°" : String(format: "%.1f°", value)
     }
+}
+
+/// The display link's target — CADisplayLink needs an NSObject with an
+/// @objc selector, so the toy's `tickFrame` rides inside a closure.
+private final class TickBox: NSObject {
+    var onTick: () -> Void = {}
+    @objc func tick() { onTick() }
 }

@@ -8,8 +8,9 @@ import Testing
 @Suite("Aquarium model")
 struct AquariumModelTests {
     static func session(_ id: String, lifecycle: String? = "active", mode: String? = "working",
-                        ask: Bool = false) -> CoreSession {
+                        ask: Bool = false, updatedAt: Double? = nil) -> CoreSession {
         CoreSession(id: id, provider: "claude", label: "run \(id)", mode: mode, lifecycle: lifecycle,
+                    updatedAt: updatedAt,
                     ask: ask ? CoreAsk(session: id, kind: "permission", openedAt: 1) : nil)
     }
 
@@ -112,6 +113,39 @@ struct AquariumModelTests {
         #expect(fish[0].state == .swimming)
         #expect(fish[0].stateSince == t0 + 2)
         #expect(!fish[0].isRetired(at: t0 + 100))
+    }
+
+    @Test("a new fish enters the tank at reduce time & keeps its entrance")
+    func entrance() {
+        let t0 = Date()
+        let first = AquariumModel.reduce(sessions: [Self.session("a")], previous: [], now: t0)[0]
+        #expect(first.enteredAt == t0)
+        // A state change is not a re-entry: the fish keeps its entrance.
+        let again = AquariumModel.reduce(sessions: [Self.session("a", ask: true)],
+                                         previous: [first], now: t0 + 5)[0]
+        #expect(again.enteredAt == t0)
+        #expect(again.stateSince == t0 + 5)
+        // A fish that leaves & comes back is a new fish with a new entrance.
+        let later = AquariumModel.reduce(sessions: [Self.session("a")], previous: [], now: t0 + 9)[0]
+        #expect(later.enteredAt == t0 + 9)
+    }
+
+    @Test("the session's updated_at lands on the fish & survives reduces that drop it")
+    func activity() {
+        let t0 = Date()
+        var fish = AquariumModel.reduce(sessions: [Self.session("a", updatedAt: 1_000)],
+                                        previous: [], now: t0)[0]
+        #expect(fish.lastUpdate == Date(timeIntervalSince1970: 1_000))
+        // A later reduce without the field keeps the last known activity.
+        fish = AquariumModel.reduce(sessions: [Self.session("a")], previous: [fish], now: t0 + 1)[0]
+        #expect(fish.lastUpdate == Date(timeIntervalSince1970: 1_000))
+        // A newer stamp replaces it.
+        fish = AquariumModel.reduce(sessions: [Self.session("a", updatedAt: 2_000)],
+                                    previous: [fish], now: t0 + 2)[0]
+        #expect(fish.lastUpdate == Date(timeIntervalSince1970: 2_000))
+        // A session that never carried one stays nil.
+        let quiet = AquariumModel.reduce(sessions: [Self.session("b")], previous: [], now: t0)[0]
+        #expect(quiet.lastUpdate == nil)
     }
 
     @Test("an ask outranks work, and a failure outranks an ask")

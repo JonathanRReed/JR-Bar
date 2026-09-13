@@ -94,13 +94,7 @@ struct ToyCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                Text(status.text)
-                    .font(.caption)
-                    .foregroundStyle(status.tint)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(status.tint.opacity(0.14), in: Capsule())
-                    .lineLimit(1)
+                StatusChip(status: status)
                 Toggle(isOn: toggle) { EmptyView() }
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -108,6 +102,33 @@ struct ToyCard: View {
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
+        }
+    }
+}
+
+/// The card's status chip. On the live "On" state the capsule breathes —
+/// a slow opacity pulse on a timeline that pauses for every other state
+/// and under Reduce Motion — and long status text truncates instead of
+/// pushing the toggle out.
+private struct StatusChip: View {
+    let status: ToyStatus
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var live: Bool { status == .on && !reduceMotion }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !live)) { context in
+            let breath = live
+                ? (1 - cos(context.date.timeIntervalSinceReferenceDate * .pi * 2 / 2.6)) / 2
+                : 0
+            Text(status.text)
+                .font(.caption)
+                .foregroundStyle(status.tint)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 2)
+                .background(status.tint.opacity(0.14 + 0.10 * breath), in: Capsule())
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 }

@@ -4,10 +4,11 @@ import Observation
 import SwiftUI
 
 /// Aquarium (docs/TOYS.md): every live session is a fish in a resizable
-/// window — provider colour, label under it, swims at its own pace. An
-/// ask brings the fish up to bob with a bubble, a failed run sinks
-/// grey, a completion drifts off the edge. Reads `core.sessions` only;
-/// the timeline pauses while the window is covered. Off by default.
+/// window — provider colour, label in a chip under it, swims its lane
+/// at its own pace & turns at the glass. An ask rises to bob with a
+/// bubble, a failed run sinks grey & settles on the sand, a completion
+/// drifts off the edge. Reads `core.sessions` only; the timeline pauses
+/// while the window is covered. Off by default.
 @MainActor
 @Observable
 final class AquariumToy: Toy {

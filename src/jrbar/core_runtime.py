@@ -1227,6 +1227,40 @@ def _cmd_end_calibration_preview(self, args):
     return {"device": device, "ended": ended}
 
 
+@command("screensaver_peek")
+def _cmd_screensaver_peek(self, args):
+    """The Screensaver card's "Play it now" (docs/TOYS.md): the configured
+    ``idle_screensaver_effect`` staged on the strip and bar for a few
+    seconds through the ambient runtime's own IDLE-candidate seam, then
+    retired. ``seconds`` is optional and clamps to 2…15 (default 9). The
+    reply's ``state`` is the daemon's fresh fact word -- "peeking" when
+    the effect actually took the surfaces this batch; a live semantic,
+    DND or a sleeping display still wins, so a refused-looking ``state``
+    is the honest answer.
+    """
+    from .ambient_effect_runtime import request_idle_screensaver_peek
+
+    reply = request_idle_screensaver_peek(self, seconds=args.get("seconds"))
+    # Stage on this command rather than a refresh tick from now: the same
+    # observation seam a batch runs, with no new events and the state the
+    # last refresh left. A daemon mid-startup simply stages on the next
+    # tick -- the armed window outlives either path.
+    try:
+        self.observe_operator_history_events(
+            (), getattr(self, "current_operator_state", None)
+        )
+    except Exception:
+        pass
+    fact = getattr(self, "_idle_screensaver_fact", None)
+    if isinstance(fact, dict):
+        screensaver = fact.get("screensaver")
+        if isinstance(screensaver, dict) and type(screensaver.get("state")) is str:
+            reply["state"] = screensaver["state"]
+    self._core_publish_state_soon()
+    self._core_publish_lights()
+    return reply
+
+
 @command("apply_effect")
 def _cmd_apply_effect(self, args):
     """The protocol-1 alias: ``effect`` null or ``"none"`` is the remove.

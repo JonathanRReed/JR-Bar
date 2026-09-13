@@ -18,10 +18,12 @@ final class FoldOverlayWindow: NSPanel {
         super.init(contentRect: screen.frame,
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         metalView.colorPixelFormat = .bgra8Unorm
-        // The view draws only when asked: a new captured frame or a new
-        // angle pokes `redraw`, nothing free-runs.
+        // While the overlay is up the view free-runs at the display's
+        // refresh — the fold's glide lives on the vsync, not on sensor
+        // cadence. Ordered out it pauses: nothing to draw, nothing drawn.
         metalView.isPaused = true
-        metalView.enableSetNeedsDisplay = true
+        metalView.enableSetNeedsDisplay = false
+        metalView.preferredFramesPerSecond = Int(screen.maximumFramesPerSecond)
         metalView.delegate = renderer
         metalView.autoresizingMask = [.width, .height]
         contentView = metalView
@@ -43,8 +45,17 @@ final class FoldOverlayWindow: NSPanel {
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
+    /// Order in and start vsync-driven draws, or pause and order out.
+    /// The toy calls this every heartbeat; both halves are no-ops when
+    /// nothing changed.
     func setVisible(_ visible: Bool) {
-        if visible { orderFrontRegardless() } else { orderOut(nil) }
+        if visible {
+            if !isVisible { orderFrontRegardless() }
+            metalView.isPaused = false
+        } else {
+            metalView.isPaused = true
+            if isVisible { orderOut(nil) }
+        }
     }
 
     /// Keeps the panel matched to the built-in screen's frame after a
@@ -52,10 +63,6 @@ final class FoldOverlayWindow: NSPanel {
     func reframe() {
         guard let screen = Self.builtinScreen() else { return }
         setFrame(screen.frame, display: true)
-    }
-
-    func redraw() {
-        metalView.needsDisplay = true
     }
 
     // MARK: Built-in display facts

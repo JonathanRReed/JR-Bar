@@ -26,16 +26,39 @@ All notable changes to JR-Bar are documented here.
   lid swings under it — the hold-the-angle illusion instead of a warp —
   so at the activation angle the render is pixel-identical and nothing
   appears until the lid is meaningfully closed. The delta eases with an
-  ~80 ms exponential filter, blur is a real Gaussian pyramid baked once
-  per frame with a radius that grows toward the far edge, and the image
-  boundary feathers into the dark surround. Under the hood: capture is
-  capped at 2560 px, drops the cursor, only accepts complete frames and
-  excludes all of JR-Bar's windows; the stream stays alive across the
-  activation line instead of restarting on every crossing; and the
-  activation gate reads the raw sensor angle so jitter can never hold
-  the overlay open. A corrupt HID report outside 0–180° is dropped, and
-  "lid closed" now comes from the registry's clamshell state rather than
-  the keep-awake hold.
+  ~80 ms exponential filter on a vsync display link — the 30 Hz sensor
+  moves the target, the screen's own refresh moves the fold — blur is a
+  real Gaussian pyramid baked once per frame with a radius that grows
+  toward the far edge, and the image boundary feathers into the dark
+  surround. Under the hood: capture is capped at 2560 px, drops the
+  cursor, only accepts complete frames and excludes all of JR-Bar's
+  windows; the stream stays alive across the activation line instead of
+  restarting on every crossing; and the activation gate reads the raw
+  sensor angle so jitter can never hold the overlay open. A corrupt HID
+  report outside 0–180° is dropped, "lid closed" now comes from the
+  registry's clamshell state rather than the keep-awake hold, and the
+  shipped defaults moved to 82° / Dusk — a file still carrying the old
+  untouched defaults migrates.
+- The toys stopped feeling like novelties. Confetti is a real cannon
+  now: 140 pieces launched from the notch under closed-form ballistics
+  (gravity plus quadratic drag, solved rather than integrated), cards
+  and streamers that tumble, twirl and flutter to their own terminal
+  speeds, a muzzle flash & shockwave on the pop, and a radial bloom in
+  place of the burst under Reduce Motion. Notch Buddy grew a skeleton:
+  it blinks, anticipates turns, leans into its stride, squashes on
+  landing, wears the working provider's colour while it paces, crouch-
+  jumps and springs a "!" on an ask, throws sparkles on a completion,
+  and sags half-lidded when work fails. Aquarium is a body of water:
+  sun glow, god rays, caustic shimmer, a dune floor, parallax plankton,
+  and fish with real skeletons — notched tail-fan beats, pectoral flaps,
+  sheen & belly shading, depth lanes that shrink and desaturate the far
+  swimmers, wall approaches that pitch & squash, edge swim-ins for new
+  sessions, nose-up ask rises and failure drops that rock to rest on
+  the sand. Screen Bar Screensaver can audition itself: a live LED
+  preview of the picked effect on the card plus "Play it now", which
+  stages the effect through the same admission gates on a short window
+  (2–15 s) and retires it on its own — new `screensaver_peek` command.
+  The status chips breathe while a toy is on.
 - Every control does what it says. An audit found eight settings that
   wrote keys nothing read or described things the app couldn't do:
   Show in full screen, Gap width and Wing length now shape the Screen

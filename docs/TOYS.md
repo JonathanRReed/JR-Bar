@@ -42,7 +42,7 @@ public struct ToysState {
     public var confetti: ConfettiSettings
     public var externalApps: [ExternalToyApp]
 }
-public struct FoldSettings { enabled: Bool = false; activationAngle: Double = 110; style: FoldStyle = .tilt;
+public struct FoldSettings { enabled: Bool = false; activationAngle: Double = 82; style: FoldStyle = .dusk;
                              perspective: Double = 0.6; blur: Double = 0.5; shade: Double = 0.4;
                              jitterTolerance: Double = 0; provider: FoldProvider = .jrbar }
 public enum FoldStyle: String { case tilt, dusk, fog }          // perspective only / + darken / + blur
@@ -117,7 +117,10 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
   perspective by `perspective` — so at delta 0 the render is
   pixel-identical and activating is invisible. `delta` is radians past
   the anchor (`(activation − angle)·π/180`, clamped −0.65…1.25), eased
-  with an ~80 ms exponential filter so sensor steps glide. Blur is a
+  with an ~80 ms exponential filter on a `CADisplayLink` at the screen's
+  own refresh — the 30 Hz sensor moves the target, the vsync moves the
+  fold. While the overlay is up the `MTKView` free-runs at
+  `preferredFramesPerSecond`; ordered out, it is paused. Blur is a
   4-level MPS Gaussian pyramid baked once per frame, mixed by a radius
   that grows toward the far edge (`smoothstep(0.08,1,h)·|sin δ|·65`,
   scaled by `blur`); the image boundary feathers out over the blur radius
@@ -148,15 +151,26 @@ its angle in the room while the screen moves. Clean-room; no Lid Plane
 
 ## Aquarium (native)
 
-Every live session is a fish. Provider colour, session label under it,
-swims left-right at its own pace. An ask brings the fish to the surface
-where it bobs with a small bubble; a failed session goes grey and sinks;
-a completion drifts off the edge. The tank is a resizable window
-(`AquariumWindowController`), `TimelineView(.animation)` + `Canvas`,
-reads `core.sessions` only, and stops its timeline when hidden. Controls:
-On/Off (opens/closes the window), Show labels, Density (how much
-plankton/bubbles), "Fill screen" button (borderless full-screen, Esc
-leaves). Reduce Motion: fish glide without tail wag.
+Every live session is a fish — a real one: tapered body, dorsal &
+pectoral fins, a translucent tail that articulates, a gill line, a
+lateral highlight and a proper eye, in the provider's colour with the
+session label in a small dark chip under it. The tank has depth: a lit
+gradient warming toward the surface, three slow god rays, a caustic
+shimmer band under the surface line, plankton in two parallax layers,
+ambient bubbles, a dune floor and a soft bottom-corner vignette.
+Deeper lanes hold smaller, dimmer, slower fish. Fish ease into curved
+U-turns at the glass instead of mirror-flipping, and new sessions swim
+in from an edge; a recently updated session's tail beats faster. An
+ask rises to the surface trailing small bubbles and bobs there with a
+bubble riding overhead; a failed session goes grey, sinks nose-down
+onto the sand and settles with a slow rocking; a completion drifts off
+the right edge. The tank is a resizable window
+(`AquariumWindowController`), `TimelineView(.animation)` capped at 30
+fps + `Canvas`, reads `core.sessions` only, and stops its timeline
+while occluded. Controls: On/Off (opens/closes the window), Show
+labels, Density (how much plankton/bubbles), "Fill screen" button
+(borderless full-screen, Esc leaves). Reduce Motion: rays & shimmer
+hold still, tails don't wag, fish glide — poses stay.
 
 ## Notch Buddy (native)
 
@@ -164,19 +178,42 @@ A tiny creature in the `NotchHUD` panel that lives by the agent state:
 asleep when nothing runs, paces while sessions work, waves (and turns
 amber) when an ask is open, slumps when something failed, does one hop on
 a completion. Drawn in SwiftUI shapes, one character to start ("dot"),
-with the enum left open. It must never cover the HUD's toasts: when a
-toast shows, the buddy steps aside. Off by default.
+with the enum left open.
+
+It's a soft blob body, two pupils under lids, a small mouth and a ground
+shadow — at 18pt the silhouette does the work, so the craft lives in the
+animation. Pacing is an eased walk with a per-step bob and a pause at
+each end where the eyes turn before the body follows. The wave and the
+hop both crouch first, stretch on the way up and land flat; the ask pops
+a "!" once and the hop throws two sparkles near its apex. Sleeping
+breathes and drifts "z"s; slumping droops half-lidded and keeps slowly
+deflating. Every awake mood blinks on a jittered ~2.5–6s cadence. While
+it paces it wears the working provider's accent when one provider owns
+the work (`ProviderStyle.style(for:).accent`); ask stays amber, failed
+red, the hop green.
+
+It must never cover the HUD's toasts: when a toast shows, the buddy
+steps aside. Reduce Motion swaps the moving poses for still ones (the
+blink stays — a shut-eye frame is a pose too). Off by default.
 
 ## Confetti (native)
 
-When a provider's **weekly** quota resets, a short burst of confetti in
-that provider's colours falls from the notch/Screen Bar area over ~1.5 s
-in a transparent, click-through overlay window, then the window closes.
-The trigger is the daemon's `quota_reset` event where `lane == "weekly"`
-or `lane` ends in `-weekly` (docs/CORE-PROTOCOL.md); five-hour and
-session resets do not fire. Hooks into `EventCoordinator.apply` via
-`ToysStore.confetti.fire(providerColor:)`. A "Test burst" button in the
-card fires one on demand. Honors Reduce Motion (a single soft flash
+When a provider's **weekly** quota resets, a confetti cannon pops at the
+notch/Screen Bar centre: a flash & starburst at the muzzle, then ~140
+pieces in that provider's colours burst up & out in a cone (a few fired
+sideways, like spray), arc under gravity & quadratic air drag, and
+tumble down the band — cards twinkle (a scaleX oscillation standing in
+for a spin about the vertical axis), streamers corkscrew — easing out
+near the bottom edge over ~2.6 s in a transparent, click-through overlay
+window, then the window closes. Pieces are rects, dots & long thin
+streamers; the palette is the provider colour in light & dark steps plus
+white & a few gold flecks. Motion is closed-form (`ConfettiPhysics`);
+piece constants are fixed at fire time. The trigger is the daemon's
+`quota_reset` event where `lane == "weekly"` or `lane` ends in `-weekly`
+(docs/CORE-PROTOCOL.md); five-hour and session resets do not fire. Hooks
+into `EventCoordinator.apply` via `ToysStore.confetti.fire(providerColor:)`.
+A "Test burst" button in the card fires one on demand. Honors Reduce
+Motion (a gentle radial bloom of the provider colour at the notch
 instead). Off by default. `ConfettiSettings { enabled: Bool = false }`
 (the `onCompletion`/`onMilestone` fields are dropped).
 
@@ -199,8 +236,19 @@ enabled with a valid effect, plan that effect as an ambient owner; any
 real signal preempts it immediately; it never runs inside the night scene
 unless `rainstick_night_enabled` is on (same consent as rainstick). The
 existing `idle_auto_off` still wins when it fires later. The card shows a
-picker of effects (from `list_effects`), the delay slider, and the live
-"playing / waiting (idle 3m of 20m) / off" fact.
+picker of effects (from `list_effects`), the picked effect playing live
+in a `LEDStripPreview` band (the catalog's own `preview.program`, so the
+band is what the bar will play; no program in the catalog → no row, the
+picker still stands), the delay slider, a "Play it now" peek button, and
+the live "playing / peeking / waiting (idle 3m of 20m) / off" fact.
+
+The peek is the `screensaver_peek` core command (docs/CORE-PROTOCOL.md):
+the daemon arms a ~9 s window during which each observation batch stages
+the picked effect through the same IDLE-candidate seam — the toggle and
+the delay do not gate an explicit preview, but admission, Reduce Motion
+and every live semantic still do — and the batch after the window retires
+it. While a peek owns the surfaces the fact reads `"peeking"`; the button
+disables as "Playing…" while `state` is `peeking` or `playing`.
 
 ## Alcove (bridge)
 

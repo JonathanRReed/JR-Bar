@@ -12,14 +12,15 @@ struct ToysPage: View {
 
     var body: some View {
         Section {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 14) {
                 JRMonogram(tint: tint)
                 Text("Stuff that's just fun. None of it touches your agents or your usage, & every bit of it can be turned off.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
+            .accessibilityElement(children: .combine)
         }
 
         if let toys = store.toys {

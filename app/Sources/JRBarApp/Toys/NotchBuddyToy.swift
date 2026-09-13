@@ -19,6 +19,10 @@ final class NotchBuddyToy: Toy {
 
     /// While non-nil and in the future the buddy hops once.
     private(set) var hopUntil: Date?
+    /// When the current wave began — the ask entrance and the "!" pop
+    /// once from here. `mood(at:)` maintains it because the view is the
+    /// only clock that ticks the mood.
+    private(set) var wavingSince: Date?
     @ObservationIgnored private var lastDoneCount = 0
 
     init(core: CoreModel) {
@@ -70,6 +74,32 @@ final class NotchBuddyToy: Toy {
     }
 
     func mood(at now: Date = Date()) -> Mood {
+        let mood = reducedMood(at: now)
+        if mood == .waving {
+            if wavingSince == nil { wavingSince = now }
+        } else if wavingSince != nil {
+            wavingSince = nil
+        }
+        return mood
+    }
+
+    /// The provider the buddy wears while it paces: the one running the
+    /// work when a single provider owns it, else nil — split work falls
+    /// back to the plain accent. Ask, failed and hop keep their own
+    /// colours regardless.
+    var workingProvider: String? {
+        var provider: String?
+        for session in core.sessions where SessionActivity.reduce(session) == .working {
+            if let provider, provider != session.provider { return nil }
+            provider = session.provider
+        }
+        return provider
+    }
+
+    /// What the buddy is doing, in `SessionActivity`'s precedence: a live
+    /// ask outranks a failure, a failure outranks work, work outranks
+    /// sleep. A completion hops once and then the mood falls back.
+    private func reducedMood(at now: Date) -> Mood {
         if let hopUntil, now < hopUntil { return .celebrating }
         var mood = Mood.asleep
         for session in core.sessions {

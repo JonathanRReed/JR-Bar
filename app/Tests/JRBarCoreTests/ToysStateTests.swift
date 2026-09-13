@@ -21,8 +21,8 @@ struct ToysStateTests {
         let state = ToysState()
         #expect(state.fold == FoldSettings())
         #expect(state.fold.enabled == false)
-        #expect(state.fold.activationAngle == 110)
-        #expect(state.fold.style == .tilt)
+        #expect(state.fold.activationAngle == 82)
+        #expect(state.fold.style == .dusk)
         #expect(state.fold.provider == .jrbar)
         #expect(state.aquarium == AquariumSettings())
         #expect(state.notchBuddy == NotchBuddySettings())
@@ -53,8 +53,8 @@ struct ToysStateTests {
         let json = #"{"fold": {"enabled": true, "activationAngle": "soon", "style": "glow", "provider": "someone"}, "confetti": {"enabled": "yes"}, "externalApps": "many", "futureToy": {"enabled": true}}"#
         let state = try decode(ToysState.self, json)
         #expect(state.fold.enabled == true)
-        #expect(state.fold.activationAngle == 110, "a string is not an angle")
-        #expect(state.fold.style == .tilt, "an unknown style is tilt")
+        #expect(state.fold.activationAngle == 82, "a string is not an angle")
+        #expect(state.fold.style == .dusk, "an unknown style is dusk")
         #expect(state.fold.provider == .jrbar, "an unknown renderer is jrbar")
         #expect(state.confetti.enabled == false, "a string is not a flag")
         #expect(state.externalApps.isEmpty)
@@ -70,6 +70,22 @@ struct ToysStateTests {
             ExternalToyApp(id: "com.example.A", name: "A", launchWithJRBar: true),
             ExternalToyApp(id: "com.example.B", name: ""),
         ])
+    }
+
+    @Test("a file still on the old defaults migrates to the new ones")
+    func oldDefaultsMigrate() throws {
+        // Pre-0.9.6 builds shipped 110°/Tilt and proved over-eager: a
+        // file carrying exactly those values is treated as untouched.
+        let stale = try decode(FoldSettings.self, #"{"activationAngle": 110, "style": "tilt"}"#)
+        #expect(stale.activationAngle == 82)
+        #expect(stale.style == .dusk)
+        // But a deliberate 110° survives: any other field moved means the
+        // user touched it, and Tilt on its own is a real choice too.
+        let chosen = try decode(FoldSettings.self,
+                                #"{"activationAngle": 110, "style": "tilt", "blur": 0.9}"#)
+        #expect(chosen.activationAngle == 110)
+        let tiltOnly = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "tilt"}"#)
+        #expect(tiltOnly.style == .tilt)
     }
 
     @Test("the earlier confetti fields decode as their replacement: off")

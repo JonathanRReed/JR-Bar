@@ -1619,6 +1619,12 @@ _IDLE_SCREENSAVER_CANDIDATE_KEY = "idle_screensaver"
 _IDLE_SCREENSAVER_DEFAULT_AFTER_SECONDS = 20 * 60
 _IDLE_SCREENSAVER_MIN_AFTER_SECONDS = 5 * 60
 _IDLE_SCREENSAVER_MAX_AFTER_SECONDS = 1440 * 60
+# The card's "Play it now" arms a window this long: every observation
+# batch inside it re-stages the picked effect and the first batch after
+# it retires the output, so the strip returns to normal on its own.
+_IDLE_SCREENSAVER_PEEK_SECONDS = 9.0
+_IDLE_SCREENSAVER_PEEK_MIN_SECONDS = 2.0
+_IDLE_SCREENSAVER_PEEK_MAX_SECONDS = 15.0
 
 
 def _idle_screensaver_after_seconds(settings: object) -> int:
@@ -1675,6 +1681,64 @@ def _idle_screensaver_program(
     except Exception:
         return None
     return program if type(program) is str and program else None
+
+
+def request_idle_screensaver_peek(
+    controller: object,
+    *,
+    seconds: float | None = None,
+) -> dict[str, object]:
+    """Arm a short live preview of the configured screensaver effect.
+
+    The toy card's "Play it now" (``screensaver_peek``, docs/
+    CORE-PROTOCOL.md) lands here. While the window is armed the
+    observation batch stages the picked effect through the same
+    IDLE-candidate seam the idle delay uses -- the enable toggle and the
+    delay do not gate an explicit preview, but admission, Reduce Motion
+    and every live semantic still do -- and the first batch after it
+    retires the output the ordinary way. Returns the reply's effect id
+    and the clamped window; ``CommandError`` when there is nothing to
+    peek at: ``invalid_args`` with nothing picked or a bad ``seconds``,
+    ``not_found`` for an id the (pack-aware) registry does not know.
+    """
+    from .core_server import CommandError
+
+    settings = getattr(controller, "settings", None)
+    raw_effect = getattr(settings, "idle_screensaver_effect", None)
+    effect_id = (
+        raw_effect.strip()
+        if type(raw_effect) is str and raw_effect.strip()
+        else None
+    )
+    if effect_id is None:
+        raise CommandError("invalid_args", "pick a screensaver effect first")
+    if _idle_screensaver_registry(controller).get(effect_id) is None:
+        raise CommandError(
+            "not_found", "the picked effect is not in this build's library"
+        )
+    if seconds is None:
+        window = _IDLE_SCREENSAVER_PEEK_SECONDS
+    else:
+        if type(seconds) is bool:
+            raise CommandError("invalid_args", "seconds must be a number")
+        try:
+            window = float(seconds)
+        except (TypeError, ValueError) as error:
+            raise CommandError(
+                "invalid_args", "seconds must be a number"
+            ) from error
+        if not math.isfinite(window):
+            raise CommandError("invalid_args", "seconds must be finite")
+    window = max(
+        _IDLE_SCREENSAVER_PEEK_MIN_SECONDS,
+        min(_IDLE_SCREENSAVER_PEEK_MAX_SECONDS, window),
+    )
+    setattr(
+        controller,
+        "_idle_screensaver_peek_until",
+        time.monotonic() + window,
+    )
+    return {"effect_id": effect_id, "seconds": window}
 
 
 def _retire_idle_screensaver(controller: object, *, now: float) -> None:
@@ -1772,8 +1836,23 @@ def _observe_idle_screensaver(
         # A delivered signal staged this batch keeps the seam.
         or (pending is not None and pending.winner is not None)
     )
+    peek_until = getattr(controller, "_idle_screensaver_peek_until", None)
+    peeking = type(peek_until) in {int, float} and now < float(peek_until)
+    if not peeking and peek_until is not None:
+        # A stale window is cleared, never honoured twice.
+        setattr(controller, "_idle_screensaver_peek_until", None)
     playing = False
-    if armed and not blocked and idle_seconds >= float(after_seconds):
+    # A peek skips the enable toggle and the delay -- it is the owner
+    # pressing "Play it now" -- but never the admission gates: a live
+    # semantic, DND or a sleeping display still wins.
+    if not blocked and (
+        (armed and idle_seconds >= float(after_seconds))
+        or (
+            peeking
+            and effect_id is not None
+            and registry.get(effect_id) is not None
+        )
+    ):
         effect_map = SemanticEffectMap(
             tuple(
                 SemanticEffectAssignment(
@@ -1817,10 +1896,17 @@ def _observe_idle_screensaver(
             "screensaver": {
                 # "waiting" means armed and merely short of the delay; a
                 # held-off or unarmed card reads "off", never "waiting".
+                # "peeking" is a staged "playing" the owner asked for
+                # (request_idle_screensaver_peek); the card shows it as
+                # "Playing…" on the button.
                 "state": (
-                    "playing"
-                    if playing
-                    else ("waiting" if armed and not blocked else "off")
+                    "peeking"
+                    if playing and peeking
+                    else (
+                        "playing"
+                        if playing
+                        else ("waiting" if armed and not blocked else "off")
+                    )
                 ),
                 "idle_seconds": round(idle_seconds, 3),
                 "after_seconds": int(after_seconds),
@@ -2056,4 +2142,5 @@ __all__ = [
     "active_ambient_surface_output",
     "active_device_ambient_surface_output",
     "install_ambient_effect_runtime",
+    "request_idle_screensaver_peek",
 ]

@@ -33,9 +33,16 @@ public struct Fish: Equatable, Sendable, Identifiable {
     /// When the fish entered `state`; the view integrates the bob, the
     /// sink and the drift off the edge from it.
     public var stateSince: Date
+    /// When the fish joined the tank; the view swims it in from an edge
+    /// over its first couple of seconds instead of popping it in.
+    public var enteredAt: Date
+    /// The session's `updated_at`; a recently active session's tail
+    /// beats faster. Kept from the last reduce that carried one.
+    public var lastUpdate: Date?
 
     public init(id: String, label: String, providerID: String, state: FishState,
-                lane: Double, speed: Double, direction: Double, stateSince: Date) {
+                lane: Double, speed: Double, direction: Double, stateSince: Date,
+                enteredAt: Date = .distantPast, lastUpdate: Date? = nil) {
         self.id = id
         self.label = label
         self.providerID = providerID
@@ -44,6 +51,8 @@ public struct Fish: Equatable, Sendable, Identifiable {
         self.speed = speed
         self.direction = direction
         self.stateSince = stateSince
+        self.enteredAt = enteredAt
+        self.lastUpdate = lastUpdate
     }
 
     /// How far through the drift off the right edge the fish is, 0...1.
@@ -83,6 +92,9 @@ public enum AquariumModel {
                 // says about it now is rewritten.
                 fish.label = session.displayLabel
                 fish.providerID = session.provider
+                if let updated = session.updatedAt {
+                    fish.lastUpdate = Date(timeIntervalSince1970: updated)
+                }
                 if fish.state != target {
                     fish.state = target
                     fish.stateSince = now
@@ -97,7 +109,9 @@ public enum AquariumModel {
                 lane: lane(for: session.id),
                 speed: speed(for: session.id),
                 direction: direction(for: session.id),
-                stateSince: now)
+                stateSince: now,
+                enteredAt: now,
+                lastUpdate: session.updatedAt.map { Date(timeIntervalSince1970: $0) })
         }
     }
 

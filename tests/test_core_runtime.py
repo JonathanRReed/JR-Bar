@@ -39,6 +39,8 @@ REQUIRED_COMMANDS = {
     # History/remote/Scene-pack extensions the app's stores already call.
     "mark_history_seen", "dismiss_session", "serve_token",
     "list_scene_packs", "import_scene_pack", "preview_scene_pack",
+    # Toys: the Screensaver card's "Play it now" (docs/TOYS.md).
+    "screensaver_peek",
 }
 
 
@@ -313,6 +315,35 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused(headless) 
     with pytest.raises(CommandError) as bad_path:
         controller._core_dispatch("set_setting", {"path": "devices.7.brightness", "value": 1})
     assert bad_path.value.code == "invalid_path"
+
+
+def test_screensaver_peek_arms_the_ambient_window(headless) -> None:
+    """The card's "Play it now": arms the idle-screensaver peek window on
+    the configured effect and refuses honestly when there is none."""
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+
+    # Nothing picked: the daemon refuses instead of playing "something".
+    with pytest.raises(CommandError) as refused:
+        controller._core_dispatch("screensaver_peek", {})
+    assert refused.value.code == "invalid_args"
+
+    controller._core_dispatch(
+        "set_setting", {"path": "idle_screensaver_effect", "value": "rainbow"}
+    )
+    reply = controller._core_dispatch("screensaver_peek", {"seconds": 5})
+    assert reply["effect_id"] == "rainbow"
+    assert reply["seconds"] == 5.0
+    until = getattr(controller, "_idle_screensaver_peek_until", None)
+    assert until is not None and until > time.monotonic()
+
+    # An id the registry does not know fails closed, like the idle path.
+    controller._core_dispatch(
+        "set_setting", {"path": "idle_screensaver_effect", "value": "not-a-real-effect"}
+    )
+    with pytest.raises(CommandError) as missing:
+        controller._core_dispatch("screensaver_peek", {})
+    assert missing.value.code == "not_found"
 
 
 def test_unsnooze_all_lifts_quiet_snoozes_not_just_asks(headless) -> None:
