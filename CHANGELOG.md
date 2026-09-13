@@ -2,7 +2,7 @@
 
 All notable changes to JR-Bar are documented here.
 
-## 0.9.5 (unreleased)
+## 0.9.6 (unreleased)
 
 - Toys. A new Settings page for the things that are fun first & don't
   touch agents or usage (docs/TOYS.md). Six to start: Fold, your desktop
