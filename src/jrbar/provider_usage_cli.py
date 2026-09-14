@@ -218,7 +218,9 @@ def _initial_state(settings, now: float) -> ProviderUsageState:
         "cursor": "Enable Cursor browser access",
         "devin": "Enable Devin browser access",
         "grok": "Run grok login",
+        "gemini": "Run gemini once to sign in",
         "antigravity": "Open Antigravity or run agy",
+        "opencode": "Run opencode once",
         "openai-api": "Add OpenAI Admin key",
     }
     for preference in settings.providers:
@@ -229,7 +231,7 @@ def _initial_state(settings, now: float) -> ProviderUsageState:
         else:
             state = ProviderSourceState.SOURCE_NOT_FOUND
             reason = "not_collected"
-            action = actions[preference.provider_id]
+            action = actions.get(preference.provider_id, "Check provider setup")
         snapshots.append(
             ProviderUsageSnapshot(
                 provider_id=preference.provider_id,

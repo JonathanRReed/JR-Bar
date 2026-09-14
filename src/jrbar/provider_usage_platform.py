@@ -114,6 +114,14 @@ _PROVIDER_DESCRIPTORS: Final = (
         True,
     ),
     ProviderDescriptor(
+        "gemini",
+        "Gemini",
+        ("gemini-code-assist",),
+        False,
+        True,
+        True,
+    ),
+    ProviderDescriptor(
         "antigravity",
         "Antigravity",
         ("antigravity-app", "agy-server", "antigravity-oauth"),

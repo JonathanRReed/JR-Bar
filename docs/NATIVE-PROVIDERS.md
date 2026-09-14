@@ -14,7 +14,8 @@ JR-Bar owns provider accounting directly. CodexBar is an engineering reference o
 | Antigravity | running Antigravity or `agy` loopback quota server | Gemini session/weekly and Claude+GPT session/weekly pools, dynamic detail lanes |
 | OpenAI API | encrypted JR-Bar Admin API key | organization/project spend, tokens, requests, models, daily history |
 | Pi | lifecycle hooks only (`~/.pi/agent/extensions/jrbar.ts`, `jrbar agent-monitor install pi`); session logs under `~/.pi/agent/sessions` as transcript fallback | sessions, prompts, tool runs, turn ends; no asks (see below) and no quota source (pi bills through whichever model provider it is pointed at) |
-| Gemini CLI | lifecycle hooks only (`hooks` in `~/.gemini/settings.json`, `jrbar agent-monitor install gemini`); chat logs under `~/.gemini/tmp/*/chats` as transcript fallback | sessions, prompts, tool runs, ToolPermission asks, turn ends; the Code Assist quota endpoint (`retrieveUserQuota`) is documented in `docs/research/gemini-cli-and-pi-hooks.md` and not read yet |
+| Gemini CLI | lifecycle hooks only (`hooks` in `~/.gemini/settings.json`, `jrbar agent-monitor install gemini`); chat logs under `~/.gemini/tmp/*/chats` as transcript fallback | sessions, prompts, tool runs, ToolPermission asks, turn ends |
+| Gemini (quota) | `~/.gemini/oauth_creds.json` (in-memory token refresh, file never rewritten), Code Assist `retrieveUserQuota` | per-model quota buckets (model, remaining, reset) as detail lanes; needs a provisioned Code Assist project — see below |
 
 Unknown provider-owned quota lanes remain visible in detail views but cannot trigger hardware or interruption alerts until their effect is declared. Missing data, measured zero, stale data, last-known-good data, permission failures, and unsupported sources are separate states.
 
@@ -54,6 +55,8 @@ The mechanism is a synthetic keystroke (`CGEventPostToPid`) to the process hosti
 
 **Gemini CLI could not be driven locally.** It refuses a base-URL override with "Invalid auth method selected" (exit 41), so its hook path is unverified against a scripted endpoint; it is exercised only by real use.
 
+**Gemini quota was certified live 2026-09-13** against `cloudcode-pa.googleapis.com` on the owner's account. The collector reads `~/.gemini/oauth_creds.json`, refreshes the access token in memory with the Gemini CLI's own public OAuth client (the file is never rewritten), discovers the Code Assist project through `loadCodeAssist` (or `--option project_id=...` / `GOOGLE_CLOUD_PROJECT`), then reads `retrieveUserQuota`. Verified failure shapes: an account that never onboarded gets `allowedTiers`/`ineligibleTiers` and no project — the free tier answers `UNSUPPORTED_CLIENT` ("migrate to the Antigravity suite"), and Google retired it for this client; `retrieveUserQuota` on an unprovisioned account answers `403 PERMISSION_DENIED` "no valid license", which is classified as a license state (`quota_license_required`), never as a sign-in failure. Buckets are per-model pools, so every Gemini lane is a non-bindable detail lane — none can pose as an account ceiling.
+
 ## Basic setup
 
 ```bash
@@ -63,6 +66,7 @@ jrbar providers enable claude
 jrbar providers enable cursor
 jrbar providers enable devin
 jrbar providers enable grok
+jrbar providers enable gemini
 jrbar providers enable antigravity
 jrbar providers enable openai-api
 ```

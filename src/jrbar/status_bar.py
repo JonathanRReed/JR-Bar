@@ -147,7 +147,7 @@ def _connected_device_count(target) -> int:
 def _usage_summary(target) -> str | None:
     labels = getattr(target, "_usage_menu_labels", {}) or {}
     values: list[str] = []
-    for provider in ("claude", "codex", "cursor", "grok", "devin", "antigravity"):
+    for provider in ("claude", "codex", "cursor", "grok", "devin", "antigravity", "gemini"):
         label = labels.get(provider)
         if label is None:
             continue

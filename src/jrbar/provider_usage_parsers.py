@@ -643,12 +643,63 @@ def parse_openai_api_usage(
     )
 
 
+def parse_gemini_usage(
+    payload: object,
+    *,
+    observed_at: float,
+    account_label: str | None = None,
+) -> ProviderUsageSnapshot:
+    """Code Assist ``retrieveUserQuota`` buckets -> per-model lanes.
+
+    Every bucket is one model's pool (``modelId`` + ``remainingFraction``);
+    the endpoint reports no account-wide window, so no lane is bindable and
+    none can stand in as the account's ceiling (T22).
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("invalid Gemini usage payload")
+    buckets = payload.get("buckets")
+    if not isinstance(buckets, list):
+        raise ValueError("Gemini usage payload has no quota buckets")
+    lanes: list[UsageLane] = []
+    for index, bucket in enumerate(buckets[:64]):
+        if not isinstance(bucket, dict):
+            continue
+        model_id = bucket.get("modelId")
+        if not isinstance(model_id, str) or not model_id.strip():
+            continue
+        model_id = model_id.strip()[:128]
+        fraction = _number(bucket.get("remainingFraction"))
+        lanes.append(
+            normalize_dynamic_lane(
+                provider_id="gemini",
+                lane_id=f"model-{_slug(model_id, f'bucket-{index + 1}')}",
+                label=model_id,
+                remaining_percent=(
+                    None if fraction is None else max(0.0, min(100.0, fraction * 100.0))
+                ),
+                reset_at=_reset_epoch(bucket.get("resetTime")),
+                source_id="gemini-code-assist",
+                known_lane_ids=frozenset(),
+                scope="model",
+                model=model_id,
+            )
+        )
+    return _snapshot(
+        "gemini",
+        observed_at=observed_at,
+        lanes=tuple(lanes),
+        account_label=account_label,
+        model_count=len(lanes),
+    )
+
+
 __all__ = [
     "parse_antigravity_usage",
     "parse_claude_usage",
     "parse_codex_usage",
     "parse_cursor_usage",
     "parse_devin_usage",
+    "parse_gemini_usage",
     "parse_grok_usage",
     "parse_openai_api_usage",
 ]

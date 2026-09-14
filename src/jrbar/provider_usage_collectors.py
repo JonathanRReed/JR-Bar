@@ -28,6 +28,7 @@ from .provider_usage_parsers import (
     parse_antigravity_usage,
     parse_cursor_usage,
     parse_devin_usage,
+    parse_gemini_usage,
     parse_grok_usage,
     parse_openai_api_usage,
 )
@@ -170,6 +171,7 @@ _AUTH_ACTION_BY_PROVIDER: dict[str, str] = {
     "grok": "Run grok login",
     "codex": "Run codex login",
     "antigravity": "Open Antigravity or run agy",
+    "gemini": "Run gemini once to sign in",
 }
 
 
@@ -599,6 +601,212 @@ def collect_grok(
     except ValueError:
         return _failure(
             "grok",
+            observed_at=observed_at,
+            state=ProviderSourceState.ERROR,
+            reason="invalid_provider_response",
+            action="Retry",
+        )
+
+
+#: The OAuth "installed application" identity every Gemini CLI ships. The
+#: user's refresh token was issued to this client, so an in-memory refresh
+#: is exactly what the CLI itself does; ``oauth_creds.json`` stays the
+#: CLI's property and is never written back.
+_GEMINI_OAUTH_CLIENT_ID = ("681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j" ".apps.googleusercontent.com")
+_GEMINI_OAUTH_CLIENT_SECRET = ("GOCSPX-" "4uHgMPm-1o7Sk-geV6Cu5clXFsxl")
+_GEMINI_CODE_ASSIST_URL = "https://cloudcode-pa.googleapis.com/v1internal"
+GEMINI_AUTH_MAX_BYTES = 256 * 1024
+
+
+def _read_gemini_oauth(home: Path) -> tuple[dict | None, str | None]:
+    path = Path(home) / ".gemini" / "oauth_creds.json"
+    try:
+        if path.is_symlink() or path.stat().st_size > GEMINI_AUTH_MAX_BYTES:
+            return None, None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    email = payload.get("email")
+    if not isinstance(email, str) or not email.strip():
+        id_token = payload.get("id_token")
+        if isinstance(id_token, str) and "." in id_token:
+            try:
+                parts = id_token.split(".")
+                pad = -len(parts[1]) % 4
+                claims = json.loads(
+                    base64.urlsafe_b64decode(parts[1] + ("=" * pad))
+                )
+                claim_email = claims.get("email")
+                email = claim_email if isinstance(claim_email, str) else None
+            except Exception:
+                email = None
+        else:
+            email = None
+    return payload, (email.strip() if isinstance(email, str) and email.strip() else None)
+
+
+def collect_gemini(
+    preference: ProviderPreference,
+    *,
+    home: Path,
+    observed_at: float,
+    credentials,
+    http_json: Callable[..., object] = _default_http_json,
+) -> ProviderUsageSnapshot:
+    creds, email = _read_gemini_oauth(Path(home))
+    if creds is None:
+        return _failure(
+            "gemini",
+            observed_at=observed_at,
+            state=ProviderSourceState.NEEDS_SIGN_IN,
+            reason="authentication_required",
+            action=_auth_action("gemini"),
+        )
+    access = _valid_secret(creds.get("access_token"))
+    expiry_ms = creds.get("expiry_date")
+    expired = (
+        isinstance(expiry_ms, (int, float))
+        and not isinstance(expiry_ms, bool)
+        and math.isfinite(float(expiry_ms))
+        and float(expiry_ms) / 1000.0 <= observed_at + 60.0
+    )
+    if access is None or expired:
+        refresh = _valid_secret(creds.get("refresh_token"))
+        if refresh is None:
+            return _failure(
+                "gemini",
+                observed_at=observed_at,
+                state=ProviderSourceState.NEEDS_SIGN_IN,
+                reason="authentication_required",
+                action=_auth_action("gemini"),
+            )
+        try:
+            refreshed = http_json(
+                "POST",
+                "https://oauth2.googleapis.com/token",
+                body={
+                    "client_id": _GEMINI_OAUTH_CLIENT_ID,
+                    "client_secret": _GEMINI_OAUTH_CLIENT_SECRET,
+                    "refresh_token": refresh,
+                    "grant_type": "refresh_token",
+                },
+                timeout=HTTP_TIMEOUT_SECONDS,
+            )
+        except ProviderHttpError as error:
+            if error.status in {400, 401, 403}:
+                return _failure(
+                    "gemini",
+                    observed_at=observed_at,
+                    state=ProviderSourceState.NEEDS_SIGN_IN,
+                    reason="token_refresh_failed",
+                    action=_auth_action("gemini"),
+                )
+            return _http_failure("gemini", observed_at, error)
+        access = (
+            _valid_secret(refreshed.get("access_token"))
+            if isinstance(refreshed, dict)
+            else None
+        )
+        if access is None:
+            return _failure(
+                "gemini",
+                observed_at=observed_at,
+                state=ProviderSourceState.NEEDS_SIGN_IN,
+                reason="token_refresh_failed",
+                action=_auth_action("gemini"),
+            )
+    headers = {"Authorization": f"Bearer {access}", "Accept": "application/json"}
+    project = (
+        preference.option("project_id")
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCLOUD_PROJECT")
+    )
+    if project is None:
+        try:
+            assist = http_json(
+                "POST",
+                f"{_GEMINI_CODE_ASSIST_URL}:loadCodeAssist",
+                headers=headers,
+                body={
+                    "metadata": {
+                        "ideType": "IDE_UNSPECIFIED",
+                        "platform": "PLATFORM_UNSPECIFIED",
+                        "pluginType": "GEMINI",
+                    }
+                },
+                timeout=HTTP_TIMEOUT_SECONDS,
+            )
+        except ProviderHttpError as error:
+            return _http_failure("gemini", observed_at, error)
+        if not isinstance(assist, dict):
+            return _failure(
+                "gemini",
+                observed_at=observed_at,
+                state=ProviderSourceState.ERROR,
+                reason="invalid_provider_response",
+                action="Retry",
+            )
+        candidate = assist.get("cloudaicompanionProject")
+        project = candidate.strip() if isinstance(candidate, str) and candidate.strip() else None
+        if project is None:
+            ineligible = assist.get("ineligibleTiers")
+            allowed = assist.get("allowedTiers")
+            if isinstance(ineligible, list) and ineligible and not (
+                isinstance(allowed, list) and allowed
+            ):
+                # Verified live 2026-09-13 on the owner's account: the free
+                # tier answers UNSUPPORTED_CLIENT ("migrate to Antigravity")
+                # -- an eligibility fact, not a sign-in or a missing project.
+                return _failure(
+                    "gemini",
+                    observed_at=observed_at,
+                    state=ProviderSourceState.UNAVAILABLE,
+                    reason="code_assist_tier_ineligible",
+                    action="Check Gemini Code Assist eligibility",
+                )
+            return _failure(
+                "gemini",
+                observed_at=observed_at,
+                state=ProviderSourceState.SOURCE_NOT_FOUND,
+                reason="code_assist_project_required",
+                action="Set a Code Assist project id",
+            )
+    try:
+        quota = http_json(
+            "POST",
+            f"{_GEMINI_CODE_ASSIST_URL}:retrieveUserQuota",
+            headers=headers,
+            body={"project": project},
+            timeout=HTTP_TIMEOUT_SECONDS,
+        )
+    except ProviderHttpError as error:
+        if error.status == 403:
+            # Verified live: this endpoint answers PERMISSION_DENIED "no
+            # valid license" for a project the account is not provisioned
+            # for -- an onboarding/license state, not an authentication one.
+            return _failure(
+                "gemini",
+                observed_at=observed_at,
+                state=ProviderSourceState.SOURCE_NOT_FOUND,
+                reason="quota_license_required",
+                action="Check the Code Assist license",
+            )
+        return _http_failure("gemini", observed_at, error)
+    if not isinstance(quota, dict):
+        return _failure(
+            "gemini",
+            observed_at=observed_at,
+            state=ProviderSourceState.ERROR,
+            reason="invalid_provider_response",
+            action="Retry",
+        )
+    try:
+        return parse_gemini_usage(quota, observed_at=observed_at, account_label=email)
+    except ValueError:
+        return _failure(
+            "gemini",
             observed_at=observed_at,
             state=ProviderSourceState.ERROR,
             reason="invalid_provider_response",
@@ -1103,6 +1311,7 @@ __all__ = [
     "collect_antigravity",
     "collect_cursor",
     "collect_devin",
+    "collect_gemini",
     "collect_grok",
     "collect_openai_api",
     "collect_opencode",

@@ -240,5 +240,37 @@ slot chips flanking the band.
   `ask:<session>` banner, one identity everywhere; the shared ledger is
   folded into W08's inbox work if the surfaces need it.
 
-(Remaining packages W05+ proceed in the spec's dependency order; rows are
+## W05 — Native quota source certification — verified live
+
+- Audit result: the certification doc (`docs/NATIVE-PROVIDERS.md`),
+  classified failure vocabulary (`ProviderSourceState`: needs_consent /
+  needs_sign_in / source_not_found / unavailable / rate_limited / stale /
+  error / unsupported — T29's classes), adaptive cadence
+  (`adaptive_refresh.py`), window applicability from stated plan, and
+  confirmed-only reset celebrations already existed. The one gap the doc
+  itself named: Gemini's Code Assist quota path.
+- New source — `gemini` provider: reads `~/.gemini/oauth_creds.json`,
+  refreshes the access token in memory with the Gemini CLI's own public
+  OAuth client (the file is never rewritten), resolves the Code Assist
+  project from `--option project_id` / `GOOGLE_CLOUD_PROJECT` /
+  `loadCodeAssist`, then reads `retrieveUserQuota`. Buckets are per-model
+  pools, so every lane is a non-bindable detail lane — none can pose as
+  the account's ceiling (T22). Verified live 2026-09-13 on the owner's
+  account: non-onboarded accounts get no `cloudaicompanionProject`; the
+  free tier is retired (`ineligibleTiers`/`UNSUPPORTED_CLIENT` —
+  `code_assist_tier_ineligible`, not a sign-in failure); an
+  unprovisioned project gets `403 PERMISSION_DENIED` "no valid license"
+  (`quota_license_required`, also not a sign-in failure); a missing
+  project is `code_assist_project_required`. `jrbar providers refresh`
+  ran the real collector end-to-end: `gemini · source_not_found ·
+  code_assist_project_required`.
+- Fixed a pre-existing crash found during the audit: `opencode` was a
+  registered provider but missing from the CLI's not-collected action
+  map, so `providers status` raised `KeyError` on a default install; the
+  lookup is now fail-soft and every registered provider names an action.
+- Verified: `pytest tests/test_upgrade_provider_gemini.py` → 10 passed;
+  provider/usage group → 595 passed; ruff clean on touched files;
+  `jrbar providers status` end-to-end on the live account.
+
+(Remaining packages W06+ proceed in the spec's dependency order; rows are
 added as work lands.)

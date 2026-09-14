@@ -224,6 +224,7 @@ def _default_collectors() -> dict[str, Collector]:
         collect_antigravity,
         collect_cursor,
         collect_devin,
+        collect_gemini,
         collect_grok,
         collect_openai_api,
         collect_opencode,
@@ -254,6 +255,12 @@ def _default_collectors() -> dict[str, Collector]:
             credentials=credentials,
         ),
         "grok": lambda preference, home, observed, credentials: collect_grok(
+            preference,
+            home=home,
+            observed_at=observed,
+            credentials=credentials,
+        ),
+        "gemini": lambda preference, home, observed, credentials: collect_gemini(
             preference,
             home=home,
             observed_at=observed,

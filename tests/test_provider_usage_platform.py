@@ -78,6 +78,7 @@ def test_snapshot_preserves_source_instance_identity__and_2_more() -> None:
         "cursor",
         "devin",
         "grok",
+        "gemini",
         "antigravity",
         "opencode",
         "openai-api",
