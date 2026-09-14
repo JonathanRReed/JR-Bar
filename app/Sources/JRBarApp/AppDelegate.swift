@@ -172,6 +172,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             onOpen: { [weak core] session in core?.openSession(session) }
         )
         self.interaction = interaction
+        // W12 timers: a due timer is one banner, never an agent launch.
+        interaction.timers.onFire = { [weak self] entry in
+            self?.events?.notifications.deliver(.init(
+                identifier: "shelf-timer:\(entry.id)",
+                title: entry.label,
+                body: "Timer done.",
+                category: .plain))
+        }
         screenBar.focusProvider = { [weak store] in store?.screenBarFocus }
         screenBar.onGeometryChange = { [weak interaction] in interaction?.geometryChanged() }
         // Alcove: the band follows the capsule while the setting is on and Alcove is up.

@@ -179,6 +179,43 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W12 slice — shelf tray, timers, calendar glance — LANDED
+
+- `ShelfTray.swift` (new): bounded file tray on the pinned card —
+  max 12 path references (no copies), persisted to defaults,
+  revalidated on every show/read (T49: a moved/deleted file renders
+  "moved" and loses reveal/share/drag, never silently dropped, never
+  still claimed). Drag-in via `.onDrop(UTType.fileURL)`, drag-out via
+  `NSItemProvider`, context-menu Reveal/Remove/Share — the share menu
+  lists real `NSSharingService`s and a canceled sheet claims nothing
+  (T50). `attachCopyBound` = 8 MiB for the future draft's inline-copy
+  decision.
+- `ShelfTimers.swift` (new): absolute-deadline timers persisted to
+  `~/Library/Application Support/JR-Bar/shelf-timers.json`. The
+  `fired` flag makes expiry one-shot across restarts (T51): a timer
+  that came due while the app was down delivers exactly one banner on
+  the recovery sweep, then sits "Done". Wake (`didWakeNotification`)
+  and clock-change (`NSSystemClockDidChange`) both re-sweep — the
+  absolute deadline is truth, not elapsed ticks. 12 h max duration;
+  `onFire` is wired to `NotificationBridge` in AppDelegate — a due
+  timer is a banner, never an agent launch.
+- `ShelfCalendar.swift` (new): the next authorized calendar event,
+  read-only. Permission is opt-in from a card button, never polled in
+  the background (T52): denied/restricted hides the row entirely.
+  `joinableURL` gates to http(s) — the event's `url` first, then the
+  first safe link in the notes; everything else is unjoinable. Join
+  opens the link; Open shows the event in Calendar.app.
+- Pinned card now renders tray/timer/calendar rows below the session
+  and media/battery rows; the whole card is a file-drop target.
+- `ShelfTests`: 11 tests — tray bound/dedupe/missing-marking/no-share-
+  when-missing, timer persist/reload/one-shot-fire/clamp/corrupt-store,
+  calendar safe-URL acceptance/rejection.
+- Still open in W12: "Attach to task" has no draft composer to land in
+  yet (that's W15's shared draft surface — the tray's `canAttachCopy`
+  bound is ready); calendar's `isPrivate` can't be read from EKEvent on
+  macOS so private events aren't specially marked (they're still only
+  title+time+safe-link); no test can exercise a real EventKit grant.
+
 ## W02 — Canonical records and the independent roster — verified with fixtures
 
 - `src/jrbar/activity_model.py` (new): the §14.2 record vocabulary —

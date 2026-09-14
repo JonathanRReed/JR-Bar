@@ -2,6 +2,7 @@ import AppKit
 import JRBarCore
 import QuartzCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What the Screen Bar's tooltip says: the top-priority session, or the
 /// aggregate when there is none.
@@ -67,6 +68,9 @@ final class ScreenBarInteraction {
     private var hideWork: DispatchWorkItem?
     private var lifeWork: DispatchWorkItem?
     private let tooltip = ScreenBarTooltipPanel()
+    /// W12's persisted timers — surfaced so AppDelegate can wire the
+    /// expiry notification into `NotificationBridge`.
+    var timers: ShelfTimerModel { tooltip.model.timers }
     private(set) var isTooltipShown = false
     private var lastFocus: ScreenBarFocus?
     /// Escape-to-unpin while a pinned card is up: local covers the
@@ -412,11 +416,25 @@ final class ScreenBarTooltipModel {
     /// deliberate-focus state — the band itself stays click-through).
     var pinned = false {
         didSet {
-            if pinned { utility.start() } else { utility.stop() }
+            if pinned {
+                utility.start()
+                tray.revalidate()
+            } else {
+                utility.stop()
+                calendar.stop()
+            }
         }
     }
     /// W11's media/device utility facts — monitored only while pinned.
     let utility = ShelfUtilityModel()
+    /// W12's file tray — paths persist in defaults; revalidated on pin.
+    let tray = ShelfTrayModel()
+    /// W12's timers — tick and persist regardless of pin state so a
+    /// deadline set now still fires after the card goes away.
+    let timers = ShelfTimerModel()
+    /// W12's calendar glance — reads only while pinned (privacy: no
+    /// background polling of the owner's schedule).
+    let calendar = ShelfCalendarModel()
     var onOpenSession: (() -> Void)?
     var onClose: (() -> Void)?
 }
@@ -427,16 +445,25 @@ struct ScreenBarTooltipView: View {
     var body: some View {
         if model.pinned {
             // The pinned card is a vertical surface: session row on
-            // top, W11 utility rows below.
+            // top, W11/W12 utility rows below.
             VStack(alignment: .leading, spacing: 6) {
                 sessionRow
                 ShelfMediaRow(utility: model.utility)
                 ShelfBatteryRow(power: model.utility.power)
+                ShelfTrayRow(tray: model.tray)
+                ShelfTimersRow(timers: model.timers)
+                ShelfCalendarRow(calendar: model.calendar)
             }
             .padding(.leading, 7)
             .padding(.trailing, 10)
             .padding(.vertical, 5)
             .fixedSize()
+            .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+                ShelfTrayDrop.urls(from: providers) { urls in
+                    model.tray.add(urls)
+                }
+                return true
+            }
         } else {
             sessionRow
                 .padding(.leading, 7)
@@ -581,5 +608,184 @@ private struct ShelfBatteryRow: View {
             parts.append(power.onAC ? "On AC" : "On battery")
         }
         return parts.isEmpty ? "Battery" : parts.joined(separator: " · ")
+    }
+}
+
+/// The pinned card's tray strip (W12): dropped files as chips. A moved
+/// or deleted file renders dimmed and disabled — the strip says
+/// missing, it doesn't silently forget (T49). Reveal/share only ever
+/// act on a file that re-resolved this pass.
+private struct ShelfTrayRow: View {
+    let tray: ShelfTrayModel
+
+    var body: some View {
+        if !tray.entries.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 4) {
+                    ForEach(tray.entries) { entry in
+                        trayChip(entry)
+                    }
+                }
+            }
+            .frame(maxWidth: 280)
+        }
+    }
+
+    private func trayChip(_ entry: ShelfTrayModel.Entry) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: entry.missing ? "doc.questionmark" : "doc")
+                .font(.system(size: 9))
+            Text(entry.missing ? "\(entry.name) (moved)" : entry.name)
+                .font(.system(size: 10))
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(entry.missing
+                    ? AnyShapeStyle(Color.primary.opacity(0.05))
+                    : AnyShapeStyle(.quaternary),
+                    in: Capsule())
+        .foregroundStyle(entry.missing ? .tertiary : .secondary)
+        .contextMenu {
+            if !entry.missing {
+                Button("Reveal in Finder") { tray.reveal(entry) }
+                shareMenu(for: entry)
+            }
+            Button("Remove from Tray", role: .destructive) { tray.remove(entry) }
+        }
+        .onDrag {
+            tray.provider(for: entry) ?? NSItemProvider()
+        }
+        .help(entry.missing
+              ? "Missing — the file moved or was deleted."
+              : entry.path)
+    }
+
+    /// Native share targets for the file; a canceled sheet delivers
+    /// nothing and claims nothing (T50).
+    private func shareMenu(for entry: ShelfTrayModel.Entry) -> some View {
+        Menu("Share…") {
+            ForEach(tray.sharingServices(for: entry), id: \.title) { service in
+                Button(service.title) {
+                    service.perform(withItems: [entry.url])
+                }
+            }
+        }
+    }
+}
+
+/// The pinned card's timer strip (W12): live countdowns plus a small
+/// add menu. Timers persist across sleep/restart on absolute deadlines;
+/// an overdue one shows "Done" once — the notification fires through
+/// the model's `onFire`, not here.
+private struct ShelfTimersRow: View {
+    let timers: ShelfTimerModel
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(timers.entries) { entry in
+                timerChip(entry)
+            }
+            Menu {
+                ForEach(Self.presets, id: \.seconds) { preset in
+                    Button(preset.name) {
+                        timers.add(label: preset.name, duration: preset.seconds)
+                    }
+                }
+            } label: {
+                Image(systemName: "timer")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 16, height: 16)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 20)
+            .help("Add a timer")
+        }
+    }
+
+    /// (name, seconds) presets — bounded by `maxDuration` regardless.
+    private static let presets: [(name: String, seconds: TimeInterval)] = [
+        ("1 minute", 60), ("5 minutes", 300), ("15 minutes", 900),
+        ("30 minutes", 1800), ("1 hour", 3600),
+    ]
+
+    private func timerChip(_ entry: ShelfTimerModel.Entry) -> some View {
+        let overdue = entry.overdue
+        return HStack(spacing: 3) {
+            Image(systemName: overdue ? "checkmark" : "timer")
+                .font(.system(size: 9))
+            Text(overdue ? "Done" : remainingText(entry))
+                .font(.system(size: 10, design: .monospaced))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(.quaternary, in: Capsule())
+        .foregroundStyle(overdue
+            ? AnyShapeStyle(.secondary)
+            : AnyShapeStyle(Color.primary.opacity(0.75)))
+        .contextMenu {
+            Button("Remove", role: .destructive) { timers.remove(entry) }
+        }
+        .help(overdue ? "\(entry.label) — done." : "\(entry.label) — due \(entry.deadline.formatted(date: .omitted, time: .shortened))")
+    }
+
+    /// `m:ss` or `h:mm:ss` remaining — the chip counts down from the
+    /// absolute deadline, so a clock change shows up here too.
+    private func remainingText(_ entry: ShelfTimerModel.Entry) -> String {
+        let seconds = Int(entry.remaining.rounded(.up))
+        let h = seconds / 3600, m = (seconds % 3600) / 60, s = seconds % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
+                     : String(format: "%d:%02d", m, s)
+    }
+}
+
+/// The pinned card's calendar glance (W12): the next event, hidden
+/// until the owner grants EventKit access — no permission, no row
+/// (T52). Join only ever opens an http(s) link.
+private struct ShelfCalendarRow: View {
+    let calendar: ShelfCalendarModel
+
+    var body: some View {
+        switch calendar.state {
+        case .hidden:
+            EmptyView()
+        case .needsPermission:
+            Button {
+                calendar.authorizeAndLoad()
+            } label: {
+                Label("Show calendar", systemImage: "calendar")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .buttonStyle(.plain)
+        case .idle:
+            Label("Nothing on the calendar today", systemImage: "calendar")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        case .event(let event):
+            HStack(spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14)
+                Text(event.start.formatted(date: .omitted, time: .shortened))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                Text(event.title)
+                    .font(.system(size: 10))
+                    .lineLimit(1)
+                if event.url != nil {
+                    Button("Join") { calendar.join(event) }
+                        .controlSize(.mini)
+                }
+            }
+            .contextMenu {
+                Button("Open in Calendar") { calendar.openInCalendar(event) }
+            }
+        }
     }
 }
