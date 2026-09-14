@@ -34,6 +34,10 @@ struct AquariumView: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// W14's selection: the tapped fish's id, cleared when it leaves
+    /// the tank. Drives the inspector strip — the tap already hit-tests
+    /// via `hoverProbe.boxes`, selection just keeps the last hit.
+    @ViewState private var selectedID: String?
 
     var body: some View {
         // Read the observable surface in `body` so the card's tracked
@@ -173,6 +177,18 @@ struct AquariumView: View {
                     }
                 }
             }
+
+            // W14's inspector: the selected fish's session facts — the
+            // plan's own evidence line, so the strip and the marker
+            // can't disagree about why it looks the way it does.
+            if let selectedID,
+               let selected = fish.first(where: { $0.id == selectedID }) {
+                VStack {
+                    Spacer()
+                    inspectorStrip(selected)
+                }
+                .transition(.opacity)
+            }
         }
         .onContinuousHover(coordinateSpace: .local) { phase in
             switch phase {
@@ -180,11 +196,18 @@ struct AquariumView: View {
             case .ended: hoverProbe.point = nil
             }
         }
-        // A tap flashes the tag for a couple of seconds, for when the
-        // pointer can't just hover.
+        // A tap selects the fish under it (W14's inspection): the
+        // inspector strip opens on the session's facts; a tap on empty
+        // water clears. The flash path still covers a tap that hits
+        // nothing selectable.
         .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
-            hoverProbe.flashPoint = value.location
-            hoverProbe.flashUntil = Date().addingTimeInterval(2.2)
+            if let hit = hoverProbe.boxes.last(where: { $0.rect.contains(value.location) }) {
+                selectedID = selectedID == hit.id ? nil : hit.id
+            } else {
+                selectedID = nil
+                hoverProbe.flashPoint = value.location
+                hoverProbe.flashUntil = Date().addingTimeInterval(2.2)
+            }
         })
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.02, green: 0.07, blue: 0.25))
@@ -2781,6 +2804,44 @@ struct AquariumView: View {
     /// the decor pass can keep clear of it: a small translucent
     /// capsule pinned to the bottom-left with a 16 pt margin, like a
     /// gallery plaque set on the sand.
+    /// W14's inspector: the selected fish's name, species, and the
+    /// plan's own evidence line — so what the card says and why the
+    /// fish looks the way it does are one fact. Open raises the
+    /// session's terminal; it never answers or acts.
+    private func inspectorStrip(_ fish: Fish) -> some View {
+        HStack(spacing: 10) {
+            ProviderTile(style: ProviderStyle.style(for: fish.providerID), size: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(fish.label)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                Text(fish.plan?.evidence ?? fish.state.rawValue)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 6)
+            if let onOpen = toy?.core.openSession {
+                Button("Open") { onOpen(fish.id) }
+                    .controlSize(.small)
+            }
+            Button {
+                selectedID = nil
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Close inspector")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(.ultraThinMaterial, in: Capsule())
+        .padding(.horizontal, 14)
+        .padding(.bottom, 10)
+    }
+
     private func captionLayout(canvas: inout GraphicsContext, size: CGSize)
         -> (text: GraphicsContext.ResolvedText, rect: CGRect) {
         let resolved = canvas.resolve(

@@ -179,6 +179,22 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W14 slice — Aquarium selection/inspection — LANDED
+
+- Tap on a fish now selects it (was: flash the nameplate): the tapped
+  fish's id is held in `selectedID`, a tap on empty water clears, a
+  re-tap toggles off.
+- The inspector strip at the tank's bottom shows the selected fish's
+  provider tile, label, and the *plan's own evidence line* — the
+  inspector and the overlay marker cite the same fact (T54's
+  "evidence matches the animation"). Open raises the session's
+  terminal via `core.openSession`; nothing here answers or acts.
+- Still open in W14: creature-design pass (six species already drawn;
+  polish is real-device work), themes, habitats/stations as drawn
+  zones, privacy controls, population LOD, demo-mode labeling, and
+  rendering profile — all visual-verification work awaiting a dev
+  bundle on the owner's display.
+
 ## W13 slice — Aquarium semantic behavior planner — LANDED
 
 - `AquariumPlanner.swift` (new, JRBarCore): a pure per-session planner
