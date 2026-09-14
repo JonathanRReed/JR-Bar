@@ -260,8 +260,18 @@ Vocabulary:
   keeps its label); `id` is the lane id (`five-hour`, `weekly`,
   `fable-only`, …). `used_pct` is `100 - remaining_percent` from the
   provider usage lanes; `resets_at` is the lane's reset epoch whenever the
-  lane knows it; `fidelity` is `stale` when the source is stale, else
+  lane knows it; `bindable` is false for a lane the provider's own catalog
+  does not know — evidence only, never an applicable constraint;
+  `fidelity` is `stale` when the source is stale, else
   `official`; `state` is the `ProviderSourceState` value.
+- `usage.providers[].constrained` is the window the daemon says is worth
+  watching — not the name convention but the least headroom among the
+  `bindable` windows that were actually measured: `{id, name, used_pct,
+  resets_at, reason, candidates}`, where `reason` is `only_measured` or
+  `least_headroom` and `candidates` is how many windows were eligible.
+  Null when nothing applicable was measured. The app's card leads with
+  this window and explains the pick when it departs from the `5h`
+  convention; an unclassified lane cannot win it even at 1 % left.
 - `usage.providers[].quota_source` is whether a quota collector exists for
   the provider at all (read off `provider_usage_platform`'s descriptors,
   not the snapshot's claims), so a "show meters" control can hide instead

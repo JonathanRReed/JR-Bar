@@ -1129,6 +1129,10 @@ def usage_document(
                     "resets_at": epoch(getattr(lane, "reset_at", None)),
                     "scope": getattr(lane, "scope", None),
                     "model": getattr(lane, "model", None),
+                    # False for a lane the provider's own catalog does not
+                    # know: it is evidence, never an applicable constraint
+                    # (S6.1: unclassified lanes must not drive decisions).
+                    "bindable": getattr(lane, "bindable", True) is not False,
                     "forecast": window_forecast,
                 }
             )
@@ -1139,6 +1143,27 @@ def usage_document(
         primary = primary_window(windows)
         if primary is not None:
             forecast = primary.get("forecast")
+        # The lane worth watching is not the one named "5h", it is the
+        # one with the least headroom -- among windows the provider's own
+        # catalog knows (``bindable``) and actually measured. Named on the
+        # wire with its reason so the app can say why (S6.4); None when
+        # nothing applicable was measured.
+        constrained = None
+        candidates = [
+            window
+            for window in windows
+            if window["bindable"] and window["used_pct"] is not None
+        ]
+        if candidates:
+            pick = max(candidates, key=lambda window: window["used_pct"])
+            constrained = {
+                "id": pick["id"],
+                "name": pick["name"],
+                "used_pct": pick["used_pct"],
+                "resets_at": pick["resets_at"],
+                "reason": "only_measured" if len(candidates) == 1 else "least_headroom",
+                "candidates": len(candidates),
+            }
         providers.append(
             {
                 "id": provider_id,
@@ -1163,6 +1188,7 @@ def usage_document(
                     else None
                 ),
                 "windows": windows,
+                "constrained": constrained,
                 "fidelity": "stale" if state == "stale" else "official",
                 "state": state,
                 "reason": getattr(snapshot, "reason_code", None),

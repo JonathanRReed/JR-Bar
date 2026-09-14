@@ -489,6 +489,14 @@
      "plan": null
     },
     "action": null,
+    "constrained": {
+     "candidates": 2,
+     "id": "seven_day",
+     "name": "7d",
+     "reason": "least_headroom",
+     "resets_at": 1789260092.4,
+     "used_pct": 61.0
+    },
     "credits_remaining": null,
     "estimated_cost_usd": null,
     "fidelity": "official",
@@ -514,6 +522,7 @@
     },
     "windows": [
      {
+      "bindable": true,
       "forecast": {
        "exhausts_at": 1789000292.4,
        "pace": "under",
@@ -531,6 +540,7 @@
       "used_pct": 42.0
      },
      {
+      "bindable": true,
       "forecast": {
        "exhausts_at": null,
        "pace": "guarded",
@@ -553,6 +563,14 @@
    {
     "account": null,
     "action": "Retry later",
+    "constrained": {
+     "candidates": 1,
+     "id": "five_hour",
+     "name": "5h",
+     "reason": "only_measured",
+     "resets_at": null,
+     "used_pct": 12.0
+    },
     "credits_remaining": null,
     "estimated_cost_usd": null,
     "fidelity": "stale",
@@ -579,6 +597,7 @@
     },
     "windows": [
      {
+      "bindable": true,
       "forecast": {
        "exhausts_at": null,
        "pace": "guarded",
@@ -597,6 +616,7 @@
       "used_pct": 12.0
      },
      {
+      "bindable": true,
       "forecast": null,
       "id": "seven_day",
       "model": null,

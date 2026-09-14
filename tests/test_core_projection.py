@@ -394,6 +394,39 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert codex["forecast"]["exhausts_at"] is None and codex["forecast"]["samples"] == 0
     # Without a sample buffer there is no forecast at all.
     assert usage_document(fixture_inputs()["usage_state"])["providers"][0]["forecast"] is None
+    # The constrained lane is the least-headroom measured window, not the
+    # name convention: claude's 7d at 61 % used beats its 5h at 42 %, and
+    # the wire says why (S6.4). Codex's second window is unmeasured, so
+    # it cannot contend.
+    assert claude["constrained"] == {
+        "id": "seven_day", "name": "7d", "used_pct": 61.0,
+        "resets_at": NOW + 277200.0, "reason": "least_headroom", "candidates": 2,
+    }
+    assert codex["constrained"] == {
+        "id": "five_hour", "name": "5h", "used_pct": 12.0,
+        "resets_at": None, "reason": "only_measured", "candidates": 1,
+    }
+    assert all(window["bindable"] is True for window in claude["windows"])
+    # A lane outside the provider's catalog is evidence, never a
+    # constraint: even at 1 % left it cannot be the featured pick.
+    custom = SimpleNamespace(
+        refreshed_at=NOW, next_refresh_at=None, refreshing=False,
+        snapshots=(
+            SimpleNamespace(
+                provider_id="claude", source_instance_id="default", account_label=None,
+                state=SimpleNamespace(value="ready"), reason_code=None, action_label=None,
+                observed_at=NOW, input_tokens=0, cached_input_tokens=0, output_tokens=0,
+                estimated_cost_usd=None, credits_remaining=None,
+                lanes=(
+                    SimpleNamespace(lane_id="five_hour", label="5h", remaining_percent=80.0, reset_at=None, scope="account", model=None, bindable=True),
+                    SimpleNamespace(lane_id="mystery", label="Mystery lane", remaining_percent=1.0, reset_at=None, scope="account", model=None, bindable=False),
+                ),
+            ),
+        ),
+    )
+    provider = usage_document(custom, usage_samples=None, now=NOW)["providers"][0]
+    assert provider["constrained"]["id"] == "five_hour" and provider["constrained"]["candidates"] == 1
+    assert provider["windows"][1]["bindable"] is False
     assert document["power"] == {
         "keep_awake": True,
         "closed_lid": {"policy": "agents", "holding": False, "helper_installed": True},

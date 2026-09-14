@@ -105,12 +105,14 @@
      {
       "name": "5h",
       "used_pct": 42.0,
-      "resets_at": 1788990000.0
+      "resets_at": 1788990000.0,
+      "bindable": true
      },
      {
       "name": "7d",
       "used_pct": 61.0,
-      "resets_at": 1789300000.0
+      "resets_at": 1789300000.0,
+      "bindable": true
      }
     ],
     "fidelity": "official",
@@ -118,6 +120,14 @@
     "forecast": {
      "exhausts_at": 1788999000.0,
      "pace": "ahead"
+    },
+    "constrained": {
+     "id": "seven_day",
+     "name": "7d",
+     "used_pct": 61.0,
+     "resets_at": 1789300000.0,
+     "reason": "least_headroom",
+     "candidates": 2
     }
    },
    {
@@ -134,7 +144,15 @@
      }
     ],
     "fidelity": "derived",
-    "state": "ok"
+    "state": "ok",
+    "constrained": {
+     "id": "five_hour",
+     "name": "5h",
+     "used_pct": 12.5,
+     "resets_at": null,
+     "reason": "only_measured",
+     "candidates": 1
+    }
    }
   ]
  },

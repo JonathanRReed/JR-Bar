@@ -99,6 +99,12 @@ struct CodecTests {
         #expect(usage.providers[0].isDerived == false)
         #expect(usage.providers[1].isDerived)
         #expect(usage.providers[1].windows[0].resetsAt == nil)
+        // The daemon's constrained pick decodes with its reason (S6.4).
+        let constrained = try #require(usage.providers[0].constrained)
+        #expect(constrained.id == "seven_day" && constrained.usedPct == 61.0)
+        #expect(constrained.reason == "least_headroom" && constrained.candidates == 2)
+        #expect(constrained.explanation == "least headroom of 2 measured windows")
+        #expect(usage.providers[0].windows.allSatisfy { $0.bindable })
 
         #expect(state.power?.keepAwake == true)
         #expect(state.power?.closedLid?.policy == "agents")

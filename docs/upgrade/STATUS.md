@@ -342,13 +342,25 @@ slot chips flanking the band.
   `unpricedModels`, `UsagePricing` gains `model`/`source`/`estimated`.
   The Usage Center pricing line now names the model, flags a reference
   rate, and calls out unpriced records by name and count.
+- `usage.providers[].constrained` names the lane worth watching — least
+  headroom among `bindable` (provider-catalog-known) windows that were
+  actually measured — with `reason` (`only_measured`/`least_headroom`)
+  and the eligible `candidates` count, so the card leads with it and
+  explains the pick when it departs from the `5h` convention (S6.4).
+  Window docs carry `bindable`; an unclassified lane cannot win the pick
+  even at 1 % left. T23's counting layer needed no changes: the scan
+  already pins first-seen dedupe, cumulative→delta conversion,
+  fork/copy lineage, incremental tails and cache-read separation
+  (`test_codex_usage_lineage`, `test_usage_incremental_tail`,
+  `test_usage_coverage` — 52 test functions).
 - Verified: `tests/test_core_usage_samples.py` +
   `test_core_usage_history.py` + projection/runtime updates → 89 passed
   focused; wider usage/provider group 93 passed; Swift UsageForecast/
   UsageHistory suites green; `swift build` clean.
-- Still open in W07: account/project/date filters, constrained-lane
-  explanations, and any dedupe/scan work the audit surfaces beyond the
-  existing incremental mtime+size cache.
+- Still open in W07: account/project/date filters in the Usage Center
+  (transcripts are not per-configured-instance, so account filtering
+  needs a session→account map) and any further dedupe/scan work the
+  audit surfaces beyond the existing incremental mtime+size cache.
 
 (Remaining packages W07+ proceed in the spec's dependency order; rows are
 added as work lands.)

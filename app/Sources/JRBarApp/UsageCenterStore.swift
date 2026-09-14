@@ -439,6 +439,17 @@ final class UsageCenterStore {
         return UsageForecaster.forecast(window: window, daemon: daemon, samples: samples, now: now.timeIntervalSince1970)
     }
 
+    /// The window the card leads with: the daemon's constrained pick when
+    /// it names one (least headroom of the applicable measured lanes),
+    /// else the 5h convention.
+    static func featuredWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
+        if let constrained = provider.constrained,
+           let match = provider.windows.first(where: { $0.id == constrained.id || $0.name == constrained.name }) {
+            return match
+        }
+        return primaryWindow(of: provider)
+    }
+
     /// The window the card leads with: 5h when reported, else the first.
     static func primaryWindow(of provider: CoreProviderUsage) -> CoreUsageWindow? {
         provider.windows.first { $0.name.lowercased() == "5h" } ?? provider.windows.first

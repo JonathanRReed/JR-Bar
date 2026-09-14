@@ -269,3 +269,31 @@ import JRBarUI
         #expect(payload.first?.action == nil)
     }
 }
+
+/// The card's featured window: the daemon's constrained pick when it
+/// names one (least headroom of the applicable measured lanes), else the
+/// 5h convention (S6.4).
+@Suite @MainActor struct FeaturedWindowTests {
+    static func provider(_ constrained: CoreConstrainedLane?) -> CoreProviderUsage {
+        CoreProviderUsage(id: "claude", windows: [
+            CoreUsageWindow(key: "five_hour", name: "5h", usedPct: 42),
+            CoreUsageWindow(key: "seven_day", name: "7d", usedPct: 61),
+        ], constrained: constrained)
+    }
+
+    @Test func constrainedPickLeadsOverTheConvention() {
+        let provider = Self.provider(CoreConstrainedLane(id: "seven_day", name: "7d", usedPct: 61,
+                                                         reason: "least_headroom", candidates: 2))
+        #expect(UsageCenterStore.featuredWindow(of: provider)?.id == "seven_day")
+        #expect(UsageCenterStore.primaryWindow(of: provider)?.id == "five_hour")
+        #expect(provider.constrained?.explanation == "least headroom of 2 measured windows")
+    }
+
+    @Test func conventionLeadsWhenTheDaemonNamesNothing() {
+        let provider = Self.provider(nil)
+        #expect(UsageCenterStore.featuredWindow(of: provider)?.id == "five_hour")
+        // A constrained id that matches no window falls back the same way.
+        let stale = Self.provider(CoreConstrainedLane(id: "gone", name: "gone"))
+        #expect(UsageCenterStore.featuredWindow(of: stale)?.id == "five_hour")
+    }
+}

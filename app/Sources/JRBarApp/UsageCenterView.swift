@@ -156,7 +156,12 @@ struct ProviderUsageCard: View {
     /// `quota_reset`, without the "Window reset" badge.
     private var focused: Bool { store.isFocused(provider) }
     private var flashing: Bool { celebrating || focused }
-    private var primary: CoreUsageWindow? { UsageCenterStore.primaryWindow(of: provider) }
+    /// The window the card leads with: the daemon's constrained pick when
+    /// it names one, else the 5h convention (S6.4).
+    private var primary: CoreUsageWindow? { UsageCenterStore.featuredWindow(of: provider) }
+    /// The name-convention window — the pick the explanation compares
+    /// against before it needs defending.
+    private var conventional: CoreUsageWindow? { UsageCenterStore.primaryWindow(of: provider) }
     /// Two accounts of one provider get an instance badge so the cards
     /// are not twins with no way to tell them apart.
     private var duplicated: Bool { store.providers.filter { $0.id == provider.id }.count > 1 }
@@ -319,6 +324,13 @@ struct ProviderUsageCard: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .monospacedDigit()
+                    // The pick explains itself when it is not the window
+                    // the 5h convention would have led with (S6.4).
+                    if let constrained = provider.constrained, primary.id != conventional?.id {
+                        Text("Watching it — \(constrained.explanation)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
                 .animation(PanelMotion.crossfade(reduced: store.reduceMotion), value: primary.usedPct)
             }

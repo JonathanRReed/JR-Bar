@@ -365,6 +365,10 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// Per-window pace projection; the daemon emits it for every measured
     /// window, not only the primary one.
     public var forecast: CoreUsageForecast?
+    /// False when the provider's own catalog does not know this lane:
+    /// evidence, never an applicable constraint (it must not drive the
+    /// featured-window pick or an interruption).
+    public var bindable: Bool
 
     public var id: String { key ?? name }
 
@@ -386,16 +390,18 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
     /// "no reading" — never "0 percent used".
     public var spokenPercent: String { UsageWindowLabel.spoken(usedPct) }
 
-    public init(key: String? = nil, name: String, usedPct: Double?, resetsAt: Double? = nil, forecast: CoreUsageForecast? = nil) {
+    public init(key: String? = nil, name: String, usedPct: Double?, resetsAt: Double? = nil,
+                forecast: CoreUsageForecast? = nil, bindable: Bool = true) {
         self.key = key
         self.name = name
         self.usedPct = usedPct
         self.resetsAt = resetsAt
         self.forecast = forecast
+        self.bindable = bindable
     }
 
     enum CodingKeys: String, CodingKey {
-        case name
+        case name, bindable
         case key = "id"
         case usedPct = "used_pct"
         case resetsAt = "resets_at"
@@ -413,6 +419,7 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
         usedPct = raw.flatMap { $0.isFinite ? $0 : nil }
         resetsAt = try c.decodeIfPresent(Double.self, forKey: .resetsAt)
         forecast = try? c.decodeIfPresent(CoreUsageForecast.self, forKey: .forecast)
+        bindable = (try? c.decodeIfPresent(Bool.self, forKey: .bindable)) ?? true
     }
 }
 
@@ -482,6 +489,55 @@ public struct CoreUsageTokens: Codable, Hashable, Sendable {
     }
 }
 
+/// The daemon's pick for "the lane worth watching" (S6.4): the least
+/// headroom among windows the provider's own catalog knows (`bindable`)
+/// and actually measured. `reason` is `only_measured` or
+/// `least_headroom`; `candidates` is how many windows were eligible.
+public struct CoreConstrainedLane: Codable, Hashable, Sendable {
+    public var id: String?
+    public var name: String
+    public var usedPct: Double?
+    public var resetsAt: Double?
+    public var reason: String?
+    public var candidates: Int
+
+    public init(id: String? = nil, name: String, usedPct: Double? = nil, resetsAt: Double? = nil,
+                reason: String? = nil, candidates: Int = 0) {
+        self.id = id
+        self.name = name
+        self.usedPct = usedPct
+        self.resetsAt = resetsAt
+        self.reason = reason
+        self.candidates = candidates
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, reason, candidates
+        case usedPct = "used_pct"
+        case resetsAt = "resets_at"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? c.decodeIfPresent(String.self, forKey: .id)
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "?"
+        usedPct = try? c.decodeIfPresent(Double.self, forKey: .usedPct)
+        resetsAt = try? c.decodeIfPresent(Double.self, forKey: .resetsAt)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        candidates = (try? c.decodeIfPresent(Int.self, forKey: .candidates)) ?? 0
+    }
+
+    /// One clause explaining the pick — never a bare enum word.
+    public var explanation: String {
+        switch reason {
+        case "only_measured": return "the only measured window"
+        case "least_headroom":
+            return candidates > 1 ? "least headroom of \(candidates) measured windows" : "least headroom"
+        default: return "most constrained window"
+        }
+    }
+}
+
 public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var windows: [CoreUsageWindow]
@@ -514,11 +570,17 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     /// When the snapshot was taken (epoch seconds): the age a stale lane
     /// should name instead of posing as current.
     public var observedAt: Double?
+    /// The window the daemon says is worth watching — least headroom of
+    /// the applicable measured lanes, with its reason — so the card can
+    /// lead with it and say why (S6.4). Nil when nothing applicable was
+    /// measured.
+    public var constrained: CoreConstrainedLane?
 
     public init(id: String, windows: [CoreUsageWindow] = [], fidelity: String? = nil, state: String? = nil, forecast: CoreUsageForecast? = nil,
                 account: UsageAccount? = nil, action: String? = nil, reason: String? = nil,
                 instance: String? = nil, quotaSource: Bool = true, tokens: CoreUsageTokens? = nil,
-                estimatedCostUSD: Double? = nil, creditsRemaining: Double? = nil, observedAt: Double? = nil) {
+                estimatedCostUSD: Double? = nil, creditsRemaining: Double? = nil, observedAt: Double? = nil,
+                constrained: CoreConstrainedLane? = nil) {
         self.id = id
         self.windows = windows
         self.fidelity = fidelity
@@ -533,6 +595,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         self.estimatedCostUSD = estimatedCostUSD
         self.creditsRemaining = creditsRemaining
         self.observedAt = observedAt
+        self.constrained = constrained
     }
 
     public init(from decoder: Decoder) throws {
@@ -554,6 +617,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
         estimatedCostUSD = try? c.decodeIfPresent(Double.self, forKey: .estimatedCostUSD)
         creditsRemaining = try? c.decodeIfPresent(Double.self, forKey: .creditsRemaining)
         observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
+        constrained = try? c.decodeIfPresent(CoreConstrainedLane.self, forKey: .constrained)
     }
 
     /// Stable identity across multi-account rows of the same provider;
@@ -564,7 +628,7 @@ public struct CoreProviderUsage: Codable, Hashable, Sendable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, windows, fidelity, state, forecast, account, action, reason, instance, tokens
+        case id, windows, fidelity, state, forecast, account, action, reason, instance, tokens, constrained
         case quotaSource = "quota_source"
         case estimatedCostUSD = "estimated_cost_usd"
         case creditsRemaining = "credits_remaining"
