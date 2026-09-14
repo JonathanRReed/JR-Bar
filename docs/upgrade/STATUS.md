@@ -179,6 +179,24 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W26 slice — OpenCode capability bridge — LANDED
+
+- `src/jrbar/opencode_bridge.py` (new): probes a running `opencode
+  serve` instance's `/doc` OpenAPI surface and reports a closed
+  `supported`/`missing` set for the six operations JR-Bar could drive
+  (interrupt, permission reply, question reply, session list, session
+  events, prompt) — an unreachable server or a `/doc` without a paths
+  map is a named limitation, never a guessed route. `list_sessions`
+  projects the server's own `/session` list to the glance facts (id,
+  title, directory, updated stamp, version) — no transcript bodies.
+- Verified against the installed `opencode` 1.18.30's real `/doc`: all
+  six routes the bridge expects are genuinely published.
+- Still open in W26: authenticated control calls through the W19
+  journal (the probe is read-only — the UI must not offer a button
+  until the route is in `supported`), the T3 bridge's scoped-interface
+  proof (T3 reads stay read-only today), and the no-duplicate-owner
+  check when native and T3 observations correlate.
+
 ## W25 slice — coordinator policy — LANDED
 
 - `src/jrbar/coordinator_policy.py` (new): the assistant layer's
