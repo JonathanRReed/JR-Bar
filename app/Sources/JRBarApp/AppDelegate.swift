@@ -173,9 +173,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         )
         self.interaction = interaction
         // The docked buddy and toasts hang under the band; the peek
-        // drops below them.
+        // drops below them, and their frame joins its hover corridor.
         interaction.underBandClearance = { [weak self] in
             self?.events?.hud.panelClearance ?? 0
+        }
+        interaction.underBandRegion = { [weak self] in
+            self?.events?.hud.panelFrame
         }
         // W12 timers: a due timer is one banner, never an agent launch.
         interaction.timers.onFire = { [weak self] entry in

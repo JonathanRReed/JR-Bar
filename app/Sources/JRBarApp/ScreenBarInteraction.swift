@@ -59,12 +59,20 @@ final class ScreenBarInteraction {
     /// docked buddy hangs there, so the peek drops below the pet instead
     /// of landing on it.
     var underBandClearance: @MainActor () -> CGFloat = { 0 }
+    /// The frame that clearance comes from — while the peek is up the
+    /// HUD panel is part of its hover corridor, so crossing the buddy
+    /// between band and card never counts as leaving.
+    var underBandRegion: @MainActor () -> NSRect? = { nil }
     var onOpen: @MainActor (String) -> Void
 
     /// Points of vertical travel before a press-on-the-band becomes a
     /// swipe — small enough that a deliberate pull feels instant, large
     /// enough that a jittery click never fires it.
     nonisolated static let swipeThreshold: CGFloat = 14
+    /// Points of accumulated finger travel before a trackpad swipe
+    /// commits — matches the island's vertical read so both surfaces
+    /// feel the same.
+    nonisolated static let scrollSwipeThreshold: CGFloat = 40
 
     private var globalMonitors: [Any] = []
     private var localMonitors: [Any] = []
@@ -145,6 +153,15 @@ final class ScreenBarInteraction {
             Task { @MainActor [weak self] in self?.pointerReleased() }
             return event
         } { localMonitors.append(up) }
+        // Trackpad swipes arrive as scrollWheel, never as drags — the
+        // same stream the island's hosting view reads.
+        if let scroll = NSEvent.addGlobalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            Task { @MainActor [weak self] in self?.pointerScrolled(event) }
+        } { globalMonitors.append(scroll) }
+        if let scroll = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+            Task { @MainActor [weak self] in self?.pointerScrolled(event) }
+            return event
+        } { localMonitors.append(scroll) }
     }
 
     func stop() {
@@ -154,6 +171,8 @@ final class ScreenBarInteraction {
         hovering = false
         swipeStart = nil
         swipeFired = false
+        scrollLive = false
+        scrollFired = false
         hideTooltip()
     }
 
@@ -192,7 +211,12 @@ final class ScreenBarInteraction {
     private func pointerInHitRegion() -> Bool {
         let point = NSEvent.mouseLocation
         if hitRects().contains(where: { $0.insetBy(dx: -2, dy: -3).contains(point) }) { return true }
-        return isTooltipShown && tooltip.frame.insetBy(dx: -1, dy: -1).contains(point)
+        guard isTooltipShown else { return false }
+        if tooltip.frame.insetBy(dx: -1, dy: -1).contains(point) { return true }
+        // The buddy's HUD frame sits in the corridor between band and
+        // card — without it, crossing the pet kills and re-arms the peek.
+        if let region = underBandRegion(), region.insetBy(dx: -1, dy: -1).contains(point) { return true }
+        return false
     }
 
     private func pointerMoved() {
@@ -246,9 +270,10 @@ final class ScreenBarInteraction {
     /// `deltaY` is in screen coordinates — upward positive.
     enum SwipeOutcome { case expand, collapse, none }
 
-    nonisolated static func swipeOutcome(pinnedAtDown: Bool, deltaY: CGFloat) -> SwipeOutcome {
-        if deltaY <= -swipeThreshold { return pinnedAtDown ? .none : .expand }
-        if deltaY >= swipeThreshold { return pinnedAtDown ? .collapse : .none }
+    nonisolated static func swipeOutcome(pinnedAtDown: Bool, deltaY: CGFloat,
+                                         threshold: CGFloat = swipeThreshold) -> SwipeOutcome {
+        if deltaY <= -threshold { return pinnedAtDown ? .none : .expand }
+        if deltaY >= threshold { return pinnedAtDown ? .collapse : .none }
         return .none
     }
 
@@ -297,6 +322,51 @@ final class ScreenBarInteraction {
         // was — pinned cards route inside clicks to their buttons, so
         // only the pin path is left to resolve here.
         if !tooltip.isPinned, pointerInHitRegion() { pinCard() }
+    }
+
+    // MARK: Scroll swipe
+
+    /// The trackpad's two-finger swipe, read off scroll events the same
+    /// way the island's hosting view reads them — the band is
+    /// click-through, so this runs on the monitor stream and only ever
+    /// counts a gesture that began inside the hit region.
+    private var scrollAccum: CGFloat = 0
+    private var scrollLive = false
+    private var scrollFired = false
+    private var scrollPinnedAtStart = false
+
+    private func pointerScrolled(_ event: NSEvent) {
+        // Only a trackpad gesture carries phases; a wheel's deltas and a
+        // gesture's momentum tail arrive with `phase` empty.
+        guard event.hasPreciseScrollingDeltas, event.phase != [] else { return }
+        if event.phase.contains(.began) {
+            scrollLive = pointerInHitRegion()
+            scrollPinnedAtStart = tooltip.isPinned
+            scrollFired = false
+            scrollAccum = 0
+        }
+        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+            scrollLive = false
+            scrollAccum = 0
+            return
+        }
+        guard scrollLive, !scrollFired else { return }
+        // Normalise to finger direction — natural scrolling already
+        // follows the fingers, legacy is the wheel's opposite. Fingers
+        // down accumulate negative, matching the drag's screen-y sense.
+        scrollAccum += event.isDirectionInvertedFromDevice
+            ? event.scrollingDeltaY : -event.scrollingDeltaY
+        switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart, deltaY: scrollAccum,
+                                 threshold: Self.scrollSwipeThreshold) {
+        case .expand:
+            scrollFired = true
+            pinCard()
+        case .collapse:
+            scrollFired = true
+            unpin()
+        case .none:
+            return
+        }
     }
 
     /// Deliberate focus entry: a click or swipe pins the peek open as an

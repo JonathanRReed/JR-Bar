@@ -949,3 +949,25 @@ the Overview was undiscoverable.
   truth table, 10 toys-state incl. chained migration). Python suite
   unchanged (3516). Hardware lid-travel and on-screen gesture feel
   remain device-verified.
+
+## Notch polish pass 2 — opaque wing pills, trackpad swipes, peek corridor — LANDED
+
+Owner re-check: bare-text wings read as stray menu-bar labels, swipes
+did nothing, and the peek flapped again.
+
+- Wings are opaque `.black` capsules again — flat black beside the flat
+  black notch is the notch-extension look; translucent read as a
+  smudge, bare text read as stray labels. Text back to white, 11 pt.
+- Trackpad swipes now work: a two-finger swipe is `scrollWheel`, never
+  `leftMouseDragged` — the interaction reads the same
+  phase-accumulated, `isDirectionInvertedFromDevice`-normalised stream
+  the island's hosting view does (`hasPreciseScrollingDeltas` +
+  non-empty `phase`, momentum ignored), threshold 40 pt to match the
+  island's vertical read. Fingers down expands, fingers up collapses a
+  pinned card; the click-drag path stays for mice.
+- Peek jitter: the card drops below the docked buddy's HUD frame, but
+  that frame wasn't in the hover union — crossing the pet on the way to
+  the card counted as leaving, so the peek hid and re-armed. The HUD's
+  occupied frame now joins the union while the card is up
+  (`underBandRegion`), closing the dead zone.
+- Verified: `swift build` clean; 9 interaction tests green.

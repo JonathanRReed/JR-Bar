@@ -87,6 +87,13 @@ final class NotchHUD {
         guard panel.isVisible, let bandBottom = panel.bandBottom else { return 0 }
         return bandBottom - panel.frame.minY + 4
     }
+
+    /// The HUD panel's occupied frame under the band — part of the
+    /// peek's hover corridor, so crossing the buddy on the way to the
+    /// card never counts as leaving.
+    var panelFrame: NSRect? {
+        panel.isVisible ? panel.frame : nil
+    }
 }
 
 @MainActor
