@@ -22,6 +22,10 @@ final class OverviewStore {
     var loadedAt: Date?
     var now = Date()
     var selectedID: String?
+    /// The table's full multi-selection; `selectedID` is the primary
+    /// (first in row order) the inspector follows. Two selected rows
+    /// enable Compare (S7.4).
+    var selectedIDs: Set<String> = []
 
     /// The active cut: a preset or a saved view's definition.
     var filter = OverviewFilter(preset: .needsMe)
@@ -149,10 +153,42 @@ final class OverviewStore {
     /// visible (filtered, sorted) rows, never off it.
     func moveSelection(by delta: Int) {
         let list = rows
-        guard !list.isEmpty else { selectedID = nil; return }
+        guard !list.isEmpty else { selectedID = nil; selectedIDs = []; return }
         let index = list.firstIndex { $0.id == selectedID } ?? (delta > 0 ? -1 : list.count)
         let next = max(0, min(list.count - 1, index + delta))
         selectedID = list[next].id
+        selectedIDs = [list[next].id]
+    }
+
+    /// The table reports its selection set; `selectedID` follows the
+    /// first selected row in table order so the inspector stays stable.
+    func selectionChanged(to ids: Set<String>) {
+        selectedIDs = ids
+        selectedID = rows.first { ids.contains($0.id) }?.id
+    }
+
+    // MARK: Compare
+
+    /// The `compare_sessions` document for the two-row selection, shown
+    /// in a sheet; nil hides it. `comparing` marks the fetch in flight.
+    var comparison: CoreRunComparison?
+    var comparing = false
+
+    var canCompare: Bool { selectedIDs.count == 2 }
+
+    func compareSelected() {
+        guard canCompare else { return }
+        let pair = rows.filter { selectedIDs.contains($0.id) }.map(\.id)
+        guard pair.count == 2 else { return }
+        comparing = true
+        Task {
+            defer { comparing = false }
+            do {
+                comparison = try await core.compareRuns(pair[0], pair[1])
+            } catch {
+                self.error = Self.describe(error)
+            }
+        }
     }
 
     /// Open the selected session's terminal — the same `open_session`

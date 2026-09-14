@@ -528,6 +528,173 @@ public struct CoreTimelinePage: Codable, Hashable, Sendable {
     }
 }
 
+/// One side of a `compare_sessions` document: the roster row's axes,
+/// the transcript aggregate, and the ledger's interruption counts.
+/// `activity` is nil with a named gap when no transcript exists;
+/// `artifacts`/`model` are always nil — neither is tracked (S7.3).
+public struct CoreRunSide: Codable, Hashable, Sendable {
+    public var id: String
+    public var label: String?
+    public var provider: String?
+    public var cwd: String?
+    public var lifecycle: String?
+    public var mode: String?
+    public var axes: CoreSessionAxes?
+    public var remote: Bool
+    public var activity: CoreRunActivity?
+    public var interruptions: CoreRunInterruptions
+    public var gaps: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, provider, cwd, lifecycle, mode, axes, remote
+        case activity, interruptions, gaps
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        label = try? c.decodeIfPresent(String.self, forKey: .label)
+        provider = try? c.decodeIfPresent(String.self, forKey: .provider)
+        cwd = try? c.decodeIfPresent(String.self, forKey: .cwd)
+        lifecycle = try? c.decodeIfPresent(String.self, forKey: .lifecycle)
+        mode = try? c.decodeIfPresent(String.self, forKey: .mode)
+        axes = try? c.decodeIfPresent(CoreSessionAxes.self, forKey: .axes)
+        remote = (try? c.decodeIfPresent(Bool.self, forKey: .remote)) ?? false
+        activity = try? c.decodeIfPresent(CoreRunActivity.self, forKey: .activity)
+        interruptions = (try? c.decodeIfPresent(CoreRunInterruptions.self, forKey: .interruptions))
+            ?? CoreRunInterruptions()
+        gaps = (try? c.decodeIfPresent([String].self, forKey: .gaps)) ?? []
+    }
+}
+
+/// The transcript aggregate for one side: message/tool counts, tool
+/// failures and retried calls, the tool histogram, and the run's span.
+public struct CoreRunActivity: Codable, Hashable, Sendable {
+    public var userMessages: Int
+    public var assistantMessages: Int
+    public var toolUses: Int
+    public var toolFailures: Int
+    public var retriedTools: Int
+    public var turnEnds: Int
+    public var sidechainRows: Int
+    public var tools: [String: Int]
+    public var span: CoreRunSpan?
+    public var file: String?
+
+    enum CodingKeys: String, CodingKey {
+        case counts, tools, span, file
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let counts = try? c.decodeIfPresent(JSONValue.self, forKey: .counts)
+        userMessages = counts?["user_messages"]?.intValue ?? 0
+        assistantMessages = counts?["assistant_messages"]?.intValue ?? 0
+        toolUses = counts?["tool_uses"]?.intValue ?? 0
+        toolFailures = counts?["tool_failures"]?.intValue ?? 0
+        retriedTools = counts?["retried_tools"]?.intValue ?? 0
+        turnEnds = counts?["turn_ends"]?.intValue ?? 0
+        sidechainRows = counts?["sidechain_rows"]?.intValue ?? 0
+        tools = (try? c.decodeIfPresent([String: Int].self, forKey: .tools)) ?? [:]
+        span = try? c.decodeIfPresent(CoreRunSpan.self, forKey: .span)
+        file = try? c.decodeIfPresent(String.self, forKey: .file)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(JSONValue.object([
+            "user_messages": .number(Double(userMessages)),
+            "assistant_messages": .number(Double(assistantMessages)),
+            "tool_uses": .number(Double(toolUses)),
+            "tool_failures": .number(Double(toolFailures)),
+            "retried_tools": .number(Double(retriedTools)),
+            "turn_ends": .number(Double(turnEnds)),
+            "sidechain_rows": .number(Double(sidechainRows)),
+        ]), forKey: .counts)
+        try c.encode(tools, forKey: .tools)
+        try c.encodeIfPresent(span, forKey: .span)
+        try c.encodeIfPresent(file, forKey: .file)
+    }
+}
+
+/// `span{first_at,last_at,duration_s}` — the transcript's own bounds.
+public struct CoreRunSpan: Codable, Hashable, Sendable {
+    public var firstAt: Double?
+    public var lastAt: Double?
+    public var durationS: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case firstAt = "first_at", lastAt = "last_at", durationS = "duration_s"
+    }
+
+    public init(firstAt: Double? = nil, lastAt: Double? = nil, durationS: Double? = nil) {
+        self.firstAt = firstAt
+        self.lastAt = lastAt
+        self.durationS = durationS
+    }
+}
+
+/// Ledger-derived interruption counts for the run's agent id.
+public struct CoreRunInterruptions: Codable, Hashable, Sendable {
+    public var asked: Int
+    public var blocked: Int
+    public var completed: Int
+
+    public init(asked: Int = 0, blocked: Int = 0, completed: Int = 0) {
+        self.asked = asked
+        self.blocked = blocked
+        self.completed = completed
+    }
+}
+
+/// `compare_sessions`: two sides plus `shared` facts and `warnings` —
+/// `not_a_controlled_benchmark` is always present (S7.4: uncontrolled
+/// runs are not a fair model comparison).
+public struct CoreRunComparison: Codable, Hashable, Sendable {
+    public var a: CoreRunSide
+    public var b: CoreRunSide
+    public var sharedProvider: Bool
+    public var sharedWorkspace: Bool
+    /// Always nil — the roster tracks no per-session model.
+    public var sharedModel: Bool?
+    public var warnings: [String]
+    public var gaps: [String]
+    public var generatedAt: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case a, b, warnings, gaps, shared
+        case generatedAt = "generated_at"
+    }
+
+    private enum SharedKeys: String, CodingKey { case provider, workspace, model }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        a = try c.decode(CoreRunSide.self, forKey: .a)
+        b = try c.decode(CoreRunSide.self, forKey: .b)
+        warnings = (try? c.decodeIfPresent([String].self, forKey: .warnings)) ?? []
+        gaps = (try? c.decodeIfPresent([String].self, forKey: .gaps)) ?? []
+        generatedAt = try? c.decodeIfPresent(Double.self, forKey: .generatedAt)
+        let shared = try? c.nestedContainer(keyedBy: SharedKeys.self, forKey: .shared)
+        sharedProvider = (try? shared?.decodeIfPresent(Bool.self, forKey: .provider)) ?? false
+        sharedWorkspace = (try? shared?.decodeIfPresent(Bool.self, forKey: .workspace)) ?? false
+        sharedModel = try? shared?.decodeIfPresent(Bool.self, forKey: .model)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(a, forKey: .a)
+        try c.encode(b, forKey: .b)
+        try c.encode(warnings, forKey: .warnings)
+        try c.encode(gaps, forKey: .gaps)
+        try c.encodeIfPresent(generatedAt, forKey: .generatedAt)
+        var shared = c.nestedContainer(keyedBy: SharedKeys.self, forKey: .shared)
+        try shared.encode(sharedProvider, forKey: .provider)
+        try shared.encode(sharedWorkspace, forKey: .workspace)
+        try shared.encodeIfPresent(sharedModel, forKey: .model)
+    }
+}
+
 public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var kind: String

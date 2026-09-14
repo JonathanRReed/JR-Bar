@@ -261,6 +261,19 @@ public final class CoreModel {
         return try ReplyDecoding.decode(CoreTimelinePage.self, from: result)
     }
 
+    /// `compare_sessions`: two runs side by side on retained facts —
+    /// transcript aggregates, ledger interruptions, roster axes — with
+    /// `warnings`/`gaps` naming what the comparison cannot claim.
+    public func compareRuns(_ a: String, _ b: String) async throws -> CoreRunComparison {
+        let reply = try await send("compare_sessions", args: [
+            "a": .string(a), "b": .string(b)])
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "compare_sessions failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "compare_sessions: missing result")
+        }
+        return try ReplyDecoding.decode(CoreRunComparison.self, from: result)
+    }
+
     /// A line from the app itself (the supervisor, a delivery failure) in
     /// the same tail as the daemon's `log` messages.
     public func appendLocalLog(level: String = "info", _ message: String) {

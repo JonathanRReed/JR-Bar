@@ -24,6 +24,16 @@ struct OverviewView: View {
         .font(.system(size: 13))
         .searchable(text: $store.search, placement: .sidebar, prompt: "Search titles, projects, tools")
         .toolbar {
+            if store.canCompare {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        store.compareSelected()
+                    } label: {
+                        Label("Compare", systemImage: "arrow.left.arrow.right")
+                    }
+                    .help("Compare the two selected runs")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task { await store.prepareExport() }
@@ -48,6 +58,14 @@ struct OverviewView: View {
             set: { if !$0 { store.exportPreview = nil } }
         )) {
             ExportPreviewSheet(store: store)
+        }
+        .sheet(isPresented: Binding(
+            get: { store.comparison != nil },
+            set: { if !$0 { store.comparison = nil } }
+        )) {
+            if let comparison = store.comparison {
+                CompareRunsSheet(comparison: comparison)
+            }
         }
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
@@ -163,8 +181,8 @@ struct OverviewView: View {
                                        : "No row fits this view. Try another preset or clear the search.")
             } else {
                 Table(store.rows, selection: Binding(
-                    get: { store.selectedID.map { Set([$0]) } ?? Set<String>() },
-                    set: { store.selectedID = $0.first }
+                    get: { store.selectedIDs },
+                    set: { store.selectionChanged(to: $0) }
                 ), sortOrder: $store.sortOrder) {
                     TableColumn("Task", value: \.labelSortKey) { entry in
                         HStack(spacing: 6) {
@@ -224,6 +242,9 @@ struct OverviewView: View {
                 }
                 .contextMenu(forSelectionType: String.self) { _ in
                     Button("Open session") { store.openSelected() }
+                    if store.canCompare {
+                        Button("Compare selected runs") { store.compareSelected() }
+                    }
                 }
             }
             if let note = store.coverageNote {
@@ -506,6 +527,111 @@ struct OverviewView: View {
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
+}
+
+/// S7.4 run comparison: two sides on retained facts — roster axes,
+/// transcript aggregates, ledger interruptions — with the benchmark
+/// warning and named gaps always visible, never a verdict the facts
+/// cannot carry.
+private struct CompareRunsSheet: View {
+    let comparison: CoreRunComparison
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Compare runs").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                if comparison.generatedAt != nil {
+                    Text("Replay-free · live facts")
+                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                }
+            }
+            if comparison.warnings.contains("not_a_controlled_benchmark") {
+                Label("Uncontrolled runs — not a fair model benchmark.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+            }
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+                GridRow {
+                    Text("").frame(width: 90, alignment: .leading)
+                    sideHeader(comparison.a)
+                    sideHeader(comparison.b)
+                }
+                Divider().gridCellUnsizedAxes([.horizontal])
+                compareRow("Provider") { side in
+                    ProviderStyle.style(for: side.provider ?? "unknown").name
+                }
+                compareRow("Workspace") { side in
+                    side.cwd.map { OverviewFilter.projectName(of: $0) ?? $0 } ?? "—"
+                }
+                compareRow("Lifecycle") { $0.lifecycle ?? "—" }
+                compareRow("Outcome") { $0.axes?.outcome ?? "—" }
+                compareRow("Review") { $0.axes?.review ?? "—" }
+                compareRow("Model") { _ in "not tracked" }
+                Divider().gridCellUnsizedAxes([.horizontal])
+                compareRow("Span") { side in
+                    side.activity?.span?.durationS.map(Self.durationText) ?? "—"
+                }
+                compareRow("Messages") { side in
+                    side.activity.map { "\($0.userMessages)↑ \($0.assistantMessages)↓" } ?? "—"
+                }
+                compareRow("Tool calls") { side in
+                    side.activity.map { "\($0.toolUses)" } ?? "—"
+                }
+                compareRow("Failures") { side in
+                    side.activity.map { "\($0.toolFailures)" } ?? "—"
+                }
+                compareRow("Retries") { side in
+                    side.activity.map { "\($0.retriedTools)" } ?? "—"
+                }
+                compareRow("Asked you") { "\($0.interruptions.asked)" }
+                compareRow("Top tools") { side in
+                    side.activity.map { activity in
+                        activity.tools.prefix(3)
+                            .map { "\($0.key) ×\($0.value)" }
+                            .joined(separator: ", ")
+                    }.flatMap { $0.isEmpty ? nil : $0 } ?? "—"
+                }
+            }
+            .font(.system(size: 12))
+            ForEach(comparison.gaps, id: \.self) { gap in
+                Text(Self.gapText(gap)).font(.system(size: 10)).foregroundStyle(.orange)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 560)
+    }
+
+    private func sideHeader(_ side: CoreRunSide) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(side.label ?? side.id).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+            Text(side.id).font(.system(size: 9, design: .monospaced)).foregroundStyle(.tertiary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func compareRow(_ name: String,
+                            _ value: (CoreRunSide) -> String) -> some View {
+        GridRow {
+            Text(name).foregroundStyle(.tertiary).frame(width: 90, alignment: .leading)
+            Text(value(comparison.a)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            Text(value(comparison.b)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private static func durationText(_ seconds: Double) -> String {
+        if seconds < 90 { return String(format: "%.0fs", seconds) }
+        if seconds < 5400 { return String(format: "%.0fm %.0fs", seconds / 60, seconds.truncatingRemainder(dividingBy: 60)) }
+        return String(format: "%.1fh", seconds / 3600)
+    }
+
+    private static func gapText(_ gap: String) -> String {
+        switch gap {
+        case "artifacts_not_tracked": "Artifacts are not tracked per session — nothing to compare."
+        case "model_not_tracked": "Model is not tracked per session — differences are unknown, not equal."
+        default: gap
+        }
+    }
 }
 
 /// The Overview's own empty-state label set (the Usage Center's

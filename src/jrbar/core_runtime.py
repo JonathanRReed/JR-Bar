@@ -2462,6 +2462,51 @@ def _cmd_session_timeline(self, args):
     return document
 
 
+@command("compare_sessions")
+def _cmd_compare_sessions(self, args):
+    """Two runs side by side on retained facts only (S7.4).
+
+    Each side carries the projected roster row's axes, the transcript
+    aggregate (messages, tools, failures/retries, span), and the
+    ledger's interruption counts for that agent id. ``warnings`` always
+    names ``not_a_controlled_benchmark``; ``gaps`` names what is not
+    tracked (artifacts, model). Refuses ``not_found`` for an unknown id.
+    """
+    from .agent_roster import ROSTER_MAX_LIMIT
+    from .run_compare import compare_runs
+
+    id_a, id_b = args.get("a"), args.get("b")
+    if not (isinstance(id_a, str) and id_a and isinstance(id_b, str) and id_b):
+        raise CommandError("invalid_value", "a and b session ids are required")
+    if id_a == id_b:
+        raise CommandError("invalid_value", "choose two different sessions")
+
+    snapshot = getattr(self, "last_snapshot", None)
+    statuses = [
+        *getattr(snapshot, "statuses", ()),
+        *getattr(snapshot, "stale_statuses", ()),
+    ]
+    by_id = {getattr(s, "agent_id", None): s for s in statuses}
+    status_a, status_b = by_id.get(id_a), by_id.get(id_b)
+    if status_a is None:
+        raise CommandError("not_found", f"unknown session id: {id_a}")
+    if status_b is None:
+        raise CommandError("not_found", f"unknown session id: {id_b}")
+
+    roster = _roster_document(
+        self, scope="all", provider=None, parent=None,
+        since=None, limit=ROSTER_MAX_LIMIT,
+    )
+    rows = {row.get("id"): row for row in roster.get("sessions", ())}
+    ledger = self.ensure_activity_ledger()
+    return compare_runs(
+        row_a=rows.get(id_a), row_b=rows.get(id_b),
+        status_a=status_a, status_b=status_b,
+        ledger_entries=getattr(ledger, "entries", ()),
+        id_a=id_a, id_b=id_b,
+    )
+
+
 @command("replay_events")
 def _cmd_replay_events(self, args):
     """The resumable event stream's suffix after a cursor.

@@ -426,9 +426,36 @@ slot chips flanking the band.
   project), Unavailable (model: the roster does not track it).
 - Verified: 6 audit-export tests + 12 roster tests pass; ruff clean;
   `OverviewExportTests` proves preview==saved bytes; `swift build` clean.
-- Still open in W09: run comparison, the bounded Radar importer/
-  relationship lens, and the labeled read-only replay surface
-  (T38/T39).
+- Still open in W09: the bounded Radar importer/relationship lens
+  (T38) and the labeled read-only replay surface (T39).
+
+## W09 slice — run comparison — LANDED
+
+`compare_sessions` (S7.4): two roster ids side by side on retained
+facts — projected axes, transcript aggregates, ledger interruptions —
+with the benchmark caveat carried on the wire, never implied away.
+
+- `run_compare.py`: per side `{id, label, provider, cwd, lifecycle,
+  mode, axes, remote, activity, interruptions, artifacts:null,
+  model:null, gaps[]}`; `activity` is the `session_timeline` item
+  aggregate — message/tool counts, `tool_failures`, `retried_tools`
+  (tool_use ids that saw an error result), tool histogram, span —
+  or `null` + `transcript_not_found`/`unsupported_provider`.
+  `interruptions` counts the ledger's asked/blocked/completed for the
+  agent id. `warnings` always carries `not_a_controlled_benchmark`
+  plus `different_providers`/`different_workspaces`; `gaps` names
+  `artifacts_not_tracked`/`model_not_tracked` — the roster has no
+  per-session artifact or model record, so `shared.model` is `null`,
+  never `true`.
+- Swift: `CoreRunSide`/`CoreRunActivity`/`CoreRunSpan`/
+  `CoreRunInterruptions`/`CoreRunComparison`, `CoreModel.compareRuns`,
+  `OverviewStore` gains multi-select (`selectedIDs`, primary follows
+  row order) + `compareSelected`, toolbar Compare button and context
+  menu entry at exactly two selected rows, `CompareRunsSheet` —
+  two-column grid with warnings banner and gap lines.
+- Verified: 5 `test_run_compare` cases (aggregation, retries, gaps,
+  not_found/invalid_value, end-to-end command) + 2 `CompareCodecTests`;
+  `swift build` clean; ruff clean.
 
 ## W09 slice — per-session transcript timeline — LANDED
 
