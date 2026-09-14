@@ -105,7 +105,8 @@ public enum NotchProfile: String, CaseIterable, Sendable {
         guard size > 0 else { return "" }
         var name = [CChar](repeating: 0, count: size)
         sysctlbyname("hw.model", &name, &size, nil, 0)
-        return String(cString: name)
+        return String(decoding: name.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) },
+                      as: UTF8.self)
     }
 
     /// A friendlier family name for `machineModel` in settings copy —
