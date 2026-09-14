@@ -1067,3 +1067,25 @@ the notch; it is one continuous shape that wraps under it.
   keeps the peek — it is our drawn surface.
 - Notch-less screens keep the capsule chip hugging the band's end.
 - Verified: `swift build` clean; 567 Swift tests green.
+
+## Notch polish pass 7 — content-sized ears — LANDED
+
+Owner: "jt still looks & feel like shit compare to alcove." The tray
+was still claim-wide — ~126 pt of black each side no matter how short
+the words — so `Working` floated mid-menu-bar inside a slab. Alcove's
+island is exactly as wide as its content.
+
+- The ear is now content-sized: `earWidth` measures the words plus the
+  mark plus padding, capped by the claim, and hugs the bezel edge.
+  `Working` sits against the notch's left edge; `100%` against its
+  right — one tight island, not two text clusters in a black void.
+- Hit regions follow the drawn ear, not the claim: empty claim space
+  is no longer a hover dead-zone magnet.
+- Ear content centres in the full tray depth (notch depth + chin),
+  dropping to the island's own visual centre rather than menu-item
+  height.
+- The island morphs: tray/ear bounds and chip presence spring
+  (0.22 s response, damped) while a claim persists; Reduce Motion
+  skips it. Window-frame snaps stay instant.
+- Notch-less chips keep the claim rect and their own capsule.
+- Verified: `swift build` clean; 567 Swift tests green.

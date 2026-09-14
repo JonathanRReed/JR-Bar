@@ -37,12 +37,14 @@ final class ScreenBarView: NSView {
     var wings: ScreenBarWings = .empty {
         didSet { if wings != oldValue { updateWingChips() } }
     }
-    /// The claim `windowFrame` was built with — where each side's chip may
-    /// sit. `relayout` resolves it to the rects the view draws and the
-    /// interaction hit-tests.
+    /// The claim `windowFrame` was built with — the ceiling on each
+    /// side's ear. `updateWingChips` resolves it to the ears' drawn
+    /// bounds, which are what hit regions and wing gestures answer to.
     var wingGeometry = ScreenBarWingGeometry() {
         didSet { if wingGeometry != oldValue { updateWingChips() } }
     }
+    /// The ear's drawn bounds in view coordinates — content-sized,
+    /// hugging the bezel — not the claim that capped it.
     private(set) var leftWingRect: NSRect?
     private(set) var rightWingRect: NSRect?
     /// The wings' shared tray — ear to ear under the bezel with a chin
@@ -165,8 +167,9 @@ final class ScreenBarView: NSView {
             lastBandWidth = rect.width
             lastStops = []
         }
-        leftWingRect = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: wingGeometry)
-        rightWingRect = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: wingGeometry)
+        // The claims are the ceiling on ear width; `updateWingChips`
+        // turns them into the ears' drawn bounds, which are what hit
+        // regions and wing gestures answer to.
         updateWingChips()
     }
 
@@ -175,8 +178,26 @@ final class ScreenBarView: NSView {
     /// view is created lazily so a bar that never shows wings never pays
     /// for a SwiftUI tree.
     private func updateWingChips() {
-        let left = leftWingRect.flatMap { rect in wings.left.map { (slot: $0, rect: rect) } }
-        let right = rightWingRect.flatMap { rect in wings.right.map { (slot: $0, rect: rect) } }
+        let size = bounds.size
+        // The ear is content-sized and hugs the bezel's edge — the claim
+        // is only the ceiling on the room it may take, never its width.
+        // The ear's own bounds are what hit regions answer to, so empty
+        // claim space is not a dead-zone magnet.
+        func ear(_ side: ScreenBarWingSide, _ slot: ScreenBarWingSlot?) -> (slot: ScreenBarWingSlot, rect: CGRect)? {
+            guard let slot,
+                  let claim = ScreenBarGeometry.wingSlotRect(side, in: size, geometry: wingGeometry)
+            else { return nil }
+            // Notch-less: the capsule chip carries itself in the claim.
+            guard wingGeometry.notchDepth > 0 else { return (slot, claim) }
+            let depth = wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin
+            let width = min(claim.width, Self.earWidth(slot))
+            let x = side == .left ? claim.maxX - width : claim.minX
+            return (slot, CGRect(x: x, y: size.height - depth, width: width, height: depth))
+        }
+        let left = ear(.left, wings.left)
+        let right = ear(.right, wings.right)
+        leftWingRect = left?.rect
+        rightWingRect = right?.rect
         guard left != nil || right != nil else {
             wingsModel.left = nil
             wingsModel.right = nil
@@ -190,30 +211,46 @@ final class ScreenBarView: NSView {
             addSubview(hosting)
             wingsHosting = hosting
         }
-        // The tray is the one continuous shape: from the outer edge of
-        // the left claim, under the bezel, to the outer edge of the
-        // right claim — and a chin below the bezel's bottom edge so the
-        // notch visibly sits in the shape. An unclaimed side ends the
-        // tray at its own bezel edge; the bezel hides the middle.
+        // The tray is the one continuous shape: from the left ear's outer
+        // edge, under the bezel, to the right ear's outer edge — the chin
+        // below the bezel so the notch visibly sits in the shape. An
+        // unclaimed side ends the tray at its own bezel edge; the bezel
+        // hides the middle.
+        var tray: CGRect?
         if wingGeometry.notchDepth > 0 {
-            let sideExtent = max(0, (bounds.width - wingGeometry.notchWidth) / 2.0)
-            let tray = CGRect(
+            let sideExtent = max(0, (size.width - wingGeometry.notchWidth) / 2.0)
+            tray = CGRect(
                 x: left?.rect.minX ?? sideExtent,
-                y: bounds.height - (wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin),
+                y: size.height - (wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin),
                 width: (right?.rect.maxX ?? (sideExtent + wingGeometry.notchWidth))
                     - (left?.rect.minX ?? sideExtent),
                 height: wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin)
-            wingsModel.tray = tray
-            trayRect = tray
-        } else {
-            wingsModel.tray = nil
-            trayRect = nil
         }
-        wingsModel.viewHeight = bounds.height
-        wingsModel.left = left
-        wingsModel.right = right
+        trayRect = tray
+        // The island morphs rather than pops: tray and ears spring to
+        // their new bounds while a claim persists — Alcove's motion.
+        let mutate = {
+            self.wingsModel.tray = tray
+            self.wingsModel.viewHeight = size.height
+            self.wingsModel.left = left
+            self.wingsModel.right = right
+        }
+        if Self.reduceMotion {
+            mutate()
+        } else {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.9), mutate)
+        }
         wingsHosting?.frame = bounds
         wingsHosting?.isHidden = false
+    }
+
+    /// An ear's drawn width: the words measured, the mark's own room,
+    /// the padding — the claim only ever caps it.
+    private static func earWidth(_ slot: ScreenBarWingSlot) -> CGFloat {
+        let text = (slot.text as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width
+        let mark: CGFloat = slot.provider != nil || slot.symbol != nil ? 17 : 0
+        return ceil(text) + mark + 20
     }
 
     // MARK: Keyframes (Core Animation owns the motion)
