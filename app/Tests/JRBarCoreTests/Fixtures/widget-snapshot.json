@@ -1,0 +1,31 @@
+{
+ "schema": 1,
+ "generated_at": 1700000000.0,
+ "counts": {
+  "sessions": 3,
+  "working": 2,
+  "waiting": 1,
+  "stale": 1,
+  "shown": 3
+ },
+ "entries": [
+  {
+   "provider": "codex",
+   "mode": "working",
+   "waiting": false,
+   "stale": false
+  },
+  {
+   "provider": "claude",
+   "mode": "waiting_for_input",
+   "waiting": false,
+   "stale": false
+  },
+  {
+   "provider": "gemini",
+   "mode": "working",
+   "waiting": true,
+   "stale": true
+  }
+ ]
+}

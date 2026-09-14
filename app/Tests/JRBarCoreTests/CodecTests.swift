@@ -424,3 +424,26 @@ struct CodecTests {
         #expect(work.state == nil)
     }
 }
+
+extension CodecTests {
+    @Test("the widget snapshot file decodes: redacted tiles + counts")
+    func widgetSnapshotDecodes() throws {
+        let url = CoreFixtures.root.appending(path: "widget-snapshot.json")
+        let snapshot = try #require(WidgetSnapshot.load(from: url))
+        #expect(snapshot.schema == 1)
+        #expect(snapshot.generatedAt == 1_700_000_000)
+        #expect(snapshot.counts.working == 2)
+        #expect(snapshot.counts.waiting == 1)
+        #expect(snapshot.entries.count == 3)
+        #expect(snapshot.entries[0].provider == "codex")
+        #expect(snapshot.entries[2].waiting == true)
+        #expect(snapshot.entries[2].stale == true)
+        // Freshness is a pure function of the file's stamp.
+        #expect(snapshot.isFresh(at: Date(timeIntervalSince1970: 1_700_000_030)))
+        #expect(!snapshot.isFresh(at: Date(timeIntervalSince1970: 1_700_000_200)))
+        // Absent/corrupt/wrong-schema files all read as nil — the widget
+        // shows its placeholder rather than a fabricated count.
+        #expect(WidgetSnapshot.load(from: url.deletingLastPathComponent()
+            .appending(path: "does-not-exist.json")) == nil)
+    }
+}

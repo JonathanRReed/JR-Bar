@@ -4676,6 +4676,20 @@ def build_headless_controller_class() -> type:
                 self._core_documents["state"] = document
             server.publish_state(document)
             self._core_note_frame(self._core_state_frame_times)
+            self._core_publish_widget_snapshot(document)
+
+        def _core_publish_widget_snapshot(self, document) -> None:
+            """The desktop glance file: a redacted counts-and-tiles view a
+            WidgetKit extension reads without holding the socket. Best
+            effort — a disk hiccup must not stall the state pipeline."""
+            try:
+                from .widget_snapshot import write_widget_snapshot
+                write_widget_snapshot(
+                    document, default_state_dir(), now=time.time())
+            except Exception:
+                legacy.log_status_bar(
+                    "core: widget snapshot write failed: "
+                    + traceback.format_exc(limit=3))
 
         def _core_publish_lights(self) -> None:
             if getattr(self, "_core_in_refresh", False):
