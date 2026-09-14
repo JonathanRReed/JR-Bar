@@ -179,6 +179,36 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W21 slice — shared JSON-RPC stdio transport — LANDED
+
+- `src/jrbar/acp_transport.py` (new): the bounded transport every
+  managed-session adapter (W20 Codex/Claude, W22 Grok/Gemini, W23
+  Devin/Antigravity) sits on — newline-delimited JSON-RPC with
+  monotonic request ids, id-matched response routing, a notification
+  callback for peer-initiated frames (ACP permission callbacks ride
+  the same path), per-request deadlines, a bounded stderr tail, and a
+  1 MiB line bound with a protocol-violation counter — a malformed or
+  oversized frame is counted and skipped, never fatal. `close()` is
+  idempotent and fails every in-flight waiter.
+- Tested against a real fake subprocess (`tests/test_acp_transport.py`):
+  round-trip, id matching, notification routing, error-frame raising,
+  deadline bounding a silent peer, peer exit failing all waiters,
+  idempotent close.
+- Still open in W21: capability negotiation and the ACP method surface
+  live in the adapters (this file is framing only), reconnect/resume
+  semantics, and provider-quirk separation proof.
+
+## W20–W23 note — provider adapters are live-certification work
+
+W20 (Codex/Claude managed sessions), W22 (Grok Build/Gemini CLI) and
+W23 (Devin CLI/Antigravity) each need a real adapter speaking the
+provider's actual protocol plus positive/negative live tests against
+installed CLIs — the Codex app-server probe in `provider_reconnect.py`
+is the only existing handshake. The transport spine (above) and the
+command journal (W19) are the shared infrastructure those adapters
+build on; the adapters themselves are separate certification work that
+cannot be honestly "implemented" without the live provider runs.
+
 ## W19 slice — durable command journal — LANDED
 
 - `src/jrbar/command_journal.py` (new): the execution ledger —
