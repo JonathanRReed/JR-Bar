@@ -2407,6 +2407,61 @@ def _cmd_audit_export(self, args):
     return payload
 
 
+@command("session_timeline")
+def _cmd_session_timeline(self, args):
+    """A session's transcript as bounded, paginated timeline items.
+
+    ``id`` is a roster row id — the status's provider/session_id/cwd
+    resolve the transcript. An ended session whose status has aged out
+    is still inspectable via ``session`` + ``provider`` (+ optional
+    ``cwd``). ``before`` is the seq cursor for older pages. Items carry
+    occurrence time only; per-row ingestion time was never recorded
+    (spec S7.2 — the distinction is surfaced, not fabricated).
+    """
+    from .session_timeline import TIMELINE_DEFAULT_LIMIT, session_timeline
+
+    agent_id = args.get("id")
+    provider = args.get("provider")
+    session_id = args.get("session")
+    cwd = args.get("cwd")
+    if isinstance(agent_id, str) and agent_id:
+        status = next(
+            (
+                status
+                for status in [
+                    *getattr(getattr(self, "last_snapshot", None), "statuses", ()),
+                    *getattr(
+                        getattr(self, "last_snapshot", None), "stale_statuses", ()
+                    ),
+                ]
+                if getattr(status, "agent_id", None) == agent_id
+            ),
+            None,
+        )
+        if status is None:
+            raise CommandError("not_found", f"unknown session id: {agent_id}")
+        provider = provider or getattr(status, "provider", None)
+        session_id = session_id or getattr(status, "session_id", None)
+        cwd = cwd or getattr(status, "cwd", None)
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_value", "provider is required")
+    try:
+        limit = int(args.get("limit") or 0)
+    except (TypeError, ValueError):
+        limit = 0
+    before = args.get("before")
+    document = session_timeline(
+        provider,
+        str(session_id) if session_id else None,
+        cwd=str(cwd) if cwd else None,
+        limit=limit or TIMELINE_DEFAULT_LIMIT,
+        before=int(before) if isinstance(before, (int, float)) else None,
+    )
+    if isinstance(agent_id, str) and agent_id:
+        document["session"] = agent_id
+    return document
+
+
 @command("replay_events")
 def _cmd_replay_events(self, args):
     """The resumable event stream's suffix after a cursor.

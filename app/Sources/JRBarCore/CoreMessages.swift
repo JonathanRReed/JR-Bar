@@ -409,6 +409,125 @@ public struct CoreRoster: Codable, Hashable, Sendable {
     }
 }
 
+/// One `session_timeline` item — a transcript row projected for the
+/// inspector: message, tool_use/tool_result (paired by `toolUseId`),
+/// turn_end. `at` is the row's own stamp (occurrence); `recordedAt`
+/// stays nil — per-row ingestion time was never kept (S7.2).
+public struct CoreTimelineItem: Codable, Hashable, Sendable, Identifiable {
+    public var id: Int { seq }
+    public var seq: Int
+    public var at: Double?
+    /// Always nil on transcript rows — ingestion time is not recorded.
+    public var recordedAt: Double?
+    public var kind: String
+    public var role: String?
+    public var name: String?
+    public var text: String?
+    public var toolUseId: String?
+    public var isError: Bool?
+    public var sidechain: Bool?
+    public var model: String?
+    public var uuid: String?
+    public var parentUuid: String?
+    public var origin: String?
+    /// Tool output and assistant text are untrusted content — never
+    /// rendered as a command or an approval (T44).
+    public var untrusted: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case seq, at, kind, role, name, text, model, uuid, origin, untrusted
+        case recordedAt = "recorded_at"
+        case toolUseId = "tool_use_id"
+        case isError = "is_error"
+        case sidechain
+        case parentUuid = "parent_uuid"
+    }
+
+    public init(seq: Int, at: Double? = nil, kind: String, role: String? = nil,
+                name: String? = nil, text: String? = nil, toolUseId: String? = nil,
+                isError: Bool? = nil, sidechain: Bool? = nil, model: String? = nil,
+                uuid: String? = nil, parentUuid: String? = nil,
+                origin: String? = nil, untrusted: Bool? = nil,
+                recordedAt: Double? = nil) {
+        self.seq = seq
+        self.at = at
+        self.recordedAt = recordedAt
+        self.kind = kind
+        self.role = role
+        self.name = name
+        self.text = text
+        self.toolUseId = toolUseId
+        self.isError = isError
+        self.sidechain = sidechain
+        self.model = model
+        self.uuid = uuid
+        self.parentUuid = parentUuid
+        self.origin = origin
+        self.untrusted = untrusted
+    }
+}
+
+/// A `session_timeline` page: the newest `limit` items before the
+/// caller's `before` cursor, the next cursor for an older page, and the
+/// named gaps (`transcript_not_found`, `unsupported_provider`,
+/// `timeline_item_cap:N`).
+public struct CoreTimelinePage: Codable, Hashable, Sendable {
+    public var events: [CoreTimelineItem]
+    public var hasMore: Bool
+    public var nextBefore: Int?
+    public var total: Int
+    public var provider: String?
+    public var file: String?
+    public var gaps: [String]
+
+    public init(events: [CoreTimelineItem] = [], hasMore: Bool = false,
+                nextBefore: Int? = nil, total: Int = 0,
+                provider: String? = nil, file: String? = nil,
+                gaps: [String] = []) {
+        self.events = events
+        self.hasMore = hasMore
+        self.nextBefore = nextBefore
+        self.total = total
+        self.provider = provider
+        self.file = file
+        self.gaps = gaps
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case events, gaps, total, source
+        case hasMore = "has_more"
+        case nextBefore = "next_before"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        events = tolerantRows(
+            CoreTimelineItem.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .events)
+        )
+        hasMore = (try? c.decodeIfPresent(Bool.self, forKey: .hasMore)) ?? false
+        nextBefore = try? c.decodeIfPresent(Int.self, forKey: .nextBefore)
+        total = (try? c.decodeIfPresent(Int.self, forKey: .total)) ?? events.count
+        gaps = (try? c.decodeIfPresent([String].self, forKey: .gaps)) ?? []
+        let source = try? c.decodeIfPresent(JSONValue.self, forKey: .source)
+        provider = source?["provider"]?.stringValue
+        file = source?["file"]?.stringValue
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(events, forKey: .events)
+        try c.encode(hasMore, forKey: .hasMore)
+        try c.encodeIfPresent(nextBefore, forKey: .nextBefore)
+        try c.encode(total, forKey: .total)
+        try c.encode(gaps, forKey: .gaps)
+        var source: [String: JSONValue] = [:]
+        if let provider { source["provider"] = .string(provider) }
+        if let file { source["file"] = .string(file) }
+        try c.encode(JSONValue.object(source), forKey: .source)
+    }
+}
+
 public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var kind: String

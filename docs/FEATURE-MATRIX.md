@@ -39,7 +39,7 @@ at the end so nobody claims them.
 | "Why this light" row with a hover popover (programs per surface, time in state, dimming, brightness settings) | Ships | On |
 | Settings window: General, Agents, Usage, Devices & Screen Bar, Lighting, Notifications & Focus, Remote, Advanced; every control writes through `set_setting`, refused writes shown | Ships | ⌘, |
 | History window: rows by day, away banner, filters, Clear completed with 5-minute Undo | Ships | ⌘Y |
-| Overview window: sidebar presets (Needs me, Working, Unreviewed, This project, This Mac, All connected), scoped roster table, summary strip, inspector, saved filters, search | Ships | ⌘O |
+| Overview window: sidebar presets (Needs me, Working, Unreviewed, This project, This Mac, All connected), scoped roster table, summary strip, inspector with per-session transcript Timeline (Claude/Codex, paginated), saved filters, search | Ships | ⌘O |
 | Usage Center: rings per window, forecast, tokens/cost graph by day or hour, cache savings, pricing disclosure | Ships | ⌘U |
 | Effect Studio: library, inspector with parameters and live preview, preview on hardware, assignments by scope, scenes, pack import/export | Ships | Settings › Lighting › Effects… |
 | Control Center and the Rail for the Creator Micro 2 | Ships, unverified live (pad verified powered off only) | ⌘K |

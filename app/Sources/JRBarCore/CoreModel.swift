@@ -245,6 +245,22 @@ public final class CoreModel {
         return (result["document"] ?? .object([:]), result["text"]?.stringValue)
     }
 
+    /// `session_timeline`: the session's provider transcript as bounded
+    /// items — messages, tool_use/tool_result pairs, turn ends — newest
+    /// page first. `before` pages older items; ended sessions keep
+    /// working through `session`+`provider` once the roster row is gone.
+    public func sessionTimeline(id: String, limit: Int = 100,
+                                before: Int? = nil) async throws -> CoreTimelinePage {
+        var args: [String: JSONValue] = ["id": .string(id), "limit": .number(Double(limit))]
+        if let before { args["before"] = .number(Double(before)) }
+        let reply = try await send("session_timeline", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "session_timeline failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "session_timeline: missing result")
+        }
+        return try ReplyDecoding.decode(CoreTimelinePage.self, from: result)
+    }
+
     /// A line from the app itself (the supervisor, a delivery failure) in
     /// the same tail as the daemon's `log` messages.
     public func appendLocalLog(level: String = "info", _ message: String) {

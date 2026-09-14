@@ -49,6 +49,10 @@ struct OverviewView: View {
         )) {
             ExportPreviewSheet(store: store)
         }
+        .onChange(of: store.selectedID) { _, id in
+            guard let id else { return }
+            Task { await store.loadTimeline(for: id) }
+        }
     }
 
     // MARK: Sidebar
@@ -325,6 +329,7 @@ struct OverviewView: View {
                     if let coverage = store.coverageNote, entry.visibility == "hidden" {
                         Text(coverage).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
+                    timelineSection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -403,6 +408,104 @@ struct OverviewView: View {
             Text(text).font(.system(size: 12)).textSelection(.enabled)
         }
     }
+
+    // MARK: Timeline
+
+    /// S7.2 Timeline: the session's transcript rows — messages, tool
+    /// pairs, turn ends — occurrence time on the left. "Load earlier"
+    /// is the only way deeper history enters; nothing is virtualised
+    /// silently past the daemon's page bound.
+    @ViewBuilder
+    private func timelineSection(for entry: CoreRosterEntry) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("Timeline").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                Spacer()
+                if store.timelineLoading { ProgressView().controlSize(.mini) }
+                if let page = store.timelinePage, store.timelineSessionID == entry.id, page.hasMore {
+                    Button("Load earlier") { Task { await store.loadEarlierTimeline() } }
+                        .controlSize(.mini)
+                }
+            }
+            if store.timelineSessionID == entry.id {
+                if let page = store.timelinePage {
+                    ForEach(store.timeline) { item in
+                        timelineRow(item)
+                    }
+                    ForEach(page.gaps, id: \.self) { gap in
+                        Text(Self.gapText(gap))
+                            .font(.system(size: 10)).foregroundStyle(.orange)
+                    }
+                    if let file = page.file {
+                        Text("Source: \(file) · \(page.total) items")
+                            .font(.system(size: 9)).foregroundStyle(.quaternary)
+                            .textSelection(.enabled)
+                    }
+                } else if store.timelineLoading {
+                    Text("Reading transcript…").font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+
+    private func timelineRow(_ item: CoreTimelineItem) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(item.at.map { Self.clock.string(from: Date(timeIntervalSince1970: $0)) } ?? "—")
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.quaternary)
+                .frame(width: 40, alignment: .leading)
+            Image(systemName: Self.timelineSymbol(item))
+                .font(.system(size: 9))
+                .foregroundStyle(Self.timelineTint(item))
+                .frame(width: 12)
+            VStack(alignment: .leading, spacing: 1) {
+                if let name = item.name, item.kind != "message" {
+                    Text(name + (item.isError == true ? " · failed" : ""))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(item.isError == true ? Color.red : Color.secondary)
+                }
+                if let text = item.text {
+                    Text(text).font(.system(size: 11)).lineLimit(4).textSelection(.enabled)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private static func timelineSymbol(_ item: CoreTimelineItem) -> String {
+        switch item.kind {
+        case "message": item.role == "user" ? "person" : "sparkle"
+        case "tool_use": "wrench.and.screwdriver"
+        case "tool_result": item.isError == true ? "xmark.octagon" : "checkmark.circle"
+        case "turn_end": "flag.checkered"
+        default: "circle"
+        }
+    }
+
+    private static func timelineTint(_ item: CoreTimelineItem) -> Color {
+        if item.isError == true { return .red }
+        switch item.kind {
+        case "tool_use": return .accentColor
+        case "tool_result": return .green
+        case "turn_end": return .secondary
+        default: return .secondary
+        }
+    }
+
+    private static func gapText(_ gap: String) -> String {
+        switch gap {
+        case "transcript_not_found": "No transcript found for this session."
+        case "unsupported_provider": "This provider's transcript format is not read yet."
+        case "transcript_unreadable": "The transcript file could not be read."
+        default: gap.hasPrefix("timeline_item_cap") ? "Transcript exceeds the item cap — earliest rows omitted." : gap
+        }
+    }
+
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 }
 
 /// The Overview's own empty-state label set (the Usage Center's

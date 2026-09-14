@@ -426,7 +426,42 @@ slot chips flanking the band.
   project), Unavailable (model: the roster does not track it).
 - Verified: 6 audit-export tests + 12 roster tests pass; ruff clean;
   `OverviewExportTests` proves preview==saved bytes; `swift build` clean.
-- Still open in W09: per-session paginated timeline (S7.2 — needs a
-  bounded per-session event store beyond the wire-event journal),
-  run comparison, the bounded Radar importer/relationship lens, and
-  the labeled read-only replay surface (T38/T39).
+- Still open in W09: run comparison, the bounded Radar importer/
+  relationship lens, and the labeled read-only replay surface
+  (T38/T39).
+
+## W09 slice — per-session transcript timeline — LANDED
+
+The timeline did not need a new event store: provider transcripts are
+already the per-session record. `session_timeline.py` reads the
+session's own transcript file and projects bounded items; S7.2's
+paginate/virtualize ask is the `before`/`limit` cursor over them.
+
+- `session_timeline` command (core_runtime): `id` resolves the roster
+  row's provider/`session_id`/`cwd` (`not_found` for an unknown id);
+  an aged-out session stays inspectable via `session`+`provider`
+  (+`cwd`). `before` pages older items, `limit` 100/500 cap.
+- `find_transcript` matches uuid-in-filename under
+  `~/.claude/projects/**` (cwd-slugged project dir first) and
+  `~/.codex/sessions/**`; other providers answer `unsupported_provider`,
+  a missing file `transcript_not_found` — named gaps, never empty
+  success.
+- Items: `{seq, at, kind, role, name, text, tool_use_id, is_error,
+  sidechain, model, uuid, parent_uuid, origin:"transcript",
+  recorded_at:null, untrusted}` — kinds `message`/`tool_use`/
+  `tool_result`/`turn_end`; tool pairs link on `tool_use_id`; `at` is
+  the row's own stamp (occurrence vs ingestion distinguished honestly:
+  ingestion time was never recorded). Tool output and assistant text
+  carry `untrusted: true` (T44 — content, never a command); text is
+  600-char bounded and secret-run redacted.
+- Bounds: 64 MB file cap (`transcript_too_large` gap), 5000-item cap
+  (`timeline_item_cap` gap), 4000-file discovery bound.
+- Swift: `CoreTimelineItem`/`CoreTimelinePage` (tolerant decode, source
+  flattened), `CoreModel.sessionTimeline`, `OverviewStore` timeline
+  buffer pinned to `timelineSessionID` (a late reply cannot write
+  another selection's page), inspector Timeline section with
+  occurrence-clock column, tool-pair icons, per-gap honest text and
+  "Load earlier".
+- Verified: 14 `test_session_timeline` cases (pairing, paging, gaps,
+  redaction, occurrence-vs-ingestion, command resolution incl. direct
+  ended-session lookup) + 3 `TimelineCodecTests`; `swift build` clean.

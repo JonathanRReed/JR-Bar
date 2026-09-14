@@ -218,6 +218,56 @@ final class OverviewStore {
         try data.write(to: url, options: .atomic)
     }
 
+    // MARK: Timeline
+
+    /// The selected session's transcript items, newest page loaded.
+    /// `timelineSessionID` pins which row the buffer belongs to so a
+    /// late reply cannot write another selection's page into view.
+    var timeline: [CoreTimelineItem] = []
+    var timelinePage: CoreTimelinePage?
+    var timelineLoading = false
+    var timelineSessionID: String?
+
+    /// Load the newest page for the given roster row id.
+    func loadTimeline(for id: String) async {
+        guard timelineSessionID != id || timelinePage == nil else { return }
+        timelineSessionID = id
+        timeline = []
+        timelinePage = nil
+        timelineLoading = true
+        defer { timelineLoading = false }
+        do {
+            let page = try await core.sessionTimeline(id: id)
+            guard timelineSessionID == id else { return }
+            timeline = page.events
+            timelinePage = page
+        } catch {
+            guard timelineSessionID == id else { return }
+            timelinePage = CoreTimelinePage(gaps: [Self.describe(error)])
+        }
+    }
+
+    /// The next older page, prepended — transcript reads are bounded so
+    /// "Load earlier" is the only way deep history enters the window.
+    func loadEarlierTimeline() async {
+        guard let id = timelineSessionID,
+              let page = timelinePage, page.hasMore,
+              let before = page.nextBefore, !timelineLoading else { return }
+        timelineLoading = true
+        defer { timelineLoading = false }
+        do {
+            let older = try await core.sessionTimeline(id: id, before: before)
+            guard timelineSessionID == id else { return }
+            timeline = older.events + timeline
+            timelinePage = CoreTimelinePage(
+                events: timeline, hasMore: older.hasMore,
+                nextBefore: older.nextBefore, total: older.total,
+                provider: page.provider, file: page.file, gaps: page.gaps)
+        } catch {
+            self.error = Self.describe(error)
+        }
+    }
+
     // MARK: Search
 
     /// Titles, project labels, tool and event names, and the row's own
