@@ -1110,3 +1110,25 @@ truncating inside a crowded claim.
   notch + 60 pt.
 - Accessibility keeps the slot's text as the label.
 - Verified: `swift build` clean; 567 Swift tests green.
+
+## Gesture pass — the sign bug and the dead feel — LANDED
+
+Owner: "gestures don't work … get them working right & better."
+
+- The real bug: the scroll path fed scroll-space deltas to
+  `swipeOutcome`/`wingSwipeOutcome`, which read pointer space. Under
+  natural scrolling a downward pull accumulated positive — a pull-down
+  fired collapse (or nothing), and an outward ear flick read inward.
+  `scrollFingerDelta` recovers the finger's direction; both gesture
+  feeds now meet the pure functions in one convention, pinned by two
+  sign tests.
+- The dead feel: a pull that never reached the threshold did nothing
+  visible. A downward pull past 25% now slides the peek out early;
+  an ear being pulled rides the finger with `tanh` resistance and
+  fades as it leaves, springing home when the flick doesn't commit.
+- Flick commit: a gesture that lifts past ~55% of the threshold on
+  `.ended` still lands; `.cancelled` (palm) never commits.
+- Found while there: pinning while the peek was up swapped to the
+  taller card layout inside the peek's frame — the card clipped until
+  focus churn refit it. `setPinned` re-presents immediately.
+- Verified: `swift build` clean; 569 Swift tests green (+2 sign tests).

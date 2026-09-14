@@ -248,6 +248,24 @@ final class ScreenBarView: NSView {
     /// the mark's room plus its padding. The claim only ever caps it.
     private static let earWidth: CGFloat = 30
 
+    /// A dismiss-pull drags the ear off the bezel: outward travel only
+    /// (inward pulls meet the notch), eased by `tanh` so it resists as
+    /// it leaves. Direct writes while the finger moves — the ear keeps
+    /// up — and a spring back to zero when the pull ends short of the
+    /// flick threshold.
+    func setWingPull(_ side: ScreenBarWingSide, to dx: CGFloat, springBack: Bool = false) {
+        let outward = side == .left ? min(0, dx) : max(0, dx)
+        let eased = CGFloat(36 * tanh(Double(outward) / 36))
+        let write = { [wingsModel] in
+            if side == .left { wingsModel.leftPull = eased } else { wingsModel.rightPull = eased }
+        }
+        if springBack, !Self.reduceMotion {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.65), write)
+        } else {
+            write()
+        }
+    }
+
     // MARK: Keyframes (Core Animation owns the motion)
 
     /// Hands `plan` to Core Animation: the lead pass from `anchor` (a

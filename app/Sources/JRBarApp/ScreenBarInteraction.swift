@@ -71,6 +71,11 @@ final class ScreenBarInteraction {
     var onWingDismiss: @MainActor (ScreenBarWingSide) -> Void = { _ in }
     /// A horizontal swipe on the band summoned dismissed wings back.
     var onWingRestore: @MainActor () -> Void = {}
+    /// An ear is being pulled — it follows the finger with resistance
+    /// until the flick commits; `dx` is finger-space, rightward positive.
+    var onWingPull: @MainActor (ScreenBarWingSide, CGFloat) -> Void = { _, _ in }
+    /// The pull ended without a dismiss — the ear springs home.
+    var onWingPullEnd: @MainActor (ScreenBarWingSide) -> Void = { _ in }
 
     /// Points of vertical travel before a press-on-the-band becomes a
     /// swipe — small enough that a deliberate pull feels instant, large
@@ -343,9 +348,13 @@ final class ScreenBarInteraction {
         // it, a sideways drag on the band summons — the vertical
         // expand/collapse only fires when the pull is honestly vertical.
         if abs(point.x - start.x) > abs(point.y - start.y) {
+            // The ear follows the finger with resistance until the
+            // flick commits.
+            if case .wing(let side) = swipeRegion { onWingPull(side, point.x - start.x) }
             switch Self.wingSwipeOutcome(region: swipeRegion, deltaX: point.x - start.x) {
             case .dismiss(let side):
                 swipeFired = true
+                onWingPullEnd(side)
                 onWingDismiss(side)
             case .restore:
                 swipeFired = true
@@ -354,6 +363,11 @@ final class ScreenBarInteraction {
                 return
             }
             return
+        }
+        // A downward pull that has not committed still slides the card
+        // out under the pointer.
+        if point.y - start.y <= -Self.swipeThreshold * 0.25, !isTooltipShown {
+            showPullPeek()
         }
         switch Self.swipeOutcome(pinnedAtDown: swipePinnedAtDown, deltaY: point.y - start.y) {
         case .expand:
@@ -369,6 +383,8 @@ final class ScreenBarInteraction {
 
     private func pointerReleased() {
         let wasSwipe = swipeFired
+        // A wing pull that never committed springs the ear home.
+        if case .wing(let side) = swipeRegion { onWingPullEnd(side) }
         swipeStart = nil
         swipeFired = false
         guard !wasSwipe else { return }
@@ -376,6 +392,14 @@ final class ScreenBarInteraction {
         // was — pinned cards route inside clicks to their buttons, so
         // only the pin path is left to resolve here.
         if !tooltip.isPinned, pointerInHitRegion() { pinCard() }
+    }
+
+    /// The pull's early answer: the peek slides out before the commit
+    /// lands — a gesture with no visible response until the threshold
+    /// reads dead.
+    private func showPullPeek() {
+        guard !isTooltipShown, let focus = focus() ?? lastFocus else { return }
+        showTooltip(focus)
     }
 
     // MARK: Scroll swipe
@@ -403,30 +427,74 @@ final class ScreenBarInteraction {
             scrollAccumY = 0
             scrollAccumX = 0
         }
-        if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
+        if event.phase.contains(.ended) {
+            // A flick is a gesture that lifts short of the threshold —
+            // a fast pull past roughly half commits on release instead
+            // of evaporating. `.cancelled` is the OS retracting the
+            // gesture (a palm), so only `.ended` commits.
+            if scrollLive, !scrollFired {
+                let commit = Self.scrollSwipeThreshold * 0.55
+                if abs(scrollAccumX) > abs(scrollAccumY), abs(scrollAccumX) >= commit {
+                    switch Self.wingSwipeOutcome(region: scrollRegion, deltaX: scrollAccumX,
+                                                 threshold: commit) {
+                    case .dismiss(let side):
+                        onWingPullEnd(side)
+                        onWingDismiss(side)
+                    case .restore:
+                        onWingRestore()
+                    case .none:
+                        break
+                    }
+                } else if abs(scrollAccumY) >= commit {
+                    switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart,
+                                             deltaY: scrollAccumY, threshold: commit) {
+                    case .expand:
+                        pinCard()
+                    case .collapse:
+                        unpin()
+                    case .none:
+                        break
+                    }
+                }
+            }
+            if case .wing(let side) = scrollRegion { onWingPullEnd(side) }
+            scrollLive = false
+            scrollAccumY = 0
+            scrollAccumX = 0
+            return
+        }
+        if event.phase.contains(.cancelled) {
+            if case .wing(let side) = scrollRegion { onWingPullEnd(side) }
             scrollLive = false
             scrollAccumY = 0
             scrollAccumX = 0
             return
         }
         guard scrollLive, !scrollFired else { return }
-        // Normalise to finger direction — natural scrolling already
-        // follows the fingers, legacy is the wheel's opposite. Fingers
-        // down accumulate negative (matching the drag's screen-y sense),
-        // fingers left negative x.
-        scrollAccumY += event.isDirectionInvertedFromDevice
-            ? event.scrollingDeltaY : -event.scrollingDeltaY
-        scrollAccumX += event.isDirectionInvertedFromDevice
-            ? event.scrollingDeltaX : -event.scrollingDeltaX
+        // Recover the finger's direction: under natural scrolling the
+        // delta is inverted from the fingers (`isDirectionInvertedFrom-
+        // Device`), so finger travel is the delta's negation; a legacy
+        // wheel reports finger direction already. The drag path reads
+        // the pointer — the same space — so both feeds meet
+        // `swipeOutcome`/`wingSwipeOutcome` in one sign convention.
+        scrollAccumY += Self.scrollFingerDelta(event.scrollingDeltaY,
+                                               inverted: event.isDirectionInvertedFromDevice)
+        scrollAccumX += Self.scrollFingerDelta(event.scrollingDeltaX,
+                                               inverted: event.isDirectionInvertedFromDevice)
         // The dominant axis decides which gesture this is — a sideways
         // flick dismisses or summons wings, a vertical pull expands or
         // collapses the card, and a diagonal never fires either until
         // one axis honestly wins.
         if abs(scrollAccumX) > abs(scrollAccumY) {
+            // An ear being pulled follows the finger with resistance
+            // until the flick commits — touch that reads dead is what
+            // made these feel absent.
+            if case .wing(let side) = scrollRegion { onWingPull(side, scrollAccumX) }
             switch Self.wingSwipeOutcome(region: scrollRegion, deltaX: scrollAccumX,
                                          threshold: Self.scrollSwipeThreshold) {
             case .dismiss(let side):
                 scrollFired = true
+                onWingPullEnd(side)
                 onWingDismiss(side)
             case .restore:
                 scrollFired = true
@@ -435,6 +503,11 @@ final class ScreenBarInteraction {
                 return
             }
             return
+        }
+        // A downward pull that has not committed still slides the card
+        // out under the fingers.
+        if scrollAccumY <= -Self.scrollSwipeThreshold * 0.25, !isTooltipShown {
+            showPullPeek()
         }
         switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart, deltaY: scrollAccumY,
                                  threshold: Self.scrollSwipeThreshold) {
@@ -447,6 +520,13 @@ final class ScreenBarInteraction {
         case .none:
             return
         }
+    }
+
+    /// Scroll delta → finger travel. Positive is the pointer-space
+    /// "up"/"right" the drag path reports — under natural scrolling the
+    /// deltas run inverted from the fingers, so they are negated.
+    nonisolated static func scrollFingerDelta(_ delta: CGFloat, inverted: Bool) -> CGFloat {
+        inverted ? -delta : delta
     }
 
     /// Deliberate focus entry: a click or swipe pins the peek open as an
@@ -467,6 +547,10 @@ final class ScreenBarInteraction {
         for monitor in pinnedKeyMonitors { NSEvent.removeMonitor(monitor) }
         pinnedKeyMonitors = []
         guard pinned else { return }
+        // The card's layout is taller than the peek it replaces — the
+        // panel refits now rather than drawing clipped until some later
+        // focus churn happens to re-present it.
+        if isTooltipShown, let current = focus() ?? lastFocus { showTooltip(current) }
         // Escape unpins: the card never becomes key (nonactivating), so
         // watch for it — local when we are active, global when we are not.
         if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in

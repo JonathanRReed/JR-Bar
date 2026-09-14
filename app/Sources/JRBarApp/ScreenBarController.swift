@@ -329,6 +329,18 @@ final class ScreenBarController {
         pushWings()
     }
 
+    /// The ear rides a dismiss-pull — the view owns the easing; the
+    /// controller only forwards the finger's travel.
+    func pullWing(_ side: ScreenBarWingSide, to dx: CGFloat) {
+        guard isShown else { return }
+        view.setWingPull(side, to: dx)
+    }
+
+    /// The pull ended short of a flick — the ear springs home.
+    func releaseWingPull(_ side: ScreenBarWingSide) {
+        view.setWingPull(side, to: 0, springBack: true)
+    }
+
     /// A device transition holds the ambient wing for `life`, then the
     /// slot it replaced returns.
     private func presentWingNotice(_ side: ScreenBarWingSide, slot: ScreenBarWingSlot) {

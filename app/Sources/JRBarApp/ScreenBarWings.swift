@@ -65,6 +65,10 @@ final class ScreenBarWingsModel {
     /// carry their own capsules beside the band.
     var tray: CGRect?
     var viewHeight: CGFloat = 0
+    /// The dismiss-pull: the ear rides the finger's horizontal travel,
+    /// already eased, so a flick visibly drags it off the notch.
+    var leftPull: CGFloat = 0
+    var rightPull: CGFloat = 0
 }
 
 /// The wing lobes. The drawn ear is a fixed-size complication hugging
@@ -107,6 +111,8 @@ struct ScreenBarWingsView: View {
     @ViewBuilder
     private func chip(_ slot: ScreenBarWingSlot, rect: CGRect, side: ScreenBarWingSide) -> some View {
         let tint = slot.tone == .neutral ? nil : slot.textColor
+        // A dismiss-pull drags the ear off the bezel, fading as it goes.
+        let pull = side == .left ? model.leftPull : model.rightPull
         let mark = Group {
             if let symbol = slot.symbol {
                 Image(systemName: symbol)
@@ -122,11 +128,12 @@ struct ScreenBarWingsView: View {
                 Circle().fill(slot.textColor).frame(width: 5, height: 5)
             }
         }
+        .opacity(1 - min(1, abs(pull) / 40))
 
         if model.tray != nil {
             mark
                 .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: model.viewHeight - rect.midY)
+                .position(x: rect.midX + pull, y: model.viewHeight - rect.midY)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(slot.text))
         } else {
@@ -136,7 +143,7 @@ struct ScreenBarWingsView: View {
                 .background(Capsule(style: .continuous).fill(.black))
                 .frame(width: rect.width, height: rect.height,
                        alignment: side == .left ? .trailing : .leading)
-                .position(x: rect.midX, y: model.viewHeight - rect.midY)
+                .position(x: rect.midX + pull, y: model.viewHeight - rect.midY)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(slot.text))
         }

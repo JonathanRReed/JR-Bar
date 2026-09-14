@@ -86,4 +86,20 @@ import Testing
             #expect(ScreenBarInteraction.wingSwipeOutcome(region: region, deltaX: -8) == .none)
         }
     }
+
+    // MARK: Trackpad deltas (finger direction, not scroll direction)
+
+    @Test func naturalScrollingNegatesTheDeltaBackToTheFinger() {
+        // Natural scrolling reports scroll-direction deltas — fingers
+        // down yield a positive delta — so the finger's travel is its
+        // negation. Without this a pull-down read as a push-up and the
+        // gestures fired the wrong branch.
+        #expect(ScreenBarInteraction.scrollFingerDelta(12, inverted: true) == -12)
+        #expect(ScreenBarInteraction.scrollFingerDelta(-12, inverted: true) == 12)
+    }
+
+    @Test func legacyScrollingReportsFingerDirectionAlready() {
+        #expect(ScreenBarInteraction.scrollFingerDelta(12, inverted: false) == 12)
+        #expect(ScreenBarInteraction.scrollFingerDelta(-12, inverted: false) == -12)
+    }
 }

@@ -181,10 +181,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             self?.events?.hud.panelFrame
         }
         // Wing gestures: an outward flick dismisses a side, a horizontal
-        // swipe on the band summons dismissed wings back.
+        // swipe on the band summons dismissed wings back. The pull wires
+        // make the ear ride the finger until the flick commits.
         interaction.wingSideAt = { [weak screenBar] point in screenBar?.wingSide(atScreenPoint: point) }
         interaction.onWingDismiss = { [weak screenBar] side in screenBar?.dismissWing(side) }
         interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
+        interaction.onWingPull = { [weak screenBar] side, dx in screenBar?.pullWing(side, to: dx) }
+        interaction.onWingPullEnd = { [weak screenBar] side in screenBar?.releaseWingPull(side) }
         // W12 timers: a due timer is one banner, never an agent launch.
         interaction.timers.onFire = { [weak self] entry in
             self?.events?.notifications.deliver(.init(
