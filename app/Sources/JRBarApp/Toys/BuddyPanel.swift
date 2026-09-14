@@ -194,14 +194,14 @@ final class BuddyPanelModel {
     var toy: NotchBuddyToy?
 }
 
-/// The buddy's free-floating home: the same glass pill as the HUD, on
-/// the same just-over-the-menu-bar level, but it takes the mouse — the
-/// pill is how it gets dragged, tapped and menued. It hosts no toasts,
-/// so a toast can never fight it for the panel.
+/// The buddy's free-floating home: the pet bare on a transparent
+/// window — no pill chrome — on the same just-over-the-menu-bar level.
+/// It takes the mouse — the pet is how it gets dragged, tapped and
+/// menued. It hosts no toasts, so a toast can never fight it for the
+/// panel.
 @MainActor
 final class BuddyPanel: NSPanel {
     private let hosting: BuddyHostingView<BuddyPanelView>
-    private let backdrop: NSView
     private let model = BuddyPanelModel()
 
     var buddyDrag: BuddyDragController? {
@@ -212,37 +212,15 @@ final class BuddyPanel: NSPanel {
     init() {
         hosting = BuddyHostingView(rootView: BuddyPanelView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
-        // The HUD pill's chrome: glass, or the plain-material stand-in
-        // the test renders ask for.
-        if ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil {
-            let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 60, height: 30))
-            effect.material = .hudWindow
-            effect.blendingMode = .behindWindow
-            effect.state = .active
-            effect.wantsLayer = true
-            effect.layer?.masksToBounds = true
-            hosting.translatesAutoresizingMaskIntoConstraints = false
-            effect.addSubview(hosting)
-            NSLayoutConstraint.activate([
-                hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-                hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-                hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-            ])
-            backdrop = effect
-        } else {
-            let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 60, height: 30))
-            glass.cornerRadius = 15
-            glass.style = .regular
-            glass.contentView = hosting
-            backdrop = glass
-        }
+        hosting.autoresizingMask = [.width, .height]
         super.init(contentRect: NSRect(x: 0, y: 0, width: 60, height: 30),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
+        contentView = hosting
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        // A window shadow would hug the caption text and read as a
+        // smudge over whatever is behind the pet.
+        hasShadow = false
         ignoresMouseEvents = false   // the draggable one — never click-through
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
@@ -277,10 +255,6 @@ final class BuddyPanel: NSPanel {
         let size = hosting.fittingSize
         let height = max(26, size.height)
         let width = max(30, size.width)
-        // A pill at every size: capsule ends scale with the panel.
-        let radius = min(width, height) / 2
-        (backdrop as? NSGlassEffectView)?.cornerRadius = radius
-        backdrop.layer?.cornerRadius = radius
         let screen = NSScreen.screens.first { $0.frame.contains(point) }
             ?? ScreenBarGeometry.preferredScreen() ?? NSScreen.main
         let visible = (screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900))
@@ -328,6 +302,9 @@ struct BuddyPanelView: View {
                         Text(summary.focus?.line ?? toy.buddyName)
                             .font(.system(size: caption, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
+                            // No pill behind it — the shadow keeps the
+                            // tag readable over whatever it parks on.
+                            .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
                             .lineLimit(1)
                             .truncationMode(.tail)
                             .frame(maxWidth: max(150, 60 * scale))

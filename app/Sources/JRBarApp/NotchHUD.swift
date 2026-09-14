@@ -79,12 +79,26 @@ final class NotchHUD {
         let depth = screen.map { ScreenBarGeometry.notchDepth(of: $0) } ?? 0
         return NSRect(x: frame.midX - 90, y: frame.maxY - depth - 8, width: 180, height: 6)
     }
+
+    /// The vertical room the HUD panel claims under the band — docked
+    /// buddy or toast — so the peek hangs below it instead of landing
+    /// on it. 0 while the panel is away.
+    var panelClearance: CGFloat {
+        guard panel.isVisible, let bandBottom = panel.bandBottom else { return 0 }
+        return bandBottom - panel.frame.minY + 4
+    }
 }
 
 @MainActor
 final class NotchHUDPanel: NSPanel {
     private let hosting: BuddyHostingView<NotchHUDView>
-    private let backdrop: NSView
+    /// The toast's backing: quiet HUD material, never liquid glass. The
+    /// buddy does not wear it — a pet hangs under the notch bare, or it
+    /// reads as a blob crowding the menu bar.
+    private let chrome: NSVisualEffectView
+    /// The buddy's container: nothing but the hosting view on a clear
+    /// window, so the creature floats instead of sitting in a pill.
+    private let clear = NSView()
     private let model = NotchHUDModel()
     /// The band the pill last hung under, so a toast that is handing back
     /// to the buddy can re-centre without asking again.
@@ -106,36 +120,24 @@ final class NotchHUDPanel: NSPanel {
     init() {
         hosting = BuddyHostingView(rootView: NotchHUDView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
-        let plain = ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil
-        if !plain {
-            let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 160, height: 30))
-            glass.cornerRadius = 15
-            glass.style = .regular
-            glass.contentView = hosting
-            backdrop = glass
-        } else {
-            let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 160, height: 30))
-            effect.material = .hudWindow
-            effect.blendingMode = .behindWindow
-            effect.state = .active
-            effect.wantsLayer = true
-            effect.layer?.cornerRadius = 15
-            effect.layer?.masksToBounds = true
-            hosting.translatesAutoresizingMaskIntoConstraints = false
-            effect.addSubview(hosting)
-            NSLayoutConstraint.activate([
-                hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-                hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-                hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-            ])
-            backdrop = effect
-        }
+        // The hosting view moves between the two containers, so it fills
+        // whichever one it is in by autoresizing rather than constraints.
+        hosting.autoresizingMask = [.width, .height]
+        let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 160, height: 30))
+        effect.material = .hudWindow
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 15
+        effect.layer?.masksToBounds = true
+        chrome = effect
         super.init(contentRect: NSRect(x: 0, y: 0, width: 160, height: 30), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        contentView = backdrop
+        clear.frame = NSRect(x: 0, y: 0, width: 160, height: 30)
+        clear.addSubview(hosting)
+        contentView = clear
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false
         ignoresMouseEvents = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
@@ -151,6 +153,20 @@ final class NotchHUDPanel: NSPanel {
     override var canBecomeMain: Bool { false }
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
+    /// Which container holds the hosting view: the material-backed
+    /// chrome for a toast, the clear view for the buddy. The shadow
+    /// belongs to the chrome — a bare pet keeps none.
+    private func wearChrome(_ on: Bool) {
+        let container: NSView = on ? chrome : clear
+        if hosting.superview !== container {
+            hosting.removeFromSuperview()
+            container.addSubview(hosting)
+            hosting.frame = container.bounds
+        }
+        if contentView !== container { contentView = container }
+        hasShadow = on
+    }
+
     func present(text: String, symbol: String, under band: NSRect) {
         // A toast takes the panel even out from under a carry — the
         // buddy stays wherever the settings say it lives.
@@ -161,13 +177,13 @@ final class NotchHUDPanel: NSPanel {
         // A toast is a sign, not a button: clicks fall straight through.
         ignoresMouseEvents = true
         lastBand = band
+        wearChrome(true)
         hosting.rootView = NotchHUDView(model: model)
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let height = max(30, size.height)
         let width = max(80, size.width)
-        (backdrop as? NSGlassEffectView)?.cornerRadius = height / 2
-        backdrop.layer?.cornerRadius = height / 2
+        chrome.layer?.cornerRadius = height / 2
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
@@ -182,27 +198,30 @@ final class NotchHUDPanel: NSPanel {
         }
     }
 
-    /// The buddy's own slot: the same pill, sized to the creature. No-op
-    /// while a toast is up — the toast always wins the panel. The buddy
-    /// is a pet: it takes the clicks a toast would let fall through.
+    /// The buddy's own slot: the pet bare under the notch, sized to the
+    /// creature. No-op while a toast is up — the toast always wins the
+    /// panel. The buddy is a pet: it takes the clicks a toast would let
+    /// fall through.
     func presentBuddy(under band: NSRect) {
         guard !model.toastActive else { return }
         // A carry owns the frame until the drop lands it.
         guard buddyDrag?.inProgress != true else { return }
         ignoresMouseEvents = false
         lastBand = band
+        wearChrome(false)
         hosting.rootView = NotchHUDView(model: model)
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let height = max(26, size.height)
         let width = max(30, size.width)
-        (backdrop as? NSGlassEffectView)?.cornerRadius = height / 2
-        backdrop.layer?.cornerRadius = height / 2
         let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 10 - height).rounded())
         setFrame(NSRect(origin: origin, size: NSSize(width: width, height: height)), display: true)
         orderFrontRegardless()
         animator().alphaValue = 1
     }
+
+    /// The bottom edge of the band the pill last hung under.
+    var bandBottom: CGFloat? { lastBand?.minY }
 
     /// The buddy was switched off while it held the panel. A toast in
     /// flight is left alone; it hands back (or out) in `dismiss`.

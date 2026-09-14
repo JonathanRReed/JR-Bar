@@ -172,6 +172,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             onOpen: { [weak core] session in core?.openSession(session) }
         )
         self.interaction = interaction
+        // The docked buddy and toasts hang under the band; the peek
+        // drops below them.
+        interaction.underBandClearance = { [weak self] in
+            self?.events?.hud.panelClearance ?? 0
+        }
         // W12 timers: a due timer is one banner, never an agent launch.
         interaction.timers.onFire = { [weak self] entry in
             self?.events?.notifications.deliver(.init(

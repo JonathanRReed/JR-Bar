@@ -52,6 +52,10 @@ final class ScreenBarInteraction {
     /// The band's rect for anchoring the peek card (nil while hidden).
     var bandRect: @MainActor () -> NSRect?
     var focus: @MainActor () -> ScreenBarFocus?
+    /// Extra room under the band another surface already claims — the
+    /// docked buddy hangs there, so the peek drops below the pet instead
+    /// of landing on it.
+    var underBandClearance: @MainActor () -> CGFloat = { 0 }
     var onOpen: @MainActor (String) -> Void
 
     private var globalMonitors: [Any] = []
@@ -258,7 +262,7 @@ final class ScreenBarInteraction {
     private func showTooltip(_ focus: ScreenBarFocus) {
         guard let rect = bandRect() ?? hitRects().first else { return }
         lastFocus = focus
-        tooltip.present(focus, under: rect)
+        tooltip.present(focus, under: rect, clearance: underBandClearance())
         isTooltipShown = true
         lifeWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -299,7 +303,8 @@ final class ScreenBarInteraction {
     }
 }
 
-/// The glass pill under the band. Click-through and never key.
+/// The pill under the band. Click-through and never key. Quiet HUD
+/// material, not liquid glass — it is a glance, not a surface.
 @MainActor
 final class ScreenBarTooltipPanel: NSPanel {
     private let hosting: NSHostingView<ScreenBarTooltipView>
@@ -309,31 +314,22 @@ final class ScreenBarTooltipPanel: NSPanel {
         model = ScreenBarTooltipModel()
         hosting = NSHostingView(rootView: ScreenBarTooltipView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
-        let plain = ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil
-        if !plain {
-            let glass = NSGlassEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
-            glass.cornerRadius = 13
-            glass.style = .regular
-            glass.contentView = hosting
-            backdrop = glass
-        } else {
-            let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
-            effect.material = .hudWindow
-            effect.blendingMode = .behindWindow
-            effect.state = .active
-            effect.wantsLayer = true
-            effect.layer?.cornerRadius = 13
-            effect.layer?.masksToBounds = true
-            hosting.translatesAutoresizingMaskIntoConstraints = false
-            effect.addSubview(hosting)
-            NSLayoutConstraint.activate([
-                hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
-                hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
-                hosting.topAnchor.constraint(equalTo: effect.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
-            ])
-            backdrop = effect
-        }
+        let effect = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 120, height: 26))
+        effect.material = .hudWindow
+        effect.blendingMode = .behindWindow
+        effect.state = .active
+        effect.wantsLayer = true
+        effect.layer?.cornerRadius = 13
+        effect.layer?.masksToBounds = true
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        effect.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: effect.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+        ])
+        backdrop = effect
         super.init(contentRect: NSRect(x: 0, y: 0, width: 120, height: 26), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         contentView = backdrop
         isOpaque = false
@@ -367,16 +363,16 @@ final class ScreenBarTooltipPanel: NSPanel {
 
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
-    func present(_ focus: ScreenBarFocus, under band: NSRect) {
+    func present(_ focus: ScreenBarFocus, under band: NSRect, clearance: CGFloat = 0) {
         model.focus = focus
         hosting.rootView = ScreenBarTooltipView(model: model)
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let height = max(26, size.height)
         let width = max(60, size.width)
-        (backdrop as? NSGlassEffectView)?.cornerRadius = height / 2
         backdrop.layer?.cornerRadius = height / 2
-        let origin = NSPoint(x: (band.midX - width / 2).rounded(), y: (band.minY - 7 - height).rounded())
+        let origin = NSPoint(x: (band.midX - width / 2).rounded(),
+                             y: (band.minY - 7 - height - clearance).rounded())
         let frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
         let wasVisible = isVisible && alphaValue > 0.01
         setFrame(frame, display: true)

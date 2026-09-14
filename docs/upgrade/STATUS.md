@@ -878,3 +878,34 @@ paginate/virtualize ask is the `before`/`limit` cursor over them.
 - Verified: 14 `test_session_timeline` cases (pairing, paging, gaps,
   redaction, occurrence-vs-ingestion, command resolution incl. direct
   ended-session lookup) + 3 `TimelineCodecTests`; `swift build` clean.
+
+## Visual cleanup — pet chrome removal, peek material, under-band clearance — LANDED
+
+Owner-reported glitches on the installed 0.9.8 build: the buddy sat on a
+dark glass blob crowding the notch, and the peek/pinned card rendered as
+a `.regular` `NSGlassEffectView` — the "random liquid glass pill".
+
+- `BuddyPanel` (free pet): pill chrome removed entirely — the hosting
+  view is the content view on a transparent borderless panel; no
+  material, no window shadow (a shadow hugging the caption read as a
+  smudge). The creature floats bare; the caption got a text shadow for
+  legibility over arbitrary content.
+- `NotchHUDPanel` (docked buddy): the hosting view now moves between
+  two containers — `chrome` (`NSVisualEffectView` `.hudWindow`) for
+  toasts, which are real UI and keep a backing, and a plain clear
+  `NSView` for the buddy, which hangs under the notch bare. Shadow
+  follows the chrome only.
+- `ScreenBarTooltipPanel`: `.regular` glass removed — the peek and the
+  pinned card wear `.hudWindow` unconditionally (the
+  `JRBAR_PLAIN_MATERIAL` fork in these three surfaces is gone; the
+  deliberate surfaces — main panel, first-run card, deck rail, why
+  popover — keep their materials).
+- Under-band clearance: `NotchHUD.panelClearance` reports the vertical
+  room the HUD panel claims (docked buddy or toast);
+  `ScreenBarInteraction.underBandClearance` is wired to it in
+  `AppDelegate`, so the peek drops below whatever is hanging under the
+  band instead of landing on the pet — they shared the same level and
+  centre before.
+- Verified: `swift build` clean; 20 buddy/interaction tests + full
+  Swift suite (557) green. Real-screen overlap check is on hardware —
+  geometry is asserted in code, not screenshot-verified here.
