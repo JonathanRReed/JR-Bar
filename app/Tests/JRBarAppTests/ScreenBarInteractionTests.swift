@@ -52,4 +52,38 @@ import Testing
                     "pinned deltaY \(delta) should not fire")
         }
     }
+
+    // MARK: Wing swipe (dismiss / summon the notch lobes)
+
+    @Test func anOutwardFlickDismissesTheLeftWing() {
+        #expect(ScreenBarInteraction.wingSwipeOutcome(
+            region: .wing(.left),
+            deltaX: -ScreenBarInteraction.swipeThreshold - 1) == .dismiss(.left))
+    }
+
+    @Test func anOutwardFlickDismissesTheRightWing() {
+        #expect(ScreenBarInteraction.wingSwipeOutcome(
+            region: .wing(.right),
+            deltaX: ScreenBarInteraction.swipeThreshold + 1) == .dismiss(.right))
+    }
+
+    @Test func anInwardFlickOnAWingIsNothing() {
+        // Pushing the left ear toward the notch does not summon; the
+        // band's own swipe is the summon gesture.
+        #expect(ScreenBarInteraction.wingSwipeOutcome(region: .wing(.left), deltaX: 30) == .none)
+        #expect(ScreenBarInteraction.wingSwipeOutcome(region: .wing(.right), deltaX: -30) == .none)
+    }
+
+    @Test func aHorizontalSwipeOnTheBandSummons() {
+        for delta: CGFloat in [-40, 40] {
+            #expect(ScreenBarInteraction.wingSwipeOutcome(region: .band, deltaX: delta) == .restore)
+        }
+    }
+
+    @Test func aSubThresholdHorizontalMoveIsNothing() {
+        for region in [ScreenBarInteraction.SwipeRegion.wing(.left), .wing(.right), .band] {
+            #expect(ScreenBarInteraction.wingSwipeOutcome(region: region, deltaX: 8) == .none)
+            #expect(ScreenBarInteraction.wingSwipeOutcome(region: region, deltaX: -8) == .none)
+        }
+    }
 }

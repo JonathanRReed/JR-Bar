@@ -64,6 +64,13 @@ final class ScreenBarInteraction {
     /// between band and card never counts as leaving.
     var underBandRegion: @MainActor () -> NSRect? = { nil }
     var onOpen: @MainActor (String) -> Void
+    /// Which drawn wing a screen point is over — the dismiss swipe's
+    /// target; the band and empty flank room answer nil.
+    var wingSideAt: @MainActor (NSPoint) -> ScreenBarWingSide? = { _ in nil }
+    /// A wing was flicked away from the notch — the controller hides it.
+    var onWingDismiss: @MainActor (ScreenBarWingSide) -> Void = { _ in }
+    /// A horizontal swipe on the band summoned dismissed wings back.
+    var onWingRestore: @MainActor () -> Void = {}
 
     /// Points of vertical travel before a press-on-the-band becomes a
     /// swipe — small enough that a deliberate pull feels instant, large
@@ -284,10 +291,33 @@ final class ScreenBarInteraction {
         return .none
     }
 
-    /// Where the press started, whether the card was pinned then, and
-    /// whether the drag already fired its outcome — one pending press
-    /// at a time; a down outside the region never arms one.
+    /// Where a press or a two-finger gesture began: a drawn wing, or the
+    /// band under everything else in the hit region.
+    enum SwipeRegion: Equatable { case wing(ScreenBarWingSide), band }
+
+    /// What a horizontal gesture becomes — pure: flicking a wing away
+    /// from the notch dismisses it (left for the left ear, right for the
+    /// right), and a horizontal swipe on the band summons dismissed
+    /// wings back. `deltaX` is in screen coordinates — rightward
+    /// positive. Inward flicks and sub-threshold travel are nothing.
+    enum WingSwipeOutcome: Equatable { case dismiss(ScreenBarWingSide), restore, none }
+
+    nonisolated static func wingSwipeOutcome(region: SwipeRegion, deltaX: CGFloat,
+                                             threshold: CGFloat = swipeThreshold) -> WingSwipeOutcome {
+        guard abs(deltaX) >= threshold else { return .none }
+        switch region {
+        case .wing(.left): return deltaX < 0 ? .dismiss(.left) : .none
+        case .wing(.right): return deltaX > 0 ? .dismiss(.right) : .none
+        case .band: return .restore
+        }
+    }
+
+    /// Where the press started and what surface it started on, whether
+    /// the card was pinned then, and whether the drag already fired its
+    /// outcome — one pending press at a time; a down outside the region
+    /// never arms one.
     private var swipeStart: NSPoint?
+    private var swipeRegion: SwipeRegion = .band
     private var swipePinnedAtDown = false
     private var swipeFired = false
 
@@ -296,6 +326,7 @@ final class ScreenBarInteraction {
             // Inside: the press might become a swipe — the click resolves
             // on release instead.
             swipeStart = point
+            swipeRegion = wingSideAt(point).map { .wing($0) } ?? .band
             swipePinnedAtDown = tooltip.isPinned
             swipeFired = false
         } else {
@@ -308,6 +339,22 @@ final class ScreenBarInteraction {
 
     private func pointerDragged(to point: NSPoint) {
         guard let start = swipeStart, !swipeFired else { return }
+        // The gesture's axis wins: a sideways drag on a wing dismisses
+        // it, a sideways drag on the band summons — the vertical
+        // expand/collapse only fires when the pull is honestly vertical.
+        if abs(point.x - start.x) > abs(point.y - start.y) {
+            switch Self.wingSwipeOutcome(region: swipeRegion, deltaX: point.x - start.x) {
+            case .dismiss(let side):
+                swipeFired = true
+                onWingDismiss(side)
+            case .restore:
+                swipeFired = true
+                onWingRestore()
+            case .none:
+                return
+            }
+            return
+        }
         switch Self.swipeOutcome(pinnedAtDown: swipePinnedAtDown, deltaY: point.y - start.y) {
         case .expand:
             swipeFired = true
@@ -337,10 +384,12 @@ final class ScreenBarInteraction {
     /// way the island's hosting view reads them — the band is
     /// click-through, so this runs on the monitor stream and only ever
     /// counts a gesture that began inside the hit region.
-    private var scrollAccum: CGFloat = 0
+    private var scrollAccumY: CGFloat = 0
+    private var scrollAccumX: CGFloat = 0
     private var scrollLive = false
     private var scrollFired = false
     private var scrollPinnedAtStart = false
+    private var scrollRegion: SwipeRegion = .band
 
     private func pointerScrolled(_ event: NSEvent) {
         // Only a trackpad gesture carries phases; a wheel's deltas and a
@@ -348,22 +397,46 @@ final class ScreenBarInteraction {
         guard event.hasPreciseScrollingDeltas, event.phase != [] else { return }
         if event.phase.contains(.began) {
             scrollLive = pointerInHitRegion()
+            scrollRegion = wingSideAt(NSEvent.mouseLocation).map { .wing($0) } ?? .band
             scrollPinnedAtStart = tooltip.isPinned
             scrollFired = false
-            scrollAccum = 0
+            scrollAccumY = 0
+            scrollAccumX = 0
         }
         if event.phase.contains(.ended) || event.phase.contains(.cancelled) {
             scrollLive = false
-            scrollAccum = 0
+            scrollAccumY = 0
+            scrollAccumX = 0
             return
         }
         guard scrollLive, !scrollFired else { return }
         // Normalise to finger direction — natural scrolling already
         // follows the fingers, legacy is the wheel's opposite. Fingers
-        // down accumulate negative, matching the drag's screen-y sense.
-        scrollAccum += event.isDirectionInvertedFromDevice
+        // down accumulate negative (matching the drag's screen-y sense),
+        // fingers left negative x.
+        scrollAccumY += event.isDirectionInvertedFromDevice
             ? event.scrollingDeltaY : -event.scrollingDeltaY
-        switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart, deltaY: scrollAccum,
+        scrollAccumX += event.isDirectionInvertedFromDevice
+            ? event.scrollingDeltaX : -event.scrollingDeltaX
+        // The dominant axis decides which gesture this is — a sideways
+        // flick dismisses or summons wings, a vertical pull expands or
+        // collapses the card, and a diagonal never fires either until
+        // one axis honestly wins.
+        if abs(scrollAccumX) > abs(scrollAccumY) {
+            switch Self.wingSwipeOutcome(region: scrollRegion, deltaX: scrollAccumX,
+                                         threshold: Self.scrollSwipeThreshold) {
+            case .dismiss(let side):
+                scrollFired = true
+                onWingDismiss(side)
+            case .restore:
+                scrollFired = true
+                onWingRestore()
+            case .none:
+                return
+            }
+            return
+        }
+        switch Self.swipeOutcome(pinnedAtDown: scrollPinnedAtStart, deltaY: scrollAccumY,
                                  threshold: Self.scrollSwipeThreshold) {
         case .expand:
             scrollFired = true

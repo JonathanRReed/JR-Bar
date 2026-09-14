@@ -79,9 +79,6 @@ public enum ScreenBarGeometry {
     public static let wingContentInnerReserve: CGFloat = 16
     /// Room left at the window's outer edge.
     public static let wingContentOuterInset: CGFloat = 6
-    /// A notched slot's capsule height, vertically centred in the notch's
-    /// own band at menu-bar height.
-    public static let wingSlotHeight: CGFloat = 22
     /// The gap between a notch-less chip and the band's end.
     public static let wingSlotGap: CGFloat = 5
     /// A notch-less screen has no flank to measure, so a slot claims a
@@ -186,10 +183,13 @@ public enum ScreenBarGeometry {
             // The claim anchors at the notch's edge and reaches outward
             // through the measured room — the chip merges with the notch
             // instead of floating a `wingContentInnerReserve` gap off it.
+            // It spans the notch's own depth at the window's top, flush
+            // with the screen's edge: the drawn lobe IS the notch's ear,
+            // not a pill centred in the menu-bar strip.
             let usable = min(sideExtent, extent) - wingContentOuterInset
             guard usable >= wingContentMinUsable else { return nil }
-            let height = min(wingSlotHeight, max(14, geometry.notchDepth - 8))
-            let y = size.height - geometry.notchDepth + (geometry.notchDepth - height) / 2.0
+            let height = geometry.notchDepth
+            let y = size.height - geometry.notchDepth
             switch side {
             case .left:
                 return CGRect(x: sideExtent - usable, y: y, width: usable, height: height)

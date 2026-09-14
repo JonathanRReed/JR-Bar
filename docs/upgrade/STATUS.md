@@ -1019,3 +1019,32 @@ pills — boxed icon tile plus text — nothing like the references.
   Content stays clear of the bezel; the hit claim is unchanged.
 - Verified: `swift build` clean; 562 Swift tests green; geometry suite
   updated for the anchored claim.
+
+## Notch polish pass 5 — real ears, wing gestures, device notices — LANDED
+
+Owner feedback: the wings still didn't match the bezel the way the
+reference's do, there was no swipe to dismiss or summon them, and they
+never spoke for device events like headphones connecting.
+
+- Silhouette: the claim now spans the notch's own depth at the window's
+  top — the drawn shape is an `UnevenRoundedRectangle` flush with the
+  screen's top edge, square where it runs under the bezel, one rounded
+  outer-bottom corner at the notch's own ~10 pt radius. The ear is the
+  bezel's arm, not a centred stadium. The 12 pt submersion seam stays.
+- Wing gestures (`wingSwipeOutcome`, pure + 5 tests): an outward flick
+  on a wing dismisses that side — drag or trackpad swipe, resolved by
+  dominant axis against the vertical expand/collapse. A horizontal
+  swipe on the band summons dismissed wings back. A dismissed wing
+  revives when its slot's content changes — the dismissal was of what
+  it showed, and a new state is new information.
+- Device notices: `AlcovePowerMonitor` transitions (charger in/out, on
+  battery, fully charged — `AlcovePower.notice`'s own wording) plus a
+  new `ScreenBarAudioMonitor` — a CoreAudio listener on the default
+  output device, the honest "headphones took the route" signal with no
+  Bluetooth SPI or entitlement. A notice holds the right wing for the
+  island's capsule `life` (2.4 s) with a 30 s same-subject cooldown
+  against reconnect flaps, then the slot it replaced returns.
+  `screen_bar_wing_notices` gates the monitors (default on); they only
+  run while the wings are actually up and never while the band follows
+  an Alcove capsule.
+- Verified: `swift build` clean; 567 Swift tests green.

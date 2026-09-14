@@ -141,9 +141,11 @@ import Testing
         let left = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry)
         let right = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry)
         // The claim anchors at the notch's edge (x 132) and reaches
-        // outward through the measured room: 132 - 6 outer inset = 126.
-        #expect(left == CGRect(x: 6, y: 11, width: 126, height: 22))
-        #expect(right == CGRect(x: 449 - 132, y: 11, width: 126, height: 22))
+        // outward through the measured room: 132 - 6 outer inset = 126,
+        // and spans the notch's full 32 pt depth at the window's top —
+        // the lobe is flush with the screen edge, like the bezel's ear.
+        #expect(left == CGRect(x: 6, y: 6, width: 126, height: 32))
+        #expect(right == CGRect(x: 449 - 132, y: 6, width: 126, height: 32))
         // Unclaimed sides draw nothing.
         let none = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32)
         #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: none) == nil)
@@ -160,7 +162,7 @@ import Testing
         let measured = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
                                              leftExtent: 62)
         #expect(ScreenBarGeometry.wingSlotRect(.left, in: oversized, geometry: measured)
-            == CGRect(x: 144, y: 11, width: 56, height: 22))
+            == CGRect(x: 144, y: 6, width: 56, height: 32))
     }
 
     @Test func notchlessSlotsFlankTheBand() {

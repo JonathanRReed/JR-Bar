@@ -43,18 +43,41 @@ final class ScreenBarController {
     /// menu-bar areas flanking the notch — the selected task and the
     /// attention count on the left, the headline usage meter on the right.
     var notchWingsEnabled = true {
-        didSet { if notchWingsEnabled != oldValue { reposition() } }
+        didSet {
+            guard notchWingsEnabled != oldValue else { return }
+            reposition()
+            updateNoticeMonitors()
+        }
     }
-    /// The slots' content, pushed from the panel store on each core
+    /// `screen_bar_wing_notices` (absent = on): the device transitions —
+    /// charger, battery full, output route — that hold a wing for a beat.
+    var wingNoticesEnabled = true {
+        didSet { if wingNoticesEnabled != oldValue { updateNoticeMonitors() } }
+    }
+    /// The slots' base content, pushed from the panel store on each core
     /// change. A nil slot collapses: the window claims no room for it.
     var wings: ScreenBarWings = .empty {
         didSet {
             if wings != oldValue {
-                view.wings = wings
-                reposition()
+                // A dismissed wing's slot changing is new information —
+                // the dismissal was of what it showed, and it revives.
+                dismissedWings = dismissedWings.filter { wings[$0.key] == $0.value }
+                pushWings()
             }
         }
     }
+    /// Sides the user flicked away, keyed by the slot that was dismissed.
+    /// Session-scoped — a relaunch brings the wings back.
+    private var dismissedWings: [ScreenBarWingSide: ScreenBarWingSlot] = [:]
+    /// The device notice holding a side, and when it lets go.
+    private var wingNotice: (side: ScreenBarWingSide, slot: ScreenBarWingSlot, until: Date)?
+    private var wingNoticeWork: DispatchWorkItem?
+    /// Same-subject notices already shown (audio route names); the
+    /// cooldown lives in `ScreenBarNotices.audio`.
+    private var recentAudioNotices: [String: Date] = [:]
+    private let powerMonitor = AlcovePowerMonitor()
+    private let audioMonitor = ScreenBarAudioMonitor()
+    private var noticeMonitorsRunning = false
     /// `JRBAR_LOG_MOTION=1` logs which path each program takes.
     private static let logsMotion = ProcessInfo.processInfo.environment["JRBAR_LOG_MOTION"] != nil
 
@@ -89,7 +112,11 @@ final class ScreenBarController {
 
     /// Alcove's capsule when the band follows it; nil hugs the notch.
     var capsule: AlcoveCapsule? {
-        didSet { if capsule != oldValue { reposition() } }
+        didSet {
+            guard capsule != oldValue else { return }
+            reposition()
+            updateNoticeMonitors()
+        }
     }
 
     init() {
@@ -110,6 +137,21 @@ final class ScreenBarController {
         workspace.addObserver(self, selector: #selector(screensDidSleep(_:)), name: NSWorkspace.screensDidSleepNotification, object: nil)
         workspace.addObserver(self, selector: #selector(screensDidWake(_:)), name: NSWorkspace.screensDidWakeNotification, object: nil)
         workspace.addObserver(self, selector: #selector(reduceMotionChanged(_:)), name: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil)
+
+        // A device transition takes the ambient wing for a beat, then the
+        // slot it replaced comes back — the queue's life constant is the
+        // same beat the island's capsules hold.
+        powerMonitor.onTransition = { [weak self] old, new in
+            guard let self, let slot = ScreenBarNotices.power(from: old, to: new) else { return }
+            self.presentWingNotice(.right, slot: slot)
+        }
+        audioMonitor.onChange = { [weak self] name, transport in
+            guard let self else { return }
+            let result = ScreenBarNotices.audio(name: name, transport: transport,
+                                                recent: self.recentAudioNotices, now: Date())
+            self.recentAudioNotices = result.recent
+            if let slot = result.slot { self.presentWingNotice(.right, slot: slot) }
+        }
     }
 
     /// The band's rounded rect in screen coordinates, for hit testing.
@@ -171,11 +213,13 @@ final class ScreenBarController {
                 panel.animator().alphaValue = 1
             }
         }
+        updateNoticeMonitors()
         present()
     }
 
     func hide() {
         isShown = false
+        updateNoticeMonitors()
         if reduceMotion {
             panel.alphaValue = 1
             panel.orderOut(nil)
@@ -218,15 +262,104 @@ final class ScreenBarController {
     /// to measure. A side with no slot claims nothing, and while the band
     /// follows an external capsule the flanks belong to it — both stand down.
     private func wingExtents(on screen: NSScreen, notchWidth: CGFloat, notchDepth: CGFloat) -> (left: CGFloat, right: CGFloat) {
+        let shown = effectiveWings
         guard notchWingsEnabled, capsule == nil else { return (0, 0) }
         if notchDepth <= 0 {
-            return (wings.left == nil ? 0 : ScreenBarGeometry.notchlessWingClaim,
-                    wings.right == nil ? 0 : ScreenBarGeometry.notchlessWingClaim)
+            return (shown.left == nil ? 0 : ScreenBarGeometry.notchlessWingClaim,
+                    shown.right == nil ? 0 : ScreenBarGeometry.notchlessWingClaim)
         }
-        return (wings.left == nil ? 0
+        return (shown.left == nil ? 0
                     : ScreenBarGeometry.contentWingExtent(of: screen, side: .left, notchWidth: notchWidth),
-                wings.right == nil ? 0
+                shown.right == nil ? 0
                     : ScreenBarGeometry.contentWingExtent(of: screen, side: .right, notchWidth: notchWidth))
+    }
+
+    /// The base slots minus what the user flicked away, plus a live
+    /// device notice — the wings the view and the geometry share.
+    private var effectiveWings: ScreenBarWings {
+        var shown = wings
+        for (side, dismissed) in dismissedWings where shown[side] == dismissed {
+            shown[side] = nil
+        }
+        if let notice = wingNotice, notice.until > Date() {
+            shown[notice.side] = notice.slot
+        }
+        return shown
+    }
+
+    /// The view keeps the effective slots; `reposition` reads them
+    /// through `wingExtents`, so the geometry and the draw never split.
+    private func syncWings() {
+        view.wings = effectiveWings
+    }
+
+    /// A wing state change outside `reposition`'s own path — dismiss,
+    /// summon, notice — pushes the slots and relayouts once.
+    private func pushWings() {
+        syncWings()
+        reposition()
+    }
+
+    // MARK: Wing gestures and device notices
+
+    /// Which drawn wing a screen point is over — the dismiss swipe's
+    /// target. The band and empty flank room answer nil.
+    func wingSide(atScreenPoint point: NSPoint) -> ScreenBarWingSide? {
+        guard isShown, panel.isVisible else { return nil }
+        for (side, rect) in [(ScreenBarWingSide.left, view.leftWingRect),
+                             (.right, view.rightWingRect)] {
+            if let rect, panel.convertToScreen(view.convert(rect, to: nil))
+                .insetBy(dx: -2, dy: -3).contains(point) { return side }
+        }
+        return nil
+    }
+
+    /// The outward flick: the slot stays down until its content changes
+    /// or a summon brings it back.
+    func dismissWing(_ side: ScreenBarWingSide) {
+        guard let slot = wings[side] else { return }
+        dismissedWings[side] = slot
+        pushWings()
+    }
+
+    /// The summon: every dismissed wing comes back.
+    func restoreWings() {
+        guard !dismissedWings.isEmpty else { return }
+        dismissedWings = [:]
+        pushWings()
+    }
+
+    /// A device transition holds the ambient wing for `life`, then the
+    /// slot it replaced returns.
+    private func presentWingNotice(_ side: ScreenBarWingSide, slot: ScreenBarWingSlot) {
+        wingNotice = (side, slot, Date().addingTimeInterval(ScreenBarNotices.life))
+        pushWings()
+        wingNoticeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.wingNotice = nil
+                self.pushWings()
+            }
+        }
+        wingNoticeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + ScreenBarNotices.life, execute: work)
+    }
+
+    /// The transition monitors earn their keep only while the wings are
+    /// actually up — the island's own pollers take over when the band
+    /// follows an Alcove capsule.
+    private func updateNoticeMonitors() {
+        let want = isShown && notchWingsEnabled && wingNoticesEnabled && capsule == nil
+        guard want != noticeMonitorsRunning else { return }
+        noticeMonitorsRunning = want
+        if want {
+            powerMonitor.start()
+            audioMonitor.start()
+        } else {
+            powerMonitor.stop()
+            audioMonitor.stop()
+        }
     }
 
     private func reposition() {
@@ -245,7 +378,7 @@ final class ScreenBarController {
         view.wingGeometry = ScreenBarWingGeometry(notchWidth: notchWidth, notchDepth: depth,
                                                   bandSpan: view.bandSpan,
                                                   leftExtent: extents.left, rightExtent: extents.right)
-        view.wings = wings
+        syncWings()
         if panel.frame != frame {
             panel.setFrame(frame, display: false)
             view.frame = NSRect(origin: .zero, size: frame.size)

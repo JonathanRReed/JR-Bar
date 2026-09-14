@@ -1,13 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// One wing slot's content: a capsule in the menu-bar area beside the
-/// notch — the selected task and the attention count on the left, the
-/// headline usage meter on the right. `provider` leads the chip with the
-/// provider's bare glyph; `tone` is the state colour the words take.
+/// One wing slot's content: a lobe of the notch itself — the selected
+/// task and the attention count on the left, the headline usage meter on
+/// the right, or a transient device notice. `provider` leads with the
+/// provider's bare glyph; `symbol` is a plain SF mark for notices with
+/// no provider; `tone` is the state colour the words take.
 struct ScreenBarWingSlot: Equatable {
     enum Tone: Equatable {
-        /// White on the black capsule — ambient information.
+        /// White on the black lobe — ambient information.
         case neutral
         /// Waiting is amber everywhere in the app.
         case attention
@@ -17,6 +18,9 @@ struct ScreenBarWingSlot: Equatable {
 
     var text: String
     var provider: String?
+    /// An SF Symbol leading the words instead of a provider glyph —
+    /// "bolt.fill" for a charger, "headphones" for an output route.
+    var symbol: String?
     var tone: Tone = .neutral
 
     var textColor: Color {
@@ -35,6 +39,11 @@ struct ScreenBarWings: Equatable {
     var right: ScreenBarWingSlot?
 
     static let empty = ScreenBarWings()
+
+    subscript(side: ScreenBarWingSide) -> ScreenBarWingSlot? {
+        get { side == .left ? left : right }
+        set { if side == .left { left = newValue } else { right = newValue } }
+    }
 }
 
 /// What the wings view draws: each side's slot and the capsule rect the
@@ -49,20 +58,22 @@ final class ScreenBarWingsModel {
     var viewHeight: CGFloat = 0
 }
 
-/// The wing chips. The claimed rect keeps the hit region honest; the
-/// drawn capsule hugs the notch side of that claim and sizes to its
-/// content — an opaque black pill against the black notch is the
-/// notch-extension look, where a claim-filling capsule or bare text in
-/// open menu-bar space reads as clutter. Text truncates inside rather
-/// than growing the claim.
+/// The wing lobes. The claimed rect keeps the hit region honest; the
+/// drawn ear hugs the notch side of that claim and sizes to its content
+/// — the notch's own black shape continuing, flush with the screen's top
+/// edge, where a centred capsule or bare text in open menu-bar space
+/// reads as clutter. Text truncates inside rather than growing the
+/// claim.
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
-    /// How far the capsule's black runs under the bezel past the claim's
-    /// notch edge — past the capsule's cap radius, so the silhouette
-    /// meets the notch on a straight edge and the merge has no seam. The
-    /// bezel covers this overlap; the content never enters it.
+    /// How far the lobe's black runs under the bezel past the claim's
+    /// notch edge — the bezel covers the overlap, so the merge has no
+    /// seam. The content never enters it.
     private static let notchSeam: CGFloat = 12
+    /// The notch's own bottom corner radius, matched so the ear reads as
+    /// the bezel continuing, not a pill docked to it.
+    private static let notchCorner: CGFloat = 10
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -78,29 +89,35 @@ struct ScreenBarWingsView: View {
         return HStack(spacing: 5) {
             if let provider = slot.provider {
                 glyph(.style(for: provider))
+            } else if let symbol = slot.symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(slot.textColor)
             }
             Text(slot.text)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(slot.textColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                // The capsule hugs content, so the bound has to live on
-                // the text — without it a long label outgrows the claim
-                // and the pill rides onto the notch.
-                .frame(maxWidth: max(24, rect.width - (slot.provider == nil ? 18 : 32)))
+                // The lobe hugs content, so the bound has to live on the
+                // text — without it a long label outgrows the claim and
+                // the black rides into menu-bar space it was not given.
+                .frame(maxWidth: max(24, rect.width - (slot.provider == nil && slot.symbol == nil ? 20 : 36)))
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 3.5)
-        // The capsule's notch-side padding runs `seam` under the bezel:
-        // its rounded cap submerges, so the black meets the notch on a
-        // straight edge instead of touching it at one tangent point.
+        .padding(.horizontal, 10)
+        // The lobe's notch-side padding runs `seam` under the bezel so
+        // the merge has no seam; the content never enters it.
         .padding(side == .left ? .trailing : .leading, seam)
         .fixedSize()
-        .background(Capsule(style: .continuous).fill(.black))
-        // The capsule hugs the notch side of the claim — a left chip
-        // anchors to the claim's trailing edge, a right chip to its
-        // leading edge — and the frame grows by the seam so the padded
-        // capsule still lands its edge on the bezel.
+        // The ear is the notch's own depth, centred on the claim — the
+        // lobe's top and bottom edges are the bezel's, flush with the
+        // screen's top edge.
+        .frame(height: rect.height)
+        .background(lobe(side).fill(.black))
+        // The lobe anchors to the claim's notch-side edge — a left chip
+        // to its trailing edge, a right chip to its leading — and the
+        // frame grows by the seam so the padded lobe still lands its
+        // submerged edge under the bezel.
         .frame(width: rect.width + seam, height: rect.height,
                alignment: side == .left ? .trailing : .leading)
         // The rect is in the hosting view's bottom-left space; SwiftUI
@@ -110,6 +127,24 @@ struct ScreenBarWingsView: View {
         .position(x: rect.midX + (side == .left ? seam / 2 : -seam / 2),
                   y: model.viewHeight - rect.midY)
         .accessibilityElement(children: .combine)
+    }
+
+    /// The notch's ear: a shape that shares the bezel's top and bottom
+    /// edges — square corners on the flush sides, and the outer bottom
+    /// corner rounded like the notch's own. The submerged notch-side
+    /// edge needs no radius; the bezel covers it.
+    private func lobe(_ side: ScreenBarWingSide) -> UnevenRoundedRectangle {
+        let corner = Self.notchCorner
+        switch side {
+        case .left:
+            return UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: corner,
+                                          bottomTrailingRadius: 0, topTrailingRadius: 0,
+                                          style: .continuous)
+        case .right:
+            return UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
+                                          bottomTrailingRadius: corner, topTrailingRadius: 0,
+                                          style: .continuous)
+        }
     }
 
     /// The provider's bare glyph in its accent — no badge: the boxed

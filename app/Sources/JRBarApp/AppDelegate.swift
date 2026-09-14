@@ -180,6 +180,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         interaction.underBandRegion = { [weak self] in
             self?.events?.hud.panelFrame
         }
+        // Wing gestures: an outward flick dismisses a side, a horizontal
+        // swipe on the band summons dismissed wings back.
+        interaction.wingSideAt = { [weak screenBar] point in screenBar?.wingSide(atScreenPoint: point) }
+        interaction.onWingDismiss = { [weak screenBar] side in screenBar?.dismissWing(side) }
+        interaction.onWingRestore = { [weak screenBar] in screenBar?.restoreWings() }
         // W12 timers: a due timer is one banner, never an agent launch.
         interaction.timers.onFire = { [weak self] entry in
             self?.events?.notifications.deliver(.init(
@@ -858,8 +863,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// Every one defaults to today's behaviour while the key is absent:
     /// `screen_bar_show_in_full_screen` (the `.fullScreenAuxiliary`
     /// membership), `virtual_status_device_wraps_menu_bar` (the wings),
-    /// and `screen_bar_gap_width` / `screen_bar_wing_length` (manual
-    /// geometry — JSON null is Automatic, so `double` reads it as nil).
+    /// `screen_bar_notch_wings` / `screen_bar_wing_notices` (the wing
+    /// slots and their device notices), and `screen_bar_gap_width` /
+    /// `screen_bar_wing_length` (manual geometry — JSON null is
+    /// Automatic, so `double` reads it as nil).
     private func refreshScreenBarGeometry() {
         guard let screenBar else { return }
         let document = core?.settings.map { SettingsDocument($0.document) }
@@ -868,6 +875,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.gapWidth = document?.double("screen_bar_gap_width").map { CGFloat($0) }
         screenBar.wingLength = document?.double("screen_bar_wing_length").map { CGFloat($0) }
         screenBar.notchWingsEnabled = document?.bool("screen_bar_notch_wings") ?? true
+        screenBar.wingNoticesEnabled = document?.bool("screen_bar_wing_notices") ?? true
     }
 
     private func refreshAggregate() {
