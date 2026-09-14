@@ -179,6 +179,22 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W25 slice — coordinator policy — LANDED
+
+- `src/jrbar/coordinator_policy.py` (new): the assistant layer's
+  contract — `bounded_evidence` redacts a session to the glance fields
+  a question may cite (provider/mode/stale/label/cwd/attention/outcome;
+  transcript bodies and token fields never leave the roster projection);
+  `parse_proposal` turns a model's JSON into a typed `ActionProposal`
+  only if the action is on the `{open_session, answer_ask}` allowlist
+  and its arguments are scalars — prompt-injection dies here, not at a
+  special case; `requires_confirmation` marks `answer_ask` as the one
+  effect that needs an explicit confirm before the W19 journal mints a
+  command id. The coordinator has no privileged effect path.
+- Still open in W25: the LLM front-end itself (the model call rides
+  the W19/W20 execution contract), the Mini/Overview composer UI,
+  push-to-talk capture/cancel indicators, and quota-failure surfacing.
+
 ## W24 slice — utility-generation policy — LANDED
 
 - `src/jrbar/utility_generation.py` (new): the decision layer a
