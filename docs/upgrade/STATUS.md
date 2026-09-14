@@ -127,10 +127,27 @@ slot chips flanking the band.
   the full notch geometry — `windowFrame`/`wingSlotRect` are self-owned
   and `AlcoveFollower` polls only while `screen_bar_follow_alcove` is on
   AND Alcove is running, so nothing in the band's layout *needs* Alcove.
-  The follow survives as opt-in coexistence. Still open in W10: the
-  named compact/peek/expanded/pinned state machine beyond the current
-  peek card + tuck, multi-display verification on hardware, and the
-  fullscreen/scaled-display fixture cases (T45–T47, T53).
+  The follow survives as opt-in coexistence.
+- W10 state machine (2026-09-14): the four named states now exist —
+  **compact** is the 6 pt band + wing chips at rest; **peek** is the
+  180 ms-deliberate-hover transient card; **pinned** is a click-pinned,
+  persistent interactive card (T46/T47: `ClickOutcome` pins on inside
+  click while unpinned, routes inside clicks to the card's own buttons
+  while pinned, dismisses only on an explicit outside click or the
+  card's dismiss control — never on transient expiry); **expanded** is
+  the card's Open-session / panel focus entry. Hit testing covers the
+  band, drawn wing chips, and the card itself; the pinned panel stays
+  nonactivating and outside the typing path. `clickOutcome` is factored
+  pure + `nonisolated` for test coverage in `ScreenBarInteractionTests`.
+- Per-display handling: `preferredScreen()` picks the notched display
+  (fallback: main), `didChangeScreenParameters` repositions, and
+  `geometryChanged` clears hover/pin state before re-evaluating the
+  pointer — safe per-display restoration. Fullscreen uses
+  `.fullScreenAuxiliary` + the `screen_bar_show_in_full_screen` toggle;
+  notchless displays get slot chips.
+- Still open in W10: real-hardware smoke of notchless/fullscreen/
+  scaled/multi-display cases in a dev bundle (T45, T53) — fixtures
+  cover the math, not the pixels.
 
 ## W02 — Canonical records and the independent roster — verified with fixtures
 

@@ -68,6 +68,9 @@ final class ScreenBarInteraction {
     private let tooltip = ScreenBarTooltipPanel()
     private(set) var isTooltipShown = false
     private var lastFocus: ScreenBarFocus?
+    /// Escape-to-unpin while a pinned card is up: local covers the
+    /// pointer having activated us, global covers every other app.
+    private var pinnedKeyMonitors: [Any] = []
 
     init(hitRects: @escaping @MainActor () -> [NSRect],
          bandRect: @escaping @MainActor () -> NSRect?,
@@ -77,6 +80,12 @@ final class ScreenBarInteraction {
         self.bandRect = bandRect
         self.focus = focus
         self.onOpen = onOpen
+        tooltip.model.onOpenSession = { [weak self] in
+            guard let self, let session = self.tooltip.model.focus.clickSession else { return }
+            self.unpin()
+            self.onOpen(session)
+        }
+        tooltip.model.onClose = { [weak self] in self?.unpin() }
     }
 
     func start() {
@@ -172,19 +181,71 @@ final class ScreenBarInteraction {
                 showWork = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + Self.hoverDelay, execute: work)
             }
-        } else if isTooltipShown {
+        } else if isTooltipShown && !tooltip.isPinned {
             let work = DispatchWorkItem { [weak self] in MainActor.assumeIsolated { self?.hideTooltip() } }
             hideWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.closeGrace, execute: work)
         }
     }
 
+    /// What a click in the hit region does next — factored pure so the
+    /// state machine is testable without a pointer (T46/T47):
+    /// pinned + outside dismisses; pinned + inside is the card's own
+    /// buttons; not pinned + inside pins (deliberate focus entry).
+    enum ClickOutcome { case pin, unpin, cardButton, none }
+
+    nonisolated static func clickOutcome(pinned: Bool, inside: Bool) -> ClickOutcome {
+        if pinned { return inside ? .cardButton : .unpin }
+        return inside ? .pin : .none
+    }
+
     private func pointerClicked() {
-        guard pointerInHitRegion() else { return }
-        hideTooltip()
-        if let session = focus()?.clickSession {
-            onOpen(session)
+        switch Self.clickOutcome(pinned: tooltip.isPinned, inside: pointerInHitRegion()) {
+        case .cardButton:
+            // The pinned card takes mouse events; its buttons handle it.
+            return
+        case .unpin:
+            unpin()
+        case .none:
+            return
+        case .pin:
+            // Deliberate focus entry: a click pins the peek open as an
+            // interactive card — Open session lives on the card, so a
+            // stray band click never yanks a terminal forward.
+            guard let focus = focus() ?? lastFocus else { return }
+            lastFocus = focus
+            showWork?.cancel(); showWork = nil
+            hideWork?.cancel(); hideWork = nil
+            lifeWork?.cancel(); lifeWork = nil
+            if !isTooltipShown { showTooltip(focus) }
+            setPinned(true)
         }
+    }
+
+    private func setPinned(_ pinned: Bool) {
+        tooltip.setPinned(pinned)
+        for monitor in pinnedKeyMonitors { NSEvent.removeMonitor(monitor) }
+        pinnedKeyMonitors = []
+        guard pinned else { return }
+        // Escape unpins: the card never becomes key (nonactivating), so
+        // watch for it — local when we are active, global when we are not.
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            if event.keyCode == 53 {
+                Task { @MainActor [weak self] in self?.unpin() }
+                return nil
+            }
+            return event
+        }) { pinnedKeyMonitors.append(local) }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            if event.keyCode == 53 {
+                Task { @MainActor [weak self] in self?.unpin() }
+            }
+        }) { pinnedKeyMonitors.append(global) }
+    }
+
+    private func unpin() {
+        setPinned(false)
+        hideTooltip()
     }
 
     // MARK: Tooltip
@@ -204,9 +265,10 @@ final class ScreenBarInteraction {
 
     /// The life timer firing: a pointer still on the card or the band
     /// means someone is reading it — extend rather than yank it away.
+    /// A pinned card answers to its buttons, not the clock.
     private func tooltipLifeExpired() {
         lifeWork = nil
-        guard isTooltipShown else { return }
+        guard isTooltipShown, !tooltip.isPinned else { return }
         if pointerInHitRegion() {
             let work = DispatchWorkItem { [weak self] in
                 MainActor.assumeIsolated { self?.tooltipLifeExpired() }
@@ -225,6 +287,7 @@ final class ScreenBarInteraction {
         showWork = nil
         hideWork = nil
         lifeWork = nil
+        if tooltip.isPinned { setPinned(false) }
         guard isTooltipShown else { return }
         isTooltipShown = false
         tooltip.dismiss()
@@ -236,9 +299,9 @@ final class ScreenBarInteraction {
 final class ScreenBarTooltipPanel: NSPanel {
     private let hosting: NSHostingView<ScreenBarTooltipView>
     private let backdrop: NSView
-    private var model = ScreenBarTooltipModel()
 
     init() {
+        model = ScreenBarTooltipModel()
         hosting = NSHostingView(rootView: ScreenBarTooltipView(model: model))
         hosting.sizingOptions = [.intrinsicContentSize]
         let plain = ProcessInfo.processInfo.environment["JRBAR_PLAIN_MATERIAL"] != nil
@@ -284,6 +347,18 @@ final class ScreenBarTooltipPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// The W10 pinned state: the card holds open and takes mouse events
+    /// so its Open/close buttons work — still `.nonactivatingPanel`,
+    /// still never key, so nothing steals focus.
+    private(set) var isPinned = false
+    private(set) var model: ScreenBarTooltipModel
+
+    func setPinned(_ pinned: Bool) {
+        isPinned = pinned
+        ignoresMouseEvents = !pinned
+        model.pinned = pinned
+    }
 
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 
@@ -332,6 +407,11 @@ final class ScreenBarTooltipPanel: NSPanel {
 @Observable
 final class ScreenBarTooltipModel {
     var focus = ScreenBarFocus(style: nil, label: "JR-Bar", word: "Idle", clickSession: nil)
+    /// Pinned: the card holds open and its controls take clicks (W10's
+    /// deliberate-focus state — the band itself stays click-through).
+    var pinned = false
+    var onOpenSession: (() -> Void)?
+    var onClose: (() -> Void)?
 }
 
 struct ScreenBarTooltipView: View {
@@ -363,6 +443,22 @@ struct ScreenBarTooltipView: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
+            }
+            if model.pinned {
+                // The deliberate-focus controls: Open raises the
+                // session's terminal; ✕ lets the card go.
+                HStack(spacing: 4) {
+                    if model.focus.clickSession != nil {
+                        Button("Open") { model.onOpenSession?() }
+                            .controlSize(.mini)
+                    }
+                    Button { model.onClose?() } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .controlSize(.mini)
+                    .accessibilityLabel("Close pinned card")
+                }
+                .buttonStyle(.borderless)
             }
         }
         .padding(.leading, 7)
