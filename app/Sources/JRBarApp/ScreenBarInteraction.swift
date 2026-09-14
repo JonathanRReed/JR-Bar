@@ -1,4 +1,5 @@
 import AppKit
+import JRBarCore
 import QuartzCore
 import SwiftUI
 
@@ -409,7 +410,13 @@ final class ScreenBarTooltipModel {
     var focus = ScreenBarFocus(style: nil, label: "JR-Bar", word: "Idle", clickSession: nil)
     /// Pinned: the card holds open and its controls take clicks (W10's
     /// deliberate-focus state — the band itself stays click-through).
-    var pinned = false
+    var pinned = false {
+        didSet {
+            if pinned { utility.start() } else { utility.stop() }
+        }
+    }
+    /// W11's media/device utility facts — monitored only while pinned.
+    let utility = ShelfUtilityModel()
     var onOpenSession: (() -> Void)?
     var onClose: (() -> Void)?
 }
@@ -418,6 +425,28 @@ struct ScreenBarTooltipView: View {
     @Bindable var model: ScreenBarTooltipModel
 
     var body: some View {
+        if model.pinned {
+            // The pinned card is a vertical surface: session row on
+            // top, W11 utility rows below.
+            VStack(alignment: .leading, spacing: 6) {
+                sessionRow
+                ShelfMediaRow(utility: model.utility)
+                ShelfBatteryRow(power: model.utility.power)
+            }
+            .padding(.leading, 7)
+            .padding(.trailing, 10)
+            .padding(.vertical, 5)
+            .fixedSize()
+        } else {
+            sessionRow
+                .padding(.leading, 7)
+                .padding(.trailing, 10)
+                .padding(.vertical, 5)
+                .fixedSize()
+        }
+    }
+
+    private var sessionRow: some View {
         HStack(alignment: .center, spacing: 6) {
             if let style = model.focus.style {
                 ProviderTile(style: style, size: 16)
@@ -461,9 +490,96 @@ struct ScreenBarTooltipView: View {
                 .buttonStyle(.borderless)
             }
         }
-        .padding(.leading, 7)
-        .padding(.trailing, 10)
-        .padding(.vertical, 5)
-        .fixedSize()
+    }
+}
+
+/// The pinned card's media row (W11/AL04): artwork, source identity,
+/// track line, transport. Drawn only while a certified source reports
+/// media — `nil` media means no row, not a dead control.
+private struct ShelfMediaRow: View {
+    let utility: ShelfUtilityModel
+
+    var body: some View {
+        if let media = utility.media {
+            HStack(spacing: 6) {
+                Group {
+                    if let artwork = utility.artwork {
+                        Image(nsImage: artwork)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Image(systemName: "music.note")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 18, height: 18)
+                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(media.displayLine)
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                    Text(utility.sourceName ?? "Now playing")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                transportButton("backward.fill") { utility.send(.previousTrack) }
+                transportButton(media.playing ? "pause.fill" : "play.fill") {
+                    utility.send(.togglePlayPause)
+                }
+                transportButton("forward.fill") { utility.send(.nextTrack) }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func transportButton(_ symbol: String,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The pinned card's battery row (W11/AL05): the internal battery's
+/// observed state, hidden entirely on machines without one — never an
+/// invented charge. Volume/brightness controls are intentionally not
+/// here: macOS owns those HUDs.
+private struct ShelfBatteryRow: View {
+    let power: AlcovePowerState
+
+    var body: some View {
+        if power.hasBattery {
+            HStack(spacing: 6) {
+                Image(systemName: power.charging ? "battery.100.bolt" : "battery.50")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                Text(label)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    private var label: String {
+        var parts: [String] = []
+        if let percent = power.percent { parts.append("\(percent)%") }
+        if power.fullyCharged {
+            parts.append("Charged")
+        } else if power.charging {
+            parts.append("Charging")
+        } else {
+            parts.append(power.onAC ? "On AC" : "On battery")
+        }
+        return parts.isEmpty ? "Battery" : parts.joined(separator: " · ")
     }
 }

@@ -149,6 +149,36 @@ slot chips flanking the band.
   scaled/multi-display cases in a dev bundle (T45, T53) — fixtures
   cover the math, not the pixels.
 
+## W11 slice — shelf media/device utility card — LANDED
+
+- `ShelfUtility.swift` (new): `ShelfUtilityModel` owns the existing
+  `AlcoveMediaMonitor` + `AlcovePowerMonitor`, alive only while the
+  pinned card is up — no parked child process or IOKit timer.
+- Pinned card gains utility rows below the session row:
+  - **Media (AL04/T48):** bounded artwork (`maxArtworkBytes` = 4 MiB
+    before `NSImage`), `displayLine`, source app name resolved from the
+    reported bundle id (unnamed stays "Now playing", never "Music" by
+    default). Transport (prev/play-pause/next) rides the monitor's
+    live path and is gated on `media != nil` — `send` with no live
+    source is a no-op, not a command fired at silence. No row at all
+    when nothing is playing.
+  - **Battery (AL05/T48):** percent/charging/AC state from
+    `AlcovePowerMonitor.read()` (IOKit), shown only when
+    `hasBattery` — a Mac without one shows no row, never a fake
+    percent. Volume and brightness are deliberately absent: macOS owns
+    those HUDs and JR-Bar has no certified read/control path (T48's
+    "no invented volume/brightness").
+- Source exit/permission paths inherited from `AlcoveMediaMonitor`:
+  adapter death drops to the in-process bridge, Music's payload ages
+  out after `musicPayloadLife`, a `Stopped` playerInfo drops the held
+  track.
+- `ShelfUtilityTests`: nil-media gating, transport no-op without a
+  live source, artwork bound, monitor lifecycle.
+- Still open in W11: capability-gated per-source command matrices
+  (some players lack next/previous — MediaRemote doesn't report it,
+  so all three transport buttons currently send regardless) and
+  dev-bundle smoke on real media sources.
+
 ## W02 — Canonical records and the independent roster — verified with fixtures
 
 - `src/jrbar/activity_model.py` (new): the §14.2 record vocabulary —
