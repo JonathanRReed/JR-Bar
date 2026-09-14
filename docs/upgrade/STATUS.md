@@ -123,6 +123,14 @@ slot chips flanking the band.
   on the owner's display — the geometry is fixture-verified, the
   pixel-level look (chip legibility at menu-bar height, overlap with
   a crowded menu bar) awaits real-runtime smoke.
+- W10 independence audit (2026-09-14): `capsule == nil` already yields
+  the full notch geometry — `windowFrame`/`wingSlotRect` are self-owned
+  and `AlcoveFollower` polls only while `screen_bar_follow_alcove` is on
+  AND Alcove is running, so nothing in the band's layout *needs* Alcove.
+  The follow survives as opt-in coexistence. Still open in W10: the
+  named compact/peek/expanded/pinned state machine beyond the current
+  peek card + tuck, multi-display verification on hardware, and the
+  fullscreen/scaled-display fixture cases (T45–T47, T53).
 
 ## W02 — Canonical records and the independent roster — verified with fixtures
 
