@@ -12,6 +12,9 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
     case glyph
     case glyphRing = "glyph_ring"
     case glyphLabel = "glyph_label"
+    /// The unified device roundel: Wi-Fi centre and signal dots, battery
+    /// ring — the folded-corner indicator grammar.
+    case orbit
 
     /// Accepts the settings value in either spelling (`ring` / `glyph_ring`);
     /// anything unknown, and an absent value, is the default `agents`.
@@ -22,6 +25,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case "glyph_label", "label", "text", "counts": self = .glyphLabel
         case "meters", "meter", "bars", "columns": self = .meters
         case "meters_percent", "meters+percent", "percent", "meters_pct": self = .metersPercent
+        case "orbit", "orbital", "fold", "unified", "device": self = .orbit
         default: self = .agents
         }
     }
@@ -38,6 +42,7 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case .glyph: return "Glyph only"
         case .glyphRing: return "Glyph with usage ring"
         case .glyphLabel: return "Glyph with label"
+        case .orbit: return "Device orbit"
         }
     }
 
@@ -49,7 +54,31 @@ public enum StatusIconStyle: String, CaseIterable, Sendable {
         case .glyph: return "The JR-Bar mark, tinted by what the agents are doing."
         case .glyphRing: return "The mark inside a ring of your primary window."
         case .glyphLabel: return "The mark beside “1 ask · 2 working”."
+        case .orbit: return "One roundel: Wi-Fi at the centre, its signal as dots, the battery as the ring around it."
         }
+    }
+}
+
+/// What the `orbit` style draws: the device facts nobody else on the
+/// menu bar nests — Wi-Fi signal and the internal battery. All fields
+/// are honest readings: a nil `wifiDots` is an interface off or one
+/// CoreWLAN could not read, never a faked bar.
+public struct StatusDeviceInfo: Hashable, Sendable {
+    /// Signal strength as 0…4 dots; nil = interface off or unreadable.
+    public var wifiDots: Int?
+    /// The RSSI in dBm for the tooltip; nil when unassociated/unreadable.
+    public var wifiRSSI: Int?
+    public var batteryPercent: Int?
+    public var charging: Bool
+    public var hasBattery: Bool
+
+    public init(wifiDots: Int? = nil, wifiRSSI: Int? = nil,
+                batteryPercent: Int? = nil, charging: Bool = false, hasBattery: Bool = false) {
+        self.wifiDots = wifiDots
+        self.wifiRSSI = wifiRSSI
+        self.batteryPercent = batteryPercent
+        self.charging = charging
+        self.hasBattery = hasBattery
     }
 }
 
@@ -182,12 +211,14 @@ public struct StatusIconSpec: Hashable, Sendable {
     /// The `agents` style: one dot per live session, in the panel's order,
     /// capped by `StatusIconRenderer.maxSessionDots`.
     public var sessions: [SessionDot]
+    /// The `orbit` style's device facts; nil leaves the roundel quiet.
+    public var device: StatusDeviceInfo?
     /// 0…1 breathing phase for the moving dots; steady dots ignore it.
     public var phase: Double
 
     public init(style: StatusIconStyle, ringFraction: Double? = nil, tintHex: String? = nil,
                 meters: [StatusMeter] = [], overflow: Int = 0, dot: StatusDotState = .idle,
-                sessions: [SessionDot] = [], phase: Double = 0) {
+                sessions: [SessionDot] = [], device: StatusDeviceInfo? = nil, phase: Double = 0) {
         self.style = style
         self.ringFraction = ringFraction.map { max(0, min(1, $0)) }
         self.tintHex = tintHex
@@ -195,6 +226,7 @@ public struct StatusIconSpec: Hashable, Sendable {
         self.overflow = max(0, overflow)
         self.dot = dot
         self.sessions = sessions
+        self.device = device
         self.phase = max(0, min(1, phase))
     }
 
@@ -212,6 +244,9 @@ public struct StatusIconSpec: Hashable, Sendable {
         let animating = (style.isMeters && dot.animates)
             || (style == .agents && sessions.contains { $0.state.breathes && !$0.dimmed })
         key.phase = animating ? (phase * 4).rounded() / 4 : 0
+        // A dBm that drifts by one draws the same dots — keep it out of
+        // the cache key or every wifi flicker rebuilds the image.
+        key.device?.wifiRSSI = nil
         return key
     }
 
@@ -285,10 +320,15 @@ public final class StatusIconRenderer: @unchecked Sendable {
         return cache.count
     }
 
+    /// The orbit roundel's footprint: a little wider than square so the
+    /// ring, its number and the dots all sit inside.
+    public static let orbitSize = NSSize(width: 26, height: 22)
+
     /// How wide the image for this spec is. The glyph styles are square;
     /// a meter or session strip grows with what it shows, so the status
     /// item has to ask before it sets its own length.
     public static func size(for spec: StatusIconSpec) -> NSSize {
+        if spec.style == .orbit { return orbitSize }
         if spec.style == .agents {
             // No sessions: the mark alone, square like the glyph styles.
             guard !spec.sessions.isEmpty else { return size }
@@ -370,6 +410,7 @@ public final class StatusIconRenderer: @unchecked Sendable {
     static func draw(_ spec: StatusIconSpec) -> NSImage {
         if spec.style.isMeters { return drawMeters(spec) }
         if spec.style == .agents { return drawAgents(spec) }
+        if spec.style == .orbit { return drawOrbit(spec) }
         let warning = spec.ringWarning
         let tint = spec.tintHex.flatMap(NSColor.init(statusHex:))
         let template = warning == .none && tint == nil
@@ -682,6 +723,9 @@ public final class StatusIconRenderer: @unchecked Sendable {
             if snoozed > 0 { parts.append(snoozed == 1 ? "1 snoozed" : "\(snoozed) snoozed") }
             return parts.joined(separator: " · ")
         }
+        if spec.style == .orbit {
+            return (["JR-Bar"] + orbitDeviceWords(spec.device)).joined(separator: " · ")
+        }
         guard spec.style.isMeters else { return "JR-Bar" }
         var parts: [String] = ["JR-Bar"]
         switch spec.dot {
@@ -707,6 +751,9 @@ public final class StatusIconRenderer: @unchecked Sendable {
         if spec.style == .agents {
             return ([headline] + sessionLines.prefix(maxSessionDots)).joined(separator: "\n")
         }
+        if spec.style == .orbit {
+            return ([headline] + orbitDeviceWords(spec.device)).joined(separator: "\n")
+        }
         guard spec.style.isMeters else { return headline }
         var lines = [headline, spec.dot.meaning]
         if !spec.meters.isEmpty {
@@ -717,6 +764,27 @@ public final class StatusIconRenderer: @unchecked Sendable {
             lines.append("\(spec.overflow) more")
         }
         return lines.joined(separator: "\n")
+    }
+
+    /// The words `orbit`'s picture carries: "Wi-Fi −58 dBm · Battery 84%
+    /// charging" — or "Wi-Fi off" / "No battery" when the hardware has
+    /// nothing honest to say.
+    static func orbitDeviceWords(_ device: StatusDeviceInfo?) -> [String] {
+        guard let device else { return ["Device status unavailable"] }
+        var words: [String] = []
+        if let rssi = device.wifiRSSI {
+            words.append("Wi-Fi \(rssi) dBm")
+        } else {
+            words.append(device.wifiDots == nil ? "Wi-Fi off" : "Wi-Fi on")
+        }
+        if device.hasBattery {
+            var battery = device.batteryPercent.map { "Battery \($0)%" } ?? "Battery"
+            if device.charging { battery += " charging" }
+            words.append(battery)
+        } else {
+            words.append("No battery")
+        }
+        return words
     }
 
     /// A rounded bar tucked under a small notch cap, as in the original glyph.
@@ -745,6 +813,84 @@ public final class StatusIconRenderer: @unchecked Sendable {
         cap.fill()
         barColor.setFill()
         NSBezierPath(roundedRect: NSRect(x: 2.5, y: 5.6, width: 13, height: 3.6), xRadius: 1.8, yRadius: 1.8).fill()
+    }
+
+    /// The orbit roundel — the folded-corner indicator grammar nested for
+    /// a menu bar: a battery ring with its bottom broken open for the
+    /// signal dots, the Wi-Fi mark at the centre, the charge figure above
+    /// it. Colours carry meaning the way the concept does — blue Wi-Fi,
+    /// a red arc when the battery runs low, grey when the radio is off —
+    /// so the image is never a template.
+    static func drawOrbit(_ spec: StatusIconSpec) -> NSImage {
+        let device = spec.device ?? StatusDeviceInfo()
+        let image = NSImage(size: orbitSize, flipped: false) { _ in
+            let center = NSPoint(x: orbitSize.width / 2, y: orbitSize.height / 2)
+            let radius: CGFloat = 9.3
+            // The ring's gap at 6 o'clock is where the signal dots sit.
+            let gapHalf: CGFloat = 34
+            let arcStart: CGFloat = 270 + gapHalf   // bottom-left edge of the gap
+            let arcSweep: CGFloat = 360 - 2 * gapHalf
+
+            let ink = NSColor.labelColor
+            let track = ink.withAlphaComponent(0.18)
+            // Battery ring: green while charging, red under a fifth, the
+            // menu bar's own ink otherwise — never invented colour.
+            let percent = device.batteryPercent
+            let ringColor: NSColor = device.charging ? .systemGreen
+                : (percent != nil && percent! <= 20 ? .systemRed : ink)
+            let ringPath = NSBezierPath()
+            ringPath.appendArc(withCenter: center, radius: radius,
+                               startAngle: arcStart, endAngle: arcStart + arcSweep, clockwise: false)
+            ringPath.lineWidth = 1.6
+            ringPath.lineCapStyle = .round
+            track.setStroke()
+            ringPath.stroke()
+            if let percent, percent > 0 {
+                let fillPath = NSBezierPath()
+                fillPath.appendArc(withCenter: center, radius: radius,
+                                   startAngle: arcStart,
+                                   endAngle: arcStart + arcSweep * CGFloat(percent) / 100,
+                                   clockwise: false)
+                fillPath.lineWidth = 1.6
+                fillPath.lineCapStyle = .round
+                ringColor.setStroke()
+                fillPath.stroke()
+            }
+
+            // The Wi-Fi mark centred in the ring — blue while associated
+            // (the dots carry the strength), grey when the radio is off
+            // or unreadable — the "reduced service" state. No number:
+            // the arc is the charge and the figure lives in the tooltip.
+            let wifiColor: NSColor = (device.wifiDots ?? 0) > 0 ? .systemBlue : .systemGray
+            if let symbol = NSImage(systemSymbolName: "wifi",
+                                    variableValue: 0,
+                                    accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 9.5, weight: .semibold)) {
+                let box = NSRect(x: center.x - 5.6, y: center.y - 5.6,
+                                 width: 11.2, height: 11.2)
+                symbol.isTemplate = true
+                symbol.draw(in: box)
+                wifiColor.set()
+                box.fill(using: .sourceAtop)
+            }
+
+            // Four dots in the ring's bottom gap — the signal read.
+            let dotD: CGFloat = 1.7
+            let dotGap: CGFloat = 2.1
+            let dotsWidth = 4 * dotD + 3 * dotGap
+            let filled = device.wifiDots ?? 0
+            for i in 0..<4 {
+                let rect = NSRect(x: center.x - dotsWidth / 2 + CGFloat(i) * (dotD + dotGap),
+                                  y: center.y - radius + 1.4,
+                                  width: dotD, height: dotD)
+                (i < filled ? wifiColor : ink.withAlphaComponent(0.22)).setFill()
+                NSBezierPath(ovalIn: rect).fill()
+            }
+            return true
+        }
+        image.isTemplate = false
+        image.accessibilityDescription = accessibilityLabel(spec)
+        return image
     }
 
     /// A 1.2 pt ring at radius 8, filling clockwise from 12 o'clock.

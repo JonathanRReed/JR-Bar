@@ -156,6 +156,32 @@ import JRBarUI
         #expect(plan.spec.tintHex != nil)
         #expect(StatusItemController.plan(style: .glyph).spec.tintHex == nil)
     }
+
+    @Test func onlyTheOrbitStyleCarriesTheDeviceReading() {
+        let device = StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58,
+                                      batteryPercent: 72, hasBattery: true)
+        let orbit = StatusItemController.plan(style: .orbit, device: device)
+        #expect(orbit.isStrip, "the roundel owns its own width")
+        #expect(orbit.spec.device == device)
+        #expect(orbit.stripWidth == StatusIconRenderer.orbitSize.width)
+        #expect(orbit.label == nil)
+        // Other styles never take it — a device spec on a glyph would be
+        // a stray reading the picture can't show.
+        #expect(StatusItemController.plan(style: .glyph, device: device).spec.device == nil)
+        #expect(StatusItemController.plan(style: .agents, device: device).spec.device == nil)
+    }
+}
+
+/// The `orbit` icon's Wi-Fi read: the dBm-to-dots bucketing, off-device.
+@Suite struct StatusDeviceMonitorTests {
+    @Test func rssiBuckets() {
+        #expect(StatusDeviceMonitor.wifiDots(rssi: -40) == 4)
+        #expect(StatusDeviceMonitor.wifiDots(rssi: -55) == 4)
+        #expect(StatusDeviceMonitor.wifiDots(rssi: -60) == 3)
+        #expect(StatusDeviceMonitor.wifiDots(rssi: -70) == 2)
+        #expect(StatusDeviceMonitor.wifiDots(rssi: -80) == 1)
+        #expect(StatusDeviceMonitor.wifiDots(rssi: -95) == 1, "a thread of a link is still a dot")
+    }
 }
 
 /// The Screen Bar's program acceptance: a safe program is installed, a

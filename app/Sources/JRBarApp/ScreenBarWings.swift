@@ -64,6 +64,13 @@ final class ScreenBarWingsModel {
     /// the bezel is the wrap. nil on notch-less screens, where the chips
     /// carry their own capsules beside the band.
     var tray: CGRect?
+    /// The tray's bottom corner — the notch profile's radius, so the
+    /// wrap's silhouette is the bezel's own.
+    var notchCorner: CGFloat = NotchProfile.standardCornerRadius
+    /// How far the tray hangs below the bezel. The ear's mark centres
+    /// inside the bezel's own height, not the taller tray — the chin is
+    /// structure, not content room.
+    var chin: CGFloat = 0
     var viewHeight: CGFloat = 0
     /// The dismiss-pull: the ear rides the finger's horizontal travel,
     /// already eased, so a flick visibly drags it off the notch.
@@ -79,10 +86,6 @@ final class ScreenBarWingsModel {
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
-    /// The notch's own bottom corner radius, matched so the tray reads
-    /// as the bezel continuing, not a shape docked to it.
-    private static let notchCorner: CGFloat = 10
-
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let tray = model.tray {
@@ -90,8 +93,8 @@ struct ScreenBarWingsView: View {
                 // where it runs under the bezel, the outer bottom corners
                 // rounded like the notch's own. The ears and the chin are
                 // the same fill — the notch sits in it.
-                UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: Self.notchCorner,
-                                       bottomTrailingRadius: Self.notchCorner, topTrailingRadius: 0,
+                UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: model.notchCorner,
+                                       bottomTrailingRadius: model.notchCorner, topTrailingRadius: 0,
                                        style: .continuous)
                     .fill(.black)
                     .frame(width: tray.width, height: tray.height)
@@ -133,7 +136,9 @@ struct ScreenBarWingsView: View {
         if model.tray != nil {
             mark
                 .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX + pull, y: model.viewHeight - rect.midY)
+                // The mark centres inside the bezel's own height — the
+                // chin below it is the tray's structure, not content room.
+                .position(x: rect.midX + pull, y: model.viewHeight - rect.midY - model.chin / 2)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(slot.text))
         } else {

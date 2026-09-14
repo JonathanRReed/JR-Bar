@@ -879,6 +879,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         screenBar.wingLength = document?.double("screen_bar_wing_length").map { CGFloat($0) }
         screenBar.notchWingsEnabled = document?.bool("screen_bar_notch_wings") ?? true
         screenBar.wingNoticesEnabled = document?.bool("screen_bar_wing_notices") ?? true
+        screenBar.notchProfile = NotchProfile(setting: document?.string("screen_bar_notch_profile"))
+        screenBar.notchCornerManual = document?.double("screen_bar_notch_corner").map { CGFloat($0) }
     }
 
     private func refreshAggregate() {

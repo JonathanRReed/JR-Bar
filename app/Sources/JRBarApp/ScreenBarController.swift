@@ -54,6 +54,15 @@ final class ScreenBarController {
     var wingNoticesEnabled = true {
         didSet { if wingNoticesEnabled != oldValue { updateNoticeMonitors() } }
     }
+    /// `screen_bar_notch_profile` + `screen_bar_notch_corner`: which
+    /// MacBook's notch the tray's bottom corners copy, and the custom
+    /// radius when the profile is `custom`.
+    var notchProfile: NotchProfile = .auto {
+        didSet { if notchProfile != oldValue { syncNotchCorner() } }
+    }
+    var notchCornerManual: CGFloat? {
+        didSet { if notchCornerManual != oldValue { syncNotchCorner() } }
+    }
     /// The slots' base content, pushed from the panel store on each core
     /// change. A nil slot collapses: the window claims no room for it.
     var wings: ScreenBarWings = .empty {
@@ -372,6 +381,12 @@ final class ScreenBarController {
             powerMonitor.stop()
             audioMonitor.stop()
         }
+    }
+
+    /// Resolves the profile (and the custom slider) into the corner the
+    /// tray draws — the bezel's own radius on this Mac.
+    private func syncNotchCorner() {
+        view.notchCornerRadius = notchProfile.cornerRadius(manual: notchCornerManual)
     }
 
     private func reposition() {

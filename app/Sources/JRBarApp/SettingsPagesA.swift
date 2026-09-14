@@ -207,6 +207,12 @@ struct MenuBarPreview: View {
     /// every row's text starts at the same x and none of them truncates.
     static let width: CGFloat = 152
 
+    /// The orbit preview's stand-in reading — a decent link on a
+    /// mid-charge battery — so the row shows the roundel it names.
+    private static let sampleDevice = StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58,
+                                                       batteryPercent: 72, charging: false,
+                                                       hasBattery: true)
+
     private var spec: StatusIconSpec {
         StatusIconSpec(style: style,
                        ringFraction: meters.first?.fraction ?? 0.42,
@@ -215,6 +221,7 @@ struct MenuBarPreview: View {
                        overflow: style.isMeters ? overflow : 0,
                        dot: style.isMeters ? .working : .idle,
                        sessions: style == .agents ? sessions : [],
+                       device: style == .orbit ? Self.sampleDevice : nil,
                        phase: 0.5)
     }
 
@@ -718,6 +725,15 @@ struct ScreenBarCard: View {
         SettingToggle(store, "Follow Alcove", subtitle: "Match Alcove's capsule width so an expanded live activity never outgrows the band.", path: "screen_bar_follow_alcove", default: true)
         SettingToggle(store, "Show in full screen", subtitle: "Keep the band over full-screen apps and videos.", path: "screen_bar_show_in_full_screen", default: true)
         SettingToggle(store, "Notch wings", subtitle: "Status slots in the menu-bar space beside the notch — who's working or needs you on the left, the headline usage meter on the right. Off, the bar keeps to its light strip.", path: "screen_bar_notch_wings", default: true)
+        SettingPicker(store, "Notch shape", subtitle: notchShapeSubtitle,
+                      path: "screen_bar_notch_profile",
+                      options: NotchProfile.allCases.map { ($0.rawValue, $0.title) },
+                      default: NotchProfile.auto.rawValue)
+        if NotchProfile(setting: store.document.string("screen_bar_notch_profile")) == .custom {
+            SettingSlider(store, "Corner radius", subtitle: "The tray's bottom corners, in points. Every notched MacBook measures about 8.",
+                          path: "screen_bar_notch_corner", in: 4...16, step: 0.5,
+                          default: Double(NotchProfile.standardCornerRadius)) { SettingsStore.points($0) }
+        }
         SettingToggle(store, "Mirror the hardware strip", subtitle: "The Screen Bar plays the strip's own program on the strip's clock. Off, it renders its own display. Independent of Dot follows the strip above.", path: "link_screen_bar_to_hardware", default: true)
         SettingSlider(store, "Phase nudge", subtitle: "Shift the Screen Bar against the strip if the two are visibly out of step. Positive holds the bar back.",
                       path: "screen_bar_phase_offset_ms", in: -500...500, step: 10, default: 0) { "\(Int($0)) ms" }
@@ -732,6 +748,14 @@ struct ScreenBarCard: View {
         } label: {
             SettingLabel(title: "Colour calibration", subtitle: screenBarCalibrationSummary)
         }
+    }
+
+    /// The picker's note: what the machine reports and what the tray's
+    /// corners follow. The radius itself is measured — ~8 pt on every
+    /// notched MacBook — so the named models agree; the picker is for
+    /// the odd panel, not for flavour.
+    private var notchShapeSubtitle: String {
+        "The tray's bottom corners copy this notch's radius. Detected: \(NotchProfile.machineFamily)."
     }
 
     private var screenBarCalibrationSummary: String {

@@ -178,3 +178,36 @@ import Testing
         #expect(right == CGRect(x: 377, y: 1, width: 84, height: 18))
     }
 }
+
+@Suite struct NotchProfileTests {
+    @Test func settingParsesAndAnythingUnknownIsAutomatic() {
+        #expect(NotchProfile(setting: "auto") == .auto)
+        #expect(NotchProfile(setting: "macbook_pro_14") == .macbookPro14)
+        #expect(NotchProfile(setting: "custom") == .custom)
+        #expect(NotchProfile(setting: nil) == .auto)
+        #expect(NotchProfile(setting: "performa") == .auto)
+    }
+
+    @Test func everyBuiltInProfileResolvesTheMeasuredRadius() {
+        // The hardware cutout's bottom corner is ~8 pt on every notched
+        // MacBook — the named models agree; they exist so the override
+        // is real, and so a future panel with a different cutout has a
+        // place to land.
+        for profile in [NotchProfile.auto, .macbookAir13, .macbookAir15, .macbookPro14, .macbookPro16] {
+            #expect(profile.cornerRadius() == NotchProfile.standardCornerRadius)
+        }
+    }
+
+    @Test func customRadiusIsTheSliderClampedToSanity() {
+        #expect(NotchProfile.custom.cornerRadius(manual: 12) == 12)
+        #expect(NotchProfile.custom.cornerRadius(manual: -3) == 0)
+        #expect(NotchProfile.custom.cornerRadius(manual: 40) == 16)
+        #expect(NotchProfile.custom.cornerRadius(manual: nil) == NotchProfile.standardCornerRadius,
+                "a custom profile with no stored value still draws the standard corner")
+    }
+
+    @Test func machineModelReadsHwModel() {
+        #expect(!NotchProfile.machineModel.isEmpty, "sysctl hw.model always answers on a Mac")
+        #expect(!NotchProfile.machineFamily.isEmpty)
+    }
+}

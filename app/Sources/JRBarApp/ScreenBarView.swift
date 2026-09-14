@@ -43,6 +43,12 @@ final class ScreenBarView: NSView {
     var wingGeometry = ScreenBarWingGeometry() {
         didSet { if wingGeometry != oldValue { updateWingChips() } }
     }
+    /// The tray's bottom corner — the notch profile's resolution
+    /// (`screen_bar_notch_profile` + `screen_bar_notch_corner`), pushed
+    /// by the controller so the wrap's silhouette is the bezel's own.
+    var notchCornerRadius: CGFloat = NotchProfile.standardCornerRadius {
+        didSet { if notchCornerRadius != oldValue { updateWingChips() } }
+    }
     /// The ear's drawn bounds in view coordinates — content-sized,
     /// hugging the bezel — not the claim that capped it.
     private(set) var leftWingRect: NSRect?
@@ -231,6 +237,8 @@ final class ScreenBarView: NSView {
         // their new bounds while a claim persists — Alcove's motion.
         let mutate = {
             self.wingsModel.tray = tray
+            self.wingsModel.notchCorner = self.notchCornerRadius
+            self.wingsModel.chin = tray == nil ? 0 : ScreenBarGeometry.wingTrayChin
             self.wingsModel.viewHeight = size.height
             self.wingsModel.left = left
             self.wingsModel.right = right

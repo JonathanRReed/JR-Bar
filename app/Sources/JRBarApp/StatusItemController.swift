@@ -56,6 +56,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             guard iconStyle != oldValue else { return }
             syncBreathing()
             applyPulseAnimation()
+            syncDeviceMonitor()
             redraw()
         }
     }
@@ -88,6 +89,11 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     /// One tooltip line per session for the `agents` style
     /// ("docs-sweep · waiting on you 2h 31m · Gemini"), same order.
     var sessionLines: [String] = [] { didSet { if sessionLines != oldValue { redraw() } } }
+    /// The `orbit` style's feed. The monitor fills it only while the
+    /// style is selected, so a machine on another style never pays for
+    /// the Wi-Fi and battery reads.
+    var deviceInfo: StatusDeviceInfo? { didSet { if deviceInfo != oldValue { redraw() } } }
+    private var deviceMonitor: StatusDeviceMonitor?
 
     private static let pulseKey = "jrbar.escalationPulse"
     /// The breathing clock: two frames a second, only while the dot moves.
@@ -209,7 +215,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     nonisolated static func plan(style: StatusIconStyle, ringFraction: Double? = nil, tint: NSColor? = nil,
                      isPulsing: Bool = false, meters: [StatusMeter] = [], meterOverflow: Int = 0,
                      dotState: StatusDotState = .idle, sessionDots: [SessionDot] = [],
-                     labelText: String? = nil, phase: Double = 0) -> StatusItemPlan {
+                     labelText: String? = nil, device: StatusDeviceInfo? = nil, phase: Double = 0) -> StatusItemPlan {
         let spec = StatusIconSpec(style: style,
                                   ringFraction: style == .glyphRing ? ringFraction : nil,
                                   tintHex: tint?.statusHex,
@@ -221,8 +227,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                                   // as a live ask.
                                   dot: style.isMeters ? (dotState == .error ? .error : (isPulsing ? .ask : dotState)) : .idle,
                                   sessions: style == .agents ? sessionDots : [],
+                                  device: style == .orbit ? device : nil,
                                   phase: phase)
-        let strip = style.isMeters || style == .agents
+        let strip = style.isMeters || style == .agents || style == .orbit
         return StatusItemPlan(spec: spec,
                               label: style == .glyphLabel ? labelText : nil,
                               // The meter strip and the session strip size
@@ -240,7 +247,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         let tint: NSColor? = isPulsing ? .systemOrange : aggregateTint
         let plan = Self.plan(style: iconStyle, ringFraction: ringFraction, tint: tint, isPulsing: isPulsing,
                              meters: meters, meterOverflow: meterOverflow, dotState: dotState,
-                             sessionDots: sessionDots, labelText: labelText, phase: phase)
+                             sessionDots: sessionDots, labelText: labelText, device: deviceInfo, phase: phase)
         let spec = plan.spec
         let strip = plan.isStrip
         let label = plan.label
@@ -323,6 +330,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             breathing?.invalidate()
             breathing = nil
             phase = 0.5
+        }
+    }
+
+    /// The `orbit` style is the only one that needs Wi-Fi and battery
+    /// reads, so the monitor exists only while that style is selected.
+    /// Selecting orbit mid-session backfills `deviceInfo` as soon as the
+    /// first sample lands; leaving it frees the reader.
+    private func syncDeviceMonitor() {
+        if iconStyle == .orbit, deviceMonitor == nil {
+            let monitor = StatusDeviceMonitor()
+            monitor.onChange = { [weak self] info in
+                MainActor.assumeIsolated { self?.deviceInfo = info }
+            }
+            monitor.start()
+            deviceMonitor = monitor
+        } else if iconStyle != .orbit {
+            deviceMonitor = nil
         }
     }
 

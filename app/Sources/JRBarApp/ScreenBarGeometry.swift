@@ -7,3 +7,4 @@ typealias ScreenBarDesign = JRBarUI.ScreenBarDesign
 typealias ScreenBarGeometry = JRBarUI.ScreenBarGeometry
 typealias ScreenBarWingGeometry = JRBarUI.ScreenBarWingGeometry
 typealias ScreenBarWingSide = JRBarUI.ScreenBarWingSide
+typealias NotchProfile = JRBarUI.NotchProfile

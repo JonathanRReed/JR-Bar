@@ -52,6 +52,73 @@ public struct ScreenBarWingGeometry: Equatable, Sendable {
     }
 }
 
+/// `screen_bar_notch_profile`: which MacBook's notch the tray's bottom
+/// corners copy. `NSScreen` reports the slot's *size* (the safe-area
+/// inset, the auxiliary areas) but never its corner radius, so the
+/// radius comes from the machine: `auto` reads `hw.model`, the named
+/// rows are the override when the guess is wrong — or when the desk runs
+/// something Apple's table doesn't cover — and `custom` hands the
+/// `screen_bar_notch_corner` slider outright.
+public enum NotchProfile: String, CaseIterable, Sendable {
+    case auto
+    case macbookAir13 = "macbook_air_13"
+    case macbookAir15 = "macbook_air_15"
+    case macbookPro14 = "macbook_pro_14"
+    case macbookPro16 = "macbook_pro_16"
+    case custom
+
+    /// Anything stored, and nothing, resolves to `auto`.
+    public init(setting: String?) {
+        self = setting.flatMap(NotchProfile.init(rawValue:)) ?? .auto
+    }
+
+    public var title: String {
+        switch self {
+        case .auto: return "Automatic"
+        case .macbookAir13: return "MacBook Air 13″"
+        case .macbookAir15: return "MacBook Air 15″"
+        case .macbookPro14: return "MacBook Pro 14″"
+        case .macbookPro16: return "MacBook Pro 16″"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// The hardware cutout's bottom corner in points — measured ~8 on
+    /// every notched MacBook (the top corners are ~4; only the bottom
+    /// pair meets our tray). `custom` is the one case that differs: the
+    /// `screen_bar_notch_corner` slider's value, clamped to sanity.
+    public func cornerRadius(manual: CGFloat? = nil) -> CGFloat {
+        if self == .custom {
+            return manual.map { min(16, max(0, $0)) } ?? Self.standardCornerRadius
+        }
+        return Self.standardCornerRadius
+    }
+
+    /// The measured notch bottom corner, shared by every notched MacBook.
+    public static let standardCornerRadius: CGFloat = 8
+
+    /// `hw.model` — "Mac16,8" on this MacBook Pro — for the settings
+    /// row's detected-model note.
+    public static var machineModel: String {
+        var size = 0
+        sysctlbyname("hw.model", nil, &size, nil, 0)
+        guard size > 0 else { return "" }
+        var name = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.model", &name, &size, nil, 0)
+        return String(cString: name)
+    }
+
+    /// A friendlier family name for `machineModel` in settings copy —
+    /// "MacBook Pro" for MacBookPro18,3, the raw identifier for a VM or
+    /// a desktop (whose "notch" is drawn, not machined).
+    public static var machineFamily: String {
+        let model = machineModel
+        if model.hasPrefix("MacBookPro") { return "MacBook Pro" }
+        if model.hasPrefix("MacBookAir") { return "MacBook Air" }
+        return model.isEmpty ? "this Mac" : model
+    }
+}
+
 public enum ScreenBarGeometry {
     public static let ledCount = 8
     /// Automatic wings hug the notch tightly (`WING_AUTO_LENGTH`).

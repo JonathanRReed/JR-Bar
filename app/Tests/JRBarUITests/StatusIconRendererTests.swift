@@ -79,10 +79,123 @@ struct StatusIconRendererTests {
         #expect(StatusIconStyle(setting: "meters") == .meters, "an explicit choice is kept")
         #expect(StatusIconStyle(setting: "meters_percent") == .metersPercent)
         #expect(StatusIconStyle(setting: "percent") == .metersPercent)
+        #expect(StatusIconStyle(setting: "orbit") == .orbit)
+        #expect(StatusIconStyle(setting: "fold") == .orbit, "the fold-style name resolves too")
         #expect(StatusIconStyle(setting: nil) == .agents, "no setting means the agent-first one")
         #expect(StatusIconStyle(setting: "banana") == .agents)
         #expect(StatusIconStyle.meters.isMeters && StatusIconStyle.metersPercent.isMeters)
         #expect(!StatusIconStyle.glyph.isMeters && !StatusIconStyle.agents.isMeters)
+        #expect(!StatusIconStyle.orbit.isMeters)
+    }
+}
+
+@Suite("Device orbit menu bar icon")
+struct StatusOrbitTests {
+    static func pixels(_ image: NSImage) -> [UInt8] {
+        StatusMetersTests.pixels(image)
+    }
+
+    static let device = StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58,
+                                         batteryPercent: 72, charging: false, hasBattery: true)
+
+    @Test("the roundel is its own size, wider than the square styles")
+    func sizing() {
+        let spec = StatusIconSpec(style: .orbit, device: Self.device)
+        #expect(StatusIconRenderer.size(for: spec) == StatusIconRenderer.orbitSize)
+        #expect(StatusIconRenderer.orbitSize.height == StatusIconRenderer.barHeight,
+                "menu-bar tall like the strips")
+        #expect(StatusIconRenderer.orbitSize.width > StatusIconRenderer.size.width)
+    }
+
+    @Test("battery, signal and radio state each change the picture; never a template")
+    func states() {
+        let renderer = StatusIconRenderer()
+        let base = renderer.image(for: StatusIconSpec(style: .orbit, device: Self.device))
+        #expect(!base.isTemplate, "the colours carry meaning — it can never be a template")
+        let charging = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, charging: true, hasBattery: true)))
+        let low = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 12, charging: false, hasBattery: true)))
+        let off = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: nil, wifiRSSI: nil, batteryPercent: 72, charging: false, hasBattery: true)))
+        let weak = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: 1, wifiRSSI: -80, batteryPercent: 72, charging: false, hasBattery: true)))
+        let empty = renderer.image(for: StatusIconSpec(style: .orbit, device: StatusDeviceInfo()))
+        #expect(Self.pixels(base) != Self.pixels(charging), "charging paints the ring")
+        #expect(Self.pixels(base) != Self.pixels(low), "a low battery goes red")
+        #expect(Self.pixels(base) != Self.pixels(off), "radio off is grey, not blue")
+        #expect(Self.pixels(base) != Self.pixels(weak), "the dots move with the signal")
+        #expect(Self.pixels(base) != Self.pixels(empty), "no reading still draws the quiet roundel")
+    }
+
+    @Test("a dBm drift inside a dot bucket reuses the cached image")
+    func caching() {
+        let renderer = StatusIconRenderer()
+        let a = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, hasBattery: true)))
+        let b = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: 3, wifiRSSI: -60, batteryPercent: 72, hasBattery: true)))
+        let c = renderer.image(for: StatusIconSpec(style: .orbit,
+            device: StatusDeviceInfo(wifiDots: 4, wifiRSSI: -40, batteryPercent: 72, hasBattery: true)))
+        #expect(a === b, "a 2 dBm flicker is the same roundel")
+        #expect(a !== c, "a dot gained is a new image")
+    }
+
+    @Test("the words say what the picture means — rssi, percent, charging, the honest offs")
+    func words() {
+        let spec = StatusIconSpec(style: .orbit, device: Self.device)
+        let voice = StatusIconRenderer.accessibilityLabel(spec)
+        #expect(voice.contains("Wi-Fi -58 dBm") && voice.contains("Battery 72%"))
+        #expect(!voice.contains("charging"))
+        let tip = StatusIconRenderer.tooltip(spec, headline: "JR-Bar · Working")
+        #expect(tip.contains("JR-Bar · Working") && tip.contains("Wi-Fi"))
+        let off = StatusIconSpec(style: .orbit, device: StatusDeviceInfo(batteryPercent: 40, hasBattery: true))
+        #expect(StatusIconRenderer.accessibilityLabel(off).contains("Wi-Fi off"))
+        let desktop = StatusIconSpec(style: .orbit, device: StatusDeviceInfo(wifiDots: 2))
+        #expect(StatusIconRenderer.accessibilityLabel(desktop).contains("No battery"))
+        #expect(StatusIconRenderer.accessibilityLabel(StatusIconSpec(style: .orbit))
+            .contains("unavailable"), "a nil reading admits it")
+    }
+
+    /// Render proof: every orbit state at 8× on a menu-bar-dark strip,
+    /// written to /tmp/orbit-proof so a human can eyeball the roundel
+    /// rather than trust the pixel-diff tests. Off by default — the
+    /// regular suite never writes files.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["JRBAR_RENDER_PROOF"] == "1",
+                   "set JRBAR_RENDER_PROOF=1 to write /tmp/orbit-proof PNGs"))
+    func snapshots() throws {
+        let dir = URL(fileURLWithPath: "/tmp/orbit-proof", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let states: [(name: String, device: StatusDeviceInfo)] = [
+            ("base", StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, charging: false, hasBattery: true)),
+            ("charging", StatusDeviceInfo(wifiDots: 3, wifiRSSI: -58, batteryPercent: 72, charging: true, hasBattery: true)),
+            ("low", StatusDeviceInfo(wifiDots: 4, wifiRSSI: -42, batteryPercent: 14, charging: false, hasBattery: true)),
+            ("radio-off", StatusDeviceInfo(wifiDots: nil, wifiRSSI: nil, batteryPercent: 88, charging: false, hasBattery: true)),
+            ("unassociated", StatusDeviceInfo(wifiDots: 0, wifiRSSI: nil, batteryPercent: 60, charging: false, hasBattery: true)),
+            ("desktop", StatusDeviceInfo(wifiDots: 4, wifiRSSI: -50)),
+        ]
+        let scale = 8
+        let size = StatusIconRenderer.orbitSize
+        for state in states {
+            let spec = StatusIconSpec(style: .orbit, device: state.device)
+            let image = StatusIconRenderer.shared.image(for: spec)
+            let rep = NSBitmapImageRep(bitmapDataPlanes: nil,
+                                       pixelsWide: Int(size.width) * scale,
+                                       pixelsHigh: Int(size.height) * scale,
+                                       bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                       isPlanar: false, colorSpaceName: .deviceRGB,
+                                       bytesPerRow: 0, bitsPerPixel: 0)!
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            // The menu bar's dark strip, so the picture reads in context.
+            NSColor(calibratedWhite: 0.13, alpha: 1).setFill()
+            NSRect(x: 0, y: 0, width: rep.pixelsWide, height: rep.pixelsHigh).fill()
+            image.draw(in: NSRect(x: 0, y: 0, width: rep.pixelsWide, height: rep.pixelsHigh))
+            NSGraphicsContext.restoreGraphicsState()
+            try rep.representation(using: .png, properties: [:])!
+                .write(to: dir.appendingPathComponent("\(state.name).png"))
+        }
+        #expect(states.count == 6)
     }
 }
 
