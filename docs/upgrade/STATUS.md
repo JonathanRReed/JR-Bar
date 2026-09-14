@@ -1048,3 +1048,22 @@ never spoke for device events like headphones connecting.
   run while the wings are actually up and never while the band follows
   an Alcove capsule.
 - Verified: `swift build` clean; 567 Swift tests green.
+
+## Notch polish pass 6 — one tray, not two ears — LANDED
+
+Owner: "still feels nothing like alcove but better direction." The
+missing piece was structural — the reference is not two lobes beside
+the notch; it is one continuous shape that wraps under it.
+
+- The tray: a single `UnevenRoundedRectangle` spanning outer-left claim
+  to outer-right claim — under the bezel in between — with a 6 pt chin
+  below the bezel's bottom edge (`wingTrayChin`). Flush with the
+  screen's top edge, bottom corners at the notch's own 10 pt radius.
+  The ears are the tray's visible ends; the chips draw content only.
+- The window grows by the chin while any wing claims room
+  (`windowFrame(chin:)`), so the band drops exactly the chin's depth —
+  tray + light reads as one device. Empty wings collapse it back.
+- The tray joins the hover region, so moving from an ear onto the chin
+  keeps the peek — it is our drawn surface.
+- Notch-less screens keep the capsule chip hugging the band's end.
+- Verified: `swift build` clean; 567 Swift tests green.

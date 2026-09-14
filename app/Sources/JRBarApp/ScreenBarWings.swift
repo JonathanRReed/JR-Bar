@@ -46,15 +46,21 @@ struct ScreenBarWings: Equatable {
     }
 }
 
-/// What the wings view draws: each side's slot and the capsule rect the
-/// geometry claimed for it, in view coordinates (origin bottom-left, as
-/// `ScreenBarGeometry.wingSlotRect` returns them — the view flips y for
-/// SwiftUI's top-left space).
+/// What the wings view draws: each side's slot and the rect the
+/// geometry claimed for it, plus the tray — the one continuous shape
+/// that runs from the left claim, under the bezel, to the right claim
+/// and drops a chin below it. All in view coordinates (origin
+/// bottom-left, as `ScreenBarGeometry.wingSlotRect` returns them — the
+/// view flips y for SwiftUI's top-left space).
 @MainActor
 @Observable
 final class ScreenBarWingsModel {
     var left: (slot: ScreenBarWingSlot, rect: CGRect)?
     var right: (slot: ScreenBarWingSlot, rect: CGRect)?
+    /// The shared body — the ears are its visible ends, the chin under
+    /// the bezel is the wrap. nil on notch-less screens, where the chips
+    /// carry their own capsules beside the band.
+    var tray: CGRect?
     var viewHeight: CGFloat = 0
 }
 
@@ -67,16 +73,24 @@ final class ScreenBarWingsModel {
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
-    /// How far the lobe's black runs under the bezel past the claim's
-    /// notch edge — the bezel covers the overlap, so the merge has no
-    /// seam. The content never enters it.
-    private static let notchSeam: CGFloat = 12
-    /// The notch's own bottom corner radius, matched so the ear reads as
-    /// the bezel continuing, not a pill docked to it.
+    /// The notch's own bottom corner radius, matched so the tray reads
+    /// as the bezel continuing, not a shape docked to it.
     private static let notchCorner: CGFloat = 10
 
     var body: some View {
         ZStack(alignment: .topLeading) {
+            if let tray = model.tray {
+                // The one shape: flush with the screen's top edge, square
+                // where it runs under the bezel, the outer bottom corners
+                // rounded like the notch's own. The ears and the chin are
+                // the same fill — the notch sits in it.
+                UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: Self.notchCorner,
+                                       bottomTrailingRadius: Self.notchCorner, topTrailingRadius: 0,
+                                       style: .continuous)
+                    .fill(.black)
+                    .frame(width: tray.width, height: tray.height)
+                    .position(x: tray.midX, y: model.viewHeight - tray.midY)
+            }
             if let left = model.left { chip(left.slot, rect: left.rect, side: .left) }
             if let right = model.right { chip(right.slot, rect: right.rect, side: .right) }
         }
@@ -84,9 +98,13 @@ struct ScreenBarWingsView: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// The slot's words and mark. With a tray the chip is content only,
+    /// centred in its claim — the ear's measured room beside the notch.
+    /// Notch-less screens have no tray, so the chip keeps its own
+    /// capsule hugging the band's end.
+    @ViewBuilder
     private func chip(_ slot: ScreenBarWingSlot, rect: CGRect, side: ScreenBarWingSide) -> some View {
-        let seam = Self.notchSeam
-        return HStack(spacing: 5) {
+        let content = HStack(spacing: 5) {
             if let provider = slot.provider {
                 glyph(.style(for: provider))
             } else if let symbol = slot.symbol {
@@ -99,51 +117,26 @@ struct ScreenBarWingsView: View {
                 .foregroundStyle(slot.textColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                // The lobe hugs content, so the bound has to live on the
-                // text — without it a long label outgrows the claim and
-                // the black rides into menu-bar space it was not given.
+                // The bound lives on the text — a long label truncates
+                // inside its claim instead of riding past the shape.
                 .frame(maxWidth: max(24, rect.width - (slot.provider == nil && slot.symbol == nil ? 20 : 36)))
         }
         .padding(.horizontal, 10)
-        // The lobe's notch-side padding runs `seam` under the bezel so
-        // the merge has no seam; the content never enters it.
-        .padding(side == .left ? .trailing : .leading, seam)
-        .fixedSize()
-        // The ear is the notch's own depth, centred on the claim — the
-        // lobe's top and bottom edges are the bezel's, flush with the
-        // screen's top edge.
-        .frame(height: rect.height)
-        .background(lobe(side).fill(.black))
-        // The lobe anchors to the claim's notch-side edge — a left chip
-        // to its trailing edge, a right chip to its leading — and the
-        // frame grows by the seam so the padded lobe still lands its
-        // submerged edge under the bezel.
-        .frame(width: rect.width + seam, height: rect.height,
-               alignment: side == .left ? .trailing : .leading)
-        // The rect is in the hosting view's bottom-left space; SwiftUI
-        // positions from the top, so flip the midpoint — and shift the
-        // widened frame half a seam toward the notch so the claim keeps
-        // its outer edge.
-        .position(x: rect.midX + (side == .left ? seam / 2 : -seam / 2),
-                  y: model.viewHeight - rect.midY)
-        .accessibilityElement(children: .combine)
-    }
 
-    /// The notch's ear: a shape that shares the bezel's top and bottom
-    /// edges — square corners on the flush sides, and the outer bottom
-    /// corner rounded like the notch's own. The submerged notch-side
-    /// edge needs no radius; the bezel covers it.
-    private func lobe(_ side: ScreenBarWingSide) -> UnevenRoundedRectangle {
-        let corner = Self.notchCorner
-        switch side {
-        case .left:
-            return UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: corner,
-                                          bottomTrailingRadius: 0, topTrailingRadius: 0,
-                                          style: .continuous)
-        case .right:
-            return UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
-                                          bottomTrailingRadius: corner, topTrailingRadius: 0,
-                                          style: .continuous)
+        if model.tray != nil {
+            content
+                .frame(width: rect.width, height: rect.height)
+                .position(x: rect.midX, y: model.viewHeight - rect.midY)
+                .accessibilityElement(children: .combine)
+        } else {
+            content
+                .padding(.vertical, 3.5)
+                .fixedSize()
+                .background(Capsule(style: .continuous).fill(.black))
+                .frame(width: rect.width, height: rect.height,
+                       alignment: side == .left ? .trailing : .leading)
+                .position(x: rect.midX, y: model.viewHeight - rect.midY)
+                .accessibilityElement(children: .combine)
         }
     }
 

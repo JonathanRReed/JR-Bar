@@ -166,7 +166,7 @@ final class ScreenBarController {
     /// drawn capsules, so a click on one is a click on something of ours.
     var hoverScreenRects: [NSRect] {
         guard isShown, panel.isVisible else { return [] }
-        return [view.bandRect, view.leftWingRect, view.rightWingRect]
+        return [view.bandRect, view.leftWingRect, view.rightWingRect, view.trayRect]
             .compactMap { $0 }
             .map { panel.convertToScreen(view.convert($0, to: nil)) }
     }
@@ -369,9 +369,13 @@ final class ScreenBarController {
         let notchWidth = ScreenBarGeometry.resolvedNotchWidth(slotWidth: ScreenBarGeometry.slotWidth(of: screen),
                                                             gapWidth: gapWidth)
         let extents = wingExtents(on: screen, notchWidth: notchWidth, notchDepth: depth)
+        // A claimed wing gets the tray's chin below the bezel — the
+        // window grows by exactly that much so the band drops clear.
+        let chin = extents.left > 0 || extents.right > 0 ? ScreenBarGeometry.wingTrayChin : 0
         let frame = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
                                                   gapWidth: gapWidth, wingLength: wingLength, capsule: capsule,
-                                                  contentExtent: max(extents.left, extents.right))
+                                                  contentExtent: max(extents.left, extents.right),
+                                                  chin: chin)
         view.bandSpan = ScreenBarGeometry.windowFrame(for: screen, wrapMenuBar: wrapMenuBar,
                                                       gapWidth: gapWidth, wingLength: wingLength,
                                                       capsule: capsule).width

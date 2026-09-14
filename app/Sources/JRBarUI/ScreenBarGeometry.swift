@@ -87,6 +87,12 @@ public enum ScreenBarGeometry {
     /// …but only draws a capsule this wide, hugging the band's end.
     public static let notchlessSlotMaxWidth: CGFloat = 84
     public static let notchlessSlotHeight: CGFloat = 18
+    /// The tray's chin: how far the wings' shared black shape hangs below
+    /// the bezel's bottom edge while a wing claims room — the wrap that
+    /// makes the notch sit in the shape instead of beside it. It fills
+    /// the space between the bezel and the band, so the window grows by
+    /// exactly this much.
+    public static let wingTrayChin: CGFloat = 6
 
     /// The screen the Screen Bar belongs on: the first with a safe-area
     /// inset (the notched built-in), else the main screen.
@@ -235,11 +241,14 @@ public enum ScreenBarGeometry {
     /// (`contentWingExtent`, or `notchlessWingClaim` where there is no
     /// safe area to measure); it widens the window without widening the
     /// band. While a capsule is followed the flanks belong to it, so the
-    /// claim is ignored.
+    /// claim is ignored. `chin` is `wingTrayChin` while a wing claims
+    /// room: the tray hangs that far below the bezel, growing the window
+    /// so the band drops clear of it.
     public static func windowFrame(screenFrame frame: CGRect, slotWidth measuredSlot: CGFloat, notchDepth: CGFloat,
                                    auxiliaryLeft leftWidth: CGFloat, auxiliaryRight rightWidth: CGFloat, hardwareSlot: CGFloat,
                                    wrapMenuBar: Bool, gapWidth: CGFloat? = nil, wingLength: CGFloat? = nil,
-                                   capsule: AlcoveCapsule? = nil, contentExtent: CGFloat = 0) -> CGRect {
+                                   capsule: AlcoveCapsule? = nil, contentExtent: CGFloat = 0,
+                                   chin: CGFloat = 0) -> CGRect {
         let notchWidth = resolvedNotchWidth(slotWidth: measuredSlot, gapWidth: gapWidth)
         let wing = wrapMenuBar
             ? wingWidth(auxiliaryLeft: leftWidth, auxiliaryRight: rightWidth, hardwareSlot: hardwareSlot,
@@ -247,7 +256,8 @@ public enum ScreenBarGeometry {
             : 0
         let side = capsule == nil ? max(wing, max(0, contentExtent)) : wing
         return AlcoveGeometry.windowFrame(screenFrame: frame, notchWidth: notchWidth, wing: side,
-                                          notchDepth: notchDepth, capsule: capsule, windowHeight: windowHeight(notchDepth:))
+                                          notchDepth: notchDepth, capsule: capsule,
+                                          windowHeight: { windowHeight(notchDepth: $0) + chin })
     }
 
     /// The panel's frame in screen coordinates, measured off `screen`.
@@ -255,13 +265,13 @@ public enum ScreenBarGeometry {
     /// (`AlcoveGeometry.windowFrame`).
     public static func windowFrame(for screen: NSScreen, wrapMenuBar: Bool, gapWidth: CGFloat? = nil,
                                    wingLength: CGFloat? = nil, capsule: AlcoveCapsule? = nil,
-                                   contentExtent: CGFloat = 0) -> NSRect {
+                                   contentExtent: CGFloat = 0, chin: CGFloat = 0) -> NSRect {
         let left = screen.auxiliaryTopLeftArea, right = screen.auxiliaryTopRightArea
         return windowFrame(screenFrame: screen.frame, slotWidth: slotWidth(of: screen), notchDepth: notchDepth(of: screen),
                            auxiliaryLeft: left?.width ?? 0, auxiliaryRight: right?.width ?? 0,
                            hardwareSlot: left != nil && right != nil ? right!.origin.x - left!.maxX : 0,
                            wrapMenuBar: wrapMenuBar, gapWidth: gapWidth, wingLength: wingLength, capsule: capsule,
-                           contentExtent: contentExtent)
+                           contentExtent: contentExtent, chin: chin)
     }
 
     /// `screen_bar_design.rounded_band_bounds`: a centered, bounded band that

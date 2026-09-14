@@ -45,6 +45,10 @@ final class ScreenBarView: NSView {
     }
     private(set) var leftWingRect: NSRect?
     private(set) var rightWingRect: NSRect?
+    /// The wings' shared tray — ear to ear under the bezel with a chin
+    /// below it — in view coordinates; nil while no wing is drawn or the
+    /// screen has no notch to wrap.
+    private(set) var trayRect: NSRect?
     private let wingsModel = ScreenBarWingsModel()
     private var wingsHosting: NSHostingView<ScreenBarWingsView>?
     /// Settings › Screen Bar › Minimum glow, pushed in live: it scales the
@@ -176,6 +180,8 @@ final class ScreenBarView: NSView {
         guard left != nil || right != nil else {
             wingsModel.left = nil
             wingsModel.right = nil
+            wingsModel.tray = nil
+            trayRect = nil
             wingsHosting?.isHidden = true
             return
         }
@@ -183,6 +189,25 @@ final class ScreenBarView: NSView {
             let hosting = NSHostingView(rootView: ScreenBarWingsView(model: wingsModel))
             addSubview(hosting)
             wingsHosting = hosting
+        }
+        // The tray is the one continuous shape: from the outer edge of
+        // the left claim, under the bezel, to the outer edge of the
+        // right claim — and a chin below the bezel's bottom edge so the
+        // notch visibly sits in the shape. An unclaimed side ends the
+        // tray at its own bezel edge; the bezel hides the middle.
+        if wingGeometry.notchDepth > 0 {
+            let sideExtent = max(0, (bounds.width - wingGeometry.notchWidth) / 2.0)
+            let tray = CGRect(
+                x: left?.rect.minX ?? sideExtent,
+                y: bounds.height - (wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin),
+                width: (right?.rect.maxX ?? (sideExtent + wingGeometry.notchWidth))
+                    - (left?.rect.minX ?? sideExtent),
+                height: wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin)
+            wingsModel.tray = tray
+            trayRect = tray
+        } else {
+            wingsModel.tray = nil
+            trayRect = nil
         }
         wingsModel.viewHeight = bounds.height
         wingsModel.left = left
