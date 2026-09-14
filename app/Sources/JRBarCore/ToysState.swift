@@ -183,6 +183,10 @@ public struct BuddySpot: Codable, Equatable, Sendable {
 public struct NotchBuddySettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var character: String
+    /// `character` draws the picked creature; `mini` is the same
+    /// controller — same summary, tap and menu — wearing a small status
+    /// pill instead of a body. Stored raw so a newer build's mode keeps.
+    public var presentation: String
     public var buddyName: String
     public var care: BuddyCare
     /// Where the free-floating buddy's panel centres; nil = docked.
@@ -207,11 +211,13 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     }
 
     public init(enabled: Bool = false, character: String = "dot",
+                presentation: String = "character",
                 buddyName: String = "", care: BuddyCare = BuddyCare(),
                 freePosition: BuddySpot? = nil, tucked: Bool = false,
                 showCaption: Bool = true, scale: Double = 1.0) {
         self.enabled = enabled
         self.character = character
+        self.presentation = presentation
         self.buddyName = buddyName
         self.care = care
         self.freePosition = freePosition
@@ -227,6 +233,10 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
         BuddyCharacter(rawValue: character) ?? .dot
     }
 
+    /// Mini reads as "no body": anything but the stored `mini` word —
+    /// including a hand edit's noise — presents the character.
+    public var miniMode: Bool { presentation == "mini" }
+
     /// Who the status line names: the stored name, or the character's
     /// own when the field is blank or all spaces.
     public var resolvedName: String {
@@ -235,13 +245,14 @@ public struct NotchBuddySettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, character, buddyName, care, freePosition, tucked, showCaption, scale
+        case enabled, character, presentation, buddyName, care, freePosition, tucked, showCaption, scale
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         character = (try? c.decodeIfPresent(String.self, forKey: .character)) ?? "dot"
+        presentation = (try? c.decodeIfPresent(String.self, forKey: .presentation)) ?? "character"
         buddyName = (try? c.decodeIfPresent(String.self, forKey: .buddyName)) ?? ""
         care = (try? c.decodeIfPresent(BuddyCare.self, forKey: .care)) ?? BuddyCare()
         // A spot that fails its own decode (a missing or mistyped half)

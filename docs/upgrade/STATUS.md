@@ -179,6 +179,26 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W15 slice — interruption-safe reply drafts + Mini presentation — LANDED
+
+- Reply drafts are no longer `@ViewState` on `AskRow` (lost whenever the
+  view rebuilt): `PanelStore` keeps them keyed by the ask's stable
+  `request` id (falling back to `id`), persisted to UserDefaults as
+  `{text, editedAt}` — a half-typed reply survives the panel closing,
+  a relaunch, and a refused send (cleared only when `answer_ask`
+  confirms `ok`). The store is bounded at 50 entries, oldest first.
+- Mini is a presentation mode on the same toy, not a second controller:
+  `NotchBuddySettings.presentation` (`"character"`/`"mini"`, stored raw
+  so a newer build's mode survives). `MiniFigure` renders the same
+  `summary(at:)` as a mood-tinted pill with the same ask badge, tap,
+  menu and help contract; the character picker disables while mini is
+  on. T60's "character-free, same controller" is the shape here.
+- Still open in W15: context/skill/model-aware draft seeding (drafts
+  today are free text — no session context auto-fill), configurable
+  keyboard shortcuts for draft send, and the W12-deferred "Attach to
+  task" into a shared reviewable draft. Execution-adapter gating is
+  already honest (buttons disabled by `canAnswer`/`isRemote`).
+
 ## W14 slice — Aquarium selection/inspection — LANDED
 
 - Tap on a fish now selects it (was: flash the nameplate): the tapped

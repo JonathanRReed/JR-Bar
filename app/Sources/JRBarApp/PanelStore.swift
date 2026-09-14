@@ -275,8 +275,10 @@ final class PanelStore {
     @ObservationIgnored private var brightnessSentAt = Date.distantPast
     @ObservationIgnored private var toastClear: DispatchWorkItem?
 
-    init(core: CoreModel) {
+    init(core: CoreModel, draftsDefaults: UserDefaults = .standard) {
         self.core = core
+        self.draftsDefaults = draftsDefaults
+        self.replyDrafts = loadReplyDrafts()
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -851,6 +853,56 @@ final class PanelStore {
     /// second click cannot post a second answer.
     private(set) var pendingAnswers: Set<String> = []
 
+    /// A half-typed reply, keyed by the ask's request id. Persisted so
+    /// closing the panel — or the app — mid-draft doesn't lose the text;
+    /// clearing it takes a confirmed send, not just an edit.
+    private struct ReplyDraft: Codable {
+        var text: String
+        var editedAt: TimeInterval
+    }
+
+    /// Kept small: a draft for an ask that no longer exists is clutter.
+    private static let replyDraftsKey = "jrbar.askReplyDrafts.v1"
+    private static let replyDraftLimit = 50
+    private let draftsDefaults: UserDefaults
+    private var replyDrafts: [String: ReplyDraft] = [:]
+
+    /// The stable key: the request id while the episode is open, the
+    /// ask's own id (session|summary|openedAt) when there is none.
+    private static func draftKey(for ask: CoreAsk) -> String { ask.request ?? ask.id }
+
+    func replyDraft(for ask: CoreAsk) -> String {
+        replyDrafts[Self.draftKey(for: ask)]?.text ?? ""
+    }
+
+    func setReplyDraft(_ text: String, for ask: CoreAsk) {
+        let key = Self.draftKey(for: ask)
+        if text.isEmpty {
+            replyDrafts.removeValue(forKey: key)
+        } else {
+            replyDrafts[key] = ReplyDraft(text: text, editedAt: Date().timeIntervalSince1970)
+            if replyDrafts.count > Self.replyDraftLimit {
+                // Oldest first: a draft whose ask resolved weeks ago is
+                // the first to go.
+                let overflow = replyDrafts.count - Self.replyDraftLimit
+                for entry in replyDrafts.sorted(by: { $0.value.editedAt < $1.value.editedAt }).prefix(overflow) {
+                    replyDrafts.removeValue(forKey: entry.key)
+                }
+            }
+        }
+        saveReplyDrafts()
+    }
+
+    private func loadReplyDrafts() -> [String: ReplyDraft] {
+        guard let data = draftsDefaults.data(forKey: Self.replyDraftsKey) else { return [:] }
+        return (try? JSONDecoder().decode([String: ReplyDraft].self, from: data)) ?? [:]
+    }
+
+    private func saveReplyDrafts() {
+        guard let data = try? JSONEncoder().encode(replyDrafts) else { return }
+        draftsDefaults.set(data, forKey: Self.replyDraftsKey)
+    }
+
     func isAnswerPending(_ ask: CoreAsk) -> Bool { pendingAnswers.contains(ask.id) }
 
     func approve(_ ask: CoreAsk) { answer(ask, approve: true) }
@@ -920,6 +972,9 @@ final class PanelStore {
                 let reply = try await self.core.answerAskNow(session: session, approve: true, replyText: trimmed,
                                                              request: ask.request)
                 if reply.ok {
+                    // Sent and confirmed — the draft's job is done. A
+                    // refusal keeps the text so it isn't lost.
+                    self.setReplyDraft("", for: ask)
                     self.show(toast: "Reply sent · typed into the session's terminal")
                 } else {
                     self.answerRefused(reply.error)

@@ -751,8 +751,14 @@ struct SessionContextMenu: View {
 struct AskRow: View {
     let row: SessionRow
     @Bindable var store: PanelStore
-    /// The reply draft, for a `replyable` ask; cleared once sent.
-    @ViewState private var replyText = ""
+    /// The reply draft rides the store: a half-typed answer survives the
+    /// panel closing and a relaunch, and a refused send keeps the text.
+    private var replyText: Binding<String> {
+        Binding(
+            get: { self.row.ask.map { self.store.replyDraft(for: $0) } ?? "" },
+            set: { text in if let ask = self.row.ask { self.store.setReplyDraft(text, for: ask) } }
+        )
+    }
 
     /// The whole card goes quiet while the family mailbox is snoozed —
     /// dim, still, and stamped "snoozed until", never dressed as a fresh ask.
@@ -807,7 +813,7 @@ struct AskRow: View {
                     // and Send; `reply_text` rides the same answer_ask. A
                     // daemon that cannot take text for it says so, and the
                     // toast carries that.
-                    TextField("Reply…", text: $replyText)
+                    TextField("Reply…", text: replyText)
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .padding(.horizontal, 9).padding(.vertical, 3.5)
@@ -818,7 +824,7 @@ struct AskRow: View {
                         .onSubmit { send(ask) }
                     Button("Send") { send(ask) }
                         .buttonStyle(PillButtonStyle(prominent: true))
-                        .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
+                        .disabled(replyText.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isAnswerPending(ask))
                         .help("Type this reply into \(row.terminalApp ?? "the session's terminal")")
                 } else if let ask = row.ask, ask.canAnswer, !ask.wantsTextReply, ask.session != nil, !row.isRemote {
                     // Approve/Deny type the answer into the session's own
@@ -884,9 +890,9 @@ struct AskRow: View {
     }
 
     private func send(_ ask: CoreAsk) {
-        let text = replyText
-        replyText = ""
-        store.reply(ask, text: text)
+        // No eager clear: the draft clears when the send confirms, so a
+        // refused reply keeps its text.
+        store.reply(ask, text: store.replyDraft(for: ask))
     }
 }
 

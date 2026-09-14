@@ -111,6 +111,14 @@ final class NotchBuddyToy: Toy {
                 set: { self.store?.state.notchBuddy.character = $0.rawValue })
     }
 
+    /// Mini is the same toy without the body: `presentation` stores the
+    /// raw word so a newer build's mode survives this one.
+    var miniMode: Bool { store?.state.notchBuddy.miniMode ?? false }
+    var presentationBinding: Binding<Bool> {
+        Binding(get: { self.miniMode },
+                set: { self.store?.state.notchBuddy.presentation = $0 ? "mini" : "character" })
+    }
+
     /// The card's name field writes straight into the settings blob;
     /// blank keeps the character's own `defaultName`.
     var nameBinding: Binding<String> {
@@ -531,8 +539,14 @@ private struct BuddyControlsView: View {
             }
             .pickerStyle(.menu)
             .fixedSize()
+            .disabled(toy.miniMode)
 
-            roster
+            Toggle(isOn: toy.presentationBinding) {
+                SettingLabel(title: "Mini", subtitle: "Just the status — a small pill instead of a character.")
+            }
+            .toggleStyle(.checkbox)
+
+            if !toy.miniMode { roster }
 
             LabeledContent {
                 TextField("", text: toy.nameBinding, prompt: Text(toy.buddyCharacter.defaultName))

@@ -33,6 +33,20 @@ struct NotchBuddyView: View {
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
             let dress = dragDress(at: context.date)
+            if toy.miniMode {
+                // Mini: the same summary wearing a status pill — no
+                // character body, same tap/menu/badge contract.
+                MiniFigure(
+                    mood: summary.mood,
+                    tint: tint(for: summary),
+                    waiting: summary.waiting,
+                    working: summary.working,
+                    still: reduceMotion,
+                    phase: context.date.timeIntervalSince1970
+                )
+                .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
+                .help(summary.statusLine)
+            } else {
             BuddyFigure(
                 character: toy.buddyCharacter,
                 mood: summary.mood,
@@ -54,6 +68,7 @@ struct NotchBuddyView: View {
             .rotationEffect(.degrees(dress.tilt), anchor: .center)
             .offset(y: dress.lift)
             .help(summary.statusLine)
+            }
         }
         .frame(width: 18, height: 18)
         .scaleEffect(scale)
@@ -172,6 +187,37 @@ struct NotchBuddyView: View {
         case .slumped: return .red
         case .celebrating: return .green
         }
+    }
+}
+
+/// Mini: the buddy's controller without a character. One status pill
+/// tinted by the mood, a "!" for open asks and a count when they stack —
+/// the tap, menu and badge contract is identical to the full figure.
+private struct MiniFigure: View {
+    let mood: NotchBuddyToy.Mood
+    let tint: Color
+    let waiting: Int
+    let working: Int
+    let still: Bool
+    let phase: TimeInterval
+
+    var body: some View {
+        Capsule()
+            .fill(tint.opacity(mood == .asleep ? 0.35 : 0.9))
+            // Awake breathes on a slow cycle; Reduce Motion holds still.
+            .scaleEffect(still || mood == .asleep ? 1.0 : 1.0 + 0.08 * sin(phase * 2.2))
+            .frame(width: 14, height: 8)
+            .overlay(alignment: .top) {
+                if waiting > 0 {
+                    Text(waiting > 1 ? "!\(waiting)" : "!")
+                        .font(.system(size: 7, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 2.5).padding(.vertical, 0.5)
+                        .background(Capsule().fill(Color.orange))
+                        .offset(y: -7)
+                        .accessibilityHidden(true)
+                }
+            }
     }
 }
 
