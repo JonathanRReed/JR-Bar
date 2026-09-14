@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var historyStore: HistoryStore?
     private var historyWindow: HistoryWindowController?
     private var overviewWindow: OverviewWindowController?
+    private var replayWindow: ReplayWindowController?
     private var usageStore: UsageCenterStore?
     private var usageWindow: UsageCenterWindowController?
     private var effectsStore: EffectStudioStore?
@@ -199,6 +200,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.overviewWindow = overviewWindow
         store.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         statusItem.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+
+        // Event Replay: the read-only journaled-events surface (S7.4).
+        let replayStore = ReplayStore(core: core)
+        let replayWindow = ReplayWindowController(store: replayStore)
+        self.replayWindow = replayWindow
+        statusItem.onOpenReplay = { [weak replayWindow] in replayWindow?.show() }
 
         // Usage Center (⌘U) and Effect Studio windows.
         let usageStore = UsageCenterStore(core: core)

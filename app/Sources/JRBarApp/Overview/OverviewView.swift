@@ -634,9 +634,9 @@ private struct CompareRunsSheet: View {
     }
 }
 
-/// The Overview's own empty-state label set (the Usage Center's
-/// `UsageEmptyState` is fileprivate there).
-private struct OverviewEmptyState: View {
+/// The shared empty-state label set (Replay uses it too; the Usage
+/// Center's `UsageEmptyState` is fileprivate there).
+struct OverviewEmptyState: View {
     let symbol: String
     let title: String
     let text: String

@@ -44,6 +44,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onOpenSettings: (@MainActor () -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
     var onOpenOverview: (@MainActor () -> Void)?
+    var onOpenReplay: (@MainActor () -> Void)?
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
@@ -135,6 +136,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         history.target = self
         let overview = NSMenuItem(title: "Overview…", action: #selector(openOverview(_:)), keyEquivalent: "o")
         overview.target = self
+        let replay = NSMenuItem(title: "Event Replay…", action: #selector(openReplay(_:)), keyEquivalent: "r")
+        replay.target = self
         let usage = NSMenuItem(title: "Usage Center…", action: #selector(openUsageCenter(_:)), keyEquivalent: "u")
         usage.target = self
         let effects = NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: "")
@@ -152,6 +155,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(open)
         menu.addItem(history)
         menu.addItem(overview)
+        menu.addItem(replay)
         menu.addItem(usage)
         menu.addItem(effects)
         menu.addItem(controlCenter)
@@ -427,6 +431,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openOverview(_ sender: Any?) {
         onOpenOverview?()
+    }
+
+    @objc private func openReplay(_ sender: Any?) {
+        onOpenReplay?()
     }
 
     @objc private func openUsageCenter(_ sender: Any?) {

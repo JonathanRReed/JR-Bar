@@ -274,6 +274,31 @@ public final class CoreModel {
         return try ReplyDecoding.decode(CoreRunComparison.self, from: result)
     }
 
+    /// `replay_events`: the retained event journal for the Replay
+    /// surface — read-only history with its coverage bounds (`retained`,
+    /// `dropped`, `stream`) so the view can say exactly what it shows.
+    public func replayEvents(limit: Int = 512) async throws -> CoreReplayPage {
+        let reply = try await send("replay_events", args: ["limit": .number(Double(limit))])
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "replay_events failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "replay_events: missing result")
+        }
+        let events = result["events"]?.arrayValue ?? []
+        let decoder = JSONDecoder()
+        let decoded = events.compactMap { value -> CoreEvent? in
+            guard let data = try? JSONEncoder().encode(value) else { return nil }
+            return try? decoder.decode(CoreEvent.self, from: data)
+        }
+        return CoreReplayPage(
+            events: decoded,
+            stream: result["stream"]?.stringValue,
+            retained: result["retained"]?.intValue ?? decoded.count,
+            dropped: result["dropped"]?.intValue ?? 0,
+            resyncRequired: result["resync_required"]?.boolValue ?? false,
+            reason: result["reason"]?.stringValue,
+            cursor: result["cursor"]?.stringValue)
+    }
+
     /// A line from the app itself (the supervisor, a delivery failure) in
     /// the same tail as the daemon's `log` messages.
     public func appendLocalLog(level: String = "info", _ message: String) {

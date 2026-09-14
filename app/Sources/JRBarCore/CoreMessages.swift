@@ -695,6 +695,33 @@ public struct CoreRunComparison: Codable, Hashable, Sendable {
     }
 }
 
+/// The `replay_events` reply for the Replay surface: journaled event
+/// frames plus the coverage the view must state — `retained`/`dropped`
+/// are the journal's bounds, `resyncRequired`+`reason` the honest
+/// refusal a foreign/expired cursor gets.
+public struct CoreReplayPage: Hashable, Sendable {
+    public var events: [CoreEvent]
+    public var stream: String?
+    public var retained: Int
+    public var dropped: Int
+    public var resyncRequired: Bool
+    public var reason: String?
+    public var cursor: String?
+
+    public init(events: [CoreEvent] = [], stream: String? = nil,
+                retained: Int = 0, dropped: Int = 0,
+                resyncRequired: Bool = false, reason: String? = nil,
+                cursor: String? = nil) {
+        self.events = events
+        self.stream = stream
+        self.retained = retained
+        self.dropped = dropped
+        self.resyncRequired = resyncRequired
+        self.reason = reason
+        self.cursor = cursor
+    }
+}
+
 public struct CoreDevice: Codable, Hashable, Sendable, Identifiable {
     public var id: String
     public var kind: String

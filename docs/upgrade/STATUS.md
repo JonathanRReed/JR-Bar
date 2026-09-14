@@ -427,7 +427,26 @@ slot chips flanking the band.
 - Verified: 6 audit-export tests + 12 roster tests pass; ruff clean;
   `OverviewExportTests` proves preview==saved bytes; `swift build` clean.
 - Still open in W09: the bounded Radar importer/relationship lens
-  (T38) and the labeled read-only replay surface (T39).
+  (T38).
+
+## W09 slice — read-only event replay surface — LANDED
+
+The transport existed (W03 `replay_events`); the surface did not. The
+Event Replay window renders the retained journal read-only.
+
+- `CoreModel.replayEvents(limit:)` decodes journaled `CoreEvent`
+  frames plus coverage: `stream`, `retained`, `dropped`,
+  `resyncRequired`/`reason`. One call at the journal's own bound (512)
+  reads the whole retained stream.
+- `ReplayStore`/`ReplayView`/`ReplayWindowController`: persistent
+  REPLAY badge + "nothing here acts" line, journal coverage line
+  (loaded time, retained/dropped, resync state), and the live-attention
+  count as a separate labeled indicator (T39). No mutation controls —
+  the list is the journal verbatim; refresh re-reads, it never
+  re-fires.
+- Entry: status menu "Event Replay…" (⌘R).
+- Verified: `swift build` clean; replay coverage via the existing
+  `replay_events` journal tests and `CoreEvent` codec tests.
 
 ## W09 slice — run comparison — LANDED
 
