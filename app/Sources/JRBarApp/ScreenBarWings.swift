@@ -49,26 +49,25 @@ final class ScreenBarWingsModel {
     var viewHeight: CGFloat = 0
 }
 
-/// The wing chips. Each fills the rect the geometry measured for it —
-/// fixed extents keep the hit region honest and keep content churn from
-/// reframing the window. They draw as opaque black capsules: bare text
-/// reads as stray menu-bar labels, and a translucent fill reads as a
-/// smudge — the flat black capsule beside the flat black notch is the
-/// notch-extension look. Text truncates inside rather than growing the
-/// claim.
+/// The wing chips. The claimed rect keeps the hit region honest; the
+/// drawn capsule hugs the notch side of that claim and sizes to its
+/// content — an opaque black pill against the black notch is the
+/// notch-extension look, where a claim-filling capsule or bare text in
+/// open menu-bar space reads as clutter. Text truncates inside rather
+/// than growing the claim.
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            if let left = model.left { chip(left.slot, rect: left.rect) }
-            if let right = model.right { chip(right.slot, rect: right.rect) }
+            if let left = model.left { chip(left.slot, rect: left.rect, side: .left) }
+            if let right = model.right { chip(right.slot, rect: right.rect, side: .right) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .contain)
     }
 
-    private func chip(_ slot: ScreenBarWingSlot, rect: CGRect) -> some View {
+    private func chip(_ slot: ScreenBarWingSlot, rect: CGRect, side: ScreenBarWingSide) -> some View {
         HStack(spacing: 5) {
             if let provider = slot.provider {
                 ProviderTile(style: .style(for: provider), size: 12)
@@ -78,10 +77,20 @@ struct ScreenBarWingsView: View {
                 .foregroundStyle(slot.textColor)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                // The capsule hugs content, so the bound has to live on
+                // the text — without it a long label outgrows the claim
+                // and the pill rides onto the notch.
+                .frame(maxWidth: max(24, rect.width - (slot.provider == nil ? 18 : 36)))
         }
         .padding(.horizontal, 9)
-        .frame(width: rect.width, height: rect.height)
+        .padding(.vertical, 3.5)
+        .fixedSize()
         .background(Capsule(style: .continuous).fill(.black))
+        // The capsule hugs the notch side of the claim: a left chip
+        // anchors to the claim's trailing edge, a right chip to its
+        // leading edge — the pill always touches the notch's flank.
+        .frame(width: rect.width, height: rect.height,
+               alignment: side == .left ? .trailing : .leading)
         // The rect is in the hosting view's bottom-left space; SwiftUI
         // positions from the top, so flip the midpoint.
         .position(x: rect.midX, y: model.viewHeight - rect.midY)

@@ -24,17 +24,23 @@ final class BuddyHostingView<Content: View>: NSHostingView<Content>, BuddyMouseH
     /// docked status line hang off this, so they only exist on hover.
     var onHoverChange: ((Bool) -> Void)?
     /// Ours only — the hosting view keeps whatever tracking areas it
-    /// installs for SwiftUI's own hover machinery.
+    /// installs for SwiftUI's own hover machinery. It re-registers only
+    /// when the bounds actually change: the buddy's breathing relayouts
+    /// run per animation tick, and re-adding the area each time refires
+    /// enter/exit and flickers the name tag.
     private var hoverArea: NSTrackingArea?
+    private var hoverAreaBounds: NSRect?
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
+        if hoverArea != nil, hoverAreaBounds == bounds { return }
         if let hoverArea { removeTrackingArea(hoverArea) }
         let area = NSTrackingArea(rect: bounds,
-                                  options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  options: [.mouseEnteredAndExited, .activeAlways],
                                   owner: self, userInfo: nil)
         addTrackingArea(area)
         hoverArea = area
+        hoverAreaBounds = bounds
     }
 
     override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }

@@ -971,3 +971,28 @@ did nothing, and the peek flapped again.
   occupied frame now joins the union while the card is up
   (`underBandRegion`), closing the dead zone.
 - Verified: `swift build` clean; 9 interaction tests green.
+
+## Notch polish pass 3 — flap fix, hugging pills, scroll swipes — LANDED
+
+Owner re-check on the installed build: hovering the band opened and
+closed the peek nonstop, and the wings still did not read like the
+reference.
+
+- The flap: `geometryChanged` hid the tooltip on ANY wing-rect change.
+  State churn toggles a slot → peek killed while the pointer was still
+  on the band → the 180 ms hover re-armed it → repeat forever. Now it
+  re-anchors under the band's current rect and re-evaluates the hover —
+  the peek survives geometry churn it has no business dying to.
+- The wings: the claim rect was being drawn as the capsule and the
+  content centered inside — a ~110 pt pill floating far off the notch.
+  The capsule now hugs the notch side of the claim and sizes to its
+  content (bounded text so a long label truncates instead of riding
+  onto the notch). Opaque black, 11 pt, matches the notch-extension
+  look the references show.
+- The caption flicker: the buddy's per-tick breathing relayout
+  re-registered the hover tracking area every frame, refiring
+  enter/exit — the name tag strobed. It now re-registers only when the
+  bounds actually change.
+- Scroll swipes (pass 2) and the drag path both live: fingers down
+  expands, fingers up collapses a pinned card.
+- Verified: `swift build` clean; 562 Swift tests green.

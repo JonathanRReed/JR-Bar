@@ -176,9 +176,16 @@ final class ScreenBarInteraction {
         hideTooltip()
     }
 
-    /// The band moved (screen change): drop any tooltip and re-evaluate.
+    /// The band or a wing rect moved. Re-anchor a live peek under the
+    /// band's new rect instead of hiding it — killing it while the
+    /// pointer sat on the band just re-armed the hover, and a wing slot
+    /// coming and going on state churn turned that into an open/close
+    /// flap. A pinned card re-anchors the same way; its buttons ride along.
     func geometryChanged() {
-        hideTooltip()
+        if isTooltipShown, let rect = bandRect() ?? hitRects().first,
+           let current = focus() ?? lastFocus {
+            showTooltip(current)
+        }
         hovering = false
         pointerMoved()
     }
