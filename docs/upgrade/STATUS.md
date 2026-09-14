@@ -179,6 +179,21 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W24 slice — utility-generation policy — LANDED
+
+- `src/jrbar/utility_generation.py` (new): the decision layer a
+  title/summary adapter drives — `should_generate` enforces the
+  precedence (user title > provider title > generated), once-per-thread
+  with explicit-regeneration override, and no-evidence refusal;
+  `collect_evidence` bounds the facts sent to the model (first user
+  message, last assistant message, current label, each ≤500 chars —
+  a pasted log can never flood the request); `accept_title` is the
+  result gate (non-empty printable ≤80 chars or the deterministic label
+  wins); `TitleCache` is the bounded once-per-session memory.
+- Still open in W24: the adapter itself — the model call rides the
+  W19/W20 execution contract — plus cancellation, usage-category
+  surfacing, and fish/notification exclusion for utility work.
+
 ## W21 slice — shared JSON-RPC stdio transport — LANDED
 
 - `src/jrbar/acp_transport.py` (new): the bounded transport every
