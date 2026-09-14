@@ -1529,3 +1529,48 @@ def test_the_aggregate_is_always_derivable_from_the_rows() -> None:
             assert aggregate["ready"] > 0 and aggregate["active"] == 0
         if aggregate["mode"] == "idle":
             assert not any(aggregate[key] for key in ("needs_you", "active", "ready", "failed"))
+
+
+def test_session_rows_carry_the_separated_axes() -> None:
+    # The tank's planner reads review/freshness off state.sessions — the
+    # same session_axes the roster rows carry.
+    row = session_document(
+        _status(
+            mode=AgentMode.COMPLETED,
+            event_name="SessionEnd",
+            updated_at=_at(30.0),
+        ),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False, provider_ended=True),
+        workers=0,
+        acknowledged=False,
+    )
+    assert row["axes"] == {
+        "outcome": "succeeded",
+        "review": "unreviewed",
+        "freshness": "live",
+    }
+
+    acknowledged = session_document(
+        _status(
+            mode=AgentMode.COMPLETED,
+            event_name="SessionEnd",
+            updated_at=_at(30.0),
+        ),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False, provider_ended=True),
+        workers=0,
+        acknowledged=True,
+    )
+    assert acknowledged["axes"]["review"] == "reviewed"
+
+    stale_row = session_document(
+        _status(mode=AgentMode.WORKING, updated_at=None),
+        operator_state=None,
+        ask_ids=frozenset(),
+        extras=SessionExtras(pid=None, process_alive=False, provider_ended=False),
+        workers=0,
+    )
+    assert stale_row["axes"]["freshness"] in {"delayed", "unknown"}

@@ -221,13 +221,19 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     public var event: String?
     public var tool: String?
     public var message: String?
+    /// The separated record axes on the live session row — the same
+    /// `session_axes` the roster carries, so a surface reading
+    /// `state.sessions` (the tank) sees review/freshness without a
+    /// roster fetch. nil on older daemons.
+    public var axes: CoreSessionAxes?
 
     public init(id: String, provider: String, kind: String = "main", parent: String? = nil, label: String? = nil,
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
                 snoozedUntil: Double? = nil, remote: Bool = false,
-                event: String? = nil, tool: String? = nil, message: String? = nil) {
+                event: String? = nil, tool: String? = nil, message: String? = nil,
+                axes: CoreSessionAxes? = nil) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -251,11 +257,12 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.event = event
         self.tool = tool
         self.message = message
+        self.axes = axes
     }
 
     enum CodingKeys: String, CodingKey {
         case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
-        case event, tool, message
+        case event, tool, message, axes
         case shortId = "short_id"
         case nextActor = "next_actor"
         case updatedAt = "updated_at"
@@ -287,6 +294,7 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         event = try c.decodeIfPresent(String.self, forKey: .event)
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
         message = try c.decodeIfPresent(String.self, forKey: .message)
+        axes = try? c.decodeIfPresent(CoreSessionAxes.self, forKey: .axes)
     }
 }
 

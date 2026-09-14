@@ -146,12 +146,16 @@ public struct Fish: Equatable, Sendable, Identifiable {
     /// like the swim it rides through `previous` untouched instead of
     /// being re-hashed per fish per frame.
     public var seed: UInt64
+    /// W13's semantic plan — the AQ action + overlay the session's wire
+    /// facts drove. Recomputed every reduce (it reads `now` and the
+    /// session), so it rides `previous` as the freshest word.
+    public var plan: FishPlan?
 
     public init(id: String, label: String, providerID: String, state: FishState,
                 lane: Double, speed: Double, direction: Double, stateSince: Date,
                 enteredAt: Date = .distantPast, lastUpdate: Date? = nil,
                 species: FishSpecies = .minnow, isFry: Bool = false, anchorID: String? = nil,
-                seed: UInt64? = nil) {
+                seed: UInt64? = nil, plan: FishPlan? = nil) {
         self.id = id
         self.label = label
         self.providerID = providerID
@@ -166,6 +170,7 @@ public struct Fish: Equatable, Sendable, Identifiable {
         self.enteredAt = enteredAt
         self.lastUpdate = lastUpdate
         self.seed = seed ?? AquariumModel.stableHash(id)
+        self.plan = plan
     }
 
     /// Drawn-size proxy: species scale times the lane's depth scale.
@@ -319,9 +324,13 @@ public enum AquariumModel {
     }
 
     /// One session → fish, preserving the swim of the `previous` fish
-    /// with the same id when there is one.
+    /// with the same id when there is one. The plan is recomputed on
+    /// every pass — `state` comes from it (the AQ23 stale degradation
+    /// lives there), so a fish's displayed state and its cited evidence
+    /// are the same decision.
     static func fishFor(session: CoreSession, previous: Fish?, now: Date) -> Fish {
-        let target = state(for: session)
+        let plan = AquariumPlanner.plan(for: session, axes: session.axes, now: now)
+        let target = plan.state
         if var fish = previous {
             // The swim belongs to the fish; only what the session
             // says about it now is rewritten.
@@ -330,6 +339,7 @@ public enum AquariumModel {
             fish.species = FishSpecies.forProvider(session.provider)
             fish.isFry = false
             fish.anchorID = nil
+            fish.plan = plan
             if let updated = session.updatedAt {
                 fish.lastUpdate = Date(timeIntervalSince1970: updated)
             }
@@ -351,7 +361,8 @@ public enum AquariumModel {
             enteredAt: now,
             lastUpdate: session.updatedAt.map { Date(timeIntervalSince1970: $0) },
             species: FishSpecies.forProvider(session.provider),
-            seed: stableHash(session.id))
+            seed: stableHash(session.id),
+            plan: plan)
     }
 
     /// The tank's reading of a session, in `SessionActivity`'s words.

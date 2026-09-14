@@ -2288,6 +2288,7 @@ def _roster_document(
         has_answer_handler=getattr(
             getattr(self, "answer_handler_registry", None), "has_handler", None
         ),
+        acknowledged_keys=self._core_acknowledged_keys(),
     )
     rows = roster_rows(
         projected,

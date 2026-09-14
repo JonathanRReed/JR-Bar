@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final
 
+from .activity_model import session_axes
 from .completion_visibility import (
     COMPLETED_VISIBLE_SECONDS,
     END_EVENT_NAMES,
@@ -923,6 +924,7 @@ def session_document(
     snoozed_until: float | None = None,
     answer_contracts: object = None,
     has_answer_handler: object = None,
+    acknowledged: bool = False,
 ) -> dict[str, Any]:
     mode = getattr(status, "mode", AgentMode.UNKNOWN)
     if not isinstance(mode, AgentMode):
@@ -1039,6 +1041,16 @@ def session_document(
         "event": getattr(status, "event_name", None),
         "tool": getattr(status, "tool_name", None),
         "message": getattr(status, "message", None),
+        # The separated record axes on the live session row too — the
+        # tank's planner reads review/freshness for AQ21–AQ23 instead of
+        # waiting for a roster fetch. Same ``session_axes`` the roster
+        # rows carry, computed from the same fields.
+        "axes": session_axes(
+            lifecycle=lifecycle,
+            stale=stale,
+            updated_at=updated_at,
+            acknowledged=acknowledged,
+        ),
     }
 
 
@@ -1288,6 +1300,7 @@ def project_session_rows(
     snoozed_until_by_id: dict[str, float] | None = None,
     answer_contracts: object = None,
     has_answer_handler: object = None,
+    acknowledged_keys: object = (),
 ) -> tuple[list[dict[str, Any]], frozenset[str]]:
     """Every session the snapshot knows, projected — before panel visibility.
 
@@ -1326,6 +1339,7 @@ def project_session_rows(
     labels_by_id: dict[str, str] = {}
     ordered = sorted(statuses, key=lambda status: bool(getattr(status, "is_subagent", False)))
     documents_by_id: dict[str, dict[str, Any]] = {}
+    acknowledged_at_by_id = acknowledged_epoch_by_session(acknowledged_keys or ())
     for status in ordered:
         agent_id = str(getattr(status, "agent_id", ""))
         parent = getattr(status, "parent_agent_id", None) if getattr(status, "is_subagent", False) else None
@@ -1339,6 +1353,7 @@ def project_session_rows(
             snoozed_until=(snoozed_until_by_id or {}).get(agent_id),
             answer_contracts=answer_contracts,
             has_answer_handler=has_answer_handler,
+            acknowledged=agent_id in acknowledged_at_by_id,
         )
         labels_by_id[agent_id] = document["label"]
         documents_by_id[agent_id] = document
@@ -1392,6 +1407,7 @@ def build_state_document(
         snoozed_until_by_id=snoozed_until_by_id,
         answer_contracts=answer_contracts,
         has_answer_handler=has_answer_handler,
+        acknowledged_keys=acknowledged_keys,
     )
     extras_by_id = extras_by_id or {}
     # An ask is the loudest thing the panel can show, so visibility never

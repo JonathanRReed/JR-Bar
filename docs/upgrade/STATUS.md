@@ -179,6 +179,49 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W13 slice — Aquarium semantic behavior planner — LANDED
+
+- `AquariumPlanner.swift` (new, JRBarCore): a pure per-session planner
+  producing a `FishPlan` — `FishState` + a finer `FishAction`
+  (AQ01–AQ24's vocabulary) + one `FishOverlay` + `parallelMarkers` +
+  an `evidence` line naming the wire facts that drove it (T54: a
+  fixture and a live fish cite the same evidence).
+- AQ mapping onto real wire facts only:
+  - AQ02–AQ04 from `mode` (`idle_ready`→rest, `working`→patrol,
+    `long_task_progress`/`thinking`→attentive hover).
+  - AQ05–AQ12 from `tool`+`event`: only a live `tool_running` row with
+    a fresh `updatedAt` (≤45 s) drives a station — Read/Glob→forage,
+    search/web→explore, Edit/Write→tend stones, Bash→current work,
+    test/build→inspect structure, `mcp__*`→service visit, unknown
+    tool→generic feed. AQ11 fires on a fresh `PostToolUse` for a
+    test/build tool that stopped running — the result bubble.
+  - AQ13 `parallelMarkers` from `workers` on a working main.
+  - AQ15 `tokenPass` only on a real `delegation`/`handoff`/
+    `subagent_stop` event — proximity never implies a handoff.
+  - AQ16/AQ17 from the ask's `kind` (permission→attention buoy,
+    else→question bubble). AQ20 `blocked_error`/`failed`→warning buoy.
+  - AQ21/AQ22 from the review axis (unreviewed done→pearl,
+    reviewed→clear). AQ23 from `stale` or a non-live freshness axis →
+    neutral uncertain drift — stale claims no precise activity even
+    while `mode` still reads working. AQ24 `ended`→inactive drift,
+    kept distinct from failed by the plan's action.
+- `Fish` carries `plan`; `fishFor` computes it and takes `state` from
+  it — displayed state and cited evidence are one decision. The view
+  draws one overlay marker per plan (warning buoy, attention ring,
+    question dot, pearl, dashed stale ring); no overlay means none.
+- `axes` now rides `state.sessions` too: `session_document` emits the
+  same `session_axes` the roster computes (acknowledged threaded
+  through `project_session_rows`), so the tank's review/freshness
+  overlays fire live rather than only in a roster fetch. `CoreSession`
+  decodes `axes` tolerantly.
+- `AquariumPlannerTests` (23): every AQ rule maps to a distinguishable
+  plan, stale tool events are history not stations, the every-action-
+  is-reachable contract holds.
+- Still open in W13: burst coalescing across rapid tool changes is
+  handled by the wire already reducing to the last event (no separate
+  coalescer needed); AQ18 queued / AQ19 rate-limited have no wire
+  source — honestly absent, not faked.
+
 ## W12 slice — shelf tray, timers, calendar glance — LANDED
 
 - `ShelfTray.swift` (new): bounded file tray on the pinned card —

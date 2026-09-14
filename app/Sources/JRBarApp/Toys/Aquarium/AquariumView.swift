@@ -2495,6 +2495,63 @@ struct AquariumView: View {
         }
     }
 
+    /// W13's overlay markers — a small glyph floating just above the
+    /// fish, one per plan. Each is a distinct shape so a fixture that
+    /// asserts `overlay == .warningBuoy` sees the same marker the live
+    /// tank draws; nothing here routes a command or answers anything.
+    private func drawOverlayMarker(_ overlay: FishOverlay, l: Layout,
+                                   canvas: inout GraphicsContext,
+                                   length: Double, height: Double, t: Double) {
+        let r = max(3.2, length * 0.10)
+        let x = l.x + l.facing * length * 0.18
+        let y = l.y - height * 0.5 - r - 6
+        var m = canvas
+        m.opacity = l.opacity * 0.9
+        switch overlay {
+        case .warningBuoy:
+            // A warning buoy: a solid triangle riding the water line.
+            var tri = Path()
+            tri.move(to: CGPoint(x: x, y: y - r))
+            tri.addLine(to: CGPoint(x: x + r, y: y + r * 0.7))
+            tri.addLine(to: CGPoint(x: x - r, y: y + r * 0.7))
+            tri.closeSubpath()
+            m.fill(tri, with: .color(.orange))
+        case .attentionBuoy:
+            // A permission ask: a ringed dot — the lock cue reads as
+            // "decide this" rather than "answer me".
+            m.stroke(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                     with: .color(.white), lineWidth: 1.1)
+            m.fill(Path(ellipseIn: CGRect(x: x - r * 0.4, y: y - r * 0.4,
+                                          width: r * 0.8, height: r * 0.8)),
+                   with: .color(.white))
+        case .questionBubble:
+            // The plain ask: the bubble is already the surfacing cue —
+            // the overlay adds a steady dot inside it so a question
+            // isn't mistaken for an idle sip.
+            m.fill(Path(ellipseIn: CGRect(x: x - r * 0.5, y: y - r * 0.5,
+                                          width: r, height: r)),
+                   with: .color(.white.opacity(0.85)))
+        case .pearl:
+            // An unreviewed completion: a bright pearl the fish set
+            /// down — a dot with a soft gleam, cleared on review.
+            m.fill(Path(ellipseIn: CGRect(x: x - r * 0.6, y: y - r * 0.6,
+                                          width: r * 1.2, height: r * 1.2)),
+                   with: .color(.white))
+            var gleam = canvas
+            gleam.blendMode = .plusLighter
+            gleam.opacity = l.opacity * (0.25 + 0.15 * sin(t * 1.4))
+            gleam.fill(Path(ellipseIn: CGRect(x: x - r, y: y - r,
+                                              width: r * 2, height: r * 2)),
+                       with: .color(.cyan.opacity(0.5)))
+        case .staleMarker:
+            // AQ23's neutral marker: a hollow dashed ring — the fish
+            // drifts, nothing precise is claimed.
+            m.stroke(Path(ellipseIn: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2)),
+                     with: .color(.white.opacity(0.4)),
+                     style: StrokeStyle(lineWidth: 0.8, dash: [2, 3]))
+        }
+    }
+
     private func drawFish(canvas: inout GraphicsContext, size: CGSize, t: Double, now: Date,
                           fish: Fish, layout l: Layout,
                           parent: (fish: Fish, layout: Layout)?, showLabels: Bool) {
@@ -2670,6 +2727,14 @@ struct AquariumView: View {
                                             width: rr * 2, height: rr * 1.6)),
                      with: .color(.white.opacity(l.opacity * (1 - l.tapRing) * 0.35)),
                      lineWidth: 1.6)
+        }
+
+        // W13's evidence overlays — one marker, only what the plan
+        // cites. A buoy is a buoy: the same glyph a fixture asserts
+        // the overlay enum carries, drawn small above the fish.
+        if let overlay = fish.plan?.overlay, !fish.isFry {
+            drawOverlayMarker(overlay, l: l, canvas: &canvas,
+                              length: length, height: height, t: t)
         }
 
         // An idle fish sipping the surface leaves one small bubble.
