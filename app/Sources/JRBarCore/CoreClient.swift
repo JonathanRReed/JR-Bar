@@ -96,6 +96,27 @@ public final class CoreClient: @unchecked Sendable {
     /// ours, we check theirs). Nil disables the check.
     public var expectedPeerUID: uid_t? = getuid()
 
+    // MARK: Resumable event stream
+
+    /// One daemon incarnation, one event stream. `lastEventCursor` is the
+    /// resume point: every event frame carries `<stream>:<event id>` and
+    /// `hello` carries the journal's tail, so a reconnect on the SAME
+    /// stream asks `replay_events` for exactly the frames the drop ate.
+    /// A different stream means the journal restarted — we anchor at its
+    /// tail and never replay history this client never subscribed to.
+    private var lastStream: String?
+    private var lastEventCursor: String?
+    private var lastEventSeq: Int?
+    /// The in-flight `replay_events` command id; its reply is consumed
+    /// here (replayed frames) instead of reaching the handler as a reply.
+    private var replayReplyID: String?
+    /// Bounded id ring for dedupe: replayed events overlap live ones —
+    /// the journal answers with events the socket may already have fanned
+    /// out — so an id delivered once is never delivered twice.
+    private var deliveredEventIDs: [String] = []
+    private var deliveredEventIDSet: Set<String> = []
+    private let deliveredEventIDCap = 1024
+
     public init(socketPath: String = CoreSocketPath.resolve(), replyTimeout: TimeInterval = 10,
                 helloTimeout: TimeInterval = 10, connectTimeout: TimeInterval = 5,
                 writeTimeout: TimeInterval = 5,
@@ -412,15 +433,140 @@ public final class CoreClient: @unchecked Sendable {
             for frame in splitter.feed(Data(buffer[0..<count])) {
                 do {
                     let message = try CoreCodec.decode(frame: frame)
-                    if case .hello = message { sawHello = true }
-                    if case .reply(let reply) = message, let waiting = takePending(reply.id) {
-                        waiting.resume(returning: reply)
+                    if case .hello(let hello) = message {
+                        sawHello = true
+                        beginResumableStream(hello: hello, socket: socket)
+                    }
+                    if case .reply(let reply) = message {
+                        lock.lock()
+                        let isReplay = reply.id == replayReplyID
+                        if isReplay { replayReplyID = nil }
+                        lock.unlock()
+                        if isReplay {
+                            deliverReplayedEvents(reply)
+                            continue
+                        }
+                        if let waiting = takePending(reply.id) {
+                            waiting.resume(returning: reply)
+                        }
+                    }
+                    if case .event(let event) = message {
+                        if markEventDelivered(event.id) { continue }
+                        noteEventCursor(event.cursor)
                     }
                     handler(.message(message))
                 } catch {
                     handler(.decodeFailure(String(describing: error)))
                 }
             }
+        }
+    }
+
+    // MARK: Replay (read thread only)
+
+    /// Splits `<stream>:<event id>`; `ev-N` ids yield their sequence,
+    /// custom ids yield nil (the journal still matches them by cursor).
+    private static func splitCursor(_ cursor: String) -> (stream: String, seq: Int?)? {
+        guard let colon = cursor.firstIndex(of: ":") else { return nil }
+        let stream = String(cursor[cursor.startIndex..<colon])
+        let identifier = String(cursor[cursor.index(after: colon)...])
+        let seq = identifier.hasPrefix("ev-") ? Int(identifier.dropFirst(3)) : nil
+        return (stream, seq)
+    }
+
+    /// Called when `hello` lands. Same stream + a cursor behind the
+    /// daemon's tail means the drop ate frames: ask `replay_events` for
+    /// the suffix. A new stream (first connect, daemon restart) anchors
+    /// at the tail instead — replaying a restarted journal would surface
+    /// events this client never subscribed to.
+    private func beginResumableStream(hello: CoreHello, socket: Int32) {
+        guard let stream = hello.stream else { return }
+        lock.lock()
+        let sameStream = stream == lastStream
+        let resumeFrom = lastEventCursor
+        lock.unlock()
+        if sameStream, let resumeFrom, resumeFrom != hello.cursor {
+            let command = CoreCommand(id: nextCommandID(), name: "replay_events",
+                                      args: ["after": .string(resumeFrom)])
+            guard let bytes = try? CoreCodec.encode(command: command) else { return }
+            lock.lock()
+            replayReplyID = command.id
+            lock.unlock()
+            // A failed write leaves the socket half-dead; the read below
+            // fails, the loop reconnects, and the next hello retries the
+            // replay — resumeFrom still points where it did.
+            if writeAll(socket, bytes) != nil {
+                lock.lock()
+                replayReplyID = nil
+                lock.unlock()
+            }
+            return
+        }
+        lock.lock()
+        lastStream = stream
+        lastEventCursor = hello.cursor
+        lastEventSeq = hello.cursor.flatMap { Self.splitCursor($0)?.seq } ?? nil
+        // Ids restart with the stream; keeping the old ring would let a
+        // new incarnation's `ev-1` look like a duplicate.
+        deliveredEventIDs.removeAll()
+        deliveredEventIDSet.removeAll()
+        replayReplyID = nil
+        lock.unlock()
+    }
+
+    /// Advances the resume point, never backwards: a replayed cursor is
+    /// older than live frames that raced past the reply, so a stale
+    /// sequence must not pull `lastEventCursor` back.
+    private func noteEventCursor(_ cursor: String?) {
+        guard let cursor, let (stream, seq) = Self.splitCursor(cursor) else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard stream == lastStream else { return }
+        if let seq, let last = lastEventSeq, seq <= last { return }
+        if seq != nil { lastEventSeq = seq }
+        lastEventCursor = cursor
+    }
+
+    /// True when this event id already reached the handler — the frame
+    /// is a replay/live overlap and must not be delivered twice.
+    private func markEventDelivered(_ id: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if deliveredEventIDSet.contains(id) { return true }
+        deliveredEventIDs.append(id)
+        deliveredEventIDSet.insert(id)
+        if deliveredEventIDs.count > deliveredEventIDCap {
+            deliveredEventIDSet.remove(deliveredEventIDs.removeFirst())
+        }
+        return false
+    }
+
+    /// Consumes the `replay_events` reply on the read thread. Journal
+    /// entries decode exactly like wire events and run through the same
+    /// dedupe, so the suffix lands once even when the socket already
+    /// fanned some of it out. `resync_required` re-anchors at the live
+    /// tail the daemon returned — the gap stays honest (state snapshots
+    /// resync the UI; nothing here fabricates events).
+    private func deliverReplayedEvents(_ reply: CoreReply) {
+        guard reply.ok, let result = reply.result else { return }
+        if result["resync_required"]?.boolValue == true {
+            if let cursor = result["cursor"]?.stringValue {
+                noteEventCursor(cursor)
+            }
+            return
+        }
+        guard let events = result["events"]?.arrayValue else { return }
+        for value in events {
+            guard let data = try? JSONEncoder().encode(value),
+                  let event = try? JSONDecoder().decode(CoreEvent.self, from: data) else { continue }
+            if markEventDelivered(event.id) { continue }
+            handler(.message(.event(event)))
+        }
+        // The reply's cursor is the last RETURNED event's position —
+        // advancing to it once keeps a live frame that raced past the
+        // reply from being pulled backwards by a replayed one.
+        if let cursor = result["cursor"]?.stringValue {
+            noteEventCursor(cursor)
         }
     }
 }

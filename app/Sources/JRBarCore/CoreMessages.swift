@@ -28,17 +28,28 @@ public struct CoreHello: Codable, Hashable, Sendable {
     public var coreVersion: String?
     public var pid: Int?
     public var capabilities: [String]
+    /// The daemon incarnation's event stream and its journal's tail
+    /// cursor. A reconnect that sees the SAME stream can ask
+    /// `replay_events` for the frames the drop ate; a different stream
+    /// is a restarted journal — anchor, never replay.
+    public var stream: String?
+    public var cursor: String?
 
-    public init(coreVersion: String? = nil, pid: Int? = nil, capabilities: [String] = []) {
+    public init(coreVersion: String? = nil, pid: Int? = nil, capabilities: [String] = [],
+                stream: String? = nil, cursor: String? = nil) {
         self.coreVersion = coreVersion
         self.pid = pid
         self.capabilities = capabilities
+        self.stream = stream
+        self.cursor = cursor
     }
 
     enum CodingKeys: String, CodingKey {
         case coreVersion = "core_version"
         case pid
         case capabilities
+        case stream
+        case cursor
     }
 
     public init(from decoder: Decoder) throws {
@@ -46,6 +57,8 @@ public struct CoreHello: Codable, Hashable, Sendable {
         coreVersion = try c.decodeIfPresent(String.self, forKey: .coreVersion)
         pid = try c.decodeIfPresent(Int.self, forKey: .pid)
         capabilities = try c.decodeIfPresent([String].self, forKey: .capabilities) ?? []
+        stream = try c.decodeIfPresent(String.self, forKey: .stream)
+        cursor = try c.decodeIfPresent(String.self, forKey: .cursor)
     }
 }
 
@@ -1054,10 +1067,14 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// both ends of it. nil for events without a measured span.
     public var duration: Double?
 
+    /// The resume point this frame carries: `<stream>:<event id>`. The
+    /// last cursor a client saw is what it replays from after a drop.
+    public var cursor: String?
+
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
-                lane: String? = nil, duration: Double? = nil) {
+                lane: String? = nil, duration: Double? = nil, cursor: String? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -1074,9 +1091,10 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.range = range
         self.lane = lane
         self.duration = duration
+        self.cursor = cursor
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration }
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1102,6 +1120,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         range = try? c.decodeIfPresent(String.self, forKey: .range)
         lane = try? c.decodeIfPresent(String.self, forKey: .lane)
         duration = try? c.decodeIfPresent(Double.self, forKey: .duration)
+        cursor = try? c.decodeIfPresent(String.self, forKey: .cursor)
     }
 
     /// `deck_receipt` as a receipt value.

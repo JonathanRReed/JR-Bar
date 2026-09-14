@@ -41,18 +41,34 @@ hand-written examples.
   each volume after the legacy teardown, past the controllers' dedupe
   and resting glow, so a quit never leaves a strip looping.
   If the socket drops, the app restarts the daemon and reconnects with
-  backoff (0.5 s, 1 s, 2 s, 4 s, cap 5 s).
+  backoff (0.5 s, 1 s, 2 s, 4 s, cap 5 s); on the same event `stream`
+  the client replays the missed journal suffix (`replay_events`) so a
+  drop costs no events the journal still retains.
 - Every message has `"t"` (type) and `"v": 1`.
 - Coalescing: `state` at most 20/s, `lights` 30/s, `settings` 10/s, latest
-  wins. `event`, `reply` and `log` are never coalesced or dropped.
+  wins. `event`, `reply` and `log` are never coalesced; the bounded
+  dispatch queue (128 frames) sheds its OLDEST frames on overflow and a
+  client whose sends keep blocking is dropped outright — but events stay
+  replayable from the journal (512 entries, larger than the queue on
+  purpose) until it evicts them, after which `replay_events` says so
+  (`cursor_expired`, with the `dropped` count) instead of pretending.
 
 ## Daemon → app
 
 ### hello
 ```json
 {"t":"hello","v":1,"core_version":"0.8.0","pid":123,
- "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest","deck"]}
+ "capabilities":["sessions","lights","usage","devices","power","effects","calibration","history","peers","ingest","deck","roster","event_replay"],
+ "stream":"1234-abc123","cursor":"1234-abc123:ev-42"}
 ```
+`stream` identifies this daemon incarnation's event journal (pid +
+start epoch); `cursor` is its current tail — the position a fresh
+client anchors at. A reconnecting client that sees the SAME `stream`
+may ask `replay_events` with the last `cursor` it saw to recover the
+frames the drop ate. A different `stream` means the journal restarted:
+anchor at the new `cursor`, never replay. The journal is bounded
+(512 entries) and in-memory by design — replay survives socket churn,
+not a daemon restart.
 
 ### state (full)
 Sent on connect, at the end of every controller refresh (a 15 s timer plus
@@ -520,9 +536,14 @@ macOS notification or plays a sound itself in headless mode), so `notify`
 and `sound` are usually absent; `sound: "glass"` marks the chime edge of
 `escalation_stage` 3.
 ```json
-{"t":"event","v":1,"id":"ev-12","kind":"completed","session":"…","provider":"claude","label":"jr-bar-b7","detail":null,"at":…}
-{"t":"event","v":1,"id":"ev-13","kind":"escalation_stage","session":"…","label":"sidepulse-core","stage":3,"sound":"glass","at":…}
+{"t":"event","v":1,"id":"ev-12","kind":"completed","session":"…","provider":"claude","label":"jr-bar-b7","detail":null,"at":…,"cursor":"1234-abc123:ev-12"}
+{"t":"event","v":1,"id":"ev-13","kind":"escalation_stage","session":"…","label":"sidepulse-core","stage":3,"sound":"glass","at":…,"cursor":"1234-abc123:ev-13"}
 ```
+Every event carries `cursor` — its own resume point in the daemon's
+journal (`<stream>:<event id>`). The journal is written under the same
+lock as the socket fan-out, so the suffix a `replay_events` call returns
+is exactly what the wire carried, in order, with nothing dropped in
+between.
 Kinds emitted today: `completed`, `failed`, `quota_crossed` (from the
 activity ledger), `ask_opened`, `ask_resolved` (from the ask set changing
 between refreshes; `detail` carries the summary), `escalation_stage`
@@ -708,6 +729,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | `list_history` | since, limit | Everything `sessions` no longer lists. Activity ledger rows `{at, kind, provider, session, label, detail, duration, unseen}`; kinds `completed`, `asked`, `failed`, `quota_crossed`. `duration` is set only when the daemon observed both ends of the active stint — a session first seen already over gets none. `unseen` is derived per row from `at > last_seen`, the ledger's persistent watermark; the daemon also marks everything seen when the last client disconnects. `{rows, total, last_seen}`. |
 | `list_roster` | scope (`all`/`live`/`workers`/`attention`/`finished`/`hidden`), provider, parent, since, limit | The independent roster: every session the collector retains — panel visibility never removes a row. Each row is the `state.sessions` shape plus `schema` (record contract version), `pinned` (open ask), `visibility` (the verdict the panel *would* give: `live`/`completion`/`hidden`), and `axes`: `{outcome, review, freshness}` — `outcome` is `none`/`succeeded`/`failed`/`unreported`/`unknown` (what the provider reported, separate from `lifecycle`), `review` is `pending`/`unreviewed`/`reviewed` (Clear Agents acknowledgement is the review receipt), `freshness` is `live`/`delayed`/`unknown` (is the source still delivering). `hidden` scope is the audit cut: exactly what panel aging evicts. `{t:"roster", schema, now, scope, filters, sessions, counts{total, workers, attention, live, finished, hidden_from_panel, listed}, coverage}` — `coverage` names the bound: the collector's retained statuses; deeper history is `list_history`'s event ledger, not session records. `invalid_value` for an unknown scope. |
 | `mark_history_seen` | | The user just looked at History: advances the ledger's `last_seen` to now, so `unseen` rows and the "while you were away" banner measure from the last look, not from an app restart. `{last_seen}`. |
+| `replay_events` | after?, limit? (default 500, capped at the journal size) | The event stream's resumable suffix. `after` is a `cursor` from an `event` frame or `hello`; omitting it replays the whole retained journal. Replies `{t:"events", stream, retained, dropped, events[], cursor, has_more, resync_required}` — `events` are the exact journaled frames in order, `cursor` is the last one returned, `has_more` means the page cut before the tail (call again with that `cursor`). A cursor from another stream incarnation answers `resync_required: true, reason: "foreign_stream"`; one the bounded journal already evicted answers `reason: "cursor_expired"` — never a fabricated empty catch-up. `retained`/`dropped` are the journal's coverage/gap counters. `unsupported` when the core cannot replay. |
 | `dismiss_session` | session | Acknowledges one live or stuck row until it next speaks — the same receipt `clear_completed` writes, aimed at a single session the batch clear would never touch; the row leaves `sessions` now and returns the moment a newer event lands. `not_found` for an unknown session, `refused` for a `remote:` row (the peer's to manage) or a session with an open ask (the ask is the point). |
 | `doctor` | | `{ok, core_version, commit, python, pid, socket, uptime_seconds, clients, hooks, devices, settings_generation, state_generation, commands, checks[{name, ok, detail}], memory, performance}` from `doctor.py` plus the hook shim and pending-file checks. `commit` is `JRBAR_COMMIT` from an installed deployment (`scripts/install-agents.sh`), else the checkout's HEAD; `alcove_follow_state` never fails the daemon (Alcove following is the app's). `performance` is `{metrics{name: {count, p50_ms, p95_ms, max_ms, outcomes}}}` (the `PerformanceRegistry` timings the legacy Why panel renders), `cpu{user_s, system_s, percent_since_last}` (rusage deltas between doctor calls; `percent_since_last` is `null` on the first), and `frames{state_generation, lights_generation, state_per_minute, lights_per_minute}` (documents actually broadcast, counted over a rolling 60 s window). `jrbar doctor` appends these as a `performance:` section when a daemon answers (its `--socket` selects another daemon); `--json` carries it under `daemon.performance`. |
 | `usage_history` | provider, range (`7d`, `30d`, `90d`, `365d`) | Daily and hourly token/cost rows for one provider from the local transcript scan (`usage_stats.scan_usage`, the same one the Python Usage window ran): `{provider, range, days[{date, tokens_in, tokens_out, cache_read, cost_usd}], hours[{hour, at, …}] (last 7×24), pricing{input_per_mtok, output_per_mtok, cache_read_per_mtok, as_of, approximate, currency, model, source, estimated} or null, account, state, records, estimated, estimated_records}`. `tokens_in` counts input plus cache writes. `pricing` is the dominant model's quote from the Python price tables (`usage_stats.MODEL_PRICING`, `GPT_MODEL_PRICING`, `GEMINI_MODEL_PRICING`; cache reads 0.1× input, Anthropic cache writes 1.25×, OpenAI cache writes 1×): `source` is `table` (the model's own row), `codex_default` (a Codex record that names no model, the literal `codex` from rollouts without a `turn_context` row, is priced at the `model` in `~/.codex/config.toml`; records after a `turn_context` carry that turn's model, `gpt-5.6-sol`, `gpt-6-astra`, and are priced as it) or `reference` (a model the table does not know, priced at the provider's mid-range reference model, `sonnet` / `gpt-5.6` / `gemini-3-flash`, with `estimated: true` rather than $0). The document's `estimated` says whether any counted record was priced that way. Claude and Codex have transcripts; Gemini and any other provider answer empty rows, Gemini with its reference quote so the rate card still shows. Every dollar figure is approximate. The scan runs on its own thread and the reply waits for it at most 2 s (`core_usage_history.REPLY_BUDGET_SECONDS`): a warm scan (the on-disk cache under `~/.local/state/jrbar/usage-scan-cache.*` is incremental, keyed by file mtime and size, so only new or changed transcripts are parsed) answers inside that; a cold one answers what memory holds, `pending: true` with empty rows when there is nothing yet, or the last document with `stale: true`, and the `usage_history_ready` event follows when the scan lands. `scanned_at` is the epoch of the scan behind the rows (null while pending). A document younger than 60 s answers as is. The daemon warms both providers' 30-day scans 8 s after it is ready, so on the Mac the first request is normally warm (measured 2026-09-10: cold Codex 45 s, Claude 11 s; warm Codex 1.5 s, Claude 1.0 s, plus 0.3 s of bucketing). |

@@ -47,6 +47,14 @@ CLIENT_MAX_BLOCKED_SENDS: Final = 3
 # already bounded; this cap keeps an absent flusher or a burst of logs
 # from growing memory without limit. Overflow drops the OLDEST frames.
 MAX_QUEUED_FRAMES: Final = 128
+# The resumable-event journal: every published event is journaled under
+# the flush lock with a stream-scoped cursor, so a client that missed
+# frames (a dropped slow consumer, a reconnect) can ask for the exact
+# suffix instead of a full resubscribe. Larger than the send queue on
+# purpose: the queue sheds under backpressure, the journal is where the
+# shed frames stay replayable. In-memory by design — replay survives
+# socket churn, not a daemon restart (a new stream id makes that honest).
+MAX_JOURNAL_EVENTS: Final = 512
 STALE_SOCKET_PROBE_TIMEOUT_SECONDS: Final = 0.5
 _SEND_TIMEOUT_TIMEVAL: Final = struct.pack(
     "ll",
@@ -65,6 +73,8 @@ DEFAULT_CAPABILITIES: Final = (
     "peers",
     "ingest",
     "deck",
+    "roster",
+    "event_replay",
 )
 _COALESCED_KINDS: Final = ("state", "lights", "settings")
 
@@ -192,9 +202,16 @@ class CoreServer:
         }
         self._flusher: threading.Thread | None = None
         self._event_counter = 0
+        # The replay journal and the stream it belongs to. ``_stream_id``
+        # is set at ``start()``; every cursor carries it, so a cursor from
+        # a previous incarnation is provably foreign (resync_required),
+        # never mistaken for an empty suffix.
+        self._stream_id: str | None = None
+        self._journal: deque[dict[str, Any]] = deque()
+        self._journal_dropped = 0
         self.stats = {"frames_out": 0, "commands": 0, "dropped_oversize": 0,
                       "refused_clients": 0, "deduped_frames": 0,
-                      "dropped_queue": 0}
+                      "dropped_queue": 0, "journal_dropped": 0}
 
     # -- lifecycle ----------------------------------------------------------
 
@@ -221,6 +238,12 @@ class CoreServer:
             self._accept_wakeup = _AcceptWakeup()
             self._server = server
             self._running = True
+            # One incarnation, one stream: pid + start epoch identifies
+            # the journal a cursor belongs to. A restart is a new stream —
+            # its journal starts empty and old cursors refuse as foreign.
+            self._stream_id = f"{os.getpid()}-{int(time.time() * 1000):x}"
+            self._journal.clear()
+            self._journal_dropped = 0
             self._accept_thread = threading.Thread(
                 target=self._accept_loop, name="JRBarCoreAccept", daemon=True
             )
@@ -328,12 +351,18 @@ class CoreServer:
     # -- publishing ---------------------------------------------------------
 
     def hello_document(self) -> dict[str, Any]:
+        with self._flush_condition:
+            cursor = self._journal[-1]["cursor"] if self._journal else None
         return {
             "t": "hello",
             "v": PROTOCOL_VERSION,
             "core_version": self._core_version,
             "pid": os.getpid(),
             "capabilities": list(self._capabilities),
+            # The event stream this daemon serves: a reconnecting client
+            # anchors its resume point here and calls ``replay_events``.
+            "stream": self._stream_id,
+            "cursor": cursor,
         }
 
     def publish_state(self, document: dict[str, Any]) -> None:
@@ -351,9 +380,85 @@ class CoreServer:
             body = _envelope("event", document)
             body.setdefault("id", f"ev-{self._event_counter}")
             body.setdefault("at", time.time())
+            # Journal and wire share one critical section, so the journal
+            # IS the wire's order: a cursor's suffix replays exactly what
+            # the socket fanned out, nothing dropped in between.
+            body["cursor"] = f"{self._stream_id}:{body['id']}"
+            self._journal.append(body)
+            while len(self._journal) > MAX_JOURNAL_EVENTS:
+                self._journal.popleft()
+                self._journal_dropped += 1
+                self.stats["journal_dropped"] = self._journal_dropped
             self._enqueue_locked(body)
             self._flush_condition.notify_all()
         return body
+
+    def replay_events(self, *, after: str | None = None, limit: int = 500) -> dict[str, Any]:
+        """The journal suffix after ``after`` — the resumable-activity
+        half of the snapshot/cursor boundary.
+
+        A cursor is ``<stream>:<event id>``; every event frame carries it,
+        so a client's position is the last ``cursor`` it saw. ``after``
+        of ``None`` replays the whole retained journal. A foreign stream
+        or an evicted id answers ``resync_required`` with the reason and
+        the live tail cursor — never a fabricated empty catch-up. Long
+        suffixes page: ``events`` holds the first ``limit`` in order,
+        ``has_more`` says the tail was cut, and ``cursor`` is the last
+        event actually returned.
+        """
+        try:
+            limit = max(1, min(int(limit), MAX_JOURNAL_EVENTS))
+        except (TypeError, ValueError):
+            limit = 500
+        with self._flush_condition:
+            stream = self._stream_id
+            tail = self._journal[-1]["cursor"] if self._journal else None
+            base: dict[str, Any] = {
+                "t": "events",
+                "stream": stream,
+                "retained": len(self._journal),
+                "dropped": self._journal_dropped,
+            }
+            if stream is None:
+                return {
+                    **base,
+                    "events": [],
+                    "cursor": None,
+                    "resync_required": True,
+                    "reason": "no_stream",
+                }
+            start = 0
+            if after:
+                if not str(after).startswith(f"{stream}:"):
+                    return {
+                        **base,
+                        "events": [],
+                        "cursor": tail,
+                        "resync_required": True,
+                        "reason": "foreign_stream",
+                    }
+                index = next(
+                    (i for i, entry in enumerate(self._journal) if entry["cursor"] == after),
+                    None,
+                )
+                if index is None:
+                    return {
+                        **base,
+                        "events": [],
+                        "cursor": tail,
+                        "resync_required": True,
+                        "reason": "cursor_expired",
+                    }
+                start = index + 1
+            suffix = list(self._journal)[start:]
+            page = suffix[:limit]
+            return {
+                **base,
+                "events": [dict(entry) for entry in page],
+                "cursor": page[-1]["cursor"] if page else (after or tail),
+                "has_more": len(suffix) > len(page),
+                "resync_required": False,
+            }
 
     def publish_log(self, line: str, *, level: str = "info") -> None:
         body = {"t": "log", "v": PROTOCOL_VERSION, "level": level, "message": str(line)[:2000], "at": time.time()}

@@ -124,5 +124,80 @@ slot chips flanking the band.
   pixel-level look (chip legibility at menu-bar height, overlap with
   a crowded menu bar) awaits real-runtime smoke.
 
-(Remaining packages W02+ proceed in the spec's dependency order; rows are
+## W02 — Canonical records and the independent roster — verified with fixtures
+
+- `src/jrbar/activity_model.py` (new): the §14.2 record vocabulary —
+  `RECORD_SCHEMA_VERSION` and the carrier mapping (which existing type
+  holds each logical record). The five axes are explicit: `lifecycle`/
+  `mode` (activity) already existed; `session_axes` adds `outcome`
+  (`none`/`succeeded`/`failed`/`unreported`/`unknown`), `review`
+  (`pending`/`unreviewed`/`reviewed`, Clear Agents receipts are the
+  review record) and `freshness` (`live`/`delayed`/`unknown`).
+- `src/jrbar/agent_roster.py` (new): `roster_rows` re-projects every
+  retained status through the identical `session_document` — extracted
+  as `project_session_rows` so the panel and the roster can never
+  diverge — with `visibility` (the panel's would-be verdict) and
+  `pinned` attached as facts rather than applied as removals.
+  `scope_rows` cuts by scope (`all`/`live`/`workers`/`attention`/
+  `finished`/`hidden`) plus `provider`/`parent`/`since`/`limit`
+  (bounded at 2000). `build_roster_document` reports counts over the
+  full retained set and a `coverage` block naming what the roster does
+  NOT hold (deeper history is `list_history`'s event ledger).
+- `list_roster` command wired in `core_runtime` (registered, dispatched,
+  `invalid_value` on bad scope); `docs/CORE-PROTOCOL.md` row added.
+- Identity: provider-namespaced `agent_id`s are the roster key — two
+  providers reporting the same native work id stay two records (test
+  `test_similar_native_ids_across_providers_never_merge`); no title/path
+  merging anywhere in the path.
+- Verified: `pytest tests/test_upgrade_roster.py` → 11 passed
+  (independence from panel aging, orphan-worker retention, separated
+  axes, pins, scopes, contract shape, command round-trip); touched-file
+  ruff clean; `test_core_projection`/`test_core_runtime` still green.
+- Not covered (recorded): the run/tool-invocation and command-effect
+  records stay partial — full invocation detail is W03 transport and
+  W19 execution work; the roster carries their identity and axes, not
+  their transcripts.
+
+## W03 — Bounded history/detail transport and reliable subscriptions — verified with fixtures
+
+- Already in place before this package (audited): 1 MB frame cap, max 4
+  clients, per-client SO_SNDTIMEO sends with 3-strike drop, a 128-frame
+  shared dispatch queue that sheds its OLDEST frames on overflow, latest-
+  wins coalescing for `state`/`lights`/`settings`, hello deadline, and
+  the client's deterministic backoff + pending-command drain.
+- `src/jrbar/core_server.py`: every `publish_event` is now journaled
+  under the flush lock — the journal IS the wire's order. Each event
+  carries `cursor` (`<stream>:<event id>`); `stream` is pid + start
+  epoch, so a cursor from a previous incarnation is provably foreign.
+  `hello` gains `stream` + `cursor` (the journal tail a fresh client
+  anchors at). `replay_events(after, limit)` returns the suffix with
+  `has_more` paging, `retained`/`dropped` gap counters, and refuses
+  `foreign_stream` / `cursor_expired` as `resync_required` with the live
+  tail — never a fabricated empty catch-up. Journal cap is 512, larger
+  than the dispatch queue on purpose: what the queue sheds stays
+  replayable.
+- `core_runtime`: `replay_events` command registered; `unsupported`
+  when the core cannot replay. `roster` + `event_replay` added to
+  capabilities — protocol stays v1, everything additive.
+- `CoreClient.swift`: `CoreHello`/`CoreEvent` decode `stream`/`cursor`;
+  the read thread tracks the resume cursor (never regresses), dedupes
+  delivered event ids through a bounded 1024-id ring (replay/live
+  overlap), and on a same-stream reconnect issues `replay_events`
+  itself — the reply's frames arrive through the normal `.event` path
+  exactly once; `resync_required` re-anchors at the returned tail. A
+  foreign stream anchors without replaying so a restarted journal never
+  re-surfaces old ids.
+- Verified: `pytest tests/test_upgrade_event_replay.py` → 10 passed
+  (snapshot/cursor boundary, suffix order, paging, foreign + expired
+  resync, journal bound, wire-cursor round-trip, command surface);
+  `pytest tests/` → 3413 passed; `swift test` → 477 passed (2 new:
+  same-stream replay without dup, foreign-stream anchor); ruff clean on
+  touched files. `docs/CORE-PROTOCOL.md` documents hello cursor, event
+  cursor, `replay_events`, and the honest shed-vs-journal wording.
+- Still partial (recorded): T19's "don't dispatch unrecorded managed
+  work" is the control layer's rule and lands with W19; large detail
+  bodies stay out of `state` (they were never in it) while full
+  transcript pages remain `list_history`-style pulls.
+
+(Remaining packages W04+ proceed in the spec's dependency order; rows are
 added as work lands.)

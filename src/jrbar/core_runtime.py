@@ -2074,6 +2074,31 @@ def _cmd_list_roster(self, args):
     return document
 
 
+@command("replay_events")
+def _cmd_replay_events(self, args):
+    """The resumable event stream's suffix after a cursor.
+
+    ``hello.cursor`` anchors a fresh client; each event frame carries its
+    own ``cursor``. A foreign stream or evicted cursor is answered
+    ``resync_required`` with the reason and the live tail — the caller
+    resubscribes rather than trusting an empty page."""
+    server = getattr(self, "_core", None)
+    replay = getattr(server, "replay_events", None)
+    if not callable(replay):
+        raise CommandError("unsupported", "this core cannot replay events")
+    after = args.get("after")
+    try:
+        limit = int(args.get("limit") or 500)
+    except (TypeError, ValueError):
+        limit = 500
+    document = replay(
+        after=str(after) if after else None,
+        limit=limit,
+    )
+    document["generation"] = self._core_state_generation
+    return document
+
+
 @command("mark_history_seen")
 def _cmd_mark_history_seen(self, args):
     """The user just looked at History: advance the ledger's ``last_seen``.
