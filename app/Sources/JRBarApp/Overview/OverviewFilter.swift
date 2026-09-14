@@ -1,0 +1,112 @@
+import Foundation
+import JRBarCore
+
+/// The Overview's named cuts (S7.1): each preset is a *definition* over
+/// the roster's fields, never a saved list of session ids — a stored view
+/// must describe what to select so it still means something next week.
+public enum OverviewPreset: String, Codable, CaseIterable, Sendable {
+    case needsMe
+    case working
+    case unreviewed
+    case thisProject
+    case thisMac
+    case all
+
+    public var label: String {
+        switch self {
+        case .needsMe: return "Needs me"
+        case .working: return "Working"
+        case .unreviewed: return "Unreviewed"
+        case .thisProject: return "This project"
+        case .thisMac: return "This Mac"
+        case .all: return "All connected"
+        }
+    }
+
+    /// Whether the preset alone decides the row — `thisProject` also
+    /// needs the filter's `project` to mean anything.
+    public var needsProject: Bool { self == .thisProject }
+
+    public func matches(_ entry: CoreRosterEntry) -> Bool {
+        let session = entry.session
+        switch self {
+        case .needsMe:
+            // Pinned (a live ask) or any ask the projection still carries.
+            return entry.pinned || session.ask != nil
+        case .working:
+            return SessionActivity.reduce(session) == .working
+        case .unreviewed:
+            // Finished work nobody has acknowledged yet.
+            return entry.axes?.review == "unreviewed"
+        case .thisProject:
+            return true // decided by the filter's project below
+        case .thisMac:
+            return !session.remote
+        case .all:
+            return true
+        }
+    }
+}
+
+/// A saved view: preset + the project it narrows to + free text. The
+/// definition is what persists; applying it to a fresh roster is the
+/// whole point.
+public struct OverviewFilter: Codable, Equatable, Hashable, Sendable {
+    public var preset: OverviewPreset
+    /// The project label (cwd tail) `thisProject` matches; nil otherwise.
+    public var project: String?
+
+    public init(preset: OverviewPreset, project: String? = nil) {
+        self.preset = preset
+        self.project = project
+    }
+
+    public func matches(_ entry: CoreRosterEntry) -> Bool {
+        guard preset.matches(entry) else { return false }
+        if preset.needsProject {
+            guard let project, !project.isEmpty else { return false }
+            return OverviewFilter.projectName(of: entry.session.cwd) == project
+        }
+        return true
+    }
+
+    /// The label a project column shows for a cwd: the last two path
+    /// components ("JR-Bar", "work/app") so same-named roots still differ.
+    public static func projectName(of cwd: String?) -> String? {
+        guard let cwd, !cwd.isEmpty else { return nil }
+        let trimmed = cwd.hasSuffix("/") ? String(cwd.dropLast()) : cwd
+        let components = trimmed.split(separator: "/").map(String.init)
+        guard let last = components.last, last != "/" else { return trimmed.isEmpty ? nil : trimmed }
+        return components.suffix(2).joined(separator: "/")
+    }
+}
+
+/// A user-named saved view — the filter definition plus its label.
+public struct SavedOverviewFilter: Codable, Equatable, Identifiable, Sendable {
+    public var id: String { name }
+    public var name: String
+    public var filter: OverviewFilter
+
+    public init(name: String, filter: OverviewFilter) {
+        self.name = name
+        self.filter = filter
+    }
+}
+
+/// Saved views persist as definitions in UserDefaults — they are view
+/// state, and a stale build or daemon must never invent rows for them.
+public enum OverviewSavedFilters {
+    private static let key = "overview.savedFilters"
+
+    public static func load(defaults: UserDefaults = .standard) -> [SavedOverviewFilter] {
+        guard let data = defaults.data(forKey: key),
+              let saved = try? JSONDecoder().decode([SavedOverviewFilter].self, from: data)
+        else { return [] }
+        return saved
+    }
+
+    public static func save(_ filters: [SavedOverviewFilter], defaults: UserDefaults = .standard) {
+        let data = try? JSONEncoder().encode(filters)
+        defaults.set(data, forKey: key)
+    }
+}

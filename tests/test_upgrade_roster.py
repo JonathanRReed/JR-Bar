@@ -12,8 +12,11 @@ merge by title.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -375,3 +378,70 @@ def test_empty_snapshot_is_an_empty_honest_roster():
     doc = core_runtime._cmd_list_roster(controller, {})
     assert doc["sessions"] == [] and doc["counts"]["total"] == 0
     assert doc["coverage"]["source"] == "collector_snapshot"
+
+
+SWIFT_ROSTER_FIXTURE = (
+    Path(__file__).resolve().parent.parent
+    / "app" / "Tests" / "JRBarCoreTests" / "Fixtures" / "python-roster.json"
+)
+
+
+def _carried_by(fixture: object, document: object, path: str = "$") -> list[str]:
+    """Directional parity, as in ``test_core_projection``: every key the
+    Swift fixture names must still arrive with the same shape and value;
+    fields the daemon adds later are ignored."""
+    if isinstance(fixture, dict):
+        if not isinstance(document, dict):
+            return [f"{path}: fixture has an object, document has {type(document).__name__}"]
+        mismatches = []
+        for key, value in fixture.items():
+            if key not in document:
+                mismatches.append(f"{path}.{key}: missing from the roster document")
+            else:
+                mismatches += _carried_by(value, document[key], f"{path}.{key}")
+        return mismatches
+    if isinstance(fixture, list):
+        if not isinstance(document, list) or len(fixture) != len(document):
+            return [f"{path}: fixture has {len(fixture)} rows, document has "
+                    f"{len(document) if isinstance(document, list) else type(document).__name__}"]
+        mismatches = []
+        for index, (want, got) in enumerate(zip(fixture, document)):
+            mismatches += _carried_by(want, got, f"{path}[{index}]")
+        return mismatches
+    return [] if fixture == document else [f"{path}: {fixture!r} != {document!r}"]
+
+
+def test_swift_roster_fixture_matches_the_document() -> None:
+    """The Swift Overview decodes a roster document generated here — the
+    fields the app reads (id, axes, visibility, pinned, counts, coverage)
+    must exist with these exact shapes."""
+    asking = _status(
+        "codex:session:asking",
+        mode=AgentMode.WAITING_FOR_INPUT,
+        event_name="PermissionRequest",
+    )
+    worker = _status(
+        "claude:agent:w1", provider="claude", session_id="run-9", work_id="w1"
+    )
+    aged = _status(
+        "gemini:session:old",
+        provider="gemini",
+        mode=AgentMode.COMPLETED,
+        event_name="Stop",
+        minutes_ago=(COMPLETED_VISIBLE_SECONDS / 60) + 5,
+        stale=True,
+    )
+    snapshot = _snapshot(asking, worker, stale=(aged,))
+    rows = _roster(snapshot, ask_statuses=(asking,))
+    document = build_roster_document(rows, now=NOW, scope="all")
+    encoded = json.dumps(document, indent=1, sort_keys=True) + "\n"
+    if os.environ.get("JRBAR_UPDATE_FIXTURES") == "1":
+        SWIFT_ROSTER_FIXTURE.write_text(encoded, encoding="utf-8")
+    assert SWIFT_ROSTER_FIXTURE.exists(), (
+        "run with JRBAR_UPDATE_FIXTURES=1 to write the Swift fixture"
+    )
+    mismatches = _carried_by(
+        json.loads(SWIFT_ROSTER_FIXTURE.read_text(encoding="utf-8")),
+        json.loads(encoded),
+    )
+    assert mismatches == [], "\n".join(mismatches)

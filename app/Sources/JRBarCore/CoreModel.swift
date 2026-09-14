@@ -211,6 +211,23 @@ public final class CoreModel {
         }.sorted { $0.at > $1.at }
     }
 
+    /// `list_roster`: the daemon's whole retained session set — the rows
+    /// `state.sessions` filters plus everything panel aging would hide —
+    /// with `counts` over the retained set and the `coverage` bound.
+    public func listRoster(scope: String = "all", provider: String? = nil, parent: String? = nil,
+                           since: Double? = nil, limit: Int = 500) async throws -> CoreRoster {
+        var args: [String: JSONValue] = ["scope": .string(scope), "limit": .number(Double(limit))]
+        if let provider { args["provider"] = .string(provider) }
+        if let parent { args["parent"] = .string(parent) }
+        if let since { args["since"] = .number(since) }
+        let reply = try await send("list_roster", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "list_roster failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "list_roster: missing result")
+        }
+        return try ReplyDecoding.decode(CoreRoster.self, from: result)
+    }
+
     /// A line from the app itself (the supervisor, a delivery failure) in
     /// the same tail as the daemon's `log` messages.
     public func appendLocalLog(level: String = "info", _ message: String) {

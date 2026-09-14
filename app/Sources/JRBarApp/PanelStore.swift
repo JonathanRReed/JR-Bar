@@ -249,6 +249,7 @@ final class PanelStore {
     var onClose: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor (SettingsStore.Page?) -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
+    var onOpenOverview: (@MainActor () -> Void)?
     /// The provider a usage row was clicked for, when it was.
     var onOpenUsageCenter: (@MainActor (String?) -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
@@ -1198,6 +1199,11 @@ final class PanelStore {
     func openHistory() {
         onClose?()
         onOpenHistory?()
+    }
+
+    func openOverview() {
+        onClose?()
+        onOpenOverview?()
     }
 
     func openUsageCenter(provider: String? = nil) {

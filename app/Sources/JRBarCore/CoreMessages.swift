@@ -209,6 +209,9 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
     /// The family mailbox's active snooze (`snoozed_until`), when one
     /// covers this session.
     public var snoozedUntil: Double?
+    /// A peer Mac's row (`remote:<machine>:` id namespace): not locally
+    /// actionable — nothing here can raise its window or type its answer.
+    public var remote: Bool
     /// The hook's last word for the session: the canonical event name
     /// (`PreToolUse`, `PostToolUse`, …), the tool it was about when one
     /// applied, and the message it carried. Facts, not state — a finished
@@ -223,7 +226,8 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
                 shortId: String? = nil, cwd: String? = nil, mode: String? = nil, lifecycle: String? = nil, nextActor: String? = nil,
                 since: Double? = nil, updatedAt: Double? = nil, stale: Bool = false, pid: Int? = nil,
                 origin: CoreOrigin? = nil, ask: CoreAsk? = nil, terminal: CoreTerminal? = nil, workers: Int = 0,
-                snoozedUntil: Double? = nil, event: String? = nil, tool: String? = nil, message: String? = nil) {
+                snoozedUntil: Double? = nil, remote: Bool = false,
+                event: String? = nil, tool: String? = nil, message: String? = nil) {
         self.id = id
         self.provider = provider
         self.kind = kind
@@ -243,13 +247,14 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         self.terminal = terminal
         self.workers = workers
         self.snoozedUntil = snoozedUntil
+        self.remote = remote
         self.event = event
         self.tool = tool
         self.message = message
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers
+        case id, provider, kind, parent, label, cwd, mode, lifecycle, since, stale, pid, origin, ask, terminal, workers, remote
         case event, tool, message
         case shortId = "short_id"
         case nextActor = "next_actor"
@@ -278,9 +283,129 @@ public struct CoreSession: Codable, Hashable, Sendable, Identifiable {
         terminal = try c.decodeIfPresent(CoreTerminal.self, forKey: .terminal)
         workers = try c.decodeIfPresent(Int.self, forKey: .workers) ?? 0
         snoozedUntil = try c.decodeIfPresent(Double.self, forKey: .snoozedUntil)
+        remote = (try? c.decodeIfPresent(Bool.self, forKey: .remote)) ?? false
         event = try c.decodeIfPresent(String.self, forKey: .event)
         tool = try c.decodeIfPresent(String.self, forKey: .tool)
         message = try c.decodeIfPresent(String.self, forKey: .message)
+    }
+}
+
+// MARK: Roster (W02/W08)
+
+/// `list_roster`'s separated record axes (S7.3): execution outcome,
+/// review state and freshness are three facts, never one colour.
+public struct CoreSessionAxes: Codable, Hashable, Sendable {
+    /// `succeeded` / `failed` / `unreported` (ended with no terminal
+    /// word) / `none` (still running) / `unknown`.
+    public var outcome: String?
+    /// `pending` (still running) / `unreviewed` / `reviewed`.
+    public var review: String?
+    /// `live` / `delayed` / `unknown` — how fresh the row's own clock is,
+    /// independent of outcome.
+    public var freshness: String?
+
+    public init(outcome: String? = nil, review: String? = nil, freshness: String? = nil) {
+        self.outcome = outcome
+        self.review = review
+        self.freshness = freshness
+    }
+}
+
+/// One `list_roster` row: the same `session_document` the panel shows,
+/// plus the roster-only facts the panel's filter would have hidden.
+public struct CoreRosterEntry: Codable, Hashable, Sendable, Identifiable {
+    public var session: CoreSession
+    /// `activity_model.RECORD_SCHEMA_VERSION` the daemon wrote.
+    public var schema: Int
+    /// A live ask pins the row against panel aging.
+    public var pinned: Bool
+    /// What the panel's aging filter would do with this row
+    /// (`live` / `completion` / `hidden`) — a fact about the row, never a
+    /// removal of it.
+    public var visibility: String?
+    public var axes: CoreSessionAxes?
+
+    public var id: String { session.id }
+
+    public init(session: CoreSession, schema: Int = 0, pinned: Bool = false,
+                visibility: String? = nil, axes: CoreSessionAxes? = nil) {
+        self.session = session
+        self.schema = schema
+        self.pinned = pinned
+        self.visibility = visibility
+        self.axes = axes
+    }
+
+    enum CodingKeys: String, CodingKey { case schema, pinned, visibility, axes }
+
+    public init(from decoder: Decoder) throws {
+        session = try CoreSession(from: decoder)
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema = (try? c.decodeIfPresent(Int.self, forKey: .schema)) ?? 0
+        pinned = (try? c.decodeIfPresent(Bool.self, forKey: .pinned)) ?? false
+        visibility = try? c.decodeIfPresent(String.self, forKey: .visibility)
+        axes = try? c.decodeIfPresent(CoreSessionAxes.self, forKey: .axes)
+    }
+}
+
+/// `list_roster`'s totals over the FULL retained set — computed before
+/// scoping, so a scoped answer still reports what exists.
+public struct CoreRosterCounts: Codable, Hashable, Sendable {
+    public var total: Int
+    public var workers: Int
+    /// Rows carrying a live ask.
+    public var attention: Int
+    public var live: Int
+    public var finished: Int
+    /// Rows the panel's aging would hide — the roster's independence
+    /// made visible.
+    public var hiddenFromPanel: Int
+    /// How many rows this scoped answer carried — `total` minus the
+    /// scope cut.
+    public var listed: Int
+
+    enum CodingKeys: String, CodingKey {
+        case total, workers, attention, live, finished, listed
+        case hiddenFromPanel = "hidden_from_panel"
+    }
+
+    public init(total: Int = 0, workers: Int = 0, attention: Int = 0, live: Int = 0,
+                finished: Int = 0, hiddenFromPanel: Int = 0, listed: Int = 0) {
+        self.total = total
+        self.workers = workers
+        self.attention = attention
+        self.live = live
+        self.finished = finished
+        self.hiddenFromPanel = hiddenFromPanel
+        self.listed = listed
+    }
+}
+
+/// The `list_roster` answer: the scoped cut plus the honest bounds.
+public struct CoreRoster: Codable, Hashable, Sendable {
+    public var sessions: [CoreRosterEntry]
+    public var counts: CoreRosterCounts
+    /// What the roster covers (the collector's retention); deeper
+    /// history is `list_history`'s job — the document says so.
+    public var coverage: JSONValue?
+
+    public init(sessions: [CoreRosterEntry] = [], counts: CoreRosterCounts = CoreRosterCounts(),
+                coverage: JSONValue? = nil) {
+        self.sessions = sessions
+        self.counts = counts
+        self.coverage = coverage
+    }
+
+    enum CodingKeys: String, CodingKey { case sessions, counts, coverage }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessions = tolerantRows(
+            CoreRosterEntry.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .sessions)
+        )
+        counts = (try? c.decodeIfPresent(CoreRosterCounts.self, forKey: .counts)) ?? CoreRosterCounts()
+        coverage = try? c.decodeIfPresent(JSONValue.self, forKey: .coverage)
     }
 }
 

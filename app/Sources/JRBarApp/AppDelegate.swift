@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var settingsWindow: SettingsWindowController?
     private var historyStore: HistoryStore?
     private var historyWindow: HistoryWindowController?
+    private var overviewWindow: OverviewWindowController?
     private var usageStore: UsageCenterStore?
     private var usageWindow: UsageCenterWindowController?
     private var effectsStore: EffectStudioStore?
@@ -191,6 +192,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.historyWindow = historyWindow
         store.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
         statusItem.onOpenHistory = { [weak historyWindow] in historyWindow?.show() }
+
+        // Overview window (⌘O): the scoped roster workspace.
+        let overviewStore = OverviewStore(core: core)
+        let overviewWindow = OverviewWindowController(store: overviewStore)
+        self.overviewWindow = overviewWindow
+        store.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+        statusItem.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
 
         // Usage Center (⌘U) and Effect Studio windows.
         let usageStore = UsageCenterStore(core: core)
@@ -580,6 +588,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let appMenu = NSMenu()
         appMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ","))
         appMenu.addItem(NSMenuItem(title: "History", action: #selector(openHistory(_:)), keyEquivalent: "y"))
+        appMenu.addItem(NSMenuItem(title: "Overview", action: #selector(openOverview(_:)), keyEquivalent: "o"))
         appMenu.addItem(NSMenuItem(title: "Usage Center", action: #selector(openUsageCenter(_:)), keyEquivalent: "u"))
         appMenu.addItem(NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: ""))
         appMenu.addItem(NSMenuItem(title: "Control Center…", action: #selector(openControlCenter(_:)), keyEquivalent: "k"))
@@ -653,6 +662,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     @objc private func openHistory(_ sender: Any?) {
         historyWindow?.show()
+    }
+
+    @objc private func openOverview(_ sender: Any?) {
+        overviewWindow?.show()
     }
 
     // MARK: Screen Bar visibility

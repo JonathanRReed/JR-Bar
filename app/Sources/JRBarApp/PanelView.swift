@@ -1456,6 +1456,8 @@ struct PanelFooter: View {
                 Button { store.openEffects() } label: { Text("Effect Studio…") }
                 Button { store.openHistory() } label: { Text("History…") }
                     .keyboardShortcut("y", modifiers: .command)
+                Button { store.openOverview() } label: { Text("Overview…") }
+                    .keyboardShortcut("o", modifiers: .command)
                 Button { store.openUsageCenter() } label: { Text("Usage Center…") }
                     .keyboardShortcut("u", modifiers: .command)
                 Divider()

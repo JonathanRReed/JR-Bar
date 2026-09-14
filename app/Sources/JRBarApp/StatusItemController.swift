@@ -43,6 +43,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     var onTogglePanel: (@MainActor () -> Void)?
     var onOpenSettings: (@MainActor () -> Void)?
     var onOpenHistory: (@MainActor () -> Void)?
+    var onOpenOverview: (@MainActor () -> Void)?
     var onOpenUsageCenter: (@MainActor () -> Void)?
     var onOpenEffects: (@MainActor () -> Void)?
     var onOpenControlCenter: (@MainActor () -> Void)?
@@ -132,6 +133,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         open.target = self
         let history = NSMenuItem(title: "History…", action: #selector(openHistory(_:)), keyEquivalent: "y")
         history.target = self
+        let overview = NSMenuItem(title: "Overview…", action: #selector(openOverview(_:)), keyEquivalent: "o")
+        overview.target = self
         let usage = NSMenuItem(title: "Usage Center…", action: #selector(openUsageCenter(_:)), keyEquivalent: "u")
         usage.target = self
         let effects = NSMenuItem(title: "Effect Studio…", action: #selector(openEffects(_:)), keyEquivalent: "")
@@ -148,6 +151,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(open)
         menu.addItem(history)
+        menu.addItem(overview)
         menu.addItem(usage)
         menu.addItem(effects)
         menu.addItem(controlCenter)
@@ -419,6 +423,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
 
     @objc private func openHistory(_ sender: Any?) {
         onOpenHistory?()
+    }
+
+    @objc private func openOverview(_ sender: Any?) {
+        onOpenOverview?()
     }
 
     @objc private func openUsageCenter(_ sender: Any?) {

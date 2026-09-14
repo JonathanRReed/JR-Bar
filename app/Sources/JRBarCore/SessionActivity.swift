@@ -214,7 +214,7 @@ public enum AgentMonitorFeed {
 
     /// "47s" / "6m" / "2h" — a file age in the same shorthand the panel's
     /// elapsed column uses.
-    static func ageText(_ seconds: TimeInterval) -> String {
+    public static func ageText(_ seconds: TimeInterval) -> String {
         let s = max(0, Int(seconds))
         if s < 60 { return "\(s)s" }
         let minutes = s / 60
