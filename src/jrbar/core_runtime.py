@@ -1944,6 +1944,157 @@ def _cmd_refresh_usage(self, args):
     return {"requested_at": time.time(), "providers": list(providers)}
 
 
+def _provider_credentials(self):
+    from .provider_credential_store import ProviderCredentialStore
+
+    store = getattr(self, "_jrbar_provider_credential_store", None)
+    if store is None:
+        store = ProviderCredentialStore()
+        self._jrbar_provider_credential_store = store
+    return store
+
+
+@command("list_providers")
+def _cmd_list_providers(self, args):
+    only = args.get("provider")
+    instance = args.get("instance")
+    if only is not None and (not isinstance(only, str) or not only):
+        raise CommandError("invalid_args", "provider must be a nonempty string")
+    if instance is not None and (not isinstance(instance, str) or not instance):
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    from .provider_management import ProviderManagementError, provider_rows
+
+    try:
+        rows = provider_rows(
+            credentials=_provider_credentials(self),
+            state=getattr(self, "provider_usage_state", None),
+            only=only,
+            instance=instance,
+        )
+    except ProviderManagementError as exc:
+        raise CommandError(exc.code, str(exc)) from exc
+    return {"providers": rows}
+
+
+@command("set_provider_enabled")
+def _cmd_set_provider_enabled(self, args):
+    provider = args.get("provider")
+    enabled = args.get("enabled")
+    instance = args.get("instance") or "default"
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    if type(enabled) is not bool:
+        raise CommandError("invalid_args", "enabled must be a boolean")
+    if not isinstance(instance, str) or not instance:
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    from .provider_management import ProviderManagementError, set_provider_enabled
+
+    try:
+        row = set_provider_enabled(
+            provider,
+            enabled,
+            source_instance_id=instance,
+            credentials=_provider_credentials(self),
+        )
+    except ProviderManagementError as exc:
+        raise CommandError(exc.code, str(exc)) from exc
+    # Either direction lands in the next state push: an enable needs a
+    # fresh read, a disable needs the row to stop showing the old quota.
+    try:
+        self._request_provider_usage(force=True, providers=(provider,))
+    except Exception:
+        pass
+    return {"provider": row}
+
+
+@command("provider_consent")
+def _cmd_provider_consent(self, args):
+    action = args.get("action")
+    provider = args.get("provider")
+    browser = args.get("browser")
+    profile = args.get("profile")
+    instance = args.get("instance")
+    if instance is not None and (not isinstance(instance, str) or not instance):
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    from .provider_browser_consent import load_browser_consents
+    from .provider_management import (
+        ProviderManagementError,
+        grant_browser_consent,
+        revoke_browser_consent,
+    )
+
+    if action == "list":
+        rows = [
+            {
+                "provider_id": consent.provider_id,
+                "source_instance_id": consent.source_instance_id,
+                "browser": consent.browser,
+                "profile": consent.profile,
+                "domains": list(consent.domains),
+                "fields": list(consent.fields),
+                "background_repair": consent.background_repair,
+                "granted_at": consent.granted_at,
+            }
+            for consent in load_browser_consents().store.consents
+            if (provider is None or consent.provider_id == provider)
+            and (instance is None or consent.source_instance_id == instance)
+        ]
+        return {"consents": rows}
+    for name, value in (("provider", provider), ("browser", browser), ("profile", profile)):
+        if not isinstance(value, str) or not value:
+            raise CommandError("invalid_args", f"{name} is required")
+    try:
+        if action == "grant":
+            consent = grant_browser_consent(
+                provider,
+                browser,
+                profile,
+                background_repair=bool(args.get("background_repair")),
+                source_instance_id=instance or "default",
+            )
+        elif action == "revoke":
+            consent = revoke_browser_consent(
+                provider,
+                browser,
+                profile,
+                source_instance_id=instance or "default",
+                credentials=_provider_credentials(self),
+            )
+            try:
+                self._request_provider_usage(force=True, providers=(provider,))
+            except Exception:
+                pass
+        else:
+            raise CommandError("invalid_args", "action must be list, grant, or revoke")
+    except ProviderManagementError as exc:
+        raise CommandError(exc.code, str(exc)) from exc
+    return {"consent": consent}
+
+
+@command("provider_action")
+def _cmd_provider_action(self, args):
+    provider = args.get("provider")
+    instance = args.get("instance") or "default"
+    if not isinstance(provider, str) or not provider:
+        raise CommandError("invalid_args", "provider is required")
+    if not isinstance(instance, str) or not instance:
+        raise CommandError("invalid_args", "instance must be a nonempty string")
+    from .provider_browser_access import perform_provider_usage_action
+    from .provider_usage_platform import provider_descriptor
+
+    try:
+        provider_descriptor(provider)
+    except ValueError as exc:
+        raise CommandError("unknown_provider", f"unknown provider {provider!r}") from exc
+    message = perform_provider_usage_action(self, provider, instance)
+    if message is None:
+        raise CommandError(
+            "unsupported",
+            "no staged action matches this provider's current state",
+        )
+    return {"provider": provider, "instance": instance, "message": message}
+
+
 def _hooks_command(self, args, *, install: bool):
     from .install import install_provider_hooks, uninstall_provider_hooks
 

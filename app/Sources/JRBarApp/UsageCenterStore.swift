@@ -152,6 +152,7 @@ final class UsageCenterStore {
         }
         observeCore()
         loadAll()
+        loadProviderRows()
     }
 
     func windowDidClose() {
@@ -224,6 +225,7 @@ final class UsageCenterStore {
         let ids = core.usage.map(\.identity)
         if (live && !wasLive) || ids != knownProviders {
             loadAll()
+            loadProviderRows()
         }
         wasLive = live
         knownProviders = ids
@@ -445,6 +447,98 @@ final class UsageCenterStore {
     func isCelebrating(_ provider: String) -> Bool {
         guard let at = resetPulses[provider] else { return false }
         return now.timeIntervalSince(at) < 1.6
+    }
+
+    // MARK: Provider connections (W06)
+
+    /// `list_providers` rows keyed by identity (`id` or `id|instance`) —
+    /// the inspect/manage surface (enabled flag, consents, credential
+    /// availability).
+    private(set) var providerRows: [String: ProviderRow] = [:]
+    /// A toggle while its write is in flight: a second tap can't stack.
+    private var managing: Set<String> = []
+
+    func row(for identity: String) -> ProviderRow? { providerRows[identity] }
+
+    func loadProviderRows() {
+        guard core.isLive else { providerRows = [:]; return }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let rows = try await self.core.listProviders()
+                self.providerRows = Dictionary(
+                    uniqueKeysWithValues: rows.map { ($0.identity, $0) }
+                )
+            } catch {
+                // Inspection is best-effort: without it the cards still
+                // show quota state, just without the manage row.
+            }
+        }
+    }
+
+    func setProviderEnabled(_ row: ProviderRow, _ on: Bool) {
+        guard !managing.contains(row.identity) else { return }
+        managing.insert(row.identity)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.managing.remove(row.identity) }
+            do {
+                let updated = try await self.core.setProviderEnabled(
+                    row.id,
+                    enabled: on,
+                    instance: row.instance == "default" ? nil : row.instance
+                )
+                self.providerRows[updated.identity] = updated
+            } catch {
+                self.show(error: "\(row.label): \(Self.describe(error))")
+            }
+        }
+    }
+
+    /// Runs the staged flow behind the provider's current action label —
+    /// clipboard import, reconnect, repair. The daemon's own message is
+    /// surfaced verbatim; it may be a success note, not only an error.
+    func runProviderAction(_ provider: CoreProviderUsage) {
+        guard !managing.contains(provider.identity) else { return }
+        managing.insert(provider.identity)
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.managing.remove(provider.identity) }
+            do {
+                let message = try await self.core.providerAction(
+                    provider.id,
+                    instance: provider.instance == "default" ? nil : provider.instance
+                )
+                self.show(error: message)
+                self.loadProviderRows()
+            } catch {
+                self.show(error: Self.describe(error))
+            }
+        }
+    }
+
+    /// Revokes one exact consent; the daemon removes the imported
+    /// credential only while it is still the imported one.
+    func revokeConsent(providerID: String, consent: ProviderConsentRow) {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let reply = try await self.core.providerConsent(
+                    action: "revoke",
+                    provider: providerID,
+                    browser: consent.browser,
+                    profile: consent.profile,
+                    instance: consent.sourceInstanceID == "default" ? nil : consent.sourceInstanceID
+                )
+                if !reply.ok {
+                    self.show(error: reply.error?.message ?? "Consent revoke refused")
+                    return
+                }
+                self.loadProviderRows()
+            } catch {
+                self.show(error: "Revoke failed: \(Self.describe(error))")
+            }
+        }
     }
 
     private func show(error: String) {

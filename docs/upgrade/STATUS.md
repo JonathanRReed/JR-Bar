@@ -272,5 +272,44 @@ slot chips flanking the band.
   provider/usage group → 595 passed; ruff clean on touched files;
   `jrbar providers status` end-to-end on the live account.
 
-(Remaining packages W06+ proceed in the spec's dependency order; rows are
+### W06 — provider inspect/enable/consent/action on the shared control surface — LANDED
+
+- New module `provider_management.py` is the single control surface the
+  socket and the CLI both drive: `provider_rows` (one inspect row per
+  configured provider *instance* — enabled flag, live state, source
+  ladder, granted consents scoped to that instance, credential
+  *availability* never secrets, `imported_credential` provenance),
+  `set_provider_enabled` (per-instance flag through the settings
+  document's optimistic concurrency — `settings_changed` on a
+  concurrent edit, `unknown_instance` when none is configured, T25),
+  `grant_browser_consent`/`revoke_browser_consent` (exact
+  provider+browser+profile+field scope; grant imports nothing).
+- T26 provenance: a browser import records a sha256 digest of the
+  imported credential (`record_browser_import` inside
+  `import_devin_browser_session`, so every entry point gets it). A
+  manual `credential set` drops the provenance (`forget_browser_import`)
+  — the credential is the user's own data again. A revoke deletes the
+  stored credential only while it still matches the import digest and
+  reports `removed`/`replaced`/`retained`/`none`; the CLI revoke path
+  now runs the same purge, not just the consent row.
+- Socket commands: `list_providers`, `set_provider_enabled`,
+  `provider_consent` (list/grant/revoke), `provider_action` — which runs
+  the staged flow behind the provider's current action label and returns
+  the daemon's own message. `provider_action` preserves ownership:
+  Gemini's states answer with CLI-directed text (sign-in → `gemini`,
+  missing project → configure `project_id` or let the CLI provision,
+  license → Google-side entitlement, free-tier ineligible → Antigravity
+  route), never a JR-Bar-side credential rewrite.
+- Swift: `ProviderRow`/`ProviderConsentRow`/`ProviderCredentialRow`
+  wire models (instance-keyed `identity` matching `id|instance`), the
+  four `CoreModel` calls, `UsageCenterStore` provider rows loaded on
+  window open and refreshed after every mutation, and a connection
+  section on each Usage Center card: a Metering toggle, the provider's
+  current action label as a working button, an `imported session`
+  badge, and per-consent Revoke buttons.
+- Verified: `pytest tests/test_upgrade_provider_management.py` → 12
+  passed; full suite 3444 passed; `swift test` 478 passed; ruff clean on
+  touched files.
+
+(Remaining packages W07+ proceed in the spec's dependency order; rows are
 added as work lands.)

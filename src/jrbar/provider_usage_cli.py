@@ -18,6 +18,12 @@ from .provider_browser_consent import (
 from .provider_browser_import import import_devin_browser_session
 from .provider_credential_store import ProviderCredentialStore
 from .provider_instances import ProviderInstanceKey, ProviderInstanceProfile
+from .provider_management import (
+    BROWSER_CONSENT_SCOPES as _BROWSER_SCOPES,
+)
+from .provider_management import (
+    CREDENTIAL_ACCOUNTS as _CREDENTIAL_ACCOUNTS,
+)
 from .provider_usage_platform import (
     ProviderSourceState,
     ProviderUsageSnapshot,
@@ -36,23 +42,6 @@ from .provider_usage_store import (
     load_provider_usage_state,
     save_provider_usage_state,
 )
-
-_BROWSER_SCOPES = {
-    "devin": {
-        "domains": ("app.devin.ai",),
-        "fields": ("auth1_session", "organization"),
-    },
-    "cursor": {
-        "domains": ("cursor.com",),
-        "fields": ("session",),
-    },
-}
-_CREDENTIAL_ACCOUNTS = {
-    "claude": ("oauth-token",),
-    "devin": ("token",),
-    "grok": ("token",),
-    "openai-api": ("admin-key",),
-}
 
 
 def _on_off(value: str) -> bool:
@@ -351,6 +340,15 @@ def main(
         if args.credential_command == "set":
             secret = input_stream.read()
             credential_store.set(args.provider, account, secret.strip())
+            if account == "token":
+                # A manually stored credential is the user's own data
+                # again: a later consent revoke must not delete it.
+                try:
+                    from .provider_management import forget_browser_import
+
+                    forget_browser_import(args.provider)
+                except Exception:
+                    pass
             output.write(
                 f"{provider_descriptor(args.provider).label} credential stored in Keychain.\n"
             )
@@ -400,7 +398,20 @@ def main(
                 source_instance_id=args.source_instance_id,
             )
             save_browser_consents(updated, consent_target, loaded=loaded_consents)
+            # Imported data is JR-Bar-owned: a revoke removes it only
+            # while the stored credential is still the imported one (T26).
+            from .provider_management import purge_imported_browser_data
+
+            imported = purge_imported_browser_data(
+                args.provider,
+                args.source_instance_id,
+                credential_store,
+            )
             output.write("Browser consent revoked.\n")
+            if imported == "removed":
+                output.write("Imported credential removed.\n")
+            elif imported == "retained":
+                output.write("Imported credential could not be removed; delete it manually.\n")
             return 0
         if args.browser_command == "list":
             json.dump(

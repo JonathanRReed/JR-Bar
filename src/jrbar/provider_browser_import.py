@@ -328,6 +328,19 @@ def import_devin_browser_session(
             "keychain_write_failed",
             f"{browser} {profile}",
         )
+    try:
+        from .provider_management import record_browser_import
+
+        record_browser_import(
+            "devin",
+            source_instance_id,
+            browser,
+            profile,
+            token,
+            home=home,
+        )
+    except Exception:
+        pass
     return BrowserImportResult(
         "devin",
         BrowserImportState.IMPORTED,

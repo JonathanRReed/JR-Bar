@@ -374,6 +374,80 @@ public final class CoreModel {
         try await send("refresh_usage", args: ["providers": .array(providers.map(JSONValue.string))])
     }
 
+    // MARK: Provider connections (W06)
+
+    /// `list_providers` → one inspection row per configured provider
+    /// instance (enabled flag, live state, consents, credential
+    /// availability — never secrets).
+    public func listProviders(
+        provider: String? = nil,
+        instance: String? = nil
+    ) async throws -> [ProviderRow] {
+        var args: [String: JSONValue] = [:]
+        if let provider { args["provider"] = .string(provider) }
+        if let instance { args["instance"] = .string(instance) }
+        let reply = try await send("list_providers", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "list_providers failed")
+        }
+        return try ReplyDecoding.decode([ProviderRow].self, from: reply.result?["providers"])
+    }
+
+    /// `set_provider_enabled {provider, enabled, instance}` → the row as
+    /// persisted. `settings_changed` means a concurrent edit won; reload
+    /// and retry.
+    @discardableResult
+    public func setProviderEnabled(
+        _ provider: String,
+        enabled: Bool,
+        instance: String? = nil
+    ) async throws -> ProviderRow {
+        var args: [String: JSONValue] = [
+            "provider": .string(provider),
+            "enabled": .bool(enabled),
+        ]
+        if let instance { args["instance"] = .string(instance) }
+        let reply = try await send("set_provider_enabled", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "set_provider_enabled failed")
+        }
+        return try ReplyDecoding.decode(ProviderRow.self, from: reply.result?["provider"])
+    }
+
+    /// `provider_consent` — list, or grant/revoke one exact
+    /// provider+browser+profile scope. Grant imports nothing.
+    @discardableResult
+    public func providerConsent(
+        action: String,
+        provider: String? = nil,
+        browser: String? = nil,
+        profile: String? = nil,
+        backgroundRepair: Bool = false,
+        instance: String? = nil
+    ) async throws -> CoreReply {
+        var args: [String: JSONValue] = ["action": .string(action)]
+        if let provider { args["provider"] = .string(provider) }
+        if let browser { args["browser"] = .string(browser) }
+        if let profile { args["profile"] = .string(profile) }
+        if let instance { args["instance"] = .string(instance) }
+        if action == "grant" { args["background_repair"] = .bool(backgroundRepair) }
+        return try await send("provider_consent", args: args)
+    }
+
+    /// `provider_action` runs the staged flow behind the provider's
+    /// current action label (clipboard import, reconnect, repair). The
+    /// reply carries the message the daemon surfaced; `unsupported`
+    /// means no staged action matches the live state.
+    public func providerAction(_ provider: String, instance: String? = nil) async throws -> String {
+        var args: [String: JSONValue] = ["provider": .string(provider)]
+        if let instance { args["instance"] = .string(instance) }
+        let reply = try await send("provider_action", args: args)
+        guard reply.ok else {
+            throw reply.error ?? CoreReplyError(code: "error", message: "provider_action failed")
+        }
+        return reply.result?["message"]?.stringValue ?? ""
+    }
+
     // MARK: Effect Studio (app-proposed extensions, see app/README.md)
 
     public func listEffects() async throws -> EffectCatalog {

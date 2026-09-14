@@ -1282,3 +1282,118 @@ public enum CoreMessage: Hashable, Sendable {
         }
     }
 }
+
+// MARK: - Provider management (W06: `list_providers`, `provider_consent`)
+
+/// One granted browser consent as `list_providers`/`provider_consent`
+/// report it: the exact provider + browser + profile + field scope.
+public struct ProviderConsentRow: Codable, Hashable, Sendable {
+    public var browser: String
+    public var profile: String
+    public var domains: [String]
+    public var fields: [String]
+    public var backgroundRepair: Bool
+    public var grantedAt: Double
+    public var sourceInstanceID: String
+
+    public init(browser: String, profile: String, domains: [String], fields: [String],
+                backgroundRepair: Bool = false, grantedAt: Double = 0, sourceInstanceID: String = "default") {
+        self.browser = browser
+        self.profile = profile
+        self.domains = domains
+        self.fields = fields
+        self.backgroundRepair = backgroundRepair
+        self.grantedAt = grantedAt
+        self.sourceInstanceID = sourceInstanceID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case browser, profile, domains, fields
+        case backgroundRepair = "background_repair"
+        case grantedAt = "granted_at"
+        case sourceInstanceID = "source_instance_id"
+    }
+}
+
+/// Whether a credential account exists — never the secret itself.
+public struct ProviderCredentialRow: Codable, Hashable, Sendable {
+    public var account: String
+    public var available: Bool
+}
+
+/// `list_providers` row: what the daemon knows and can do for one
+/// provider — enabled flag, live source state, the source ladder,
+/// consents, credential availability. Secrets never cross the socket.
+public struct ProviderRow: Codable, Hashable, Sendable {
+    public var id: String
+    /// The configured source instance this row inspects ("default" for
+    /// the single-account case).
+    public var instance: String
+    public var label: String
+    public var enabled: Bool
+    public var menuVisible: Bool
+    public var browserSourcesEnabled: Bool
+    public var supportsBrowserSources: Bool
+    public var supportsLocalTokens: Bool
+    public var supportsQuota: Bool
+    public var sourceOrder: [String]
+    public var options: [String: String]
+    public var consents: [ProviderConsentRow]
+    public var credentials: [ProviderCredentialRow]
+    /// A stored credential whose provenance says "browser import" — the
+    /// only credential a consent revoke may remove (T26).
+    public var importedCredential: Bool
+    public var state: String?
+    public var reason: String?
+    public var action: String?
+    public var accountLabel: String?
+    public var observedAt: Double?
+
+    /// `id|instance` for non-default instances — the same composite the
+    /// usage rows use, so a card can find its manage row directly.
+    public var identity: String {
+        instance.isEmpty || instance == "default" ? id : "\(id)|\(instance)"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, instance, label, enabled, options, consents, credentials, state, reason, action
+        case menuVisible = "menu_visible"
+        case browserSourcesEnabled = "browser_sources_enabled"
+        case supportsBrowserSources = "supports_browser_sources"
+        case supportsLocalTokens = "supports_local_tokens"
+        case supportsQuota = "supports_quota"
+        case sourceOrder = "source_order"
+        case importedCredential = "imported_credential"
+        case accountLabel = "account_label"
+        case observedAt = "observed_at"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        instance = (try? c.decodeIfPresent(String.self, forKey: .instance)) ?? "default"
+        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? id
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        menuVisible = (try? c.decodeIfPresent(Bool.self, forKey: .menuVisible)) ?? true
+        browserSourcesEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .browserSourcesEnabled)) ?? false
+        supportsBrowserSources = (try? c.decodeIfPresent(Bool.self, forKey: .supportsBrowserSources)) ?? false
+        supportsLocalTokens = (try? c.decodeIfPresent(Bool.self, forKey: .supportsLocalTokens)) ?? false
+        supportsQuota = (try? c.decodeIfPresent(Bool.self, forKey: .supportsQuota)) ?? false
+        sourceOrder = (try? c.decodeIfPresent([String].self, forKey: .sourceOrder)) ?? []
+        options = (try? c.decodeIfPresent([String: String].self, forKey: .options)) ?? [:]
+        consents = tolerantRows(
+            ProviderConsentRow.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .consents)
+        )
+        credentials = tolerantRows(
+            ProviderCredentialRow.self,
+            try c.decodeIfPresent([JSONValue].self, forKey: .credentials)
+        )
+        importedCredential = (try? c.decodeIfPresent(Bool.self, forKey: .importedCredential)) ?? false
+        state = try? c.decodeIfPresent(String.self, forKey: .state)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        action = try? c.decodeIfPresent(String.self, forKey: .action)
+        accountLabel = try? c.decodeIfPresent(String.self, forKey: .accountLabel)
+        observedAt = try? c.decodeIfPresent(Double.self, forKey: .observedAt)
+    }
+}

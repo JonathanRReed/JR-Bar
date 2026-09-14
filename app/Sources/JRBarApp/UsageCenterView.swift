@@ -185,6 +185,10 @@ struct ProviderUsageCard: View {
                     .monospacedDigit()
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let row = store.row(for: provider.identity) {
+                Divider()
+                connectionSection(row)
+            }
             if !provider.isSignedOut {
                 Divider()
                 historySection
@@ -220,6 +224,59 @@ struct ProviderUsageCard: View {
         }
         .animation(store.reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.45, dampingFraction: 0.75), value: flashing)
         .accessibilityElement(children: .contain)
+    }
+
+    /// The inspect/manage row: the enabled toggle, the daemon's current
+    /// fix-it action as a working button, and any granted browser
+    /// consents with a working revoke. All of it is the daemon's own
+    /// `list_providers`/`provider_consent`/`provider_action` truth.
+    @ViewBuilder
+    private func connectionSection(_ row: ProviderRow) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Toggle(
+                    "Metering",
+                    isOn: Binding(
+                        get: { row.enabled },
+                        set: { store.setProviderEnabled(row, $0) }
+                    )
+                )
+                .controlSize(.small)
+                .toggleStyle(.checkbox)
+                .help("Enable or disable this provider's quota collection")
+                if let action = provider.action, !action.isEmpty {
+                    Button(action) { store.runProviderAction(provider) }
+                        .controlSize(.small)
+                        .help(provider.reason?.replacingOccurrences(of: "_", with: " ") ?? action)
+                }
+                Spacer()
+                if row.importedCredential {
+                    Text("imported session")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .help("This credential came from a consented browser import; revoking the consent removes it while it is still the imported value.")
+                }
+            }
+            if !row.consents.isEmpty {
+                ForEach(Array(row.consents.enumerated()), id: \.offset) { _, consent in
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.shield")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(consent.browser) · \(consent.profile)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text(consent.fields.joined(separator: ", "))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Button("Revoke") { store.revokeConsent(providerID: provider.id, consent: consent) }
+                            .controlSize(.mini)
+                            .help("Stop every future read of \(consent.browser) \(consent.profile); imported data is removed only while it is still the imported value")
+                    }
+                }
+            }
+        }
     }
 
     private var header: some View {

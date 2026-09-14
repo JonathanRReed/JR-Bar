@@ -376,6 +376,39 @@ def handle_provider_usage_action(
             return codex_activity_report(_Path.home(), _time.time())
         except Exception:
             return "Rescanning Codex CLI activity now."
+    if provider_id == "gemini":
+        # Gemini's OAuth credentials live in ~/.gemini/oauth_creds.json
+        # and belong to the gemini CLI: JR-Bar refreshes and reads them
+        # but cannot sign the user in, onboard the account, or create a
+        # Code Assist project. Every action here points at the owner.
+        if "sign in" in label.lower():
+            return (
+                "Gemini's sign-in belongs to the gemini CLI. Run `gemini` "
+                "once in a terminal and complete its sign-in — JR-Bar reads "
+                "~/.gemini/oauth_creds.json on the next refresh."
+            )
+        if label == "Set a Code Assist project id":
+            return (
+                "This account has no Code Assist project. Run `gemini` once "
+                "so the CLI can provision one, or set an existing GCP "
+                "project id with `jrbar providers configure gemini "
+                "--option project_id=<id>`."
+            )
+        if label == "Check the Code Assist license":
+            return (
+                "Google denied the quota read: the account has no Code "
+                "Assist license for that project. This is a Gemini-side "
+                "entitlement — enable it in the Google Admin console or "
+                "AI Studio; JR-Bar only reads the result."
+            )
+        if label == "Check Gemini Code Assist eligibility":
+            return (
+                "Google reports this account/client ineligible for the "
+                "Code Assist free tier — the free tier now routes through "
+                "Antigravity. Use the Antigravity provider or a paid "
+                "Code Assist project."
+            )
+        return None
     if provider_id == "antigravity" and (
         "Antigravity" in label or "agy" in label
     ):
@@ -427,14 +460,14 @@ def handle_provider_usage_action(
     return None
 
 
-def run_provider_usage_action(
+def perform_provider_usage_action(
     controller,
     provider_id: str,
     source_instance_id: str = "default",
-) -> bool:
-    """Controller-level wrapper: resolve the provider's CURRENT action
-    label, run the staged flow, surface the message, force a refresh.
-    False when the label is not part of this flow (caller falls back)."""
+) -> str | None:
+    """Resolve the provider's CURRENT action label, run the staged flow,
+    surface the message, force a refresh. Returns the surfaced message --
+    None when the label is not part of this flow (caller falls back)."""
     state = getattr(controller, "provider_usage_state", None)
     snapshot = next(
         (
@@ -446,7 +479,7 @@ def run_provider_usage_action(
     )
     label = getattr(snapshot, "action_label", None)
     if not label:
-        return False
+        return None
     from .provider_credential_store import ProviderCredentialStore
 
     message = handle_provider_usage_action(
@@ -457,7 +490,7 @@ def run_provider_usage_action(
         source_instance_id=source_instance_id,
     )
     if message is None:
-        return False
+        return None
     # The message MUST land somewhere visible. set_settings_message's
     # only sink is empty until Settings has been opened once, which is
     # how "Reconnect Grok" spent months answering into the void.
@@ -494,7 +527,24 @@ def run_provider_usage_action(
     # The click's REAL outcome arrives with the refresh it just forced;
     # arm the one-shot reporter so the banner tells the truth about what
     # actually happened instead of only what was attempted.
-    return True
+    return message
+
+
+def run_provider_usage_action(
+    controller,
+    provider_id: str,
+    source_instance_id: str = "default",
+) -> bool:
+    """Controller-level wrapper kept for the legacy call sites: True when
+    the staged flow handled the click."""
+    return (
+        perform_provider_usage_action(
+            controller,
+            provider_id,
+            source_instance_id,
+        )
+        is not None
+    )
 
 
 __all__ = [

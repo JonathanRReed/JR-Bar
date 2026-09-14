@@ -375,4 +375,46 @@ struct CodecTests {
         #expect(model.unknownMessageCount == 1)
         #expect(model.isLive == false, "no socket means the file feeds stay in charge")
     }
+
+    @Test("provider rows decode per instance with no secret fields")
+    func providerRows() throws {
+        let json = """
+            {"providers": [
+              {"id": "devin", "instance": "default", "label": "Devin",
+               "enabled": true, "menu_visible": true,
+               "browser_sources_enabled": true, "supports_browser_sources": true,
+               "supports_local_tokens": true, "supports_quota": true,
+               "source_order": ["browser", "api"],
+               "options": {"organization": "acme"},
+               "consents": [{"browser": "chrome", "profile": "Default",
+                 "domains": ["app.devin.ai"], "fields": ["auth1_session"],
+                 "background_repair": false, "granted_at": 1789000000.0,
+                 "source_instance_id": "default"}],
+               "credentials": [{"account": "token", "available": true}],
+               "imported_credential": true,
+               "state": "ready", "reason": null, "action": null,
+               "account_label": "me@acme", "observed_at": 1789000100.0},
+              {"id": "devin", "instance": "work", "label": "Devin · work",
+               "enabled": false}
+            ]}
+            """
+        let envelope = try JSONDecoder().decode(
+            [String: [ProviderRow]].self, from: Data(json.utf8)
+        )
+        let decoded = try #require(envelope["providers"])
+        #expect(decoded.count == 2)
+        let devin = decoded[0]
+        #expect(devin.identity == "devin")
+        #expect(devin.enabled == true)
+        #expect(devin.consents.first?.fields == ["auth1_session"])
+        #expect(devin.credentials.first?.available == true)
+        #expect(devin.importedCredential == true)
+        #expect(devin.state == "ready")
+        let work = decoded[1]
+        #expect(work.identity == "devin|work")
+        #expect(work.enabled == false)
+        // Tolerates the absent rest: a minimal row still decodes.
+        #expect(work.consents.isEmpty && work.sourceOrder.isEmpty)
+        #expect(work.state == nil)
+    }
 }
