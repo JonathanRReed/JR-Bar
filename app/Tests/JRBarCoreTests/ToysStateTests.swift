@@ -21,8 +21,8 @@ struct ToysStateTests {
         let state = ToysState()
         #expect(state.fold == FoldSettings())
         #expect(state.fold.enabled == false)
-        #expect(state.fold.activationAngle == 82)
-        #expect(state.fold.style == .dusk)
+        #expect(state.fold.activationAngle == 65)
+        #expect(state.fold.style == .fog)
         #expect(state.fold.provider == .jrbar)
         #expect(state.aquarium == AquariumSettings())
         #expect(state.notchBuddy == NotchBuddySettings())
@@ -53,8 +53,8 @@ struct ToysStateTests {
         let json = #"{"fold": {"enabled": true, "activationAngle": "soon", "style": "glow", "provider": "someone"}, "confetti": {"enabled": "yes"}, "externalApps": "many", "futureToy": {"enabled": true}}"#
         let state = try decode(ToysState.self, json)
         #expect(state.fold.enabled == true)
-        #expect(state.fold.activationAngle == 82, "a string is not an angle")
-        #expect(state.fold.style == .dusk, "an unknown style is dusk")
+        #expect(state.fold.activationAngle == 65, "a string is not an angle")
+        #expect(state.fold.style == .fog, "an unknown style is fog")
         #expect(state.fold.provider == .jrbar, "an unknown renderer is jrbar")
         #expect(state.confetti.enabled == false, "a string is not a flag")
         #expect(state.externalApps.isEmpty)
@@ -74,11 +74,18 @@ struct ToysStateTests {
 
     @Test("a file still on the old defaults migrates to the new ones")
     func oldDefaultsMigrate() throws {
-        // Pre-0.9.6 builds shipped 110°/Tilt and proved over-eager: a
-        // file carrying exactly those values is treated as untouched.
-        let stale = try decode(FoldSettings.self, #"{"activationAngle": 110, "style": "tilt"}"#)
-        #expect(stale.activationAngle == 82)
-        #expect(stale.style == .dusk)
+        // Each past default set is treated as untouched: pre-0.9.6's
+        // 110°/Tilt and 0.9.6's 82°/Dusk both land on the current
+        // 65°/Fog. Real persisted files encode every key, so the check
+        // sees the old shade too. Deliberate changes survive either way.
+        let stale = try decode(FoldSettings.self,
+                               #"{"activationAngle": 110, "style": "tilt", "shade": 0.4}"#)
+        #expect(stale.activationAngle == 65)
+        #expect(stale.style == .fog)
+        #expect(stale.shade == 0.7)
+        let mid = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "dusk", "shade": 0.4}"#)
+        #expect(mid.activationAngle == 65)
+        #expect(mid.style == .fog)
         // But a deliberate 110° survives: any other field moved means the
         // user touched it, and Tilt on its own is a real choice too.
         let chosen = try decode(FoldSettings.self,
@@ -86,6 +93,10 @@ struct ToysStateTests {
         #expect(chosen.activationAngle == 110)
         let tiltOnly = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "tilt"}"#)
         #expect(tiltOnly.style == .tilt)
+        // A deliberate 82° with a moved field survives the migration too.
+        let kept = try decode(FoldSettings.self, #"{"activationAngle": 82, "style": "dusk", "shade": 0.9}"#)
+        #expect(kept.activationAngle == 82)
+        #expect(kept.shade == 0.9)
     }
 
     @Test("the earlier confetti fields decode as their replacement: off")

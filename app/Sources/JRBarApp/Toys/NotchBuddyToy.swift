@@ -542,7 +542,7 @@ private struct BuddyControlsView: View {
             .disabled(toy.miniMode)
 
             Toggle(isOn: toy.presentationBinding) {
-                SettingLabel(title: "Mini", subtitle: "Just the status — a small pill instead of a character.")
+                SettingLabel(title: "Mini", subtitle: "Just the status dot while floating too — the docked slot is always the dot.")
             }
             .toggleStyle(.checkbox)
 
@@ -565,7 +565,7 @@ private struct BuddyControlsView: View {
                 }
             } label: {
                 SettingLabel(title: "Size",
-                             subtitle: "How big the floating buddy grows — the docked pill stays its 18pt self.")
+                             subtitle: "How big the floating buddy grows — the docked slot stays a small status dot.")
             }
 
             HStack(spacing: 10) {

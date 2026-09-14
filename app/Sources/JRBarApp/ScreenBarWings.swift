@@ -21,7 +21,10 @@ struct ScreenBarWingSlot: Equatable {
 
     var textColor: Color {
         switch tone {
-        case .neutral: return .white.opacity(0.92)
+        // `.primary` adapts to the menu bar's own light/dark the way a
+        // native status item does — the chip wears no background, so a
+        // fixed white would vanish on a light wallpaper.
+        case .neutral: return .primary
         case .attention: return .orange
         case .alert: return .red
         }
@@ -50,9 +53,10 @@ final class ScreenBarWingsModel {
 }
 
 /// The wing chips. Each fills the rect the geometry measured for it —
-/// fixed extents keep the hit region honest (the drawn capsule and the
-/// tested rect are the same) and keep content churn from reframing the
-/// window. Text truncates inside rather than growing the claim.
+/// fixed extents keep the hit region honest and keep content churn from
+/// reframing the window. They draw bare — an icon and a word like a
+/// native status item, not a floating capsule; the menu bar is the
+/// background. Text truncates inside rather than growing the claim.
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
@@ -78,7 +82,6 @@ struct ScreenBarWingsView: View {
         }
         .padding(.horizontal, 8)
         .frame(width: rect.width, height: rect.height)
-        .background(Capsule(style: .continuous).fill(.black.opacity(0.82)))
         // The rect is in the hosting view's bottom-left space; SwiftUI
         // positions from the top, so flip the midpoint.
         .position(x: rect.midX, y: model.viewHeight - rect.midY)

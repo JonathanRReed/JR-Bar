@@ -132,6 +132,7 @@ final class NotchHUDPanel: NSPanel {
         effect.layer?.masksToBounds = true
         chrome = effect
         super.init(contentRect: NSRect(x: 0, y: 0, width: 160, height: 30), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        hosting.onHoverChange = { [weak self] in self?.model.hovered = $0 }
         clear.frame = NSRect(x: 0, y: 0, width: 160, height: 30)
         clear.addSubview(hosting)
         contentView = clear
@@ -265,6 +266,8 @@ final class NotchHUDModel {
     var toastActive = false
     /// The Notch Buddy the panel hosts while no toast is up.
     var buddy: NotchBuddyToy?
+    /// The pointer is on the pet — its name tag only shows while it is.
+    var hovered = false
 }
 
 struct NotchHUDView: View {
@@ -284,7 +287,21 @@ struct NotchHUDView: View {
             .padding(.vertical, 7)
             .fixedSize()
         } else if let buddy = model.buddy, buddy.isOn {
-            NotchBuddyView(toy: buddy)
+            // The docked slot is the status dot — compact beside the
+            // notch. Its name tag exists only under the pointer; the
+            // space stays reserved so the dot never jumps.
+            VStack(spacing: 1) {
+                NotchBuddyView(toy: buddy, compact: true)
+                Text(model.hovered ? buddy.caption() : " ")
+                    .font(.system(size: 8, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .shadow(color: .black.opacity(0.6), radius: 2, y: 1)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 130)
+                    .frame(height: 9)
+                    .opacity(model.hovered ? 1 : 0)
+            }
         }
     }
 }

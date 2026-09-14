@@ -20,6 +20,25 @@ protocol BuddyMouseHost: NSView {
 /// or a press held half a second).
 final class BuddyHostingView<Content: View>: NSHostingView<Content>, BuddyMouseHost {
     weak var buddyDrag: BuddyDragController?
+    /// The pointer entering or leaving the pet — the name tag and the
+    /// docked status line hang off this, so they only exist on hover.
+    var onHoverChange: ((Bool) -> Void)?
+    /// Ours only — the hosting view keeps whatever tracking areas it
+    /// installs for SwiftUI's own hover machinery.
+    private var hoverArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
 
     override func mouseDown(with event: NSEvent) {
         if let buddyDrag { buddyDrag.mouseDown(event, in: self) } else { super.mouseDown(with: event) }
@@ -192,6 +211,8 @@ final class BuddyDragController {
 final class BuddyPanelModel {
     /// Who lives in the free panel; nil until the HUD hands it over.
     var toy: NotchBuddyToy?
+    /// The pointer is on the pet — the name tag only shows while it is.
+    var hovered = false
 }
 
 /// The buddy's free-floating home: the pet bare on a transparent
@@ -215,6 +236,7 @@ final class BuddyPanel: NSPanel {
         hosting.autoresizingMask = [.width, .height]
         super.init(contentRect: NSRect(x: 0, y: 0, width: 60, height: 30),
                    styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        hosting.onHoverChange = { [weak self] in self?.model.hovered = $0 }
         contentView = hosting
         isOpaque = false
         backgroundColor = .clear
@@ -310,6 +332,9 @@ struct BuddyPanelView: View {
                             .frame(maxWidth: max(150, 60 * scale))
                             .frame(height: caption + 2)
                             .padding(.bottom, 2 * scale)
+                            // The name tag exists only under the pointer;
+                            // the space stays so the pet never jumps.
+                            .opacity(model.hovered ? 1 : 0)
                     }
                 }
                 .help(summary.statusLine)

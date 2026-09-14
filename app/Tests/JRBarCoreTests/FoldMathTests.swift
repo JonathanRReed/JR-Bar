@@ -89,29 +89,40 @@ struct FoldMathTests {
         #expect(tracker.velocity == 0)
     }
 
-    @Test("a 10 Hz staircase of a 60°/s close renders each edge and never leads the sensor")
+    @Test("a 10 Hz staircase of a 60°/s close interpolates edges and never leads the sensor")
     func tracksStaircase() {
         var tracker = LidTracker()
         let poll = 1.0 / 120
         let truth: (Double) -> Double = { 90 - 60 * $0 }
+        var maxStep = 0.0
+        var lastRender = 0.0
         for i in 0...240 {
             let t = Double(i) * poll
             let raw = sensor(t, truth: truth)
             tracker.feed(raw, at: t)
             tracker.tick(dt: poll, at: t)
-            guard t > 0.3 else { continue }
-            // The contract: the render angle IS the newest edge — never
-            // ahead of the sensor (the old extrapolation's overshoot was
-            // the fast-close judder), never behind it by more than the
-            // sensor's own ~100 ms report latency plus a degree of
-            // quantization.
-            #expect(tracker.renderAngle == raw,
-                    "render must be the last edge at t=\(t)")
+            guard t > 0.3 else {
+                lastRender = tracker.renderAngle
+                continue
+            }
+            // The contract: the render angle is a piecewise-linear fit
+            // through the samples — on a close it never dips under the
+            // newest edge (never ahead), never lags it by more than one
+            // edge's travel, never leads truth, and never steps.
+            #expect(tracker.renderAngle >= raw - 0.001,
+                    "ahead of the newest edge at t=\(t)")
+            #expect(tracker.renderAngle - raw < 7,
+                    "more than one edge behind at t=\(t): \(tracker.renderAngle) vs \(raw)")
             #expect(tracker.renderAngle >= truth(t) - 0.5,
                     "never ahead of the lid at t=\(t)")
             #expect(tracker.renderAngle - truth(t) < 8,
                     "lag stays inside the sensor's own latency at t=\(t)")
+            maxStep = max(maxStep, abs(tracker.renderAngle - lastRender))
+            lastRender = tracker.renderAngle
         }
+        // The staircase the sensor delivers steps ~6° per edge; a smooth
+        // render's largest single-frame move is a small fraction of it.
+        #expect(maxStep < 1.5, "render stepped \(maxStep)° in one frame")
     }
 
     @Test("0.3 s after the last edge the lid reads parked: velocity zero, render is the last raw")
@@ -147,7 +158,10 @@ struct FoldMathTests {
             let raw = sensor(t, truth: truth)
             tracker.feed(raw, at: t)
             tracker.tick(dt: poll, at: t)
-            #expect(tracker.renderAngle == raw, "every render is an edge at t=\(t)")
+            // The render stays within one edge of the newest reading —
+            // interpolating between measured points, never inventing one.
+            #expect(abs(tracker.renderAngle - raw) < 7,
+                    "render drifted off the samples at t=\(t): \(tracker.renderAngle) vs \(raw)")
             if t > 1.3 {
                 // 0.3 s past the turn the estimate is with the new
                 // direction.

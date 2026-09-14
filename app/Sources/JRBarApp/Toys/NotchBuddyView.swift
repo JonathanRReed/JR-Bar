@@ -17,11 +17,15 @@ import SwiftUI
 /// a "+1" crumb whenever it eats a completed session.
 struct NotchBuddyView: View {
     let toy: NotchBuddyToy
-    /// The floating panel's size multiplier — the docked pill leaves it
+    /// The floating panel's size multiplier — the docked slot leaves it
     /// at 1. Everything inside is vector (paths, shapes, text), so this
     /// rides the render tree as a transform, not a resample: strokes,
     /// eyes and the badge stay crisp at 3×.
     var scale: Double = 1
+    /// The docked slot's presentation: always the status dot — compact
+    /// beside the notch, no character body. Floating keeps whichever
+    /// presentation the settings picked.
+    var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The window a hop plays across; `NotchBuddyToy.hopUntil` sets it.
@@ -33,9 +37,10 @@ struct NotchBuddyView: View {
             // care mood and the hover line all read the same summary.
             let summary = toy.summary(at: context.date)
             let dress = dragDress(at: context.date)
-            if toy.miniMode {
-                // Mini: the same summary wearing a status pill — no
-                // character body, same tap/menu/badge contract.
+            if compact || toy.miniMode {
+                // The status dot: idle dims, one worker tints it, and a
+                // plural count earns the number — same tap/menu/badge
+                // contract as the full figure.
                 MiniFigure(
                     mood: summary.mood,
                     tint: tint(for: summary),
@@ -44,7 +49,6 @@ struct NotchBuddyView: View {
                     still: reduceMotion,
                     phase: context.date.timeIntervalSince1970
                 )
-                .overlay(alignment: .bottomTrailing) { workingBadge(for: summary) }
                 .help(summary.statusLine)
             } else {
             BuddyFigure(
@@ -190,9 +194,11 @@ struct NotchBuddyView: View {
     }
 }
 
-/// Mini: the buddy's controller without a character. One status pill
-/// tinted by the mood, a "!" for open asks and a count when they stack —
-/// the tap, menu and badge contract is identical to the full figure.
+/// The status-dot presentation: no character body, just a dot tinted by
+/// the mood — dim when idle, provider-coloured while one session works,
+/// and a number beside it once the work is plural. The "!" still wears
+/// the open-ask count; tap, drag and menu behave exactly like the full
+/// figure.
 private struct MiniFigure: View {
     let mood: NotchBuddyToy.Mood
     let tint: Color
@@ -202,22 +208,31 @@ private struct MiniFigure: View {
     let phase: TimeInterval
 
     var body: some View {
-        Capsule()
-            .fill(tint.opacity(mood == .asleep ? 0.35 : 0.9))
-            // Awake breathes on a slow cycle; Reduce Motion holds still.
-            .scaleEffect(still || mood == .asleep ? 1.0 : 1.0 + 0.08 * sin(phase * 2.2))
-            .frame(width: 14, height: 8)
-            .overlay(alignment: .top) {
-                if waiting > 0 {
-                    Text(waiting > 1 ? "!\(waiting)" : "!")
-                        .font(.system(size: 7, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 2.5).padding(.vertical, 0.5)
-                        .background(Capsule().fill(Color.orange))
-                        .offset(y: -7)
-                        .accessibilityHidden(true)
-                }
+        HStack(alignment: .center, spacing: 3) {
+            Circle()
+                .fill(tint.opacity(mood == .asleep ? 0.35 : 0.95))
+                // Awake breathes on a slow cycle; Reduce Motion holds still.
+                .scaleEffect(still || mood == .asleep ? 1.0 : 1.0 + 0.1 * sin(phase * 2.2))
+                .frame(width: 7, height: 7)
+            if working > 1 {
+                Text("\(working)")
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                    .accessibilityHidden(true)
             }
+        }
+        .overlay(alignment: .top) {
+            if waiting > 0 {
+                Text(waiting > 1 ? "!\(waiting)" : "!")
+                    .font(.system(size: 7, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 2.5).padding(.vertical, 0.5)
+                    .background(Capsule().fill(Color.orange))
+                    .offset(y: -8)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 }
 

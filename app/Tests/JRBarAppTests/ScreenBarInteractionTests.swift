@@ -23,4 +23,33 @@ import Testing
     @Test func pinnedOutsideClicksDismiss() {
         #expect(ScreenBarInteraction.clickOutcome(pinned: true, inside: false) == .unpin)
     }
+
+    // MARK: Swipe (Alcove-style band gestures)
+
+    @Test func aSwipeDownOnTheBandExpands() {
+        #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: false,
+                                                  deltaY: -ScreenBarInteraction.swipeThreshold - 1) == .expand)
+    }
+
+    @Test func aSwipeUpOnAPinnedCardCollapses() {
+        #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: true,
+                                                  deltaY: ScreenBarInteraction.swipeThreshold + 1) == .collapse)
+    }
+
+    @Test func aSwipeDownOnAPinnedCardIsAlreadyExpanded() {
+        #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: true, deltaY: -30) == .none)
+    }
+
+    @Test func aSwipeUpWithNothingPinnedIsNothing() {
+        #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: false, deltaY: 30) == .none)
+    }
+
+    @Test func aJitterInsideTheThresholdStaysAClick() {
+        for delta in stride(from: -13.0, through: 13.0, by: 1.0) {
+            #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: false, deltaY: delta) == .none,
+                    "deltaY \(delta) should not fire")
+            #expect(ScreenBarInteraction.swipeOutcome(pinnedAtDown: true, deltaY: delta) == .none,
+                    "pinned deltaY \(delta) should not fire")
+        }
+    }
 }

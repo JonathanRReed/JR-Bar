@@ -142,8 +142,32 @@ final class AquariumToy: Toy {
 
     private func refreshFish() {
         // The tank takes every listed session: `core.sessions` is mains
-        // only, and a sub-agent is somebody's fry.
-        fish = AquariumModel.reduce(sessions: core.state?.sessions ?? [], previous: fish, now: Date())
+        // only, and a sub-agent is somebody's fry. Species come from the
+        // settings' per-provider casting, falling back to the table.
+        let settings = store?.state.aquarium ?? AquariumSettings()
+        fish = AquariumModel.reduce(sessions: core.state?.sessions ?? [], previous: fish, now: Date()) {
+            settings.species(for: $0)
+        }
+    }
+
+    /// The inspector's species picker writes here — a per-provider
+    /// recast, so every fish from that provider changes shape at once.
+    func setSpecies(_ species: FishSpecies?, for provider: String) {
+        store?.state.aquarium.speciesOverrides[provider.lowercased()] = species?.rawValue
+        refreshFish()
+    }
+
+    /// What the inspector's picker shows for `provider`: the stored pick
+    /// or the table default.
+    func species(for provider: String) -> FishSpecies {
+        (store?.state.aquarium ?? AquariumSettings()).species(for: provider)
+    }
+
+    /// The picker's raw selection for `provider`: the stored override,
+    /// or nil when the provider swims as its table species.
+    func speciesOverride(for provider: String) -> FishSpecies? {
+        store?.state.aquarium.speciesOverrides[provider.lowercased()]
+            .flatMap(FishSpecies.init(rawValue:))
     }
 
     /// Watches the session list like `NotchBuddyToy`: one observation

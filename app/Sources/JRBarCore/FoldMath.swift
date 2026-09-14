@@ -94,16 +94,27 @@ public struct DeltaSpring: Sendable {
 /// is 9–13°, so the velocity estimate led 8° past the truth and the next
 /// edge yanked it back — a multi-degree sawtooth riding every close,
 /// worst exactly when the lid moves fast. The ~100 ms of sensor latency
-/// it covered costs less than the sawtooth it bought: the display spring
-/// already turns the staircase into a ramp, so the render angle is now
-/// simply the last accepted edge, and the spring carries the glide.
+/// it covered costs less than the sawtooth it bought — but snapping the
+/// render target to each edge still feeds the display spring a 10 Hz
+/// staircase, and every step re-energizes it into a faint judder.
+///
+/// So the render angle is a piecewise-linear fit through the samples:
+/// each edge eases in over the interval it took to arrive, landing on
+/// the newest reading just as the next lands. It never leads the truth
+/// — every rendered value interpolates between two measured points —
+/// and it never lags the old snap by more than the ramp's own run.
+/// The spring downstream owns the last of the smoothing.
 ///
 /// Velocity survives only as an input to the motion-blur boost — it is
 /// estimated at edges, capped at a physical slam speed, and never feeds
 /// the render. All times are host seconds (CACurrentMediaTime).
 public struct LidTracker: Sendable {
-    /// What the renderer should draw: the last accepted hinge reading.
-    /// The spring downstream owns every millisecond of smoothing.
+    /// What the renderer should draw: a bounded ramp toward the newest
+    /// accepted hinge reading — it eases from the value the last edge
+    /// left to this edge over the interval the edge took to arrive,
+    /// then holds. Unlike the old dead reckoning it can never pass the
+    /// truth: the ramp only ever interpolates between two measured
+    /// points.
     public private(set) var renderAngle = 0.0
     /// Lid velocity in deg/s, estimated at each edge and blended.
     /// Negative is closing. Cosmetic — feeds only the motion-aware blur.
@@ -111,6 +122,13 @@ public struct LidTracker: Sendable {
 
     private var edgeAt: TimeInterval = 0
     private var lastRaw: Double = 0
+    /// The angle the current ramp started from — the value mid-flight
+    /// when the edge landed, so direction changes stay continuous.
+    private var rampFrom = 0.0
+    /// Seconds the current ramp runs — the interval the newest edge
+    /// took to arrive, so at steady cadence the render reaches each
+    /// sample just as the next lands.
+    private var rampSpan = LidTracker.samplePeriod
     private var primed = false
 
     /// The measured sensor cadence: the HID report only changes every
@@ -142,13 +160,21 @@ public struct LidTracker: Sendable {
             primed = true
             edgeAt = at
             lastRaw = raw
+            rampFrom = raw
             renderAngle = raw
             velocity = 0
             return
         }
         guard raw != lastRaw else { return }
         let dt = max(0.02, at - edgeAt)
-        let vNew = max(-Self.maxLidSpeed, min(Self.maxLidSpeed, (raw - renderAngle) / dt))
+        // The ramp runs for exactly the interval this edge took to
+        // arrive: at steady cadence the render lands on each sample just
+        // as the next lands — a piecewise-linear fit through the
+        // measurements with no added lag and no extrapolation.
+        let newSpan = min(0.4, max(0.04, dt))
+        // Edge-to-edge: `renderAngle` may be mid-ramp, so measure off
+        // the previous accepted reading, not the eased display value.
+        let vNew = max(-Self.maxLidSpeed, min(Self.maxLidSpeed, (raw - lastRaw) / dt))
         if vNew * velocity < 0 {
             if abs(vNew) >= Self.reversalFloor {
                 // A real reversal: take the new direction whole — a
@@ -161,16 +187,25 @@ public struct LidTracker: Sendable {
         } else {
             velocity = velocity == 0 ? vNew : velocity + (vNew - velocity) * Self.velocityBlend
         }
-        renderAngle = raw
+        // Hand off from exactly where the display was when this edge
+        // landed — a mid-ramp value, so direction changes stay smooth.
+        let eased = rampFrom + (lastRaw - rampFrom) * min(1, max(0, (at - edgeAt) / rampSpan))
+        rampFrom = eased
+        renderAngle = eased
+        rampSpan = newSpan
         edgeAt = at
         lastRaw = raw
     }
 
-    /// Per render frame: no extrapolation, just the blur boost's decay —
-    /// `restAfter` quiet and the velocity reads zero.
+    /// Per render frame: the ramp walks the render angle from the last
+    /// edge's value to the newest one over the interval that edge took
+    /// to arrive, then holds — and the blur boost's decay: `restAfter`
+    /// quiet and the velocity reads zero.
     public mutating func tick(dt: Double, at: TimeInterval) {
         guard at.isFinite, primed else { return }
-        if at - edgeAt > Self.restAfter { velocity = 0 }
+        let span = at - edgeAt
+        renderAngle = rampFrom + (lastRaw - rampFrom) * min(1, max(0, span / rampSpan))
+        if span > Self.restAfter { velocity = 0 }
     }
 }
 

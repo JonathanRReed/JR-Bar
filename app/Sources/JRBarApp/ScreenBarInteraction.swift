@@ -25,7 +25,10 @@ struct ScreenBarFocus: Equatable {
 /// the band's own rounded rect (the way codenotch does), coalesced to at
 /// most one main-actor wake per `moveInterval` so a fast pointer does not
 /// run the actor at mouse-event rate. Hovering shows a transient glass pill
-/// under the band, clicking opens the session.
+/// under the band, clicking pins it open. A press dragged down is the
+/// Alcove-style swipe — it expands the pinned card — and a press dragged
+/// up while pinned collapses it; a click is simply a down+up that never
+/// crossed the threshold, so it resolves on release instead of on down.
 @MainActor
 final class ScreenBarInteraction {
     /// Deliberate-intent delay: long enough that a pointer cutting across
@@ -58,6 +61,11 @@ final class ScreenBarInteraction {
     var underBandClearance: @MainActor () -> CGFloat = { 0 }
     var onOpen: @MainActor (String) -> Void
 
+    /// Points of vertical travel before a press-on-the-band becomes a
+    /// swipe — small enough that a deliberate pull feels instant, large
+    /// enough that a jittery click never fires it.
+    nonisolated static let swipeThreshold: CGFloat = 14
+
     private var globalMonitors: [Any] = []
     private var localMonitors: [Any] = []
     /// The monitor callback runs off-actor; a lock and one pending flag keep
@@ -75,6 +83,9 @@ final class ScreenBarInteraction {
     /// W12's persisted timers — surfaced so AppDelegate can wire the
     /// expiry notification into `NotificationBridge`.
     var timers: ShelfTimerModel { tooltip.model.timers }
+    /// The peek/pinned card's model — surfaced so AppDelegate can wire
+    /// the roster affordance into the Overview window.
+    var tooltipModel: ScreenBarTooltipModel { tooltip.model }
     private(set) var isTooltipShown = false
     private var lastFocus: ScreenBarFocus?
     /// Escape-to-unpin while a pinned card is up: local covers the
@@ -106,16 +117,34 @@ final class ScreenBarInteraction {
             self?.schedulePointerMoved()
         } { globalMonitors.append(moved) }
         if let down = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.pointerClicked() }
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerDown(at: point) }
         } { globalMonitors.append(down) }
+        if let drag = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] _ in
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerDragged(to: point) }
+        } { globalMonitors.append(drag) }
+        if let up = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.pointerReleased() }
+        } { globalMonitors.append(up) }
         if let moved = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) { [weak self] event in
             self?.schedulePointerMoved()
             return event
         } { localMonitors.append(moved) }
         if let down = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
-            Task { @MainActor [weak self] in self?.pointerClicked() }
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerDown(at: point) }
             return event
         } { localMonitors.append(down) }
+        if let drag = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged]) { [weak self] event in
+            let point = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in self?.pointerDragged(to: point) }
+            return event
+        } { localMonitors.append(drag) }
+        if let up = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { [weak self] event in
+            Task { @MainActor [weak self] in self?.pointerReleased() }
+            return event
+        } { localMonitors.append(up) }
     }
 
     func stop() {
@@ -123,6 +152,8 @@ final class ScreenBarInteraction {
         globalMonitors = []
         localMonitors = []
         hovering = false
+        swipeStart = nil
+        swipeFired = false
         hideTooltip()
     }
 
@@ -208,27 +239,77 @@ final class ScreenBarInteraction {
         return inside ? .pin : .none
     }
 
-    private func pointerClicked() {
-        switch Self.clickOutcome(pinned: tooltip.isPinned, inside: pointerInHitRegion()) {
-        case .cardButton:
-            // The pinned card takes mouse events; its buttons handle it.
-            return
-        case .unpin:
+    /// What a vertical drag that started on the band becomes — pure so
+    /// the gesture's truth table is testable without a pointer: down
+    /// expands an unpinned band, up collapses a pinned card, anything
+    /// else or below the threshold is still just a click pending.
+    /// `deltaY` is in screen coordinates — upward positive.
+    enum SwipeOutcome { case expand, collapse, none }
+
+    nonisolated static func swipeOutcome(pinnedAtDown: Bool, deltaY: CGFloat) -> SwipeOutcome {
+        if deltaY <= -swipeThreshold { return pinnedAtDown ? .none : .expand }
+        if deltaY >= swipeThreshold { return pinnedAtDown ? .collapse : .none }
+        return .none
+    }
+
+    /// Where the press started, whether the card was pinned then, and
+    /// whether the drag already fired its outcome — one pending press
+    /// at a time; a down outside the region never arms one.
+    private var swipeStart: NSPoint?
+    private var swipePinnedAtDown = false
+    private var swipeFired = false
+
+    private func pointerDown(at point: NSPoint) {
+        if pointerInHitRegion() {
+            // Inside: the press might become a swipe — the click resolves
+            // on release instead.
+            swipeStart = point
+            swipePinnedAtDown = tooltip.isPinned
+            swipeFired = false
+        } else {
+            swipeStart = nil
+            // Outside: only the dismiss-a-pinned-card case, and it wants
+            // the press, not the release.
+            if tooltip.isPinned { unpin() }
+        }
+    }
+
+    private func pointerDragged(to point: NSPoint) {
+        guard let start = swipeStart, !swipeFired else { return }
+        switch Self.swipeOutcome(pinnedAtDown: swipePinnedAtDown, deltaY: point.y - start.y) {
+        case .expand:
+            swipeFired = true
+            pinCard()
+        case .collapse:
+            swipeFired = true
             unpin()
         case .none:
             return
-        case .pin:
-            // Deliberate focus entry: a click pins the peek open as an
-            // interactive card — Open session lives on the card, so a
-            // stray band click never yanks a terminal forward.
-            guard let focus = focus() ?? lastFocus else { return }
-            lastFocus = focus
-            showWork?.cancel(); showWork = nil
-            hideWork?.cancel(); hideWork = nil
-            lifeWork?.cancel(); lifeWork = nil
-            if !isTooltipShown { showTooltip(focus) }
-            setPinned(true)
         }
+    }
+
+    private func pointerReleased() {
+        let wasSwipe = swipeFired
+        swipeStart = nil
+        swipeFired = false
+        guard !wasSwipe else { return }
+        // A press that never crossed the threshold is the click it always
+        // was — pinned cards route inside clicks to their buttons, so
+        // only the pin path is left to resolve here.
+        if !tooltip.isPinned, pointerInHitRegion() { pinCard() }
+    }
+
+    /// Deliberate focus entry: a click or swipe pins the peek open as an
+    /// interactive card — Open session lives on the card, so a stray
+    /// band click never yanks a terminal forward.
+    private func pinCard() {
+        guard let focus = focus() ?? lastFocus else { return }
+        lastFocus = focus
+        showWork?.cancel(); showWork = nil
+        hideWork?.cancel(); hideWork = nil
+        lifeWork?.cancel(); lifeWork = nil
+        if !isTooltipShown { showTooltip(focus) }
+        setPinned(true)
     }
 
     private func setPinned(_ pinned: Bool) {
@@ -433,6 +514,8 @@ final class ScreenBarTooltipModel {
     let calendar = ShelfCalendarModel()
     var onOpenSession: (() -> Void)?
     var onClose: (() -> Void)?
+    /// The pinned card's roster affordance — the Overview window.
+    var onOpenOverview: (() -> Void)?
 }
 
 struct ScreenBarTooltipView: View {
@@ -449,6 +532,24 @@ struct ScreenBarTooltipView: View {
                 ShelfTrayRow(tray: model.tray)
                 ShelfTimersRow(timers: model.timers)
                 ShelfCalendarRow(calendar: model.calendar)
+                Button { model.onOpenOverview?() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "rectangle.grid.2x2")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 18, height: 18)
+                        Text("Agent Overview")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text("⌘O")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Every session as a roster (⌘O)")
             }
             .padding(.leading, 7)
             .padding(.trailing, 10)

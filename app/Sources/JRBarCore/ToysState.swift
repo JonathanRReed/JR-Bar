@@ -46,10 +46,10 @@ public struct ToysState: Codable, Equatable, Sendable {
 }
 
 /// Fold: the desktop tilts, dims and blurs as the lid comes down. The
-/// shipped defaults — 82°, Dusk — are the ones that read as the
-/// hold-the-angle illusion rather than a warp: late enough that normal
-/// typing angles never reach it, dim enough that the fold reads as
-/// shadow before it reads as distortion.
+/// shipped defaults — 65°, Fog — are the ones that read as the
+/// hold-the-angle illusion rather than a warp: early enough that the
+/// fold starts while the lid is still visibly moving, dim enough that
+/// the fold reads as shadow before it reads as distortion.
 public struct FoldSettings: Codable, Equatable, Sendable {
     public var enabled: Bool
     public var activationAngle: Double
@@ -61,8 +61,8 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     /// Who renders the fold: JR-Bar's own overlay, or Bendy / Lid Plane.
     public var provider: FoldProvider
 
-    public init(enabled: Bool = false, activationAngle: Double = 82, style: FoldStyle = .dusk,
-                perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.4,
+    public init(enabled: Bool = false, activationAngle: Double = 65, style: FoldStyle = .fog,
+                perspective: Double = 0.6, blur: Double = 0.5, shade: Double = 0.7,
                 jitterTolerance: Double = 0, provider: FoldProvider = .jrbar) {
         self.enabled = enabled
         self.activationAngle = activationAngle
@@ -81,21 +81,25 @@ public struct FoldSettings: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
-        activationAngle = (try? c.decodeIfPresent(Double.self, forKey: .activationAngle)) ?? 82
-        style = (try? c.decodeIfPresent(FoldStyle.self, forKey: .style)) ?? .dusk
+        activationAngle = (try? c.decodeIfPresent(Double.self, forKey: .activationAngle)) ?? 65
+        style = (try? c.decodeIfPresent(FoldStyle.self, forKey: .style)) ?? .fog
         perspective = (try? c.decodeIfPresent(Double.self, forKey: .perspective)) ?? 0.6
         blur = (try? c.decodeIfPresent(Double.self, forKey: .blur)) ?? 0.5
-        shade = (try? c.decodeIfPresent(Double.self, forKey: .shade)) ?? 0.4
+        shade = (try? c.decodeIfPresent(Double.self, forKey: .shade)) ?? 0.7
         jitterTolerance = (try? c.decodeIfPresent(Double.self, forKey: .jitterTolerance)) ?? 0
         provider = (try? c.decodeIfPresent(FoldProvider.self, forKey: .provider)) ?? .jrbar
-        // The pre-0.9.6 defaults (110°/Tilt) proved over-eager: a file
-        // still carrying exactly the old default set is treated as
-        // untouched and moved to the new ones. Any deliberate change —
-        // including to a sibling field — means the angle survives.
+        // Each past default set is treated as untouched and moved to the
+        // current one; any deliberate change means the file survives.
         if activationAngle == 110, style == .tilt, perspective == 0.6,
            blur == 0.5, shade == 0.4, jitterTolerance == 0 {
-            activationAngle = 82
-            style = .dusk
+            activationAngle = 65
+            style = .fog
+            shade = 0.7
+        } else if activationAngle == 82, style == .dusk, perspective == 0.6,
+                  blur == 0.5, shade == 0.4, jitterTolerance == 0 {
+            activationAngle = 65
+            style = .fog
+            shade = 0.7
         }
     }
 }
@@ -116,15 +120,21 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
     public var showLabels: Bool
     /// How much plankton/bubbles the tank draws.
     public var density: Double
+    /// Provider id → `FishSpecies` raw value — the tank's per-provider
+    /// casting, set from a fish's inspector. A missing or unknown entry
+    /// falls back to the provider's table species.
+    public var speciesOverrides: [String: String]
 
-    public init(enabled: Bool = false, showLabels: Bool = true, density: Double = 1.0) {
+    public init(enabled: Bool = false, showLabels: Bool = true, density: Double = 1.0,
+                speciesOverrides: [String: String] = [:]) {
         self.enabled = enabled
         self.showLabels = showLabels
         self.density = density
+        self.speciesOverrides = speciesOverrides
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, showLabels, density
+        case enabled, showLabels, density, speciesOverrides
     }
 
     public init(from decoder: any Decoder) throws {
@@ -132,6 +142,16 @@ public struct AquariumSettings: Codable, Equatable, Sendable {
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
         showLabels = (try? c.decodeIfPresent(Bool.self, forKey: .showLabels)) ?? true
         density = (try? c.decodeIfPresent(Double.self, forKey: .density)) ?? 1.0
+        let raw = (try? c.decodeIfPresent([String: String].self, forKey: .speciesOverrides)) ?? [:]
+        speciesOverrides = raw.filter { FishSpecies(rawValue: $0.value) != nil }
+    }
+
+    /// What `provider` swims as: the user's pick when one is stored,
+    /// else the table species.
+    public func species(for provider: String) -> FishSpecies {
+        if let raw = speciesOverrides[provider.lowercased()],
+           let species = FishSpecies(rawValue: raw) { return species }
+        return FishSpecies.forProvider(provider)
     }
 }
 

@@ -213,6 +213,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         self.overviewWindow = overviewWindow
         store.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
         statusItem.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
+        // The pinned card's roster affordance opens the same window.
+        interaction.tooltipModel.onOpenOverview = { [weak overviewWindow] in overviewWindow?.show() }
 
         // Event Replay: the read-only journaled-events surface (S7.4).
         let replayStore = ReplayStore(core: core)

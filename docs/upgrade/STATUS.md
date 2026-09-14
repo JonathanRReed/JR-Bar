@@ -909,3 +909,43 @@ a `.regular` `NSGlassEffectView` — the "random liquid glass pill".
 - Verified: `swift build` clean; 20 buddy/interaction tests + full
   Swift suite (557) green. Real-screen overlap check is on hardware —
   geometry is asserted in code, not screenshot-verified here.
+
+## Notch-side polish — bare wings, dot buddy, swipe gestures, aquarium casting, fold smoothness — LANDED
+
+Follow-up owner pass on the installed build: the wing capsules read as
+floating pills, the pet's name tag was always on, the aquarium doubled
+its labels, fold still juddered, there were no Alcove-style swipes, and
+the Overview was undiscoverable.
+
+- `ScreenBarWingsView`: the translucent black capsule is gone — wings
+  draw bare (icon + word, `.primary` so they follow the menu bar's
+  light/dark like a native status item). Same hit rects, same tones.
+- Docked buddy is now the status dot: idle dims it, one working session
+  tints it, a plural count earns a number; open asks still wear "!".
+  The name tag exists only under the pointer (space reserved, no jump),
+  driven by a `mouseEntered/Exited` tracking area on the hosting view —
+  its own area only, so SwiftUI's internal tracking survives.
+  Floating keeps the character (or Mini), with the same hover-only tag.
+- Alcove-style band gestures: a press dragged down expands the pinned
+  card, dragged up while pinned collapses it (`swipeOutcome` is the
+  pure truth table, threshold 14pt). Clicks resolve on release now so a
+  drag can claim the gesture first; outside presses still unpin on down.
+- Pinned card footer row: "Agent Overview ⌘O" — the roster was real
+  (⌘O, status menu, More menu) but invisible in the surface users
+  actually open. Wired to `OverviewWindowController.show()`.
+- Aquarium: per-provider species casting. `AquariumSettings.
+  speciesOverrides` persists `[provider: species]`; the inspector's
+  picker recasts every fish from that provider at once ("Automatic"
+  returns the table species). Duplicate nameplate fixed — the fish
+  wearing the hover/tap tag skips its always-on chip.
+- Fold: shipped defaults now 65°/Fog/shade 0.7 (both past default sets
+  migrate; deliberate files survive). `LidTracker` renders a
+  piecewise-linear fit through sensor samples — each edge eases in over
+  the interval it took to arrive, landing on the newest reading as the
+  next lands. No extrapolation, no added lag, no 10 Hz staircase
+  re-energizing the spring. Velocity measures edge-to-edge.
+- Verified: `swift build` clean; full Swift suite 562 green (30 FoldMath
+  incl. a new "render never steps" bound, 9 interaction incl. swipe
+  truth table, 10 toys-state incl. chained migration). Python suite
+  unchanged (3516). Hardware lid-travel and on-screen gesture feel
+  remain device-verified.

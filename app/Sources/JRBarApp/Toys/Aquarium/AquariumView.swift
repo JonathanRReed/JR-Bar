@@ -126,6 +126,16 @@ struct AquariumView: View {
                         let meals = completionMeals(in: size, now: context.date,
                                                     roster: order.ordered)
                         applyPursuits(meals, to: &layouts, now: context.date)
+                        // The nameplate's target, off the previous
+                        // frame's boxes: a fish wearing the tag skips
+                        // its always-on chip so the two never stack.
+                        let nameplateID: String? = {
+                            let probe = hoverProbe.point
+                                ?? (hoverProbe.flashUntil > context.date
+                                    ? hoverProbe.flashPoint : nil)
+                            guard let probe else { return nil }
+                            return hoverProbe.boxes.last(where: { $0.rect.contains(probe) })?.id
+                        }()
                         hoverProbe.boxes.removeAll(keepingCapacity: true)
                         for aFish in order.ordered where !aFish.isRetired(at: context.date) {
                             let parent = parentContext(of: aFish, mains: order.mains,
@@ -136,7 +146,7 @@ struct AquariumView: View {
                             layouts[aFish.id] = l
                             drawFish(canvas: &canvas, size: size, t: t, now: context.date,
                                      fish: aFish, layout: l, parent: parent,
-                                     showLabels: showLabels)
+                                     showLabels: showLabels && aFish.id != nameplateID)
                             // The hover/tap hit area: a soft-edged box
                             // around the drawn body, front-most fish wins.
                             let len = 46 * l.scale * aFish.species.sizeScale
@@ -2822,6 +2832,23 @@ struct AquariumView: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 6)
+            // Recast every fish this provider swims as — the pick is a
+            // per-provider override, so the school changes shape at once.
+            Picker(selection: Binding<FishSpecies?>(
+                get: { toy?.speciesOverride(for: fish.providerID) },
+                set: { toy?.setSpecies($0, for: fish.providerID) })) {
+                Text("Automatic").tag(FishSpecies?.none)
+                ForEach(FishSpecies.allCases, id: \.self) { species in
+                    Text(species.displayName).tag(FishSpecies?.some(species))
+                }
+            } label: {
+                EmptyView()
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(width: 108)
+            .help("The fish every \(fish.providerID) session swims as.")
             if let onOpen = toy?.core.openSession {
                 Button("Open") { onOpen(fish.id) }
                     .controlSize(.small)

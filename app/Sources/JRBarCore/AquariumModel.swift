@@ -49,6 +49,21 @@ public enum FishSpecies: String, Equatable, Sendable, CaseIterable {
         case band
     }
 
+    /// The picker's name for the species.
+    public var displayName: String {
+        switch self {
+        case .minnow: return "Minnow"
+        case .clownfish: return "Clownfish"
+        case .angelfish: return "Angelfish"
+        case .puffer: return "Puffer"
+        case .shark: return "Shark"
+        case .seahorse: return "Seahorse"
+        case .betta: return "Betta"
+        case .tang: return "Tang"
+        case .tetra: return "Tetra"
+        }
+    }
+
     /// Provider id → species. Case-insensitive; anything the table
     /// doesn't know is a minnow.
     public static func forProvider(_ provider: String) -> FishSpecies {
@@ -259,7 +274,8 @@ public enum AquariumModel {
     /// around the largest same-provider fish, or free-swimming when
     /// there isn't one. A parent that sinks or drifts off takes its
     /// school with it.
-    public static func reduce(sessions: [CoreSession], previous: [Fish], now: Date) -> [Fish] {
+    public static func reduce(sessions: [CoreSession], previous: [Fish], now: Date,
+                              species: (String) -> FishSpecies = FishSpecies.forProvider) -> [Fish] {
         let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // Mains first, so a fry can anchor to its parent's fish even
         // when the worker precedes it in the session list. "Main" is
@@ -269,7 +285,7 @@ public enum AquariumModel {
         var mainByID: [String: Fish] = [:]
         var mainsInOrder: [Fish] = []
         for session in sessions where isMain(session) {
-            let fish = fishFor(session: session, previous: previousByID[session.id], now: now)
+            let fish = fishFor(session: session, previous: previousByID[session.id], now: now, species: species)
             mainByID[session.id] = fish
             mainsInOrder.append(fish)
         }
@@ -279,7 +295,7 @@ public enum AquariumModel {
         result.reserveCapacity(sessions.count)
         for session in sessions {
             guard !isMain(session) else {
-                result.append(mainByID[session.id] ?? fishFor(session: session, previous: previousByID[session.id], now: now))
+                result.append(mainByID[session.id] ?? fishFor(session: session, previous: previousByID[session.id], now: now, species: species))
                 continue
             }
             // The anchor: the parent session's fish when it's here,
@@ -299,7 +315,7 @@ public enum AquariumModel {
             guard count < maxFryPerSchool else { continue }
             fryPerAnchor[key] = count + 1
 
-            var fish = fishFor(session: session, previous: previousByID[session.id], now: now)
+            var fish = fishFor(session: session, previous: previousByID[session.id], now: now, species: species)
             fish.isFry = true
             fish.anchorID = anchor?.id
             // A school looks like its parent: same species. The colour
@@ -328,7 +344,8 @@ public enum AquariumModel {
     /// every pass — `state` comes from it (the AQ23 stale degradation
     /// lives there), so a fish's displayed state and its cited evidence
     /// are the same decision.
-    static func fishFor(session: CoreSession, previous: Fish?, now: Date) -> Fish {
+    static func fishFor(session: CoreSession, previous: Fish?, now: Date,
+                        species resolve: (String) -> FishSpecies = FishSpecies.forProvider) -> Fish {
         let plan = AquariumPlanner.plan(for: session, axes: session.axes, now: now)
         let target = plan.state
         if var fish = previous {
@@ -336,7 +353,7 @@ public enum AquariumModel {
             // says about it now is rewritten.
             fish.label = session.displayLabel
             fish.providerID = session.provider
-            fish.species = FishSpecies.forProvider(session.provider)
+            fish.species = resolve(session.provider)
             fish.isFry = false
             fish.anchorID = nil
             fish.plan = plan
@@ -360,7 +377,7 @@ public enum AquariumModel {
             stateSince: now,
             enteredAt: now,
             lastUpdate: session.updatedAt.map { Date(timeIntervalSince1970: $0) },
-            species: FishSpecies.forProvider(session.provider),
+            species: resolve(session.provider),
             seed: stableHash(session.id),
             plan: plan)
     }
