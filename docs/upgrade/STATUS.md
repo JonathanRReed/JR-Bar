@@ -996,3 +996,26 @@ reference.
 - Scroll swipes (pass 2) and the drag path both live: fingers down
   expands, fingers up collapses a pinned card.
 - Verified: `swift build` clean; 562 Swift tests green.
+
+## Notch polish pass 4 — the wing is a lobe, not a pill — LANDED
+
+Owner screenshot review: the wings still read as floating menu-bar
+pills — boxed icon tile plus text — nothing like the references.
+
+- The icon tile: `ProviderTile` draws an app-icon badge (accent fill +
+  stroke rounded square). Replaced in the wing with the provider's bare
+  glyph in its accent — a plain mark against the black, like the
+  references.
+- The gap: `wingSlotRect` carved `wingContentInnerReserve` (16) out of
+  the drawn claim, so the capsule ended 16 pt short of the notch and
+  floated in open menu-bar space. The claim now anchors its notch-side
+  edge AT the notch edge and reaches outward through the measured room;
+  the reserve stays in `contentWingExtent` purely as a viability margin
+  (a flank that tight is not honestly usable).
+- The seam: a capsule cap touching the notch edge meets it at one
+  tangent point. The chip now pads its notch side by `notchSeam` (12 —
+  past the cap radius) so the black runs under the bezel and the
+  silhouette meets the notch on a straight edge: the lobe-merged look.
+  Content stays clear of the bezel; the hit claim is unchanged.
+- Verified: `swift build` clean; 562 Swift tests green; geometry suite
+  updated for the anchored claim.

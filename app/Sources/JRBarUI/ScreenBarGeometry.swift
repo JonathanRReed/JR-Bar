@@ -72,9 +72,10 @@ public enum ScreenBarGeometry {
     /// A slot narrower than this truncates past usefulness — it collapses
     /// rather than overdraw the menu area.
     public static let wingContentMinUsable: CGFloat = 34
-    /// Clearance kept next to the notch itself: the island's shoulder
-    /// (12) draws there when the island is ours, and the gap reads the
-    /// same when it is not.
+    /// Margin kept next to the notch when a flank's room is measured:
+    /// the island's shoulder (12) draws there when the island is ours, so
+    /// a claim that tight is not honestly usable. The drawn claim itself
+    /// reaches the notch edge — `wingSlotRect` anchors it there.
     public static let wingContentInnerReserve: CGFloat = 16
     /// Room left at the window's outer edge.
     public static let wingContentOuterInset: CGFloat = 6
@@ -182,15 +183,18 @@ public enum ScreenBarGeometry {
         guard extent > 0 else { return nil }
         let sideExtent = max(0, (size.width - geometry.notchWidth) / 2.0)
         if geometry.notchDepth > 0 {
-            let usable = min(sideExtent, extent) - wingContentInnerReserve - wingContentOuterInset
+            // The claim anchors at the notch's edge and reaches outward
+            // through the measured room — the chip merges with the notch
+            // instead of floating a `wingContentInnerReserve` gap off it.
+            let usable = min(sideExtent, extent) - wingContentOuterInset
             guard usable >= wingContentMinUsable else { return nil }
             let height = min(wingSlotHeight, max(14, geometry.notchDepth - 8))
             let y = size.height - geometry.notchDepth + (geometry.notchDepth - height) / 2.0
             switch side {
             case .left:
-                return CGRect(x: wingContentOuterInset, y: y, width: usable, height: height)
+                return CGRect(x: sideExtent - usable, y: y, width: usable, height: height)
             case .right:
-                return CGRect(x: size.width - wingContentOuterInset - usable, y: y,
+                return CGRect(x: size.width - sideExtent, y: y,
                               width: usable, height: height)
             }
         }

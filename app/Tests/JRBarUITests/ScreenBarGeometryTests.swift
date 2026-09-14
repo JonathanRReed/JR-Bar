@@ -140,25 +140,27 @@ import Testing
                                              leftExtent: 132, rightExtent: 132)
         let left = ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: geometry)
         let right = ScreenBarGeometry.wingSlotRect(.right, in: size, geometry: geometry)
-        // Left chip: inset 6 from the window edge, ending 16 short of the
-        // notch (the island shoulder reserve) → 132 - 22 = 110 usable.
-        #expect(left == CGRect(x: 6, y: 11, width: 110, height: 22))
-        #expect(right == CGRect(x: 449 - 6 - 110, y: 11, width: 110, height: 22))
+        // The claim anchors at the notch's edge (x 132) and reaches
+        // outward through the measured room: 132 - 6 outer inset = 126.
+        #expect(left == CGRect(x: 6, y: 11, width: 126, height: 22))
+        #expect(right == CGRect(x: 449 - 132, y: 11, width: 126, height: 22))
         // Unclaimed sides draw nothing.
         let none = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32)
         #expect(ScreenBarGeometry.wingSlotRect(.left, in: size, geometry: none) == nil)
         // A claim too small for the minimum collapses.
         let tight = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
-                                          leftExtent: 50)
-        let tightSize = NSSize(width: 185 + 2 * 50, height: 38)
+                                          leftExtent: 38)
+        let tightSize = NSSize(width: 185 + 2 * 38, height: 38)
         #expect(ScreenBarGeometry.wingSlotRect(.left, in: tightSize, geometry: tight) == nil)
         // A manual wing length widening the window past the measured
-        // claim does not widen the chip into unmeasured menu-bar room.
+        // claim does not widen the chip into unmeasured menu-bar room —
+        // the claim still anchors at the notch edge (x 200) and reaches
+        // 62 - 6 = 56 outward.
         let oversized = NSSize(width: 185 + 2 * 200, height: 38)
         let measured = ScreenBarWingGeometry(notchWidth: 185, notchDepth: 32,
                                              leftExtent: 62)
         #expect(ScreenBarGeometry.wingSlotRect(.left, in: oversized, geometry: measured)
-            == CGRect(x: 6, y: 11, width: 40, height: 22))
+            == CGRect(x: 144, y: 11, width: 56, height: 22))
     }
 
     @Test func notchlessSlotsFlankTheBand() {

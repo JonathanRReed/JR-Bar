@@ -4,7 +4,7 @@ import SwiftUI
 /// One wing slot's content: a capsule in the menu-bar area beside the
 /// notch — the selected task and the attention count on the left, the
 /// headline usage meter on the right. `provider` leads the chip with the
-/// provider's tile; `tone` is the state colour the words take.
+/// provider's bare glyph; `tone` is the state colour the words take.
 struct ScreenBarWingSlot: Equatable {
     enum Tone: Equatable {
         /// White on the black capsule — ambient information.
@@ -58,6 +58,12 @@ final class ScreenBarWingsModel {
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
+    /// How far the capsule's black runs under the bezel past the claim's
+    /// notch edge — past the capsule's cap radius, so the silhouette
+    /// meets the notch on a straight edge and the merge has no seam. The
+    /// bezel covers this overlap; the content never enters it.
+    private static let notchSeam: CGFloat = 12
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let left = model.left { chip(left.slot, rect: left.rect, side: .left) }
@@ -68,9 +74,10 @@ struct ScreenBarWingsView: View {
     }
 
     private func chip(_ slot: ScreenBarWingSlot, rect: CGRect, side: ScreenBarWingSide) -> some View {
-        HStack(spacing: 5) {
+        let seam = Self.notchSeam
+        return HStack(spacing: 5) {
             if let provider = slot.provider {
-                ProviderTile(style: .style(for: provider), size: 12)
+                glyph(.style(for: provider))
             }
             Text(slot.text)
                 .font(.system(size: 11, weight: .medium))
@@ -80,20 +87,45 @@ struct ScreenBarWingsView: View {
                 // The capsule hugs content, so the bound has to live on
                 // the text — without it a long label outgrows the claim
                 // and the pill rides onto the notch.
-                .frame(maxWidth: max(24, rect.width - (slot.provider == nil ? 18 : 36)))
+                .frame(maxWidth: max(24, rect.width - (slot.provider == nil ? 18 : 32)))
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 3.5)
+        // The capsule's notch-side padding runs `seam` under the bezel:
+        // its rounded cap submerges, so the black meets the notch on a
+        // straight edge instead of touching it at one tangent point.
+        .padding(side == .left ? .trailing : .leading, seam)
         .fixedSize()
         .background(Capsule(style: .continuous).fill(.black))
-        // The capsule hugs the notch side of the claim: a left chip
+        // The capsule hugs the notch side of the claim — a left chip
         // anchors to the claim's trailing edge, a right chip to its
-        // leading edge — the pill always touches the notch's flank.
-        .frame(width: rect.width, height: rect.height,
+        // leading edge — and the frame grows by the seam so the padded
+        // capsule still lands its edge on the bezel.
+        .frame(width: rect.width + seam, height: rect.height,
                alignment: side == .left ? .trailing : .leading)
         // The rect is in the hosting view's bottom-left space; SwiftUI
-        // positions from the top, so flip the midpoint.
-        .position(x: rect.midX, y: model.viewHeight - rect.midY)
+        // positions from the top, so flip the midpoint — and shift the
+        // widened frame half a seam toward the notch so the claim keeps
+        // its outer edge.
+        .position(x: rect.midX + (side == .left ? seam / 2 : -seam / 2),
+                  y: model.viewHeight - rect.midY)
         .accessibilityElement(children: .combine)
+    }
+
+    /// The provider's bare glyph in its accent — no badge: the boxed
+    /// `ProviderTile` reads as a menu-bar icon where the references draw a
+    /// plain mark against the notch extension.
+    @ViewBuilder
+    private func glyph(_ style: ProviderStyle) -> some View {
+        switch style.glyph {
+        case .symbol(let name):
+            Image(systemName: name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(style.accent)
+        case .text(let text):
+            Text(text)
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(style.accent)
+        }
     }
 }
