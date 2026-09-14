@@ -341,6 +341,9 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert codex["ask"] == {
         "kind": "permission", "opened_at": 1788982800.0, "summary": "Run: rm -rf build",
         "answerable": True, "replyable": False,
+        # The fixture's request key is a namespace stub, not a real
+        # RequestKey -- the episode identity is honestly absent.
+        "request": None,
     }
     assert codex["next_actor"] == "user"
     # The origin comes from the hook annotation when the registry has none.
@@ -353,6 +356,7 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
         {
             "session": CODEX_ID, "kind": "permission", "opened_at": 1788982800.0,
             "summary": "Run: rm -rf build", "answerable": True, "replyable": False,
+            "request": None,
         }
     ]
     assert document["aggregate"] == {

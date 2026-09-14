@@ -490,6 +490,50 @@ def _find_status(self, session: object):
     raise CommandError("not_found", "no such session")
 
 
+def _ask_event_identity(status) -> str | None:
+    """The episode identity the ask diff and events are keyed on.
+
+    The canonical request key's announcer identity when the status
+    carries one; ``None`` when it does not (a legacy-path ask). ``None``
+    is the honest "cannot prove replacement": the diff then falls back to
+    session presence, exactly as before this field existed.
+    """
+    request_key = getattr(status, "request_key", None)
+    if request_key is None:
+        return None
+    try:
+        from .announcer_stack import announcer_alert_identity
+
+        return str(announcer_alert_identity(request_key).value)
+    except Exception:
+        return None
+
+
+def _diff_ask_episodes(previous: dict, current: dict) -> list[tuple[str, str, object, str | None]]:
+    """(kind, agent_id, status, request_identity) for the ask-set change.
+
+    Keyed by session AND episode: a session present on both sides whose
+    request identity moved emits ``ask_resolved`` for the old episode and
+    ``ask_opened`` for the new one — a surface holding A's card never has
+    it silently become B. Identities of ``None`` (unmodelled asks) never
+    prove a replacement; presence alone decides, as before.
+    """
+    events: list[tuple[str, str, object, str | None]] = []
+    for agent_id, (status, identity) in current.items():
+        previous_entry = previous.get(agent_id)
+        if previous_entry is None:
+            events.append(("ask_opened", agent_id, status, identity))
+            continue
+        prev_status, prev_identity = previous_entry
+        if identity is not None and prev_identity is not None and identity != prev_identity:
+            events.append(("ask_resolved", agent_id, prev_status, prev_identity))
+            events.append(("ask_opened", agent_id, status, identity))
+    for agent_id, (status, identity) in previous.items():
+        if agent_id not in current:
+            events.append(("ask_resolved", agent_id, status, identity))
+    return events
+
+
 @command("open_session")
 def _cmd_open_session(self, args):
     status = _find_status(self, args.get("session"))
@@ -548,6 +592,21 @@ def _cmd_answer_ask(self, args):
                 break
     if request is None:
         raise CommandError("not_found", "no live ask for that session")
+    # A card pinned to one request must never answer its replacement: when
+    # the caller names the ask it is looking at, a different live request
+    # refuses BEFORE anything is armed or typed (T07). An identity the
+    # daemon cannot even compute cannot verify — same refusal.
+    expected_request = args.get("request")
+    if expected_request is not None:
+        try:
+            live_identity = str(announcer_alert_identity(request.key).value)
+        except Exception:
+            live_identity = None
+        if expected_request != live_identity:
+            raise CommandError(
+                "stale_request",
+                "that request was replaced — the card is stale; answer the current ask",
+            )
     surface = getattr(self, "local_answer_surface", None)
     if surface is None:
         raise CommandError("unsupported", "no local answer surface is registered")
@@ -2916,25 +2975,26 @@ def build_headless_controller_class() -> type:
                 self._core_in_refresh = False
             if getattr(self, "_core", None) is None:
                 return result
-            asks = {status.agent_id: status for status in self._core_ask_statuses()}
+            asks = {
+                status.agent_id: (status, _ask_event_identity(status))
+                for status in self._core_ask_statuses()
+            }
             if previous_asks is not None:
-                for agent_id, status in asks.items():
-                    if agent_id not in previous_asks:
-                        self._core_publish_event(
-                            "ask_opened",
-                            session=agent_id,
-                            provider=status.provider,
-                            label=self._core_label(status),
-                            detail=status.message or status.tool_name,
-                        )
-                for agent_id, status in previous_asks.items():
-                    if agent_id not in asks:
-                        self._core_publish_event(
-                            "ask_resolved",
-                            session=agent_id,
-                            provider=status.provider,
-                            label=self._core_label(status),
-                        )
+                for kind, agent_id, status, identity in _diff_ask_episodes(
+                    previous_asks, asks
+                ):
+                    self._core_publish_event(
+                        kind,
+                        session=agent_id,
+                        provider=status.provider,
+                        label=self._core_label(status),
+                        detail=(
+                            status.message or status.tool_name
+                            if kind == "ask_opened"
+                            else None
+                        ),
+                        request=identity,
+                    )
             self._core_prev_asks = asks
             physical = [
                 d

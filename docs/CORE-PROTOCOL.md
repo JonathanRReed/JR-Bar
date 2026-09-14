@@ -91,7 +91,7 @@ protocol 1. Timestamps are Unix epoch seconds.
  ],
  "hidden_count":3,
  "asks":[{"session":"codex:session:…","kind":"permission","opened_at":1788982800.0,"summary":"Run: rm -rf build",
-          "answerable":true,"replyable":false}],
+          "answerable":true,"replyable":false,"request":"request:v1:{…}"}],
  "devices":[{"id":"sidepulse:pro:B293A1","kind":"pro","name":"SidePulse","path":"/Volumes/SidePulse","leds":8,"connected":true,"brightness":79,"linked":true,"last_write":1788982891.31,"error":null},
             {"id":"sidepulse:dot:7F02C4","kind":"dot","leds":2,"connected":false,"error":"volume unmounted"},
             {"id":"screen-bar","kind":"screen_bar","name":"Screen Bar","leds":8,"enabled":true,"brightness":100,"linked":true,"error":null}],
@@ -212,7 +212,13 @@ Vocabulary:
   Ghostty window, an IDE panel, an unresolved or remote host -- so the
   button is never offered for what the daemon could only refuse.
   `replyable` is the narrower "this ask takes free text" (`input` asks
-  only). Both are `false` on a remote row's ask.
+  only). Both are `false` on a remote row's ask. `request` is the
+  episode's canonical identity — `request:v1:{…}` from the request key —
+  or `null` when the operator state does not model the ask. A surface
+  that pins a card to `request` passes it back to `answer_ask` and the
+  daemon refuses `stale_request` when the live request has moved on;
+  `asks` itself is ordered by `opened_at` so a provider re-emitting a
+  pending prompt never shuffles a card out from under the pointer.
 - `pid` is the process registry's live pid for that session (absent when
   the process ended). `origin` is the hook's origin annotation plus the
   bundle id when the kind names an app or IDE; `terminal` is found by
@@ -546,7 +552,12 @@ is exactly what the wire carried, in order, with nothing dropped in
 between.
 Kinds emitted today: `completed`, `failed`, `quota_crossed` (from the
 activity ledger), `ask_opened`, `ask_resolved` (from the ask set changing
-between refreshes; `detail` carries the summary), `escalation_stage`
+between refreshes; `detail` carries the summary; both carry `request`,
+the episode's canonical identity, when the ask is canonically modelled —
+a session whose pending request was REPLACED emits `ask_resolved` for the
+old identity then `ask_opened` for the new one rather than silently
+reusing the slot, so every surface keys one request to one interruption
+episode), `escalation_stage`
 (`stage` 0…3), `device_connected`, `device_disconnected` (`label` is the
 device name, `detail` its id; keyed by name, so a device whose id moves
 from its mount path to its firmware serial is not a disconnect/connect
@@ -676,7 +687,8 @@ Answer to a command.
 Error codes: `unknown_command`, `bad_frame`, `bad_command`, `internal`,
 `not_found`, `not_frontmost`, `invalid_args`, `invalid_path`,
 `invalid_value`, `read_only`, `refused`, `expired`, `busy`, `unsupported`;
-`answer_ask` adds `accessibility_required`, `session_gone`, `stale_ask` and
+`answer_ask` adds `accessibility_required`, `session_gone`, `stale_ask`,
+`stale_request` and
 `send_failed` (see below); the Effect
 Studio commands add `unknown_effect`, `invalid_scope`, `invalid_target`,
 `reserved_semantic`, `invalid_pack`, `conflict`, `export_failed`,
@@ -709,7 +721,7 @@ Codex trust handshake can take seconds. Unknown args are ignored.
 | name | args | effect / result |
 | --- | --- | --- |
 | `open_session` | session, action? | The controller's `open_session` (terminal launch or provider URL, honouring the session-open preference). `{session, activated, origin}`. |
-| `answer_ask` | session, decision (`approve`/`deny`), reply_text (optional, for `input` asks), only_if_frontmost (default true) | Answers the session's live request **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- Ghostty, kitty, WezTerm, Alacritty have no such call) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is always `focused_tab_tty` (the terminal named the focused tab and it is this session's). See the refusals below. |
+| `answer_ask` | session, decision (`approve`/`deny`), reply_text (optional, for `input` asks), request (optional — the ask's `request` identity; a live request that does not match refuses `stale_request` before anything is armed or typed), only_if_frontmost (default true) | Answers the session's live request **in its own terminal** (`answer_local.py`, the `local.answer_in_place` surface the `answering` product capability binds to). A bare `decision` posts the key that provider's CLI takes at its permission prompt. Claude Code: `1` to approve ("1. Yes" is always the first row), `esc` to deny (the prompt's own "Esc to cancel"). Codex: `y` to approve ("1. Yes, proceed (y)"), `3` to deny ("3. No, and tell Codex what to do differently"). With `reply_text` (non-empty printable, normalized to one line, at most 280 chars) the action becomes `reply`: the text is typed into the same verified window via `CGEventKeyboardSetUnicodeString` and submitted with Return -- same frontmost/ancestry/tty/accessibility fences, `mechanism: "synthetic_text"`, and the reply reports `decision: "reply"` plus `characters` instead of a key. A `reply_text` on an ask whose capability does not take text is `unsupported`. Only `codex/hooks` and `claude/hooks` declare the capability; any other provider is `unsupported`. Every fence is affirmative-only: unknown liveness (`liveness_unproven`), unwalkable ancestry (`ownership_unproven`), an unresolved session tty (`session_tty_unknown`), and a terminal that cannot name its focused tab (`focused_tab_unproven` -- Ghostty, kitty, WezTerm, Alacritty have no such call) all refuse; there is no send-anyway path. The reply waits for the real outcome, so `answered: true` means the key went out: `{session, decision, answered, mechanism: "synthetic_keystroke", key, key_code, meaning, confirmation, host{pid, tty, app, app_pid, window_evidence}}`. `confirmation` is `provider_pending` on a posted key -- an attempted delivery, not a confirmed approval; the provider's own stream closing the request is the only proof it landed -- and `none` on a refusal. `window_evidence` on a sent answer is always `focused_tab_tty` (the terminal named the focused tab and it is this session's). See the refusals below. |
 | `snooze` | session or `all`, seconds | Mailbox snooze for the session's family (presets: ≤ 900 s → 15 minutes, ≤ 3600 s → 1 hour, else tomorrow morning; 0 unsnoozes). `{sessions, until}`. |
 | `clear_completed` | sessions[] or `all` | Acknowledges every row `sessions` is currently listing as over -- `completed`, `ended`, and any stale row -- through the Clear Agents plan/commit machinery with widened eligibility (`clearable_presentation_key`). Afterwards `sessions` holds only live rows and the rest are in `list_history`. `sessions` may name a subset; a named row that is not clearable (a live session) is simply not in the batch. Live sessions, asks, failures and worker rows are fenced as protected and never cleared. `{batch, cleared[]}` with every acknowledged session id, or `{batch: null, cleared: []}` when nothing was over. Refuses `busy` while a clear is in flight. |
 | `undo_clear` | batch | Undo that batch within its 300 s window; the rows return to `sessions` exactly as they were. `{batch, restored[]}`; `expired` after, `not_found` for another batch. |

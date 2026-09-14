@@ -879,7 +879,11 @@ final class PanelStore {
             guard let self else { return }
             defer { self.pendingAnswers.remove(ask.id) }
             do {
-                let reply = try await self.core.answerAskNow(session: session, approve: approve)
+                // `request` pins the card to its episode: a session that
+                // moved on to a different ask refuses `stale_request`
+                // instead of approving whatever is live now.
+                let reply = try await self.core.answerAskNow(session: session, approve: approve,
+                                                             request: ask.request)
                 if reply.ok {
                     self.show(toast: approve ? "Approved · typed into the session's terminal" : "Denied")
                 } else {
@@ -912,7 +916,8 @@ final class PanelStore {
             guard let self else { return }
             defer { self.pendingAnswers.remove(ask.id) }
             do {
-                let reply = try await self.core.answerAskNow(session: session, approve: true, replyText: trimmed)
+                let reply = try await self.core.answerAskNow(session: session, approve: true, replyText: trimmed,
+                                                             request: ask.request)
                 if reply.ok {
                     self.show(toast: "Reply sent · typed into the session's terminal")
                 } else {
@@ -930,7 +935,11 @@ final class PanelStore {
     /// "JR-Bar's helper", the name the Accessibility pane shows.
     private func answerRefused(_ error: CoreReplyError?) {
         let message = error?.message ?? error?.code ?? "refused"
-        if error?.code == "accessibility_required" {
+        if error?.code == "stale_request" {
+            // The card answered a request the provider already replaced:
+            // nothing was typed — the current ask is still live.
+            show(toast: "That request changed while the card was open — nothing was sent")
+        } else if error?.code == "accessibility_required" {
             show(toast: "Answering needs Accessibility access for JR-Bar's helper", actionTitle: "Open Settings") {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                     NSWorkspace.shared.open(url)

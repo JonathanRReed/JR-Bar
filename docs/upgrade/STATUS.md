@@ -199,5 +199,46 @@ slot chips flanking the band.
   bodies stay out of `state` (they were never in it) while full
   transcript pages remain `list_history`-style pulls.
 
-(Remaining packages W04+ proceed in the spec's dependency order; rows are
+## W04 — Attention inbox and interruption policy — verified with fixtures
+
+- Already in place before this package (audited): `AttentionProjection`
+  is the single "who needs you" source every surface reads; `EventPolicy`
+  is the single interruption decision (sound/banner/toast/pulse/chime,
+  focus-mode suppression, escalation ceiling); `ask_episodes` batches
+  burst announcements; snooze is family-scoped through `work_key` and
+  never removes an ask (`state.asks` keeps it resolvable — T42's
+  "snooze never drops a real request" holds); the review watermark
+  `last_seen_epoch` is persisted in the ledger document, monotonic
+  (`mark_activity_seen`), and moves only on explicit review —
+  `mark_history_seen` fires from the History window's open/close, never
+  from app focus alone (T43 audited, no focus-path marking exists).
+- New wire truth — `src/jrbar/core_projection.py`: `ask.request` carries
+  the episode's canonical identity (`request:v1:{…}` from the request
+  key) or `null` when the operator state does not model the ask — the
+  honest "cannot prove the episode" case. `state.asks` now sorts by
+  `opened_at` then session (`_pointer_stable_ask_key`): `updated_at`
+  bumps no longer shuffle a card out from under the pointer (T41).
+- `src/jrbar/core_runtime.py`: the ask diff is keyed by request identity
+  (`_diff_ask_episodes`) — a session whose pending request was REPLACED
+  emits `ask_resolved` + `ask_opened` with the respective identities
+  instead of silently reusing the slot; both events carry `request`.
+  `answer_ask` accepts `request` and refuses `stale_request` before the
+  surface is armed when the pinned identity does not match the live
+  request — including when the live identity cannot even be computed
+  (T07, fail closed). `CoreAsk.request`/`CoreEvent.request` decode on
+  the app side; `CoreAsk.id` prefers the episode identity;
+  `answerAsk(Now)` sends it; PanelStore pins cards and toasts the stale
+  refusal as "that request changed — nothing was sent."
+- Verified: `pytest tests/test_upgrade_attention.py` → 9 passed
+  (identity on the wire, stale-request refusal before arming, replaced-
+  request diff, unmodelled-ask honesty, pointer-stable order, monotonic
+  watermark); codec fixtures extended (hello stream/cursor, event cursor,
+  ask request); ruff clean on touched files.
+- Partial (recorded): interruption dedupe across the island/pet/Shelf
+  surfaces still rides per-surface cooldowns keyed to the shared episode
+  id rather than a single cross-surface ledger — one request, one
+  `ask:<session>` banner, one identity everywhere; the shared ledger is
+  folded into W08's inbox work if the surfaces need it.
+
+(Remaining packages W05+ proceed in the spec's dependency order; rows are
 added as work lands.)

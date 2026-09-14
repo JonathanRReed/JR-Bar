@@ -121,27 +121,34 @@ public final class CoreModel {
 
     public func openSession(_ id: String) { post("open_session", args: ["session": .string(id)]) }
 
-    public func answerAsk(session: String, approve: Bool, onlyIfFrontmost: Bool = false) {
-        post("answer_ask", args: [
+    public func answerAsk(session: String, approve: Bool, onlyIfFrontmost: Bool = false,
+                          request: String? = nil) {
+        var args: [String: JSONValue] = [
             "session": .string(session),
             "decision": .string(approve ? "approve" : "deny"),
             "only_if_frontmost": .bool(onlyIfFrontmost),
-        ])
+        ]
+        if let request { args["request"] = .string(request) }
+        post("answer_ask", args: args)
     }
 
     /// `answer_ask` awaited: the reply carries the daemon's verdict —
     /// `ok: false` with `error.message` naming the refusal
     /// (`not_frontmost`, `accessibility_required`, `unsupported`, …).
     /// Callers that show a toast must show this, not a guessed success.
+    /// `request` pins the answer to the ask's episode identity: a daemon
+    /// that finds a DIFFERENT live request refuses `stale_request` rather
+    /// than approving whatever replaced the card.
     @discardableResult
     public func answerAskNow(session: String, approve: Bool, onlyIfFrontmost: Bool = false,
-                             replyText: String? = nil) async throws -> CoreReply {
+                             replyText: String? = nil, request: String? = nil) async throws -> CoreReply {
         var args: [String: JSONValue] = [
             "session": .string(session),
             "decision": .string(approve ? "approve" : "deny"),
             "only_if_frontmost": .bool(onlyIfFrontmost),
         ]
         if let replyText { args["reply_text"] = .string(replyText) }
+        if let request { args["request"] = .string(request) }
         return try await send("answer_ask", args: args, timeout: 8)
     }
 

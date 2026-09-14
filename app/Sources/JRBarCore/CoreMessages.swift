@@ -137,8 +137,12 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     /// Whether this ask accepts free text (a reply field instead of
     /// Approve/Deny).
     public var replyable: Bool?
+    /// The exact episode this card answers (`request:v1:{…}`): a card
+    /// that pins it has the daemon refuse the answer when the live
+    /// request has moved on. nil on older daemons or unmodelled asks.
+    public var request: String?
 
-    public var id: String { (session ?? "") + "|" + (summary ?? "") + "|" + String(openedAt ?? 0) }
+    public var id: String { request ?? ((session ?? "") + "|" + (summary ?? "") + "|" + String(openedAt ?? 0)) }
 
     /// What the buttons may claim: assume yes when the daemon is too old
     /// to say, so nothing regresses against pre-0.8.2 cores.
@@ -146,18 +150,30 @@ public struct CoreAsk: Codable, Hashable, Sendable, Identifiable {
     public var wantsTextReply: Bool { replyable ?? false }
 
     public init(session: String? = nil, kind: String? = nil, openedAt: Double? = nil, summary: String? = nil,
-                answerable: Bool? = nil, replyable: Bool? = nil) {
+                answerable: Bool? = nil, replyable: Bool? = nil, request: String? = nil) {
         self.session = session
         self.kind = kind
         self.openedAt = openedAt
         self.summary = summary
         self.answerable = answerable
         self.replyable = replyable
+        self.request = request
     }
 
     enum CodingKeys: String, CodingKey {
-        case session, kind, summary, answerable, replyable
+        case session, kind, summary, answerable, replyable, request
         case openedAt = "opened_at"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        session = try c.decodeIfPresent(String.self, forKey: .session)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        openedAt = try c.decodeIfPresent(Double.self, forKey: .openedAt)
+        summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        answerable = try c.decodeIfPresent(Bool.self, forKey: .answerable)
+        replyable = try c.decodeIfPresent(Bool.self, forKey: .replyable)
+        request = try c.decodeIfPresent(String.self, forKey: .request)
     }
 }
 
@@ -1071,10 +1087,15 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
     /// last cursor a client saw is what it replays from after a drop.
     public var cursor: String?
 
+    /// `ask_opened` / `ask_resolved`: the episode's canonical request
+    /// identity — every surface keys the same request to the same
+    /// interruption episode, and a resolution only closes its own ask.
+    public var request: String?
+
     public init(id: String, kind: String, session: String? = nil, label: String? = nil, at: Double? = nil, sound: String? = nil,
                 notify: Bool? = nil, provider: String? = nil, detail: String? = nil, stage: Int? = nil,
                 input: DeckInput? = nil, code: String? = nil, message: String? = nil, range: String? = nil,
-                lane: String? = nil, duration: Double? = nil, cursor: String? = nil) {
+                lane: String? = nil, duration: Double? = nil, cursor: String? = nil, request: String? = nil) {
         self.id = id
         self.kind = kind
         self.session = session
@@ -1092,9 +1113,10 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         self.lane = lane
         self.duration = duration
         self.cursor = cursor
+        self.request = request
     }
 
-    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor }
+    enum CodingKeys: String, CodingKey { case id, kind, session, label, at, sound, notify, provider, detail, stage, input, code, message, range, lane, duration, cursor, request }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1121,6 +1143,7 @@ public struct CoreEvent: Codable, Hashable, Sendable, Identifiable {
         lane = try? c.decodeIfPresent(String.self, forKey: .lane)
         duration = try? c.decodeIfPresent(Double.self, forKey: .duration)
         cursor = try? c.decodeIfPresent(String.self, forKey: .cursor)
+        request = try? c.decodeIfPresent(String.self, forKey: .request)
     }
 
     /// `deck_receipt` as a receipt value.

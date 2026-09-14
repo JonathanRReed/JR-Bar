@@ -25,6 +25,10 @@ struct CodecTests {
         #expect(hello.pid == 123)
         #expect(hello.capabilities.count == 10)
         #expect(hello.capabilities.contains("lights"))
+        // The resumable-stream anchor: same stream → replay the suffix,
+        // different stream → anchor at this tail.
+        #expect(hello.stream == "1234-abcd")
+        #expect(hello.cursor == "1234-abcd:ev-42")
     }
 
     @Test("state decodes every documented field")
@@ -71,6 +75,9 @@ struct CodecTests {
         #expect(state.asks.count == 1)
         #expect(state.asks[0].session == "codex:session:0f3b")
         #expect(state.asks[0].openedAt == 1788982800.0)
+        // The episode identity a card pins its answer to.
+        #expect(state.asks[0].request == "request:v1:{\"request_id\":\"request:01\"}")
+        #expect(state.asks[0].id == state.asks[0].request)
 
         #expect(state.devices.count == 3)
         let pro = state.devices[0]
@@ -133,6 +140,7 @@ struct CodecTests {
         #expect(event.label == "jr-bar-b7")
         #expect(event.sound == "glass")
         #expect(event.notify == true)
+        #expect(event.cursor == "1234-abcd:ev-77")
 
         guard case .settings(let settings) = try CoreFixtures.message("settings.json") else {
             Issue.record("not settings"); return

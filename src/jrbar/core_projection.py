@@ -843,6 +843,22 @@ def _answer_flags(
     return (True, bool(getattr(capability, "supports_reply_text", False)))
 
 
+def _pointer_stable_ask_key(ask: dict) -> tuple:
+    """Display order for ``state.asks``: when the ask OPENED, then session.
+
+    ``opened_at`` is fixed for the episode's life (the request's own
+    open stamp, not the row's ever-bumping ``updated_at``), so a pending
+    prompt the provider re-emits keeps its slot and a card under the
+    pointer never retargets to a different request. Asks without an open
+    stamp sink to the end, named by session.
+    """
+    opened = ask.get("opened_at")
+    return (
+        opened if type(opened) in (int, float) else float("inf"),
+        str(ask.get("session") or ""),
+    )
+
+
 def ask_document(
     status: object,
     operator_state: object,
@@ -869,12 +885,27 @@ def ask_document(
     answerable, replyable = _answer_flags(
         request, answer_contracts, has_answer_handler, host_bundle_ids
     )
+    # The ask's exact episode identity: the canonical request key when the
+    # operator state models one, ``None`` when it does not. A surface that
+    # pins a card to ``request`` can have ``answer_ask`` verify the same
+    # request is still live before anything is typed -- a session whose
+    # provider swapped the prompt answers the NEW one, never the card's.
+    request_identity: str | None = None
+    request_key = getattr(request, "key", None)
+    if request_key is not None:
+        try:
+            from .announcer_stack import announcer_alert_identity
+
+            request_identity = str(announcer_alert_identity(request_key).value)
+        except Exception:
+            request_identity = None
     document: dict[str, Any] = {
         "kind": kind,
         "opened_at": opened_at,
         "summary": summary if isinstance(summary, str) else None,
         "answerable": answerable,
         "replyable": replyable,
+        "request": request_identity,
     }
     if with_session:
         document = {"session": getattr(status, "agent_id", None), **document}
@@ -1369,6 +1400,11 @@ def build_state_document(
         for status in ask_statuses
         if str(getattr(status, "agent_id", "") or "") in listed_ids
     ]
+    # Pointer-stable ordering (T41): sort by when the ask OPENED, not by
+    # the row's updated_at -- a provider that keeps re-emitting a pending
+    # prompt must not shuffle a card out from under the pointer. New asks
+    # land after older ones; an open card's slot never retargets.
+    asks.sort(key=_pointer_stable_ask_key)
     # News is only news while the row that carries it is on screen: a
     # completion that aged out or was cleared stops counting here too.
     unseen = sorted(set(unseen_completion_ids) & set(visible_completion_ids))
@@ -1567,13 +1603,13 @@ __all__ = [
     "escalation_stage_name",
     "focus_document",
     "history_rows",
-    "project_session_rows",
     "hook_health",
     "lifecycle_for_mode",
     "light_why",
     "origin_document",
     "origin_kind",
     "primary_window",
+    "project_session_rows",
     "session_document",
     "session_label",
     "short_session_id",
