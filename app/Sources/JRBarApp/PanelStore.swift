@@ -530,7 +530,8 @@ final class PanelStore {
                     : .neutral)
         }
         let right = AlcoveIsland.meters(core.state?.usage).first
-            .map { ScreenBarWingSlot(text: $0.percentText, provider: $0.provider) }
+            .map { ScreenBarWingSlot(text: $0.percentText, provider: $0.provider,
+                                     meter: $0.percent.map { min(1, max(0, $0 / 100)) }) }
         return ScreenBarWings(left: left, right: right)
     }
 

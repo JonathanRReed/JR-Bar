@@ -2,10 +2,10 @@ import AppKit
 import SwiftUI
 
 /// One wing slot's content: a lobe of the notch itself — the selected
-/// task and the attention count on the left, the headline usage meter on
-/// the right, or a transient device notice. `provider` leads with the
-/// provider's bare glyph; `symbol` is a plain SF mark for notices with
-/// no provider; `tone` is the state colour the words take.
+/// task on the left, the headline usage meter on the right, or a
+/// transient device notice. The ear draws a mark only — the provider's
+/// bare glyph, a quota ring, or an SF symbol; `text` is the peek's and
+/// VoiceOver's copy, not the ear's face. `tone` is the state colour.
 struct ScreenBarWingSlot: Equatable {
     enum Tone: Equatable {
         /// White on the black lobe — ambient information.
@@ -21,6 +21,9 @@ struct ScreenBarWingSlot: Equatable {
     /// An SF Symbol leading the words instead of a provider glyph —
     /// "bolt.fill" for a charger, "headphones" for an output route.
     var symbol: String?
+    /// The ear's ring fill, 0…1 — the usage meter's fraction. nil means
+    /// no ring (state ears, notices).
+    var meter: Double?
     var tone: Tone = .neutral
 
     var textColor: Color {
@@ -64,12 +67,11 @@ final class ScreenBarWingsModel {
     var viewHeight: CGFloat = 0
 }
 
-/// The wing lobes. The claimed rect keeps the hit region honest; the
-/// drawn ear hugs the notch side of that claim and sizes to its content
-/// — the notch's own black shape continuing, flush with the screen's top
-/// edge, where a centred capsule or bare text in open menu-bar space
-/// reads as clutter. Text truncates inside rather than growing the
-/// claim.
+/// The wing lobes. The drawn ear is a fixed-size complication hugging
+/// the bezel — a mark inside the notch's own black shape continuing,
+/// flush with the screen's top edge, where a centred capsule or bare
+/// text in open menu-bar space reads as clutter. The claim is only the
+/// ceiling on room; the ear's drawn bounds are what hit regions follow.
 struct ScreenBarWingsView: View {
     @Bindable var model: ScreenBarWingsModel
 
@@ -98,62 +100,81 @@ struct ScreenBarWingsView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// The slot's words and mark. With a tray the chip is content only,
-    /// centred in its claim — the ear's measured room beside the notch.
-    /// Notch-less screens have no tray, so the chip keeps its own
-    /// capsule hugging the band's end.
+    /// The slot's mark — a symbol, never words. The ear is a complication
+    /// on the bezel: the provider's bare glyph for state, a meter ring
+    /// for quota, an SF mark for notices. The words stay in the peek and
+    /// in VoiceOver.
     @ViewBuilder
     private func chip(_ slot: ScreenBarWingSlot, rect: CGRect, side: ScreenBarWingSide) -> some View {
-        let content = HStack(spacing: 5) {
-            if let provider = slot.provider {
-                glyph(.style(for: provider))
-            } else if let symbol = slot.symbol {
+        let tint = slot.tone == .neutral ? nil : slot.textColor
+        let mark = Group {
+            if let symbol = slot.symbol {
                 Image(systemName: symbol)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(slot.textColor)
+            } else if let meter = slot.meter {
+                ring(meter, slot: slot, tint: tint)
+            } else if let provider = slot.provider {
+                glyph(.style(for: provider), size: 11, tint: tint)
+            } else {
+                // A slot with words but no mark still holds its claim —
+                // the lone dot is the resting grammar.
+                Circle().fill(slot.textColor).frame(width: 5, height: 5)
             }
-            Text(slot.text)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(slot.textColor)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                // The bound lives on the text — a long label truncates
-                // inside its claim instead of riding past the shape.
-                .frame(maxWidth: max(24, rect.width - (slot.provider == nil && slot.symbol == nil ? 20 : 36)))
         }
-        .padding(.horizontal, 10)
 
         if model.tray != nil {
-            content
+            mark
                 .frame(width: rect.width, height: rect.height)
                 .position(x: rect.midX, y: model.viewHeight - rect.midY)
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(slot.text))
         } else {
-            content
-                .padding(.vertical, 3.5)
+            mark
+                .padding(.vertical, 4)
                 .fixedSize()
                 .background(Capsule(style: .continuous).fill(.black))
                 .frame(width: rect.width, height: rect.height,
                        alignment: side == .left ? .trailing : .leading)
                 .position(x: rect.midX, y: model.viewHeight - rect.midY)
-                .accessibilityElement(children: .combine)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(slot.text))
         }
+    }
+
+    /// The quota ear: a thin ring filling to `fraction` — the battery-glyph
+    /// grammar every Mac user reads — with the provider's mark inside.
+    private func ring(_ fraction: Double, slot: ScreenBarWingSlot, tint: Color?) -> some View {
+        ZStack {
+            Circle()
+                .stroke(.white.opacity(0.22), lineWidth: 1.6)
+            Circle()
+                .trim(from: 0, to: min(1, max(0, fraction)))
+                .stroke(tint ?? (slot.provider.map { ProviderStyle.style(for: $0).accent } ?? .white),
+                        style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            if let provider = slot.provider {
+                glyph(.style(for: provider), size: 7, tint: tint)
+            }
+        }
+        .frame(width: 16, height: 16)
     }
 
     /// The provider's bare glyph in its accent — no badge: the boxed
     /// `ProviderTile` reads as a menu-bar icon where the references draw a
-    /// plain mark against the notch extension.
+    /// plain mark against the notch extension. `tint` wins for the
+    /// attention/alert tones.
     @ViewBuilder
-    private func glyph(_ style: ProviderStyle) -> some View {
+    private func glyph(_ style: ProviderStyle, size: CGFloat, tint: Color? = nil) -> some View {
         switch style.glyph {
         case .symbol(let name):
             Image(systemName: name)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(style.accent)
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(tint ?? style.accent)
         case .text(let text):
             Text(text)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
-                .foregroundStyle(style.accent)
+                .font(.system(size: size, weight: .semibold, design: .rounded))
+                .foregroundStyle(tint ?? style.accent)
         }
     }
 }

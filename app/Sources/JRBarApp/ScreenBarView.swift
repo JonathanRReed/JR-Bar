@@ -190,7 +190,7 @@ final class ScreenBarView: NSView {
             // Notch-less: the capsule chip carries itself in the claim.
             guard wingGeometry.notchDepth > 0 else { return (slot, claim) }
             let depth = wingGeometry.notchDepth + ScreenBarGeometry.wingTrayChin
-            let width = min(claim.width, Self.earWidth(slot))
+            let width = min(claim.width, Self.earWidth)
             let x = side == .left ? claim.maxX - width : claim.minX
             return (slot, CGRect(x: x, y: size.height - depth, width: width, height: depth))
         }
@@ -244,14 +244,9 @@ final class ScreenBarView: NSView {
         wingsHosting?.isHidden = false
     }
 
-    /// An ear's drawn width: the words measured, the mark's own room,
-    /// the padding — the claim only ever caps it.
-    private static func earWidth(_ slot: ScreenBarWingSlot) -> CGFloat {
-        let text = (slot.text as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width
-        let mark: CGFloat = slot.provider != nil || slot.symbol != nil ? 17 : 0
-        return ceil(text) + mark + 20
-    }
+    /// An ear's drawn width — a fixed complication on the bezel's edge:
+    /// the mark's room plus its padding. The claim only ever caps it.
+    private static let earWidth: CGFloat = 30
 
     // MARK: Keyframes (Core Animation owns the motion)
 

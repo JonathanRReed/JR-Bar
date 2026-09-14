@@ -1089,3 +1089,24 @@ island is exactly as wide as its content.
   skips it. Window-frame snaps stay instant.
 - Notch-less chips keep the claim rect and their own capsule.
 - Verified: `swift build` clean; 567 Swift tests green.
+
+## Notch polish pass 8 — symbols-only ears — LANDED
+
+Owner: "lets not do text, only icons & symbols … should feel like an
+apple native feature." Words in the ears never read native — macOS
+complications are marks, not labels — and "10…" showed a meter
+truncating inside a crowded claim.
+
+- The ear is a mark, never words: provider glyph for the left state
+  ear (tone-coloured), a thin quota ring filling to the meter fraction
+  with the provider mark inside for the right ear, an SF symbol for
+  notices, a resting dot when a slot has words but no mark.
+- `ScreenBarWingSlot.meter` (0…1) carries the usage fraction;
+  `percentText` still feeds the peek and VoiceOver — the words moved,
+  they were not lost.
+- The ear is a fixed 30 pt lobe hugging the bezel at tray depth —
+  the claim stays only as the room ceiling, so native menu items a
+  few points further out are never crowded. The island is now at most
+  notch + 60 pt.
+- Accessibility keeps the slot's text as the label.
+- Verified: `swift build` clean; 567 Swift tests green.
