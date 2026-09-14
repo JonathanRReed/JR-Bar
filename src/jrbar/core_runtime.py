@@ -490,6 +490,26 @@ def _find_status(self, session: object):
     raise CommandError("not_found", "no such session")
 
 
+def _command_journal(self):
+    """The durable command ledger, lazily loaded from the state dir.
+
+    ``answer_ask`` writes its intent before the effect so a crash
+    mid-answer leaves an ``accepted`` record — outcome unknown — and a
+    retried command id replays its first receipt instead of re-typing.
+    A journal that cannot load or persist degrades to memory-only: the
+    answer path still runs, the ledger simply forgets on restart.
+    """
+    journal = getattr(self, "_jrbar_command_journal", None)
+    if journal is None:
+        from .command_journal import CommandJournal
+        try:
+            journal = CommandJournal.load(default_state_dir())
+        except Exception:
+            journal = CommandJournal()
+        self._jrbar_command_journal = journal
+    return journal
+
+
 def _ask_event_identity(status) -> str | None:
     """The episode identity the ask diff and events are keyed on.
 
@@ -610,6 +630,27 @@ def _cmd_answer_ask(self, args):
     surface = getattr(self, "local_answer_surface", None)
     if surface is None:
         raise CommandError("unsupported", "no local answer surface is registered")
+    from .command_journal import STATUS_ACCEPTED, STATUS_COMPLETED
+    journal = _command_journal(self)
+    command_id = args.get("command_id")
+    if type(command_id) is not str or not command_id:
+        command_id = None
+    record = journal.begin(
+        "answer_ask",
+        {"session": status.agent_id,
+         "decision": "reply" if reply_text is not None else decision,
+         "request": expected_request},
+        command_id=command_id,
+    )
+    if record.status != STATUS_ACCEPTED:
+        # A retry of a settled command replays its first receipt — the
+        # second send never re-types an answer (T09/T70).
+        if record.status == STATUS_COMPLETED and record.receipt is not None:
+            return {**record.receipt, "replayed": True}
+        raise CommandError(
+            (record.error or {}).get("code", "send_failed"),
+            (record.error or {}).get("message", "that command already failed"),
+        )
     if not bool(args.get("only_if_frontmost", True)):
         # Explicitly asked to answer a terminal that is not in front: raise it,
         # then let the unchanged check chain decide. Never a bypass.
@@ -636,25 +677,35 @@ def _cmd_answer_ask(self, args):
     )
     snapshot = self.last_snapshot
     surface.arm()
-    accepted = self.answer_controller.perform_browser_answer(
-        command_payload, state, tuple(snapshot.statuses)
-    )
-    if not accepted:
-        raise CommandError("unsupported", "this ask cannot be answered from here")
-    if not surface.completed.wait(ANSWER_REPLY_BUDGET_SECONDS):
-        raise CommandError("busy", "answering did not finish in time")
-    outcome = surface.last_outcome
-    if outcome is None:
-        raise CommandError("send_failed", "the answer surface reported nothing")
-    if not outcome.delivered:
-        raise CommandError(outcome.code, outcome.message)
+    try:
+        accepted = self.answer_controller.perform_browser_answer(
+            command_payload, state, tuple(snapshot.statuses)
+        )
+        if not accepted:
+            raise CommandError("unsupported", "this ask cannot be answered from here")
+        if not surface.completed.wait(ANSWER_REPLY_BUDGET_SECONDS):
+            raise CommandError("busy", "answering did not finish in time")
+        outcome = surface.last_outcome
+        if outcome is None:
+            raise CommandError("send_failed", "the answer surface reported nothing")
+        if not outcome.delivered:
+            raise CommandError(outcome.code, outcome.message)
+    except CommandError as error:
+        # The journal settles as the same refusal the caller sees — a
+        # retry of this command id replays that verdict, never re-runs.
+        journal.settle(
+            record.command_id,
+            error={"code": error.code, "message": str(error)})
+        raise
     self.refresh_(None)
-    return {
+    result = {
         "session": status.agent_id,
         "decision": "reply" if reply_text is not None else decision,
         "answered": True,
         **outcome.document(),
     }
+    journal.settle(record.command_id, receipt=result)
+    return result
 
 
 @command("snooze")
@@ -2199,6 +2250,32 @@ def _cmd_list_history(self, args):
     ledger = self.ensure_activity_ledger()
     rows = history_rows(ledger, since=float(since) if isinstance(since, (int, float)) else None, limit=limit)
     return {"rows": rows, "total": len(ledger.entries), "last_seen": ledger.last_seen_epoch}
+
+
+@command("list_commands")
+def _cmd_list_commands(self, args):
+    """The durable command journal: what was asked, and how it settled.
+
+    ``commands`` are the recent records (newest first, bounded); the
+    ``outcome_unknown`` ids are the ones a restart must not pretend
+    finished — an ``accepted`` record with no settlement is evidence of
+    a command whose effect was never confirmed.
+    """
+    journal = _command_journal(self)
+    report = journal.reconcile()
+    records = sorted(
+        (r for r in journal._records.values() if r.status != "accepted"),
+        key=lambda r: r.settled_at or 0, reverse=True,
+    )[:50]
+    return {
+        "outcome_unknown": report["outcome_unknown"],
+        "counts": {
+            "completed": report["completed"],
+            "failed": report["failed"],
+            "pending": len(report["outcome_unknown"]),
+        },
+        "commands": [r.to_payload() for r in records],
+    }
 
 
 @command("list_roster")

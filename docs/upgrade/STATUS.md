@@ -179,6 +179,28 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W19 slice — durable command journal — LANDED
+
+- `src/jrbar/command_journal.py` (new): the execution ledger —
+  `begin()` persists intent *before* the effect runs (T09's
+  persist-before-effect), `settle()` moves a record to completed or
+  failed with its receipt, and a re-settle returns the first receipt —
+  idempotent replay, never a second effect (T70). Records compact to a
+  256-entry, 7-day window; `accepted` records are never compacted —
+  an unfinished command is exactly what the journal must keep.
+- `answer_ask` now journals: `command_id` is the caller's idempotency
+  key (a retried send replays its first receipt with `replayed: true`
+  rather than re-typing), a `CommandError` settles the record as the
+  same refusal the caller saw, and a confirmed send settles as
+  completed. A journal that cannot load or persist degrades to
+  memory-only — the answer path still runs.
+- `list_commands` command exposes the journal: counts plus the
+  `outcome_unknown` ids a restart must not pretend finished.
+- Still open in W19: expected-revision/grant typing per command
+  (`answer_ask` has `request` identity today), managed-process
+  ownership beyond `process_registry`, per-workspace concurrency
+  policy, and the single registry the UI reads.
+
 ## W18 slice — widget snapshot publisher — LANDED
 
 - `src/jrbar/widget_snapshot.py` (new): projects the `state` document

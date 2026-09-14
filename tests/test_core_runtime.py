@@ -2943,3 +2943,15 @@ def test_answer_ask_reports_the_surface_refusal__and_1_more(headless) -> None:
         )
     assert error.value.code == "not_found"
 
+
+
+def test_list_commands_reports_the_journal(headless) -> None:
+    # The durable command ledger: a fresh journal is empty, and the
+    # command answers with the shape a UI reads — counts plus the ids
+    # whose outcome a restart cannot confirm.
+    controller = headless
+    controller.applicationDidFinishLaunching_(None)
+    reply = controller._core_dispatch("list_commands", {})
+    assert reply["counts"] == {"completed": 0, "failed": 0, "pending": 0}
+    assert reply["outcome_unknown"] == []
+    assert reply["commands"] == []
