@@ -304,6 +304,57 @@ final class OverviewStore {
         }
     }
 
+    // MARK: Topology (S7.5)
+
+    /// Imported Radar report summaries and the newest one's graph —
+    /// the static-topology lens behind the inspector. Imported edges
+    /// are `evidence: "static"` — labels, never live-call proof (T38).
+    var radarReports: [CoreRadarSummary] = []
+    var radarReport: CoreRadarReport?
+    var radarLoaded = false
+
+    /// The newest report's graph, loaded once; the lens reads the
+    /// selected session's one-hop neighborhood from it.
+    func loadRadarIfNeeded() async {
+        guard !radarLoaded else { return }
+        radarLoaded = true
+        do {
+            radarReports = try await core.listRadarReports()
+            if let newest = radarReports.first {
+                radarReport = try await core.radarReport(id: newest.id)
+            }
+        } catch {
+            // No reports is the common case — not an error surface.
+            radarReports = []
+        }
+    }
+
+    /// The selected run's one-hop neighborhood: edges touching a node
+    /// named for the session's provider (or current tool). Evidence is
+    /// always "static" — the view labels it and nothing else consumes
+    /// it (T38).
+    func staticEdges(for entry: CoreRosterEntry) -> [CoreRadarEdge] {
+        guard let report = radarReport else { return [] }
+        var needles = [entry.session.provider.lowercased()]
+        if let tool = entry.session.tool?.lowercased() { needles.append(tool) }
+        return report.edges.filter { edge in
+            needles.contains {
+                edge.source.lowercased().contains($0)
+                    || edge.target.lowercased().contains($0)
+            }
+        }
+    }
+
+    func importRadarReport(path: String) async {
+        do {
+            _ = try await core.importRadarReport(path: path)
+            radarLoaded = false
+            await loadRadarIfNeeded()
+        } catch {
+            self.error = Self.describe(error)
+        }
+    }
+
     // MARK: Search
 
     /// Titles, project labels, tool and event names, and the row's own

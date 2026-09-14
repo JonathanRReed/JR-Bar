@@ -426,8 +426,35 @@ slot chips flanking the band.
   project), Unavailable (model: the roster does not track it).
 - Verified: 6 audit-export tests + 12 roster tests pass; ruff clean;
   `OverviewExportTests` proves preview==saved bytes; `swift build` clean.
-- Still open in W09: the bounded Radar importer/relationship lens
-  (T38).
+- W09 core surface complete: timeline, comparison, replay, importer.
+
+## W09 slice — bounded Radar importer + static-topology lens — LANDED
+
+`radar_import.py` + three commands, and the inspector's static lens
+(S7.5/T38).
+
+- `import_radar_report`: data-only — JSON parsed, capped (4 MB /
+  1000 nodes / 2000 edges), normalized to `{nodes[{id,name,kind}],
+  edges[{source,target,kind,evidence:"static",dangling}]}` with
+  `meta{analyzer, analyzer_version, scanned_at, repository, revision,
+  scope, imported_at, source_file}`; stored under the state dir with
+  an index. Refusals carry codes (`not_found`/`too_large`/
+  `invalid_report`). The repository and its tools are never executed.
+- `list_radar_reports` / `radar_report id` — summaries and one graph;
+  report ids are path-cleaned on load.
+- Every imported edge is `evidence:"static"` — the importer cannot
+  assert observed/configured edges; the inspector labels edges
+  "static" under a "Static topology" section showing the selected
+  session's one-hop provider/tool neighborhood, with an Import…
+  button (`NSOpenPanel`, JSON only). T38: a static edge feeds no
+  counts and fires nothing.
+- Swift: `CoreRadarSummary`/`CoreRadarNode`/`CoreRadarEdge`/
+  `CoreRadarReport` (tolerant decode), `CoreModel.listRadarReports`/
+  `radarReport`/`importRadarReport`, `OverviewStore.staticEdges(for:)`
+  + `loadRadarIfNeeded`.
+- Verified: 8 `test_radar_import` cases (normalize, static label,
+  caps, dangling, store/index, path-cleaning, command codes); ruff
+  clean; `swift build` clean.
 
 ## W09 slice — read-only event replay surface — LANDED
 

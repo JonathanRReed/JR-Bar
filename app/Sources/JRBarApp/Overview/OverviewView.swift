@@ -70,6 +70,7 @@ struct OverviewView: View {
         .onChange(of: store.selectedID) { _, id in
             guard let id else { return }
             Task { await store.loadTimeline(for: id) }
+            Task { await store.loadRadarIfNeeded() }
         }
     }
 
@@ -351,6 +352,7 @@ struct OverviewView: View {
                         Text(coverage).font(.system(size: 10)).foregroundStyle(.tertiary)
                     }
                     timelineSection(for: entry)
+                    topologySection(for: entry)
                     if entry.session.remote {
                         Label("Remote row — open it on \(entry.session.origin?.label ?? "that Mac").", systemImage: "network")
                             .font(.system(size: 11)).foregroundStyle(.secondary)
@@ -527,6 +529,61 @@ struct OverviewView: View {
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
+
+    // MARK: Topology
+
+    /// S7.5 relationship lens: the selected run's one-hop neighborhood
+    /// in the newest imported Radar report. Every edge is labeled
+    /// "static" — a statically detected relationship, never an observed
+    /// call; it feeds nothing (T38).
+    @ViewBuilder
+    private func topologySection(for entry: CoreRosterEntry) -> some View {
+        let edges = store.staticEdges(for: entry)
+        if !edges.isEmpty || store.radarReport != nil {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("Static topology")
+                        .font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                    Text("static")
+                        .font(.system(size: 8, weight: .medium))
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(Color.purple.opacity(0.15), in: .capsule)
+                        .foregroundStyle(.purple)
+                    Spacer()
+                    Button("Import…") { importRadarReport() }
+                        .controlSize(.mini)
+                }
+                if let report = store.radarReport {
+                    ForEach(Array(edges.prefix(12).enumerated()), id: \.offset) { _, edge in
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 8)).foregroundStyle(.quaternary)
+                            Text("\(edge.source) → \(edge.target)")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                                .lineLimit(1).truncationMode(.middle)
+                            if let kind = edge.kind {
+                                Text(kind).font(.system(size: 8)).foregroundStyle(.quaternary)
+                            }
+                        }
+                    }
+                    if edges.isEmpty {
+                        Text("No static edges near this session's provider.")
+                            .font(.system(size: 10)).foregroundStyle(.quaternary)
+                    }
+                    Text("\(report.repository ?? "report") · \(report.nodes.count) nodes · \(report.edges.count) edges")
+                        .font(.system(size: 9)).foregroundStyle(.quaternary)
+                }
+            }
+        }
+    }
+
+    private func importRadarReport() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { await store.importRadarReport(path: url.path) }
+    }
 }
 
 /// S7.4 run comparison: two sides on retained facts — roster axes,
