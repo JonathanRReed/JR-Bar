@@ -68,6 +68,12 @@ public struct UsageForecast: Hashable, Sendable {
         case comfortable
         /// Too little information for a pace.
         case unknown
+        /// The daemon measured the window and refused the pace, with the
+        /// reason (`insufficient_samples`, `reset_boundary`, `stale_samples`,
+        /// `clock_regressed`, ...). A guarded verdict can never be
+        /// overridden by the app's own weaker local fit — the daemon's
+        /// guard is the authority (T28).
+        case guarded(reason: String)
         /// The window exists and the provider stated no number at all, so
         /// there is nothing to have a pace about. Distinct from `unknown`,
         /// which is a known percentage with too few samples.
@@ -86,10 +92,13 @@ public struct UsageForecast: Hashable, Sendable {
     /// Percent of the window burned per hour, when known.
     public var ratePctPerHour: Double?
     public var source: Source
-    /// The daemon's own word (`ahead`, `on`, `under`, `exhausted`), passed through.
+    /// The daemon's own word (`ahead`, `on`, `under`, `exhausted`,
+    /// `guarded`), passed through.
     public var pace: String?
+    /// The daemon's reason a pace was refused, when `pace == "guarded"`.
+    public var guardReason: String?
 
-    public init(window: String, usedPct: Double?, resetsAt: Double?, verdict: Verdict, ratePctPerHour: Double?, source: Source, pace: String? = nil) {
+    public init(window: String, usedPct: Double?, resetsAt: Double?, verdict: Verdict, ratePctPerHour: Double?, source: Source, pace: String? = nil, guardReason: String? = nil) {
         self.window = window
         self.usedPct = usedPct
         self.resetsAt = resetsAt
@@ -97,6 +106,7 @@ public struct UsageForecast: Hashable, Sendable {
         self.ratePctPerHour = ratePctPerHour
         self.source = source
         self.pace = pace
+        self.guardReason = guardReason
     }
 
     /// How much of the window is left — nil when nobody measured it. A
@@ -141,9 +151,24 @@ public struct UsageForecast: Hashable, Sendable {
             return "Comfortable: \(left) % left at this pace"
         case .unknown:
             return "\(left) % left · no pace yet"
+        case .guarded(let reason):
+            return "\(left) % left · \(Self.guardText(reason))"
         case .unmeasured:
             // Unreachable: a window with no reading has no `remainingPct`.
             return "No reading for the \(window) window"
+        }
+    }
+
+    /// The human reading of a daemon guard reason — one short clause that
+    /// names why the pace is paused, never a fabricated prediction.
+    public static func guardText(_ reason: String) -> String {
+        switch reason {
+        case "insufficient_samples": return "pace needs more readings"
+        case "insufficient_span": return "pace needs about 30 min of readings"
+        case "reset_boundary": return "window just reset; pace resumes as readings arrive"
+        case "stale_samples": return "readings stopped; pace paused"
+        case "clock_regressed": return "clock moved backwards; pace paused"
+        default: return "no pace yet"
         }
     }
 
@@ -216,18 +241,43 @@ public enum UsageForecaster {
         if used >= 99.95 {
             return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: .exhausted, ratePctPerHour: nil, source: daemon != nil ? .daemon : .local, pace: daemon?.pace)
         }
-        if let daemon, let exhaustsAt = daemon.exhaustsAt {
-            let hours = (exhaustsAt - now) / 3600
-            let rate = hours > 0 ? (100 - used) / hours : nil
-            let verdict: UsageForecast.Verdict
-            if exhaustsAt <= now {
-                verdict = .exhausted
-            } else if let resetsAt, resetsAt <= exhaustsAt {
-                verdict = .comfortable
-            } else {
-                verdict = .runsOut(exhaustsAt: exhaustsAt)
+        if let daemon {
+            // The daemon's guard is the authority: when it refused the
+            // pace the app must not quietly fit one over weaker evidence.
+            if daemon.pace == "guarded" {
+                return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt,
+                                     verdict: .guarded(reason: daemon.reason ?? "unknown"),
+                                     ratePctPerHour: daemon.ratePctPerHour, source: .daemon,
+                                     pace: daemon.pace, guardReason: daemon.reason)
             }
-            return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: verdict, ratePctPerHour: rate, source: .daemon, pace: daemon.pace)
+            if let exhaustsAt = daemon.exhaustsAt {
+                let hours = (exhaustsAt - now) / 3600
+                let rate = hours > 0 ? (100 - used) / hours : nil
+                let verdict: UsageForecast.Verdict
+                if exhaustsAt <= now {
+                    verdict = .exhausted
+                } else if let resetsAt, resetsAt <= exhaustsAt {
+                    verdict = .comfortable
+                } else {
+                    verdict = .runsOut(exhaustsAt: exhaustsAt)
+                }
+                return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: verdict, ratePctPerHour: rate, source: .daemon, pace: daemon.pace)
+            }
+            // A daemon answer with a pace but no date ("under": idle or
+            // the reset wins) still counts as its verdict: the local fit
+            // only ever runs when the daemon said nothing at all.
+            if let pace = daemon.pace, pace == "under" || pace == "on" {
+                return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt,
+                                     verdict: .comfortable, ratePctPerHour: daemon.ratePctPerHour,
+                                     source: .daemon, pace: pace)
+            }
+            // `ahead`/`exhausted` with no date is a protocol anomaly:
+            // honest unknown, never a locally fabricated date.
+            if daemon.pace != nil {
+                return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt,
+                                     verdict: .unknown, ratePctPerHour: daemon.ratePctPerHour,
+                                     source: .daemon, pace: daemon.pace)
+            }
         }
         guard let rate = rate(samples: samples, now: now) else {
             return UsageForecast(window: window.name, usedPct: used, resetsAt: resetsAt, verdict: .unknown, ratePctPerHour: nil, source: .none, pace: daemon?.pace)

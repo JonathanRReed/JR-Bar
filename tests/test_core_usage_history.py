@@ -85,6 +85,30 @@ def test_days_and_hours_cover_the_range_and_dedupe_records__and_2_more() -> None
     assert history.price_quote("grok", "grok-4") is None
     assert history.record_cost("grok", "grok-4", 1, 1, 1, 1) == 0.0
 
+    # --- scenario: unpriced_records_stay_visible_not_estimated (T24)
+    # A record whose provider has no price table at all is counted, its
+    # cost is a real absence, and it is NOT blended into "estimated".
+    document = history.usage_history_document(
+        [_record("grok", "grok-4", NOW, inp=5000, cached=0, create=0, out=1000, dedupe="g")],
+        provider="grok", range_name="7d", now=NOW.timestamp(),
+    )
+    assert document["days"][-1]["tokens_in"] == 5000
+    assert document["days"][-1]["cost_usd"] == 0.0
+    assert document["pricing"] is None
+    assert document["estimated"] is False and document["estimated_records"] == 0
+    assert document["unpriced_records"] == 1 and document["unpriced_models"] == ["grok-4"]
+    # A mixed provider shows both: table-priced rows, reference-priced
+    # rows labeled estimated, and the unpriced count stays zero.
+    document = history.usage_history_document(
+        [
+            _record("claude", "fable", NOW, dedupe="a"),
+            _record("claude", "mystery-9", NOW, dedupe="b"),
+        ],
+        provider="claude", range_name="7d", now=NOW.timestamp(),
+    )
+    assert document["estimated_records"] == 1 and document["unpriced_records"] == 0
+    assert document["unpriced_models"] == []
+
 
 
 def test_codex_records_are_priced_at_the_configured_default_model(tmp_path) -> None:

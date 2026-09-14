@@ -128,14 +128,26 @@ public struct UsagePricing: Codable, Hashable, Sendable {
     public var asOf: String?
     public var approximate: Bool
     public var currency: String
+    /// The model this quote is for — the dominant model's own row, the
+    /// Codex default, or the provider's reference stand-in.
+    public var model: String?
+    /// `table` / `codex_default` / `reference` — where the rate came from.
+    public var source: String?
+    /// True when the rate is a stand-in, not the model's own table row.
+    public var estimated: Bool
 
-    public init(inputPerMillion: Double? = nil, outputPerMillion: Double? = nil, cacheReadPerMillion: Double? = nil, asOf: String? = nil, approximate: Bool = true, currency: String = "USD") {
+    public init(inputPerMillion: Double? = nil, outputPerMillion: Double? = nil, cacheReadPerMillion: Double? = nil,
+                asOf: String? = nil, approximate: Bool = true, currency: String = "USD",
+                model: String? = nil, source: String? = nil, estimated: Bool = false) {
         self.inputPerMillion = inputPerMillion
         self.outputPerMillion = outputPerMillion
         self.cacheReadPerMillion = cacheReadPerMillion
         self.asOf = asOf
         self.approximate = approximate
         self.currency = currency
+        self.model = model
+        self.source = source
+        self.estimated = estimated
     }
 
     enum CodingKeys: String, CodingKey {
@@ -143,7 +155,7 @@ public struct UsagePricing: Codable, Hashable, Sendable {
         case outputPerMillion = "output_per_mtok"
         case cacheReadPerMillion = "cache_read_per_mtok"
         case asOf = "as_of"
-        case approximate, currency
+        case approximate, currency, model, source, estimated
     }
 
     public init(from decoder: Decoder) throws {
@@ -154,6 +166,9 @@ public struct UsagePricing: Codable, Hashable, Sendable {
         asOf = try c.decodeIfPresent(String.self, forKey: .asOf)
         approximate = try c.decodeIfPresent(Bool.self, forKey: .approximate) ?? true
         currency = try c.decodeIfPresent(String.self, forKey: .currency) ?? "USD"
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        estimated = try c.decodeIfPresent(Bool.self, forKey: .estimated) ?? false
     }
 }
 
@@ -184,9 +199,17 @@ public struct UsageHistory: Codable, Hashable, Sendable {
     /// True while the daemon's scan is still running and these rows are
     /// what it has so far; a `usage_history_ready` event follows.
     public var partial: Bool
+    /// Counted records priced at a reference stand-in rather than their
+    /// model's own row (T24: estimates stay labeled).
+    public var estimatedRecords: Int
+    /// Counted records whose model has no price at all — their tokens are
+    /// in the rows; the cost they contributed is a real absence.
+    public var unpricedRecords: Int
+    public var unpricedModels: [String]
 
     public init(provider: String, range: String, days: [UsageHistoryDay] = [], hours: [UsageHistoryHour] = [], pricing: UsagePricing? = nil,
-                account: UsageAccount? = nil, records: Int? = nil, partial: Bool = false) {
+                account: UsageAccount? = nil, records: Int? = nil, partial: Bool = false,
+                estimatedRecords: Int = 0, unpricedRecords: Int = 0, unpricedModels: [String] = []) {
         self.provider = provider
         self.range = range
         self.days = days
@@ -195,9 +218,17 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         self.account = account
         self.records = records
         self.partial = partial
+        self.estimatedRecords = estimatedRecords
+        self.unpricedRecords = unpricedRecords
+        self.unpricedModels = unpricedModels
     }
 
-    enum CodingKeys: String, CodingKey { case provider, range, days, hours, pricing, account, records, partial }
+    enum CodingKeys: String, CodingKey {
+        case provider, range, days, hours, pricing, account, records, partial
+        case estimatedRecords = "estimated_records"
+        case unpricedRecords = "unpriced_records"
+        case unpricedModels = "unpriced_models"
+    }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -209,6 +240,9 @@ public struct UsageHistory: Codable, Hashable, Sendable {
         account = try c.decodeIfPresent(UsageAccount.self, forKey: .account)
         records = try? c.decodeIfPresent(Int.self, forKey: .records)
         partial = (try? c.decodeIfPresent(Bool.self, forKey: .partial)) ?? false
+        estimatedRecords = (try? c.decodeIfPresent(Int.self, forKey: .estimatedRecords)) ?? 0
+        unpricedRecords = (try? c.decodeIfPresent(Int.self, forKey: .unpricedRecords)) ?? 0
+        unpricedModels = (try? c.decodeIfPresent([String].self, forKey: .unpricedModels)) ?? []
     }
 
     public var isEmpty: Bool { days.isEmpty && hours.isEmpty }

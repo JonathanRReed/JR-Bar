@@ -171,6 +171,8 @@ def usage_history_document(
     seen: set[str] = set()
     counted = 0
     estimated_records = 0
+    unpriced_records = 0
+    unpriced_models: list[str] = []
     for record in records:
         try:
             record_provider, _session, model, epoch, inp, cached_in, cache_create, out, dedupe = record
@@ -191,7 +193,14 @@ def usage_history_document(
         if model_name not in quotes:
             quotes[model_name] = price_quote(provider, model_name, codex_default_model=codex_default_model)
         quote = quotes[model_name]
-        if quote is None or quote.estimated:
+        if quote is None:
+            # No price at all: the tokens are counted, the $0 is NOT a
+            # price. Unpriced coverage stays its own number (T24) --
+            # never blended into "estimated" and never hidden.
+            unpriced_records += 1
+            if model_name not in unpriced_models:
+                unpriced_models.append(model_name)
+        elif quote.estimated:
             estimated_records += 1
         cost = quote_cost(provider, quote, int(inp), int(cached_in), int(cache_create), int(out))
         total = int(inp) + int(cached_in) + int(cache_create) + int(out)
@@ -228,6 +237,11 @@ def usage_history_document(
         # dollars are approximate anyway, these more so.
         "estimated": estimated_records > 0,
         "estimated_records": estimated_records,
+        # Records whose model has no price at all: their tokens are in the
+        # rows, their cost contribution is a real $0 absence -- visible,
+        # never silently folded into the total (T24).
+        "unpriced_records": unpriced_records,
+        "unpriced_models": sorted(unpriced_models),
     }
 
 

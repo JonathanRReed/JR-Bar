@@ -9,12 +9,16 @@
  },
  "asks": [
   {
+   "answerable": true,
    "kind": "permission",
    "opened_at": 1788982800.0,
+   "replyable": false,
+   "request": null,
    "session": "codex:session:0f3b2c9a-71d4-4e0e-9a8e-2c1d5f6a7b8c",
    "summary": "Run: rm -rf build"
   }
  ],
+ "catalog_generation": 4172,
  "deck": {
   "aux": [
    {
@@ -94,9 +98,14 @@
   "rail": {
    "edge": "left"
   },
+  "scope": "automatic",
+  "scopes": [],
   "settings": {
    "analog_enabled": false,
+   "bindings": [],
    "enabled": true,
+   "layer_map": [],
+   "scopes": [],
    "session_mode": true
   },
   "slots": [
@@ -296,6 +305,11 @@
  },
  "generation": 4812,
  "health": {
+  "detected": {
+   "claude": true,
+   "codex": true,
+   "pi": false
+  },
   "hooks": {
    "claude": "ok",
    "codex": "stale",
@@ -352,6 +366,7 @@
    "parent": null,
    "pid": 9170,
    "provider": "claude",
+   "remote": false,
    "short_id": "fca1eb06",
    "since": 1788982891.0,
    "snoozed_until": null,
@@ -384,6 +399,7 @@
    "parent": "claude:session:fca1eb06-f6d1-413e-aa5f-dd19d8e05973",
    "pid": null,
    "provider": "claude",
+   "remote": false,
    "short_id": "fca1eb06",
    "since": 1788982890.4,
    "snoozed_until": null,
@@ -395,8 +411,11 @@
   },
   {
    "ask": {
+    "answerable": true,
     "kind": "permission",
     "opened_at": 1788982800.0,
+    "replyable": false,
+    "request": null,
     "summary": "Run: rm -rf build"
    },
    "cwd": "/Users/j/Downloads/JR-Bar/src",
@@ -416,6 +435,7 @@
    "parent": null,
    "pid": 9311,
    "provider": "codex",
+   "remote": false,
    "short_id": "0f3b2c9a",
    "since": 1788982800.0,
    "snoozed_until": null,
@@ -443,6 +463,7 @@
    "parent": null,
    "pid": null,
    "provider": "gemini",
+   "remote": false,
    "short_id": "8a1c2e3f",
    "since": 1788982851.4,
    "snoozed_until": null,
@@ -475,6 +496,7 @@
      "exhausts_at": 1789000292.4,
      "pace": "under",
      "rate_pct_per_hour": 12.0,
+     "reason": null,
      "remaining_pct": 58.0,
      "samples": 13,
      "window_id": "five_hour"
@@ -482,6 +504,7 @@
     "id": "claude",
     "instance": "default",
     "observed_at": 1788982850.0,
+    "quota_source": true,
     "reason": null,
     "state": "ready",
     "tokens": {
@@ -491,6 +514,15 @@
     },
     "windows": [
      {
+      "forecast": {
+       "exhausts_at": 1789000292.4,
+       "pace": "under",
+       "rate_pct_per_hour": 12.0,
+       "reason": null,
+       "remaining_pct": 58.0,
+       "samples": 13,
+       "window_id": "five_hour"
+      },
       "id": "five_hour",
       "model": null,
       "name": "5h",
@@ -499,6 +531,16 @@
       "used_pct": 42.0
      },
      {
+      "forecast": {
+       "exhausts_at": null,
+       "pace": "guarded",
+       "rate_pct_per_hour": null,
+       "reason": "insufficient_samples",
+       "remaining_pct": 39.0,
+       "samples": 0,
+       "span_seconds": 0.0,
+       "window_id": "seven_day"
+      },
       "id": "seven_day",
       "model": null,
       "name": "7d",
@@ -514,10 +556,20 @@
     "credits_remaining": null,
     "estimated_cost_usd": null,
     "fidelity": "stale",
-    "forecast": null,
+    "forecast": {
+     "exhausts_at": null,
+     "pace": "guarded",
+     "rate_pct_per_hour": null,
+     "reason": "insufficient_samples",
+     "remaining_pct": 88.0,
+     "samples": 0,
+     "span_seconds": 0.0,
+     "window_id": "five_hour"
+    },
     "id": "codex",
     "instance": "default",
     "observed_at": 1788981992.4,
+    "quota_source": true,
     "reason": "rate_limited",
     "state": "stale",
     "tokens": {
@@ -527,6 +579,16 @@
     },
     "windows": [
      {
+      "forecast": {
+       "exhausts_at": null,
+       "pace": "guarded",
+       "rate_pct_per_hour": null,
+       "reason": "insufficient_samples",
+       "remaining_pct": 88.0,
+       "samples": 0,
+       "span_seconds": 0.0,
+       "window_id": "five_hour"
+      },
       "id": "five_hour",
       "model": null,
       "name": "5h",
@@ -535,6 +597,7 @@
       "used_pct": 12.0
      },
      {
+      "forecast": null,
       "id": "seven_day",
       "model": null,
       "name": "7d",

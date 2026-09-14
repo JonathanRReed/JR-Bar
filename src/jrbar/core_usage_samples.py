@@ -40,11 +40,28 @@ EXHAUSTED_PCT: Final = 99.5
 ON_PACE_MARGIN: Final = 0.10
 #: Between saves of the buffer while samples keep arriving.
 SAVE_INTERVAL_SECONDS: Final = 60.0
+#: Heartbeats land every five minutes while the source delivers; a tail
+#: older than this means the readings stopped, and a line fitted to stale
+#: history is not a pace.
+STALE_SAMPLE_SECONDS: Final = 15 * 60
+#: A sample this far in the future means the clock moved backwards; it
+#: poisons the fit, so it is dropped and the forecast is guarded.
+FUTURE_TOLERANCE_SECONDS: Final = 60.0
 
 PACE_AHEAD: Final = "ahead"
 PACE_ON: Final = "on"
 PACE_UNDER: Final = "under"
 PACE_EXHAUSTED: Final = "exhausted"
+#: The window is measured but the evidence cannot carry a pace. The
+#: forecast is a real object, not a null: ``reason`` says exactly which
+#: guard fired (T28).
+PACE_GUARDED: Final = "guarded"
+
+GUARD_INSUFFICIENT_SAMPLES: Final = "insufficient_samples"
+GUARD_INSUFFICIENT_SPAN: Final = "insufficient_span"
+GUARD_RESET_BOUNDARY: Final = "reset_boundary"
+GUARD_STALE_SAMPLES: Final = "stale_samples"
+GUARD_CLOCK_REGRESSED: Final = "clock_regressed"
 
 
 def default_usage_samples_path(home: Path | None = None) -> Path:
@@ -61,28 +78,73 @@ def _key(provider: str, window_id: str) -> str:
     return f"{provider}|{str(window_id).lower()}"
 
 
-def linear_rate(samples: list[UsageSample], *, now: float) -> tuple[float, int] | None:
-    """Percent per hour from a least-squares line through the samples of
-    the last ``LOOKBACK_SECONDS``, after the last reset (a drop of more
-    than a point). None with less than ``MIN_SPAN_SECONDS`` of spread.
-    Returns ``(rate, samples_used)``; the rate is never negative."""
+@dataclass(frozen=True, slots=True)
+class _FitGuard:
+    """Why a measured window has no pace (T28): the reason, how many
+    samples were usable, and their spread. A forecast carries this
+    instead of a number it cannot defend."""
+
+    reason: str
+    samples: int
+    span_seconds: float
+
+
+def _fit(samples: list[UsageSample], *, now: float) -> tuple[float, int] | _FitGuard:
     recent = [sample for sample in samples if now - sample.at <= LOOKBACK_SECONDS]
+    # A clock jump backwards leaves future-dated samples: dropping them is
+    # honest, and when that empties the window the guard says why.
+    clock_regressed = False
+    usable = [sample for sample in recent if sample.at <= now + FUTURE_TOLERANCE_SECONDS]
+    if len(usable) != len(recent):
+        clock_regressed = True
+        recent = usable
+    saw_reset = False
     for index in range(len(recent) - 1, 0, -1):
         if recent[index].used_pct < recent[index - 1].used_pct - 1.0:
             recent = recent[index:]
+            saw_reset = True
             break
+    if not recent:
+        return _FitGuard(
+            GUARD_CLOCK_REGRESSED if clock_regressed else GUARD_INSUFFICIENT_SAMPLES,
+            0,
+            0.0,
+        )
+    if now - recent[-1].at > STALE_SAMPLE_SECONDS:
+        return _FitGuard(GUARD_STALE_SAMPLES, len(recent), recent[-1].at - recent[0].at)
     if len(recent) < 2:
-        return None
+        return _FitGuard(
+            # A reset just truncated the history: the honest reason is the
+            # boundary, not a generic sample shortage.
+            GUARD_RESET_BOUNDARY if saw_reset else (
+                GUARD_CLOCK_REGRESSED if clock_regressed else GUARD_INSUFFICIENT_SAMPLES
+            ),
+            len(recent),
+            0.0,
+        )
     span = recent[-1].at - recent[0].at
     if span < MIN_SPAN_SECONDS:
-        return None
+        return _FitGuard(
+            GUARD_RESET_BOUNDARY if saw_reset else GUARD_INSUFFICIENT_SPAN,
+            len(recent),
+            span,
+        )
     mean_t = sum(sample.at for sample in recent) / len(recent)
     mean_p = sum(sample.used_pct for sample in recent) / len(recent)
     numerator = sum((sample.at - mean_t) * (sample.used_pct - mean_p) for sample in recent)
     denominator = sum((sample.at - mean_t) ** 2 for sample in recent)
     if denominator <= 0:
-        return None
+        return _FitGuard(GUARD_INSUFFICIENT_SPAN, len(recent), span)
     return max(0.0, numerator / denominator * 3600.0), len(recent)
+
+
+def linear_rate(samples: list[UsageSample], *, now: float) -> tuple[float, int] | None:
+    """Percent per hour from a least-squares line through the samples of
+    the last ``LOOKBACK_SECONDS``, after the last reset (a drop of more
+    than a point). None with less than ``MIN_SPAN_SECONDS`` of spread.
+    Returns ``(rate, samples_used)``; the rate is never negative."""
+    fit = _fit(samples, now=now)
+    return fit if isinstance(fit, tuple) else None
 
 
 def forecast_window(
@@ -112,12 +174,21 @@ def forecast_window(
         "pace": None,
         "rate_pct_per_hour": None,
         "samples": 0,
+        "reason": None,
     }
     if used >= EXHAUSTED_PCT:
         return {**base, "exhausts_at": now, "pace": PACE_EXHAUSTED}
-    fit = linear_rate(samples, now=now)
-    if fit is None:
-        return None
+    fit = _fit(samples, now=now)
+    if isinstance(fit, _FitGuard):
+        # T28: a measured window whose evidence cannot carry a pace is a
+        # guarded forecast with the reason, never a fabricated date.
+        return {
+            **base,
+            "pace": PACE_GUARDED,
+            "reason": fit.reason,
+            "samples": fit.samples,
+            "span_seconds": round(fit.span_seconds, 1),
+        }
     rate, used_samples = fit
     base["rate_pct_per_hour"] = round(rate, 3)
     base["samples"] = used_samples
@@ -269,6 +340,12 @@ class UsageSampleBuffer:
 
 __all__ = [
     "EXHAUSTED_PCT",
+    "FUTURE_TOLERANCE_SECONDS",
+    "GUARD_CLOCK_REGRESSED",
+    "GUARD_INSUFFICIENT_SAMPLES",
+    "GUARD_INSUFFICIENT_SPAN",
+    "GUARD_RESET_BOUNDARY",
+    "GUARD_STALE_SAMPLES",
     "HEARTBEAT_SECONDS",
     "IDLE_RATE_PCT_PER_HOUR",
     "LOOKBACK_SECONDS",
@@ -276,9 +353,11 @@ __all__ = [
     "ON_PACE_MARGIN",
     "PACE_AHEAD",
     "PACE_EXHAUSTED",
+    "PACE_GUARDED",
     "PACE_ON",
     "PACE_UNDER",
     "SAMPLE_LIMIT",
+    "STALE_SAMPLE_SECONDS",
     "UsageSample",
     "UsageSampleBuffer",
     "default_usage_samples_path",

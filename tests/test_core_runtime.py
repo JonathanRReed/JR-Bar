@@ -504,7 +504,9 @@ def test_state_builds_feed_the_usage_sample_buffer(headless, tmp_path: Path) -> 
     document = controller._core_build_state()
     assert buffer.samples("claude", "five-hour") == [UsageSample(document["now"], 42.0)]
     claude = document["usage"]["providers"][0]
-    assert claude["forecast"] is None  # one sample is not a pace
+    # One sample is not a pace: the forecast is guarded, not a guess (T28).
+    assert claude["forecast"]["pace"] == "guarded"
+    assert claude["forecast"]["reason"] == "insufficient_samples"
     assert buffer.path.exists()  # the first change is saved at once
     # Backfill an hour of history: the next build carries a forecast.
     now = document["now"]

@@ -24,3 +24,4 @@ work/
 
 # Private local final-testing records. Never uploaded automatically.
 .jrbar-verification/
+.playwright-mcp/

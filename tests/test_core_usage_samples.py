@@ -52,7 +52,7 @@ def test_a_steady_climb_that_beats_the_reset_is_ahead__and_2_more() -> None:
     forecast = forecast_window(flat, window_id="weekly", used_pct=37.0, resets_at=NOW + 3 * 86400, now=NOW)
     assert forecast == {
         "window_id": "weekly", "remaining_pct": 63.0, "exhausts_at": None, "pace": "under",
-        "rate_pct_per_hour": 0.0, "samples": len(flat),
+        "rate_pct_per_hour": 0.0, "samples": len(flat), "reason": None,
     }
     # A trickle below the idle rate reads the same way.
     assert forecast_window(climb(37.0, 0.02), window_id="weekly", used_pct=37.0, resets_at=None, now=NOW)["pace"] == "under"
@@ -67,19 +67,46 @@ def test_exhausted_needs_no_history__and_2_more() -> None:
     # A falling line into an exhausted window is still exhausted.
     assert forecast_window(climb(99.0, 1.0), window_id="five-hour", used_pct=99.9, resets_at=None, now=NOW)["pace"] == "exhausted"
 
-    # --- scenario: not_enough_history_means_no_forecast
-    assert forecast_window([], window_id="five-hour", used_pct=50.0, resets_at=None, now=NOW) is None
-    assert forecast_window(climb(40.0, 20.0, minutes=20), window_id="five-hour", used_pct=46.0, resets_at=None, now=NOW) is None
+    # --- scenario: not_enough_history_is_guarded_never_fabricated (T28)
+    # No samples at all: a guarded forecast naming the reason, not null
+    # and never an invented exhaustion date.
+    guarded = forecast_window([], window_id="five-hour", used_pct=50.0, resets_at=None, now=NOW)
+    assert guarded["pace"] == "guarded" and guarded["reason"] == "insufficient_samples"
+    assert guarded["exhausts_at"] is None and guarded["samples"] == 0
+    # A 20-minute spread cannot carry a pace either.
+    guarded = forecast_window(climb(40.0, 20.0, minutes=20), window_id="five-hour", used_pct=46.0, resets_at=None, now=NOW)
+    assert guarded["pace"] == "guarded" and guarded["reason"] == "insufficient_span"
+    assert guarded["samples"] == 5 and guarded["span_seconds"] == pytest.approx(1200.0)
+    # No measurement at all is still a true null -- there is no window
+    # to pace, only an absence.
     assert forecast_window(climb(40.0, 20.0), window_id="five-hour", used_pct=None, resets_at=None, now=NOW) is None
-    # Old samples fall out of the 90-minute lookback.
+    # Readings that stopped flowing are stale, not a pace.
+    stale_tail = climb(40.0, 20.0, minutes=45, end=NOW - 20 * 60)
+    guarded = forecast_window(stale_tail, window_id="five-hour", used_pct=55.0, resets_at=None, now=NOW)
+    assert guarded["pace"] == "guarded" and guarded["reason"] == "stale_samples"
+    # Old samples entirely outside the lookback are just absent history.
     stale = climb(40.0, 20.0, end=NOW - 4 * HOUR)
+    assert forecast_window(stale, window_id="five-hour", used_pct=60.0, resets_at=None, now=NOW)["reason"] == "insufficient_samples"
     assert linear_rate(stale, now=NOW) is None
+    # A backwards clock leaves the buffer entirely future-dated: dropped,
+    # and the forecast says the clock moved rather than fitting noise.
+    future = climb(40.0, 20.0, end=NOW + 2 * HOUR)
+    guarded = forecast_window(future, window_id="five-hour", used_pct=60.0, resets_at=None, now=NOW)
+    assert guarded["pace"] == "guarded" and guarded["reason"] == "clock_regressed"
+    # A partial regression keeps the usable history -- the tail that is
+    # not future-dated still fits.
+    mixed = climb(40.0, 20.0, end=NOW + 10 * 60)
+    assert forecast_window(mixed, window_id="five-hour", used_pct=60.0, resets_at=None, now=NOW)["pace"] == "ahead"
 
     # --- scenario: a_reset_drop_restarts_the_fit
     before = climb(60.0, 30.0, end=NOW - 40 * 60)
     after = climb(2.0, 6.0, minutes=40, end=NOW)
     rate, used = linear_rate(before + after, now=NOW)
     assert rate == pytest.approx(6.0, abs=0.01) and used == len(after)
+    # A lone post-reset reading is a boundary guard, not a fake shortage.
+    one_after = [*before, UsageSample(at=NOW - 60, used_pct=3.0)]
+    guarded = forecast_window(one_after, window_id="five-hour", used_pct=3.0, resets_at=NOW + 4 * HOUR, now=NOW)
+    assert guarded["pace"] == "guarded" and guarded["reason"] == "reset_boundary"
 
 
 
@@ -122,7 +149,9 @@ def test_buffer_records_on_change_or_heartbeat_and_stays_bounded__and_2_more(tmp
     assert loaded.path == path
     forecast = loaded.forecast("claude", "five-hour", used_pct=70.0, resets_at=NOW + 5 * HOUR, now=NOW)
     assert forecast["pace"] == "ahead" and forecast["exhausts_at"] == pytest.approx(NOW + HOUR, abs=1.0)
-    assert loaded.forecast("claude", None, used_pct=60.0, resets_at=None, now=NOW) is None
+    # A window with no samples at all is guarded, not null.
+    guarded = loaded.forecast("claude", None, used_pct=60.0, resets_at=None, now=NOW)
+    assert guarded["pace"] == "guarded" and guarded["reason"] == "insufficient_samples"
 
     # Garbage and a missing file both give an empty buffer.
     path.write_text("{not json")

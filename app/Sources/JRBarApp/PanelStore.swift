@@ -1311,6 +1311,9 @@ final class PanelStore {
         case "behind", "under": return "resets first"
         case "on", "on_pace", "on-pace", "onpace", "steady": return "on pace"
         case "exhausted": return "used up"
+        // A guarded pace already explains itself through the forecast's
+        // `reason`; "guarded" as a bare hint would read like a verdict.
+        case "guarded": return nil
         case nil, "": return nil
         case let other?: return other.replacingOccurrences(of: "_", with: " ")
         }

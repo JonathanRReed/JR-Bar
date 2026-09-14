@@ -91,6 +91,37 @@ struct UsageForecastTests {
         #expect(UsageForecaster.rate(samples: close, now: Self.now) == nil)
     }
 
+    @Test("the daemon's guard wins: a refused pace is never re-fitted locally")
+    func daemonGuardWins() {
+        // The daemon saw a reset boundary and guarded the pace; the local
+        // samples alone would fit a misleading climb. The guard is the
+        // authority (T28) — the verdict carries the reason, not a date.
+        let window = CoreUsageWindow(name: "5h", usedPct: 40, resetsAt: Self.now + 3 * 3600)
+        let misleading = Self.samples([(40, 20), (30, 30), (20, 40), (10, 50), (0, 60)])
+        let guarded = CoreUsageForecast(exhaustsAt: nil, pace: "guarded", reason: "reset_boundary", samples: 1)
+        let forecast = UsageForecaster.forecast(window: window, daemon: guarded, samples: misleading, now: Self.now)
+        guard case .guarded(let reason) = forecast.verdict else {
+            Issue.record("expected guarded, got \(forecast.verdict)"); return
+        }
+        #expect(reason == "reset_boundary")
+        #expect(forecast.source == .daemon)
+        #expect(forecast.guardReason == "reset_boundary")
+        #expect(!forecast.isCritical)
+        #expect(forecast.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc)
+            == "60 % left · window just reset; pace resumes as readings arrive")
+        // An unrecognized guard reason still reads honestly.
+        let other = UsageForecaster.forecast(window: window,
+                                             daemon: CoreUsageForecast(pace: "guarded", reason: "no_such_reason"),
+                                             samples: [], now: Self.now)
+        #expect(other.headline(now: Date(timeIntervalSince1970: Self.now), timeZone: Self.utc) == "60 % left · no pace yet")
+        // A daemon "under" with no date is a verdict, not an invitation
+        // for the local fit to override it with a worse-threshold pace.
+        let under = UsageForecaster.forecast(window: window,
+                                             daemon: CoreUsageForecast(exhaustsAt: nil, pace: "under"),
+                                             samples: misleading, now: Self.now)
+        #expect(under.verdict == .comfortable && under.source == .daemon)
+    }
+
     @Test("a reset inside the lookback restarts the fit")
     func resetRestartsFit() {
         // Climbing, then a drop to 5 %, then climbing again at 30 %/h.

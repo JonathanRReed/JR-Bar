@@ -1404,12 +1404,19 @@
   "cache_read_per_mtok": 0.3,
   "as_of": "2026-09-01",
   "approximate": true,
-  "currency": "USD"
+  "currency": "USD",
+  "model": "sonnet",
+  "source": "table",
+  "estimated": false
  },
  "account": {
   "plan": "Max 20\u00d7",
   "label": "jonathan@\u2026",
   "fidelity": "official"
  },
- "state": "ok"
+ "state": "ok",
+ "estimated": true,
+ "estimated_records": 1,
+ "unpriced_records": 0,
+ "unpriced_models": []
 }

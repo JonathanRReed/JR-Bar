@@ -272,7 +272,7 @@ slot chips flanking the band.
   provider/usage group → 595 passed; ruff clean on touched files;
   `jrbar providers status` end-to-end on the live account.
 
-### W06 — provider inspect/enable/consent/action on the shared control surface — LANDED
+## W06 — provider inspect/enable/consent/action on the shared control surface — LANDED
 
 - New module `provider_management.py` is the single control surface the
   socket and the CLI both drive: `provider_rows` (one inspect row per
@@ -310,6 +310,45 @@ slot chips flanking the band.
 - Verified: `pytest tests/test_upgrade_provider_management.py` → 12
   passed; full suite 3444 passed; `swift test` 478 passed; ruff clean on
   touched files.
+- Still open in W06: the model/skill catalog slice — paginated catalogs,
+  option validation, saved-model handling and exact route labels
+  (T30–T32) — which lands with the control layer it feeds.
+
+## W07 — forecast authority and pricing coverage (T24, T28 slice) — LANDED
+
+- `core_usage_samples.forecast_window` no longer returns null for a
+  *measured* window it cannot pace. The daemon emits `pace: "guarded"`
+  with `reason` (`insufficient_samples`, `insufficient_span`,
+  `reset_boundary`, `stale_samples`, `clock_regressed`), the surviving
+  `samples` count, and `span_seconds`; `exhausts_at` stays null.
+  `forecast` is null only for an unmeasured window or a missing sample
+  buffer. Future-dated samples past a 60 s tolerance are dropped as
+  clock regression; a reset drop restarts the fit at the boundary.
+- Swift `UsageForecast.Verdict` gains `.guarded(reason:)` and the
+  forecaster treats the daemon's guard as the authority — the app's
+  60-second local fit can no longer publish a pace or exhaustion date
+  the daemon refused on 30-minute evidence (T28). A daemon `under`/`on`
+  with no date is its own verdict; an `ahead`/`exhausted` with no date
+  is a protocol anomaly and reads `unknown`, never a fabricated date.
+  `guardText` renders each reason as a sentence; `PanelStore.paceHint`
+  declines the bare word `guarded`.
+- `core_usage_history.usage_history_document` splits `unpriced_records`/
+  `unpriced_models` (no quote at all — tokens counted, $0 is a real
+  absence) from `estimated_records` (reference stand-in rate), so a
+  provider with no price table never has its usage silently labeled
+  "estimated" or its missing prices folded into the total (T24).
+- Wire/Swift: `CoreUsageForecast` gains `reason`/`rate_pct_per_hour`;
+  `UsageHistory` gains `estimatedRecords`/`unpricedRecords`/
+  `unpricedModels`, `UsagePricing` gains `model`/`source`/`estimated`.
+  The Usage Center pricing line now names the model, flags a reference
+  rate, and calls out unpriced records by name and count.
+- Verified: `tests/test_core_usage_samples.py` +
+  `test_core_usage_history.py` + projection/runtime updates → 89 passed
+  focused; wider usage/provider group 93 passed; Swift UsageForecast/
+  UsageHistory suites green; `swift build` clean.
+- Still open in W07: account/project/date filters, constrained-lane
+  explanations, and any dedupe/scan work the audit surfaces beyond the
+  existing incremental mtime+size cache.
 
 (Remaining packages W07+ proceed in the spec's dependency order; rows are
 added as work lands.)

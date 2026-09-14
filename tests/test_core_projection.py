@@ -387,8 +387,12 @@ def test_state_document_carries_the_deck_when_given__and_2_more() -> None:
     assert claude["forecast"]["window_id"] == "five_hour" and claude["forecast"]["pace"] == "under"
     assert claude["forecast"]["exhausts_at"] == pytest.approx(NOW + 58.0 / 12.0 * 3600.0, abs=1.0)
     assert claude["forecast"]["remaining_pct"] == 58.0 and claude["forecast"]["samples"] == 13
-    # No history for codex yet: no forecast rather than a guess.
-    assert codex["forecast"] is None
+    # No history for codex yet: a measured window reports its absence of
+    # pace as a guarded forecast, never a fabricated date (T28).
+    assert codex["forecast"]["pace"] == "guarded"
+    assert codex["forecast"]["reason"] == "insufficient_samples"
+    assert codex["forecast"]["exhausts_at"] is None and codex["forecast"]["samples"] == 0
+    # Without a sample buffer there is no forecast at all.
     assert usage_document(fixture_inputs()["usage_state"])["providers"][0]["forecast"] is None
     assert document["power"] == {
         "keep_awake": True,

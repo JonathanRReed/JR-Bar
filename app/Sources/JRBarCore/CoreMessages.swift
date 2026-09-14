@@ -419,15 +419,26 @@ public struct CoreUsageWindow: Codable, Hashable, Sendable, Identifiable {
 public struct CoreUsageForecast: Codable, Hashable, Sendable {
     public var exhaustsAt: Double?
     public var pace: String?
+    /// Why a `guarded` pace has no date (T28): `insufficient_samples`,
+    /// `insufficient_span`, `reset_boundary`, `stale_samples`,
+    /// `clock_regressed`. Nil on a real pace.
+    public var reason: String?
+    public var samples: Int?
+    public var ratePctPerHour: Double?
 
-    public init(exhaustsAt: Double? = nil, pace: String? = nil) {
+    public init(exhaustsAt: Double? = nil, pace: String? = nil, reason: String? = nil,
+                samples: Int? = nil, ratePctPerHour: Double? = nil) {
         self.exhaustsAt = exhaustsAt
         self.pace = pace
+        self.reason = reason
+        self.samples = samples
+        self.ratePctPerHour = ratePctPerHour
     }
 
     enum CodingKeys: String, CodingKey {
-        case pace
+        case pace, reason, samples
         case exhaustsAt = "exhausts_at"
+        case ratePctPerHour = "rate_pct_per_hour"
     }
 }
 

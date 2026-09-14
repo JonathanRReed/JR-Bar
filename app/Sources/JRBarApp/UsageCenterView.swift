@@ -401,7 +401,7 @@ struct ProviderUsageCard: View {
         let window = primary ?? provider.windows[0]
         let forecast = store.forecast(for: provider, window: window)
         return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: forecast.isCritical ? "exclamationmark.triangle.fill" : (forecast.verdict == .unknown || forecast.verdict == .unmeasured ? "questionmark.circle" : "checkmark.circle"))
+            Image(systemName: forecast.isCritical ? "exclamationmark.triangle.fill" : (isQuiet(forecast.verdict) ? "questionmark.circle" : "checkmark.circle"))
                 .foregroundStyle(forecast.isCritical ? Color.orange : Color.secondary)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 4) {
@@ -416,6 +416,15 @@ struct ProviderUsageCard: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// Verdicts that mean "no number to show" rather than a pace: the
+    /// question-mark icon, never the green check.
+    private func isQuiet(_ verdict: UsageForecast.Verdict) -> Bool {
+        switch verdict {
+        case .unknown, .unmeasured, .guarded: return true
+        default: return false
+        }
     }
 
     private func forecastSource(_ forecast: UsageForecast) -> String {
@@ -508,22 +517,31 @@ struct ProviderUsageCard: View {
                     .help("What the cache reads would have cost at the input price, minus what they cost at the cache price")
                 }
             }
-            Text(pricingDisclosure(history.pricing))
+            Text(pricingDisclosure(history))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
     }
 
-    private func pricingDisclosure(_ pricing: UsagePricing?) -> String {
-        guard let pricing else { return "Approximate: the monitor reported no price table for this provider." }
+    private func pricingDisclosure(_ history: UsageHistory) -> String {
+        guard let pricing = history.pricing else { return "Approximate: the monitor reported no price table for this provider." }
         var text = "Approximate: list prices"
         if let input = pricing.inputPerMillion, let output = pricing.outputPerMillion {
             text += String(format: " (%@%.2f in / %@%.2f out per M tokens", UsageFormat.currencySymbol(pricing.currency), input, UsageFormat.currencySymbol(pricing.currency), output)
             if let cache = pricing.cacheReadPerMillion { text += String(format: ", %@%.2f cache", UsageFormat.currencySymbol(pricing.currency), cache) }
             text += ")"
         }
+        if let model = pricing.model { text += " for \(model)" }
         if let asOf = pricing.asOf { text += ", as of \(asOf)" }
-        return text + ". Subscription plans are not billed per token."
+        text += "."
+        if pricing.estimated {
+            text += " This model has no table row — priced at the provider's reference rate."
+        }
+        if history.unpricedRecords > 0 {
+            let models = history.unpricedModels.isEmpty ? "" : " (\(history.unpricedModels.joined(separator: ", ")))"
+            text += " \(history.unpricedRecords) record\(history.unpricedRecords == 1 ? "" : "s")\(models) ha\(history.unpricedRecords == 1 ? "s" : "ve") no price — their tokens are counted but add no dollars."
+        }
+        return text + " Subscription plans are not billed per token."
     }
 }
 
