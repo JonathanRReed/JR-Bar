@@ -3,7 +3,6 @@
 import subprocess
 import sys
 import threading
-import time
 
 import pytest
 
@@ -106,13 +105,10 @@ def test_deadline_bounds_a_silent_peer(peer):
 
 def test_peer_exit_closes_every_waiter(peer):
     transport = JsonRpcTransport(peer)
-    transport.request("crash", timeout=5) if False else None
     # Ask the peer to exit without an in-flight request first.
     transport.notify("crash")
-    deadline = time.monotonic() + 5
-    while not transport.closed and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert transport.closed
+    # Bounded wait on the closed event — no wall-clock sleep.
+    assert transport.wait_closed(5.0)
     with pytest.raises(TransportClosed):
         transport.request("anything", timeout=1)
 

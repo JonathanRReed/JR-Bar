@@ -44,7 +44,20 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "jrbar"
 # accident: an entry here is a decision deferred, and the deferral is what
 # cost this project its blend modes, its log janitors and a 1,139-line
 # presentation layer.
-KNOWN_UNWIRED: dict[str, str] = {}
+KNOWN_UNWIRED: dict[str, str] = {
+    # W21: the JSON-RPC spine the managed-session adapters (W20/W22/W23)
+    # will drive — nothing owns a live transport until one exists.
+    "acp_transport": "shared transport; first caller is a W20/W22 adapter",
+    # W25: the assistant layer's contract; its caller is the composer UI
+    # and an LLM front-end that are not built yet.
+    "coordinator_policy": "policy surface; first caller is the W25 composer",
+    # W26: the OpenCode serve probe; its caller is the provider
+    # management UI — probed live, not yet wired into a card.
+    "opencode_bridge": "capability probe; first caller is provider management",
+    # W24: title-generation policy; its caller is an adapter over the
+    # W19/W20 execution contract.
+    "utility_generation": "generation policy; first caller is a W24 adapter",
+}
 
 # Legitimate separate entry points -- not imported by the app by design.
 # Fixture ownership is a build/test provenance gate, not shipped runtime work.

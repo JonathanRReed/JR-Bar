@@ -66,6 +66,7 @@ class JsonRpcTransport:
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
         self._lock = threading.Lock()
         self._closed = False
+        self._closed_event = threading.Event()
         self._close_reason: str | None = None
         self.protocol_violations = 0
         self.stderr_tail = ""
@@ -154,6 +155,7 @@ class JsonRpcTransport:
             self._close_reason = reason
             pending = list(self._pending.values())
             self._pending.clear()
+        self._closed_event.set()
         for waiter in pending:
             waiter.put({"__closed__": reason})
 
@@ -212,6 +214,11 @@ class JsonRpcTransport:
     @property
     def closed(self) -> bool:
         return self._closed
+
+    def wait_closed(self, timeout: float) -> bool:
+        """Bounded wait for teardown — the caller's alternative to a
+        polling sleep. Returns True if the transport closed in time."""
+        return self._closed_event.wait(timeout)
 
     def close(self) -> None:
         """Idempotent: kill the reader's blockers, fail the waiters."""

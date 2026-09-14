@@ -179,6 +179,21 @@ slot chips flanking the band.
   so all three transport buttons currently send regardless) and
   dev-bundle smoke on real media sources.
 
+## W27 audit — onboarding / privacy / accessibility — VERIFIED EXISTING
+
+- Disabled reasons are real: `ToyStatus` carries `.paused(String)`,
+  `.needsPermission(String)`, `.unavailable(String)` — every chip names
+  *why*, never just dims. The panel's gated controls pair `.disabled()`
+  with a `.help` that says the same thing ("on a peer", "answer it in
+  the session's own window").
+- Permission-on-use is honest: the ask card's gate is `canAnswer`, the
+  Fold's is `FoldCapturePermission.granted`, Calendar's is EventKit
+  authorization — each names the permission it needs, none fabricate.
+- The remaining W27 items are real-device verification — VoiceOver
+  traversal, Reduce Motion/Transparency live, screen-sharing/lock
+  behaviour — not code gaps. Onboarding presets and deep-link
+  preservation ride the existing Settings document.
+
 ## W26 slice — OpenCode capability bridge — LANDED
 
 - `src/jrbar/opencode_bridge.py` (new): probes a running `opencode
