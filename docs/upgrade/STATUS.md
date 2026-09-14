@@ -1132,3 +1132,43 @@ Owner: "gestures don't work … get them working right & better."
   taller card layout inside the peek's frame — the card clipped until
   focus churn refit it. `setPinned` re-presents immediately.
 - Verified: `swift build` clean; 569 Swift tests green (+2 sign tests).
+
+## First-class pass — the notch's own corner, the device orbit — LANDED
+
+Owner: "make it feel even more first class … same radius rounding as
+the notch … get the user's machine spec, or a dropdown asking the
+MacBook … a menu symbol like the new Apple fold one — Wi-Fi, cellular
+and battery nested in one indicator, dots for signal, a ring for
+battery, blue/green/grey."
+
+- The tray's bottom corners now follow the notch's own radius: the
+  hardware cutout measures ~8 pt at the bottom on every notched
+  MacBook (4 pt at the top, which never meets us) — the hard-coded 10
+  over-rounded by a visible two points. `NotchProfile` resolves it:
+  `auto` reads `hw.model`, the named MacBook profiles pin it, and
+  `custom` takes the `screen_bar_notch_corner` slider (4–16 pt).
+  Settings › Screen Bar shows the detected model ("Detected:
+  MacBook Pro") under a new Notch shape row.
+- `NSScreen` gives the slot's size, never its corner — verified on
+  this machine (Mac16,8: 185×32 pt slot, exactly the published MBP14
+  figure). No public or IOKit surface carries the radius, so the
+  measured constant plus an override is the honest shape of it.
+- The ear's mark now centres inside the bezel's own height; the chin
+  below the bezel is tray structure, not content room.
+- New menu-bar icon style **Device orbit** (`orbit`): the
+  folded-corner grammar — a battery ring broken at the bottom for
+  four signal dots, the Wi-Fi mark centred inside. Blue while
+  associated, grey for a radio off or unreadable, the ring green
+  while charging and red under a fifth. No number: the arc is the
+  charge, the figure lives in the tooltip and VoiceOver. Fed by a
+  5 s CoreWLAN + IOKit poll (`StatusDeviceMonitor`) that exists only
+  while the style is selected; a dBm that drifts inside a dot bucket
+  reuses the cached image.
+- Macs have no cellular — the icon doesn't pretend: the radio read
+  is Wi-Fi, the honest cellular slot on this hardware is nothing.
+- Render proofs (`JRBAR_RENDER_PROOF=1`) write the roundel's six
+  states and the tray silhouette to /tmp for eyeball review; the
+  tray render and a live screencapture of the installed build both
+  show the bezel sitting inside one continuous shape.
+- Verified: `swift build` clean; 581 Swift tests green (+12); signed,
+  installed, running.
