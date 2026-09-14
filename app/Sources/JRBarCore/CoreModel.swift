@@ -228,6 +228,23 @@ public final class CoreModel {
         return try ReplyDecoding.decode(CoreRoster.self, from: result)
     }
 
+    /// `audit_export`: the redacted audit bundle — projected roster rows,
+    /// activity rows, the named gaps, and pricing coverage. `format` is
+    /// `"json"` or `"markdown"`; the markdown reply also carries `text`.
+    /// The document is returned for preview; the app writes the bytes the
+    /// user previews to the destination they pick.
+    public func exportAudit(scope: String = "all", since: Double? = nil,
+                            format: String = "json") async throws -> (document: JSONValue, text: String?) {
+        var args: [String: JSONValue] = ["scope": .string(scope), "format": .string(format)]
+        if let since { args["since"] = .number(since) }
+        let reply = try await send("audit_export", args: args)
+        guard reply.ok else { throw reply.error ?? CoreReplyError(code: "error", message: "audit_export failed") }
+        guard let result = reply.result else {
+            throw CoreReplyError(code: "bad_reply", message: "audit_export: missing result")
+        }
+        return (result["document"] ?? .object([:]), result["text"]?.stringValue)
+    }
+
     /// A line from the app itself (the supervisor, a delivery failure) in
     /// the same tail as the daemon's `log` messages.
     public func appendLocalLog(level: String = "info", _ message: String) {

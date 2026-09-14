@@ -222,3 +222,28 @@ import JRBarCore
         #expect(store.activeSavedFilter == "mine")
     }
 }
+
+/// The export preview/write path: the previewed bytes are the saved ones.
+@MainActor
+@Suite struct OverviewExportTests {
+    @Test func saveExportWritesThePreviewedDocument() throws {
+        let store = OverviewStore(core: CoreModel())
+        store.exportPreview = (
+            .object(["t": .string("audit_export"), "counts": .object(["total": .number(3)])]),
+            "# audit\n"
+        )
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let jsonURL = dir.appending(path: "audit.json")
+        try store.saveExport(to: jsonURL, markdown: false)
+        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: jsonURL)) as? [String: Any]
+        #expect(saved?["t"] as? String == "audit_export")
+
+        let mdURL = dir.appending(path: "audit.md")
+        try store.saveExport(to: mdURL, markdown: true)
+        let savedMD = try String(decoding: Data(contentsOf: mdURL), as: UTF8.self)
+        #expect(savedMD == "# audit\n")
+    }
+}

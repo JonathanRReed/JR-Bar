@@ -26,6 +26,15 @@ struct OverviewView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
+                    Task { await store.prepareExport() }
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .help("Export audit bundle")
+                .accessibilityLabel("Export audit bundle")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
                     Task { await store.load() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
@@ -33,6 +42,12 @@ struct OverviewView: View {
                 .help("Refresh")
                 .accessibilityLabel("Refresh")
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { store.exportPreview != nil },
+            set: { if !$0 { store.exportPreview = nil } }
+        )) {
+            ExportPreviewSheet(store: store)
         }
     }
 
@@ -330,27 +345,56 @@ struct OverviewView: View {
     private func inspectorFacts(_ entry: CoreRosterEntry) -> some View {
         let session = entry.session
         return Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 5) {
-            fact("State", SessionActivity.reduce(session).word)
-            fact("Outcome", entry.axes?.outcome ?? "—")
-            fact("Review", entry.axes?.review ?? "—")
-            fact("Freshness", entry.axes?.freshness ?? (session.stale ? "stale" : "live"))
-            fact("Harness", session.provider)
-            if let origin = session.origin?.label { fact("Origin", origin) }
-            if let project = OverviewFilter.projectName(of: session.cwd) { fact("Project", project) }
-            if let tool = session.tool { fact("Tool", tool) }
-            if session.workers > 0 { fact("Workers", "\(session.workers)") }
-            if session.stale { fact("Stale", "yes") }
-            fact("Model", "not reported")
+            // S7.3: every fact names its evidence class — what the provider
+            // reported vs what the daemon derived vs what nobody can say.
+            fact("State", SessionActivity.reduce(session).word, evidence: .derived)
+            fact("Outcome", entry.axes?.outcome ?? "—", evidence: .derived)
+            fact("Review", entry.axes?.review ?? "—", evidence: .derived)
+            fact("Freshness", entry.axes?.freshness ?? (session.stale ? "stale" : "live"), evidence: .derived)
+            fact("Harness", session.provider, evidence: .reported)
+            if let origin = session.origin?.label { fact("Origin", origin, evidence: .reported) }
+            if let project = OverviewFilter.projectName(of: session.cwd) {
+                fact("Project", project, evidence: .derived)
+            }
+            if let tool = session.tool { fact("Tool", tool, evidence: .reported) }
+            if session.workers > 0 { fact("Workers", "\(session.workers)", evidence: .reported) }
+            if session.stale { fact("Stale", "yes", evidence: .reported) }
+            fact("Model", "not reported", evidence: .unavailable)
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
     }
 
-    private func fact(_ name: String, _ value: String) -> some View {
+    /// S7.3's evidence vocabulary: reported (the source said it), derived
+    /// (the daemon computed it from reported inputs), unavailable.
+    private enum Evidence: String {
+        case reported = "Reported"
+        case derived = "Derived"
+        case unavailable = "Unavailable"
+
+        var tint: Color {
+            switch self {
+            case .reported: return .accentColor
+            case .derived: return .secondary
+            case .unavailable: return .orange
+            }
+        }
+    }
+
+    private func fact(_ name: String, _ value: String, evidence: Evidence) -> some View {
         GridRow {
             Text(name).foregroundStyle(.tertiary)
-            Text(value).textSelection(.enabled)
+            HStack(spacing: 5) {
+                Text(value).textSelection(.enabled)
+                Text(evidence.rawValue)
+                    .font(.system(size: 8, weight: .medium))
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(evidence.tint.opacity(0.15), in: .capsule)
+                    .foregroundStyle(evidence.tint)
+            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name): \(value) (\(evidence.rawValue))")
     }
 
     private func inspectorSection(_ title: String, text: String) -> some View {
@@ -377,6 +421,61 @@ private struct OverviewEmptyState: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The export preview: scope, counts, gaps, and the markdown rendering —
+/// what Save writes is what this sheet showed (S7.4).
+private struct ExportPreviewSheet: View {
+    @Bindable var store: OverviewStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Audit export").font(.system(size: 15, weight: .semibold))
+            if let preview = store.exportPreview {
+                let gaps = preview.document["gaps"]?.arrayValue?.compactMap(\.stringValue) ?? []
+                if !gaps.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Gaps").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                        ForEach(gaps, id: \.self) { gap in
+                            Text("· \(gap)").font(.system(size: 11)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                ScrollView {
+                    Text(preview.markdown)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 220)
+                .padding(8)
+                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 8))
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { store.exportPreview = nil }
+                Button("Save Markdown…") { save(markdown: true) }
+                Button("Save JSON…") { save(markdown: false) }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(16)
+        .frame(width: 480, height: 420)
+    }
+
+    private func save(markdown: Bool) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = markdown ? "jrbar-audit.md" : "jrbar-audit.json"
+        panel.allowedContentTypes = markdown ? [.plainText] : [.json]
+        panel.message = "The previewed bundle is written as-is."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.saveExport(to: url, markdown: markdown)
+            store.exportPreview = nil
+        } catch {
+            store.error = error.localizedDescription
+        }
     }
 }
 

@@ -396,5 +396,29 @@ slot chips flanking the band.
   context/tools, changes/results — S7.2), generated-explanation labels
   with event-id citations, and W09's read-only replay view.
 
-(Remaining packages W07+ proceed in the spec's dependency order; rows are
-added as work lands.)
+## W09 slice — redacted audit export + inspector evidence labels — LANDED
+
+- `audit_export` (core_runtime): the same `list_roster`/`list_history`
+  projections, scoped identically, as `{document, format}` with
+  `gaps[]` naming what is missing (no collector snapshot, ledger rows
+  past `since`, a pending usage scan) and `pricing` carrying the cached
+  per-provider coverage (`records`/`estimated_records`/`unpriced_records`/
+  `unpriced_models`/`pending`/`stale` over 30d — never blocks on a cold
+  scan). `format: "markdown"` adds the rendered `text`; `path` writes
+  through `write_private_export` exactly like `export_effect_pack`.
+- `audit_export.audit_export_document` redacts: `$HOME` collapses to
+  `~`, secret-shaped runs (≥24 unseparated chars) become `[redacted]`,
+  and only projected fields travel — no raw provider payloads (T36).
+  `audit_export_markdown` renders the same facts and gaps.
+- Swift: `CoreModel.exportAudit(scope:since:format:)`; the Overview
+  toolbar exports via a preview sheet — the bytes previewed are the
+  bytes written (Save JSON/Save Markdown through NSSavePanel).
+- Inspector facts now carry S7.3 evidence chips — Reported (the source
+  said it), Derived (computed from reported inputs: state word, axes,
+  project), Unavailable (model: the roster does not track it).
+- Verified: 6 audit-export tests + 12 roster tests pass; ruff clean;
+  `OverviewExportTests` proves preview==saved bytes; `swift build` clean.
+- Still open in W09: per-session paginated timeline (S7.2 — needs a
+  bounded per-session event store beyond the wire-event journal),
+  run comparison, the bounded Radar importer/relationship lens, and
+  the labeled read-only replay surface (T38/T39).

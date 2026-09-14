@@ -2210,9 +2210,7 @@ def _cmd_list_roster(self, args):
     the same ``session_document`` shape the panel reads, plus the
     separated axes and the visibility verdict the panel would give.
     """
-    from .agent_roster import ROSTER_SCOPES, build_roster_document, roster_rows
-    from .completion_visibility import acknowledged_epoch_by_session
-    from .core_projection import project_session_rows
+    from .agent_roster import ROSTER_SCOPES
 
     scope = str(args.get("scope") or "all")
     if scope not in ROSTER_SCOPES:
@@ -2226,6 +2224,32 @@ def _cmd_list_roster(self, args):
         limit = int(args.get("limit") or 0) or None
     except (TypeError, ValueError):
         limit = None
+    document = _roster_document(
+        self,
+        scope=scope,
+        provider=str(provider) if provider else None,
+        parent=str(parent) if parent else None,
+        since=float(since) if isinstance(since, (int, float)) else None,
+        limit=limit if limit is not None else 500,
+    )
+    document["generation"] = self._core_state_generation
+    return document
+
+
+def _roster_document(
+    self,
+    *,
+    scope: str,
+    provider: str | None,
+    parent: str | None,
+    since: float | None,
+    limit: int,
+):
+    """The projection both ``list_roster`` and ``audit_export`` share."""
+    from .agent_roster import build_roster_document, roster_rows
+    from .completion_visibility import acknowledged_epoch_by_session
+    from .core_projection import project_session_rows
+
     snapshot = getattr(self, "last_snapshot", None)
     statuses = (
         [*snapshot.statuses, *getattr(snapshot, "stale_statuses", ())]
@@ -2271,17 +2295,116 @@ def _cmd_list_roster(self, args):
         acknowledged_at_by_id=acknowledged_epoch_by_session(self._core_acknowledged_keys()),
         now=time.time(),
     )
-    document = build_roster_document(
+    return build_roster_document(
         rows,
         now=time.time(),
         scope=scope,
-        provider=str(provider) if provider else None,
-        parent=str(parent) if parent else None,
-        since=float(since) if isinstance(since, (int, float)) else None,
-        limit=limit if limit is not None else 500,
+        provider=provider,
+        parent=parent,
+        since=since,
+        limit=limit,
     )
-    document["generation"] = self._core_state_generation
-    return document
+
+
+@command("audit_export")
+def _cmd_audit_export(self, args):
+    """The redacted audit bundle: roster + activity + the named gaps.
+
+    ``scope``/``provider``/``since`` narrow the session rows the same way
+    ``list_roster`` does; ``format`` selects ``json`` (the document) or
+    ``markdown`` (the rendered report). The export is the projections the
+    surfaces already show — the audit cannot claim more than the app
+    knows (spec S7.4/T36).
+    """
+    from .agent_roster import ROSTER_MAX_LIMIT, ROSTER_SCOPES
+    from .audit_export import audit_export_document, audit_export_markdown
+    from .core_projection import history_rows
+    from .core_usage_history import SCANNED_PROVIDERS
+
+    scope = str(args.get("scope") or "all")
+    if scope not in ROSTER_SCOPES:
+        raise CommandError("invalid_value", f"unknown roster scope: {scope}")
+    since = args.get("since")
+    since = float(since) if isinstance(since, (int, float)) else None
+    roster = _roster_document(
+        self,
+        scope=scope,
+        provider=str(args["provider"]) if args.get("provider") else None,
+        parent=str(args["parent"]) if args.get("parent") else None,
+        since=since,
+        limit=ROSTER_MAX_LIMIT,
+    )
+    ledger = self.ensure_activity_ledger()
+    rows = history_rows(ledger, since=since, limit=2000)
+
+    gaps: list[str] = []
+    if getattr(self, "last_snapshot", None) is None:
+        gaps.append("No collector snapshot yet — session coverage is empty, not quiet.")
+    retained = int((getattr(ledger, "entries", ()) and len(ledger.entries)) or 0)
+    if retained > len(rows):
+        gaps.append(
+            f"Activity ledger retains {retained} entries; this export carries {len(rows)}."
+        )
+    pricing = None
+    try:
+        # Zero budget: the export carries whatever the scan cache already
+        # holds and names it pending otherwise — it never blocks a save
+        # on a cold transcript scan.
+        service = _usage_history_service(self)
+        per_provider: dict[str, Any] = {}
+        for provider in SCANNED_PROVIDERS:
+            doc = service.document(provider, "30d", budget=0)
+            per_provider[provider] = {
+                key: doc.get(key)
+                for key in ("records", "estimated_records", "unpriced_records",
+                            "unpriced_models", "pending", "stale")
+                if key in doc
+            }
+        pricing = {"range": "30d", "providers": per_provider}
+        if any(row.get("pending") for row in per_provider.values()):
+            gaps.append("A usage scan is in progress — pricing coverage is partial.")
+    except Exception:
+        gaps.append("Usage history unavailable — pricing coverage could not be read.")
+
+    document = audit_export_document(
+        roster=roster,
+        history_rows=rows,
+        pricing=pricing,
+        gaps=gaps,
+        scope=scope,
+        since=since,
+        generated_at=time.time(),
+        core_version=CORE_VERSION,
+        home=str(Path.home()),
+    )
+    fmt = str(args.get("format") or "json")
+    if fmt == "markdown":
+        payload: dict[str, Any] = {"format": "markdown", "document": document,
+                                   "text": audit_export_markdown(document)}
+    else:
+        payload = {"format": "json", "document": document}
+
+    # ``path`` writes the bundle the same way ``export_effect_pack`` does:
+    # a user-picked destination, scratch-write, identity-checked publish.
+    raw_path = args.get("path")
+    if isinstance(raw_path, str) and raw_path.strip():
+        from .private_export import write_private_export
+
+        path = Path(raw_path).expanduser()
+        encoded = (
+            payload["text"].encode("utf-8")
+            if fmt == "markdown"
+            else (json.dumps(document, indent=1, sort_keys=True) + "\n").encode("utf-8")
+        )
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            written = write_private_export(path, encoded, max_bytes=8 * 1024 * 1024)
+        except (OSError, ValueError) as error:
+            raise CommandError(
+                "export_failed", f"could not write {path}: {error.__class__.__name__}"
+            ) from error
+        payload["written"] = {"path": str(written), "bytes": len(encoded)}
+    return payload
 
 
 @command("replay_events")
