@@ -241,6 +241,14 @@ final class MenuBarItemHider {
         caps = MenuBarSpacerCaps()
     }
 
+    /// The controls were torn down and reinstalled (a reseat): the
+    /// lengths handed to the old items mean nothing to the new ones.
+    func controlsReinstalled() {
+        assignedLengths = [:]
+        resetCaps()
+        scheduleSettle()
+    }
+
     /// A gesture asks for these sections back for a while; `hide`
     /// pushes them off again.
     func reveal(_ sections: Set<MenuBarItemSection>) {
@@ -272,6 +280,13 @@ final class MenuBarItemHider {
         let row = rowRect()
         let controls = controlFrames()
         learnCaps(controls: controls, row: row)
+        // A pushed always-hidden control keeps only its glyph, so when
+        // the chevron collapses it comes back small and grows from a
+        // measured slot rather than returning oversized and parking.
+        if Self.alwaysHiddenPushed(controls: controls, row: row),
+           (assignedLengths[.alwaysHidden] ?? 0) > MenuBarControlFrames.glyphLength + 1 {
+            assign(.alwaysHidden, length: MenuBarControlFrames.glyphLength)
+        }
         let plan = Self.plan(items: listItems(),
                              sections: settings().sections, row: row,
                              controls: controls, regionMin: regionMin(),
@@ -397,7 +412,11 @@ final class MenuBarItemHider {
         var plan = MenuBarHidePlan()
         let sorted = items.sorted(by: { $0.bounds.minX < $1.bounds.minX })
         let hiddenControl = controls.hidden.flatMap { $0.intersects(row) ? $0 : nil }
-        let ahControl = controls.alwaysHidden.flatMap { $0.intersects(row) ? $0 : nil }
+        // A control the chevron's spacer pushed off reports a frame
+        // stacked inside the chevron's own — not a boundary, and not a
+        // slot to size a spacer from.
+        let ahControl = alwaysHiddenPushed(controls: controls, row: row)
+            ? nil : controls.alwaysHidden.flatMap { $0.intersects(row) ? $0 : nil }
         // The boundary is the glyph's left edge: an item under the
         // spacer part of a control has been pushed, not shown.
         let hiddenBoundary = hiddenControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
@@ -475,6 +494,15 @@ final class MenuBarItemHider {
             }
         }
         return plan
+    }
+
+    /// True while the always-hidden control sits under the chevron's
+    /// expanded spacer: macOS packed it off the row and reports its
+    /// frame stacked inside the chevron's.
+    nonisolated static func alwaysHiddenPushed(controls: MenuBarControlFrames, row: CGRect) -> Bool {
+        guard let hidden = controls.hidden, let ah = controls.alwaysHidden,
+              hidden.intersects(row), ah.intersects(row) else { return false }
+        return ah.intersection(hidden).width > 4
     }
 
     /// The plan with the utility parked: everything on the row is

@@ -102,6 +102,9 @@ final class MenuBarUtility: Toy {
             guard let self else { return }
             self.lastPlan = plan
             self.refreshChevron()
+            // The seating waits for a listing that names our own item —
+            // the first pass at launch is usually still empty.
+            if self.running { self.reseatControlsIfNeeded() }
         }
         // Our own controls are never covered — their live frames split
         // cover runs even on the no-AX path where they cannot list.
@@ -394,16 +397,18 @@ final class MenuBarUtility: Toy {
     /// without either it waits for the next start.
     /// - Parameters:
     ///   - mainItemMinX: the left edge of JR-Bar's own status item.
-    ///   - chevronMinX: the collapsed chevron's left edge right now.
+    ///   - chevronGlyphMinX: the left edge of the chevron's glyph — its
+    ///     right edge less `glyphLength` — which is the same whether
+    ///     the spacer is out or not.
     ///   - chevronPreferred: the preferred position the chevron was
     ///     seated with.
     /// Returns the preferred positions to write for the chevron and
     /// the always-hidden control.
-    nonisolated static func reseatPositions(mainItemMinX: CGFloat, chevronMinX: CGFloat,
+    nonisolated static func reseatPositions(mainItemMinX: CGFloat, chevronGlyphMinX: CGFloat,
                                             chevronPreferred: Double) -> (chevron: Double, alwaysHidden: Double) {
         // macOS seats an item at x ≈ offset − preferred; the offset is
         // whatever it is on this bar, measured off our own chevron.
-        let offset = chevronPreferred + Double(chevronMinX)
+        let offset = chevronPreferred + Double(chevronGlyphMinX)
         let target = Double(mainItemMinX - MenuBarControlFrames.glyphLength - 2)
         let chevron = (offset - target).rounded()
         return (chevron, chevron + 30)
@@ -420,9 +425,10 @@ final class MenuBarUtility: Toy {
               let main = MenuBarItemLister.list().first(where: {
                   $0.ownerName == "JR-Bar" && $0.identifier == StatusItemController.accessibilityIdentifier
               }) else { return }
-        let positions = Self.reseatPositions(mainItemMinX: main.bounds.minX,
-                                             chevronMinX: chevronFrame.minX,
-                                             chevronPreferred: preferred)
+        let positions = Self.reseatPositions(
+            mainItemMinX: main.bounds.minX,
+            chevronGlyphMinX: chevronFrame.maxX - MenuBarControlFrames.glyphLength,
+            chevronPreferred: preferred)
         MenuBarItemHider.log.notice("reseating controls next to the JR-Bar item at \(main.bounds.minX, privacy: .public): chevron \(positions.chevron, privacy: .public), always-hidden \(positions.alwaysHidden, privacy: .public)")
         removeSeparateControls()
         UserDefaults.standard.set(positions.chevron,
@@ -430,9 +436,8 @@ final class MenuBarUtility: Toy {
         UserDefaults.standard.set(positions.alwaysHidden,
                                   forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
         installSeparateControls()
-        hider.resetCaps()
+        hider.controlsReinstalled()
         update { $0.controlsSeated = true }
-        hider.scheduleSettle()
     }
 
     private func start() {

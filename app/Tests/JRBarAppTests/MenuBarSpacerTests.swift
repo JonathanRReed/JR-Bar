@@ -288,9 +288,52 @@ extension MenuBarSpacerTests {
         // The chevron seated at preferred 660 sits at x=926, so the bar's
         // offset is 1586; the main item at 1038 wants the chevron's left
         // edge at 1038 − 24 − 2 = 1012 → preferred 574.
-        let positions = MenuBarUtility.reseatPositions(mainItemMinX: 1038, chevronMinX: 926,
+        let positions = MenuBarUtility.reseatPositions(mainItemMinX: 1038, chevronGlyphMinX: 926,
                                                        chevronPreferred: 660)
         #expect(positions.chevron == 574)
         #expect(positions.alwaysHidden == 604)
     }
+
+    @Test("an always-hidden control stacked under the expanded chevron is pushed, not a boundary")
+    func pushedAlwaysHidden() {
+        // The chevron grew to 833…985; macOS reports the pushed control
+        // stacked inside that span.
+        let pushed = MenuBarControlFrames(
+            hidden: CGRect(x: 833, y: 0, width: 152, height: 24),
+            alwaysHidden: CGRect(x: 833, y: 0, width: 152, height: 24))
+        #expect(MenuBarItemHider.alwaysHiddenPushed(controls: pushed, row: row))
+        let plan = MenuBarItemHider.plan(items: [], sections: [:], row: row,
+                                         controls: pushed, regionMin: regionMin)
+        #expect(plan.alwaysHiddenControlLength == nil, "no slot to size from")
+        #expect(plan.hiddenControlLength == 121)
+        // Side by side, both stand.
+        #expect(!MenuBarItemHider.alwaysHiddenPushed(controls: controls, row: row))
+    }
+
+    @MainActor
+    @Test("a pushed always-hidden control collapses to its glyph so it returns small")
+    func pushedCollapses() {
+        var frames = controls
+        let (hider, writes) = makeHider(controls: { frames })
+        hider.reconcile()
+        #expect(hider.assignedLengths[.alwaysHidden] == 40)
+        frames.hidden = CGRect(x: 833, y: 0, width: 152, height: 24)
+        frames.alwaysHidden = CGRect(x: 840, y: 0, width: 140, height: 24)
+        hider.reconcile()
+        #expect(hider.assignedLengths[.alwaysHidden] == MenuBarControlFrames.glyphLength)
+        #expect(writes().contains { $0.0 == .alwaysHidden && $0.1 == MenuBarControlFrames.glyphLength })
+        #expect(hider.caps.alwaysHidden == .infinity, "pushed is not parked — no cap learned")
+    }
+
+    @MainActor
+    @Test("reinstalled controls forget the old lengths so the new items get sized again")
+    func reinstallForgets() {
+        let (hider, writes) = makeHider(controls: { self.controls })
+        hider.reconcile()
+        let before = writes().count
+        hider.controlsReinstalled()
+        hider.reconcile()
+        #expect(writes().count == before + 2, "both lengths are handed to the fresh items")
+    }
 }
+
