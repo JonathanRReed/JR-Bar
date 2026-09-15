@@ -240,16 +240,9 @@ struct MenuBarSurfacesTests {
         #expect(back.combinedStatusItem == settings.combinedStatusItem)
     }
 
-    // MARK: Combined mode — the control plan and its menu
+    // MARK: The hidden-items submenu
 
-    @Test("the plan fields two controls normally, one combined item when on")
-    func controlPlan() {
-        #expect(MenuBarControlPlan.plan(combinedStatusItem: false).roles
-                == [.chevron, .alwaysHidden])
-        #expect(MenuBarControlPlan.plan(combinedStatusItem: true).roles == [.combined])
-    }
-
-    @Test("the combined menu lists the toggle, the bar, then covered items in order")
+    @Test("the hidden-items submenu lists the toggle, the bar, then hidden items in order")
     func combinedMenuEntries() {
         var plan = MenuBarHidePlan()
         plan.hidden = [item("H1", x: 100), item("H2", x: 200)]
@@ -269,27 +262,6 @@ struct MenuBarSurfacesTests {
                 == "Hide Items Again")
         #expect(MenuBarCombinedMenu.entries(plan: MenuBarHidePlan(),
                                             hiddenRevealed: false).count == 2)
-    }
-
-    @MainActor
-    @Test("combined mode installs one item and the swap tears down the pair")
-    func combinedControlLifecycle() {
-        let utility = MenuBarUtility()
-        var state = MenuBarSettings(enabled: true, combinedStatusItem: true)
-        utility.settings = { state }
-        utility.installChevron()
-        #expect(utility.combinedControl != nil)
-        #expect(utility.chevron == nil)
-        #expect(utility.alwaysHiddenControl == nil)
-        // Back to separate — the swap is clean both ways.
-        state.combinedStatusItem = false
-        utility.installChevron()
-        #expect(utility.combinedControl == nil)
-        #expect(utility.chevron != nil)
-        #expect(utility.alwaysHiddenControl != nil)
-        utility.removeChevron()
-        #expect(utility.combinedControl == nil && utility.chevron == nil
-                && utility.alwaysHiddenControl == nil)
     }
 
     @MainActor

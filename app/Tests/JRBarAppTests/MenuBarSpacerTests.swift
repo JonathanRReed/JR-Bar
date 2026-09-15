@@ -423,5 +423,77 @@ extension MenuBarSpacerTests {
         #expect(hider.assignedLengths[.hidden] == 52)
         #expect(writes().count == 2)
     }
-}
 
+    // MARK: The boundary host — JR-Bar's own status item
+
+    /// A host that records what the utility asks of it.
+    @MainActor
+    private final class FakeHost: MenuBarBoundaryHost {
+        var frame: CGRect? = CGRect(x: 1084, y: 0, width: 39, height: 24)
+        var boundaryFrame: CGRect? { frame }
+        var boundaryGlyphLength: CGFloat = 39
+        var spacers: [CGFloat] = []
+        func setBoundarySpacer(_ length: CGFloat) { spacers.append(length) }
+        var onBoundaryClick: (@MainActor () -> Void)?
+        var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
+        var hiddenCount = 0
+        var hiddenRevealed = false
+    }
+
+    @MainActor
+    @Test("with a host the boundary is the JR-Bar icon: no chevron item, the spacer is the length past the icon")
+    func hostIsTheBoundary() {
+        let utility = MenuBarUtility()
+        let host = FakeHost()
+        utility.settings = { MenuBarSettings(enabled: true) }
+        utility.host = host
+        utility.hider.rowRect = { self.row }
+        utility.hider.regionMin = { 876 }
+        utility.hider.shuttersSuppressed = true
+        utility.hider.listItems = { [self.item("Left", x: 1000), self.item("Right", x: 1130)] }
+        utility.installChevron()
+        #expect(utility.chevron == nil, "the host stands in for the chevron")
+        #expect(utility.alwaysHiddenControl != nil)
+        utility.hider.reconcile()
+        // The icon's right edge is 1123: 1123 − 876 − 22 = 225 of length,
+        // less the 39-point icon = 186 of spacer.
+        #expect(host.spacers.last == 186)
+        #expect(utility.lastPlan.hidden.map(\.id) == ["Left"])
+        #expect(utility.lastPlan.shown.map(\.id) == ["Right"])
+        #expect(host.hiddenCount == 1)
+        utility.hider.reveal([.hidden])
+        #expect(host.spacers.last == 0, "revealed, the icon folds to itself")
+        #expect(host.hiddenRevealed)
+        utility.removeChevron()
+        #expect(host.hiddenCount == 0)
+        #expect(utility.alwaysHiddenControl == nil)
+    }
+
+    @Test("the host folds the icon at the right end of its spacer, chevron only while something hides")
+    func hostFold() {
+        let icon = NSImage(size: NSSize(width: 39, height: 18), flipped: false) { _ in true }
+        icon.isTemplate = true
+        let plain = StatusItemController.folded(icon, spacer: 120, chevron: false)
+        #expect(plain.size.width == 159)
+        #expect(plain.isTemplate)
+        let hinted = StatusItemController.folded(icon, spacer: 120, chevron: true)
+        #expect(hinted.size.width == 159)
+        #expect(StatusItemController.clickIsOnSpacer(x: 30, spacer: 120))
+        #expect(!StatusItemController.clickIsOnSpacer(x: 130, spacer: 120))
+        #expect(!StatusItemController.clickIsOnSpacer(x: 10, spacer: 0))
+    }
+
+    @Test("the boundary's glyph share follows the host's icon, not the chevron constant")
+    func hostGlyphShare() {
+        let wide = MenuBarControlFrames(hidden: CGRect(x: 1084, y: 0, width: 39, height: 24),
+                                        hiddenGlyph: 39)
+        let items = [item("UnderIcon", x: 1090), item("Right", x: 1130)]
+        let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                         controls: wide, regionMin: 876)
+        #expect(plan.hidden.isEmpty, "an item overlapping the icon itself is not under a spacer")
+        #expect(plan.hiddenControlLength == 225)
+        let collapsed = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                              controls: wide, regionMin: nil)
+        #expect(collapsed.hiddenControlLength == 39, "no region: the icon alone")
+    }
+}

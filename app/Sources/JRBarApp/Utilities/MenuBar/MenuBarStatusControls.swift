@@ -1,36 +1,10 @@
 import AppKit
 import JRBarCore
 
-/// Which control items the utility fields — pure so a test pins the
-/// layout. `combinedStatusItem` on collapses the chevron and the
-/// always-hidden control into a single status item; off keeps the two
-/// separate controls the utility shipped with.
-struct MenuBarControlPlan: Equatable, Sendable {
-    /// One status item's job on the row.
-    enum Role: String, Equatable, Sendable {
-        /// The hidden run's toggle — left-click reveals/hides,
-        /// right-click opens the Item Bar.
-        case chevron
-        /// The deeper run's surface — a click opens the Item Bar.
-        case alwaysHidden
-        /// The single-item mode: click opens the Item Bar, right-click
-        /// pops the covered-item menu (which also carries the hidden
-        /// run's toggle, the one job the click cannot hold).
-        case combined
-    }
-
-    /// The items to install, in install order.
-    var roles: [Role]
-
-    nonisolated static func plan(combinedStatusItem: Bool) -> MenuBarControlPlan {
-        MenuBarControlPlan(roles: combinedStatusItem ? [.combined] : [.chevron, .alwaysHidden])
-    }
-}
-
-/// The combined item's menu, modeled as plain entries so a test pins
-/// the list without an `NSMenu`. The menu carries what the one click
-/// cannot: the hidden run's reveal/hide toggle, the Item Bar, and the
-/// covered items themselves with activate actions.
+/// The "Hidden Menu Bar Items" submenu on JR-Bar's own status item,
+/// modeled as plain entries so a test pins the list without an
+/// `NSMenu`. It carries the hidden run's reveal/hide toggle, the Item
+/// Bar, and the hidden items themselves with activate actions.
 struct MenuBarMenuEntry: Equatable, Sendable {
     enum Kind: Equatable, Sendable {
         /// Reveal or re-hide the hidden run — title follows the state.

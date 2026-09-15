@@ -23,8 +23,16 @@ struct StatusItemPlan: Equatable {
 /// usage ring, or beside a label. Left click opens the panel; right click
 /// (or Option-click) shows a small utility menu. Stage-2 escalation
 /// pulses the icon amber.
+///
+/// It is also the Menu Bar utility's boundary: everything left of this
+/// icon is the hidden run, and hiding is the item growing a blank
+/// spacer to its left (`boundarySpacer`) that packs those items off the
+/// row. The icon keeps its place at the spacer's right end, with a
+/// small chevron beside it while anything is tucked away; a click on
+/// the blank part is the reveal, a click on the icon is the panel as
+/// ever.
 @MainActor
-final class StatusItemController: NSObject, NSMenuDelegate {
+final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost {
     /// The `AXIdentifier` JR-Bar's own status item carries.
     nonisolated static let accessibilityIdentifier = "com.jonathanreed.jrbar.status-item"
 
@@ -40,6 +48,27 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private let renderer = StatusIconRenderer.shared
     private var currentSpec: StatusIconSpec?
     private var currentLabel: String?
+    /// The icon's own image and width before the boundary spacer is
+    /// folded in — what `redraw` decided, kept so a spacer change can
+    /// re-fold without re-deciding.
+    private var naturalImage: NSImage?
+    private var naturalWidth: CGFloat = 0
+    /// Points of blank bar the item claims left of its icon — the Menu
+    /// Bar utility's spacer. 0 is the plain icon.
+    private(set) var boundarySpacer: CGFloat = 0
+    /// The composite face for the current spacer, memoised on the
+    /// natural image's identity: the breathing dot redraws twice a
+    /// second and must not re-rasterise a 200-point image each time.
+    private var foldedCache: (source: NSImage, spacer: CGFloat, chevron: Bool, image: NSImage)?
+    /// The Menu Bar utility's hooks: a click on the blank part of the
+    /// item, and the "Hidden Items" submenu it builds for the menu.
+    var onBoundaryClick: (@MainActor () -> Void)?
+    var hiddenItemsMenu: (@MainActor () -> NSMenu?)?
+    /// The hidden run's state for the tooltip and the chevron: how many
+    /// items are tucked away and whether they are out right now.
+    var hiddenCount = 0 { didSet { if hiddenCount != oldValue { syncTooltip(); refold() } } }
+    var hiddenRevealed = false { didSet { if hiddenRevealed != oldValue { refold() } } }
+    private let hiddenItemsMenuItem = NSMenuItem(title: "Hidden Menu Bar Items", action: nil, keyEquivalent: "")
     private var aggregateTint: NSColor?
     private(set) var isPulsing = false
     var onToggleScreenBar: (@MainActor (Bool) -> Void)?
@@ -165,6 +194,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(effects)
         menu.addItem(controlCenter)
         menu.addItem(showBarItem)
+        hiddenItemsMenuItem.isHidden = true
+        menu.addItem(hiddenItemsMenuItem)
         let settings = NSMenuItem(title: "Settings…", action: #selector(openSettings(_:)), keyEquivalent: ",")
         settings.target = self
         menu.addItem(settings)
@@ -184,6 +215,96 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         return window.convertToScreen(button.convert(button.bounds, to: nil))
     }
 
+    // MARK: MenuBarBoundaryHost
+
+    /// The item's frame in Quartz coordinates (top-left origin), the
+    /// space the Menu Bar utility measures in.
+    var boundaryFrame: CGRect? {
+        guard let rect = anchorRect else { return nil }
+        let height = CGDisplayBounds(CGMainDisplayID()).height
+        return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// The icon's own width — the part of the item that is not spacer.
+    var boundaryGlyphLength: CGFloat {
+        naturalWidth > 0 ? naturalWidth : NSStatusBar.system.thickness
+    }
+
+    /// The utility's write: claim `length` points of blank bar left of
+    /// the icon (0 collapses to the plain icon).
+    func setBoundarySpacer(_ length: CGFloat) {
+        let rounded = max(0, length.rounded())
+        guard rounded != boundarySpacer else { return }
+        boundarySpacer = rounded
+        refold()
+    }
+
+    /// The face the button wears: the natural image, or — with a spacer
+    /// out — a wider template composite with the icon at its right end
+    /// and a small chevron just left of it while anything is hidden.
+    private func refold() {
+        guard let button = statusItem.button, let source = naturalImage else { return }
+        let chevron = boundarySpacer > 0 && hiddenCount > 0 && !hiddenRevealed
+        if boundarySpacer <= 0 {
+            if button.image !== source { button.image = source }
+            button.imageScaling = .scaleProportionallyDown
+            if currentWidth > 0, statusItem.length != currentWidth { statusItem.length = currentWidth }
+            return
+        }
+        let folded: NSImage
+        if let cache = foldedCache, cache.source === source, cache.spacer == boundarySpacer,
+           cache.chevron == chevron {
+            folded = cache.image
+        } else {
+            folded = Self.folded(source, spacer: boundarySpacer, chevron: chevron)
+            foldedCache = (source, boundarySpacer, chevron, folded)
+        }
+        if button.image !== folded { button.image = folded }
+        button.imageScaling = .scaleNone
+        let width = (currentWidth > 0 ? currentWidth : naturalWidth) + boundarySpacer
+        if statusItem.length != width { statusItem.length = width }
+    }
+
+    /// The composite: `spacer` points of nothing, then the icon, drawn
+    /// as a template so the bar tints it. The chevron sits in the last
+    /// points of the spacer — a whisper that the blank stretch holds
+    /// something. Pure over its inputs; a test pins the size.
+    nonisolated static func folded(_ source: NSImage, spacer: CGFloat, chevron: Bool) -> NSImage {
+        let iconSize = source.size
+        let size = NSSize(width: iconSize.width + spacer, height: max(iconSize.height, 18))
+        let mark = chevron
+            ? NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+            : nil
+        let image = NSImage(size: size, flipped: false) { _ in
+            let y = (size.height - iconSize.height) / 2
+            source.draw(in: NSRect(x: spacer, y: y, width: iconSize.width, height: iconSize.height))
+            if let mark, spacer >= 20 {
+                let m = mark.size
+                mark.draw(in: NSRect(x: spacer - m.width - 6, y: (size.height - m.height) / 2,
+                                     width: m.width, height: m.height))
+            }
+            return true
+        }
+        image.isTemplate = source.isTemplate
+        return image
+    }
+
+    /// Whether a click's location falls in the blank part of the item —
+    /// the Menu Bar utility's reveal — rather than on the icon.
+    nonisolated static func clickIsOnSpacer(x: CGFloat, spacer: CGFloat) -> Bool {
+        spacer > 0 && x < spacer
+    }
+
+    private func syncTooltip() {
+        guard let button = statusItem.button else { return }
+        var tip = stateSummary
+        if hiddenCount > 0 {
+            tip += " · \(hiddenCount) menu bar item\(hiddenCount == 1 ? "" : "s") tucked away to the left — hover or click the blank stretch to reveal"
+        }
+        button.toolTip = tip
+    }
+
     func setPanelOpen(_ open: Bool) {
         statusItem.button?.highlight(open)
     }
@@ -199,7 +320,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         ])
         aggregateTint = state.tint
         stateSummary = "JR-Bar · \(state.label)" + (detail.isEmpty ? "" : " · \(detail)")
-        statusItem.button?.toolTip = stateSummary
+        syncTooltip()
         redraw()
     }
 
@@ -263,7 +384,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         if spec != currentSpec {
             currentSpec = spec
             let image = renderer.image(for: spec)
-            if button.image !== image { button.image = image }
+            naturalImage = image
+            naturalWidth = plan.stripWidth ?? StatusIconRenderer.size(for: spec).width
+            if boundarySpacer <= 0, button.image !== image { button.image = image }
             // A template image takes the tint from the button; a coloured
             // one carries its own. A strip is never tinted whole:
             // its dots and meters carry the only colour that means anything.
@@ -271,16 +394,21 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             if let width = plan.stripWidth {
                 if width != currentWidth {
                     currentWidth = width
-                    statusItem.length = width
+                    if boundarySpacer <= 0 { statusItem.length = width }
                     logFrame(width: width)
                 }
             } else {
                 currentWidth = 0
             }
+            if boundarySpacer > 0 { refold() }
         }
         if strip {
-            button.toolTip = StatusIconRenderer.tooltip(spec, headline: stateSummary,
-                                                        sessionLines: iconStyle == .agents ? sessionLines : [])
+            var tip = StatusIconRenderer.tooltip(spec, headline: stateSummary,
+                                                 sessionLines: iconStyle == .agents ? sessionLines : [])
+            if hiddenCount > 0 {
+                tip += "\n\(hiddenCount) menu bar item\(hiddenCount == 1 ? "" : "s") tucked away to the left — hover or click the blank stretch to reveal"
+            }
+            button.toolTip = tip
             button.setAccessibilityLabel(StatusIconRenderer.accessibilityLabel(spec))
         }
         if label != currentLabel || (strip && button.imagePosition != .imageOnly) {
@@ -297,8 +425,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
                 button.title = ""
                 button.imagePosition = .imageOnly
                 // A strip sets its own width above; the square styles are
-                // square.
-                if !strip { statusItem.length = NSStatusItem.squareLength }
+                // square — unless the boundary spacer owns the width.
+                if !strip, boundarySpacer <= 0 { statusItem.length = NSStatusItem.squareLength }
             }
         }
     }
@@ -420,7 +548,23 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func clicked(_ sender: Any?) {
         let event = NSApp.currentEvent
         let secondary = event?.type == .rightMouseUp || event?.modifierFlags.contains(.option) == true
+        // A click on the blank stretch left of the icon is the Menu Bar
+        // utility's reveal, whichever button.
+        if let event, let button = statusItem.button, boundarySpacer > 0 {
+            let x = button.convert(event.locationInWindow, from: nil).x
+            if Self.clickIsOnSpacer(x: x, spacer: boundarySpacer) {
+                onBoundaryClick?()
+                return
+            }
+        }
         if secondary {
+            if let submenu = hiddenItemsMenu?() {
+                hiddenItemsMenuItem.submenu = submenu
+                hiddenItemsMenuItem.isHidden = false
+            } else {
+                hiddenItemsMenuItem.submenu = nil
+                hiddenItemsMenuItem.isHidden = true
+            }
             statusItem.menu = menu
             statusItem.button?.performClick(nil)
             statusItem.menu = nil

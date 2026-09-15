@@ -146,6 +146,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         self.utilitiesStore = utilitiesStore
         settingsStore.utilities = utilitiesStore
+        // The app's own status item is the Menu Bar utility's boundary:
+        // everything left of it is the hidden run.
+        utilitiesStore.menuBar.host = statusItem
         // Software update: the embedded Sparkle, or a stub that says why not.
         let updater = SparkleUpdater(log: { [weak core] line in core?.appendLocalLog(level: "updater", line) })
         self.updater = updater

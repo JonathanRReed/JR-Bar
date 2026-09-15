@@ -6,20 +6,28 @@ import OSLog
 /// A control that is not installed — or that macOS has parked off the
 /// row — reports nil, and the plan treats its boundary as unknown.
 struct MenuBarControlFrames: Equatable, Sendable {
-    /// The chevron's live frame: the hidden run's boundary and spacer.
+    /// The boundary's live frame: the hidden run's edge and spacer —
+    /// JR-Bar's own status item when it hosts the run, else the
+    /// separate chevron.
     var hidden: CGRect?
     /// The always-hidden control's live frame.
     var alwaysHidden: CGRect?
+    /// The boundary's glyph share — the icon's own width when JR-Bar's
+    /// item hosts the run (a strip of session dots is wider than a
+    /// chevron), `glyphLength` for the separate chevron.
+    var hiddenGlyph: CGFloat = MenuBarControlFrames.glyphLength
 
     /// The glyph's share of a control — the part that is not spacer.
     /// A collapsed control is exactly this wide; an expanded one keeps
-    /// its right-most `glyphLength` for the glyph and spends the rest
-    /// pushing items off the row.
+    /// its right-most glyph and spends the rest pushing items off the
+    /// row.
     nonisolated static let glyphLength: CGFloat = 24
 
-    init(hidden: CGRect? = nil, alwaysHidden: CGRect? = nil) {
+    init(hidden: CGRect? = nil, alwaysHidden: CGRect? = nil,
+         hiddenGlyph: CGFloat = MenuBarControlFrames.glyphLength) {
         self.hidden = hidden
         self.alwaysHidden = alwaysHidden
+        self.hiddenGlyph = hiddenGlyph
     }
 }
 
@@ -334,14 +342,15 @@ final class MenuBarItemHider {
     /// what it was asked to claim and collapse it, so the next pass
     /// measures it on the row and grows it again — under the cap.
     private func learnCaps(controls: MenuBarControlFrames, row: CGRect) {
+        let glyph = controls.hiddenGlyph
         let hiddenOnRow = controls.hidden.map { $0.intersects(row) } ?? true
-        let hiddenExpanded = (assignedLengths[.hidden] ?? 0) > MenuBarControlFrames.glyphLength + 1
+        let hiddenExpanded = (assignedLengths[.hidden] ?? 0) > glyph + 1
         if controls.hidden != nil, !hiddenOnRow {
-            let asked = assignedLengths[.hidden] ?? MenuBarControlFrames.glyphLength
-            if asked > MenuBarControlFrames.glyphLength + 1 {
-                caps.hidden = max(MenuBarControlFrames.glyphLength, asked - Self.capStep)
-                Self.log.notice("chevron parked at \(asked, privacy: .public)pt; cap now \(self.caps.hidden, privacy: .public)")
-                assign(.hidden, length: MenuBarControlFrames.glyphLength)
+            let asked = assignedLengths[.hidden] ?? glyph
+            if asked > glyph + 1 {
+                caps.hidden = max(glyph, asked - Self.capStep)
+                Self.log.notice("boundary parked at \(asked, privacy: .public)pt; cap now \(self.caps.hidden, privacy: .public)")
+                assign(.hidden, length: glyph)
             }
         }
         // The always-hidden control is expected on the row only while
@@ -364,11 +373,12 @@ final class MenuBarItemHider {
     /// Lower the cap under what was asked so the next pass sizes it to
     /// fit. Pure on the frames, so a test can pin it.
     nonisolated static func controlOverflowed(controlFrame: CGRect, items: [MenuBarItem],
-                                              row: CGRect) -> Bool {
+                                              row: CGRect,
+                                              glyph: CGFloat = MenuBarControlFrames.glyphLength) -> Bool {
         guard let overflow = items.first(where: {
             $0.isNativeOverflowControl && $0.bounds.intersects(row)
         }) else { return false }
-        return overflow.bounds.minX >= controlFrame.maxX - MenuBarControlFrames.glyphLength - 4
+        return overflow.bounds.minX >= controlFrame.maxX - glyph - 4
     }
 
     /// The region's left edge as the bar actually packs it: macOS keeps
@@ -381,7 +391,7 @@ final class MenuBarItemHider {
                                                row: CGRect) -> CGFloat? {
         guard let hidden = controls.hidden, hidden.intersects(row),
               let overflow = items.first(where: { $0.isNativeOverflowControl && $0.bounds.intersects(row) }),
-              overflow.bounds.maxX < hidden.maxX - MenuBarControlFrames.glyphLength - 4 else { return nil }
+              overflow.bounds.maxX < hidden.maxX - controls.hiddenGlyph - 4 else { return nil }
         return overflow.bounds.minX
     }
 
@@ -402,9 +412,10 @@ final class MenuBarItemHider {
         guard let hidden = controls.hidden, hidden.intersects(row),
               !revealed.contains(.hidden),
               let asked = assignedLengths[.hidden],
-              asked > MenuBarControlFrames.glyphLength + 1,
-              Self.controlOverflowed(controlFrame: hidden, items: items, row: row) else { return }
-        let cap = max(MenuBarControlFrames.glyphLength, asked - Self.overflowStep)
+              asked > controls.hiddenGlyph + 1,
+              Self.controlOverflowed(controlFrame: hidden, items: items, row: row,
+                                     glyph: controls.hiddenGlyph) else { return }
+        let cap = max(controls.hiddenGlyph, asked - Self.overflowStep)
         guard cap < caps.hidden else { return }
         caps.hidden = cap
         Self.log.notice("chevron overflowed at \(asked, privacy: .public)pt (the « sits on it); cap now \(cap, privacy: .public)")
@@ -464,9 +475,10 @@ final class MenuBarItemHider {
     /// anchors), capped by what has been seen to fit, never shorter
     /// than the glyph.
     nonisolated static func spacerLength(controlFrame: CGRect, regionMin: CGFloat,
-                                         cap: CGFloat = .infinity) -> CGFloat {
+                                         cap: CGFloat = .infinity,
+                                         glyph: CGFloat = MenuBarControlFrames.glyphLength) -> CGFloat {
         let wanted = controlFrame.maxX - regionMin - spacerMargin
-        return max(MenuBarControlFrames.glyphLength, min(cap, wanted))
+        return max(glyph, min(cap, wanted))
     }
 
     /// The layout for a candidate list: an item's section is its
@@ -500,7 +512,7 @@ final class MenuBarItemHider {
             ? nil : controls.alwaysHidden.flatMap { $0.intersects(row) ? $0 : nil }
         // The boundary is the glyph's left edge: an item under the
         // spacer part of a control has been pushed, not shown.
-        let hiddenBoundary = hiddenControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
+        let hiddenBoundary = hiddenControl.map { $0.maxX - controls.hiddenGlyph }
         let ahBoundary = ahControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
         let overflowFrames = sorted.filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
             .map(\.bounds)
@@ -572,10 +584,11 @@ final class MenuBarItemHider {
         // Spacer lengths.
         if let hiddenControl {
             if revealed.contains(.hidden) || regionMin == nil {
-                plan.hiddenControlLength = MenuBarControlFrames.glyphLength
+                plan.hiddenControlLength = controls.hiddenGlyph
             } else if let regionMin {
                 plan.hiddenControlLength = spacerLength(
-                    controlFrame: hiddenControl, regionMin: regionMin, cap: caps.hidden)
+                    controlFrame: hiddenControl, regionMin: regionMin, cap: caps.hidden,
+                    glyph: controls.hiddenGlyph)
             }
         }
         if let ahControl {

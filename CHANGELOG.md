@@ -7,9 +7,11 @@ All notable changes to JR-Bar are documented here.
 - Menu Bar hides like Bartender now, not like a blindfold. macOS 26
   parks any status item that no longer fits into its own overflow, and
   an item inserted mid-row pushes everything left of it there — so the
-  chevron is the separator: items left of it are hidden, hiding is the
-  chevron's own width growing from its glyph to reach the notch's edge,
-  revealing is it collapsing back. No holes, nothing moved, the pointer
+  JR-Bar icon itself is the separator: items left of it are hidden,
+  hiding is the icon growing a blank spacer to its left that reaches the
+  bar's real left edge, revealing is it folding back. ⌘-drag any item
+  across the icon to choose; hover or click the blank stretch, or scroll
+  the bar, to peek; the icon's right-click menu lists what is hidden. No holes, nothing moved, the pointer
   never touched. The section map is overrides only (an item marked
   Cover by hand while it sits right of the chevron is still covered in
   place, honestly a hole); cover-era maps are cleared once, and the

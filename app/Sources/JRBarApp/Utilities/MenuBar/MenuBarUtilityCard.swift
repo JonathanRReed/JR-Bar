@@ -25,132 +25,55 @@ struct DockUtilityCard: View {
     }
 }
 
-/// The card's disclosure body (the "card controls"): what's hidden,
-/// the reveal gestures, the rehide dial, and the per-item section
-/// pickers. Every row writes `UtilitiesStore.state.menuBar` through
-/// the utility's `bind`/`setSection`, which persists and re-applies.
+/// The card's disclosure body: what is hidden right now and how to
+/// change it, the reveal gestures, then everything else behind an
+/// Advanced disclosure. Every row writes `UtilitiesStore.state.menuBar`
+/// through the utility's `bind`/`setSection`, which persists and
+/// re-applies.
 struct MenuBarUtilityControls: View {
     let utility: MenuBarUtility
+    @ViewState private var showAdvanced = false
+    @ViewState private var showOverrides = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if !utility.listedItems.isEmpty {
-                SettingLabel(title: "Items",
-                             subtitle: "Everything left of the ‹ chevron is hidden; everything left of ··· is always hidden. ⌘-drag any item across them to choose. Hover, click or scroll the bar to bring the hidden run back.")
-                if !countsText.isEmpty {
-                    Text(countsText)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(utility.listedItems.filter { !MenuBarItemLister.isProtected($0) },
-                        id: \.id) { item in
-                    itemRow(item)
-                }
-
-                Divider()
-                    .padding(.vertical, 4)
-            }
+            SettingLabel(title: "How it works",
+                         subtitle: "Everything to the left of the JR-Bar icon in the menu bar is tucked away. ⌘-drag any item across the icon to hide or show it. Items left of ··· stay hidden even while the rest are revealed.")
 
             LabeledContent {
-                Button("Show Item Bar") { utility.bar.toggle() }
-                    .controlSize(.small)
+                Text(countsText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             } label: {
-                SettingLabel(title: "Hidden items",
-                             subtitle: "The glass strip under the menu bar lists them as live tiles.")
+                SettingLabel(title: "Right now")
             }
 
-            Divider()
-                .padding(.vertical, 4)
-
-            SettingLabel(title: "Cover appearance",
-                         subtitle: "Only items you mark Cover or Always by hand get a cover drawn over them in place. The default is the menu bar's own material — invisible until you tint or round it.")
-
-            LabeledContent {
-                Picker(selection: utility.bind(\.coverMaterial)) {
-                    Text("Menu Bar").tag(MenuBarSettings.CoverMaterial.menu)
-                    Text("HUD").tag(MenuBarSettings.CoverMaterial.hud)
-                    Text("Popover").tag(MenuBarSettings.CoverMaterial.popover)
-                    Text("Sheet").tag(MenuBarSettings.CoverMaterial.sheet)
-                } label: { EmptyView() }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-            } label: {
-                SettingLabel(title: "Cover material",
-                             subtitle: "The blur style the cover draws with.")
-            }
-
-            Toggle(isOn: utility.bindCoverTintEnabled()) {
-                SettingLabel(title: "Tint the cover",
-                             subtitle: "A color wash over the material so the covered stretch reads as yours.")
-            }
-            if !utility.settings().coverTint.isEmpty {
-                LabeledContent {
-                    ColorPicker(selection: utility.bindCoverTintColor(), supportsOpacity: false) {
-                        EmptyView()
+            if !hideable.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(hideable, id: \.id) { item in
+                        itemRow(item)
                     }
-                    .labelsHidden()
-                    .controlSize(.small)
-                } label: {
-                    SettingLabel(title: "Tint color")
                 }
-                LabeledContent {
-                    HStack(spacing: 10) {
-                        Slider(value: utility.bind(\.coverTintOpacity), in: 0...1)
-                            .frame(width: 160)
-                        ValueText(text: "\(Int((utility.settings().coverTintOpacity * 100).rounded()))%")
-                    }
-                } label: {
-                    SettingLabel(title: "Tint strength")
-                }
+                .padding(.top, 2)
             }
-
-            LabeledContent {
-                HStack(spacing: 10) {
-                    Slider(value: utility.bind(\.coverRoundness),
-                           in: MenuBarSettings.coverRoundnessRange)
-                        .frame(width: 160)
-                    ValueText(text: "\(Int(utility.settings().coverRoundness))pt")
-                }
-            } label: {
-                SettingLabel(title: "Rounded ends",
-                             subtitle: "Corner radius on each covered run.")
-            }
-
-            Toggle(isOn: utility.bind(\.showCoverSeparator)) {
-                SettingLabel(title: "Edge separators",
-                             subtitle: "A hairline where a covered run meets visible menu bar.")
-            }
-
-            Toggle(isOn: utility.bind(\.combinedStatusItem)) {
-                SettingLabel(title: "Single combined item",
-                             subtitle: "One control instead of two — everything left of it is hidden; click opens the Item Bar, right-click lists what's hidden.")
-            }
-
-            Divider()
-                .padding(.vertical, 4)
-
-            MenuBarProfilesControls(utility: utility)
 
             Divider()
                 .padding(.vertical, 4)
 
             SettingLabel(title: "Bring them back",
-                         subtitle: "What counts as a reveal gesture. The run folds away again on its own.")
-
+                         subtitle: "What counts as a reveal. The run tucks itself away again on its own.")
             Toggle(isOn: utility.bind(\.revealOnHover)) {
-                SettingLabel(title: "Pointer reaches the bar",
-                             subtitle: "Hover over the menu bar's empty space.")
+                SettingLabel(title: "Hover the blank stretch",
+                             subtitle: "Rest the pointer on the empty bar left of the icon.")
             }
             Toggle(isOn: utility.bind(\.revealOnClick)) {
-                SettingLabel(title: "Click on empty space",
-                             subtitle: "A click that lands on no item's frame.")
+                SettingLabel(title: "Click the blank stretch",
+                             subtitle: "A click on the empty bar left of the icon, or on the icon's edge.")
             }
             Toggle(isOn: utility.bind(\.revealOnScroll)) {
                 SettingLabel(title: "Scroll over the bar",
                              subtitle: "A swipe or scroll wheel on the menu bar.")
             }
-
             LabeledContent {
                 HStack(spacing: 10) {
                     Slider(value: utility.bind(\.rehideSeconds), in: MenuBarSettings.rehideRange)
@@ -158,19 +81,22 @@ struct MenuBarUtilityControls: View {
                     ValueText(text: SettingsStore.seconds(utility.settings().rehideSeconds))
                 }
             } label: {
-                SettingLabel(title: "Hide again after",
-                             subtitle: "How long a reveal lasts while the pointer is off the bar.")
+                SettingLabel(title: "Tuck away after",
+                             subtitle: "How long a reveal lasts once the pointer leaves the bar.")
             }
-
-            Divider()
-                .padding(.vertical, 4)
-            MenuBarAutomationControls(utility: utility)
+            LabeledContent {
+                Button("Show Item Bar") { utility.bar.toggle() }
+                    .controlSize(.small)
+            } label: {
+                SettingLabel(title: "Hidden items as tiles",
+                             subtitle: "A glass strip under the menu bar with a live tile per hidden item — also on the JR-Bar icon's right-click menu.")
+            }
 
             if !utility.accessibilityGranted {
                 Divider()
                     .padding(.vertical, 4)
                 HStack(spacing: 8) {
-                    Text("Accessibility lets Menu Bar list every app's items and click Item Bar tiles through. Without it the covers still hide what you assign, but listing and tiles need the window list.")
+                    Text("Accessibility lets Menu Bar see where every item sits and click tiles through. Without it the boundary still works, but the list and the tiles go blind.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -179,23 +105,76 @@ struct MenuBarUtilityControls: View {
                         .controlSize(.small)
                 }
             }
+
+            Divider()
+                .padding(.vertical, 4)
+
+            DisclosureGroup(isExpanded: $showOverrides) {
+                VStack(alignment: .leading, spacing: 4) {
+                    SettingLabel(title: "Cover in place",
+                                 subtitle: "An item marked Cover or Always is hidden under a patch of menu bar where it sits, even right of the icon — a hole, honestly. Auto follows the drag position.")
+                    ForEach(hideable, id: \.id) { item in
+                        overrideRow(item)
+                    }
+                    appearanceControls
+                }
+                .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "Overrides",
+                             subtitle: "Hide an item without moving it.")
+            }
+
+            DisclosureGroup(isExpanded: $showAdvanced) {
+                VStack(alignment: .leading, spacing: 4) {
+                    MenuBarProfilesControls(utility: utility)
+                    Divider()
+                        .padding(.vertical, 4)
+                    MenuBarAutomationControls(utility: utility)
+                }
+                .padding(.top, 4)
+            } label: {
+                SettingLabel(title: "Advanced",
+                             subtitle: "Profiles, the ⌘⇧K command bar, hotkeys, rules, and the arrange run.")
+            }
         }
         .onAppear { utility.refreshListing() }
     }
 
+    /// Every listed item the utility could hide, in bar order.
+    private var hideable: [MenuBarItem] {
+        utility.listedItems.filter { !MenuBarItemLister.isProtected($0) }
+    }
+
     private var countsText: String {
+        let hidden = utility.lastPlan.hidden.count
+        let always = utility.lastPlan.alwaysHidden.count
+        let shown = hideable.count - hidden - always
         var parts: [String] = []
-        if !utility.lastPlan.hidden.isEmpty {
-            parts.append("\(utility.lastPlan.hidden.count) hidden")
-        }
-        if !utility.lastPlan.alwaysHidden.isEmpty {
-            parts.append("\(utility.lastPlan.alwaysHidden.count) always-hidden")
-        }
+        if hidden > 0 { parts.append("\(hidden) hidden") }
+        if always > 0 { parts.append("\(always) always hidden") }
+        parts.append("\(max(0, shown)) shown")
+        if utility.listedItems.isEmpty { return "Nothing listed yet" }
         return parts.joined(separator: " · ")
     }
 
-    /// One item: the owner's icon and name, then the section picker.
+    /// One item: the owner's icon and name, then where it is.
     private func itemRow(_ item: MenuBarItem) -> some View {
+        HStack(spacing: 8) {
+            Image(nsImage: item.owner?.icon ?? NSImage())
+                .resizable()
+                .frame(width: 16, height: 16)
+            Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 8)
+            Text(placement(of: item))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    /// The override picker for one item.
+    private func overrideRow(_ item: MenuBarItem) -> some View {
         LabeledContent {
             Picker(selection: Binding(
                 get: { utility.section(for: item.id) },
@@ -212,13 +191,11 @@ struct MenuBarUtilityControls: View {
             HStack(spacing: 8) {
                 Image(nsImage: item.owner?.icon ?? NSImage())
                     .resizable()
-                    .frame(width: 16, height: 16)
+                    .frame(width: 14, height: 14)
                 Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
+                    .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                Text(placement(of: item))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -235,6 +212,61 @@ struct MenuBarUtilityControls: View {
             return item.bounds.intersects(MenuBarItemLister.menuBarRow()) ? "hidden" : "in overflow"
         }
         return "shown"
+    }
+
+    /// The cover's look — only overrides draw one.
+    @ViewBuilder
+    private var appearanceControls: some View {
+        LabeledContent {
+            Picker(selection: utility.bind(\.coverMaterial)) {
+                Text("Menu Bar").tag(MenuBarSettings.CoverMaterial.menu)
+                Text("HUD").tag(MenuBarSettings.CoverMaterial.hud)
+                Text("Popover").tag(MenuBarSettings.CoverMaterial.popover)
+                Text("Sheet").tag(MenuBarSettings.CoverMaterial.sheet)
+            } label: { EmptyView() }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+        } label: {
+            SettingLabel(title: "Cover material",
+                         subtitle: "The blur style a cover draws with.")
+        }
+        Toggle(isOn: utility.bindCoverTintEnabled()) {
+            SettingLabel(title: "Tint the cover")
+        }
+        if !utility.settings().coverTint.isEmpty {
+            LabeledContent {
+                ColorPicker(selection: utility.bindCoverTintColor(), supportsOpacity: false) {
+                    EmptyView()
+                }
+                .labelsHidden()
+                .controlSize(.small)
+            } label: {
+                SettingLabel(title: "Tint color")
+            }
+            LabeledContent {
+                HStack(spacing: 10) {
+                    Slider(value: utility.bind(\.coverTintOpacity), in: 0...1)
+                        .frame(width: 160)
+                    ValueText(text: "\(Int((utility.settings().coverTintOpacity * 100).rounded()))%")
+                }
+            } label: {
+                SettingLabel(title: "Tint strength")
+            }
+        }
+        LabeledContent {
+            HStack(spacing: 10) {
+                Slider(value: utility.bind(\.coverRoundness),
+                       in: MenuBarSettings.coverRoundnessRange)
+                    .frame(width: 160)
+                ValueText(text: "\(Int(utility.settings().coverRoundness))pt")
+            }
+        } label: {
+            SettingLabel(title: "Rounded ends")
+        }
+        Toggle(isOn: utility.bind(\.showCoverSeparator)) {
+            SettingLabel(title: "Edge separators")
+        }
     }
 }
 

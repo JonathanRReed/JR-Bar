@@ -45,15 +45,24 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > fits in its own overflow (the "Show Hidden Menu Bar Items" control
 > MenuBarAgent draws). A 3 000-point item is parked itself; a 250-point
 > item inserted mid-row stays and pushes everything left of it into that
-> overflow, with no holes. So the chevron is Bartender's separator: items
-> left of it are hidden, and hiding is the chevron's own `length` growing
-> from the glyph (24 pt) to reach `spacerMargin` right of the notch's
-> right edge (`auxiliaryTopRightArea.minX`), which packs the hidden run
-> off the row. Revealing collapses the length back to the glyph and the
-> run packs back where it was. The always-hidden control does the same
-> for the deeper run. A control found parked (its spacer did not fit
-> under a wide app menu) lowers a learned cap and collapses; caps reset
-> on screen changes and when the frontmost app changes.
+> overflow, with no holes. So **JR-Bar's own status item is Bartender's
+> separator**: items left of it are hidden, and hiding is the item's
+> own `length` growing a blank spacer left of its icon
+> (`StatusItemController.boundarySpacer`) that reaches `spacerMargin`
+> right of the region's real left edge — the left edge of macOS's own
+> `«` overflow control, ~28 pt right of the notch, remembered once seen
+> — which packs the hidden run off the row. macOS draws a status item
+> only when it fits in the visible run, so the spacer leaves exactly
+> the `«`'s room (narrower than any item) and the `«` itself wears a
+> cover while the run is hidden. Revealing collapses the spacer and the
+> run packs back where it was; a click on the blank stretch, a hover on
+> it, or a scroll over the bar is the reveal, and the icon's right-click
+> menu carries a "Hidden Menu Bar Items" submenu. The always-hidden
+> control (`···`, seeded far left) does the same for the deeper run. A
+> control found parked (its spacer did not fit under a wide app menu)
+> lowers a learned cap and collapses; caps reset on screen changes and
+> when the frontmost app changes. A separate chevron item remains only
+> as the fallback when no host is wired (tests).
 >
 > Foreign items are never moved by the utility: the person ⌘-drags items
 > across the controls to choose sections, exactly as with Bartender. The

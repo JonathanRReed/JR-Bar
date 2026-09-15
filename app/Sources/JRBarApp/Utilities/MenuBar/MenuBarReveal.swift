@@ -22,6 +22,12 @@ final class MenuBarReveal {
     /// Every layer-25 frame on the row in *AppKit* screen coordinates —
     /// the empty-space click's hit test.
     var itemFrames: @MainActor () -> [NSRect] = { [] }
+    /// The stretch a hover or an empty-space click means "show me what
+    /// is hidden": the blank run left of the boundary, in AppKit screen
+    /// coordinates. nil widens the gesture to the whole row (the old
+    /// rule) — a pointer crossing the app menus or the notch's island
+    /// must not pop the run, so the utility always supplies one.
+    var revealZone: @MainActor () -> NSRect? = { nil }
     /// The Item Bar panel's frame while it is up — a surface a reveal
     /// stays alive for.
     var barFrame: @MainActor () -> NSRect? = { nil }
@@ -172,7 +178,7 @@ final class MenuBarReveal {
     /// timer already re-arms while the pointer stays on the row.
     func pollHover() {
         let point = mouseLocation()
-        let inZone = (row() ?? .zero).contains(point)
+        let inZone = (revealZone() ?? row() ?? .zero).contains(point)
             && !itemFrames().contains(where: { $0.contains(point) })
         let entered = inZone && !hoverInside
         hoverInside = inZone
@@ -187,7 +193,9 @@ final class MenuBarReveal {
 
     func pointerDown(at point: NSPoint) {
         guard settings().revealOnClick else { return }
-        // Only empty space counts — a click on an item is that item's.
+        // Only empty space in the zone counts — a click on an item is
+        // that item's, a click on the far side of the bar is nobody's.
+        if let zone = revealZone(), !zone.contains(point) { return }
         guard !itemFrames().contains(where: { $0.contains(point) }) else { return }
         triggerReveal()
     }
