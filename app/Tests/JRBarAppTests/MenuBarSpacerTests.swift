@@ -368,17 +368,20 @@ extension MenuBarSpacerTests {
         #expect(hider.caps.hidden == 68)
     }
 
-    @Test("a « standing left of the chevron is the region's real left edge")
+    @Test("a « standing clear of the chevron's glyph is the region's real left edge, and it is remembered")
     func overflowEdgeIsTheRegion() {
         let chevron = MenuBarControlFrames(hidden: CGRect(x: 926, y: 0, width: 24, height: 24))
         let overflowLeft = item("«", owner: "MenuBarAgent", x: 876, w: 17, overflow: true)
-        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, controls: chevron,
-                                                    items: [overflowLeft], row: row) == 876)
+        #expect(MenuBarItemHider.observedRegionEdge(controls: chevron, items: [overflowLeft], row: row) == 876)
+        // Under an expanded spacer but clear of the glyph: still the edge.
+        let expanded = MenuBarControlFrames(hidden: CGRect(x: 846, y: 0, width: 158, height: 24))
+        #expect(MenuBarItemHider.observedRegionEdge(controls: expanded, items: [overflowLeft], row: row) == 876)
         // On the glyph, it says nothing about the edge.
         let overflowOnGlyph = item("«", owner: "MenuBarAgent", x: 930, w: 17, overflow: true)
-        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, controls: chevron,
-                                                    items: [overflowOnGlyph], row: row) == regionMin)
-        #expect(MenuBarItemHider.effectiveRegionMin(nil, controls: chevron, items: [overflowLeft], row: row) == nil)
+        #expect(MenuBarItemHider.observedRegionEdge(controls: chevron, items: [overflowOnGlyph], row: row) == nil)
+        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, knownEdge: 876) == 876)
+        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, knownEdge: nil) == regionMin)
+        #expect(MenuBarItemHider.effectiveRegionMin(nil, knownEdge: 876) == nil)
         // The spacer then lands flush against the «: 950 − 876 − 22 = 52.
         let plan = MenuBarItemHider.plan(items: [overflowLeft], sections: [:], row: row,
                                          controls: chevron, regionMin: 876)
@@ -401,6 +404,24 @@ extension MenuBarSpacerTests {
         let overflowed = MenuBarItemHider.plan(items: [onGlyph], sections: [:], row: row,
                                                controls: chevron, regionMin: regionMin)
         #expect(overflowed.hiddenCovers.isEmpty)
+    }
+
+    @MainActor
+    @Test("the remembered « edge survives an app switch's cap reset and sizes the spacer in one pass")
+    func edgeSurvivesCapReset() {
+        var items: [MenuBarItem] = [item("«", owner: "MenuBarAgent", x: 876, w: 17, overflow: true)]
+        let (hider, writes) = makeHider(controls: { self.controls }, items: items)
+        hider.listItems = { items }
+        hider.reconcile()
+        #expect(hider.knownRegionEdge == 876)
+        // 950 − 876 − 22 = 52, straight away.
+        #expect(hider.assignedLengths[.hidden] == 52)
+        hider.resetCaps()
+        items = []
+        hider.reconcile()
+        #expect(hider.knownRegionEdge == 876, "no « in this listing changes nothing")
+        #expect(hider.assignedLengths[.hidden] == 52)
+        #expect(writes().count == 2)
     }
 }
 

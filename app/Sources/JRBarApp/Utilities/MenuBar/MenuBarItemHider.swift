@@ -143,6 +143,11 @@ final class MenuBarItemHider {
     /// The listing generation at the last length write — frames from
     /// that generation predate the reflow the write caused.
     private var lengthWrittenAtGeneration = -1
+    /// The region's left edge as the bar last packed it — the «'s left
+    /// edge whenever it stood clear of our glyph. Remembered across cap
+    /// resets so an app switch never restarts the settle from the notch
+    /// edge; a screen change forgets it.
+    private(set) var knownRegionEdge: CGFloat?
 
     /// The AX listing's refresh cadence driver.
     private var listingTask: Task<Void, Never>?
@@ -176,6 +181,7 @@ final class MenuBarItemHider {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
+                self?.knownRegionEdge = nil
                 self?.resetCaps()
                 self?.reconcile()
             }
@@ -293,6 +299,9 @@ final class MenuBarItemHider {
         let items = listItems()
         learnCaps(controls: controls, row: row)
         learnOverflow(controls: controls, row: row, items: items)
+        if let edge = Self.observedRegionEdge(controls: controls, items: items, row: row) {
+            knownRegionEdge = edge
+        }
         // A pushed always-hidden control keeps only its glyph, so when
         // the chevron collapses it comes back small and grows from a
         // measured slot rather than returning oversized and parking.
@@ -303,8 +312,7 @@ final class MenuBarItemHider {
         let plan = Self.plan(items: items,
                              sections: settings().sections, row: row,
                              controls: controls,
-                             regionMin: Self.effectiveRegionMin(regionMin(), controls: controls,
-                                                                items: items, row: row),
+                             regionMin: Self.effectiveRegionMin(regionMin(), knownEdge: knownRegionEdge),
                              revealed: revealed, caps: caps,
                              protectedFrames: protectedFrames())
         let changed = plan != lastPlan
@@ -364,17 +372,26 @@ final class MenuBarItemHider {
     }
 
     /// The region's left edge as the bar actually packs it: macOS keeps
-    /// its overflow control at the visible run's left end, so when the
-    /// « stands left of our chevron its own left edge is the truth —
+    /// its overflow control at the visible run's left end, so whenever
+    /// the « stands clear of our glyph its own left edge is the truth —
     /// on this hardware ~28 pt right of the notch, not the notch edge.
-    /// Sizing from it lands the spacer flush against the « in one pass.
-    nonisolated static func effectiveRegionMin(_ regionMin: CGFloat?, controls: MenuBarControlFrames,
-                                               items: [MenuBarItem], row: CGRect) -> CGFloat? {
-        guard let regionMin else { return nil }
+    /// nil when there is no « or it sits on our glyph (then our chevron
+    /// is the overflowed one and the « says nothing about the edge).
+    nonisolated static func observedRegionEdge(controls: MenuBarControlFrames, items: [MenuBarItem],
+                                               row: CGRect) -> CGFloat? {
         guard let hidden = controls.hidden, hidden.intersects(row),
               let overflow = items.first(where: { $0.isNativeOverflowControl && $0.bounds.intersects(row) }),
-              overflow.bounds.maxX <= hidden.minX + 4 else { return regionMin }
-        return max(regionMin, overflow.bounds.minX)
+              overflow.bounds.maxX < hidden.maxX - MenuBarControlFrames.glyphLength - 4 else { return nil }
+        return overflow.bounds.minX
+    }
+
+    /// The edge a spacer sizes from: the remembered « edge when one has
+    /// been seen, else the notch edge. Sizing from the « lands the
+    /// spacer flush against it in one pass.
+    nonisolated static func effectiveRegionMin(_ regionMin: CGFloat?, knownEdge: CGFloat?) -> CGFloat? {
+        guard let regionMin else { return nil }
+        guard let knownEdge else { return regionMin }
+        return max(regionMin, knownEdge)
     }
 
     private func learnOverflow(controls: MenuBarControlFrames, row: CGRect, items: [MenuBarItem]) {
