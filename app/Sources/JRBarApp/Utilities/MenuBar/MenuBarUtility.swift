@@ -379,18 +379,17 @@ final class MenuBarUtility: Toy {
     /// chevron in place. Clear it once; the person's ⌘-drag layout is
     /// the arrangement now, and the pickers write fresh overrides.
     func migrateSectionsIfNeeded() {
-        guard settings().layoutModel < MenuBarSettings.clearedLayoutModel else { return }
+        guard settings().layoutModel < MenuBarSettings.currentLayoutModel else { return }
         update { draft in
             draft.sections = [:]
-            draft.layoutModel = MenuBarSettings.clearedLayoutModel
+            draft.layoutModel = MenuBarSettings.currentLayoutModel
         }
     }
 
-    /// The cover era never asked where the chevron sat — hiding was a
-    /// map. Under the position model the slot *is* the setting, so a
-    /// migrated install seats the chevron once just left of JR-Bar's
-    /// own status item: what arrived after JR-Bar hides, the system's
-    /// items and ours stay. Needs the chevron's live frame (to
+    /// Under the position model the chevron's slot *is* the setting,
+    /// so an install seats the chevron once just left of JR-Bar's own
+    /// status item: what arrived after JR-Bar hides, the system's
+    /// items and ours stay. The person ⌘-drags it from there. Needs the chevron's live frame (to
     /// calibrate preferred position against x) and our main item's;
     /// without either it waits for the next start.
     /// - Parameters:
@@ -412,7 +411,7 @@ final class MenuBarUtility: Toy {
 
     /// Run the reseat once the controls stand and the listing is in.
     func reseatControlsIfNeeded() {
-        guard settings().layoutModel < MenuBarSettings.currentLayoutModel,
+        guard !settings().controlsSeated,
               !settings().combinedStatusItem,
               let chevron, let chevronFrame = Self.quartzFrame(of: chevron),
               chevronFrame.intersects(MenuBarItemLister.menuBarRow()),
@@ -432,7 +431,7 @@ final class MenuBarUtility: Toy {
                                   forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
         installSeparateControls()
         hider.resetCaps()
-        update { $0.layoutModel = MenuBarSettings.currentLayoutModel }
+        update { $0.controlsSeated = true }
         hider.scheduleSettle()
     }
 

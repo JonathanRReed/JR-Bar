@@ -256,17 +256,14 @@ struct MenuBarSpacerTests {
         utility.migrateSectionsIfNeeded()
         #expect(writes == 1)
         #expect(state.sections.isEmpty)
-        // The map is cleared first; the reseat (1 → 2) waits for the
+        #expect(state.layoutModel == MenuBarSettings.currentLayoutModel)
+        // The reseat is a separate one-time step that waits for the
         // controls to stand on a real bar.
-        #expect(state.layoutModel == MenuBarSettings.clearedLayoutModel)
+        #expect(state.controlsSeated == false)
         utility.migrateSectionsIfNeeded()
         #expect(writes == 1)
-        // A fresh override written under the cleared or current model
-        // survives.
+        // A fresh override written under the current model survives.
         state.sections = ["B": .hidden]
-        utility.migrateSectionsIfNeeded()
-        #expect(state.sections == ["B": .hidden])
-        state.layoutModel = MenuBarSettings.currentLayoutModel
         utility.migrateSectionsIfNeeded()
         #expect(state.sections == ["B": .hidden])
         #expect(writes == 1)

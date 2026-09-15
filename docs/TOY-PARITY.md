@@ -71,21 +71,26 @@ Labels: **Done** (shipped in the native toy, tested at its seam),
 
 ## Dock (vs DockDoor Free, DockDoor Pro)
 
-Native has two modes. **Enhance** keeps Apple's Dock and measures against
-DockDoor Free. **Replace** draws our own and measures against Pro.
+One mode. **Enhance** keeps Apple's Dock and measures against DockDoor
+Free. The Replace bar (our own dock over a hidden Apple Dock, measured
+against Pro) was cut on 2026-09-15: a replacement dock has to get minimize
+animation, drag-to-dock, Exposé and Stage Manager right before it is a
+daily driver, and each of those is weeks — one dock done well beats two
+done halfway. `AppleDockControl.restore()` survives so a Mac the bar left
+with Apple's Dock hidden gets it back.
 
 ### Enhance mode (vs DockDoor Free)
 
 | Feature | DockDoor Free | JR-Bar Dock | Notes |
 | --- | --- | --- | --- |
 | Hover a Dock icon → live window previews | yes | Done | AX hit-test of the Dock's `AXList`, `SCScreenshotManager` one-shots per window — no stream, no purple indicator |
-| Click preview to raise, close / minimise / maximise buttons | yes | Done (raise/un-minimise) / Planned (close/min/max buttons, P2) | `AXRaise`/`AXMain`/`activateAllWindows` on click |
+| Click preview to raise, close / minimise / maximise buttons | yes | Done (raise, close ×, minimise/restore –) / Won't (maximise — a zoom button on a thumbnail is a mis-click magnet) | `AXRaise`/`AXMain`/`activateAllWindows` on click; `AXCloseButton` press; `AXMinimized` write |
 | Middle-click to close | yes | Planned (P2) | |
 | Drag a window between previews / to another app | yes | Planned (P2) | |
 | Aero shake (shake a preview to minimise the rest) | yes | Planned (P5) | |
-| Close-all / minimise-all from the app preview | yes | Planned (P2) | |
+| Close-all / minimise-all from the app preview | yes | Done (Hide, Quit in the header) / Planned (minimise-all, P2) | |
 | Compact list view past N windows | yes | Planned (P2) | |
-| Large preview option | yes | Planned (P2) | |
+| Large preview option | yes | Done | 208×130 cards |
 | Folder Pop: hover a Dock folder → contents, sort, open | yes | Planned (P4) | |
 | Option+Tab window switcher with previews and keyboard control | yes | Planned (P3) | Global hotkey via `CGEventTap` (Accessibility) |
 | Cmd+Tab replacement overlay | yes | Planned (P3) | Same tap; off by default, it's aggressive |
@@ -96,42 +101,8 @@ DockDoor Free. **Replace** draws our own and measures against Pro.
 | Quick quit ⌘+right-click, force quit ⌘⌥ | yes | Planned (P2) | |
 | App filters (hide apps from previews) | yes | Planned (P2) | |
 | Dock locking to one display | yes | Planned (P5) | |
-| Preview layouts / appearance settings | yes | Planned (P2) | Glass per the material rule: previews float, so glass |
+| Preview layouts / appearance settings | yes | Done (glass, card size, every-window toggle) | Glass per the material rule: previews float, so glass |
 | AppleScript: show preview / show switcher | yes | Won't for now | Revisit if anyone asks |
-| Localisation | yes | Won't for now | |
-
-### Replace mode (vs DockDoor Pro)
-
-| Feature | DockDoor Pro | JR-Bar Dock | Notes |
-| --- | --- | --- | --- |
-| Own dock bar: running + pinned apps, running indicators (dot / card / none) | yes | Done | Pins seed from `com.apple.dock persistent-apps` on first run |
-| Hide Apple's Dock (experimental in Pro) | yes | Done | Save + restore `autohide`, confirmation dialog, "Restore Apple's Dock" button. Mission Control still shows Apple's; same as Pro |
-| Spring magnification wave at display refresh, tunable scale + reach | yes | Done | CADisplayLink + per-icon springs, cosine wave |
-| Materials: Liquid Glass / frosted / solid / clear, tint, borders | yes | Done | Floats, so glass is allowed |
-| Liquid Crest (glass swells under the magnified icons) | yes | Planned (P1) | `NSGlassEffectView` shape morph |
-| Floating vs full-width, any edge, any display, per-display docks | yes | Done | Top edge deliberately absent — the menu bar owns it |
-| Auto-hide with delay, reveal on edge | yes | Done | |
-| Light / dark / follow wallpaper | yes | Planned (P1) | |
-| Sizing, spacing, custom icons, tints | yes | Done (size) / Planned (custom icons P5) | |
-| Click to launch / cycle windows | yes | Done (launch/raise) / Planned (cycle, P2) | |
-| Right-click: minimise all, hide, close all, bring here, jump to window, relaunch, force quit, saved commands | yes | Done (quit/hide/force-quit/pin) / Planned (window actions P2, saved commands P5) | |
-| Drag to reorder, drop into folder, spacers, separators | yes | Done (pin reorder, pinned↔running + Trash separators) / Planned (folders, spacers P4) | |
-| Notification badges | yes | Planned (P1) | `badgeSource` seam in place; no public API exposes Dock badge counts — AX read is the plan |
-| Overlap avoidance (windows don't hide under the dock) | yes | Planned (P5) | |
-| Window previews above own icons with 20+ actions (tile half/quarter, full screen, move to this space) | yes | Planned (P2) | Tiling via AX position/size |
-| Preview Navigator (Opt+W) and Alt-Tab switcher | yes | Planned (P3) | |
-| Letter navigation (hold key, press letter) | yes | Planned (P3) | |
-| Folder fan-out: list / grid / fan / accordion, hover preview | yes | Planned (P4) | |
-| App groups (several apps in one icon) | yes | Planned (P4) | |
-| File tray: staging shelf, pinned folders, AirDrop, multi-select | yes | Planned (P4) | Share the Notch tray store |
-| Profiles per display / context, AppSense auto-switch | yes | Planned (P5) | |
-| Widgets: clock, weather, battery, Now Playing, audio device switcher, volume on scroll, calendar month | yes | Planned (P5) | Reuse Notch rows; weather off by default |
-| Community widget marketplace | yes | Won't | Runs third-party code in-process; not for a local-only app |
-| Agent widgets (sessions, asks, usage in the dock) | no (community Codex widgets) | Planned (P5) | Where we beat them |
-| Gestures + haptics, pinch/swipe icons | yes | Planned (P5) | |
-| Handoff tile | yes | Won't | Private API |
-| Backup / restore settings | yes | Done by construction | `app-state.json` is the backup |
-| Finder optional | yes | Done | `showFinder` toggle; Trash always last with Open / Empty Trash… menu |
 | Localisation | yes | Won't for now | |
 
 ## Menu Bar (vs Ice, Bartender 7)
@@ -141,22 +112,22 @@ parity bar; "Pro" extras (Top Shelf) are called out where they're separate.
 
 | Feature | Ice | Bartender 7 | JR-Bar Menu Bar | Notes |
 | --- | --- | --- | --- | --- |
-| Hide menu bar items (separator section) | yes | yes | Done | Spacer `NSStatusItem` pushes the hidden run offscreen |
+| Hide menu bar items (separator section) | yes | yes | Done | The chevron is the separator; its own `length` grows to push the run left of it into macOS 26's native overflow (the only push the OS allows — see docs/UTILITIES.md) |
 | Always-hidden section | yes | yes | Done | |
 | Show hidden on hover over menu bar | yes | yes | Done | |
 | Show hidden on empty-space click | yes | yes | Done | |
 | Show hidden on scroll/swipe | yes | yes | Done | |
 | Auto-rehide after N s | yes | yes | Done | |
 | Hide app menus when they overlap items | yes | yes | Planned (phase 2) | |
-| Drag-and-drop arrange | yes | yes | Planned | ⌘-drag `CGEvent`s on the real items, AX-gated |
-| Hidden items in a separate bar (Ice Bar / Bartender Bar) | yes | yes (Liquid Glass) | Done | The "Item Bar" — glass, floats under the menu bar; icon tiles now, live captures next phase |
-| Search menu bar items | yes | yes (Command Bar + clipboard history) | Planned | Clipboard history: Won't — a second product |
+| Drag-and-drop arrange | yes | yes | Done (explicit arrange mode) | ⌘-drag `CGEvent`s on the real items, AX-gated, banner + Esc cancel; never in the background |
+| Hidden items in a separate bar (Ice Bar / Bartender Bar) | yes | yes (Liquid Glass) | Done | The "Item Bar" — glass, floats under the menu bar; live `SCScreenshotManager` tiles with icon fallback |
+| Search menu bar items | yes | yes (Command Bar + clipboard history) | Done (⌘⇧K) | Clipboard history: Won't — a second product |
 | Item spacing control | yes (beta) | yes (3 presets + custom) | Planned | Best-effort; macOS can refuse per item |
 | Spacer / label items in the bar | roadmap | yes | Planned | Our own status items as spacers/labels/emoji |
-| Menu bar tint, gradient, shadow, border, rounded | yes | yes (incl. themed bar) | Planned | Underlay panel at `statusBar - 1` |
-| Profiles (named bar layouts) | roadmap | yes | Planned | + per-display override, trigger-switchable |
-| Triggers (unplug → show battery, VPN on public Wi-Fi, mic in meetings…) | partial (roadmap) | yes | Planned | Off our existing monitors; rule list in the card |
-| Hotkeys for sections / bar / search | yes | yes | Planned | Carbon `RegisterEventHotKey`, same as panel hotkey |
+| Menu bar tint, gradient, shadow, border, rounded | yes | yes (incl. themed bar) | Done (cover tint/material/rounding) / Planned (full-bar underlay) | Underlay panel at `statusBar - 1` |
+| Profiles (named bar layouts) | roadmap | yes | Done | Trigger-switchable; per-display override Planned |
+| Triggers (unplug → show battery, VPN on public Wi-Fi, mic in meetings…) | partial (roadmap) | yes | Done (lock/unlock/app/time/charger) | Wi-Fi/mic/Focus triggers Planned |
+| Hotkeys for sections / bar / search | yes | yes | Done | Carbon `RegisterEventHotKey`, same as panel hotkey |
 | AppleScript / Shortcuts / Siri control | no | yes | Won't for now | Revisit if asked |
 | Custom menu bar widgets (scripts, data sources) | roadmap | yes | Won't | Third-party code in our process; a whole ecosystem |
 | Menu bar widgets (clock/stats built-ins) | roadmap | yes | Planned | Covered by the combined Status item |

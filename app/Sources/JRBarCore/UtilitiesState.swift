@@ -69,6 +69,11 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var revealOnScroll: Bool
     /// Seconds a reveal lasts before the spacers stand back up.
     public var rehideSeconds: Double
+    /// True once the controls have been seated next to JR-Bar's own
+    /// status item — a one-time placement so the chevron's first slot
+    /// is a sensible boundary rather than wherever macOS dropped it.
+    /// Absent (or a fresh file) means the seating is still owed.
+    public var controlsSeated: Bool
     /// Which hiding model the section map was written under. Files
     /// from before `currentLayoutModel` carried a map that assigned
     /// every item hidden (the cover era); the position model reads
@@ -154,13 +159,9 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     /// The default reveal window.
     public static let defaultRehideSeconds: Double = 4
     /// The hiding model this build writes: 2 is positional sections
-    /// with overrides and the controls seated next to JR-Bar's own
-    /// item; 1 is positional with the cover-era map cleared but the
-    /// controls not yet reseated; 0 (or absent) is the all-covered map.
+    /// with overrides; 0/1 (or absent with a map) is the cover era's
+    /// all-covered map, cleared once on first apply.
     public static let currentLayoutModel = 2
-    /// The model a cover-era file steps to first: map cleared, reseat
-    /// still owed.
-    public static let clearedLayoutModel = 1
     /// The card's cover-roundness dial — past half the row's depth the
     /// run ends are a pill anyway.
     public static let coverRoundnessRange: ClosedRange<Double> = 0...14
@@ -171,6 +172,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
                 layoutModel: Int = MenuBarSettings.currentLayoutModel,
+                controlsSeated: Bool = false,
                 coverMaterial: CoverMaterial = .menu, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
@@ -185,6 +187,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.revealOnScroll = revealOnScroll
         self.rehideSeconds = Self.clampedRehide(rehideSeconds)
         self.layoutModel = layoutModel
+        self.controlsSeated = controlsSeated
         self.coverMaterial = coverMaterial
         self.coverTint = coverTint
         self.coverTintOpacity = Self.clampedOpacity(coverTintOpacity)
@@ -221,6 +224,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
+        case controlsSeated
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
     }
@@ -240,6 +244,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         // nothing to migrate and reads as current.
         layoutModel = (try? c.decodeIfPresent(Int.self, forKey: .layoutModel))
             ?? (sections.isEmpty ? Self.currentLayoutModel : 0)
+        controlsSeated = (try? c.decodeIfPresent(Bool.self, forKey: .controlsSeated)) ?? false
         coverMaterial = (try? c.decodeIfPresent(CoverMaterial.self, forKey: .coverMaterial)) ?? .menu
         coverTint = (try? c.decodeIfPresent(String.self, forKey: .coverTint)) ?? ""
         coverTintOpacity = Self.clampedOpacity(

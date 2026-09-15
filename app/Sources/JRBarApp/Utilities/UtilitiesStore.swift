@@ -35,8 +35,7 @@ final class UtilitiesStore {
     /// The Menu Bar utility: the spacers, the reveal gestures, the
     /// chevron status item and the glass Item Bar.
     let menuBar: MenuBarUtility
-    /// The Dock utility: the Replace-mode bar, its model, and the
-    /// save/restore control over Apple's own Dock.
+    /// The Dock utility: the hover-preview watcher over Apple's Dock.
     let dock: DockUtility
     /// The Agent Overview utility: the roster's management seat — the
     /// compact state-grouped list, the counts, and the session verbs
@@ -69,13 +68,6 @@ final class UtilitiesStore {
         dock.onSettingsChange = { [weak self] updated in
             self?.state.dock = updated
         }
-        dock.onPinsChanged = { [weak self] pins in
-            self?.state.dock.pinned = pins
-        }
-        dock.onSeeded = { [weak self] pins in
-            self?.state.dock.pinned = pins
-            self?.state.dock.seededFromAppleDock = true
-        }
         agents.settings = { [weak self] in self?.state.agents ?? AgentOrganizerSettings() }
         agents.onSettingsChange = { [weak self] updated in
             self?.state.agents = updated
@@ -95,9 +87,9 @@ final class UtilitiesStore {
         agents.applySettings()
     }
 
-    /// `applicationWillTerminate`'s stop: puts the menu bar's items
-    /// back before the spacers vanish with the process, and hands
-    /// Apple's Dock its autohide value back if we hid it.
+    /// `applicationWillTerminate`'s stop: collapses the menu bar's
+    /// spacers before they vanish with the process, and hands Apple's
+    /// Dock its autohide value back if an old build's bar hid it.
     func stop() {
         menuBar.stop()
         dock.stop()

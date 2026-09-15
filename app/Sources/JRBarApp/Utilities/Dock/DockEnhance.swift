@@ -29,11 +29,21 @@ final class DockEnhancePreferences {
         set { write?({ var s = read(); s.previewDelay = newValue; return s }()) }
     }
     /// Live window thumbnails via one-shot `SCScreenshotManager`
-    /// captures; off falls back to icon + title rows and needs no
+    /// captures; off falls back to icon + title cards and needs no
     /// Screen Recording permission.
     var showThumbnails: Bool {
         get { read().showThumbnails }
         set { write?({ var s = read(); s.showThumbnails = newValue; return s }()) }
+    }
+    /// Bigger cards.
+    var largePreviews: Bool {
+        get { read().largePreviews }
+        set { write?({ var s = read(); s.largePreviews = newValue; return s }()) }
+    }
+    /// Windows on other Spaces and minimized windows list too.
+    var includeOffscreenWindows: Bool {
+        get { read().includeOffscreenWindows }
+        set { write?({ var s = read(); s.includeOffscreenWindows = newValue; return s }()) }
     }
 
     static let delayRange: ClosedRange<Double> = DockEnhanceSettings.delayRange
@@ -153,6 +163,29 @@ enum DockEnhanceMath {
                           width: size.width, height: size.height)
         }
     }
+
+    /// A window card's thumbnail box — 16:10, two sizes.
+    static func cardSize(large: Bool) -> CGSize {
+        large ? CGSize(width: 208, height: 130) : CGSize(width: 144, height: 90)
+    }
+
+    /// Match a captured window to an AX row. Frames are the honest key
+    /// — titles repeat, go empty, or change mid-session — with a title
+    /// match as the fallback for a window whose frame the app reports
+    /// oddly. Returns the index of the row, or nil.
+    static func matchRow(scFrame: CGRect, scTitle: String?,
+                         rows: [(frame: CGRect?, title: String)],
+                         tolerance: CGFloat = 2) -> Int? {
+        if let index = rows.firstIndex(where: { row in
+            guard let frame = row.frame else { return false }
+            return abs(frame.minX - scFrame.minX) <= tolerance
+                && abs(frame.minY - scFrame.minY) <= tolerance
+                && abs(frame.width - scFrame.width) <= tolerance
+                && abs(frame.height - scFrame.height) <= tolerance
+        }) { return index }
+        guard let scTitle, !scTitle.isEmpty else { return nil }
+        return rows.firstIndex(where: { $0.title == scTitle })
+    }
 }
 
 // MARK: - The Dock's AX tree
@@ -164,14 +197,18 @@ struct DockAXItem {
     let title: String?
     /// `AXURL` — the file URL the tile points at, when the Dock shares it.
     let url: URL?
-    /// Stable hover identity: the title, else the URL, else a constant.
-    var hoverID: String { title ?? url?.lastPathComponent ?? "dock-item" }
+    /// Stable hover identity: the URL, else the title, else the slot —
+    /// two tiles with one title (two copies of an app) still retarget.
+    var hoverID: String {
+        url?.path ?? title ?? "dock-item@\(Int(frame.minX))"
+    }
 }
 
-/// Read-only queries against the Dock process's accessibility tree.
-/// Every call fails soft (nil / []) without Accessibility permission
-/// — the caller's `AXIsProcessTrusted` gate decides whether that means
-/// "no dock" or "no rights".
+/// Read-only queries against the Dock process's accessibility tree,
+/// plus the window verbs a preview card offers. Every read fails soft
+/// (nil / []) without Accessibility permission — the caller's
+/// `AXIsProcessTrusted` gate decides whether that means "no dock" or
+/// "no rights".
 enum AppleDockReader {
     static let dockBundleID = "com.apple.dock"
 
@@ -183,6 +220,7 @@ enum AppleDockReader {
     /// The dock's `AXList` element (subrole `AXDockList`).
     static func dockList(pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
         return axChildren(app).first { axString($0, kAXSubroleAttribute) == "AXDockList" }
     }
 
@@ -202,23 +240,31 @@ enum AppleDockReader {
 
     static func frame(of element: AXUIElement) -> CGRect? { axFrame(element) }
 
-    /// One app's windows as preview rows — AX gives both the title and
-    /// the element a later click can `AXRaise`.
+    /// One app's windows as preview rows — AX gives the title, the
+    /// frame (the thumbnail match key), the minimized flag, and the
+    /// element a later click can raise, close or minimize.
     static func windows(pid: pid_t) -> [DockPreviewWindow] {
         let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
               let elements = value as? [AXUIElement] else { return [] }
-        return elements.enumerated().map { index, element in
-            DockPreviewWindow(
+        return elements.enumerated().compactMap { index, element in
+            // Sheets, drawers, floating palettes: not windows a person
+            // switches to.
+            let subrole = axString(element, kAXSubroleAttribute)
+            if let subrole, subrole != "AXStandardWindow", subrole != "AXDialog" { return nil }
+            return DockPreviewWindow(
                 id: index,
-                title: axString(element, kAXTitleAttribute) ?? "Untitled window",
+                title: axString(element, kAXTitleAttribute).flatMap { $0.isEmpty ? nil : $0 }
+                    ?? "Untitled window",
                 minimized: axBool(element, kAXMinimizedAttribute),
+                frame: axFrame(element),
                 element: element)
         }
     }
 
-    /// Click a preview row: un-minimize if needed, raise the window,
+    /// Click a preview card: un-minimize if needed, raise the window,
     /// make it main, and bring the app forward.
     static func raise(_ window: DockPreviewWindow, app: NSRunningApplication?) {
         if let element = window.element {
@@ -230,6 +276,25 @@ enum AppleDockReader {
             AXUIElementSetAttributeValue(element, kAXMainAttribute as CFString, true as CFTypeRef)
         }
         app?.activate(options: [.activateAllWindows])
+    }
+
+    /// The card's ×: press the window's close button. Returns false
+    /// when the window offers none.
+    @discardableResult
+    static func close(_ window: DockPreviewWindow) -> Bool {
+        guard let element = window.element else { return false }
+        var value: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXCloseButtonAttribute as CFString, &value) == .success,
+              let button = value else { return false }
+        return AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success
+    }
+
+    /// The card's –: minimize, or bring back a minimized window.
+    @discardableResult
+    static func setMinimized(_ window: DockPreviewWindow, _ minimized: Bool) -> Bool {
+        guard let element = window.element else { return false }
+        return AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString,
+                                            minimized as CFTypeRef) == .success
     }
 
     // MARK: Primitives
@@ -281,15 +346,18 @@ enum AppleDockReader {
 
 // MARK: - Preview content
 
-/// One row in the preview panel: a title, an AX handle a click can
-/// raise, and an optional thumbnail filled in asynchronously.
+/// One card in the preview panel: a title, the window's frame (the
+/// thumbnail match key), an AX handle the verbs act on, and an
+/// optional thumbnail filled in asynchronously.
 struct DockPreviewWindow: Identifiable {
     let id: Int
     var title: String
     var minimized: Bool
+    /// The window's frame in Quartz coordinates, when AX reports one.
+    var frame: CGRect?
     var thumbnail: NSImage?
-    /// The AX window element — the raise target. AX handles only ever
-    /// touch the main actor here.
+    /// The AX window element — the raise/close/minimize target. AX
+    /// handles only ever touch the main actor here.
     let element: AXUIElement?
 }
 
@@ -305,6 +373,7 @@ final class DockPreviewContent {
     var processIdentifier: pid_t?
     var isRunning = false
     var windows: [DockPreviewWindow] = []
+    var largeCards = false
 }
 
 // MARK: - Controller
@@ -315,11 +384,13 @@ final class DockPreviewContent {
 /// previews … AX to hit-test the Dock, SCScreenshotManager one-shots
 /// per window, no stream so no purple indicator").
 ///
-/// The watch is a 20 Hz timer, not an event tap: a poll reads the
-/// pointer, hit-tests the Dock list (one AX call while the pointer is
-/// off the dock; per-item frames only while it's inside), and feeds
-/// `DockHoverTracker`. No Accessibility, no Dock, no hover — all fold
-/// into "nothing shown".
+/// The watch is a 20 Hz timer, not an event tap. Per tick it reads the
+/// pointer and compares it against a *cached* dock-list frame — the AX
+/// walk to the Dock process runs at most once a second while the
+/// pointer is away, and per-item hit-testing only while it is inside.
+/// The TCC probes (`AXIsProcessTrusted`, the Screen Recording
+/// preflight) are IPC round trips and are cached for
+/// `permissionTTL`, the same rule the Menu Bar utility follows.
 @MainActor
 @Observable
 final class DockEnhanceController {
@@ -328,12 +399,17 @@ final class DockEnhanceController {
     let preview = DockPreviewContent()
 
     private(set) var running = false
-    /// Re-polled every tick and by the card's appear, so the chip and
-    /// the permission row can never sit stale.
-    private(set) var accessibilityTrusted = AXIsProcessTrusted()
-    private(set) var screenCaptureGranted = CGPreflightScreenCaptureAccess()
+    /// Cached TCC answers; `refreshPermissions()` re-reads when stale.
+    private(set) var accessibilityTrusted = false
+    private(set) var screenCaptureGranted = false
+    @ObservationIgnored private var permissionsCheckedAt = Date.distantPast
+    /// The minimum gap between TCC polls.
+    nonisolated static let permissionTTL: TimeInterval = 3
 
     static let pollInterval: TimeInterval = 0.05
+    /// How long a dock-list frame stays trusted while the pointer is
+    /// away from it.
+    nonisolated static let listFrameTTL: TimeInterval = 1.0
     /// Air between the dock and the preview panel.
     static let panelGap: CGFloat = 10
     /// The dock list's frame, inflated toward the screen so a
@@ -343,11 +419,14 @@ final class DockEnhanceController {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var tracker = DockHoverTracker()
     @ObservationIgnored private var panel: DockPreviewPanel?
-    /// Esc closes the preview even though it can't take key status.
+    /// Esc and a click anywhere else close the preview even though it
+    /// can't take key status.
     @ObservationIgnored private let watchers = DockPanelWatchers()
     /// Bumped per show so a slow thumbnail batch can't land on a
     /// preview that has since retargeted.
     @ObservationIgnored private var generation = 0
+    /// The dock list element and its AX frame, with the time read.
+    @ObservationIgnored private var cachedList: (element: AXUIElement, frame: CGRect, at: TimeInterval)?
 
     /// Default-argument expressions are evaluated in the caller's
     /// (nonisolated) context under Swift 6, so the main-actor
@@ -358,6 +437,14 @@ final class DockEnhanceController {
         watchers.onEscape = { [weak self] in
             self?.tracker.reset()
             self?.hidePreview()
+        }
+        watchers.onOutside = { [weak self] in
+            self?.tracker.reset()
+            self?.hidePreview()
+        }
+        watchers.isInside = { [weak self] in
+            guard let self, let panel, panel.isVisible else { return true }
+            return panel.frame.insetBy(dx: -4, dy: -4).contains(NSEvent.mouseLocation)
         }
     }
 
@@ -370,6 +457,7 @@ final class DockEnhanceController {
     func start() {
         guard !running else { return }
         running = true
+        refreshPermissions(force: true)
         timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -381,12 +469,15 @@ final class DockEnhanceController {
         timer?.invalidate()
         timer = nil
         tracker.reset()
+        cachedList = nil
         hidePreview()
     }
 
-    /// The card's appear hook — permissions are live reads, this just
-    /// refreshes the cached values the chip and rows display.
-    func refreshPermissions() {
+    /// The card's appear hook and the tick's gate: re-read TCC only
+    /// when the cache is stale (or `force`).
+    func refreshPermissions(force: Bool = false) {
+        guard force || Date().timeIntervalSince(permissionsCheckedAt) > Self.permissionTTL else { return }
+        permissionsCheckedAt = Date()
         accessibilityTrusted = AXIsProcessTrusted()
         screenCaptureGranted = CGPreflightScreenCaptureAccess()
     }
@@ -400,15 +491,13 @@ final class DockEnhanceController {
             if tracker.shown != nil { tracker.reset(); hidePreview() }
             return
         }
+        let axPoint = DockEnhanceMath.axPoint(
+            NSEvent.mouseLocation, mainScreenHeight: Self.mainScreenHeight())
         var hovered: DockAXItem?
-        if let pid = AppleDockReader.dockPID(),
-           let list = AppleDockReader.dockList(pid: pid),
-           let listFrame = AppleDockReader.frame(of: list) {
-            let axPoint = DockEnhanceMath.axPoint(
-                NSEvent.mouseLocation, mainScreenHeight: Self.mainScreenHeight())
-            let reach = listFrame.insetBy(dx: -Self.listSlop.width, dy: -Self.listSlop.height)
+        if let list = dockList(near: axPoint) {
+            let reach = list.frame.insetBy(dx: -Self.listSlop.width, dy: -Self.listSlop.height)
             if reach.contains(axPoint) {
-                hovered = AppleDockReader.item(list: list, at: axPoint)
+                hovered = AppleDockReader.item(list: list.element, at: axPoint)
                 // The inflated read can hit an icon a magnification
                 // grew past its frame — only the item's own frame wins.
                 if let item = hovered, !item.frame.contains(axPoint) { hovered = nil }
@@ -424,6 +513,28 @@ final class DockEnhanceController {
         case .none:
             break
         }
+    }
+
+    /// The dock list, re-read from AX when the cache is stale or the
+    /// pointer is inside the last known frame (a magnified or moved
+    /// Dock reflows its list, and only a live read follows it).
+    private func dockList(near point: CGPoint) -> (element: AXUIElement, frame: CGRect)? {
+        let now = CACurrentMediaTime()
+        if let cached = cachedList {
+            let inside = cached.frame.insetBy(dx: -Self.listSlop.width, dy: -Self.listSlop.height)
+                .contains(point)
+            if !inside, now - cached.at < Self.listFrameTTL {
+                return (cached.element, cached.frame)
+            }
+        }
+        guard let pid = AppleDockReader.dockPID(),
+              let list = AppleDockReader.dockList(pid: pid),
+              let frame = AppleDockReader.frame(of: list) else {
+            cachedList = nil
+            return nil
+        }
+        cachedList = (list, frame, now)
+        return (list, frame)
     }
 
     private func pointerInPanel() -> Bool {
@@ -442,6 +553,7 @@ final class DockEnhanceController {
     private func showPreview(for item: DockAXItem) {
         generation += 1
         let generationAtShow = generation
+        preview.largeCards = preferences.largePreviews
         fill(preview, for: item)
 
         let mainHeight = Self.mainScreenHeight()
@@ -449,7 +561,9 @@ final class DockEnhanceController {
         let screen = NSScreen.screens.first { $0.frame.contains(itemFrame.origin) }
             ?? NSScreen.main ?? NSScreen.screens.first
         let screenFrame = screen?.frame ?? .zero
-        let listFrame = dockListAppKitFrame(mainHeight: mainHeight) ?? itemFrame
+        let listFrame = cachedList.map {
+            DockEnhanceMath.appKitRect($0.frame, mainScreenHeight: mainHeight)
+        } ?? itemFrame
         let edge = DockEnhanceMath.dockEdge(listFrame: listFrame, screen: screenFrame)
 
         let panel = ensurePanel()
@@ -457,24 +571,19 @@ final class DockEnhanceController {
         panel.present(frame: DockEnhanceMath.panelFrame(
             anchor: itemFrame, edge: edge, size: size,
             screen: screenFrame, gap: Self.panelGap), dockedAt: edge)
-        watchers.start(escape: true)
+        watchers.start(escape: true, clickAway: true)
 
         if preferences.showThumbnails, screenCaptureGranted, let pid = preview.processIdentifier {
             let bundleID = preview.bundleID
+            let offscreen = preferences.includeOffscreenWindows
             Task { @MainActor [weak self] in
-                await self?.attachThumbnails(
-                    bundleID: bundleID, pid: pid, generation: generationAtShow)
+                guard let self else { return }
+                await DockThumbnailer.attach(
+                    to: preview, bundleID: bundleID, pid: pid,
+                    includeOffscreen: offscreen,
+                    isStale: { [weak self] in self?.generation != generationAtShow })
             }
         }
-    }
-
-    /// Reads the dock list's frame again for edge detection — one AX
-    /// call, only on a show.
-    private func dockListAppKitFrame(mainHeight: CGFloat) -> CGRect? {
-        guard let pid = AppleDockReader.dockPID(),
-              let list = AppleDockReader.dockList(pid: pid),
-              let axFrame = AppleDockReader.frame(of: list) else { return nil }
-        return DockEnhanceMath.appKitRect(axFrame, mainScreenHeight: mainHeight)
     }
 
     private func hidePreview() {
@@ -487,7 +596,11 @@ final class DockEnhanceController {
         if let panel { return panel }
         let panel = DockPreviewPanel(content: preview)
         panel.actions.onPick = { [weak self] window in self?.pick(window) }
+        panel.actions.onClose = { [weak self] window in self?.close(window) }
+        panel.actions.onMinimize = { [weak self] window in self?.toggleMinimized(window) }
         panel.actions.onOpenApp = { [weak self] in self?.openApp() }
+        panel.actions.onQuitApp = { [weak self] in self?.quitApp() }
+        panel.actions.onHideApp = { [weak self] in self?.hideApp() }
         self.panel = panel
         return panel
     }
@@ -513,21 +626,35 @@ final class DockEnhanceController {
         content.windows = running.map { AppleDockReader.windows(pid: $0.processIdentifier) } ?? []
     }
 
-    /// One-shot `SCScreenshotManager` captures matched to AX rows by
-    /// title — `DockThumbnailer` does the Retina-scaled capturing;
-    /// `generation` keeps a retarget or hide from landing stale rows.
-    private func attachThumbnails(bundleID: String?, pid: pid_t, generation: Int) async {
-        await DockThumbnailer.attach(
-            to: preview, bundleID: bundleID, pid: pid,
-            isStale: { [weak self] in self?.generation != generation })
-    }
+    // MARK: Verbs
 
-    /// A window row's click — raise it and bring the app forward.
+    /// A window card's click — raise it and bring the app forward.
     private func pick(_ window: DockPreviewWindow) {
         let app = preview.processIdentifier.flatMap { NSRunningApplication(processIdentifier: $0) }
         AppleDockReader.raise(window, app: app)
         tracker.reset()
         hidePreview()
+    }
+
+    /// The card's ×: close the window and drop its card; the panel
+    /// stays so a person can close several in a row.
+    private func close(_ window: DockPreviewWindow) {
+        guard AppleDockReader.close(window) else { return }
+        preview.windows.removeAll { $0.id == window.id }
+        if preview.windows.isEmpty {
+            tracker.reset()
+            hidePreview()
+        } else {
+            reframe()
+        }
+    }
+
+    /// The card's –: minimize, or bring a minimized window back.
+    private func toggleMinimized(_ window: DockPreviewWindow) {
+        let target = !window.minimized
+        guard AppleDockReader.setMinimized(window, target),
+              let index = preview.windows.firstIndex(where: { $0.id == window.id }) else { return }
+        preview.windows[index].minimized = target
     }
 
     /// The header's "Open" for a pinned app that isn't running.
@@ -538,5 +665,34 @@ final class DockEnhanceController {
         }
         tracker.reset()
         hidePreview()
+    }
+
+    /// The header's "Quit" — a plain terminate, never forced.
+    private func quitApp() {
+        preview.processIdentifier
+            .flatMap { NSRunningApplication(processIdentifier: $0) }?
+            .terminate()
+        tracker.reset()
+        hidePreview()
+    }
+
+    /// The header's "Hide" — the app's own ⌘H.
+    private func hideApp() {
+        preview.processIdentifier
+            .flatMap { NSRunningApplication(processIdentifier: $0) }?
+            .hide()
+        tracker.reset()
+        hidePreview()
+    }
+
+    /// The panel's content changed size (a card left): re-fit at the
+    /// same anchor edge.
+    private func reframe() {
+        guard let panel, panel.isVisible else { return }
+        let size = panel.fittingSize()
+        var frame = panel.frame
+        frame.origin.x += (frame.width - size.width) / 2
+        frame.size = size
+        panel.setFrame(frame, display: true)
     }
 }

@@ -31,7 +31,7 @@ extension AppleDockDefaults {
 /// `com.apple.dock` via a `UserDefaults` suite — reads and writes go
 /// through cfprefsd, never the plist file.
 struct UserDefaultsAppleDockDefaults: AppleDockDefaults {
-    private let defaults = UserDefaults(suiteName: AppleDockPins.suiteName)
+    private let defaults = UserDefaults(suiteName: AppleDockControl.suiteName)
     func boolValue(forKey key: String) -> Bool? { defaults?.object(forKey: key) as? Bool }
     func setBool(_ value: Bool, forKey key: String) { defaults?.set(value, forKey: key) }
     func doubleValue(forKey key: String) -> Double? { defaults?.object(forKey: key) as? Double }
@@ -48,10 +48,10 @@ enum AppleDockSavedDelay: Equatable, Sendable {
     case value(Double)
 }
 
-/// Hide Apple's own Dock while the Replace bar is up — the
-/// save-and-restore pattern (docs/TOY-PARITY.md: "Save + restore
-/// `autohide`… 'Restore Apple's Dock' button"; the same shape the Menu
-/// Bar's Status item uses for `com.apple.controlcenter`).
+/// The save-and-restore control over Apple's Dock's `autohide` that
+/// the Replace bar used. The bar is gone; `restore()` stays so a Mac
+/// the bar left with Apple's Dock hidden gets it back, and the hide
+/// path is kept only because the tests pin the restore against it.
 ///
 /// All mutation funnels through `setAppleDockHidden(_:)` and
 /// `restore()` — nothing else writes `com.apple.dock`, and every write
@@ -63,6 +63,8 @@ enum AppleDockSavedDelay: Equatable, Sendable {
 /// Reads happen on whatever caller provides; every transition is
 /// logged through `onLog` so the caller can surface it.
 final class AppleDockControl {
+    /// Apple's Dock preferences domain.
+    static let suiteName = "com.apple.dock"
     static let autohideKey = "autohide"
     static let autohideDelayKey = "autohide-delay"
     /// The reveal delay we write on hide — long enough that a pointer

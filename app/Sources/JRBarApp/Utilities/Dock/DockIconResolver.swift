@@ -1,6 +1,7 @@
 import AppKit
 
-/// Where a tile's image comes from and how it lands on the glass.
+/// Where a preview's app icon comes from and how it lands on the
+/// glass.
 ///
 /// The old path — `NSWorkspace.icon(forFile:)` on whatever `bundleURL`
 /// carried — produced the generic white-page icon for apps Launch
@@ -16,22 +17,6 @@ enum DockIconResolver {
     /// `(bundleID, render size, scale)` → finished image. App icons
     /// change on app update, not mid-session; a stale hour is fine.
     private static let cache = NSCache<NSString, NSImage>()
-
-    /// The finished tile image: `pointSize`×`pointSize` *points* whose
-    /// bitmap is `pointSize × scale` *pixels*. Always returns an image
-    /// — the dashed placeholder is the last resort, never a blank.
-    static func icon(for item: DockItem, pointSize: CGFloat, scale: CGFloat) -> NSImage {
-        let key = "\(item.bundleID)|\(Int(pointSize))|\(Int(scale))|\(item.trashIsEmpty)" as NSString
-        if let cached = cache.object(forKey: key) { return cached }
-        let image: NSImage
-        if let source = sourceImage(for: item) {
-            image = rasterized(source, pointSize: pointSize, scale: scale)
-        } else {
-            image = placeholder(for: item, pointSize: pointSize)
-        }
-        cache.setObject(image, forKey: key)
-        return image
-    }
 
     /// A file or folder's icon — the workspace read, rasterized and
     /// cached like an app icon so folder-stack cells and tray tiles
@@ -55,29 +40,6 @@ enum DockIconResolver {
         let image = rasterized(source, pointSize: pointSize, scale: scale)
         cache.setObject(image, forKey: key)
         return image
-    }
-
-    /// First real icon the item can produce, highest fidelity first:
-    /// the running app's icon (what Apple's Dock actually shows),
-    /// the bundle's declared icon, then the workspace's read — which
-    /// is last because it happily returns the generic white page.
-    static func sourceImage(for item: DockItem) -> NSImage? {
-        if item.isTrash {
-            // NSWorkspace special-cases ~/.Trash with the real can.
-            return NSWorkspace.shared.icon(forFile: DockModel.trashURL.path)
-        }
-        if item.isFolder || item.isTrayItem {
-            // The folder glyph / the document's own icon.
-            return item.bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) }
-        }
-        if let pid = item.processIdentifier,
-           let icon = NSRunningApplication(processIdentifier: pid)?.icon {
-            return icon
-        }
-        if let url = item.bundleURL {
-            return bundleIcon(for: url) ?? NSWorkspace.shared.icon(forFile: url.path)
-        }
-        return nil
     }
 
     /// The icon the bundle itself declares — `CFBundleIconFile` /
@@ -126,14 +88,5 @@ enum DockIconResolver {
         let image = NSImage(size: points)
         image.addRepresentation(rep)
         return image
-    }
-
-    /// The last resort: a recognisable symbol at the right size —
-    /// better than the workspace's blank white page.
-    private static func placeholder(for item: DockItem, pointSize: CGFloat) -> NSImage {
-        let image = NSImage(systemSymbolName: item.isTrash ? "trash" : "app.dashed",
-                            accessibilityDescription: item.name)
-        image?.size = NSSize(width: pointSize, height: pointSize)
-        return image ?? NSImage(size: NSSize(width: pointSize, height: pointSize))
     }
 }

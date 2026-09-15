@@ -5,9 +5,10 @@ import Testing
 @testable import JRBarCore
 
 /// Enhance mode's pure machinery (the hover debounce, the AX↔AppKit
-/// geometry), the Trash tile's model behaviour, the separator math —
-/// plus `AppleDockControl`'s new `autohide-delay` save/restore and its
-/// crash-safe persistence.
+/// geometry, the thumbnail match), the icon rasterizer, and
+/// `AppleDockControl`'s `autohide-delay` save/restore with its
+/// crash-safe persistence — kept because a Mac the old Replace bar
+/// left hidden must still get Apple's Dock back.
 @MainActor
 @Suite struct DockEnhanceTests {
 
@@ -196,29 +197,6 @@ import Testing
 
     // MARK: Replace-mode hide policy
 
-    @Test func replacePinsTheDelayEvenWhenAutohideWasAlreadyOn() {
-        // The reported bug: the user's OWN dock already auto-hides, so
-        // the old early-return never pinned `autohide-delay` — one
-        // hover at the edge and Apple's Dock covered our bar.
-        let defaults = FakeDefaults()
-        defaults.bools["autohide"] = true
-        defaults.doubles["autohide-delay"] = 0.0
-        let control = AppleDockControl(defaults: defaults,
-                                       persistence: freshPersistence("replacePins"))
-        var restarts = 0
-        control.restartDock = { restarts += 1 }
-        let utility = DockUtility(appleDock: control)
-
-        utility.hideAppleDockForReplace()
-
-        #expect(defaults.bools["autohide"] == true)
-        #expect(defaults.doubles["autohide-delay"] == AppleDockControl.hiddenDelay,
-                "the reveal delay is pinned even when autohide was already on")
-        #expect(control.savedAutohide == true,
-                "the user's own `true` is what restore hands back")
-        #expect(restarts == 1, "the delay changed — one bounce, not zero, not two")
-    }
-
     @Test func anAlreadyPinnedDockIsNotRestartedAgain() {
         let defaults = FakeDefaults()
         defaults.bools["autohide"] = true
@@ -284,136 +262,6 @@ import Testing
                 "restore means THEIR values, not our pin")
     }
 
-    // MARK: Separators
-
-    private func item(_ id: String, pinned: Bool = false, trash: Bool = false) -> DockItem {
-        DockItem(bundleID: id, name: id, bundleURL: nil,
-                 isRunning: !pinned, isPinned: pinned, processIdentifier: nil,
-                 isTrash: trash)
-    }
-
-    @Test func separatorsSplitPinsRunningAndTrash() {
-        let items = [item("p1", pinned: true), item("p2", pinned: true),
-                     item("r1"), item("t", trash: true)]
-        #expect(DockView.separatorIndices(for: items) == [2, 3],
-                "one where pins end, one before the Trash")
-        #expect(DockView.separatorIndices(for: [item("p", pinned: true),
-                                                item("t", trash: true)]) == [1])
-        #expect(DockView.separatorIndices(for: [item("a"), item("b")]).isEmpty,
-                "a flat running row draws none")
-    }
-
-    @Test func separatorsCountIntoTheRowLength() {
-        let noSep = DockBarMetrics.rowLength(iconSize: 10, spacing: 2, padding: 4,
-                                             scales: [1, 1, 1])
-        let withSep = DockBarMetrics.rowLength(iconSize: 10, spacing: 2, padding: 4,
-                                               scales: [1, 1, 1],
-                                               separators: 1, separatorWidth: 8)
-        #expect(noSep == 30 + 4 + 8)
-        #expect(withSep == 30 + 6 + 8 + 8,
-                "a separator is a row child: its width plus one more gap")
-    }
-
-    @Test func aSeparatorShiftsTheWaveCentreMap() {
-        // A separator before index 1 costs its width plus the gaps
-        // around it; the icon past it centres that much later or the
-        // wave lifts the wrong tile.
-        let magnifier = DockMagnifier()
-        magnifier.iconSize = 10
-        magnifier.spacing = 2
-        magnifier.itemIDs = ["a", "b", "c"]
-        let plain = magnifier.currentCenters()
-        magnifier.extraBefore = ["b": Double(DockView.separatorWidth + DockView.spacing)]
-        let shifted = magnifier.currentCenters()
-        let cost = Double(DockView.separatorWidth + DockView.spacing)
-        #expect(shifted[0] == plain[0], "before the divider nothing moves")
-        #expect(shifted[1] - plain[1] == cost)
-        #expect(shifted[2] - plain[2] == cost,
-                "everything past the divider shifts by the same amount")
-    }
-
-    @Test func aFloatingBarClampsInsideTheScreen() {
-        let screen = NSRect(x: 0, y: 0, width: 800, height: 600)
-        let wide = DockBarMetrics.frame(edge: .bottom, style: .floating,
-                                        size: NSSize(width: 4000, height: 80),
-                                        on: screen, margin: 6)
-        #expect(wide.width == 788, "a crowded bar can't hang off the display")
-        #expect(wide.midX == 400, "clamped but still centred")
-        let tall = DockBarMetrics.frame(edge: .left, style: .floating,
-                                        size: NSSize(width: 80, height: 4000),
-                                        on: screen, margin: 6)
-        #expect(tall.height == 588)
-        #expect(tall.midY == 300)
-    }
-
-    @Test func autoHideIsOnForNewInstalls() throws {
-        #expect(DockAutoHide().enabled)
-        #expect(DockSettings().autoHide.enabled)
-        let missing = try JSONDecoder().decode(
-            DockSettings.self, from: Data(#"{"autoHide": {}}"#.utf8))
-        #expect(missing.autoHide.enabled,
-                "a missing key reads as the new default, not off")
-        let kept = try JSONDecoder().decode(
-            DockSettings.self, from: Data(#"{"autoHide": {"enabled": false}}"#.utf8))
-        #expect(!kept.autoHide.enabled,
-                "a persisted false is the user's choice — it stays")
-    }
-
-    // MARK: The Trash tile
-
-    @Test func theTrashRidesAtTheEnd() {
-        let model = DockModel()
-        model.settings = { DockSettings(seededFromAppleDock: true) }
-        model.runningApplications = { [] }
-        model.trashContents = { ["file.txt"] }
-        model.start()
-        #expect(model.items.count == 1)
-        #expect(model.items[0].isTrash)
-        #expect(model.items[0].trashIsEmpty == false)
-        #expect(model.items[0].isPinned == false)
-        model.stop()
-    }
-
-    @Test func clickingTheTrashOpensIt() {
-        let model = DockModel()
-        var opened: [URL] = []
-        model.openURL = { opened.append($0) }
-        model.activate(DockItem(bundleID: DockModel.trashBundleID, name: "Trash",
-                                bundleURL: DockModel.trashURL, isRunning: false,
-                                isPinned: false, processIdentifier: nil, isTrash: true))
-        #expect(opened == [DockModel.trashURL])
-    }
-
-    @Test func emptyTrashConfirmsThenDeletes() {
-        let model = DockModel()
-        model.settings = { DockSettings(seededFromAppleDock: true) }
-        model.runningApplications = { [] }
-        model.trashContents = { ["a.txt", "b.txt"] }
-        model.confirmEmptyTrash = { true }
-        var removed: [String] = []
-        model.trashRemover = { removed.append($0) }
-        model.emptyTrash()
-        #expect(removed.count == 2)
-        #expect(removed.allSatisfy { $0.hasPrefix(DockModel.trashURL.path) })
-
-        model.confirmEmptyTrash = { false }
-        removed = []
-        model.emptyTrash()
-        #expect(removed.isEmpty, "a cancelled confirm deletes nothing")
-        model.stop()
-    }
-
-    @Test func theTrashCantBePinned() {
-        let model = DockModel()
-        var persisted: [[String]] = []
-        model.onPinsChanged = { persisted.append($0) }
-        model.togglePin(DockItem(bundleID: DockModel.trashBundleID, name: "Trash",
-                                 bundleURL: nil, isRunning: false, isPinned: false,
-                                 processIdentifier: nil, isTrash: true))
-        #expect(model.pinnedIDs.isEmpty)
-        #expect(persisted.isEmpty)
-    }
-
     // MARK: Icon resolution
 
     private func solidImage(pixels: Int) -> NSImage {
@@ -441,16 +289,6 @@ import Testing
                                                 pointSize: 56, scale: 2)
         #expect(image.representations.map(\.pixelsWide).max() == 32,
                 "a 32 px icon stays a 32 px asset — no smear")
-    }
-
-    @Test func anUnresolvedPinStillDraws() {
-        let image = DockIconResolver.icon(
-            for: DockItem(bundleID: "com.ghost.app", name: "Ghost",
-                          bundleURL: nil, isRunning: false, isPinned: true,
-                          processIdentifier: nil),
-            pointSize: 56, scale: 2)
-        #expect(image.size == NSSize(width: 56, height: 56),
-                "the placeholder beats the workspace's blank white page")
     }
 
     // MARK: Enhance preferences
@@ -502,5 +340,56 @@ import Testing
         utility.onSettingsChange = { stored = $0; writes += 1 }
         utility.applySettings()
         #expect(writes == 0, "no legacy keys, no write")
+    }
+
+    // MARK: Thumbnail matching
+
+    @Test func thumbnailsMatchByFrameFirstThenTitle() {
+        let rows: [(frame: CGRect?, title: String)] = [
+            (CGRect(x: 100, y: 100, width: 800, height: 600), "Untitled window"),
+            (CGRect(x: 100, y: 100, width: 800, height: 600), "Untitled window"),
+            (nil, "Notes — Groceries"),
+        ]
+        // An exact frame wins the first matching row.
+        #expect(DockEnhanceMath.matchRow(
+            scFrame: CGRect(x: 101, y: 99, width: 800, height: 601), scTitle: nil, rows: rows) == 0)
+        // No frame match → title.
+        #expect(DockEnhanceMath.matchRow(
+            scFrame: CGRect(x: 0, y: 0, width: 300, height: 300),
+            scTitle: "Notes — Groceries", rows: rows) == 2)
+        // Neither → nothing, never a guess.
+        #expect(DockEnhanceMath.matchRow(
+            scFrame: CGRect(x: 0, y: 0, width: 300, height: 300), scTitle: "", rows: rows) == nil)
+    }
+
+    @Test func cardSizesAreSixteenByTen() {
+        let small = DockEnhanceMath.cardSize(large: false)
+        let large = DockEnhanceMath.cardSize(large: true)
+        #expect(small.width / small.height == 1.6)
+        #expect(large.width / large.height == 1.6)
+        #expect(large.width > small.width)
+    }
+
+    @Test func hoverIdentityPrefersTheTileURL() {
+        let element = AXUIElementCreateSystemWide()
+        let byURL = DockAXItem(element: element, frame: CGRect(x: 10, y: 0, width: 50, height: 50),
+                               title: "Safari", url: URL(fileURLWithPath: "/Applications/Safari.app"))
+        let byTitle = DockAXItem(element: element, frame: CGRect(x: 10, y: 0, width: 50, height: 50),
+                                 title: "Safari", url: nil)
+        let bySlot = DockAXItem(element: element, frame: CGRect(x: 10, y: 0, width: 50, height: 50),
+                                title: nil, url: nil)
+        #expect(byURL.hoverID == "/Applications/Safari.app")
+        #expect(byTitle.hoverID == "Safari")
+        #expect(bySlot.hoverID == "dock-item@10")
+    }
+
+    @Test func permissionsAreCachedNotPolled() {
+        let controller = DockEnhanceController()
+        controller.refreshPermissions(force: true)
+        let first = controller.accessibilityTrusted
+        controller.refreshPermissions()
+        #expect(controller.accessibilityTrusted == first)
+        #expect(DockEnhanceController.permissionTTL >= 1,
+                "a TCC probe is an IPC round trip; the tick must not pay it 20× a second")
     }
 }
