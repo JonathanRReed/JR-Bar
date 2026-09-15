@@ -19,8 +19,6 @@ elsewhere in this project.
 
 from __future__ import annotations
 
-import pytest
-
 from jrbar.colors import (
     PROVIDER_BRAND_COLORS,
     STATE_SEED_COLORS,

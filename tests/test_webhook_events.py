@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import unittest
 
-from jrbar.activity_ledger import ActivityEntry, ActivityKind
-
 from test_jrbar import isolate_controller
+
+from jrbar.activity_ledger import ActivityEntry, ActivityKind
 
 
 def _entry(kind: ActivityKind, **overrides) -> ActivityEntry:

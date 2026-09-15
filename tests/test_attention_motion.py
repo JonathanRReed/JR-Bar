@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-
 from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow, SignalKind, TransientSignal
 from jrbar.colors import (
     BLEND_MODE_CLASSIC,

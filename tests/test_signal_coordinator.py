@@ -4,8 +4,6 @@ import math
 from dataclasses import replace
 from datetime import datetime, timezone
 
-import pytest
-
 from jrbar.attention import (
     AttentionProjection,
     LifecycleMode,

@@ -24,8 +24,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from jrbar import colors as colors_module
 from jrbar.colors import (
     PROVIDER_BRAND_COLORS,

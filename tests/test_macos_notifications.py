@@ -5,8 +5,6 @@ import time
 from dataclasses import dataclass
 from types import SimpleNamespace
 
-import pytest
-
 import jrbar.macos_notifications as notifications
 from jrbar.macos_notifications import (
     MacOSNotificationClient,

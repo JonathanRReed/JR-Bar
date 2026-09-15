@@ -8,8 +8,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from jrbar.install import install_gemini_hooks, uninstall_gemini_hooks
 from jrbar.models import AgentMode
 from jrbar.providers import (

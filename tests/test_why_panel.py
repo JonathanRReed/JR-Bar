@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from jrbar.why_panel import set_text_preserving_position
 
 

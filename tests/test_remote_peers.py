@@ -382,7 +382,8 @@ def test_discovery_never_reads_tailscale_stderr__and_1_more(monkeypatch) -> None
 
     # --- scenario: discovery_output_is_size_capped
     monkeypatch.undo()
-    class Completed:
+
+    class Completed:  # noqa: F811
         returncode = 0
         stdout = "x" * (remote_peers.MAX_DISCOVERY_BYTES + 1)
         stderr = ""

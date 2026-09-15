@@ -354,8 +354,8 @@ def test_commands_run_on_the_main_thread_and_unknown_ones_are_refused__and_2_mor
     # --- scenario: snooze_all_still_targets_the_ask_statuses
     """The positive path is unchanged: ``seconds > 0`` mutes what is
     actually asking, not every session on the board."""
-    from jrbar.provider_facts import WorkIdentifier, WorkKey
     from jrbar.capacity_types import SourceKey
+    from jrbar.provider_facts import WorkIdentifier, WorkKey
 
     controller = headless
     controller.current_operator_state = SimpleNamespace(generation=0, works=())
@@ -2832,6 +2832,7 @@ def test_every_hid_probe_runs_on_the_same_thread(headless, monkeypatch: pytest.M
 def _live_ask_state():
     """One canonical work holding one live ask, reduced through the real
     reducer so the generation and request phase are honest."""
+    from jrbar.capacity_types import SourceKey
     from jrbar.operator_state import (
         BootIdentifier,
         ClockSample,
@@ -2857,7 +2858,6 @@ def _live_ask_state():
         WorkKey,
         WorkLifecycle,
     )
-    from jrbar.capacity_types import SourceKey
 
     source = SourceKey("codex", "hooks", "local:01", "live_agent_events")
     work_key = WorkKey(source, WorkIdentifier("work:01"))

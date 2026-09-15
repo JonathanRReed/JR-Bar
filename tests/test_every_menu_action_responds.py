@@ -14,7 +14,6 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
 from test_jrbar import isolate_controller
 
 from jrbar.capacity_types import SourceKey

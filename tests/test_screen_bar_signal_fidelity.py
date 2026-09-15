@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 from AppKit import NSApplication, NSBitmapImageRep, NSImage
 
 from jrbar import screen_bar_runtime, virtual_device

@@ -203,7 +203,7 @@ def test_every_deck_command_is_registered() -> None:
     assert DECK_COMMANDS <= set(command_names())
 
 
-def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one__and_1_more(headless) -> None:
+def test_state_carries_the_deck_with_no_pad_and_with_an_unapproved_one__and_1_more(headless) -> None:  # noqa: F811
     # --- scenario: state_carries_the_deck_with_no_pad_and_with_an_unapproved_one
     controller = headless
     controller.applicationDidFinishLaunching_(None)
@@ -357,7 +357,7 @@ def test_deck_press_reveals_answers_or_refuses(headless, monkeypatch: pytest.Mon
     assert (reserved.value.code, reserved.value.message) == ("not_found", "Reserved: session not observed.")
 
 
-def test_physical_inputs_become_events_and_state__and_1_more(headless) -> None:
+def test_physical_inputs_become_events_and_state__and_1_more(headless) -> None:  # noqa: F811
     # --- scenario: physical_inputs_become_events_and_state
     from jrbar.deck_control_settings import DeckControlSettings
     from jrbar.deck_input import ControlInput

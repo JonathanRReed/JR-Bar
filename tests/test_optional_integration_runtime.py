@@ -4,8 +4,6 @@ import threading
 import time
 from types import SimpleNamespace
 
-import pytest
-
 from jrbar.models import AgentMode
 from jrbar.optional_integration_runtime import (
     CreatorMicroOutputService,

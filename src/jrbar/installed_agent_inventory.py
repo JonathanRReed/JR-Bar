@@ -10,10 +10,11 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Final
+from typing import Final
 
 from .installed_agents import (
     InstalledSurfaceEvidence,

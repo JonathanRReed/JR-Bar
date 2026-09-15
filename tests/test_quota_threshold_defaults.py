@@ -8,8 +8,6 @@ of user input, and the burst budget.
 
 from __future__ import annotations
 
-import pytest
-
 from jrbar.signals import (
     DEFAULT_ALERT_BURST,
     DEFAULT_QUOTA_THRESHOLDS,

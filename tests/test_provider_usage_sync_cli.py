@@ -252,7 +252,7 @@ def test_status_json_is_specific_about_disabled_and_peer_count__and_2_more(tmp_p
     state = ProviderUsageState((snapshot,), 1000, 1100, False)
     captured = {}
 
-    class Service:
+    class Service:  # noqa: F811
         def __init__(self, runtime):
             self.runtime = runtime
 

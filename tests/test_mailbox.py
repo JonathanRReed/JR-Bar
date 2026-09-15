@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from jrbar.attention import (
     AttentionProjection,
     LifecycleMode,

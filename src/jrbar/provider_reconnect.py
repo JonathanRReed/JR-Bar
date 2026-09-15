@@ -1036,7 +1036,9 @@ def reconnect_provider(
                 )
                 return ResignInResult(provider_id, message)
             secret = result.secret
-            reader = lambda: secret
+
+            def reader() -> str:
+                return secret
         try:
             repair = repair_claude_credential(
                 store,

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-import pytest
-
 from jrbar.capacity_types import (
     CapacitySourceHealth,
     CapacityUnit,

@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import fields, replace
 from datetime import datetime, timezone
 
-import pytest
-
 from jrbar.attention import LifecycleMode
 from jrbar.capacity_types import SourceKey
 from jrbar.mailbox import (

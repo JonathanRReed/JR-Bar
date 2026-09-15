@@ -485,10 +485,10 @@ def test_a_waiting_agent_beats_while_a_working_one_chases__and_1_more() -> None:
     a Stop, and the strip painted the done color for two minutes after
     each one. The LIGHTS settle after COMPLETED_GLOW_SECONDS; rows,
     badge, and gauge keep the longer memory."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     from jrbar.collector import MonitorSnapshot, aggregate_status
-    from jrbar.models import AgentMode, AgentStatus
+    from jrbar.models import AgentMode
     from jrbar.operator_state import COMPLETED_GLOW_SECONDS
     from jrbar.status_bar_legacy import settled_completion_display_mode
 

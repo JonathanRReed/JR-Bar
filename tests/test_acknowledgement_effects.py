@@ -10,14 +10,15 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
+from test_jrbar import isolate_controller
+
 from jrbar.agent_browser_window import AgentBrowserActionPayload
+from jrbar.attention import AttentionProjection, LifecycleMode, ProjectedAgentRow
 from jrbar.capacity_types import SourceKey
 from jrbar.local_triage import LocalAcknowledgement, LocalTriageState
 from jrbar.models import AgentMode, AgentStatus
 from jrbar.navigation_policy import OperatorActionKind
 from jrbar.operator_state import (
-    AcknowledgementEligibility,
     BootIdentifier,
     ClockSample,
     RequestPhase,
@@ -43,8 +44,6 @@ from jrbar.provider_facts import (
     WorkKey,
     WorkLifecycle,
 )
-
-from test_jrbar import isolate_controller
 
 NOW = 1_800_000_000.0
 
@@ -233,7 +232,7 @@ class MonitorAcknowledgementTests(unittest.TestCase):
             acknowledged_requests_supplier=lambda: keys[0],
         )
         # Seed the monitor with the same facts the reducer produced.
-        work_fact_watermark = _watermark()
+        _watermark()
         monitor.operator_state = state
 
         self.assertEqual(

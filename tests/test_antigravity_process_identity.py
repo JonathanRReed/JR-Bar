@@ -3,8 +3,6 @@ from __future__ import annotations
 import os
 import subprocess
 
-import pytest
-
 from jrbar import antigravity_process_identity as identity
 
 

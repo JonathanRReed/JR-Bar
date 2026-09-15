@@ -4033,7 +4033,7 @@ for (const event of [
             candidates = discover_devices(mount_root=mount_root)
 
             self.assertEqual(len(candidates), 2)
-            pro = [c for c in candidates if c.root == device2][0]
+            pro = next(c for c in candidates if c.root == device2)
             self.assertEqual(pro.target, device2 / "LEDS.LED")
 
         # The volume label is the owner's to change; STATUS.TXT is the

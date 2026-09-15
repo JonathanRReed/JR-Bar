@@ -17,8 +17,6 @@ for EVERY provider, since the freeze was provider-independent.
 
 from __future__ import annotations
 
-import pytest
-
 from jrbar._settings_legacy import AgentMonitorSettings
 from jrbar.attention import project_attention_from_operator_state
 from jrbar.capacity_types import SourceKey

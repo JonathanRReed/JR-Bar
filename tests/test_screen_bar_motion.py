@@ -1972,7 +1972,6 @@ def test_a_full_screen_space_hides_the_bar_unless_opted_in__and_1_more() -> None
     show() fronted the window BEFORE reconciling, so every program
     reassert popped the bar back over the movie. The verdict now comes
     first; a hidden space never sees orderFrontRegardless from show()."""
-    from types import SimpleNamespace
     from unittest.mock import MagicMock
 
     from jrbar.virtual_device import VirtualStatusDevice

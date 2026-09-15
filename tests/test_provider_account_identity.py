@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from jrbar.provider_account_identity import project_provider_account_identity
 
 

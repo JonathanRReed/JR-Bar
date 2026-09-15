@@ -15,8 +15,8 @@ execution contract and is not this module's business.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
 
 # A title longer than this is a paragraph, not a label.
 MAX_TITLE_CHARS = 80

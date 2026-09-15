@@ -897,7 +897,7 @@ def test_a_granted_permission_still_follows_the_capsule__and_2_more(monkeypatch)
     device, module, _logged = _alcove_device(monkeypatch, granted=True)
     device.wraps_menu_bar = False
 
-    class Observer:
+    class Observer:  # noqa: F811
         last_status = AlcoveCaptureStatus.CAPTURED
 
         def __init__(self) -> None:

@@ -3,8 +3,6 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 
-import pytest
-
 from jrbar.announcer_stack import AnnouncerAlertIdentity
 from jrbar.answer_in_place import (
     AnswerActionKind,

@@ -108,7 +108,6 @@ def test_browser_sources_setting_alone_never_invokes_a_browser_reader__and_2_mor
     monkeypatch.undo()
     from jrbar import browser_session_import
     from jrbar import provider_usage_collectors as collectors
-    from jrbar.provider_browser_consent import LoadedBrowserConsents
 
     monkeypatch.setattr(
         "jrbar.provider_browser_consent.load_browser_consents",
