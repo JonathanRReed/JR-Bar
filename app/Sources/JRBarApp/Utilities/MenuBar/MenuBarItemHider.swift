@@ -505,7 +505,12 @@ final class MenuBarItemHider {
                                  caps: MenuBarSpacerCaps = MenuBarSpacerCaps(),
                                  protectedFrames: [CGRect] = []) -> MenuBarHidePlan {
         var plan = MenuBarHidePlan()
-        let sorted = items.sorted(by: { $0.bounds.minX < $1.bounds.minX })
+        // A stable order: two overflowed items macOS stacks on one
+        // position would otherwise trade places between listings and
+        // flap the plan.
+        let sorted = items.sorted {
+            $0.bounds.minX != $1.bounds.minX ? $0.bounds.minX < $1.bounds.minX : $0.id < $1.id
+        }
         let hiddenControl = controls.hidden.flatMap { $0.intersects(row) ? $0 : nil }
         // A control the chevron's spacer pushed off reports a frame
         // stacked inside the chevron's own — not a boundary, and not a
@@ -518,6 +523,18 @@ final class MenuBarItemHider {
         let ahBoundary = ahControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
         let overflowFrames = sorted.filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
             .map(\.bounds)
+        // Items macOS packed off the row report stacked on one spot —
+        // under the « when it is drawn, elsewhere when it is not. Two
+        // unprotected items sharing most of their width are never both
+        // on the row; both are parked.
+        let unprotected = sorted.filter { !MenuBarItemLister.isProtected($0) && $0.bounds.intersects(row) }
+        let stackedIDs: Set<String> = Set(unprotected.compactMap { item in
+            unprotected.contains { other in
+                other.id != item.id
+                    && other.bounds.intersection(item.bounds).width
+                        >= 0.5 * min(other.bounds.width, item.bounds.width)
+            } ? item.id : nil
+        })
 
         var hiddenToCover: [MenuBarItem] = []
         var ahToCover: [MenuBarItem] = []
@@ -529,6 +546,7 @@ final class MenuBarItemHider {
             }
             let onRow = item.bounds.intersects(row)
                 && !overflowFrames.contains { $0.intersection(item.bounds).width >= 4 }
+                && !stackedIDs.contains(item.id)
             guard onRow else {
                 parked.append(item)
                 continue

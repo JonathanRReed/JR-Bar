@@ -497,4 +497,22 @@ extension MenuBarSpacerTests {
                                               controls: wide, regionMin: nil)
         #expect(collapsed.hiddenControlLength == 39, "no region: the icon alone")
     }
+
+    @Test("two items stacked on one spot are both parked, and the order is stable across listings")
+    func stackedItemsArePark() {
+        let items = [item("A", x: 855), item("B", x: 855), item("Up", x: 1130)]
+        let plan = MenuBarItemHider.plan(items: items, sections: [:], row: row,
+                                         controls: MenuBarControlFrames(), regionMin: regionMin)
+        #expect(plan.hidden.map(\.id) == ["A", "B"])
+        #expect(plan.shown.map(\.id) == ["Up"])
+        let swapped = MenuBarItemHider.plan(items: items.reversed(), sections: [:], row: row,
+                                            controls: MenuBarControlFrames(), regionMin: regionMin)
+        #expect(swapped == plan, "listing order never changes the plan")
+        // Two items merely touching are not stacked.
+        let touching = [item("A", x: 855), item("B", x: 875)]
+        #expect(MenuBarItemHider.plan(items: touching, sections: [:], row: row,
+                                      controls: MenuBarControlFrames(), regionMin: regionMin)
+                .shown.map(\.id) == ["A", "B"])
+    }
 }
+
