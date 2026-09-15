@@ -283,15 +283,17 @@ struct MenuBarSpacerTests {
 }
 
 extension MenuBarSpacerTests {
-    @Test("the reseat lands the chevron just left of JR-Bar's item, calibrated off the chevron's own slot")
-    func reseatPositions() {
-        // The chevron seated at preferred 660 sits at x=926, so the bar's
-        // offset is 1586; the main item at 1038 wants the chevron's left
-        // edge at 1038 − 24 − 2 = 1012 → preferred 574.
-        let positions = MenuBarUtility.reseatPositions(mainItemMinX: 1038, chevronGlyphMinX: 926,
-                                                       chevronPreferred: 660)
-        #expect(positions.chevron == 574)
-        #expect(positions.alwaysHidden == 604)
+    @Test("the reseat aims just left of JR-Bar's item and nudges the key by the landing error")
+    func reseatMath() {
+        let target = MenuBarUtility.reseatTarget(mainItemMinX: 1087)
+        #expect(target == 1061)
+        let key = MenuBarUtility.reseatKey(screenMaxX: 1512, targetGlyphMinX: target)
+        #expect(key == 451)
+        // Landed 92 pt left of the target: a larger key sits further
+        // left, so the key shrinks by the error.
+        #expect(MenuBarUtility.reseatCorrection(key: 563, landedGlyphMinX: 969, targetGlyphMinX: 1061) == 471)
+        // Landed right of the target: the key grows.
+        #expect(MenuBarUtility.reseatCorrection(key: 451, landedGlyphMinX: 1100, targetGlyphMinX: 1061) == 490)
     }
 
     @Test("an always-hidden control stacked under the expanded chevron is pushed, not a boundary")
