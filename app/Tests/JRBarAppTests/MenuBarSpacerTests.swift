@@ -335,26 +335,54 @@ extension MenuBarSpacerTests {
     }
 
     @MainActor
-    @Test("an overflowed chevron lowers its cap a step at a time until it fits")
+    @Test("an overflowed chevron lowers its cap one step per fresh listing until it fits")
     func overflowLearnsCap() {
         var items: [MenuBarItem] = []
+        var generation = 0
         let hider = MenuBarItemHider()
         hider.listItems = { items }
         hider.rowRect = { self.row }
         hider.controlFrames = { self.controls }
         hider.regionMin = { self.regionMin }
+        hider.listingGeneration = { generation }
         hider.shuttersSuppressed = true
         hider.settings = { MenuBarSettings(enabled: true) }
         hider.reconcile()
         #expect(hider.assignedLengths[.hidden] == 76)
+        // A « on the glyph in a listing from before the write proves
+        // nothing — the bar has not reflowed yet.
         items = [item("«", owner: "MenuBarAgent", x: 940, w: 17, overflow: true)]
+        hider.reconcile()
+        #expect(hider.caps.hidden == .infinity, "stale frames never shrink the spacer")
+        generation += 1
         hider.reconcile()
         #expect(hider.caps.hidden == 76 - MenuBarItemHider.overflowStep)
         #expect(hider.assignedLengths[.hidden] == 68)
+        // The same listing again: one step per reflow, never three.
+        hider.reconcile()
+        #expect(hider.caps.hidden == 68)
         // The « moved left of the glyph: no further shrink.
+        generation += 1
         items = [item("«", owner: "MenuBarAgent", x: 860, w: 17, overflow: true)]
         hider.reconcile()
         #expect(hider.caps.hidden == 68)
+    }
+
+    @Test("a « standing left of the chevron is the region's real left edge")
+    func overflowEdgeIsTheRegion() {
+        let chevron = MenuBarControlFrames(hidden: CGRect(x: 926, y: 0, width: 24, height: 24))
+        let overflowLeft = item("«", owner: "MenuBarAgent", x: 876, w: 17, overflow: true)
+        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, controls: chevron,
+                                                    items: [overflowLeft], row: row) == 876)
+        // On the glyph, it says nothing about the edge.
+        let overflowOnGlyph = item("«", owner: "MenuBarAgent", x: 930, w: 17, overflow: true)
+        #expect(MenuBarItemHider.effectiveRegionMin(regionMin, controls: chevron,
+                                                    items: [overflowOnGlyph], row: row) == regionMin)
+        #expect(MenuBarItemHider.effectiveRegionMin(nil, controls: chevron, items: [overflowLeft], row: row) == nil)
+        // The spacer then lands flush against the «: 950 − 876 − 22 = 52.
+        let plan = MenuBarItemHider.plan(items: [overflowLeft], sections: [:], row: row,
+                                         controls: chevron, regionMin: 876)
+        #expect(plan.hiddenControlLength == 52)
     }
 }
 

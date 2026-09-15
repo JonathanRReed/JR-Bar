@@ -196,6 +196,11 @@ enum MenuBarItemLister {
     /// `refreshAXItems` refills it off-actor.
     @MainActor
     private(set) static var axItems: [MenuBarItem] = []
+    /// Bumped on every completed AX scan — a reader that wrote a
+    /// length can tell whether the listing it sees is from before or
+    /// after the write.
+    @MainActor
+    private(set) static var axGeneration = 0
 
     /// A scan is in flight — a second caller waits rather than piling
     /// another AX round trip onto tccd.
@@ -242,6 +247,7 @@ enum MenuBarItemLister {
             MenuBarAX.items(targets: targets, row: row)
         }.value
         axItems = scanned
+        axGeneration += 1
         return scanned
     }
 
