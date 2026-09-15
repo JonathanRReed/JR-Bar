@@ -136,6 +136,9 @@ public struct Fish: Equatable, Sendable, Identifiable {
     /// A sub-agent's fish: half-sized, schooling around `anchorID`,
     /// with no label or status bubbles of its own.
     public var isFry: Bool
+    /// A raised fish whose session is gone — it idles, keeps its name,
+    /// and lives on feeding alone. Never a plan, never a status bubble.
+    public var isResident: Bool = false
     /// The fish this fry schools around — the parent session's fish
     /// when it's in the tank, else the largest same-provider fish,
     /// else nil and the fry free-swims on its own lane.
@@ -275,6 +278,7 @@ public enum AquariumModel {
     /// there isn't one. A parent that sinks or drifts off takes its
     /// school with it.
     public static func reduce(sessions: [CoreSession], previous: [Fish], now: Date,
+                              residents: [AquariumResident] = [],
                               species: (String) -> FishSpecies = FishSpecies.forProvider) -> [Fish] {
         let previousByID = Dictionary(previous.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // Mains first, so a fry can anchor to its parent's fish even
@@ -330,7 +334,51 @@ public enum AquariumModel {
             }
             result.append(fish)
         }
+        // The residents: raised fish whose sessions left. A resident
+        // whose session is listed again is simply that session's fish
+        // (same id, same swim) — never a twin.
+        let listed = Set(sessions.map(\.id))
+        for resident in residents where !listed.contains(resident.id) {
+            result.append(residentFish(resident, previous: previousByID[resident.id],
+                                       now: now, species: species))
+        }
         return result
+    }
+
+    /// A resident → fish: idling midwater on the swim its session's
+    /// fish had (or a fresh deterministic one), under its remembered
+    /// name, in its provider's species and colour. No plan — nothing
+    /// is running — so the inspector cites nothing for it.
+    static func residentFish(_ resident: AquariumResident, previous: Fish?, now: Date,
+                             species resolve: (String) -> FishSpecies) -> Fish {
+        if var fish = previous {
+            fish.label = resident.label
+            fish.providerID = resident.provider
+            fish.species = resolve(resident.provider)
+            fish.isFry = false
+            fish.anchorID = nil
+            fish.isResident = true
+            fish.plan = nil
+            if fish.state != .idling {
+                fish.state = .idling
+                fish.stateSince = now
+            }
+            return fish
+        }
+        var fish = Fish(
+            id: resident.id,
+            label: resident.label,
+            providerID: resident.provider,
+            state: .idling,
+            lane: lane(for: resident.id),
+            speed: speed(for: resident.id),
+            direction: direction(for: resident.id),
+            stateSince: now,
+            enteredAt: now,
+            species: resolve(resident.provider),
+            seed: stableHash(resident.id))
+        fish.isResident = true
+        return fish
     }
 
     /// A full-sized fish, matching the panel's `mainSessions` rule:
@@ -356,6 +404,8 @@ public enum AquariumModel {
             fish.species = resolve(session.provider)
             fish.isFry = false
             fish.anchorID = nil
+            // A resident whose session came back is the session's again.
+            fish.isResident = false
             fish.plan = plan
             if let updated = session.updatedAt {
                 fish.lastUpdate = Date(timeIntervalSince1970: updated)

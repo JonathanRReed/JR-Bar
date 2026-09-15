@@ -320,3 +320,49 @@ struct AquariumGameTests {
         #expect(game.pets["old-0"] == nil)
     }
 }
+
+// MARK: Residents — sessions stay fish
+
+extension AquariumGameTests {
+    @Test("identify names a record that exists and never mints one for a passer-by")
+    func identify() {
+        var game = AquariumGame()
+        _ = game.apply(.identify(id: "ghost", label: "run ghost", provider: "claude"), now: Self.t0)
+        #expect(game.pets["ghost"] == nil, "a session that only swam through earns no record")
+        _ = game.apply(.workTick(seconds: 10, working: ["a"]), now: Self.t0)
+        _ = game.apply(.identify(id: "a", label: "run a", provider: "codex"), now: Self.t0)
+        #expect(game.pets["a"]?.label == "run a")
+        #expect(game.pets["a"]?.provider == "codex")
+    }
+
+    @Test("residents are the raised, named fish not on the live roster — best-raised first, capped")
+    func residents() {
+        var game = AquariumGame()
+        // Raise several fish to different stages by hand.
+        for (id, stage) in [("a", 3), ("b", 1), ("c", 0), ("d", 2), ("e", 2), ("f", 1), ("g", 1), ("h", 1)] {
+            game.pets[id] = FishCare(stage: stage, lastNourishedAt: Double(stage), createdAt: 1,
+                                     label: "run \(id)", provider: "claude")
+        }
+        // Nameless records (from before the field) never surface.
+        game.pets["nameless"] = FishCare(stage: 3, createdAt: 1)
+        let residents = game.residents(excluding: ["b"])
+        #expect(!residents.map(\.id).contains("c"), "stage 0 is a fish that was never raised")
+        #expect(!residents.map(\.id).contains("b"), "a live session's fish is the session's, not a resident")
+        #expect(!residents.map(\.id).contains("nameless"))
+        #expect(residents.first?.id == "a", "the best-raised fish leads")
+        #expect(residents.count == AquariumRules.maxResidents)
+        #expect(residents.map(\.stage) == residents.map(\.stage).sorted(by: >))
+    }
+
+    @Test("a care record from before the field decodes nameless, and names round-trip")
+    func residentCodable() throws {
+        // Every field a pre-resident save wrote, none of the new ones.
+        let old = try JSONDecoder().decode(FishCare.self, from: Data(
+            #"{"stage": 2, "feedings": 1, "workSeconds": 30, "lastNourishedAt": 5, "starvingAt": 9, "lastDropAt": 5, "completionGranted": false, "createdAt": 1}"#.utf8))
+        #expect(old.stage == 2)
+        #expect(old.label == nil)
+        let named = FishCare(stage: 1, label: "run x", provider: "grok")
+        let back = try JSONDecoder().decode(FishCare.self, from: JSONEncoder().encode(named))
+        #expect(back == named)
+    }
+}

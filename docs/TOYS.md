@@ -238,6 +238,18 @@ never wipes your tank — while the tank's own toggles stay in
 drop pellets and the nearest fish dart over. Nothing in the game ever
 touches your agents.
 
+Sessions stay fish. A fish you have raised to stage 1 or beyond keeps
+swimming after its session leaves the roster — a **resident**, idling
+midwater under its remembered name in its provider's species, up to
+`AquariumRules.maxResidents` of them, best-raised first. Residents
+carry no plan and no status bubble; feeding is the only thing that
+nourishes them, and starvation still costs stages, so a tank left
+alone for days quietly empties again. The name and provider are
+remembered on the care record (`identify`) whenever the session is
+listed; records from before the field stay nameless until their
+session is seen again. A resident whose session returns is simply that
+session's fish once more, same swim.
+
 Sub-agent sessions join as fry — about half size, the school's
 species — orbiting loosely around their parent's fish, up to eight a
 school (extra workers merge visually rather than crowding the tank).

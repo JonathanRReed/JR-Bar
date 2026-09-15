@@ -416,3 +416,49 @@ struct AquariumModelTests {
         #expect(kinds.filter { $0 == .rock }.count >= 2)
     }
 }
+
+// MARK: Residents
+
+extension AquariumModelTests {
+    @Test("residents join after the roster, idling under their remembered names, and never twin a live session")
+    func residents() {
+        let now = Date()
+        let residents = [
+            AquariumResident(id: "old", label: "run old", provider: "codex", stage: 2, lastNourishedAt: 0),
+            AquariumResident(id: "a", label: "stale name", provider: "grok", stage: 1, lastNourishedAt: 0),
+        ]
+        let fish = AquariumModel.reduce(sessions: [Self.session("a")], previous: [], now: now,
+                                        residents: residents)
+        #expect(fish.map(\.id) == ["a", "old"], "the live session's fish is the session's; the resident is appended")
+        let live = fish[0]
+        #expect(!live.isResident)
+        #expect(live.label == "run a", "the session's own label wins over the remembered one")
+        let old = fish[1]
+        #expect(old.isResident)
+        #expect(old.state == .idling)
+        #expect(old.label == "run old")
+        #expect(old.providerID == "codex")
+        #expect(old.species == FishSpecies.forProvider("codex"))
+        #expect(old.plan == nil, "nothing is running — the inspector cites nothing")
+    }
+
+    @Test("a resident keeps the swim its session's fish had, and a returning session takes it back")
+    func residentSwim() {
+        let t0 = Date()
+        let swimming = AquariumModel.reduce(sessions: [Self.session("a", provider: "codex")], previous: [], now: t0)
+        let resident = AquariumResident(id: "a", label: "run a", provider: "codex", stage: 1, lastNourishedAt: 0)
+        let resting = AquariumModel.reduce(sessions: [], previous: swimming, now: t0.addingTimeInterval(5),
+                                           residents: [resident])
+        #expect(resting.count == 1)
+        #expect(resting[0].isResident)
+        #expect(resting[0].lane == swimming[0].lane)
+        #expect(resting[0].seed == swimming[0].seed)
+        #expect(resting[0].state == .idling)
+        let back = AquariumModel.reduce(sessions: [Self.session("a", provider: "codex")], previous: resting,
+                                        now: t0.addingTimeInterval(9), residents: [resident])
+        #expect(back.count == 1)
+        #expect(!back[0].isResident)
+        #expect(back[0].state == .swimming)
+        #expect(back[0].lane == swimming[0].lane)
+    }
+}

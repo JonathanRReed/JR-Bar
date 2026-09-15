@@ -298,7 +298,18 @@ final class AquariumToy: Toy {
         // settings' per-provider casting, falling back to the table.
         let settings = store?.state.aquarium ?? AquariumSettings()
         let now = Date()
-        fish = AquariumModel.reduce(sessions: core.state?.sessions ?? [], previous: fish, now: now) {
+        let sessions = core.state?.sessions ?? []
+        // Remember each listed session's name and provider on its care
+        // record, so the fish it raised can keep swimming as a resident
+        // once the session is gone. The action touches only records
+        // that already exist — nothing is minted for a passer-by.
+        for session in sessions where game.pets[session.id] != nil {
+            _ = game.apply(.identify(id: session.id, label: session.displayLabel,
+                                     provider: session.provider), now: now)
+        }
+        let residents = game.residents(excluding: Set(sessions.map(\.id)))
+        fish = AquariumModel.reduce(sessions: sessions, previous: fish, now: now,
+                                    residents: residents) {
             settings.species(for: $0)
         }
         noteCompletions(now: now)

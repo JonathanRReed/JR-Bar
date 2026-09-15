@@ -38,6 +38,10 @@ public enum AquariumRules {
     public static let snailCollectAfter: TimeInterval = 10
     /// Pet records kept at most — the oldest non-live go first.
     public static let maxPets = 64
+    /// The most raised fish that keep swimming after their sessions
+    /// are gone — enough for a tank that never reads empty, few enough
+    /// that the live roster still stands out.
+    public static let maxResidents = 6
     /// How often the toy feeds the model a tick (its own constant —
     /// the model takes whatever `dt` the tick carries).
     public static let tickInterval: TimeInterval = 20
@@ -176,11 +180,18 @@ public struct FishCare: Codable, Equatable, Sendable {
     public var completionGranted: Bool
     /// When the record was made; pruning drops the oldest first.
     public var createdAt: Double
+    /// What the tank called the session, remembered so a raised fish
+    /// can keep swimming as a resident after its session is gone. Nil
+    /// until `identify` lands (records from before the field decode
+    /// nil and stay nameless until their session is seen again).
+    public var label: String?
+    /// The session's provider — the resident's species and colour.
+    public var provider: String?
 
     public init(stage: Int = 0, feedings: Int = 0, workSeconds: Double = 0,
                 lastNourishedAt: Double = 0, starvingAt: Double = 0,
                 lastDropAt: Double = 0, completionGranted: Bool = false,
-                createdAt: Double = 0) {
+                createdAt: Double = 0, label: String? = nil, provider: String? = nil) {
         self.stage = stage
         self.feedings = feedings
         self.workSeconds = workSeconds
@@ -189,6 +200,8 @@ public struct FishCare: Codable, Equatable, Sendable {
         self.lastDropAt = lastDropAt
         self.completionGranted = completionGranted
         self.createdAt = createdAt
+        self.label = label
+        self.provider = provider
     }
 
     /// No feeding and no work for `starveAfter`: the hungry mouth.
@@ -262,8 +275,30 @@ public enum AquariumEvent: Equatable, Sendable {
     case tick
     /// Drop pet records over the cap — the oldest not in `liveIDs`.
     case prune(liveIDs: Set<String>)
+    /// Remember what a listed session's fish is called and who it
+    /// belongs to — only on a record that already exists; a session
+    /// that merely swims through earns no record.
+    case identify(id: String, label: String, provider: String)
     /// The tank window opened or closed; opening drains `away`.
     case setWindowOpen(Bool)
+}
+
+/// A raised fish still in the tank after its session left — the
+/// reducer turns it into an idling `Fish` that feeding keeps alive.
+public struct AquariumResident: Equatable, Sendable, Identifiable {
+    public var id: String
+    public var label: String
+    public var provider: String
+    public var stage: Int
+    public var lastNourishedAt: Double
+
+    public init(id: String, label: String, provider: String, stage: Int, lastNourishedAt: Double) {
+        self.id = id
+        self.label = label
+        self.provider = provider
+        self.stage = stage
+        self.lastNourishedAt = lastNourishedAt
+    }
 }
 
 /// What `apply` reports back, so the caller can animate or complain.
@@ -494,6 +529,14 @@ public struct AquariumGame: Codable, Equatable, Sendable {
                 }
             }
 
+        case .identify(let id, let label, let provider):
+            guard var care = pets[id] else { break }
+            if care.label != label || care.provider != provider {
+                care.label = label
+                care.provider = provider
+                pets[id] = care
+            }
+
         case .prune(let liveIDs):
             if pets.count > AquariumRules.maxPets {
                 let dead = pets.filter { !liveIDs.contains($0.key) }
@@ -566,6 +609,31 @@ public struct AquariumGame: Codable, Equatable, Sendable {
         totals.dropsCollected += 1
         if !windowOpen { away.dropsCollected += 1 }
         earn(drop.value)
+    }
+
+    /// The raised fish that keep swimming while their sessions are
+    /// gone (docs/TOYS.md: "sessions stay fish"): every pet at stage 1
+    /// or above with a remembered name and provider, minus the live
+    /// roster, best-raised first (then most recently fed), capped at
+    /// `AquariumRules.maxResidents`. A resident is nourished only by
+    /// feeding — that is what the pellets are for once the agents are
+    /// off — and starvation still costs it stages, so a tank left
+    /// alone for days quietly empties again.
+    public func residents(excluding liveIDs: Set<String>) -> [AquariumResident] {
+        pets.compactMap { id, care -> AquariumResident? in
+            guard !liveIDs.contains(id), care.stage >= 1,
+                  let label = care.label, !label.isEmpty,
+                  let provider = care.provider, !provider.isEmpty else { return nil }
+            return AquariumResident(id: id, label: label, provider: provider,
+                                    stage: care.stage, lastNourishedAt: care.lastNourishedAt)
+        }
+        .sorted { a, b in
+            a.stage != b.stage ? a.stage > b.stage
+                : a.lastNourishedAt != b.lastNourishedAt ? a.lastNourishedAt > b.lastNourishedAt
+                : a.id < b.id
+        }
+        .prefix(AquariumRules.maxResidents)
+        .map { $0 }
     }
 
     /// The item the fish wears, if any.
