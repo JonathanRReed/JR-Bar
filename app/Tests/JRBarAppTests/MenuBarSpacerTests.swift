@@ -384,5 +384,23 @@ extension MenuBarSpacerTests {
                                          controls: chevron, regionMin: 876)
         #expect(plan.hiddenControlLength == 52)
     }
+
+    @Test("the « beside a hidden run wears the bar's material, bare for the ear's ring; revealed, it stands")
+    func overflowCover() {
+        let chevron = MenuBarControlFrames(hidden: CGRect(x: 894, y: 0, width: 107, height: 24))
+        let overflow = item("«", owner: "MenuBarAgent", x: 869, w: 18, overflow: true)
+        let hidden = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
+                                           controls: chevron, regionMin: regionMin)
+        #expect(hidden.hiddenCovers == [(869 + MenuBarItemHider.overflowCoverInset)...887])
+        let revealed = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
+                                             controls: chevron, regionMin: regionMin,
+                                             revealed: [.hidden])
+        #expect(revealed.hiddenCovers.isEmpty)
+        // A « on the glyph (our chevron overflowed) is not beside the run — no cover.
+        let onGlyph = item("«", owner: "MenuBarAgent", x: 976, w: 18, overflow: true)
+        let overflowed = MenuBarItemHider.plan(items: [onGlyph], sections: [:], row: row,
+                                               controls: chevron, regionMin: regionMin)
+        #expect(overflowed.hiddenCovers.isEmpty)
+    }
 }
 

@@ -395,6 +395,8 @@ final class MenuBarItemHider {
 
     /// How much a spacer gives back when the overflow control lands on it.
     nonisolated static let overflowStep: CGFloat = 8
+    /// Points of the « left bare under the ear so its ring never clips.
+    nonisolated static let overflowCoverInset: CGFloat = 3
 
     /// Hand a length to the utility only when it changes — a status
     /// item's length write reflows the whole bar.
@@ -537,6 +539,18 @@ final class MenuBarItemHider {
         let blockers = plan.shown.map(\.bounds) + protectedFrames
         plan.hiddenCovers = coverRuns(covered: hiddenToCover, blockers: blockers)
         plan.alwaysHiddenCovers = coverRuns(covered: ahToCover, blockers: blockers)
+        // macOS's own « sits at the visible run's left end — flush
+        // against the chevron's spacer, half under the Screen Bar's
+        // ear. While the run is hidden it is redundant with the chevron
+        // (its popover lists what the Item Bar lists), so it wears the
+        // bar's material; the click it swallowed is the reveal gesture.
+        // Its first few points stay bare so the ear's ring is never
+        // clipped.
+        if let hiddenControl, !revealed.contains(.hidden),
+           let overflow = overflowFrames.first(where: { $0.maxX <= hiddenControl.minX + 4 }),
+           overflow.width > overflowCoverInset + 4 {
+            plan.hiddenCovers.append((overflow.minX + overflowCoverInset)...overflow.maxX)
+        }
 
         // Spacer lengths.
         if let hiddenControl {

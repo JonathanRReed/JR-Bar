@@ -479,7 +479,9 @@ final class MenuBarUtility: Toy {
     /// Frames arrive in Quartz and flip to AppKit for the hit test.
     private func shownItemFrames() -> [NSRect] {
         let height = CGDisplayBounds(CGMainDisplayID()).height
-        return lastPlan.shown.map {
+        // The « is covered while the run is hidden — a click on it is
+        // the reveal, not a click on an item.
+        return lastPlan.shown.filter { !$0.isNativeOverflowControl }.map {
             NSRect(x: $0.bounds.minX, y: height - $0.bounds.maxY,
                    width: $0.bounds.width, height: $0.bounds.height)
         }
