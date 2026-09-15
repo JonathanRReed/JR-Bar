@@ -28,6 +28,12 @@ struct MenuBarItem: Equatable, Sendable {
     /// the last resort for re-resolving the `AXUIElement` a tile click
     /// presses.
     var extrasIndex: Int = 0
+    /// macOS 26's own overflow control — the "Show Hidden Menu Bar
+    /// Items" button MenuBarAgent draws at the left end of the visible
+    /// run whenever something is parked. Listed so the plan can tell
+    /// an item stacked under it from one on the row; never covered,
+    /// never pressed.
+    var isNativeOverflowControl: Bool = false
 
     /// The owning app, for the tile's icon and the always-hidden tile's
     /// raise.
@@ -116,7 +122,8 @@ enum MenuBarItemLister {
             }
             return MenuBarItem(id: id, ownerPID: item.ownerPID, ownerName: item.ownerName,
                                bounds: item.bounds, title: item.title, windowID: item.windowID,
-                               identifier: item.identifier, extrasIndex: item.extrasIndex)
+                               identifier: item.identifier, extrasIndex: item.extrasIndex,
+                               isNativeOverflowControl: item.isNativeOverflowControl)
         }
     }
 

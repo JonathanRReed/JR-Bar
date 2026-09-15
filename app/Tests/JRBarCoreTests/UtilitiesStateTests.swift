@@ -27,7 +27,7 @@ struct UtilitiesStateTests {
         #expect(state.menuBar.revealOnClick == true)
         #expect(state.menuBar.revealOnScroll == true)
         #expect(state.menuBar.rehideSeconds == MenuBarSettings.defaultRehideSeconds)
-        #expect(state.menuBar.spacerLength == MenuBarSettings.defaultSpacerLength)
+        #expect(state.menuBar.layoutModel == MenuBarSettings.currentLayoutModel)
     }
 
     @Test("encode then decode returns the same state")
@@ -36,7 +36,7 @@ struct UtilitiesStateTests {
         state.menuBar = MenuBarSettings(enabled: true,
                                       sections: ["1Password": .hidden, "Ice": .alwaysHidden],
                                       revealOnHover: false, revealOnClick: true, revealOnScroll: false,
-                                      rehideSeconds: 8, spacerLength: 12_000)
+                                      rehideSeconds: 8)
         let decoded = try decode(UtilitiesState.self, encode(state))
         #expect(decoded == state)
     }
@@ -83,13 +83,17 @@ struct UtilitiesStateTests {
         #expect(MenuBarSettings(rehideSeconds: .infinity).rehideSeconds == MenuBarSettings.defaultRehideSeconds)
     }
 
-    @Test("a spacer too small to push anything off is not a spacer")
-    func spacerClamp() throws {
-        #expect(try decode(MenuBarSettings.self, #"{"spacerLength": 40}"#).spacerLength
-                == MenuBarSettings.defaultSpacerLength)
-        #expect(try decode(MenuBarSettings.self, #"{"spacerLength": 8000}"#).spacerLength == 8000)
-        #expect(MenuBarSettings(spacerLength: 0).spacerLength == MenuBarSettings.defaultSpacerLength)
-        #expect(MenuBarSettings(spacerLength: .nan).spacerLength == MenuBarSettings.defaultSpacerLength)
+    @Test("a file from the cover era decodes as layout model 0; a fresh value is current")
+    func layoutModel() throws {
+        // A map without the key is the cover era's; no map has nothing
+        // to migrate and reads as current.
+        #expect(try decode(MenuBarSettings.self, #"{"sections": {"A": "hidden"}}"#).layoutModel == 0)
+        #expect(try decode(MenuBarSettings.self, #"{"enabled": true}"#).layoutModel
+                == MenuBarSettings.currentLayoutModel)
+        #expect(try decode(MenuBarSettings.self, #"{"layoutModel": 2}"#).layoutModel == 2)
+        #expect(MenuBarSettings().layoutModel == MenuBarSettings.currentLayoutModel)
+        // An old file's spacer field is simply ignored.
+        #expect((try? decode(MenuBarSettings.self, #"{"spacerLength": 8000}"#)) != nil)
     }
 
     @Test("AppState carries utilities and round-trips them through the file")

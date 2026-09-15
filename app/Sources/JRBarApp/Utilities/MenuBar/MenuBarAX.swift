@@ -71,7 +71,9 @@ enum MenuBarAX {
 
     /// The extras-bar children of one app that are menu bar items —
     /// `AXMenuBarItem`s directly, or grouped one level under an
-    /// `AXGroup` (some apps wrap theirs).
+    /// `AXGroup` (some apps wrap theirs) — plus any `AXButton` the bar
+    /// fields directly: that is how MenuBarAgent exposes its overflow
+    /// control, and the plan needs its frame.
     private nonisolated static func extrasItems(of pid: pid_t) -> [AXUIElement] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, Float(messagingTimeout))
@@ -83,9 +85,10 @@ enum MenuBarAX {
         var items: [AXUIElement] = []
         for child in children {
             AXUIElementSetMessagingTimeout(child, Float(messagingTimeout))
-            if role(child) == "AXMenuBarItem" {
+            let childRole = role(child)
+            if childRole == "AXMenuBarItem" || childRole == "AXButton" {
                 items.append(child)
-            } else if role(child) == "AXGroup",
+            } else if childRole == "AXGroup",
                       let sub = value(child, kAXChildrenAttribute) as? [AXUIElement] {
                 items.append(contentsOf: sub.filter { role($0) == "AXMenuBarItem" })
             }
@@ -111,7 +114,8 @@ enum MenuBarAX {
                                bounds: bounds, title: string(element, kAXTitleAttribute),
                                windowID: 0,
                                identifier: string(element, "AXIdentifier"),
-                               extrasIndex: index)
+                               extrasIndex: index,
+                               isNativeOverflowControl: role(element) == "AXButton")
         }
     }
 
@@ -152,7 +156,8 @@ enum MenuBarAX {
             }
             return MenuBarItem(id: id, ownerPID: item.ownerPID, ownerName: item.ownerName,
                                bounds: item.bounds, title: item.title, windowID: item.windowID,
-                               identifier: item.identifier, extrasIndex: item.extrasIndex)
+                               identifier: item.identifier, extrasIndex: item.extrasIndex,
+                               isNativeOverflowControl: item.isNativeOverflowControl)
         }
     }
 

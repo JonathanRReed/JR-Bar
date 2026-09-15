@@ -36,7 +36,7 @@ struct MenuBarUtilityControls: View {
         VStack(alignment: .leading, spacing: 4) {
             if !utility.listedItems.isEmpty {
                 SettingLabel(title: "Items",
-                             subtitle: "Hidden items are covered in place — a click on the covered stretch or the chevron brings them back. Always-hidden stay covered until you open the Item Bar.")
+                             subtitle: "Everything left of the ‹ chevron is hidden; everything left of ··· is always hidden. ⌘-drag any item across them to choose. Hover, click or scroll the bar to bring the hidden run back.")
                 if !countsText.isEmpty {
                     Text(countsText)
                         .font(.callout)
@@ -62,8 +62,8 @@ struct MenuBarUtilityControls: View {
             Divider()
                 .padding(.vertical, 4)
 
-            SettingLabel(title: "Appearance",
-                         subtitle: "How the covered stretch reads. The default is the menu bar's own material — invisible until you tint or round it.")
+            SettingLabel(title: "Cover appearance",
+                         subtitle: "Only items you mark Cover or Always by hand get a cover drawn over them in place. The default is the menu bar's own material — invisible until you tint or round it.")
 
             LabeledContent {
                 Picker(selection: utility.bind(\.coverMaterial)) {
@@ -124,7 +124,7 @@ struct MenuBarUtilityControls: View {
 
             Toggle(isOn: utility.bind(\.combinedStatusItem)) {
                 SettingLabel(title: "Single combined item",
-                             subtitle: "One status item instead of two — click opens the Item Bar, right-click lists the covered items.")
+                             subtitle: "One control instead of two — everything left of it is hidden; click opens the Item Bar, right-click lists what's hidden.")
             }
 
             Divider()
@@ -201,8 +201,8 @@ struct MenuBarUtilityControls: View {
                 get: { utility.section(for: item.id) },
                 set: { utility.setSection($0, for: item.id) }
             )) {
-                Text("Shown").tag(MenuBarItemSection.shown)
-                Text("Hidden").tag(MenuBarItemSection.hidden)
+                Text("Auto").tag(MenuBarItemSection.shown)
+                Text("Cover").tag(MenuBarItemSection.hidden)
                 Text("Always").tag(MenuBarItemSection.alwaysHidden)
             } label: { EmptyView() }
             .labelsHidden()
@@ -216,8 +216,25 @@ struct MenuBarUtilityControls: View {
                 Text(item.title.map { "\(item.ownerName) · \($0)" } ?? item.ownerName)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                Text(placement(of: item))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    /// Where the plan put the item — the position-derived section, or
+    /// the override that covers it.
+    private func placement(of item: MenuBarItem) -> String {
+        let override = utility.section(for: item.id)
+        if utility.lastPlan.alwaysHidden.contains(item) {
+            return override == .alwaysHidden ? "covered · always" : "always hidden"
+        }
+        if utility.lastPlan.hidden.contains(item) {
+            if override == .hidden { return "covered" }
+            return item.bounds.intersects(MenuBarItemLister.menuBarRow()) ? "hidden" : "in overflow"
+        }
+        return "shown"
     }
 }
 

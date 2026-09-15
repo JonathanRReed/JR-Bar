@@ -25,6 +25,9 @@ struct StatusItemPlan: Equatable {
 /// pulses the icon amber.
 @MainActor
 final class StatusItemController: NSObject, NSMenuDelegate {
+    /// The `AXIdentifier` JR-Bar's own status item carries.
+    nonisolated static let accessibilityIdentifier = "com.jonathanreed.jrbar.status-item"
+
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
     private let headerItem = NSMenuItem()
@@ -105,6 +108,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         // choice under, so a rebuild does not send the item back to the
         // middle of a busy menu bar.
         statusItem.autosaveName = "com.jonathanreed.jrbar.status-item"
+        // The Menu Bar utility finds this item in the AX listing by the
+        // identifier — its slot is where a migrated chevron seats.
+        statusItem.button?.setAccessibilityIdentifier(Self.accessibilityIdentifier)
         showBarItem = NSMenuItem(title: "Show Screen Bar", action: #selector(toggleScreenBar(_:)), keyEquivalent: "")
         super.init()
 

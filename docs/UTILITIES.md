@@ -34,30 +34,46 @@ must keep working end to end.
 Replaces Ice and Bartender 7. Both are reference apps only: Ice is GPL-3,
 Bartender is closed — **clean-room**, no code, no verbatim assets.
 
-> **Status — what is built vs planned.** Built: the section model, the
-> covers, the reveal gestures, the Item Bar (icon tiles + `AXPress`
-> click-through), first-enable seeding, and the per-item section pickers.
-> Planned (phases 2–3): live-capture tiles, the arrange editor, command
-> bar, hotkeys, triggers, profiles, appearance, the combined Status item.
+> **Status — what is built.** The positional section model, the
+> spacers, the override covers, the reveal gestures, the Item Bar (live
+> tiles + `AXPress` click-through), the per-item override pickers, the
+> arrange editor, the ⌘⇧K command bar, hotkeys, triggers, profiles,
+> cover appearance, and the combined control.
 >
-> **How hiding works on macOS 26 — verified live.** A foreign item cannot
-> be evicted: oversized status items, remove/reinsert, `isVisible`, and
-> off-screen drops were all tested and all leave the item drawn. So JR-Bar
-> *covers* assigned items where they sit — borderless panels at
-> `statusBar + 1` backed by `.menu` material, opaque to the items beneath
-> and reading as ordinary empty bar. Items are never physically moved and
-> the pointer is never touched; the covers swallow clicks (which double
-> as the reveal gesture) and `AXPress` still reaches a covered item.
+> **How hiding works on macOS 26 — verified live (2026-09-15).** macOS 26
+> packs the status region right-to-left and *parks* whatever no longer
+> fits in its own overflow (the "Show Hidden Menu Bar Items" control
+> MenuBarAgent draws). A 3 000-point item is parked itself; a 250-point
+> item inserted mid-row stays and pushes everything left of it into that
+> overflow, with no holes. So the chevron is Bartender's separator: items
+> left of it are hidden, and hiding is the chevron's own `length` growing
+> from the glyph (24 pt) to reach `spacerMargin` right of the notch's
+> right edge (`auxiliaryTopRightArea.minX`), which packs the hidden run
+> off the row. Revealing collapses the length back to the glyph and the
+> run packs back where it was. The always-hidden control does the same
+> for the deeper run. A control found parked (its spacer did not fit
+> under a wide app menu) lowers a learned cap and collapses; caps reset
+> on screen changes and when the frontmost app changes.
+>
+> Foreign items are never moved by the utility: the person ⌘-drags items
+> across the controls to choose sections, exactly as with Bartender. The
+> section map is *overrides only* — an item marked Cover/Always by hand
+> while it sits right of the chevron is covered in place by a borderless
+> `.menu`-material panel at `statusBar + 1` (a hole, and honest about
+> it). Files from the cover era, whose map assigned every item hidden,
+> are cleared once on first apply (`layoutModel` 0 → 1) and the controls
+> are reseated just left of JR-Bar's own status item (1 → 2).
 > Physically reordering items is possible only via synthetic ⌘-drags —
-> which move the person's real cursor — so `MenuBarItemMover` exists
-> solely for a future explicit, user-initiated arrange mode and has no
-> background call sites.
+> which move the person's real cursor — so `MenuBarItemMover` runs only
+> inside the explicit, cancellable arrange mode and has no background
+> call sites.
 
 ### Item management
 
-- Three sections: **shown**, **hidden** (covered in place, reveal via the
-  chevron or a gesture), **always-hidden** (deeper hide, own reveal
-  gesture). **Built.**
+- Three sections: **shown** (right of the chevron), **hidden** (left of
+  the chevron — packed off by its spacer, reveal via the chevron or a
+  gesture), **always-hidden** (left of the ··· control — its own spacer,
+  reveal via the Item Bar). **Built.**
 - Reveal triggers: hover over the menu bar's empty space, click empty space,
   scroll/swipe on the menu bar, hotkey per section. Auto-rehide after N s
   (default 4, off when the Item Bar panel is pinned). **Built** except the

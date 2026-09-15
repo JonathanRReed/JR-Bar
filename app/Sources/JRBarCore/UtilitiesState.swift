@@ -69,10 +69,12 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public var revealOnScroll: Bool
     /// Seconds a reveal lasts before the spacers stand back up.
     public var rehideSeconds: Double
-    /// The width a hiding spacer claims — enough to push every hideable
-    /// item at or right of its boundary off the row. Persisted so a
-    /// rescue build can shrink it; the card never shows it.
-    public var spacerLength: Double
+    /// Which hiding model the section map was written under. Files
+    /// from before `currentLayoutModel` carried a map that assigned
+    /// every item hidden (the cover era); the position model reads
+    /// the map as overrides only, so an older map is cleared once on
+    /// first apply rather than turning every item into a hole.
+    public var layoutModel: Int
     /// The shutter covers' visual-effect material — `.menu` is the look
     /// the utility shipped with (opaque over covered items, reads as
     /// ordinary empty menu bar).
@@ -151,8 +153,14 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public static let rehideRange: ClosedRange<Double> = 1...15
     /// The default reveal window.
     public static let defaultRehideSeconds: Double = 4
-    /// The spacer's reach — far past the widest menu bar.
-    public static let defaultSpacerLength: Double = 10_000
+    /// The hiding model this build writes: 2 is positional sections
+    /// with overrides and the controls seated next to JR-Bar's own
+    /// item; 1 is positional with the cover-era map cleared but the
+    /// controls not yet reseated; 0 (or absent) is the all-covered map.
+    public static let currentLayoutModel = 2
+    /// The model a cover-era file steps to first: map cleared, reseat
+    /// still owed.
+    public static let clearedLayoutModel = 1
     /// The card's cover-roundness dial — past half the row's depth the
     /// run ends are a pill anyway.
     public static let coverRoundnessRange: ClosedRange<Double> = 0...14
@@ -162,7 +170,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     public init(enabled: Bool = false, sections: [String: MenuBarItemSection] = [:],
                 revealOnHover: Bool = true, revealOnClick: Bool = true, revealOnScroll: Bool = true,
                 rehideSeconds: Double = MenuBarSettings.defaultRehideSeconds,
-                spacerLength: Double = MenuBarSettings.defaultSpacerLength,
+                layoutModel: Int = MenuBarSettings.currentLayoutModel,
                 coverMaterial: CoverMaterial = .menu, coverTint: String = "",
                 coverTintOpacity: Double = MenuBarSettings.defaultCoverTintOpacity,
                 coverRoundness: Double = 0, showCoverSeparator: Bool = false,
@@ -176,7 +184,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         self.revealOnClick = revealOnClick
         self.revealOnScroll = revealOnScroll
         self.rehideSeconds = Self.clampedRehide(rehideSeconds)
-        self.spacerLength = Self.clampedSpacerLength(spacerLength)
+        self.layoutModel = layoutModel
         self.coverMaterial = coverMaterial
         self.coverTint = coverTint
         self.coverTintOpacity = Self.clampedOpacity(coverTintOpacity)
@@ -192,12 +200,6 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     static func clampedRehide(_ value: Double) -> Double {
         guard value.isFinite else { return defaultRehideSeconds }
         return min(rehideRange.upperBound, max(rehideRange.lowerBound, value))
-    }
-
-    /// A spacer too small to push anything off is not a spacer.
-    static func clampedSpacerLength(_ value: Double) -> Double {
-        guard value.isFinite, value >= 1_000 else { return defaultSpacerLength }
-        return value
     }
 
     /// The tint's strength pinned to 0…1.
@@ -218,7 +220,7 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case enabled, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, spacerLength
+        case enabled, sections, revealOnHover, revealOnClick, revealOnScroll, rehideSeconds, layoutModel
         case coverMaterial, coverTint, coverTintOpacity, coverRoundness, showCoverSeparator
         case combinedStatusItem, profiles, arrangeOrder, hotkeyBindings, triggerRules
     }
@@ -233,8 +235,11 @@ public struct MenuBarSettings: Codable, Equatable, Sendable {
         revealOnScroll = (try? c.decodeIfPresent(Bool.self, forKey: .revealOnScroll)) ?? true
         rehideSeconds = Self.clampedRehide(
             (try? c.decodeIfPresent(Double.self, forKey: .rehideSeconds)) ?? Self.defaultRehideSeconds)
-        spacerLength = Self.clampedSpacerLength(
-            (try? c.decodeIfPresent(Double.self, forKey: .spacerLength)) ?? Self.defaultSpacerLength)
+        // Absent with a map present means a file from the cover era —
+        // the map is cleared on first apply. Absent with no map has
+        // nothing to migrate and reads as current.
+        layoutModel = (try? c.decodeIfPresent(Int.self, forKey: .layoutModel))
+            ?? (sections.isEmpty ? Self.currentLayoutModel : 0)
         coverMaterial = (try? c.decodeIfPresent(CoverMaterial.self, forKey: .coverMaterial)) ?? .menu
         coverTint = (try? c.decodeIfPresent(String.self, forKey: .coverTint)) ?? ""
         coverTintOpacity = Self.clampedOpacity(

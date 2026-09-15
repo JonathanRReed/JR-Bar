@@ -594,41 +594,6 @@ struct MenuBarTests {
     // MARK: Utility — seed, cascade write, chevron
 
     @MainActor
-    @Test("first enable with an empty map seeds every hideable item into the hidden run — once")
-    func seedOnFirstEnable() {
-        let utility = MenuBarUtility()
-        var state = MenuBarSettings(enabled: true)
-        var writes = 0
-        utility.settings = { state }
-        utility.onSettingsChange = { draft in state = draft; writes += 1 }
-        utility.hider.listItems = { [
-            self.item("A", x: 100), self.item("B", x: 200),
-            self.item("Control Center", owner: "Control Center", x: 300),
-        ] }
-        utility.seedSectionsIfNeeded()
-        #expect(writes == 1)
-        #expect(state.sections == ["A": .hidden, "B": .hidden],
-                 "the protected clock is never seeded")
-        // A second pass — or a later enable — never overwrites the map.
-        utility.seedSectionsIfNeeded()
-        #expect(writes == 1)
-    }
-
-    @MainActor
-    @Test("an empty listing at enable writes nothing — a window-list hiccup is not an arrangement")
-    func seedEmptyList() {
-        let utility = MenuBarUtility()
-        var state = MenuBarSettings(enabled: true)
-        var writes = 0
-        utility.settings = { state }
-        utility.onSettingsChange = { draft in state = draft; writes += 1 }
-        utility.hider.listItems = { [] }
-        utility.seedSectionsIfNeeded()
-        #expect(writes == 0)
-        #expect(state.sections.isEmpty)
-    }
-
-    @MainActor
     @Test("a section pick writes just that item's mapping and persists as one write")
     func setSectionCascades() {
         let utility = MenuBarUtility()

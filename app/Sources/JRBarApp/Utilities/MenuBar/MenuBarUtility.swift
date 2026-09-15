@@ -3,20 +3,25 @@ import JRBarCore
 import Observation
 import SwiftUI
 
-/// The Menu Bar utility (docs/UTILITIES.md): owns the hider's shutter
-/// covers, the reveal gestures, the glass Item Bar, and the utility's
-/// two control items — the chevron that toggles the hidden run and the
-/// always-hidden control that opens the Item Bar. `UtilitiesStore`
-/// keeps it; the page's card reads it as a `Toy`, so one shell serves
-/// every utility.
+/// The Menu Bar utility (docs/UTILITIES.md): owns the hider's spacers
+/// and override covers, the reveal gestures, the glass Item Bar, and
+/// the utility's two control items — the chevron that is the hidden
+/// run's boundary *and* its spacer, and the always-hidden control that
+/// does the same for the deeper run and opens the Item Bar.
+/// `UtilitiesStore` keeps it; the page's card reads it as a `Toy`, so
+/// one shell serves every utility.
 ///
-/// The object itself is a façade — the rules live in the pieces it
-/// wires: `MenuBarItemHider.plan` turns the section map into covers,
-/// `MenuBarReveal` decides what counts as a gesture, and the chevron
-/// toggles the hidden cover by hand. Nothing here posts mouse events:
-/// covers hide in place, and tile clicks go through `AXPress` — the
-/// one reposted-click fallback only fires when a person clicked a
-/// tile and the item's element could not be resolved.
+/// The model is Bartender's: items left of the chevron are hidden,
+/// items left of the always-hidden control are always-hidden, and the
+/// person ⌘-drags items across the controls to choose. Hiding is the
+/// control growing a spacer that packs those items off the row into
+/// macOS's own overflow; revealing collapses it. The object itself is
+/// a façade — the rules live in the pieces it wires: `MenuBarItemHider`
+/// measures and plans, `MenuBarReveal` decides what counts as a
+/// gesture, and the chevron toggles the run by hand. Nothing here
+/// posts mouse events: tile clicks go through `AXPress` — the one
+/// reposted-click fallback only fires when a person clicked a tile and
+/// the item's element could not be resolved.
 @MainActor
 @Observable
 final class MenuBarUtility: Toy {
@@ -28,7 +33,7 @@ final class MenuBarUtility: Toy {
     /// `state`, whose `didSet` persists it and re-applies the utility.
     @ObservationIgnored var onSettingsChange: (@MainActor (MenuBarSettings) -> Void)?
 
-    /// The spacer pair and the reconcile cadence.
+    /// The spacer lengths, the override covers and the reconcile cadence.
     let hider = MenuBarItemHider()
     /// Hover / empty-space click / scroll.
     let reveal = MenuBarReveal()
@@ -102,13 +107,17 @@ final class MenuBarUtility: Toy {
         // cover runs even on the no-AX path where they cannot list.
         hider.protectedFrames = { [weak self] in
             guard let self else { return [] }
-            let height = CGDisplayBounds(CGMainDisplayID()).height
-            return [self.chevron?.button?.window?.frame,
-                    self.alwaysHiddenControl?.button?.window?.frame,
-                    self.combinedControl?.button?.window?.frame]
-                .compactMap { $0 }
-                .map { CGRect(x: $0.minX, y: height - $0.maxY,
-                              width: $0.width, height: $0.height) }
+            return [self.chevron, self.alwaysHiddenControl, self.combinedControl]
+                .compactMap { Self.quartzFrame(of: $0) }
+        }
+        hider.controlFrames = { [weak self] in
+            guard let self else { return MenuBarControlFrames() }
+            return MenuBarControlFrames(
+                hidden: Self.quartzFrame(of: self.chevron ?? self.combinedControl),
+                alwaysHidden: Self.quartzFrame(of: self.alwaysHiddenControl))
+        }
+        hider.setControlLength = { [weak self] section, length in
+            self?.setControlLength(section, length: length)
         }
         reveal.settings = { [weak self] in self?.settings() ?? MenuBarSettings() }
         // The reveal zone is the row minus the *visible* items — the
@@ -303,10 +312,15 @@ final class MenuBarUtility: Toy {
             update { $0.arrangeOrder = arrangeItems.map(\.id) }
         }
         arranging = true
+        // The spacers collapse first: an expanded chevron reaches to
+        // the region's edge, and the plan would pack against it.
+        hider.reveal([.hidden, .alwaysHidden])
         Task { [weak self] in
             guard let self else { return }
+            try? await Task.sleep(nanoseconds: 600_000_000)
             self.lastArrangeOutcome = await self.actions.arrangeMenuBar()
             self.arranging = false
+            self.hider.hide()
         }
     }
 
@@ -345,9 +359,9 @@ final class MenuBarUtility: Toy {
     /// The card toggle and the store's `state` write land here: start
     /// on enable, stop on disable, reconcile on any other change.
     func applySettings() {
+        migrateSectionsIfNeeded()
         let enabled = settings().enabled
         if enabled, !running {
-            seedSectionsIfNeeded()
             start()
         } else if !enabled, running {
             stop()
@@ -360,25 +374,66 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// First enable with an empty map: the person asked to hide their
-    /// menu bar, so every hideable item on the row seeds into the
-    /// hidden run before the covers land — the bar visibly cleans the
-    /// moment the toggle lands. A non-empty `sections` is their
-    /// arrangement and is never overwritten; an empty listing (a window
-    /// list hiccup at enable time) writes nothing, so a later enable
-    /// can still seed.
-    func seedSectionsIfNeeded() {
-        guard settings().sections.isEmpty else { return }
-        let items = hider.listItems()
-        guard !items.isEmpty else { return }
+    /// A file from the cover era assigned every item hidden — under
+    /// the position model that map would cover every item right of the
+    /// chevron in place. Clear it once; the person's ⌘-drag layout is
+    /// the arrangement now, and the pickers write fresh overrides.
+    func migrateSectionsIfNeeded() {
+        guard settings().layoutModel < MenuBarSettings.clearedLayoutModel else { return }
         update { draft in
-            // Re-check inside the mutation: the write's round trip
-            // through the store could have filled the map first.
-            guard draft.sections.isEmpty else { return }
-            for item in items where !MenuBarItemLister.isProtected(ownerName: item.ownerName) {
-                draft.sections[item.id] = .hidden
-            }
+            draft.sections = [:]
+            draft.layoutModel = MenuBarSettings.clearedLayoutModel
         }
+    }
+
+    /// The cover era never asked where the chevron sat — hiding was a
+    /// map. Under the position model the slot *is* the setting, so a
+    /// migrated install seats the chevron once just left of JR-Bar's
+    /// own status item: what arrived after JR-Bar hides, the system's
+    /// items and ours stay. Needs the chevron's live frame (to
+    /// calibrate preferred position against x) and our main item's;
+    /// without either it waits for the next start.
+    /// - Parameters:
+    ///   - mainItemMinX: the left edge of JR-Bar's own status item.
+    ///   - chevronMinX: the collapsed chevron's left edge right now.
+    ///   - chevronPreferred: the preferred position the chevron was
+    ///     seated with.
+    /// Returns the preferred positions to write for the chevron and
+    /// the always-hidden control.
+    nonisolated static func reseatPositions(mainItemMinX: CGFloat, chevronMinX: CGFloat,
+                                            chevronPreferred: Double) -> (chevron: Double, alwaysHidden: Double) {
+        // macOS seats an item at x ≈ offset − preferred; the offset is
+        // whatever it is on this bar, measured off our own chevron.
+        let offset = chevronPreferred + Double(chevronMinX)
+        let target = Double(mainItemMinX - MenuBarControlFrames.glyphLength - 2)
+        let chevron = (offset - target).rounded()
+        return (chevron, chevron + 30)
+    }
+
+    /// Run the reseat once the controls stand and the listing is in.
+    func reseatControlsIfNeeded() {
+        guard settings().layoutModel < MenuBarSettings.currentLayoutModel,
+              !settings().combinedStatusItem,
+              let chevron, let chevronFrame = Self.quartzFrame(of: chevron),
+              chevronFrame.intersects(MenuBarItemLister.menuBarRow()),
+              let preferred = UserDefaults.standard.object(
+                forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron") as? Double,
+              let main = MenuBarItemLister.list().first(where: {
+                  $0.ownerName == "JR-Bar" && $0.identifier == StatusItemController.accessibilityIdentifier
+              }) else { return }
+        let positions = Self.reseatPositions(mainItemMinX: main.bounds.minX,
+                                             chevronMinX: chevronFrame.minX,
+                                             chevronPreferred: preferred)
+        MenuBarItemHider.log.notice("reseating controls next to the JR-Bar item at \(main.bounds.minX, privacy: .public): chevron \(positions.chevron, privacy: .public), always-hidden \(positions.alwaysHidden, privacy: .public)")
+        removeSeparateControls()
+        UserDefaults.standard.set(positions.chevron,
+                                  forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron")
+        UserDefaults.standard.set(positions.alwaysHidden,
+                                  forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
+        installSeparateControls()
+        hider.resetCaps()
+        update { $0.layoutModel = MenuBarSettings.currentLayoutModel }
+        hider.scheduleSettle()
     }
 
     private func start() {
@@ -392,12 +447,12 @@ final class MenuBarUtility: Toy {
         // set, not the defaults the actions object was built with.
         syncActions()
         actions.start()
-        // First AX fill — a no-op without the grant — then seed and
-        // reconcile: an empty map at enable seeds against real frames.
+        // First AX fill — a no-op without the grant — then reconcile
+        // against real frames, and seat a migrated install's controls.
         Task { [weak self] in
             _ = await MenuBarItemLister.refreshAXItems()
             guard let self else { return }
-            self.seedSectionsIfNeeded()
+            self.reseatControlsIfNeeded()
             self.hider.reconcile()
         }
     }
@@ -590,27 +645,26 @@ final class MenuBarUtility: Toy {
         // seeds deeper than the chevron it sits left of.
         Self.seedPreferredPosition(700, autosaveName: "com.jonathanreed.jrbar.menubar-ah-control")
         Self.seedPreferredPosition(660, autosaveName: "com.jonathanreed.jrbar.menubar-chevron")
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: MenuBarControlFrames.glyphLength)
         // The slot is the person's to move (⌘-drag); the autosave name
         // is what lets macOS remember where they put it.
         item.autosaveName = "com.jonathanreed.jrbar.menubar-chevron"
         if let button = item.button {
-            button.image = Self.chevronImage(revealed: false)
-            button.imagePosition = .imageOnly
-            button.toolTip = "JR-Bar — hidden menu bar items"
+            Self.style(button, symbol: Self.chevronSymbol(revealed: false),
+                       length: MenuBarControlFrames.glyphLength,
+                       description: "JR-Bar hidden items")
+            button.toolTip = "JR-Bar — items left of this chevron are hidden. Click to reveal; ⌘-drag items across it."
             button.target = chevronActions
             button.action = #selector(MenuBarChevronActions.clicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         chevron = item
-        let deeper = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let deeper = NSStatusBar.system.statusItem(withLength: MenuBarControlFrames.glyphLength)
         deeper.autosaveName = "com.jonathanreed.jrbar.menubar-ah-control"
         if let button = deeper.button {
-            button.image = NSImage(systemSymbolName: "ellipsis",
-                                   accessibilityDescription: "JR-Bar always-hidden items")
-            button.image?.isTemplate = true
-            button.imagePosition = .imageOnly
-            button.toolTip = "JR-Bar — always-hidden items (open the Item Bar)"
+            Self.style(button, symbol: "ellipsis", length: MenuBarControlFrames.glyphLength,
+                       description: "JR-Bar always-hidden items")
+            button.toolTip = "JR-Bar — items left of this are always hidden. Click for the Item Bar."
             button.target = chevronActions
             button.action = #selector(MenuBarChevronActions.alwaysHiddenClicked(_:))
             button.sendAction(on: [.leftMouseUp])
@@ -625,11 +679,12 @@ final class MenuBarUtility: Toy {
     private func installCombinedControl() {
         guard combinedControl == nil else { return }
         Self.seedPreferredPosition(660, autosaveName: "com.jonathanreed.jrbar.menubar-combined")
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: MenuBarControlFrames.glyphLength)
         item.autosaveName = "com.jonathanreed.jrbar.menubar-combined"
         if let button = item.button {
-            button.image = Self.chevronImage(revealed: hider.revealed.contains(.hidden))
-            button.imagePosition = .imageOnly
+            Self.style(button, symbol: Self.chevronSymbol(revealed: hider.revealed.contains(.hidden)),
+                       length: MenuBarControlFrames.glyphLength,
+                       description: "JR-Bar hidden items")
             button.toolTip = "JR-Bar — hidden items (click: Item Bar, right-click: list)"
             button.target = chevronActions
             button.action = #selector(MenuBarChevronActions.combinedClicked(_:))
@@ -785,18 +840,85 @@ final class MenuBarUtility: Toy {
     }
 
     /// The glyph points at where the items are: left while they are
-    /// parked off the left edge, right while the run is out.
+    /// packed off the left edge, right while the run is out. Redrawn
+    /// at the control's current length so it stays flush right.
     private func refreshChevron() {
-        let image = Self.chevronImage(revealed: hider.revealed.contains(.hidden))
-        chevron?.button?.image = image
-        combinedControl?.button?.image = image
+        let symbol = Self.chevronSymbol(revealed: hider.revealed.contains(.hidden))
+        for item in [chevron, combinedControl].compactMap({ $0 }) {
+            guard let button = item.button else { continue }
+            Self.style(button, symbol: symbol, length: item.length,
+                       description: "JR-Bar hidden items")
+        }
     }
 
-    private static func chevronImage(revealed: Bool) -> NSImage? {
-        let name = revealed ? "chevron.right" : "chevron.left"
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: "JR-Bar hidden items")
-        image?.isTemplate = true
+    private static func chevronSymbol(revealed: Bool) -> String {
+        revealed ? "chevron.right" : "chevron.left"
+    }
+
+    /// The hider's length write: the control claims `length` points,
+    /// its glyph redrawn flush right so the spacer part reads as empty
+    /// bar.
+    private func setControlLength(_ section: MenuBarItemSection, length: CGFloat) {
+        let item: NSStatusItem?
+        let symbol: String
+        let description: String
+        switch section {
+        case .hidden:
+            item = chevron ?? combinedControl
+            symbol = Self.chevronSymbol(revealed: hider.revealed.contains(.hidden))
+            description = "JR-Bar hidden items"
+        case .alwaysHidden:
+            item = alwaysHiddenControl
+            symbol = "ellipsis"
+            description = "JR-Bar always-hidden items"
+        case .shown:
+            return
+        }
+        guard let item, let button = item.button else { return }
+        if abs(item.length - length) >= 1 { item.length = length }
+        Self.style(button, symbol: symbol, length: length, description: description)
+    }
+
+    /// A control's face: a template image as wide as the control with
+    /// the glyph in its right-most `glyphLength`, so an expanded control
+    /// draws its glyph exactly where the collapsed one did and the rest
+    /// is the bar's own material.
+    private static func style(_ button: NSStatusBarButton, symbol: String,
+                              length: CGFloat, description: String) {
+        button.image = controlImage(symbol: symbol, length: length, description: description)
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleNone
+        button.alignment = .right
+    }
+
+    /// The composite face image; pure over its inputs so a test can pin
+    /// the size.
+    nonisolated static func controlImage(symbol: String, length: CGFloat,
+                                         description: String) -> NSImage? {
+        guard let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: description)?
+            .withSymbolConfiguration(.init(pointSize: 12, weight: .medium)) else { return nil }
+        let glyphSize = glyph.size
+        let height: CGFloat = 18
+        let width = max(length, MenuBarControlFrames.glyphLength) - 8
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { _ in
+            let x = width - (MenuBarControlFrames.glyphLength - 8) / 2 - glyphSize.width / 2
+            let y = (height - glyphSize.height) / 2
+            glyph.draw(in: NSRect(x: x, y: y, width: glyphSize.width, height: glyphSize.height))
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = description
         return image
+    }
+
+    /// A control's live frame in Quartz coordinates (top-left origin),
+    /// off its button's window; nil when the control is not installed
+    /// or has no window yet.
+    private static func quartzFrame(of item: NSStatusItem?) -> CGRect? {
+        guard let frame = item?.button?.window?.frame else { return nil }
+        let height = CGDisplayBounds(CGMainDisplayID()).height
+        return CGRect(x: frame.minX, y: height - frame.maxY,
+                      width: frame.width, height: frame.height)
     }
 
     // MARK: Permissions

@@ -1,50 +1,103 @@
 import AppKit
 import JRBarCore
+import OSLog
 
-/// What `reconcile` decided: which items are covered right now and
-/// the exact Quartz x-ranges the shutters draw over. Sections are a
-/// *logical* assignment — an item assigned `hidden` is covered where
-/// it sits; nothing is ever physically moved, so the plan is always
-/// honest: covered items still exist, still answer `AXPress`, and
-/// return the instant the shutter drops.
-struct MenuBarHidePlan: Equatable, Sendable {
-    /// Items left uncovered — everything unassigned, plus protected
-    /// owners wherever they sit.
-    var shown: [MenuBarItem] = []
-    /// Assigned-hidden items — covered until a reveal gesture.
-    var hidden: [MenuBarItem] = []
-    /// Assigned-always-hidden items — covered even while the hidden
-    /// run is revealed, plus items macOS itself has parked off the
-    /// row.
-    var alwaysHidden: [MenuBarItem] = []
-    /// The Quartz x-ranges the hidden shutter covers — one range per
-    /// contiguous covered run, split wherever a shown item's frame
-    /// sits in the gap so a cover never hides what was not assigned.
-    var hiddenCovers: [ClosedRange<CGFloat>] = []
-    /// Same for the deeper section's shutter.
-    var alwaysHiddenCovers: [ClosedRange<CGFloat>] = []
+/// Where the utility's controls sit right now, in Quartz coordinates.
+/// A control that is not installed — or that macOS has parked off the
+/// row — reports nil, and the plan treats its boundary as unknown.
+struct MenuBarControlFrames: Equatable, Sendable {
+    /// The chevron's live frame: the hidden run's boundary and spacer.
+    var hidden: CGRect?
+    /// The always-hidden control's live frame.
+    var alwaysHidden: CGRect?
+
+    /// The glyph's share of a control — the part that is not spacer.
+    /// A collapsed control is exactly this wide; an expanded one keeps
+    /// its right-most `glyphLength` for the glyph and spends the rest
+    /// pushing items off the row.
+    nonisolated static let glyphLength: CGFloat = 24
+
+    init(hidden: CGRect? = nil, alwaysHidden: CGRect? = nil) {
+        self.hidden = hidden
+        self.alwaysHidden = alwaysHidden
+    }
 }
 
-/// The hide machinery. Shutter panels — borderless windows drawing
-/// the menu bar's own `.menu` material over the assigned items — do
-/// the hiding, because macOS 26 offers no way to evict a foreign
-/// item: oversized status items, removal/reinsertion, `isVisible`,
-/// and off-screen drops were all tested and all leave the item drawn.
-/// Covering is what remains, and it is honest: covered items still
-/// exist, still answer `AXPress`, and return the instant the shutter
-/// drops.
+/// The longest spacer each control may claim before macOS parks the
+/// control itself — learned live: a control found off the row while it
+/// should stand on it lowers its cap. Reset when the bar's geometry
+/// changes (a screen reconfigure, another app's menus taking the left).
+struct MenuBarSpacerCaps: Equatable, Sendable {
+    var hidden: CGFloat = .infinity
+    var alwaysHidden: CGFloat = .infinity
+
+    init(hidden: CGFloat = .infinity, alwaysHidden: CGFloat = .infinity) {
+        self.hidden = hidden
+        self.alwaysHidden = alwaysHidden
+    }
+}
+
+/// What `reconcile` decided: every item's section, the spacer length
+/// each control should claim, and the covers the explicit overrides
+/// still need.
 ///
-/// Nothing in this file posts events or moves the pointer — covers
-/// are the whole mechanism. Physically reordering items belongs to
-/// `MenuBarItemMover`, which only an explicit, user-initiated arrange
-/// gesture may ever invoke.
+/// Sections are *positional*, the way Bartender's separator works: an
+/// item to the left of the chevron is hidden, an item to the left of
+/// the always-hidden control is always-hidden, everything else is
+/// shown. Hiding is the chevron growing a spacer: macOS 26 packs the
+/// status region right-to-left and parks whatever no longer fits in
+/// its own overflow — verified live — so a spacer that claims the
+/// stretch left of the chevron takes the hidden items off the row
+/// without moving a single one. Revealing is the spacer collapsing.
+struct MenuBarHidePlan: Equatable, Sendable {
+    /// Items on the row, uncovered — everything right of the chevron
+    /// without an override, plus protected owners wherever they sit.
+    var shown: [MenuBarItem] = []
+    /// Items left of the chevron, items macOS has parked, and items
+    /// covered in place by an explicit override.
+    var hidden: [MenuBarItem] = []
+    /// Items left of the always-hidden control, or overridden into
+    /// the deeper section.
+    var alwaysHidden: [MenuBarItem] = []
+    /// The Quartz x-ranges the hidden shutter covers — only overrides
+    /// need one: an item that sits right of the chevron but was
+    /// assigned hidden by hand. Positionally hidden items are pushed,
+    /// never covered.
+    var hiddenCovers: [ClosedRange<CGFloat>] = []
+    /// Same for the deeper section's overrides.
+    var alwaysHiddenCovers: [ClosedRange<CGFloat>] = []
+    /// The length the chevron should claim; nil when it is not on the
+    /// row (leave it be).
+    var hiddenControlLength: CGFloat?
+    /// The length the always-hidden control should claim; nil when it
+    /// is not on the row.
+    var alwaysHiddenControlLength: CGFloat?
+}
+
+/// The hide machinery. Two mechanisms, one plan:
+///
+///   * **Spacers** (the default, positional): each control grows a
+///     spacer that reaches from just right of the region's left edge
+///     to the control's glyph, so every item left of the control is
+///     packed off the row into macOS's own overflow. Revealing
+///     collapses the spacer and the items pack back where they were.
+///   * **Covers** (overrides only): an item the person assigned hidden
+///     by hand while it sits right of the chevron is covered in place
+///     by a shutter panel — the only way to hide an item without
+///     moving it, and honest about being a hole.
+///
+/// Nothing in this file posts events or moves the pointer. Physically
+/// reordering items belongs to `MenuBarItemMover`, which only an
+/// explicit, user-initiated arrange gesture may ever invoke.
 ///
 /// Reconcile runs on a timer plus `didChangeScreenParameters`: items
-/// come and go as other apps add and remove theirs, and a covered
-/// item's frame drifts when the bar reflows, so each pass re-reads
-/// the cached listing and re-covers the runs.
+/// come and go as other apps add and remove theirs, and the controls'
+/// frames drift when the bar reflows, so each pass re-reads the cached
+/// listing, re-measures the controls, and re-applies the lengths.
 @MainActor
 final class MenuBarItemHider {
+    static let log = Logger(subsystem: "devin.jrbar", category: "menubar")
+
     /// The current settings, supplied by the owning utility.
     var settings: @MainActor () -> MenuBarSettings = { MenuBarSettings() }
     /// Every reconcile hands the fresh plan up — the card's count row
@@ -53,12 +106,18 @@ final class MenuBarItemHider {
 
     /// Seams so a test can drive `reconcile` without a screen, an AX
     /// scan, or control items: the row, the items the list would
-    /// report, and the Quartz-space frames a cover must never span —
-    /// the utility wires its own control items here so a merged run
-    /// can never swallow the chevron.
+    /// report, the controls' live frames, the region's left edge, and
+    /// the Quartz-space frames a cover must never span.
     var rowRect: @MainActor () -> CGRect = { MenuBarItemLister.menuBarRow() }
     var listItems: @MainActor () -> [MenuBarItem] = { MenuBarItemLister.list() }
+    var controlFrames: @MainActor () -> MenuBarControlFrames = { MenuBarControlFrames() }
+    /// The left edge of the stretch status items may occupy — the
+    /// notch's right edge on a notched display. A spacer never reaches
+    /// past it. nil means unknown: the controls stay collapsed.
+    var regionMin: @MainActor () -> CGFloat? = { MenuBarItemHider.currentRegionMin() }
     var protectedFrames: @MainActor () -> [CGRect] = { [] }
+    /// The utility's write path for a control's length.
+    var setControlLength: @MainActor (MenuBarItemSection, CGFloat) -> Void = { _, _ in }
     /// Test seam: suppress the cover panels entirely — a unit test
     /// must not draw over the real menu bar.
     var shuttersSuppressed = false
@@ -66,16 +125,31 @@ final class MenuBarItemHider {
     private let hiddenShutter = MenuBarShutter()
     private let alwaysHiddenShutter = MenuBarShutter()
     private var timer: Timer?
-    private var screenObserver: NSObjectProtocol?
+    private var observers: [NSObjectProtocol] = []
+    private var settleTask: Task<Void, Never>?
     /// Sections a reveal gesture has uncovered.
     private(set) var revealed: Set<MenuBarItemSection> = []
     /// The last plan — the card's "N hidden · M always-hidden" row.
     private(set) var lastPlan = MenuBarHidePlan()
+    /// The fit caps learned this geometry.
+    private(set) var caps = MenuBarSpacerCaps()
+    /// The lengths last handed to `setControlLength`, so a parked
+    /// control's cap can be derived from what it was asked to claim.
+    private(set) var assignedLengths: [MenuBarItemSection: CGFloat] = [:]
 
     /// The AX listing's refresh cadence driver.
     private var listingTask: Task<Void, Never>?
     /// How often the AX listing re-scans while the utility runs.
     nonisolated static let listingInterval: TimeInterval = 2.0
+    /// The empty bar a spacer leaves between the region's edge and
+    /// itself — the pushed items need to *not* fit, and a margin this
+    /// small is narrower than any item.
+    nonisolated static let spacerMargin: CGFloat = 12
+    /// How much a cap drops each time a control is found parked.
+    nonisolated static let capStep: CGFloat = 40
+    /// The beat after a length change before the plan is re-read —
+    /// the bar reflows asynchronously.
+    nonisolated static let settleDelay: TimeInterval = 0.35
 
     /// Starts the reconcile cadence and the AX refresh loop. Safe to
     /// call twice.
@@ -87,11 +161,25 @@ final class MenuBarItemHider {
         })
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-        screenObserver = NotificationCenter.default.addObserver(
+        observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reconcile() }
-        }
+            MainActor.assumeIsolated {
+                self?.resetCaps()
+                self?.reconcile()
+            }
+        })
+        // Another app's menus take the left of the bar: the room a
+        // spacer can claim changes with the frontmost app, so the caps
+        // learned under one app are forgotten under the next.
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.resetCaps()
+                self?.scheduleSettle()
+            }
+        })
         // The listing refreshes off-actor; each completed scan is a
         // reconcile. Skipped entirely without Accessibility — the
         // scan would only collect errors.
@@ -107,56 +195,139 @@ final class MenuBarItemHider {
         reconcile()
     }
 
-    /// Stops reconciling, lifts the covers and cancels the refresh
-    /// loop.
+    /// Stops reconciling, collapses the spacers, lifts the covers and
+    /// cancels the refresh loop.
     func stop() {
         timer?.invalidate()
         timer = nil
         listingTask?.cancel()
         listingTask = nil
-        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
-        screenObserver = nil
+        settleTask?.cancel()
+        settleTask = nil
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        observers = []
         restoreAll()
     }
 
     isolated deinit {
         timer?.invalidate()
         listingTask?.cancel()
-        if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
+        settleTask?.cancel()
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
     }
 
-    /// Every cover down: hidden runs come back, reveals forgotten.
+    /// Every spacer collapsed and every cover down: hidden runs come
+    /// back, reveals forgotten.
     func restoreAll() {
         revealed = []
         hiddenShutter.orderOut()
         alwaysHiddenShutter.orderOut()
+        for section in [MenuBarItemSection.hidden, .alwaysHidden] {
+            assign(section, length: MenuBarControlFrames.glyphLength)
+        }
         lastPlan = MenuBarHidePlan()
         onPlan?(lastPlan)
     }
 
+    /// Forget the learned caps — the geometry they were learned under
+    /// is gone.
+    func resetCaps() {
+        caps = MenuBarSpacerCaps()
+    }
+
     /// A gesture asks for these sections back for a while; `hide`
-    /// covers them again.
+    /// pushes them off again.
     func reveal(_ sections: Set<MenuBarItemSection>) {
         revealed.formUnion(sections)
         reconcile()
+        scheduleSettle()
     }
 
-    /// The rehide timer's landing: the covers go back.
+    /// The rehide timer's landing: the spacers grow back.
     func hide() {
         guard !revealed.isEmpty else { return }
         revealed = []
         reconcile()
+        scheduleSettle()
     }
 
-    /// Recompute the plan and the covers.
+    /// One more reconcile after the bar has had a beat to reflow.
+    func scheduleSettle() {
+        settleTask?.cancel()
+        settleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.settleDelay * 1e9))
+            guard !Task.isCancelled else { return }
+            self?.reconcile()
+        }
+    }
+
+    /// Recompute the plan, the spacer lengths and the covers.
     func reconcile() {
         let row = rowRect()
+        let controls = controlFrames()
+        learnCaps(controls: controls, row: row)
         let plan = Self.plan(items: listItems(),
                              sections: settings().sections, row: row,
+                             controls: controls, regionMin: regionMin(),
+                             revealed: revealed, caps: caps,
                              protectedFrames: protectedFrames())
+        let changed = plan != lastPlan
         lastPlan = plan
+        if let length = plan.hiddenControlLength { assign(.hidden, length: length) }
+        if let length = plan.alwaysHiddenControlLength { assign(.alwaysHidden, length: length) }
         updateShutters(plan: plan, rowHeight: row.height)
         onPlan?(plan)
+        if changed {
+            let describe = { (r: CGRect?) -> String in
+                r.map { String(format: "%.0f–%.0f@%.0f", $0.minX, $0.maxX, $0.minY) } ?? "none"
+            }
+            Self.log.notice("plan: chevron \(describe(controls.hidden), privacy: .public) → \(plan.hiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); ah \(describe(controls.alwaysHidden), privacy: .public) → \(plan.alwaysHiddenControlLength.map { String(format: "%.0f", $0) } ?? "–", privacy: .public); regionMin \(self.regionMin().map { String(format: "%.0f", $0) } ?? "nil", privacy: .public); revealed \(self.revealed.map(\.rawValue).sorted().joined(separator: ","), privacy: .public); shown \(plan.shown.map(\.id).joined(separator: " | "), privacy: .public); hidden \(plan.hidden.map(\.id).joined(separator: " | "), privacy: .public); always \(plan.alwaysHidden.map(\.id).joined(separator: " | "), privacy: .public); covers \(plan.hiddenCovers.count + plan.alwaysHiddenCovers.count, privacy: .public)")
+        }
+    }
+
+    /// A control that should stand on the row but is off it was parked
+    /// by macOS because its spacer did not fit: lower its cap below
+    /// what it was asked to claim and collapse it, so the next pass
+    /// measures it on the row and grows it again — under the cap.
+    private func learnCaps(controls: MenuBarControlFrames, row: CGRect) {
+        let hiddenOnRow = controls.hidden.map { $0.intersects(row) } ?? true
+        let hiddenExpanded = (assignedLengths[.hidden] ?? 0) > MenuBarControlFrames.glyphLength + 1
+        if controls.hidden != nil, !hiddenOnRow {
+            let asked = assignedLengths[.hidden] ?? MenuBarControlFrames.glyphLength
+            if asked > MenuBarControlFrames.glyphLength + 1 {
+                caps.hidden = max(MenuBarControlFrames.glyphLength, asked - Self.capStep)
+                Self.log.notice("chevron parked at \(asked, privacy: .public)pt; cap now \(self.caps.hidden, privacy: .public)")
+                assign(.hidden, length: MenuBarControlFrames.glyphLength)
+            }
+        }
+        // The always-hidden control is expected on the row only while
+        // the chevron is collapsed — an expanded chevron pushes it off
+        // by design.
+        let ahOnRow = controls.alwaysHidden.map { $0.intersects(row) } ?? true
+        if controls.alwaysHidden != nil, !ahOnRow, !hiddenExpanded {
+            let asked = assignedLengths[.alwaysHidden] ?? MenuBarControlFrames.glyphLength
+            if asked > MenuBarControlFrames.glyphLength + 1 {
+                caps.alwaysHidden = max(MenuBarControlFrames.glyphLength, asked - Self.capStep)
+                Self.log.notice("always-hidden control parked at \(asked, privacy: .public)pt; cap now \(self.caps.alwaysHidden, privacy: .public)")
+                assign(.alwaysHidden, length: MenuBarControlFrames.glyphLength)
+            }
+        }
+    }
+
+    /// Hand a length to the utility only when it changes — a status
+    /// item's length write reflows the whole bar.
+    private func assign(_ section: MenuBarItemSection, length: CGFloat) {
+        let rounded = length.rounded()
+        if let current = assignedLengths[section], abs(current - rounded) < 1 { return }
+        assignedLengths[section] = rounded
+        setControlLength(section, rounded)
+        scheduleSettle()
     }
 
     /// Make the shutters match the plan and the reveal state.
@@ -173,56 +344,136 @@ final class MenuBarItemHider {
                                   rowHeight: rowHeight, appearance: appearance)
     }
 
+    // MARK: Geometry
+
+    /// The left edge of the status region on the screen carrying the
+    /// menu bar: the notch's right edge where there is one. Without a
+    /// notch the app menus' extent is unknowable from here, so the
+    /// midpoint stands in — a spacer that reaches past the real edge
+    /// is parked, learned, and capped.
+    static func currentRegionMin() -> CGFloat? {
+        guard let screen = NSScreen.main else { return nil }
+        if let right = screen.auxiliaryTopRightArea {
+            // AppKit and Quartz share x on the main display.
+            return right.minX
+        }
+        return screen.frame.midX
+    }
+
     // MARK: Plan (pure)
 
-    /// The layout for a candidate list, sorted by x: an item's section
-    /// is its assignment — `hidden` and `alwaysHidden` are covered in
-    /// place, everything else is shown. Protected owners always report
-    /// shown. Items parked off the row (macOS's own overflow) join the
-    /// run their mapping says — they are hidden regardless, and the
+    /// The spacer a control on the row should claim so that every item
+    /// left of it is pushed off: from `spacerMargin` right of the
+    /// region's edge to the control's right edge (which the pack
+    /// anchors), capped by what has been seen to fit, never shorter
+    /// than the glyph.
+    nonisolated static func spacerLength(controlFrame: CGRect, regionMin: CGFloat,
+                                         cap: CGFloat = .infinity) -> CGFloat {
+        let wanted = controlFrame.maxX - regionMin - spacerMargin
+        return max(MenuBarControlFrames.glyphLength, min(cap, wanted))
+    }
+
+    /// The layout for a candidate list: an item's section is its
+    /// position relative to the controls — left of the always-hidden
+    /// control is always-hidden, left of the chevron's glyph is hidden,
+    /// the rest shown — unless an explicit override assigns it deeper,
+    /// in which case it is covered where it sits. Protected owners
+    /// always report shown. Items macOS has parked off the row, or
+    /// stacked under its overflow control, are hidden regardless — the
     /// Item Bar reaches them through `AXPress`.
-    /// - Parameter protectedFrames: Quartz-space frames a cover may
-    ///   never span even though they are not listed items — the
-    ///   utility's own controls, on the no-AX path where they cannot
-    ///   appear in the listing at all.
+    ///
+    /// The control lengths come out of the same pass: a control on the
+    /// row claims `spacerLength` unless its section is revealed, in
+    /// which case it collapses to the glyph. A control off the row
+    /// reports nil — nothing to do until it is back.
     nonisolated static func plan(items: [MenuBarItem],
                                  sections: [String: MenuBarItemSection],
                                  row: CGRect,
+                                 controls: MenuBarControlFrames = MenuBarControlFrames(),
+                                 regionMin: CGFloat? = nil,
+                                 revealed: Set<MenuBarItemSection> = [],
+                                 caps: MenuBarSpacerCaps = MenuBarSpacerCaps(),
                                  protectedFrames: [CGRect] = []) -> MenuBarHidePlan {
         var plan = MenuBarHidePlan()
         let sorted = items.sorted(by: { $0.bounds.minX < $1.bounds.minX })
-        for item in sorted where item.bounds.intersects(row) {
+        let hiddenControl = controls.hidden.flatMap { $0.intersects(row) ? $0 : nil }
+        let ahControl = controls.alwaysHidden.flatMap { $0.intersects(row) ? $0 : nil }
+        // The boundary is the glyph's left edge: an item under the
+        // spacer part of a control has been pushed, not shown.
+        let hiddenBoundary = hiddenControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
+        let ahBoundary = ahControl.map { $0.maxX - MenuBarControlFrames.glyphLength }
+        let overflowFrames = sorted.filter { $0.isNativeOverflowControl && $0.bounds.intersects(row) }
+            .map(\.bounds)
+
+        var hiddenToCover: [MenuBarItem] = []
+        var ahToCover: [MenuBarItem] = []
+        var parked: [MenuBarItem] = []
+        for item in sorted {
             if MenuBarItemLister.isProtected(item) {
-                plan.shown.append(item)
+                if item.bounds.intersects(row) { plan.shown.append(item) }
                 continue
             }
-            switch sections[item.id] {
-            case .hidden: plan.hidden.append(item)
-            case .alwaysHidden: plan.alwaysHidden.append(item)
-            default: plan.shown.append(item)
+            let onRow = item.bounds.intersects(row)
+                && !overflowFrames.contains { $0.intersection(item.bounds).width >= 4 }
+            guard onRow else {
+                parked.append(item)
+                continue
+            }
+            let positional: MenuBarItemSection
+            if let ahBoundary, item.bounds.minX < ahBoundary {
+                positional = .alwaysHidden
+            } else if let hiddenBoundary, item.bounds.minX < hiddenBoundary {
+                positional = .hidden
+            } else {
+                positional = .shown
+            }
+            let override = sections[item.id].flatMap { $0 == .shown ? nil : $0 }
+            let final = override ?? positional
+            switch final {
+            case .shown:
+                plan.shown.append(item)
+            case .hidden:
+                plan.hidden.append(item)
+                if positional == .shown { hiddenToCover.append(item) }
+            case .alwaysHidden:
+                plan.alwaysHidden.append(item)
+                if positional == .shown { ahToCover.append(item) }
             }
         }
         // Parked items report after the on-row ones — their stashed
-        // positions are not bar order.
-        for item in sorted where !item.bounds.intersects(row) {
+        // positions are not bar order. A parked item is hidden by
+        // macOS itself; only an override can call it always-hidden.
+        for item in parked {
             if sections[item.id] == .alwaysHidden {
                 plan.alwaysHidden.append(item)
             } else {
                 plan.hidden.append(item)
             }
         }
-        // Covers span on-row items only — a parked item's stash frame
-        // sits off the row, and covering it would paint a strip where
-        // nothing is. Shown items *and* the utility's own controls are
-        // blockers: a run breaks rather than cover either.
+        // Covers span override items only. Shown items *and* the
+        // utility's own controls are blockers: a run breaks rather than
+        // cover either.
         let blockers = plan.shown.map(\.bounds) + protectedFrames
-        plan.hiddenCovers = coverRuns(
-            covered: plan.hidden.filter { $0.bounds.intersects(row) }, blockers: blockers)
-        // The deeper cover splits on shown items and the controls — an
-        // always-hidden cover may span a hidden item, which stays
-        // covered anyway.
-        plan.alwaysHiddenCovers = coverRuns(
-            covered: plan.alwaysHidden.filter { $0.bounds.intersects(row) }, blockers: blockers)
+        plan.hiddenCovers = coverRuns(covered: hiddenToCover, blockers: blockers)
+        plan.alwaysHiddenCovers = coverRuns(covered: ahToCover, blockers: blockers)
+
+        // Spacer lengths.
+        if let hiddenControl {
+            if revealed.contains(.hidden) || regionMin == nil {
+                plan.hiddenControlLength = MenuBarControlFrames.glyphLength
+            } else if let regionMin {
+                plan.hiddenControlLength = spacerLength(
+                    controlFrame: hiddenControl, regionMin: regionMin, cap: caps.hidden)
+            }
+        }
+        if let ahControl {
+            if revealed.contains(.alwaysHidden) || regionMin == nil {
+                plan.alwaysHiddenControlLength = MenuBarControlFrames.glyphLength
+            } else if let regionMin {
+                plan.alwaysHiddenControlLength = spacerLength(
+                    controlFrame: ahControl, regionMin: regionMin, cap: caps.alwaysHidden)
+            }
+        }
         return plan
     }
 
@@ -275,10 +526,10 @@ final class MenuBarItemHider {
         return out
     }
 
-    /// The card's section write: the single mapping, kept honest — a
+    /// The card's override write: the single mapping, kept honest — a
     /// protected owner is never written, a shown assignment clears the
-    /// key, and an item that is not listed still records its mapping
-    /// for when it returns.
+    /// key (position decides again), and an item that is not listed
+    /// still records its mapping for when it returns.
     /// - Parameters:
     ///   - items: the currently listed items (used to protect system
     ///     owners; order irrelevant).
