@@ -423,8 +423,10 @@ final class MenuBarItemHider {
 
     /// How much a spacer gives back when the overflow control lands on it.
     nonisolated static let overflowStep: CGFloat = 8
-    /// Points of the « left bare under the ear so its ring never clips.
-    nonisolated static let overflowCoverInset: CGFloat = 3
+    /// Points of the « left bare under the ear so its ring never clips —
+    /// the ring ends within a point of the «'s left edge on this
+    /// hardware, and any more shows as a sliver of the glyph.
+    nonisolated static let overflowCoverInset: CGFloat = 1
 
     /// Hand a length to the utility only when it changes — a status
     /// item's length write reflows the whole bar.

@@ -59,7 +59,7 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// The composite face for the current spacer, memoised on the
     /// natural image's identity: the breathing dot redraws twice a
     /// second and must not re-rasterise a 200-point image each time.
-    private var foldedCache: (source: NSImage, spacer: CGFloat, chevron: Bool, image: NSImage)?
+    private var foldedCache: (source: NSImage, spacer: CGFloat, chevron: Bool, appearance: String, image: NSImage)?
     /// The Menu Bar utility's hooks: a click on the blank part of the
     /// item, and the "Hidden Items" submenu it builds for the menu.
     var onBoundaryClick: (@MainActor () -> Void)?
@@ -251,13 +251,23 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             if currentWidth > 0, statusItem.length != currentWidth { statusItem.length = currentWidth }
             return
         }
+        // A template strip tints itself; a coloured strip (the session
+        // dots) does not, so the hint takes the bar's own label colour
+        // resolved under the button's appearance — black on a dark bar
+        // is no hint at all.
+        let appearance = button.effectiveAppearance
+        var tint = NSColor.labelColor
+        appearance.performAsCurrentDrawingAppearance {
+            tint = NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
+        }
         let folded: NSImage
         if let cache = foldedCache, cache.source === source, cache.spacer == boundarySpacer,
-           cache.chevron == chevron {
+           cache.chevron == chevron, cache.appearance == appearance.name.rawValue {
             folded = cache.image
         } else {
-            folded = Self.folded(source, spacer: boundarySpacer, chevron: chevron)
-            foldedCache = (source, boundarySpacer, chevron, folded)
+            folded = Self.folded(source, spacer: boundarySpacer, chevron: chevron,
+                                 hintTint: source.isTemplate ? nil : tint)
+            foldedCache = (source, boundarySpacer, chevron, appearance.name.rawValue, folded)
         }
         if button.image !== folded { button.image = folded }
         button.imageScaling = .scaleNone
@@ -269,7 +279,8 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
     /// as a template so the bar tints it. The chevron sits in the last
     /// points of the spacer — a whisper that the blank stretch holds
     /// something. Pure over its inputs; a test pins the size.
-    nonisolated static func folded(_ source: NSImage, spacer: CGFloat, chevron: Bool) -> NSImage {
+    nonisolated static func folded(_ source: NSImage, spacer: CGFloat, chevron: Bool,
+                                   hintTint: NSColor? = nil) -> NSImage {
         let iconSize = source.size
         let size = NSSize(width: iconSize.width + spacer, height: max(iconSize.height, 18))
         let mark = chevron
@@ -281,8 +292,15 @@ final class StatusItemController: NSObject, NSMenuDelegate, MenuBarBoundaryHost 
             source.draw(in: NSRect(x: spacer, y: y, width: iconSize.width, height: iconSize.height))
             if let mark, spacer >= 20 {
                 let m = mark.size
-                mark.draw(in: NSRect(x: spacer - m.width - 6, y: (size.height - m.height) / 2,
-                                     width: m.width, height: m.height))
+                let rect = NSRect(x: spacer - m.width - 6, y: (size.height - m.height) / 2,
+                                  width: m.width, height: m.height)
+                mark.draw(in: rect)
+                // A symbol drawn into a non-template composite lands
+                // black; the tint makes it the bar's label colour.
+                if let hintTint {
+                    hintTint.withAlphaComponent(0.7).setFill()
+                    rect.fill(using: .sourceAtop)
+                }
             }
             return true
         }

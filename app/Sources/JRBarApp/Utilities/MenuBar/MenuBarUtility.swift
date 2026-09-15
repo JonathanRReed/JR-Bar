@@ -478,14 +478,24 @@ final class MenuBarUtility: Toy {
         lastPlan.hidden + lastPlan.alwaysHidden
     }
 
+    /// Anyone's item but ours — the system's extras included: a gesture
+    /// must respect the clock and Wi-Fi, never our own spacer.
+    nonisolated static func isForeignOwner(_ owner: String) -> Bool {
+        !["JR-Bar", "JRBarApp"].contains(owner)
+    }
+
     /// The on-row items a click should count as "on an item" — the
     /// shown zone only. Covered items are the reveal zone itself.
     /// Frames arrive in Quartz and flip to AppKit for the hit test.
     private func shownItemFrames() -> [NSRect] {
         let height = CGDisplayBounds(CGMainDisplayID()).height
         // The « is covered while the run is hidden — a click on it is
-        // the reveal, not a click on an item.
-        return lastPlan.shown.filter { !$0.isNativeOverflowControl }.map {
+        // the reveal, not a click on an item. Our own items are the
+        // boundary and the controls: the host's frame spans the whole
+        // blank stretch, which is exactly the zone a gesture lands on.
+        return lastPlan.shown.filter {
+            !$0.isNativeOverflowControl && Self.isForeignOwner($0.ownerName)
+        }.map {
             NSRect(x: $0.bounds.minX, y: height - $0.bounds.maxY,
                    width: $0.bounds.width, height: $0.bounds.height)
         }

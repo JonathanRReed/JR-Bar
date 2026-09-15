@@ -395,6 +395,7 @@ extension MenuBarSpacerTests {
         let hidden = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
                                            controls: chevron, regionMin: regionMin)
         #expect(hidden.hiddenCovers == [(869 + MenuBarItemHider.overflowCoverInset)...887])
+        #expect(MenuBarItemHider.overflowCoverInset <= 1, "more shows a sliver of the « glyph")
         let revealed = MenuBarItemHider.plan(items: [overflow], sections: [:], row: row,
                                              controls: chevron, regionMin: regionMin,
                                              revealed: [.hidden])
