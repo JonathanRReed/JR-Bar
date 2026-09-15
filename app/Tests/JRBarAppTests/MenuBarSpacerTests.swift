@@ -257,9 +257,6 @@ struct MenuBarSpacerTests {
         #expect(writes == 1)
         #expect(state.sections.isEmpty)
         #expect(state.layoutModel == MenuBarSettings.currentLayoutModel)
-        // The reseat is a separate one-time step that waits for the
-        // controls to stand on a real bar.
-        #expect(state.controlsSeated == false)
         utility.migrateSectionsIfNeeded()
         #expect(writes == 1)
         // A fresh override written under the current model survives.
@@ -283,19 +280,6 @@ struct MenuBarSpacerTests {
 }
 
 extension MenuBarSpacerTests {
-    @Test("the reseat aims just left of JR-Bar's item and nudges the key by the landing error")
-    func reseatMath() {
-        let target = MenuBarUtility.reseatTarget(mainItemMinX: 1087)
-        #expect(target == 1061)
-        let key = MenuBarUtility.reseatKey(screenMaxX: 1512, targetGlyphMinX: target)
-        #expect(key == 451)
-        // Landed 92 pt left of the target: a larger key sits further
-        // left, so the key shrinks by the error.
-        #expect(MenuBarUtility.reseatCorrection(key: 563, landedGlyphMinX: 969, targetGlyphMinX: 1061) == 471)
-        // Landed right of the target: the key grows.
-        #expect(MenuBarUtility.reseatCorrection(key: 451, landedGlyphMinX: 1100, targetGlyphMinX: 1061) == 490)
-    }
-
     @Test("an always-hidden control stacked under the expanded chevron is pushed, not a boundary")
     func pushedAlwaysHidden() {
         // The chevron grew to 833…985; macOS reports the pushed control

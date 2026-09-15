@@ -1189,10 +1189,13 @@ LED strip, hinge), captures + checklist as the verification.
   Item Bar, island) — verification is the AX listing and the
   `devin.jrbar:menubar` plan log.
 - Menu Bar: positional sections, the chevron and the always-hidden
-  control as spacers, overrides-only covers, cover-era map cleared and
-  controls reseated once (`controlsSeated`), learned fit caps, the
-  native overflow button listed so stacked items read as parked, the
-  reseat calibrated off the chevron's own slot. 18 new tests.
+  control as spacers, overrides-only covers, cover-era map cleared
+  once, learned fit caps, the native overflow button listed so stacked
+  items read as parked, a pushed always-hidden control recognised as
+  pushed. An automatic reseat of the controls next to JR-Bar's own
+  item was built, run live three times, and removed: the preferred
+  position is a sort key, not an x, and the correction loop diverged
+  on the real bar. 21 new tests.
 - Dock: Replace cut (−4 000 lines); `AppleDockControl.restore()` runs
   on every apply so an old hide is undone; Enhance gained TCC caching,
   a cached dock list, click-away, frame-matched thumbnails, off-screen

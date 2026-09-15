@@ -12,8 +12,8 @@ All notable changes to JR-Bar are documented here.
   revealing is it collapsing back. No holes, nothing moved, the pointer
   never touched. The section map is overrides only (an item marked
   Cover by hand while it sits right of the chevron is still covered in
-  place, honestly a hole); cover-era maps are cleared once and the
-  controls reseat just left of JR-Bar's own status item. A chevron
+  place, honestly a hole); cover-era maps are cleared once, and the
+  controls sit where you ⌘-drag them, Bartender-style. A chevron
   found parked under a wide app menu learns a cap and collapses; caps
   reset on screen and frontmost-app changes. Every plan change logs to
   `devin.jrbar:menubar`.

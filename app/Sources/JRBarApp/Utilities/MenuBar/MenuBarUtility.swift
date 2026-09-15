@@ -102,9 +102,6 @@ final class MenuBarUtility: Toy {
             guard let self else { return }
             self.lastPlan = plan
             self.refreshChevron()
-            // The seating waits for a listing that names our own item —
-            // the first pass at launch is usually still empty.
-            if self.running { self.reseatControlsIfNeeded() }
         }
         // Our own controls are never covered — their live frames split
         // cover runs even on the no-AX path where they cannot list.
@@ -389,119 +386,13 @@ final class MenuBarUtility: Toy {
         }
     }
 
-    /// Under the position model the chevron's slot *is* the setting,
-    /// so an install seats the chevron once just left of JR-Bar's own
-    /// status item: what arrived after JR-Bar hides, the system's
-    /// items and ours stay. The person ⌘-drags it from there.
-    ///
-    /// A status item's preferred position is a sort key against every
-    /// other item's stored key, not an x — verified live: a key moved
-    /// by 97 shifted the chevron one slot. So the seat is measured:
-    /// `reseatKey` is the first guess (the screen's right edge less the
-    /// target x, the shape other apps' keys roughly take), the landing
-    /// is measured, and the key is nudged by the error until the glyph
-    /// sits within `reseatTolerance` of the target or `reseatAttempts`
-    /// run out.
-    nonisolated static func reseatKey(screenMaxX: CGFloat, targetGlyphMinX: CGFloat) -> Double {
-        Double((screenMaxX - targetGlyphMinX).rounded())
-    }
-
-    /// The next key after a landing: a larger key sits further left,
-    /// so a glyph that landed right of the target grows the key.
-    nonisolated static func reseatCorrection(key: Double, landedGlyphMinX: CGFloat,
-                                             targetGlyphMinX: CGFloat) -> Double {
-        (key + Double(landedGlyphMinX - targetGlyphMinX)).rounded()
-    }
-
-    /// Where the chevron's glyph should land: just left of JR-Bar's
-    /// own status item.
-    nonisolated static func reseatTarget(mainItemMinX: CGFloat) -> CGFloat {
-        mainItemMinX - MenuBarControlFrames.glyphLength - 2
-    }
-
-    nonisolated static let reseatTolerance: CGFloat = 30
-    nonisolated static let reseatAttempts = 3
-    /// The beat between tearing the controls down and seating the new
-    /// ones: `removeStatusItem` deletes the item's autosave key, and
-    /// the old item's own teardown can land a turn later — a key
-    /// written before that lands is wiped with it (seen live).
-    nonisolated static let reseatSettle: TimeInterval = 0.35
-    /// How long the bar gets to pack the fresh items before their
-    /// landing is measured.
-    nonisolated static let reseatMeasureDelay: TimeInterval = 0.6
-
-    /// A reseat is mid-flight.
-    @ObservationIgnored private var reseatInFlight = false
-
-    /// Run the reseat once the controls stand and the listing names
-    /// our own item — the first pass at launch is usually still empty.
-    func reseatControlsIfNeeded() {
-        guard !settings().controlsSeated, !reseatInFlight,
-              !settings().combinedStatusItem,
-              let chevron, let chevronFrame = Self.quartzFrame(of: chevron),
-              chevronFrame.intersects(MenuBarItemLister.menuBarRow()),
-              let screen = NSScreen.main,
-              let main = MenuBarItemLister.list().first(where: {
-                  $0.ownerName == "JR-Bar" && $0.identifier == StatusItemController.accessibilityIdentifier
-              }) else { return }
-        let target = Self.reseatTarget(mainItemMinX: main.bounds.minX)
-        let key = Self.reseatKey(screenMaxX: screen.frame.maxX, targetGlyphMinX: target)
-        MenuBarItemHider.log.notice("reseating: JR-Bar item at \(main.bounds.minX, privacy: .public), target glyph x \(target, privacy: .public), first key \(key, privacy: .public)")
-        reseatInFlight = true
-        reseat(key: key, target: target, attempt: 1)
-    }
-
-    /// One seating pass: tear the controls down, let the teardown
-    /// drain, write the keys, reinstall, then measure the landing.
-    private func reseat(key: Double, target: CGFloat, attempt: Int) {
-        removeSeparateControls()
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.reseatSettle) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                UserDefaults.standard.set(key,
-                                          forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-chevron")
-                UserDefaults.standard.set(key + 30,
-                                          forKey: "NSStatusItem Preferred Position com.jonathanreed.jrbar.menubar-ah-control")
-                guard self.running, !self.settings().combinedStatusItem else {
-                    self.reseatInFlight = false
-                    return
-                }
-                self.installSeparateControls()
-                self.hider.controlsReinstalled()
-                DispatchQueue.main.asyncAfter(deadline: .now() + Self.reseatMeasureDelay) { [weak self] in
-                    MainActor.assumeIsolated {
-                        self?.measureReseat(key: key, target: target, attempt: attempt)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The landing: the chevron's glyph edge (its window's right edge
-    /// less the bar's inset and the glyph) against the target.
-    private func measureReseat(key: Double, target: CGFloat, attempt: Int) {
-        guard let chevron, let frame = Self.quartzFrame(of: chevron),
-              frame.intersects(MenuBarItemLister.menuBarRow()) else {
-            finishReseat(note: "chevron off the row after seating")
-            return
-        }
-        let landed = frame.maxX - 7 - MenuBarControlFrames.glyphLength
-        let error = landed - target
-        MenuBarItemHider.log.notice("reseat attempt \(attempt, privacy: .public): key \(key, privacy: .public) landed glyph x \(landed, privacy: .public), target \(target, privacy: .public)")
-        if abs(error) <= Self.reseatTolerance || attempt >= Self.reseatAttempts {
-            finishReseat(note: abs(error) <= Self.reseatTolerance ? "seated" : "out of attempts")
-            return
-        }
-        reseat(key: Self.reseatCorrection(key: key, landedGlyphMinX: landed, targetGlyphMinX: target),
-               target: target, attempt: attempt + 1)
-    }
-
-    private func finishReseat(note: String) {
-        MenuBarItemHider.log.notice("reseat done: \(note, privacy: .public)")
-        reseatInFlight = false
-        update { $0.controlsSeated = true }
-        hider.scheduleSettle()
-    }
+    /// Under the position model the chevron's slot *is* the setting.
+    /// The controls seed once at `seedPreferredPosition`'s slots and the
+    /// person ⌘-drags them from there — exactly Bartender's onboarding.
+    /// An automatic seat next to JR-Bar's own item was tried and
+    /// removed: a status item's preferred position is a sort key
+    /// against other apps' stored keys, not an x, and steering it
+    /// blind left the controls in the wrong place on a real bar.
 
     private func start() {
         guard !running else { return }
@@ -515,12 +406,10 @@ final class MenuBarUtility: Toy {
         syncActions()
         actions.start()
         // First AX fill — a no-op without the grant — then reconcile
-        // against real frames, and seat a migrated install's controls.
+        // against real frames.
         Task { [weak self] in
             _ = await MenuBarItemLister.refreshAXItems()
-            guard let self else { return }
-            self.reseatControlsIfNeeded()
-            self.hider.reconcile()
+            self?.hider.reconcile()
         }
     }
 

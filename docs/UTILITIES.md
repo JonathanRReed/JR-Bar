@@ -61,8 +61,12 @@ Bartender is closed — **clean-room**, no code, no verbatim assets.
 > while it sits right of the chevron is covered in place by a borderless
 > `.menu`-material panel at `statusBar + 1` (a hole, and honest about
 > it). Files from the cover era, whose map assigned every item hidden,
-> are cleared once on first apply (`layoutModel` 0 → 1) and the controls
-> are reseated just left of JR-Bar's own status item (1 → 2).
+> are cleared once on first apply (`layoutModel` 0 → 2). The controls
+> seed once at fixed slots and the person ⌘-drags them from there — an
+> automatic seat next to JR-Bar's own item was tried and removed: a
+> status item's preferred position is a sort key against other apps'
+> stored keys, not an x, and steering it blind put the controls in the
+> wrong place on a real bar.
 > Physically reordering items is possible only via synthetic ⌘-drags —
 > which move the person's real cursor — so `MenuBarItemMover` runs only
 > inside the explicit, cancellable arrange mode and has no background
